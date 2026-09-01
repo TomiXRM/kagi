@@ -370,10 +370,14 @@ pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, 
     };
 
     // ── 4. Build git args (no --force, ever) ─────────────────
+    // `--` + leading-dash reject (#291): both names come from the repo's own
+    // config/refs.
+    check_operand("remote", &remote_name)?;
+    check_operand("branch", &branch_name)?;
     let args: Vec<&str> = if has_upstream {
-        vec!["push", &remote_name, &branch_name]
+        vec!["push", "--", &remote_name, &branch_name]
     } else {
-        vec!["push", "-u", &remote_name, &branch_name]
+        vec!["push", "-u", "--", &remote_name, &branch_name]
     };
 
     // ── 5. Run git push via CLI ───────────────────────────────
@@ -686,10 +690,12 @@ pub fn execute_push_branch(
             .unwrap_or(0)
     };
 
+    check_operand("remote", &remote_name)?;
+    check_operand("branch", branch_name)?;
     let args: Vec<&str> = if set_upstream {
-        vec!["push", "-u", &remote_name, branch_name]
+        vec!["push", "-u", "--", &remote_name, branch_name]
     } else {
-        vec!["push", &remote_name, branch_name]
+        vec!["push", "--", &remote_name, branch_name]
     };
     let out =
         run_git(repo_path, &args).map_err(|e| GitError::Other(format!("push failed: {}", e)))?;

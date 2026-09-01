@@ -5,7 +5,7 @@ crates/kagi-git/src/conflicts.rs 1906
 crates/kagi-git/src/message_gen.rs 807
 crates/kagi-git/src/ops/cherry_revert.rs 966
 crates/kagi-git/src/ops/history.rs 1215
-crates/kagi-git/src/ops/pull.rs 813
+crates/kagi-git/src/ops/pull.rs 815
 crates/kagi-git/src/ops/stash.rs 963
 crates/kagi-git/src/resolution.rs 1254
 crates/kagi-git/src/staging.rs 909

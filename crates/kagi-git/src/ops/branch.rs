@@ -27,7 +27,7 @@ pub fn create_branch_name_errors(repo: &Repository, name: &str) -> Vec<BranchNam
 
     // Leading `-` is rejected explicitly: although git2 considers it a valid ref
     // name, it is ambiguous on the command line (may be interpreted as a flag).
-    if !name.is_empty() && name.starts_with('-') {
+    if !name.is_empty() && is_flag_like(name) {
         errs.push(BranchNameError::CreateLeadingDash(name.to_string()));
     }
 

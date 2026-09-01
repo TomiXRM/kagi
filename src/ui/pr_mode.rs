@@ -18,12 +18,15 @@
 //! whole PR, or for one selected commit. Nothing is checked out. Inputs
 //! (creating / editing a PR) deliberately go to GitHub's own UI.
 
+use std::path::PathBuf;
+
 use gpui::{div, prelude::*, px, relative, rgb, Context, ListState, SharedString};
+use kagi_domain::github::Mergeable;
 use kagi_domain::github::{
     stack_order, CiState, Comment, PrAttention, PrGroup, PrReason, PullRequest, Review,
     ReviewComment, ReviewState,
 };
-use kagi_git::{Commit, CommitId, FileStatus};
+use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
 
 use super::diff_view::{build_main_diff_view, MainDiffView};
@@ -38,6 +41,10 @@ pub struct PrTab {
     pub pr: PullRequest,
     /// merge-base(base, head) — the diff base for the whole-PR view.
     pub base: CommitId,
+    /// The base **branch's** current tip, which is what a merge would actually
+    /// be against. Distinct from `base`: merging `head` into merge-base can
+    /// never conflict, because merge-base is an ancestor of `head` (ADR-0145).
+    pub base_tip: CommitId,
     pub head: CommitId,
     pub commits: Vec<Commit>,
     /// Files of the current selection (whole PR, or the selected commit).
@@ -52,6 +59,23 @@ pub struct PrTab {
     pub reviews: Vec<Review>,
     pub comments: Vec<Comment>,
     pub line_comments: Vec<ReviewComment>,
+    /// ADR-0145: conflicts a merge would produce, computed locally on first
+    /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
+    /// = computed and clean, which is a different thing to say than "unknown".
+    pub conflicts: Option<Result<Vec<PrConflictFile>, String>>,
+    /// Which conflicted file the Conflicts tab shows. Its own selection, not
+    /// `selected_file`: the conflicting files are a different (usually much
+    /// shorter) list than the PR's changed files, and sharing an index between
+    /// them would point at the wrong row.
+    pub conflict_selected: Option<usize>,
+    /// Scroll state for the conflict diff, one per tab like `diff_scroll`.
+    pub conflict_scroll: ListState,
+    /// Which conflict within the file the jump control is on (0-based).
+    pub conflict_at: usize,
+    /// Marker text for the selected conflicted file only, and which file it is
+    /// for. On a real PR the full set came to 50 MB across 537 files to show
+    /// one of them, so the text is fetched per selection instead.
+    pub conflict_text: Option<(PathBuf, Option<String>)>,
 }
 
 /// Which body the PR tab shows.
@@ -60,6 +84,8 @@ pub enum PrView {
     Overview,
     Review,
     Diff,
+    /// ADR-0145: read-only preview of what merging this PR would conflict on.
+    Conflicts,
 }
 
 /// Which list the arrow keys drive.
@@ -140,6 +166,7 @@ impl KagiApp {
         {
             if let Some(m) = self.pr_mode.as_mut() {
                 m.active = Some(ix);
+                reset_view_if_not_conflicting(m, pr);
             }
             cx.notify();
             return;
@@ -168,7 +195,9 @@ impl KagiApp {
             return;
         };
         let repo = session.backend();
-        let base = repo.merge_base(&base_tip, &head).unwrap_or(base_tip);
+        let base = repo
+            .merge_base(&base_tip, &head)
+            .unwrap_or_else(|_| base_tip.clone());
         let commits = repo
             .commits_between(&base, &head, COMMIT_LIMIT)
             .unwrap_or_default();
@@ -182,6 +211,7 @@ impl KagiApp {
         let mut tab = PrTab {
             pr: pr.clone(),
             base,
+            base_tip,
             head,
             commits,
             files,
@@ -194,6 +224,11 @@ impl KagiApp {
             reviews: Vec::new(),
             comments: Vec::new(),
             line_comments: Vec::new(),
+            conflicts: None,
+            conflict_selected: None,
+            conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            conflict_text: None,
+            conflict_at: 0,
         };
         if !tab.files.is_empty() {
             tab.selected_file = Some(0);
@@ -202,6 +237,7 @@ impl KagiApp {
         let m = self.pr_mode.get_or_insert_with(PrModeState::default);
         m.tabs.push(tab);
         m.active = Some(m.tabs.len() - 1);
+        reset_view_if_not_conflicting(m, pr);
         cx.notify();
         self.pr_mode_load_conversation(pr.number, cx);
     }
@@ -251,12 +287,191 @@ impl KagiApp {
         .detach();
     }
 
-    /// Switch the body between Overview (description), Review and Diff.
+    /// Switch the body between Overview (description), Review, Diff and
+    /// Conflicts.
     pub fn pr_mode_show(&mut self, view: PrView, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode.as_mut() {
             m.view = view;
         }
+        if view == PrView::Conflicts {
+            self.pr_mode_load_conflicts(cx);
+        }
         cx.notify();
+    }
+
+    /// Select which conflicted file the Conflicts tab shows.
+    pub fn pr_mode_select_conflict(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode.as_mut() {
+            if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
+                t.conflict_selected = Some(ix);
+                t.conflict_at = 0;
+            }
+        }
+        self.pr_mode_load_conflict_text(cx);
+        cx.notify();
+    }
+
+    /// Move the conflict cursor and scroll that conflict into view.
+    pub fn pr_mode_jump_conflict(
+        &mut self,
+        at: usize,
+        row: Option<usize>,
+        rows: Option<std::sync::Arc<Vec<super::diff_view::DiffRow>>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(m) = self.pr_mode.as_mut() {
+            if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
+                t.conflict_at = at;
+                if let (Some(row), Some(rows)) = (row, rows) {
+                    // Side-by-side virtualizes over *paired* rows, so a unified
+                    // index addresses a different element there.
+                    let split = super::theme::diff_split();
+                    let (count, target) = if split {
+                        let sp = super::diff_split::split_rows(&rows);
+                        let t = super::diff_split::split_index_of(&sp, row).unwrap_or(row);
+                        (sp.len(), t)
+                    } else {
+                        (rows.len(), row)
+                    };
+                    // Sync the count first. `render_diff_list` resets the list
+                    // whenever its count disagrees, and `reset` clears
+                    // `logical_scroll_top` — so scrolling before the list has
+                    // been told how many rows there are is thrown away on the
+                    // very next frame, which is why this did nothing.
+                    if t.conflict_scroll.item_count() != count {
+                        t.conflict_scroll.reset(count);
+                    }
+                    // `scroll_to`, not `scroll_to_reveal_item`: revealing seeks
+                    // by accumulated height, and the list only measures rows it
+                    // has drawn, so downward targets land short. Setting the
+                    // top item is exact regardless of what has been measured —
+                    // and puts the conflict header at the top, which is where
+                    // it belongs.
+                    t.conflict_scroll.scroll_to(gpui::ListOffset {
+                        item_ix: target,
+                        offset_in_item: px(0.),
+                    });
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Fetch the marker text for the selected conflicted file, if it is not
+    /// already the one held. One file at a time: see `PrTab::conflict_text`.
+    fn pr_mode_load_conflict_text(&mut self, cx: &mut Context<Self>) {
+        let Some(m) = self.pr_mode.as_ref() else {
+            return;
+        };
+        let Some(tab) = m.active.and_then(|a| m.tabs.get(a)) else {
+            return;
+        };
+        let Some(Ok(files)) = tab.conflicts.as_ref() else {
+            return;
+        };
+        if files.is_empty() {
+            return;
+        }
+        let ix = tab.conflict_selected.unwrap_or(0).min(files.len() - 1);
+        let path = files[ix].path.clone();
+        if tab.conflict_text.as_ref().map(|(p, _)| p) == Some(&path) {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
+        let bg_path = path.clone();
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).ok()?;
+            repo.pr_conflict_text(&base, &head, &bg_path).ok().flatten()
+        });
+        cx.spawn(async move |this, acx| {
+            let text = task.await;
+            let _ = this.update(acx, |app, cx| {
+                let Some(m) = app.pr_mode.as_mut() else {
+                    return;
+                };
+                let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
+                    return;
+                };
+                // Land on the first conflict rather than the top of the
+                // file: in a 2000-line file the interesting part is nowhere
+                // near where the scroll starts, and hunting for it is the work
+                // this tab exists to remove.
+                let first = t
+                    .conflicts
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .and_then(|files| files.get(t.conflict_selected.unwrap_or(0)))
+                    .map(|f| super::pr_conflicts::conflict_diff_view(f, text.as_deref()))
+                    .and_then(|(dv, jumps)| jumps.first().map(|&j| (j, dv.rows.clone())));
+                t.conflict_text = Some((path, text));
+                t.conflict_at = 0;
+                cx.notify();
+                if let Some((row, rows)) = first {
+                    app.pr_mode_jump_conflict(0, Some(row), Some(rows), cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Compute the active tab's conflict preview, once (ADR-0145).
+    ///
+    /// Off the UI thread: it is a full three-way merge of two trees, the same
+    /// work `plan_merge_branch` does, and on a large repo that is long enough
+    /// to drop frames. Cached on the tab because the answer only changes when
+    /// the PR or the base does, and re-running it on every render of a tab the
+    /// user is *looking at* would be the worst possible cadence.
+    fn pr_mode_load_conflicts(&mut self, cx: &mut Context<Self>) {
+        let Some(m) = self.pr_mode.as_ref() else {
+            return;
+        };
+        let Some(ix) = m.active else { return };
+        let Some(tab) = m.tabs.get(ix) else { return };
+        if tab.conflicts.is_some() {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        // The base **tip**, not `tab.base`: that is merge-base(base, head), and
+        // merging head into its own ancestor is a fast-forward, so the preview
+        // would report "no conflicts" for every PR ever opened.
+        let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).map_err(|e| format!("{e}"))?;
+            repo.pr_conflict_files(&base, &head)
+                .map_err(|e| format!("{e}"))
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                // The user may have closed or switched tabs while this ran;
+                // find the tab by PR number rather than by the index we had.
+                let Some(m) = app.pr_mode.as_mut() else {
+                    return;
+                };
+                let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
+                    return;
+                };
+                klog!(
+                    "pr-conflicts: #{} {}",
+                    number,
+                    match &result {
+                        Ok(v) => format!("{} file(s)", v.len()),
+                        Err(e) => format!("error: {e}"),
+                    }
+                );
+                t.conflicts = Some(result);
+                cx.notify();
+                // The list has just arrived; pull the first file's text so the
+                // tab is not left showing an empty pane beside a full list.
+                app.pr_mode_load_conflict_text(cx);
+            });
+        })
+        .detach();
     }
 
     /// Back to the dashboard. Deactivates the tab without closing it, so its
@@ -530,6 +745,31 @@ pub(super) const MAX_INDENT_DEPTH: usize = 3;
 /// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
 /// than this clipped the descenders of the title against the meta row.
 const CARD_H: f32 = 42.0;
+/// The centre view is mode-wide so that switching PRs while reading reviews
+/// keeps showing reviews. Conflicts is the exception: it only exists for a PR
+/// that has them, so carrying it to one that does not leaves the pane on a tab
+/// with no button and nothing to say.
+fn reset_view_if_not_conflicting(m: &mut PrModeState, pr: &PullRequest) {
+    if m.view == PrView::Conflicts && pr.mergeable != Mergeable::Conflicting {
+        m.view = PrView::Overview;
+    }
+}
+
+/// A centred one-line note in the PR centre pane (no file selected, nothing to
+/// show yet, an error). Extracted so the Conflicts tab's three empty states
+/// look like the Diff tab's rather than approximately like it.
+fn pr_center_note(text: SharedString) -> gpui::AnyElement {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_sm()
+        .text_color(rgb(theme().text_muted))
+        .child(text)
+        .into_any_element()
+}
+
 /// Commit-strip height CAP (≈7 rows + header). The strip fits its content and
 /// only scrolls past this — a one-commit PR gets a one-row strip rather than a
 /// mostly-empty fixed block (user request).
@@ -861,7 +1101,17 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.diff_scroll.clone(),
         )
     };
-    let (view, reviews, comments, line_comments) = {
+    let (
+        view,
+        reviews,
+        comments,
+        line_comments,
+        conflicts,
+        conflict_selected,
+        conflict_scroll,
+        conflict_text,
+        conflict_at,
+    ) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
         (
@@ -869,6 +1119,11 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.reviews.clone(),
             t.comments.clone(),
             t.line_comments.clone(),
+            t.conflicts.clone(),
+            t.conflict_selected,
+            t.conflict_scroll.clone(),
+            t.conflict_text.clone(),
+            t.conflict_at,
         )
     };
     let show_description = view == PrView::Overview;
@@ -1228,9 +1483,27 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             view == PrView::Diff,
             PrView::Diff,
             cx,
-        ));
+        ))
+        // ADR-0145: only when GitHub says the merge conflicts. A tab that is
+        // always there but empty six times out of seven teaches people to
+        // ignore it, which is the opposite of the point.
+        .when(pr.mergeable == Mergeable::Conflicting, |el| {
+            el.child(tab_btn(
+                "pr-view-conflicts",
+                "icons/git-merge.svg",
+                Msg::PrModeConflicts.t().to_string(),
+                view == PrView::Conflicts,
+                PrView::Conflicts,
+                cx,
+            ))
+        });
 
-    col = col.child(header).child(views).child(strip);
+    // The commit strip is about "what is in this PR"; the Conflicts view is
+    // about one file at a time, and the strip only pushes the hunks down.
+    col = col.child(header).child(views);
+    if view != PrView::Conflicts {
+        col = col.child(strip);
+    }
     if show_review {
         return col
             .child(super::pr_conversation::render_conversation(
@@ -1246,6 +1519,41 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         return col
             .child(super::pr_conversation::render_description(&pr, cx))
             .into_any_element();
+    }
+    if view == PrView::Conflicts {
+        let body: gpui::AnyElement = match conflicts.as_ref() {
+            None => pr_center_note(SharedString::from("…")),
+            Some(Err(e)) => pr_center_note(SharedString::from(e.clone())),
+            Some(Ok(files)) if files.is_empty() => {
+                pr_center_note(SharedString::from(Msg::PrConflictsNone.t()))
+            }
+            Some(Ok(files)) => {
+                let ix = conflict_selected.unwrap_or(0).min(files.len() - 1);
+                // Same renderer as the Diff tab, so the unified/side-by-side
+                // toggle and everything around it work here too.
+                // The text is for whichever file was last requested; while a
+                // different one is loading, render the shell without it.
+                let text = conflict_text
+                    .as_ref()
+                    .filter(|(p, _)| *p == files[ix].path)
+                    .and_then(|(_, t)| t.as_deref());
+                let (dv, jumps) = super::pr_conflicts::conflict_diff_view(&files[ix], text);
+                // Prev/next sits in the header's `leading` slot, beside the
+                // unified/side-by-side toggle it shares a row with.
+                // Shown even for a single conflict: "1/1" answers "is there
+                // more of this?", which is the question the control exists for.
+                let nav = (!jumps.is_empty()).then(|| {
+                    super::pr_conflicts::render_jump_nav(
+                        jumps.clone(),
+                        dv.rows.clone(),
+                        conflict_at,
+                        cx,
+                    )
+                });
+                render_diff_list::<KagiApp>(dv, nav, None, conflict_scroll, cx).into_any_element()
+            }
+        };
+        return col.child(body).into_any_element();
     }
     // Diff
     let diff_el: gpui::AnyElement = match diff {
@@ -1534,10 +1842,37 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         }
     }
 
-    // Files
-    let (files, selected_file) = active
-        .map(|t| (t.files.clone(), t.selected_file))
-        .unwrap_or_default();
+    // Files. In the Conflicts view this lists the conflicting files instead:
+    // they are a different, usually much shorter set, and showing the PR's
+    // whole changed-file list beside a conflict diff invites clicking a row
+    // that has nothing to do with what is on screen.
+    let conflicts_view = app
+        .pr_mode
+        .as_ref()
+        .map(|m| m.view == PrView::Conflicts)
+        .unwrap_or(false);
+    let (files, selected_file) = if conflicts_view {
+        active
+            .map(|t| {
+                let files = match t.conflicts.as_ref() {
+                    Some(Ok(c)) => c
+                        .iter()
+                        .map(|f| FileStatus {
+                            path: f.path.clone(),
+                            change: kagi_git::ChangeKind::Modified,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let sel = (!files.is_empty()).then(|| t.conflict_selected.unwrap_or(0));
+                (files, sel)
+            })
+            .unwrap_or_default()
+    } else {
+        active
+            .map(|t| (t.files.clone(), t.selected_file))
+            .unwrap_or_default()
+    };
     col = col.child(
         section_label(format!("{} ({})", Msg::PrModeFiles.t(), files.len()))
             .border_t_1()
@@ -1560,7 +1895,11 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     for (i, f) in files.iter().enumerate() {
         let (badge, color, _) = status_badge(Some(&f.change), false);
         let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-            this.pr_mode_select_file(i, cx);
+            if conflicts_view {
+                this.pr_mode_select_conflict(i, cx);
+            } else {
+                this.pr_mode_select_file(i, cx);
+            }
         });
         let sel = selected_file == Some(i);
         let name = f
@@ -1799,11 +2138,59 @@ fn render_pr_card(
 }
 
 #[cfg(test)]
+mod view_reset_tests {
+    use super::*;
+
+    fn pr_with(mergeable: Mergeable) -> PullRequest {
+        PullRequest {
+            mergeable,
+            ..super::stack_tests::pr(1, "h", "b")
+        }
+    }
+
+    /// The Conflicts tab exists only for a PR that has conflicts, so carrying
+    /// it across to one that does not leaves the pane on a tab with no button
+    /// and nothing to show.
+    #[test]
+    fn conflicts_view_falls_back_when_the_next_pr_is_clean() {
+        for m in [Mergeable::Clean, Mergeable::Unknown] {
+            let mut state = PrModeState {
+                view: PrView::Conflicts,
+                ..Default::default()
+            };
+            reset_view_if_not_conflicting(&mut state, &pr_with(m));
+            assert_eq!(state.view, PrView::Overview, "{m:?}");
+        }
+    }
+
+    /// …and it stays put when the next PR does conflict, and never disturbs
+    /// the other views, which are mode-wide on purpose.
+    #[test]
+    fn every_other_case_is_left_alone() {
+        let mut state = PrModeState {
+            view: PrView::Conflicts,
+            ..Default::default()
+        };
+        reset_view_if_not_conflicting(&mut state, &pr_with(Mergeable::Conflicting));
+        assert_eq!(state.view, PrView::Conflicts);
+
+        for view in [PrView::Overview, PrView::Review, PrView::Diff] {
+            let mut state = PrModeState {
+                view,
+                ..Default::default()
+            };
+            reset_view_if_not_conflicting(&mut state, &pr_with(Mergeable::Clean));
+            assert_eq!(state.view, view, "{view:?} must be untouched");
+        }
+    }
+}
+
+#[cfg(test)]
 mod stack_tests {
     use super::{reason_text, stack_for, StackRow};
     use kagi_domain::github::{CiState, Mergeable, PrReason, PullRequest, ReviewState};
 
-    fn pr(number: u64, head: &str, base: &str) -> PullRequest {
+    pub(super) fn pr(number: u64, head: &str, base: &str) -> PullRequest {
         PullRequest {
             number,
             title: String::new(),

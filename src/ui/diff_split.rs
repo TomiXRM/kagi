@@ -61,6 +61,58 @@ pub(crate) fn split_rows(rows: &[DiffRow]) -> Vec<SplitDiffRow> {
     out
 }
 
+/// Map a unified row index to the split-row index that displays it.
+///
+/// The list virtualizes over split rows when side-by-side is on, so a scroll
+/// target computed against the unified rows lands somewhere else entirely.
+/// Only meaningful for rows that survive as a whole row — a hunk header, which
+/// is what the conflict jump targets are.
+pub(crate) fn split_index_of(rows: &[SplitDiffRow], unified_ix: usize) -> Option<usize> {
+    rows.iter().position(|r| match r {
+        SplitDiffRow::Full(i) => *i == unified_ix,
+        SplitDiffRow::Pair { left, right } => {
+            *left == Some(unified_ix) || *right == Some(unified_ix)
+        }
+    })
+}
+
+#[cfg(test)]
+mod split_index_tests {
+    use super::*;
+    use kagi_domain::diff::DiffLineKind;
+
+    fn line(kind: DiffLineKind) -> DiffRow {
+        DiffRow::Line {
+            kind,
+            text: "x".into(),
+            old_lineno: None,
+            new_lineno: None,
+            highlights: Vec::new(),
+        }
+    }
+
+    /// Pairing shortens the list, so a unified index is not a split index. A
+    /// header after several removed/added lines is the case that drifts.
+    #[test]
+    fn a_header_after_paired_lines_maps_past_the_pairing() {
+        let rows = vec![
+            DiffRow::HunkHeader("h1".into()), // 0
+            line(DiffLineKind::Removed),      // 1
+            line(DiffLineKind::Added),        // 2  pairs with 1
+            DiffRow::HunkHeader("h2".into()), // 3
+        ];
+        let split = split_rows(&rows);
+        assert_eq!(split_index_of(&split, 0), Some(0));
+        // 1 and 2 collapse into one split row, so the second header moves up.
+        assert_eq!(split_index_of(&split, 3), Some(2));
+        assert_ne!(
+            split_index_of(&split, 3),
+            Some(3),
+            "unified index would miss"
+        );
+    }
+}
+
 /// Which column of the split view a cell belongs to (picks the line number
 /// and the background for context lines' counterpart side).
 #[derive(Clone, Copy)]

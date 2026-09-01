@@ -127,6 +127,9 @@ pub enum MainDiffSource {
     Unstaged { path: PathBuf },
     /// Opened from the Commit Panel — staged file.
     Staged { path: PathBuf },
+    /// A view with nothing to reload from: the PR conflict preview (ADR-0145),
+    /// which is computed, read-only, and has no file on disk behind it.
+    Synthetic,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -722,6 +725,8 @@ impl KagiApp {
                 .and_then(|rp| std::fs::read(rp.join(path)).ok())
         };
         let (old_bytes, new_bytes) = match source {
+            // Nothing on disk behind it, so no image pair to load.
+            MainDiffSource::Synthetic => return None,
             MainDiffSource::Commit { row_index, .. } => {
                 let id = CommitId(
                     self.active_view
@@ -793,6 +798,9 @@ impl KagiApp {
             None => return,
         };
         match source {
+            // Read-only and computed: there is no next/previous file to step
+            // to, and nothing to reload from.
+            MainDiffSource::Synthetic => {}
             MainDiffSource::Commit {
                 row_index,
                 file_index,

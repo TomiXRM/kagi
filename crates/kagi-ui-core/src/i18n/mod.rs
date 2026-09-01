@@ -442,6 +442,22 @@ pub enum Msg {
     PrSuggestion,
     PrHunkCopy,
     PrHunkCopied,
+    /// PR pane: the Conflicts tab label.
+    PrModeConflicts,
+    /// PR pane: the Conflicts tab, when nothing conflicts after all.
+    PrConflictsNone,
+    /// PR pane: the Conflicts tab's one-line explanation.
+    PrConflictsHint,
+    /// PR pane: a file deleted on one side and changed on the other.
+    PrConflictDeleteModify,
+    /// PR pane: both sides added a file at the same path.
+    PrConflictBothAdded,
+    /// PR pane: a binary file changed on both sides — nothing to show as text.
+    PrConflictBinary,
+    /// PR pane: the conflict is too large to render.
+    PrConflictTooLarge,
+    /// PR pane: the word in a conflict hunk header ("conflict 2/7").
+    PrConflictHunk,
     PrModeNoDescription,
     /// PR mode: dashboard "back to the home screen" button.
     PrAllPrs,
@@ -1225,6 +1241,22 @@ impl Msg {
             (En, PrSuggestion) => "suggestion",
             (En, PrHunkCopy) => "Copy this hunk",
             (Ja, PrHunkCopy) => "このコードをコピー",
+            (En, PrModeConflicts) => "Conflicts",
+            (Ja, PrModeConflicts) => "Conflicts",
+            (En, PrConflictsNone) => "No conflicts against the base as it is now.",
+            (Ja, PrConflictsNone) => "現在の base に対して conflict はありません。",
+            (En, PrConflictsHint) => "What merging this PR would conflict on, computed locally. Nothing here changes your repository.",
+            (Ja, PrConflictsHint) => "この PR を merge した場合に conflict する内容です。ローカルで計算しており、リポジトリには一切変更を加えません。",
+            (En, PrConflictDeleteModify) => "deleted on one side, changed on the other",
+            (Ja, PrConflictDeleteModify) => "片方で削除、もう片方で変更",
+            (En, PrConflictBothAdded) => "added on both sides",
+            (Ja, PrConflictBothAdded) => "両方で追加",
+            (En, PrConflictBinary) => "binary file, changed on both sides",
+            (Ja, PrConflictBinary) => "binary ファイル、両方で変更",
+            (En, PrConflictHunk) => "conflict",
+            (Ja, PrConflictHunk) => "conflict",
+            (En, PrConflictTooLarge) => "conflict too large to display",
+            (Ja, PrConflictTooLarge) => "conflict が大きすぎるため表示できません",
             (En, PrHunkCopied) => "Hunk copied",
             (Ja, PrHunkCopied) => "コードをコピーしました",
             (Ja, PrSuggestion) => "コード提案",

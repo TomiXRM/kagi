@@ -1258,6 +1258,11 @@ pub struct KagiApp {
     /// stale background load (an earlier switch that lost a rapid-fire race)
     /// can detect a mismatch and discard its result before applying.
     pub switch_generation: u64,
+    /// Monotonic reload epoch (#287). Bumped when a fresh reload is requested;
+    /// each async reload drops its result on apply if the epoch moved — so an
+    /// op's authoritative reload wins over an in-flight watcher reload that read
+    /// a mid-write tree. See `reload_stale` (reload-vs-reload / reload-vs-watcher).
+    pub reload_epoch: u64,
     /// When `Some(name)`, the main pane shows a `Loading <name>…` placeholder
     /// (uncached first open) until the background load completes.
     pub loading_tab: Option<SharedString>,
@@ -1534,6 +1539,7 @@ impl KagiApp {
             // W6-TABSPEED
             tab_cache: HashMap::new(),
             switch_generation: 0,
+            reload_epoch: 0,
             loading_tab: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),

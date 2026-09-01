@@ -12,15 +12,25 @@ use gpui::{prelude::*, Context, SharedString};
 use kagi_git::CommitId;
 
 use super::commit_panel::{CommitPanelState, CommitPanelView};
-use super::{build_tab_view, FooterStatus, KagiApp, COMMIT_PAGE_STEP};
+use super::{build_tab_view, FooterStatus, KagiApp, WipDiffStat, COMMIT_PAGE_STEP};
 
 impl KagiApp {
     /// Reload all display data from the repository at `repo_path`.
     ///
-    /// Called after a successful checkout to update the commit list, header,
-    /// branch list, and badges without restarting the application.
+    /// Called at the tail of nearly every mutation (checkout, commit, discard,
+    /// merge, …) to update the commit list, header, branch list, and badges
+    /// without restarting the application.
+    ///
+    /// #288: this now runs the heavy git read (open + full snapshot + per-branch
+    /// ahead/behind + every linked worktree's status + wip diffstat + reflog
+    /// seed) on a **background** thread and applies the result on the UI thread,
+    /// so a 10k-commit repo no longer freezes the window at the end of an op.
+    /// The apply is guarded by the reload epoch (#287) so an op's authoritative
+    /// reload wins over an in-flight FS-watcher reload. `external = false`: the
+    /// op already set its own footer, so stay quiet (same surface as the old
+    /// synchronous `reload()`, minus the frozen frame).
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        let _ = self.reload_checked(cx);
+        self.reload_async(false, cx);
     }
 
     /// Pre-launch reload (headless `init_tab` / session restore). Runs before the
@@ -80,37 +90,61 @@ impl KagiApp {
             Some(p) => p,
             None => return Ok(()),
         };
-
-        // Re-open and snapshot.
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("reload: repo open error: {}", e);
-                return Err(e.to_string());
+        // #287: bump the epoch so any FS-watcher reload still in flight is
+        // dropped on apply — this synchronous, user-initiated refresh is
+        // authoritative. (Manual Cmd+R / settings toggle path; stays sync so
+        // the caller can surface a repo-open/snapshot error.)
+        self.reload_epoch = self.reload_epoch.wrapping_add(1);
+        let want_panel = self.conflict_merge_pending;
+        let want_reflog = self.operation_history.is_empty();
+        let data = match read_reload_data(&repo_path, self.commit_limit, want_panel, want_reflog) {
+            Ok(d) => d,
+            Err(msg) => {
+                klog!("reload: {}", msg);
+                return Err(msg);
             }
         };
-        let snap = match repo.snapshot(self.commit_limit) {
-            Ok(s) => s,
-            Err(e) => {
-                klog!("reload: snapshot error: {}", e);
-                return Err(e.to_string());
-            }
-        };
-        let wip_diffstat = Self::wip_diffstat_from_backend(&repo);
+        self.apply_reload_data(repo_path, data, false, cx);
+        Ok(())
+    }
 
-        // Derive repo name from path.
-        let repo_name = repo_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| repo_path.display().to_string());
+    /// Apply an already-read [`ReloadData`] to `self` on the UI thread. This is
+    /// the whole "fold a fresh snapshot into the view" step, shared verbatim by
+    /// the synchronous [`reload_checked`] and the background [`reload_async`] so
+    /// the two can never drift (modal resets, overlay refresh, reflog seed,
+    /// conflict re-detect, continued-merge panel). The heavy git I/O already
+    /// happened in [`read_reload_data`]; nothing here opens the repo except the
+    /// rare continued-merge fallback.
+    ///
+    /// `external = true` emits the `refreshed (external change)` contract line
+    /// and resets the footer (FS-watcher path); `false` stays quiet (op tail /
+    /// manual refresh, which set their own footer).
+    fn apply_reload_data(
+        &mut self,
+        repo_path: std::path::PathBuf,
+        data: ReloadData,
+        external: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let ReloadData {
+            snap,
+            wip_diffstat,
+            repo_name,
+            reflog,
+            panel,
+        } = data;
 
-        // W6-TABSPEED: rebuild the pure display data (same log output as before),
-        // reset per-repo transient UI state, then fold the view in via
-        // `apply_tab_view`.  ADR-0030 §5: reload() also refreshes the cache.
+        // Capture the CommitId of the currently-selected row before we rebuild,
+        // so we can re-select it after (survives selection across a reload).
+        let prev_commit_id: Option<CommitId> = self
+            .selected
+            .and_then(|idx| self.active_view.details.get(idx))
+            .map(|detail| CommitId(detail.full_sha.to_string()));
+
+        // W6-TABSPEED: rebuild the pure display data, reset per-repo transient
+        // UI state, then fold the view in via `apply_tab_view`.
         let view = build_tab_view(&snap, &repo_name);
 
-        // Per-repo transient state reset (unchanged behaviour).
-        self.selected = None;
         self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
@@ -118,9 +152,6 @@ impl KagiApp {
         // ADR-0119 follow-up: the full-screen Analyze + File History overlays are
         // HEAD-versioned and refreshed *in place* after the snapshot is applied
         // (see `refresh_overlays_after_reload`), only when HEAD actually moved.
-        // They used to be dropped on EVERY reload, so a no-op auto-fetch (remote
-        // refs only, HEAD unchanged) yanked the user out of a full-screen view
-        // and discarded a ~minute-long Analyze mine.
         self.clear_plan_modal();
         self.clear_pull_modal();
         self.clear_amend_modal();
@@ -157,19 +188,6 @@ impl KagiApp {
             self.commit_panel_open = false;
             self.commit_panel = None;
         }
-        // commit_scroll_handle is preserved so the existing Rc<RefCell<...>> reference
-        // wired into the uniform_list continues to work after reload.
-        // status_footer is intentionally preserved across reloads so the last
-        // operation result remains visible after the commit list refreshes.
-        // sidebar_width / panel_width are also preserved so the user's resize
-        // is not lost on checkout/reload (T023).
-        // T-BP-004: the op_log entity (entries + expanded row + scroll handle)
-        // persists across reloads/tab switches so the Operation Log keeps its
-        // contents and UI state.
-        // sidebar_collapsed / sidebar_filter are preserved so the user's
-        // collapse + filter state survives reload.
-        // W13-BRANCHTREE: branch_groups_collapsed is likewise preserved so the
-        // user's per-group ▸/▾ state survives checkout/reload.
 
         // ADR-0030 §5: keep the stale-while-revalidate cache fresh.
         self.tab_cache.insert(repo_path.clone(), view.clone());
@@ -183,15 +201,29 @@ impl KagiApp {
         // ADR-0084: seed the undo/redo history from the branch reflog when it is
         // empty (freshly-opened repo / post-branch-switch) so Cmd+Z works
         // immediately. Only seed when empty — never clobber the in-session stack.
-        self.seed_history_from_reflog(&repo);
+        // (`want_reflog` was captured at read time; re-check emptiness here in
+        // case an in-session op recorded history while the read was in flight.)
+        if let Some(reflog) = reflog {
+            if self.operation_history.is_empty() {
+                self.apply_reflog_seed(reflog);
+            }
+        }
 
         // Baseline for the FS watcher's working-tree path (skip-if-unchanged).
         self.last_working_status = Some(snap.status.clone());
 
+        // Re-resolve selection by CommitId after the graph rebuild.
+        self.selected = None;
+        if let Some(ref cid) = prev_commit_id {
+            if let Some(&new_idx) = self.active_view.commit_row_index.get(cid) {
+                self.selected = Some(new_idx);
+            }
+        }
+
         // W30-CONFLICT-UI / ADR-0056: re-detect Conflict Mode every reload so a
         // conflict produced by the GUI's own operation OR by external CLI (the
-        // watcher path runs through reload) puts the app into / out of Conflict
-        // Mode.  Force re-detection by invalidating the run-once guard.
+        // watcher path runs through here now too) puts the app into / out of
+        // Conflict Mode. Force re-detection by invalidating the run-once guard.
         self.conflict_detected_for = None;
         self.detect_conflict_mode(cx);
 
@@ -201,9 +233,9 @@ impl KagiApp {
                 // Still a resolved merge awaiting its commit: keep the commit
                 // panel up (refresh the staged list from the index) and keep the
                 // pre-filled / user-edited merge message entity untouched.
-                // ADR-0118: update the entity's `state` IN PLACE so its inputs /
-                // template mode (the pre-filled merge message) survive the reload.
-                let mut panel = CommitPanelState::from_repo(&repo_path);
+                // `panel` was read in the background when the merge was pending at
+                // spawn; fall back to a (rare) sync read if it wasn't.
+                let mut panel = panel.unwrap_or_else(|| CommitPanelState::from_repo(&repo_path));
                 if let Some(entity) = self.commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         panel.tree_view = v.state.tree_view;
@@ -227,15 +259,15 @@ impl KagiApp {
             }
         }
 
-        // ADR-0128 follow-up: Branch Cleanup classification no longer rides
-        // along with the snapshot (it was blocking the UI thread on repos
-        // with many branches) — kick it off on a background thread so
-        // `active_view.cleanup_rows` catches up a beat after this reload.
-        // The scans are re-armed by `render` off `scans_stale`, which
-        // `apply_tab_view` set a few lines above — every path that replaces the
-        // view is covered, including the ones that have no `cx` here.
+        // ADR-0128 follow-up: Branch Cleanup classification is re-armed by
+        // `render` off `scans_stale`, which `apply_tab_view` set above.
 
-        Ok(())
+        if external {
+            klog!("refreshed (external change)");
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+        }
+        cx.notify();
     }
 
     /// Grow the commit graph by [`COMMIT_PAGE_STEP`] and re-snapshot.
@@ -353,58 +385,46 @@ impl KagiApp {
     ///   the op already set its own Success footer, so keep it and stay quiet —
     ///   same surface as the synchronous `reload()`, minus the frozen frame.
     pub fn reload_async(&mut self, external: bool, cx: &mut Context<Self>) {
-        // Capture the CommitId of the currently selected row (if any) so we
-        // can attempt to re-select it after the snapshot is refreshed.
-        // `details[idx].full_sha` is the canonical commit hash string.
-        let prev_commit_id: Option<CommitId> = self
-            .selected
-            .and_then(|idx| self.active_view.details.get(idx))
-            .map(|detail| CommitId(detail.full_sha.to_string()));
-
-        // ADR-0104 / performance: an external git event (HEAD/refs change from
-        // a terminal, sibling worktree, or auto-fetch) is NOT user-initiated,
-        // so freezing the UI frame for a full repo snapshot (topological walk,
-        // full working-tree status scan, ahead/behind for every branch) is the
-        // worst kind of jank — the user didn't ask for anything. Move the
-        // heavy git2 work (open + snapshot + wip diffstat) onto a background
-        // thread, then build the view data and apply it on the UI thread.
-        // (The synchronous `reload()` is still used by user-initiated paths
-        // where a short, expected wait is acceptable.)
         let bg_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
         };
-        // Capture the switch generation so the background result is discarded
-        // if the user switched tabs while the snapshot was in flight — without
-        // this guard the snapshot would overwrite the NEW tab's freshly-loaded
-        // view with the OLD tab's data (cross-review N4).
+        // #287: bump the reload epoch and capture it (plus the tab-switch
+        // generation). The background result is dropped on apply if either has
+        // moved — so a *later* reload (typically an op's own authoritative
+        // reload) wins over this in-flight one, and a tab switch discards a
+        // stale snapshot. This is what stops an FS-watcher snapshot that read a
+        // mid-write tree from clobbering the correct post-op view (#287).
+        self.reload_epoch = self.reload_epoch.wrapping_add(1);
+        let epoch_at_spawn = self.reload_epoch;
         let gen_at_spawn = self.switch_generation;
         let commit_limit = self.commit_limit;
+        let want_panel = self.conflict_merge_pending;
+        let want_reflog = self.operation_history.is_empty();
+        let apply_path = bg_path.clone();
+        // ADR-0104 / #288: move the whole heavy git read (open + full snapshot +
+        // per-branch ahead/behind + every linked worktree's status + wip diffstat
+        // + reflog seed + continued-merge panel) off the UI thread. Every field
+        // of `ReloadData` is pure/`Send`; the view + gpui entities are built on
+        // the UI thread in `apply_reload_data`.
         let task = cx.background_spawn(async move {
-            let mut backend = kagi_git::Backend::open(&bg_path).ok()?;
-            let snap = backend.snapshot(commit_limit).ok()?;
-            let wip = KagiApp::wip_diffstat_from_backend(&backend);
-            // RepoSnapshot is pure domain (Send); build_tab_view constructs
-            // SharedString-bearing TabViewState, so we return the raw pieces
-            // and build the view on the UI thread.
-            let repo_name = bg_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| bg_path.display().to_string());
-            Some((snap, wip, repo_name))
+            read_reload_data(&bg_path, commit_limit, want_panel, want_reflog).ok()
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                // Generation guard (cross-review N4): if the user switched tabs
-                // while the snapshot was in flight, drop the result — applying
-                // it would clobber the now-current tab's view.
-                if app.switch_generation != gen_at_spawn {
+                // Epoch + generation guard (#287): drop a superseded result.
+                if reload_stale(
+                    app.reload_epoch,
+                    epoch_at_spawn,
+                    app.switch_generation,
+                    gen_at_spawn,
+                ) {
                     return;
                 }
-                let Some((snap, wip, repo_name)) = result else {
-                    // Open or snapshot failed — log and bail without nuking
-                    // the existing view (better to show stale data than none).
+                let Some(data) = result else {
+                    // Open or snapshot failed — log and bail without nuking the
+                    // existing view (better to show stale data than none).
                     klog!("reload_external: snapshot failed (non-fatal)");
                     app.status_footer = FooterStatus::Idle(SharedString::from(
                         "[kagi] refresh skipped (snapshot failed)",
@@ -412,38 +432,7 @@ impl KagiApp {
                     cx.notify();
                     return;
                 };
-                // Build the view data on the UI thread (cheap; heavy git2 work
-                // already done in the background) and apply it.
-                let view = build_tab_view(&snap, &repo_name);
-                app.apply_tab_view(view);
-                app.diff_caches.clear();
-                app.wip_diffstat = Some(wip);
-                app.main_diff = None;
-                app.compare_view = None;
-                // ADR-0119 follow-up: refresh (never close) the HEAD-versioned
-                // overlays in place — only when HEAD actually moved. An external
-                // change that doesn't move HEAD (e.g. a sibling-worktree fetch)
-                // leaves Analyze + File History untouched.
-                app.refresh_overlays_after_reload(app.active_view.head_oid.clone(), cx);
-
-                // Attempt to restore selection by CommitId.
-                app.selected = None;
-                if let Some(ref cid) = prev_commit_id {
-                    if let Some(&new_idx) = app.active_view.commit_row_index.get(cid) {
-                        app.selected = Some(new_idx);
-                    }
-                    // If the commit is no longer present, selected stays None.
-                }
-
-                // Emit the required log line and update the footer (external
-                // events only; op tails keep their Success footer).
-                if external {
-                    klog!("refreshed (external change)");
-                    app.status_footer = FooterStatus::Idle(SharedString::from(
-                        "[kagi] refreshed (external change)",
-                    ));
-                }
-                cx.notify();
+                app.apply_reload_data(apply_path, data, external, cx);
             });
         })
         .detach();
@@ -464,6 +453,16 @@ impl KagiApp {
         };
         let bg_path = repo_path.clone();
         let guard_path = repo_path.clone();
+        // #287: capture (but do NOT bump) the reload epoch. A full reload bumps
+        // it; if one lands while this cheaper working-tree read is in flight, its
+        // fresh baseline is authoritative and this stale status is dropped —
+        // otherwise a slow working-tree read could overwrite the post-reload
+        // `last_working_status` baseline with an older snapshot. We must not bump
+        // here: a working-tree refresh is a subset of a full reload and must not
+        // invalidate one. (ponytail: same-epoch worktree-vs-worktree ordering is
+        // left unguarded — a second KagiApp field would be needed and the epoch
+        // is the only new field allowed here.)
+        let epoch_at_spawn = self.reload_epoch;
         let task = cx.background_spawn(async move {
             let backend = kagi_git::Backend::open(&bg_path).ok()?;
             let status = backend.working_tree_status().ok()?;
@@ -477,6 +476,10 @@ impl KagiApp {
                 // tabs while we read it, these counts belong to another repo
                 // and would be written into this tab's status bar and WIP row.
                 if app.repo_path.as_deref() != Some(guard_path.as_path()) {
+                    return;
+                }
+                // #287: a full reload superseded this read — drop the stale status.
+                if app.reload_epoch != epoch_at_spawn {
                     return;
                 }
                 let Some((new_status, wip_diffstat)) = refreshed else {
@@ -522,5 +525,99 @@ impl KagiApp {
             });
         })
         .detach();
+    }
+}
+
+/// Owned, `Send` result of the heavy git read behind a reload (#288). Built by
+/// [`read_reload_data`] on either the UI thread (sync `reload_checked`) or a
+/// background thread (`reload_async`), then folded into the view by
+/// [`KagiApp::apply_reload_data`]. Deliberately holds no gpui types.
+struct ReloadData {
+    snap: kagi_git::RepoSnapshot,
+    wip_diffstat: WipDiffStat,
+    repo_name: String,
+    /// `Some` only when the reflog was read (history was empty at spawn); the
+    /// inner `Result` is the reflog read outcome. `None` = seeding skipped.
+    reflog: Option<Result<Vec<kagi_git::HistoryEntry>, String>>,
+    /// `Some` only when a continued-merge was pending at spawn (so the commit
+    /// panel's file lists were pre-read off the UI thread).
+    panel: Option<CommitPanelState>,
+}
+
+/// The heavy git read behind every reload, isolated so it can run either
+/// synchronously ([`KagiApp::reload_checked`]) or on a background thread
+/// ([`KagiApp::reload_async`], #288). Returns owned, `Send` data — no gpui, no
+/// view build. `want_reflog` / `want_panel` gate the two optional extra reads so
+/// we don't pay for them when they can't matter. On error the `String` is an
+/// already-formatted message (`"repo open error: …"` / `"snapshot error: …"`).
+fn read_reload_data(
+    repo_path: &std::path::Path,
+    commit_limit: usize,
+    want_panel: bool,
+    want_reflog: bool,
+) -> Result<ReloadData, String> {
+    let mut backend =
+        kagi_git::Backend::open(repo_path).map_err(|e| format!("repo open error: {e}"))?;
+    let snap = backend
+        .snapshot(commit_limit)
+        .map_err(|e| format!("snapshot error: {e}"))?;
+    let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
+    let repo_name = repo_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| repo_path.display().to_string());
+    let reflog = if want_reflog {
+        Some(backend.history_from_reflog().map_err(|e| e.to_string()))
+    } else {
+        None
+    };
+    let panel = if want_panel {
+        Some(CommitPanelState::from_repo(repo_path))
+    } else {
+        None
+    };
+    Ok(ReloadData {
+        snap,
+        wip_diffstat,
+        repo_name,
+        reflog,
+        panel,
+    })
+}
+
+/// Should a background reload result be dropped on apply? (#287 / cross-review
+/// N4.) A result is stale — and must NOT be applied — if either the reload
+/// epoch (a fresh reload was requested while this one was in flight) or the
+/// tab-switch generation (the user switched tabs) moved since it was spawned.
+/// Pure so it can be unit-tested without a gpui context.
+fn reload_stale(cur_epoch: u64, spawn_epoch: u64, cur_gen: u64, spawn_gen: u64) -> bool {
+    cur_epoch != spawn_epoch || cur_gen != spawn_gen
+}
+
+#[cfg(test)]
+mod reload_stale_tests {
+    use super::reload_stale;
+
+    #[test]
+    fn fresh_result_applies() {
+        // Nothing moved since spawn → apply.
+        assert!(!reload_stale(5, 5, 2, 2));
+    }
+
+    #[test]
+    fn bumped_epoch_drops() {
+        // A newer reload was requested (epoch bumped) → drop the older one.
+        assert!(reload_stale(6, 5, 2, 2));
+    }
+
+    #[test]
+    fn tab_switch_drops() {
+        // The user switched tabs (generation bumped) → drop.
+        assert!(reload_stale(5, 5, 3, 2));
+    }
+
+    #[test]
+    fn both_moved_drops() {
+        assert!(reload_stale(9, 5, 3, 2));
     }
 }

@@ -163,7 +163,18 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
-        preview_files: Vec::new(),
+        // #295: pin the classification so execute refuses if a target became
+        // conflicted or moved tracked→untracked between plan and execute.
+        worktree_digest: Some(status.digest()),
+        // The targets this plan is FOR, so execute can refuse a path the plan
+        // never covered (a plan for A must not be replayed to discard B).
+        preview_files: rels
+            .iter()
+            .map(|r| kagi_domain::status::FileStatus {
+                path: std::path::PathBuf::from(r),
+                change: kagi_domain::status::ChangeKind::Modified,
+            })
+            .collect(),
         preview_commits: Vec::new(),
         destructive: true,
     })
@@ -215,6 +226,19 @@ pub fn execute_discard(
         .collect();
     if rels.is_empty() {
         return Err(GitError::Other("discard: no target paths".to_string()));
+    }
+    // #295: a plan is for a specific set of paths. Refuse any path it did not
+    // cover, so a stale or mismatched plan cannot be replayed to discard
+    // something the user never confirmed.
+    let planned: std::collections::HashSet<&str> = plan
+        .preview_files
+        .iter()
+        .filter_map(|f| f.path.to_str())
+        .collect();
+    if let Some(rogue) = rels.iter().find(|r| !planned.contains(r.as_str())) {
+        return Err(GitError::Other(format!(
+            "discard refused: '{rogue}' is not among the paths this plan was built for.              Please re-plan before proceeding."
+        )));
     }
 
     // Classify targets up front: untracked targets are deleted, tracked targets

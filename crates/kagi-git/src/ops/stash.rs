@@ -144,6 +144,7 @@ pub fn plan_stash_push(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
@@ -311,6 +312,8 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        // #295: pin the tree so a dirty/conflict transition after planning is refused.
+        worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
@@ -507,6 +510,8 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        // #295: pin the tree so a dirty/conflict transition after planning is refused.
+        worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         // issue #280: pop irreversibly deletes the stash entry — Destructive class,
@@ -639,6 +644,7 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
             branch: String::new(),
         },
         stash_count_at_plan: 0,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,
@@ -714,6 +720,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,
@@ -860,29 +867,12 @@ pub fn preflight_check_stash(
     // 1. Head check (re-use existing).
     preflight_check(repo, plan)?;
 
-    // 2. Working tree must still be clean (issue #280) — apply/pop only; a
-    // standalone drop never touches the working tree, so it stays allowed on a
-    // dirty tree exactly as `plan_stash_drop` promises.
-    let needs_clean_tree = matches!(
-        plan.title,
-        PlanTitle::Stash(StashTitle::Apply { .. } | StashTitle::Pop { .. })
-    );
-    // Status only when it matters: working_tree_status walks every untracked
-    // directory, which is real time on a large repo, and a drop's preflight
-    // would pay it for nothing (#280 review, item 8).
-    if needs_clean_tree {
-        let status = working_tree_status(repo)?;
-        if !status.conflicted.is_empty() || !status.staged.is_empty() || !status.unstaged.is_empty()
-        {
-            return Err(GitError::Other(format!(
-                "Working tree changed since planning: {} staged, {} modified, {} conflicted. \
-                 Please re-plan before proceeding.",
-                status.staged.len(),
-                status.unstaged.len(),
-                status.conflicted.len(),
-            )));
-        }
-    }
+    // 2. Working-tree TOCTOU is now covered by the digest inside
+    // `preflight_check` (step 1) for apply/pop, which carry `worktree_digest`.
+    // The hand-written dirty check that used to live here (#280) is subsumed:
+    // the digest catches the same staged/unstaged/conflicted transitions, plus
+    // untracked ones the old check skipped. A standalone drop carries no
+    // digest, so it stays allowed on a dirty tree exactly as before.
 
     // 3. Stash count check.
     let current_count = count_stashes(repo)?;

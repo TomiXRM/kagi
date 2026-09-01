@@ -421,6 +421,7 @@ pub fn plan_pr_merge(
             branch: String::new(),
         },
         stash_count_at_plan: 0,
+        worktree_digest: None,
         // Not destructive in kagi's sense: nothing local is rewritten or
         // dropped, and GitHub keeps a Revert button.
         destructive: false,

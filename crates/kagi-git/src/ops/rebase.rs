@@ -105,6 +105,7 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,

@@ -337,6 +337,7 @@ pub fn plan_delete_merged_branches(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,
         destructive: false,

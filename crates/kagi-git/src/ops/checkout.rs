@@ -168,6 +168,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
@@ -196,6 +197,21 @@ pub fn preflight_check(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
              Please re-plan before proceeding.",
             plan.head_at_plan, current_head
         )));
+    }
+
+    // #295: HEAD alone misses the TOCTOU shifts that matter — a merge that
+    // conflicts does not move HEAD, `git rm --cached` does not, an interrupting
+    // edit does not. Ops whose blockers depend on the working tree carry a
+    // classification digest; refuse if it no longer matches, because those
+    // blockers were reasoned against a tree that has since changed.
+    if let Some(planned) = plan.worktree_digest() {
+        let now = working_tree_status(repo)?.digest();
+        if now != planned {
+            return Err(GitError::Other(
+                "Working tree changed since planning (a file was staged,                  unstaged, deleted, or became conflicted).                  Please re-plan before proceeding."
+                    .to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -358,6 +374,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,

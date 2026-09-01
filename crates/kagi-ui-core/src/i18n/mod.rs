@@ -834,13 +834,13 @@ impl Msg {
             (En, BusyStash) => "stash in progress…",
             (Ja, BusyStash) => "stash 実行中…",
             (En, BusyStashPop) => "stash pop in progress…",
+            (Ja, BusyStashPop) => "stash pop 実行中…",
             (En, StashPopConflictedKept) => {
                 "applied with conflicts — the stash was KEPT. Resolve the conflicts, then drop the stash manually."
             }
             (Ja, StashPopConflictedKept) => {
                 "コンフリクトありで適用しました — stash は保持されています。コンフリクトを解決してから手動で drop してください。"
             }
-            (Ja, BusyStashPop) => "stash pop 実行中…",
             (En, BusyStashDrop) => "stash drop in progress…",
             (Ja, BusyStashDrop) => "stash drop 実行中…",
             (En, BusyCherryPick) => "cherry-pick in progress…",

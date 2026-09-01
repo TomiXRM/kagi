@@ -372,10 +372,18 @@ pub fn execute_switch_to_latest(
         // already on this branch — checkout_tree's implicit baseline is the
         // HEAD tree, so baseline==target turns it into a silent no-op and the
         // working tree/index go stale (see pull.rs for the same trap).
-        checkout_branch_tree(repo, branch_name, remote_commit.as_object())?;
+        // Inlined rather than via checkout_branch_tree, whose set_head would
+        // run BEFORE the ref move: a reference() failure (ref lock, packed-refs
+        // corruption) would then leave HEAD on branch@old with tree+index at
+        // new — the exact staged-reverse-diff symptom this fix removes. Same
+        // three-step order as pull.rs: checkout_tree → reference → set_head.
+        let mut cb = git2::build::CheckoutBuilder::new();
+        cb.safe();
+        repo.checkout_tree(remote_commit.as_object(), Some(&mut cb))
+            .map_err(|e| GitError::Other(format!("checkout_tree failed: {}", e.message())))?;
 
-        // Now advance the branch ref to the remote tip (force=true only
-        // overwrites the ref we just validated as an ancestor — a safe FF).
+        // Advance the branch ref to the remote tip (force=true only overwrites
+        // the ref we just validated as an ancestor — a safe FF).
         let refname = format!("refs/heads/{}", branch_name);
         repo.reference(
             &refname,
@@ -388,6 +396,8 @@ pub fn execute_switch_to_latest(
             ),
         )
         .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
+        repo.set_head(&refname)
+            .map_err(|e| GitError::Other(format!("set_head failed: {}", e.message())))?;
     } else {
         // Diverged or ahead — switch to the branch at its current tip, no move.
         let local_commit = repo

@@ -274,9 +274,16 @@ pub fn execute_discard(
         // failure returns the PARTIAL outcome (backups included) rather than an
         // `Err` that would drop the only handle on the overwritten content.
         if let Err(e) = repo.checkout_index(None, Some(&mut cb)) {
+            // The untracked targets are unverified too: step 2b never runs on
+            // this path, so none of them were deleted (#280 review, item 7).
+            let unverified = tracked_rels
+                .iter()
+                .map(|r| (*r).clone())
+                .chain(untracked_rels.iter().map(|r| (*r).clone()))
+                .collect();
             return Ok(DiscardOutcome {
                 backups,
-                unverified: tracked_rels.iter().map(|r| (*r).clone()).collect(),
+                unverified,
                 error: Some(format!("discard: checkout_index failed: {}", e.message())),
             });
         }

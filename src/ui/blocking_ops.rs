@@ -514,13 +514,19 @@ pub(crate) fn stash_pop_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     stash_index: usize,
-) -> Result<(String, StateSummary), String> {
+) -> Result<(String, StateSummary, bool), String> {
     let mut repo =
         kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
     // in one place. run() runs preflight_check_stash (HEAD + stash count) for
     // StashPop, so a concurrent stash push between plan and execute can't shift
     // indices and pop the WRONG entry.
+    //
+    // The third tuple field is `stash_kept`: true when the apply conflicted
+    // and the stash entry was retained (#280). BOTH callers — start_pop and
+    // the sync confirm_pop — must branch on it; interpreting the outcome here,
+    // once, is what fixed the Enter path recording "applied and dropped" for
+    // a conflicted pop.
     let op = kagi_git::Operation::StashPop { index: stash_index };
     let outcome = repo
         .run(&op, plan)
@@ -543,14 +549,14 @@ pub(crate) fn stash_pop_blocking(
             head: plan.current.head.clone(),
             dirty: format!("{} conflicted (stash kept)", files.len()),
         };
-        return Ok((Msg::StashPopConflictedKept.t().to_string(), after));
+        return Ok((Msg::StashPopConflictedKept.t().to_string(), after, true));
     }
 
     let after = StateSummary {
         head: plan.current.head.clone(),
         dirty: "changes restored (stash removed)".to_string(),
     };
-    Ok(("applied and dropped".to_string(), after))
+    Ok(("applied and dropped".to_string(), after, false))
 }
 
 /// Blocking part of standalone stash drop (ADR-0087). Deletes the stash entry

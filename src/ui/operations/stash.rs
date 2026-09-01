@@ -608,6 +608,35 @@ impl KagiApp {
     }
 
     /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
+    /// Map a finished pop to its oplog record and footer, shared by the
+    /// button path (`start_pop`) and the Enter path (`confirm_pop`).
+    ///
+    /// Pure on purpose: the #280 regression happened because the two paths
+    /// each interpreted the outcome independently and only one was fixed —
+    /// a conflicted pop went into the oplog as `Success` / "applied and
+    /// dropped" when confirmed with Enter. One mapping, one truth, and a unit
+    /// test can hold it down without a `Context`.
+    fn pop_outcome_for(
+        stash_kept: bool,
+        after: StateSummary,
+        summary: &str,
+    ) -> (OpOutcome, FooterStatus) {
+        if stash_kept {
+            (
+                OpOutcome::Partial {
+                    after,
+                    error: summary.to_string(),
+                },
+                FooterStatus::Idle(SharedString::from(format!("stash pop: {}", summary))),
+            )
+        } else {
+            (
+                OpOutcome::Success { after },
+                FooterStatus::Success(SharedString::from(format!("stash pop: {}", summary))),
+            )
+        }
+    }
+
     pub fn confirm_pop(&mut self, cx: &mut Context<Self>) {
         let modal = match self.pop_modal().cloned() {
             Some(m) => m,
@@ -630,53 +659,29 @@ impl KagiApp {
             );
             return;
         }
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
-                self.record_op(
-                    "stash-pop",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_pop_modal(PopPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    stash_index: modal.stash_index,
-                });
-                return;
-            }
-        };
-        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
-        // (run uses preflight_check_stash for StashPop: HEAD + stash-count guard).
-        let pop_op = kagi_git::Operation::StashPop {
-            index: modal.stash_index,
-        };
-        match repo.run(&pop_op, &modal.plan) {
-            Ok(_) => {
-                klog!("executed: stash-pop index={}", modal.stash_index);
+        // Same execution + outcome interpretation as start_pop, via
+        // stash_pop_blocking — this used to run repo.run inline and hardcode
+        // Success/"applied and dropped", so a conflicted pop confirmed with
+        // Enter lied about the stash being gone (#280 review finding).
+        match crate::ui::blocking_ops::stash_pop_blocking(
+            &repo_path,
+            &modal.plan,
+            modal.stash_index,
+        ) {
+            Ok((summary, after, stash_kept)) => {
                 self.clear_pop_modal();
-                let after = StateSummary {
-                    head: modal.plan.current.head.clone(),
-                    dirty: "changes restored (stash removed)".to_string(),
-                };
+                let (outcome, footer) = Self::pop_outcome_for(stash_kept, after, &summary);
                 self.record_op(
                     "stash-pop",
                     modal.plan.current.clone(),
-                    OpOutcome::Success { after },
+                    outcome,
                     &repo_path,
                     cx,
                 );
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from("stash pop: applied and dropped"));
+                self.status_footer = footer;
                 self.reload(cx);
             }
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::Pop, e);
+            Err(err_msg) => {
                 self.record_op(
                     "stash-pop",
                     modal.plan.current.clone(),
@@ -738,17 +743,11 @@ impl KagiApp {
         let task =
             cx.background_spawn(async move { stash_pop_blocking(&bg_path, &bg_plan, stash_index) });
         self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok((summary, after)) => {
+            Ok((summary, after, stash_kept)) => {
                 klog!("async: stash-pop finished");
-                app.record_op(
-                    "stash-pop",
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("stash pop: {}", summary)));
+                let (outcome, footer) = Self::pop_outcome_for(stash_kept, after, &summary);
+                app.record_op("stash-pop", plan.current.clone(), outcome, &repo_path, cx);
+                app.status_footer = footer;
                 app.reload(cx);
             }
             Err(err_msg) => {
@@ -769,5 +768,40 @@ impl KagiApp {
                 });
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod pop_outcome_tests {
+    use super::*;
+
+    fn after() -> StateSummary {
+        StateSummary {
+            head: "main".into(),
+            dirty: "2 conflicted (stash kept)".into(),
+        }
+    }
+
+    /// The #280 review finding: the Enter path recorded a conflicted pop as
+    /// `Success` / "applied and dropped". Both paths now go through this one
+    /// mapping, so pinning it here pins them both.
+    #[test]
+    fn a_kept_stash_is_never_recorded_as_success() {
+        let (outcome, footer) = KagiApp::pop_outcome_for(true, after(), "stash kept");
+        match outcome {
+            OpOutcome::Partial { error, .. } => assert_eq!(error, "stash kept"),
+            other => panic!("a conflicted pop must be Partial, got {other:?}"),
+        }
+        assert!(
+            !matches!(footer, FooterStatus::Success(_)),
+            "a kept stash must not flash a green success"
+        );
+    }
+
+    #[test]
+    fn a_clean_pop_is_a_success() {
+        let (outcome, footer) = KagiApp::pop_outcome_for(false, after(), "applied and dropped");
+        assert!(matches!(outcome, OpOutcome::Success { .. }));
+        assert!(matches!(footer, FooterStatus::Success(_)));
     }
 }

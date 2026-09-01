@@ -853,19 +853,21 @@ pub fn preflight_check_stash(
         plan.title,
         PlanTitle::Stash(StashTitle::Apply { .. } | StashTitle::Pop { .. })
     );
-    let status = working_tree_status(repo)?;
-    if needs_clean_tree
-        && (!status.conflicted.is_empty()
-            || !status.staged.is_empty()
-            || !status.unstaged.is_empty())
-    {
-        return Err(GitError::Other(format!(
-            "Working tree changed since planning: {} staged, {} modified, {} conflicted. \
-             Please re-plan before proceeding.",
-            status.staged.len(),
-            status.unstaged.len(),
-            status.conflicted.len(),
-        )));
+    // Status only when it matters: working_tree_status walks every untracked
+    // directory, which is real time on a large repo, and a drop's preflight
+    // would pay it for nothing (#280 review, item 8).
+    if needs_clean_tree {
+        let status = working_tree_status(repo)?;
+        if !status.conflicted.is_empty() || !status.staged.is_empty() || !status.unstaged.is_empty()
+        {
+            return Err(GitError::Other(format!(
+                "Working tree changed since planning: {} staged, {} modified, {} conflicted. \
+                 Please re-plan before proceeding.",
+                status.staged.len(),
+                status.unstaged.len(),
+                status.conflicted.len(),
+            )));
+        }
     }
 
     // 3. Stash count check.

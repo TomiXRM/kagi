@@ -1487,16 +1487,6 @@ pub fn execute_conflict_abort(
     })
 }
 
-/// Every path the in-progress operation wrote into the working tree.
-///
-/// That is the diff between the pre-op `tree` and the operation-result index
-/// (cleanly-merged modifications, additions and deletions), plus the session's
-/// conflicting paths — those carry only stage 1/2/3 entries, so they can be
-/// reported inconsistently by a tree↔index diff and are added explicitly.
-///
-/// Non-UTF-8 paths are dropped: they cannot be expressed as a libgit2
-/// pathspec.  (Tracked separately as issue #293 — the whole codebase loses
-/// non-UTF-8 paths today; this function does not make that worse.)
 /// Paths among `touched` that are NOT conflicted and whose working-tree state
 /// differs from the index — i.e. files the user edited (or re-created) during
 /// Conflict Mode on top of the operation's output.  These are the paths the
@@ -1538,6 +1528,16 @@ fn mid_conflict_edits(
     Ok(edited)
 }
 
+/// Every path the in-progress operation wrote into the working tree.
+///
+/// That is the diff between the pre-op `tree` and the operation-result index
+/// (cleanly-merged modifications, additions and deletions), plus the session's
+/// conflicting paths — those carry only stage 1/2/3 entries, so they can be
+/// reported inconsistently by a tree↔index diff and are added explicitly.
+///
+/// Non-UTF-8 paths are dropped: they cannot be expressed as a libgit2
+/// pathspec.  (Tracked separately as issue #293 — the whole codebase loses
+/// non-UTF-8 paths today; this function does not make that worse.)
 fn op_touched_paths(
     repo: &Repository,
     tree: &git2::Tree<'_>,
@@ -1579,13 +1579,20 @@ fn op_touched_paths(
 /// tree against `tree` directly and rewrites it.
 ///
 /// The force is bounded by the pathspec to the paths the aborted operation
-/// itself wrote, and every operation that reaches this code path (merge,
-/// cherry-pick, revert, rebase) checked its result out with
-/// `CheckoutBuilder::safe()`, which refuses to overwrite locally-modified
-/// files.  So the content standing at these paths is the operation's own
-/// output, never pre-operation user work — dropping it is precisely what
-/// `git merge --abort` does.  Paths outside the pathspec (including unrelated
-/// dirty and untracked files) are never considered.  `remove_untracked` is
+/// itself wrote, and whatever wrote them refused to overwrite local
+/// modifications: kagi's own merge/cherry-pick/revert use
+/// `CheckoutBuilder::safe()`, and the operations that did NOT go through a
+/// kagi checkout — rebase (shelled out to `git`, ops/rebase.rs) and conflicts
+/// entered from the CLI and picked up by the watcher — were written by real
+/// git, which equally refuses to clobber locally-modified files.  So the
+/// content standing at these paths is the operation's own output, never
+/// pre-operation user work — dropping it is precisely what
+/// `git merge --abort` does.  (Edits made DURING Conflict Mode are the one
+/// exception, and `mid_conflict_edits` blocks the abort on those first.)  Paths outside the pathspec (including unrelated
+/// dirty and untracked files) are not candidates — with the caveat that
+/// libgit2's `disable_pathspec_match` disables fnmatch but keeps dirname
+/// prefix matching, so a pathspec entry that names a directory (e.g. a
+/// gitlink delta) would cover its contents.  `remove_untracked` is
 /// likewise pathspec-bounded: it removes the files the operation *added*
 /// (untracked once the index is back at `tree`), which is again what real
 /// `git merge --abort` does.

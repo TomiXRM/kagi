@@ -330,8 +330,11 @@ pub fn execute_switch_to_latest(
     preflight_check(repo, plan)?;
 
     // 1. Fetch the remote so the tracking ref reflects the true latest tip.
+    // #291 second path: `remote_of_ref` splits a remote-tracking display name,
+    // and `refs/remotes/--upload-pack=evil/x` is a legal refname.
     let remote_name = remote_of_ref(remote_branch);
-    let fetch_out = run_git(repo_path, &["fetch", remote_name])
+    check_operand("remote", remote_name)?;
+    let fetch_out = run_git(repo_path, &["fetch", "--", remote_name])
         .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
     if fetch_out.status != 0 {
         return Err(GitError::Other(format!(

@@ -368,15 +368,28 @@ pub fn execute_delete_merged_branches(
     let mut failed: HashMap<String, String> = HashMap::new();
 
     // ── Phase 1: one ls-remote for every remote half, OID comparison ──
-    let remote_targets: Vec<&CleanupDeleteTarget> =
-        targets.iter().filter(|t| t.remote_tip.is_some()).collect();
+    // #291: a branch name read back from the repo that git would parse as an
+    // option never reaches the CLI — it becomes a per-branch failure instead.
+    let (remote_targets, dashed): (Vec<&CleanupDeleteTarget>, Vec<&CleanupDeleteTarget>) = targets
+        .iter()
+        .filter(|t| t.remote_tip.is_some())
+        .partition(|t| !is_flag_like(&t.name));
+    for t in dashed {
+        if let Err(e) = check_operand("branch", &t.name) {
+            failed.insert(t.name.clone(), e.to_string());
+        }
+    }
     // Branch names whose remote half is verified and should be pushed away.
     let mut to_push: Vec<&CleanupDeleteTarget> = Vec::new();
     // Branch names already absent on the remote (stale tracking ref only).
     let mut already_gone: Vec<&CleanupDeleteTarget> = Vec::new();
 
     if !remote_targets.is_empty() {
-        let mut args = vec!["ls-remote".to_string(), "origin".to_string()];
+        let mut args = vec![
+            "ls-remote".to_string(),
+            "--".to_string(),
+            "origin".to_string(),
+        ];
         for t in &remote_targets {
             args.push(format!("refs/heads/{}", t.name));
         }
@@ -425,14 +438,14 @@ pub fn execute_delete_merged_branches(
     // ── Phase 2: batch remote delete, per-branch fallback on failure ──
     let mut remote_deleted: Vec<String> = Vec::new();
     if !to_push.is_empty() {
-        let mut args = vec!["push", "origin", "--delete"];
+        let mut args = vec!["push", "--delete", "--", "origin"];
         args.extend(to_push.iter().map(|t| t.name.as_str()));
         let batch_ok = matches!(run_git(repo_path, &args), Ok(out) if out.status == 0);
         if batch_ok {
             remote_deleted.extend(to_push.iter().map(|t| t.name.clone()));
         } else {
             for t in &to_push {
-                match run_git(repo_path, &["push", "origin", "--delete", &t.name]) {
+                match run_git(repo_path, &["push", "--delete", "--", "origin", &t.name]) {
                     Ok(out) if out.status == 0 => remote_deleted.push(t.name.clone()),
                     Ok(out) => {
                         failed.insert(

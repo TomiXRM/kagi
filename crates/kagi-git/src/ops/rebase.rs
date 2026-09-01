@@ -123,7 +123,9 @@ pub fn execute_rebase_current_onto(
     repo_path: &Path,
     onto: &str,
 ) -> Result<RebaseOutcome, GitError> {
-    let out = run_git(repo_path, &["rebase", onto])
+    check_operand("upstream", onto)?;
+
+    let out = run_git(repo_path, &["rebase", "--", onto])
         .map_err(|e| GitError::Other(format!("rebase failed to start: {}", e)))?;
 
     if !matches!(repo.state(), git2::RepositoryState::Clean) {

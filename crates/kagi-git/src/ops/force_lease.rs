@@ -211,8 +211,13 @@ pub fn execute_force_with_lease_push(
         )
     })?;
 
+    // #291: `branch` is also interpolated into the `--force-with-lease=` value,
+    // where `--` cannot protect it — the leading-dash reject is the guard there.
+    check_operand("remote", &remote)?;
+    check_operand("branch", &branch)?;
+
     let lease_arg = format!("--force-with-lease={}:{}", branch, lease_oid);
-    let out = run_git(repo_path, &["push", &lease_arg, &remote, &branch])
+    let out = run_git(repo_path, &["push", &lease_arg, "--", &remote, &branch])
         .map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
 
     if out.status != 0 {

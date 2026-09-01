@@ -303,7 +303,8 @@ pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, 
     let (_, remote_name, _) = resolve_upstream_info(repo, &branch_name)?;
 
     // ── 2. git fetch <remote> via CLI ─────────────────────────
-    let fetch_out = run_git(repo_path, &["fetch", "--prune", &remote_name])
+    check_operand("remote", &remote_name)?;
+    let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", &remote_name])
         .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
 
     if fetch_out.status != 0 {
@@ -728,7 +729,8 @@ pub fn execute_pull_branch_ff(
     let local_oid = local_branch_oid(repo, branch_name)?;
     let (_, remote_name, _) = resolve_upstream_info(repo, branch_name)?;
 
-    let fetch_out = run_git(repo_path, &["fetch", "--prune", &remote_name])
+    check_operand("remote", &remote_name)?;
+    let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", &remote_name])
         .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
     if fetch_out.status != 0 {
         return Err(GitError::Other(format!(

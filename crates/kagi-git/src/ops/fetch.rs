@@ -34,8 +34,14 @@ pub fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome,
     // Prune only removes tracking-ref cache entries: local branches and the
     // object store are untouched, and a pruned upstream is exactly what turns
     // a local branch `[gone]` (the squash-merge heuristic input).
+    // `--` before the remote name, and a leading-dash reject on the name itself
+    // (#291): the remote name comes straight out of the repo's own config, and
+    // a remote named `--upload-pack=<cmd>` is otherwise executed as a flag.
     let args: Vec<&str> = match remote.as_deref() {
-        Some(name) => vec!["fetch", "--prune", name],
+        Some(name) => {
+            check_operand("remote", name)?;
+            vec!["fetch", "--prune", "--", name]
+        }
         None => vec!["fetch", "--all", "--prune"],
     };
 
@@ -99,7 +105,10 @@ pub fn fetch_remote_branch(
 ) -> Result<FetchOutcome, GitError> {
     let before = remote_ref_oids(repo);
 
-    let out = run_git(repo_path, &["fetch", "--prune", remote, branch])
+    check_operand("remote", remote)?;
+    check_operand("branch", branch)?;
+
+    let out = run_git(repo_path, &["fetch", "--prune", "--", remote, branch])
         .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
 
     if out.status != 0 {

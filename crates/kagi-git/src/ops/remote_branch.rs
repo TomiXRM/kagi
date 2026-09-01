@@ -141,7 +141,11 @@ pub fn execute_delete_remote_branch(repo_path: &Path, remote_branch: &str) -> Re
         ))
     })?;
 
-    let out = run_git(repo_path, &["push", remote, "--delete", branch])
+    check_operand("remote", remote)?;
+    check_operand("branch", branch)?;
+
+    // `--delete` stays *before* `--`: it is an option, not an operand.
+    let out = run_git(repo_path, &["push", "--delete", "--", remote, branch])
         .map_err(|e| GitError::Other(format!("push --delete failed: {}", e)))?;
 
     if out.status != 0 {

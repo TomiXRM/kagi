@@ -25,7 +25,7 @@ pub fn create_tag_name_errors(repo: &Repository, name: &str) -> Vec<TagNameError
         errs.push(TagNameError::InvalidRef(name.to_string()));
     }
 
-    if !name.is_empty() && name.starts_with('-') {
+    if !name.is_empty() && is_flag_like(name) {
         errs.push(TagNameError::LeadingDash(name.to_string()));
     }
 
@@ -245,8 +245,11 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
 /// branch of the same name can never be pushed by accident, and **no force
 /// flag is ever passed** — see `plan_push_tag`.
 pub fn execute_push_tag(repo_path: &Path, remote: &str, name: &str) -> Result<(), GitError> {
+    check_operand("remote", remote)?;
+    check_operand("tag", name)?;
+
     let refspec = format!("refs/tags/{}", name);
-    let out = run_git(repo_path, &["push", remote, &refspec])
+    let out = run_git(repo_path, &["push", "--", remote, &refspec])
         .map_err(|e| GitError::Other(format!("push tag failed: {}", e)))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(

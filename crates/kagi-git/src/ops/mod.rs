@@ -76,7 +76,7 @@ pub(crate) use std::path::{Component, Path, PathBuf};
 pub(crate) use git2::{BranchType, Repository, StashFlags, WorktreeAddOptions};
 pub(crate) use kagi_domain::head::Head;
 
-pub(crate) use super::cli::run_git;
+pub(crate) use super::cli::{check_operand, is_flag_like, run_git};
 pub(crate) use super::log::CommitId;
 pub(crate) use super::resolve_head;
 pub(crate) use super::status::{working_tree_status, ChangeKind, FileStatus};

@@ -970,14 +970,25 @@ impl Backend {
     /// Plan merging `source` into `target` without checking `target` out
     /// (ADR-0144). Use [`Backend::plan_merge_branch`] when the destination is
     /// the current branch — that path can also enter Conflict Mode.
-    /// Conflicts merging `head` into `base` would produce — read-only
-    /// (ADR-0145). Empty means the merge is clean.
-    pub fn pr_conflict_preview(
+    /// Files merging `head` into `base` would conflict on — paths and kinds,
+    /// no text (ADR-0145). Empty means the merge is clean.
+    pub fn pr_conflict_files(
         &self,
         base: &CommitId,
         head: &CommitId,
     ) -> Result<Vec<ops::PrConflictFile>, GitError> {
-        ops::pr_conflict_preview(&self.repo, base, head)
+        ops::pr_conflict_files(&self.repo, base, head)
+    }
+
+    /// The conflict markers for one file. `None` when there is nothing to
+    /// show — a deleted side, a binary, or a conflict past the size cap.
+    pub fn pr_conflict_text(
+        &self,
+        base: &CommitId,
+        head: &CommitId,
+        path: &Path,
+    ) -> Result<Option<String>, GitError> {
+        ops::pr_conflict_text(&self.repo, base, head, path)
     }
 
     pub fn plan_merge_into_branch(

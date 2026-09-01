@@ -454,6 +454,10 @@ pub enum Msg {
     PrConflictBothAdded,
     /// PR pane: a binary file changed on both sides — nothing to show as text.
     PrConflictBinary,
+    /// PR pane: the conflict is too large to render.
+    PrConflictTooLarge,
+    /// PR pane: the word in a conflict hunk header ("conflict 2/7").
+    PrConflictHunk,
     PrModeNoDescription,
     /// PR mode: dashboard "back to the home screen" button.
     PrAllPrs,
@@ -1249,6 +1253,10 @@ impl Msg {
             (Ja, PrConflictBothAdded) => "両方で追加",
             (En, PrConflictBinary) => "binary file, changed on both sides",
             (Ja, PrConflictBinary) => "binary ファイル、両方で変更",
+            (En, PrConflictHunk) => "conflict",
+            (Ja, PrConflictHunk) => "conflict",
+            (En, PrConflictTooLarge) => "conflict too large to display",
+            (Ja, PrConflictTooLarge) => "conflict が大きすぎるため表示できません",
             (En, PrHunkCopied) => "Hunk copied",
             (Ja, PrHunkCopied) => "コードをコピーしました",
             (Ja, PrSuggestion) => "コード提案",

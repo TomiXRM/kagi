@@ -18,6 +18,8 @@
 //! whole PR, or for one selected commit. Nothing is checked out. Inputs
 //! (creating / editing a PR) deliberately go to GitHub's own UI.
 
+use std::path::PathBuf;
+
 use gpui::{div, prelude::*, px, relative, rgb, Context, ListState, SharedString};
 use kagi_domain::github::Mergeable;
 use kagi_domain::github::{
@@ -68,6 +70,12 @@ pub struct PrTab {
     pub conflict_selected: Option<usize>,
     /// Scroll state for the conflict diff, one per tab like `diff_scroll`.
     pub conflict_scroll: ListState,
+    /// Which conflict within the file the jump control is on (0-based).
+    pub conflict_at: usize,
+    /// Marker text for the selected conflicted file only, and which file it is
+    /// for. On a real PR the full set came to 50 MB across 537 files to show
+    /// one of them, so the text is fetched per selection instead.
+    pub conflict_text: Option<(PathBuf, Option<String>)>,
 }
 
 /// Which body the PR tab shows.
@@ -218,6 +226,8 @@ impl KagiApp {
             conflicts: None,
             conflict_selected: None,
             conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            conflict_text: None,
+            conflict_at: 0,
         };
         if !tab.files.is_empty() {
             tab.selected_file = Some(0);
@@ -292,9 +302,69 @@ impl KagiApp {
         if let Some(m) = self.pr_mode.as_mut() {
             if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
                 t.conflict_selected = Some(ix);
+                t.conflict_at = 0;
+            }
+        }
+        self.pr_mode_load_conflict_text(cx);
+        cx.notify();
+    }
+
+    /// Move the conflict cursor and scroll that conflict into view.
+    pub fn pr_mode_jump_conflict(&mut self, at: usize, row: Option<usize>, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode.as_mut() {
+            if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
+                t.conflict_at = at;
+                if let Some(row) = row {
+                    t.conflict_scroll.scroll_to_reveal_item(row);
+                }
             }
         }
         cx.notify();
+    }
+
+    /// Fetch the marker text for the selected conflicted file, if it is not
+    /// already the one held. One file at a time: see `PrTab::conflict_text`.
+    fn pr_mode_load_conflict_text(&mut self, cx: &mut Context<Self>) {
+        let Some(m) = self.pr_mode.as_ref() else {
+            return;
+        };
+        let Some(tab) = m.active.and_then(|a| m.tabs.get(a)) else {
+            return;
+        };
+        let Some(Ok(files)) = tab.conflicts.as_ref() else {
+            return;
+        };
+        if files.is_empty() {
+            return;
+        }
+        let ix = tab.conflict_selected.unwrap_or(0).min(files.len() - 1);
+        let path = files[ix].path.clone();
+        if tab.conflict_text.as_ref().map(|(p, _)| p) == Some(&path) {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
+        let bg_path = path.clone();
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).ok()?;
+            repo.pr_conflict_text(&base, &head, &bg_path).ok().flatten()
+        });
+        cx.spawn(async move |this, acx| {
+            let text = task.await;
+            let _ = this.update(acx, |app, cx| {
+                let Some(m) = app.pr_mode.as_mut() else {
+                    return;
+                };
+                let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
+                    return;
+                };
+                t.conflict_text = Some((path, text));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Compute the active tab's conflict preview, once (ADR-0145).
@@ -322,7 +392,7 @@ impl KagiApp {
         let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).map_err(|e| format!("{e}"))?;
-            repo.pr_conflict_preview(&base, &head)
+            repo.pr_conflict_files(&base, &head)
                 .map_err(|e| format!("{e}"))
         });
         cx.spawn(async move |this, acx| {
@@ -346,6 +416,9 @@ impl KagiApp {
                 );
                 t.conflicts = Some(result);
                 cx.notify();
+                // The list has just arrived; pull the first file's text so the
+                // tab is not left showing an empty pane beside a full list.
+                app.pr_mode_load_conflict_text(cx);
             });
         })
         .detach();
@@ -968,7 +1041,17 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.diff_scroll.clone(),
         )
     };
-    let (view, reviews, comments, line_comments, conflicts, conflict_selected, conflict_scroll) = {
+    let (
+        view,
+        reviews,
+        comments,
+        line_comments,
+        conflicts,
+        conflict_selected,
+        conflict_scroll,
+        conflict_text,
+        conflict_at,
+    ) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
         (
@@ -979,6 +1062,8 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.conflicts.clone(),
             t.conflict_selected,
             t.conflict_scroll.clone(),
+            t.conflict_text.clone(),
+            t.conflict_at,
         )
     };
     let show_description = view == PrView::Overview;
@@ -1381,8 +1466,18 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                 let ix = conflict_selected.unwrap_or(0).min(files.len() - 1);
                 // Same renderer as the Diff tab, so the unified/side-by-side
                 // toggle and everything around it work here too.
-                let dv = super::pr_conflicts::conflict_diff_view(&files[ix]);
-                render_diff_list::<KagiApp>(dv, None, None, conflict_scroll, cx).into_any_element()
+                // The text is for whichever file was last requested; while a
+                // different one is loading, render the shell without it.
+                let text = conflict_text
+                    .as_ref()
+                    .filter(|(p, _)| *p == files[ix].path)
+                    .and_then(|(_, t)| t.as_deref());
+                let (dv, jumps) = super::pr_conflicts::conflict_diff_view(&files[ix], text);
+                // Prev/next sits in the header's `leading` slot, beside the
+                // unified/side-by-side toggle it shares a row with.
+                let nav = (jumps.len() > 1)
+                    .then(|| super::pr_conflicts::render_jump_nav(jumps.clone(), conflict_at, cx));
+                render_diff_list::<KagiApp>(dv, nav, None, conflict_scroll, cx).into_any_element()
             }
         };
         return col.child(body).into_any_element();

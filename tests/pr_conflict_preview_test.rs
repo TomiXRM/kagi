@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
-use kagi_git::{pr_conflict_preview, CommitId, PrConflictKind};
+use kagi_git::{pr_conflict_files, pr_conflict_text, CommitId, PrConflictKind};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -70,7 +70,7 @@ fn a_clean_merge_reports_no_conflicts() {
     git(&p, &["commit", "-qm", "pr adds a file"]);
 
     let repo = Repository::open(&p).unwrap();
-    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
     assert!(files.is_empty(), "expected no conflicts, got {files:?}");
 }
 
@@ -84,19 +84,22 @@ fn both_modified_reports_the_file_and_the_marker_text() {
     git(&p, &["commit", "-qam", "base edits"]);
 
     let repo = Repository::open(&p).unwrap();
-    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
 
     assert_eq!(files.len(), 1, "{files:?}");
     let f = &files[0];
     assert_eq!(f.path, PathBuf::from("shared.txt"));
     assert_eq!(f.kind, PrConflictKind::BothModified);
+    let text = pr_conflict_text(&repo, &id(&p, "base"), &id(&p, "pr"), &f.path)
+        .unwrap()
+        .expect("text");
     // The marker text is what git would have written, so both sides are in it
     // and the untouched context survives.
-    assert!(f.marker_text.contains("BASE VERSION"), "{}", f.marker_text);
-    assert!(f.marker_text.contains("PR VERSION"), "{}", f.marker_text);
-    assert!(f.marker_text.contains("<<<<<<<"), "{}", f.marker_text);
-    assert!(f.marker_text.contains(">>>>>>>"), "{}", f.marker_text);
-    assert!(f.marker_text.contains("one"), "context is missing");
+    assert!(text.contains("BASE VERSION"), "{text}");
+    assert!(text.contains("PR VERSION"), "{text}");
+    assert!(text.contains("<<<<<<<"), "{text}");
+    assert!(text.contains(">>>>>>>"), "{text}");
+    assert!(text.contains("one"), "context is missing");
     // The file neither side touched must not be reported.
     assert!(!files.iter().any(|f| f.path == Path::new("quiet.txt")));
 }
@@ -113,8 +116,11 @@ fn the_marker_text_parses_into_hunks() {
     git(&p, &["commit", "-qam", "base"]);
 
     let repo = Repository::open(&p).unwrap();
-    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
-    let model = kagi_domain::resolution::HunkModel::from_marker_text(&files[0].marker_text);
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let text = pr_conflict_text(&repo, &id(&p, "base"), &id(&p, "pr"), &files[0].path)
+        .unwrap()
+        .expect("text");
+    let model = kagi_domain::resolution::HunkModel::from_marker_text(&text);
     let hunks: Vec<_> = model
         .regions
         .iter()
@@ -138,11 +144,12 @@ fn delete_versus_modify_is_reported_without_text() {
     git(&p, &["commit", "-qm", "base deletes"]);
 
     let repo = Repository::open(&p).unwrap();
-    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
     assert_eq!(files.len(), 1, "{files:?}");
     assert_eq!(files[0].kind, PrConflictKind::DeleteModify);
-    assert!(
-        files[0].marker_text.is_empty(),
+    assert_eq!(
+        pr_conflict_text(&repo, &id(&p, "base"), &id(&p, "pr"), &files[0].path).unwrap(),
+        None,
         "a deleted side has no three-way text to show"
     );
 }
@@ -159,11 +166,14 @@ fn both_added_is_reported() {
     git(&p, &["commit", "-qm", "base adds"]);
 
     let repo = Repository::open(&p).unwrap();
-    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
     assert_eq!(files.len(), 1, "{files:?}");
     assert_eq!(files[0].kind, PrConflictKind::BothAdded);
-    assert!(files[0].marker_text.contains("base's version"));
-    assert!(files[0].marker_text.contains("pr's version"));
+    let text = pr_conflict_text(&repo, &id(&p, "base"), &id(&p, "pr"), &files[0].path)
+        .unwrap()
+        .expect("text");
+    assert!(text.contains("base's version"));
+    assert!(text.contains("pr's version"));
 }
 
 /// The whole reason this is safe to open: it is a question, not a state change.
@@ -183,7 +193,7 @@ fn previewing_changes_nothing_at_all() {
     let refs = out(&p, &["show-ref"]);
 
     let repo = Repository::open(&p).unwrap();
-    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
     assert!(!files.is_empty(), "precondition: the merge must conflict");
 
     assert_eq!(out(&p, &["rev-parse", "HEAD"]), head, "HEAD moved");
@@ -234,11 +244,11 @@ fn the_base_tip_and_the_merge_base_give_different_answers() {
     );
 
     // The real question: against the branch tip, they conflict.
-    let against_tip = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let against_tip = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
     assert_eq!(against_tip.len(), 1, "{against_tip:?}");
 
     // The vacuous one: against the merge-base, nothing ever conflicts.
-    let against_merge_base = pr_conflict_preview(&repo, &merge_base, &id(&p, "pr")).unwrap();
+    let against_merge_base = pr_conflict_files(&repo, &merge_base, &id(&p, "pr")).unwrap();
     assert!(
         against_merge_base.is_empty(),
         "merging into an ancestor is a fast-forward; got {against_merge_base:?}"
@@ -265,7 +275,55 @@ fn a_binary_conflict_does_not_abort() {
     git(&p, &["commit", "-qm", "base adds a different binary"]);
 
     let repo = Repository::open(&p).unwrap();
-    let files = pr_conflict_preview(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
     assert_eq!(files.len(), 1, "{files:?}");
     assert_eq!(files[0].path, PathBuf::from("blob.bin"));
+    assert_eq!(files[0].kind, PrConflictKind::Binary);
+    assert_eq!(
+        pr_conflict_text(&repo, &id(&p, "base"), &id(&p, "pr"), &files[0].path).unwrap(),
+        None,
+        "a binary conflict has no text — and asking for it used to abort"
+    );
+}
+
+/// The marker text is the whole file, so the view can show context around a
+/// conflict rather than the clashing lines alone — the thing that made the
+/// first version impossible to judge from.
+#[test]
+fn the_marker_text_carries_the_unconflicted_context() {
+    let (_t, p) = setup();
+    // A file with a lot of quiet context and one clash in the middle.
+    let base_body = "keep 1\nkeep 2\nkeep 3\nMIDDLE-base\nkeep 4\nkeep 5\n";
+    let pr_body = "keep 1\nkeep 2\nkeep 3\nMIDDLE-pr\nkeep 4\nkeep 5\n";
+    write(&p, "ctx.txt", pr_body);
+    git(&p, &["add", "-A"]);
+    git(&p, &["commit", "-qm", "pr"]);
+    git(&p, &["checkout", "-q", "base"]);
+    write(&p, "ctx.txt", base_body);
+    git(&p, &["add", "-A"]);
+    git(&p, &["commit", "-qm", "base"]);
+
+    let repo = Repository::open(&p).unwrap();
+    let files = pr_conflict_files(&repo, &id(&p, "base"), &id(&p, "pr")).unwrap();
+    let f = files.iter().find(|f| f.path.ends_with("ctx.txt")).unwrap();
+    let text = pr_conflict_text(&repo, &id(&p, "base"), &id(&p, "pr"), &f.path)
+        .unwrap()
+        .expect("text");
+
+    let model = kagi_domain::resolution::HunkModel::from_marker_text(&text);
+    let passthrough: Vec<String> = model
+        .regions
+        .iter()
+        .filter_map(|r| match r {
+            kagi_domain::resolution::Region::Passthrough(l) => Some(l.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    for l in ["keep 1", "keep 2", "keep 3", "keep 4", "keep 5"] {
+        assert!(
+            passthrough.iter().any(|p| p == l),
+            "context line {l:?} is missing: {passthrough:?}"
+        );
+    }
 }

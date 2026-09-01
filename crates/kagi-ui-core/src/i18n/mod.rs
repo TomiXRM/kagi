@@ -188,6 +188,9 @@ pub enum Msg {
     BusyDeleteBranch,
     BusyDeleteBranchPlan,
     BusyDiscard,
+    /// Footer label when a discard mutated the working tree but did not finish
+    /// (issue #281). The backup blob SHAs are in the oplog entry.
+    DiscardPartial,
     BusyCommit,
     BusyCreateWorktree,
     /// Worktree context menu: unlock action label.
@@ -852,6 +855,8 @@ impl Msg {
             (Ja, BusyDeleteBranchPlan) => "delete branch 計画中…",
             (En, BusyDiscard) => "discard in progress…",
             (Ja, BusyDiscard) => "discard 実行中…",
+            (En, DiscardPartial) => "discard only partially applied (backup blobs are in the oplog)",
+            (Ja, DiscardPartial) => "discard は一部しか適用されていません (backup blob は oplog に記録済み)",
             (En, BusyCommit) => "commit in progress…",
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",

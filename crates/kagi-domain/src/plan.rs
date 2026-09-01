@@ -248,25 +248,60 @@ pub struct DiscardBackup {
 }
 
 /// Outcome of a discard: the backup blobs written before discarding.
+///
+/// A discard that fails *after* the working tree has been mutated still returns
+/// this struct (issue #281) with [`error`](Self::error) set — the backup blob
+/// SHAs are the user's only handle on the overwritten content, so they must
+/// always reach the oplog instead of being dropped with an `Err`.
 #[derive(Debug, Clone)]
 pub struct DiscardOutcome {
     /// One entry per discarded file, in plan order.
     pub backups: Vec<DiscardBackup>,
+    /// Paths that were NOT confirmed discarded. Empty on full success.
+    pub unverified: Vec<String>,
+    /// Failure reason when the discard was only partially applied.
+    pub error: Option<String>,
 }
 
 impl DiscardOutcome {
+    /// A fully successful discard (no post-mutation failure).
+    pub fn complete(backups: Vec<DiscardBackup>) -> Self {
+        DiscardOutcome {
+            backups,
+            unverified: Vec::new(),
+            error: None,
+        }
+    }
+
+    /// True when the working tree was mutated but the discard did not fully
+    /// succeed. The backups are still valid recovery handles.
+    pub fn is_partial(&self) -> bool {
+        self.error.is_some()
+    }
+
     /// Render the path/blob backup list as a single oplog-friendly summary line.
+    /// On a partial discard the per-path status and the failure reason are
+    /// appended — the backup SHAs stay first so recovery is always readable.
     pub fn oplog_summary(&self) -> String {
         let pairs: Vec<String> = self
             .backups
             .iter()
             .map(|b| format!("{}={}", b.path, b.blob))
             .collect();
-        format!(
+        let base = format!(
             "discarded {} file(s); backup: {}",
             self.backups.len(),
             pairs.join(", ")
-        )
+        );
+        match &self.error {
+            None => base,
+            Some(e) => format!(
+                "{}; PARTIAL: {}; not discarded: {}",
+                base,
+                e,
+                self.unverified.join(", ")
+            ),
+        }
     }
 }
 

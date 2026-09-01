@@ -503,13 +503,23 @@ fn discard_verify_catches_unrestorable_target() {
         status.unstaged
     );
 
-    let paths = vec!["crlf.txt".to_string()];
+    // Issue #281: batch the unrestorable target with a normal one. The working
+    // tree IS mutated (tracked.txt is stomped) before verify fails, so the
+    // backup blob SHAs must survive the failure.
+    write_file(&d, "tracked.txt", "PRECIOUS USER EDIT\n");
+
+    let paths = vec!["tracked.txt".to_string(), "crlf.txt".to_string()];
     let plan = plan_discard(&repo, &paths).expect("plan");
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
 
-    let err = execute_discard(&repo, &plan, &paths)
-        .expect_err("a target that cannot be restored must fail verify");
-    let msg = format!("{:?}", err);
+    let outcome = execute_discard(&repo, &plan, &paths)
+        .expect("#281: a post-mutation failure must still return the backups");
+    assert!(
+        outcome.is_partial(),
+        "verify failure must be reported as a PARTIAL outcome, got {:?}",
+        outcome
+    );
+    let msg = outcome.error.clone().unwrap();
     assert!(
         msg.contains("discard verify failed"),
         "expected the verify-step error, got: {}",
@@ -520,4 +530,164 @@ fn discard_verify_catches_unrestorable_target() {
         "error should name the target: {}",
         msg
     );
+    assert_eq!(
+        outcome.unverified,
+        vec!["crlf.txt".to_string()],
+        "per-path status: only crlf.txt was not discarded"
+    );
+
+    // The working tree WAS mutated: tracked.txt lost the user's edit …
+    assert_eq!(read_file(&d, "tracked.txt"), "committed\n");
+    // … and the ONLY route back to it is the backup blob, which must be in the
+    // outcome (and therefore in the oplog) despite the failure.
+    let backup = outcome
+        .backups
+        .iter()
+        .find(|b| b.path == "tracked.txt")
+        .expect("#281: tracked.txt backup must survive the failure");
+    assert_eq!(
+        git_out(&d, &["cat-file", "-p", &backup.blob]),
+        "PRECIOUS USER EDIT\n"
+    );
+
+    // The oplog line carries both the recovery handle and the partial status.
+    let summary = outcome.oplog_summary();
+    assert!(summary.contains(&backup.blob), "summary: {}", summary);
+    assert!(summary.contains("PARTIAL:"), "summary: {}", summary);
+    assert!(
+        summary.contains("not discarded: crlf.txt"),
+        "summary: {}",
+        summary
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// TC-DISCARD-8b (issue #281): untracked removal that fails at target N still
+// returns the backups for 1..N.
+// ────────────────────────────────────────────────────────────
+
+/// Forced by making the second target's parent directory non-writable, so
+/// `remove_file` fails with PermissionDenied. Unix-only, and skipped when the
+/// test runs as root (root ignores the mode bits, so the failure can't be
+/// provoked); there is no portable Windows equivalent.
+#[cfg(unix)]
+#[test]
+fn discard_partial_untracked_removal_keeps_backups() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+
+    std::fs::create_dir_all(d.join("locked")).unwrap();
+    write_file(&d, "first.txt", "first untracked\n");
+    write_file(&d, "locked/second.txt", "second untracked\n");
+
+    // Probe: can a 0o500 directory actually stop us? (No, if we are root.)
+    std::fs::create_dir_all(d.join("probe")).unwrap();
+    write_file(&d, "probe/p.txt", "p\n");
+    std::fs::set_permissions(d.join("probe"), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let is_root = std::fs::remove_file(d.join("probe/p.txt")).is_ok();
+    std::fs::set_permissions(d.join("probe"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::remove_dir_all(d.join("probe")).unwrap();
+    if is_root {
+        eprintln!("skipped: running as root, directory permissions cannot block remove_file");
+        return;
+    }
+
+    let repo = Repository::open(&d).unwrap();
+    let paths = vec!["first.txt".to_string(), "locked/second.txt".to_string()];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    std::fs::set_permissions(d.join("locked"), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let outcome = execute_discard(&repo, &plan, &paths);
+    // Restore before asserting so TempDir cleanup always works.
+    std::fs::set_permissions(d.join("locked"), std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let outcome = outcome.expect("#281: a partial deletion must still return the backups");
+    assert!(outcome.is_partial(), "outcome: {:?}", outcome);
+    assert_eq!(
+        outcome.backups.len(),
+        2,
+        "both step-1 backups survive: {:?}",
+        outcome
+    );
+    assert_eq!(outcome.unverified, vec!["locked/second.txt".to_string()]);
+    // 1..N-1 really were deleted — the backup is the only copy left.
+    assert!(!d.join("first.txt").exists());
+    let first = outcome
+        .backups
+        .iter()
+        .find(|b| b.path == "first.txt")
+        .unwrap();
+    assert_eq!(
+        git_out(&d, &["cat-file", "-p", &first.blob]),
+        "first untracked\n"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// TC-DISCARD-9 (issue #282): a repo-relative target is resolved against the
+// WORKDIR, never the process CWD — a same-named file in a subdirectory must
+// not be touched.
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn discard_relative_path_targets_the_workdir_root_not_a_shadow_file() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+
+    std::fs::create_dir_all(d.join("src")).unwrap();
+    write_file(&d, "a.txt", "root committed\n");
+    write_file(&d, "src/a.txt", "sub committed\n");
+    git(&d, &["add", "a.txt", "src/a.txt"]);
+    git(&d, &["commit", "-qm", "add both a.txt"]);
+
+    write_file(&d, "a.txt", "root DIRTY\n");
+    write_file(&d, "src/a.txt", "sub DIRTY\n");
+
+    let repo = Repository::open(&d).unwrap();
+    let paths = vec!["a.txt".to_string()];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    let outcome = execute_discard(&repo, &plan, &paths).expect("execute");
+    assert!(!outcome.is_partial(), "outcome: {:?}", outcome);
+    assert_eq!(outcome.backups.len(), 1);
+    assert_eq!(
+        outcome.backups[0].path, "a.txt",
+        "the ROOT a.txt was chosen"
+    );
+
+    assert_eq!(
+        read_file(&d, "a.txt"),
+        "root committed\n",
+        "target reverted"
+    );
+    assert_eq!(
+        read_file(&d, "src/a.txt"),
+        "sub DIRTY\n",
+        "#282: the same-named file in a subdirectory must be untouched"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// TC-DISCARD-10 (issue #282): an absolute target behaves exactly like the
+// repo-relative form.
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn discard_absolute_path_matches_relative_form() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    write_file(&d, "tracked.txt", "DIRTY EDIT\n");
+
+    let repo = Repository::open(&d).unwrap();
+    let paths = vec![d.join("tracked.txt").to_string_lossy().into_owned()];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    let outcome = execute_discard(&repo, &plan, &paths).expect("execute");
+    assert_eq!(outcome.backups[0].path, "tracked.txt");
+    assert_eq!(read_file(&d, "tracked.txt"), "committed\n");
 }

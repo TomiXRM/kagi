@@ -350,6 +350,12 @@ pub struct OperationPlan {
     /// `preflight_check_stash` to detect concurrent stash modifications.
     /// For non-stash operations this is always `0`.
     pub stash_count_at_plan: usize,
+    /// Working-tree classification digest at plan time (#295). `Some` for the
+    /// operations whose blockers depend on the working tree (discard, merge,
+    /// stash apply/pop); `None` where only HEAD matters. `preflight_check`
+    /// refuses to execute when it no longer matches — the plan's blockers were
+    /// reasoned against a tree that has since changed.
+    pub worktree_digest: Option<crate::status::WorktreeDigest>,
     /// Files that will be changed by the operation, as computed by an in-memory
     /// dry run.  Non-empty only for cherry-pick plans.  Used by the plan modal
     /// to render a preview file tree (T016).
@@ -371,5 +377,10 @@ impl OperationPlan {
     /// list has not changed since the plan was generated.
     pub fn stash_count_at_plan(&self) -> usize {
         self.stash_count_at_plan
+    }
+
+    /// The working-tree digest captured at plan time, if this op depends on it.
+    pub fn worktree_digest(&self) -> Option<crate::status::WorktreeDigest> {
+        self.worktree_digest
     }
 }

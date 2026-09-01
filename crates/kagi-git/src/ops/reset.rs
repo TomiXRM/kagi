@@ -130,6 +130,7 @@ pub fn plan_reset_current_to_head(
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,

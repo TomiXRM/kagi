@@ -4,6 +4,7 @@ use super::*;
 // `StashTitle` / `StashRecovery`), not English prose. `message_en()` in
 // kagi-domain renders the exact legacy strings for oplog/klog/EN display
 // (golden-tested there); JA lives in `kagi-ui-core::i18n::plan::stash`.
+use kagi_domain::plan::StashPopOutcome;
 use kagi_domain::plan_note::stash::StashDirtyOp;
 use kagi_domain::plan_note::{
     CommonNote, DirtyParts, OpPhrase, StashNote, StashRecovery, StashTitle,
@@ -419,6 +420,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 
     // ── 4. Check blockers ────────────────────────────────────
     let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Index out of range.
     if index >= stash_count {
@@ -455,10 +457,23 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 
     // Predict conflicts via in-memory merge of stash commit with HEAD.
     // Only run when we have no blockers so far (index valid, not dirty, no conflict state).
+    //
+    // A predicted conflict is a WARNING, not a blocker (GUI report: the modal
+    // had only a Cancel button, so a conflicting stash could never be popped
+    // at all). Blocking was the right call while execute_stash_pop dropped
+    // the stash unconditionally; now a conflicted apply returns
+    // ConflictedStashKept and the entry survives, so confirming through the
+    // conflict is exactly real `git stash pop` behaviour. The prediction
+    // FAILING is still a blocker (fail-closed): an apply we cannot reason
+    // about means the repo state is not understood — re-plan.
     if blockers.is_empty() {
         if let Some(stash_oid) = stash_oid_for_index {
-            if let Some(conflict_blocker) = predict_stash_pop_conflict(repo, &head, stash_oid) {
-                blockers.push(conflict_blocker);
+            match predict_stash_pop_conflict(repo, &head, stash_oid) {
+                Some(note @ PlanNote::Stash(StashNote::PopWouldConflict { .. })) => {
+                    warnings.push(note);
+                }
+                Some(note) => blockers.push(note),
+                None => {}
             }
         }
     }
@@ -487,14 +502,16 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         title: PlanTitle::Stash(StashTitle::Pop { index }),
         current,
         predicted,
-        warnings: Vec::new(),
+        warnings,
         blockers,
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
-        destructive: false,
+        // issue #280: pop irreversibly deletes the stash entry — Destructive class,
+        // so the confirm UI treats it like drop/reset rather than a plain apply.
+        destructive: true,
     })
 }
 
@@ -502,33 +519,59 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 // execute_stash_pop  (T-HT-007, ADR-0009)
 // ────────────────────────────────────────────────────────────
 
-/// Execute a stash pop: apply the stash entry at `index`, then drop it **only on success**.
+/// Execute a stash pop: apply the stash entry at `index`, then drop it **only
+/// when the apply came out clean**.
 ///
-/// # Design (ADR-0009 — Destructive 緩和付き)
+/// # Design (ADR-0009 — Destructive 緩和付き / issue #280)
 ///
 /// 1. `repo.stash_apply(index, None)` — same as `execute_stash_apply`.
-/// 2. If and **only if** the apply succeeds, call `stash_drop_internal(repo, index)`
-///    to remove the stash entry.
-/// 3. If apply fails for **any** reason, the drop is **not called** — the stash
-///    entry remains intact.
+/// 2. Re-read the index. libgit2's `git_stash_apply` deliberately writes
+///    conflicts into the index and still returns 0 (`GIT_ECONFLICT` is only
+///    returned on the `REINSTATE_INDEX` path), so `Ok(())` means "the apply
+///    ran", **not** "the content was restored cleanly".
+/// 3. Conflicts present → return [`StashPopOutcome::ConflictedStashKept`]
+///    **without** dropping: the stashed content is in the working tree with
+///    markers and the stash entry survives, exactly like real `git stash pop`.
+/// 4. Clean → drop the entry and return [`StashPopOutcome::Applied`].
 ///
-/// This "apply first, drop on success only" approach prevents the catastrophic
-/// case of losing the stash entry when apply produces conflicts or other errors.
-/// ADR-0009 mandates conflict prediction as a blocker in `plan_stash_pop` so
-/// the execute path should rarely see conflict failures in practice.
+/// A hard apply error also skips the drop (the `?` returns early).
 ///
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn execute_stash_pop(repo: &mut Repository, index: usize) -> Result<(), GitError> {
+pub fn execute_stash_pop(repo: &mut Repository, index: usize) -> Result<StashPopOutcome, GitError> {
     // Step 1: Apply the stash.
     repo.stash_apply(index, None)
         .map_err(|e| GitError::Other(format!("stash apply (pop phase) failed: {}", e.message())))?;
 
-    // Step 2: Drop ONLY after successful apply.
+    // Step 2: Did the apply write conflicts into the index? (issue #280)
+    let conflicts = applied_conflict_files(repo)?;
+    if !conflicts.is_empty() {
+        return Ok(StashPopOutcome::ConflictedStashKept { files: conflicts });
+    }
+
+    // Step 3: Drop ONLY after a clean apply.
     stash_drop_internal(repo, index)?;
 
-    Ok(())
+    Ok(StashPopOutcome::Applied)
+}
+
+/// Conflicting paths the just-run `stash_apply` left in the index, if any.
+fn applied_conflict_files(repo: &mut Repository) -> Result<Vec<String>, GitError> {
+    let has_conflicts = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("index read after stash apply: {}", e.message())))?
+        .has_conflicts();
+    if !has_conflicts {
+        return Ok(Vec::new());
+    }
+    // ponytail: the status walk only runs once has_conflicts() is set, so the
+    // clean path stays a single index read.
+    Ok(working_tree_status(repo)?
+        .conflicted
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect())
 }
 
 /// Drop stash entry at `index`.
@@ -541,7 +584,8 @@ pub fn execute_stash_pop(repo: &mut Repository, index: usize) -> Result<(), GitE
 /// already succeeded**.  Exposing it as a standalone public API would allow callers
 /// to drop a stash entry without first verifying that the content was successfully
 /// restored to the working tree — exactly the "stash lost, conflict unresolved"
-/// footgun that ADR-0009 was designed to prevent.
+/// footgun that ADR-0009 was designed to prevent (and that issue #280 hit,
+/// because a conflicted `stash_apply` still returns `Ok`).
 ///
 /// This function is therefore intentionally `fn` (private to this module), not `pub fn`.
 /// The only caller is [`execute_stash_pop`].
@@ -698,17 +742,24 @@ pub fn execute_stash_drop(repo: &mut Repository, index: usize) -> Result<String,
 // Internal helper: stash pop conflict prediction
 // ────────────────────────────────────────────────────────────
 
-/// Predict whether applying a stash commit onto HEAD would produce merge conflicts.
+/// Predict whether applying the stash commit onto HEAD would produce conflicts.
 ///
-/// Uses `repo.merge_commits(&head_commit, &stash_commit, None)` — an in-memory merge
-/// that does NOT modify the working tree or repo state.
+/// Runs the same three-way merge `git_stash_apply` runs (issue #280):
+/// **ancestor = the stash commit's `parent[0]` tree** (the HEAD the stash was
+/// taken from), ours = the current HEAD tree, theirs = the stash tree. The old
+/// implementation used `merge_commits(HEAD, stash)`, whose base is
+/// `merge_base(HEAD, stash)` — a *different*, older base whenever the branch
+/// the stash was taken on is not an ancestor of the current HEAD, which let
+/// real apply-time conflicts slip past the blocker.
 ///
-/// The `stash_oid` is the OID of the stash commit itself (parent[0] = base HEAD,
-/// parent[1] = index snapshot, parent[2] = untracked files if applicable).
-/// Merging the stash commit against the current HEAD predicts whether
-/// `git stash apply` would conflict.
+/// In-memory only: does NOT modify the working tree, index, or repo state.
 ///
-/// Returns `Some(blocker_note)` if a conflict is predicted, `None` if clean.
+/// **Fail-closed**: any internal error is reported as a blocker
+/// ([`StashNote::PopPredictionUnavailable`]), never as "clean" — pop deletes
+/// the stash entry, so an unverifiable pop must not proceed.
+///
+/// Returns `Some(blocker_note)` if a conflict is predicted or the prediction
+/// could not be computed, `None` only when the merge is provably clean.
 fn predict_stash_pop_conflict(
     repo: &Repository,
     head: &Head,
@@ -717,22 +768,29 @@ fn predict_stash_pop_conflict(
     // Resolve HEAD OID.
     let head_oid = match head {
         Head::Attached { target, .. } | Head::Detached { target } => {
-            git2::Oid::from_str(target).ok()?
+            match git2::Oid::from_str(target) {
+                Ok(oid) => oid,
+                Err(e) => return Some(prediction_unavailable(e.message())),
+            }
         }
+        // No HEAD commit: there is nothing to merge against, so the apply is a
+        // plain checkout of the stash tree — nothing to predict.
         Head::Unborn { .. } => return None,
     };
 
-    let head_commit = repo.find_commit(head_oid).ok()?;
-    let stash_commit = repo.find_commit(stash_oid).ok()?;
+    let index_result = match stash_apply_dry_run(repo, head_oid, stash_oid) {
+        Ok(index) => index,
+        Err(e) => return Some(prediction_unavailable(e.message())),
+    };
 
-    // In-memory merge of HEAD with the stash commit: does NOT set MERGING state,
-    // does NOT touch the working tree.
-    let index_result = repo.merge_commits(&head_commit, &stash_commit, None).ok()?;
+    if !index_result.has_conflicts() {
+        return None;
+    }
 
-    if index_result.has_conflicts() {
-        // Collect conflicting file paths.
-        let mut conflict_files: Vec<String> = Vec::new();
-        if let Ok(conflicts) = index_result.conflicts() {
+    // Collect conflicting file paths.
+    let mut conflict_files: Vec<String> = Vec::new();
+    match index_result.conflicts() {
+        Ok(conflicts) => {
             for c in conflicts.flatten() {
                 let path_bytes: Option<Vec<u8>> = c
                     .our
@@ -745,13 +803,34 @@ fn predict_stash_pop_conflict(
                 }
             }
         }
-        Some(PlanNote::Stash(StashNote::PopWouldConflict {
-            count: conflict_files.len(),
-            files: conflict_files,
-        }))
-    } else {
-        None
+        // Still a conflict — we just could not name the files.
+        Err(_) => conflict_files.clear(),
     }
+    Some(PlanNote::Stash(StashNote::PopWouldConflict {
+        count: conflict_files.len(),
+        files: conflict_files,
+    }))
+}
+
+/// The in-memory three-way merge `git_stash_apply` would perform.
+fn stash_apply_dry_run(
+    repo: &Repository,
+    head_oid: git2::Oid,
+    stash_oid: git2::Oid,
+) -> Result<git2::Index, git2::Error> {
+    let head_tree = repo.find_commit(head_oid)?.tree()?;
+    let stash_commit = repo.find_commit(stash_oid)?;
+    // parent[0] of a stash commit is the HEAD it was created from — the base
+    // libgit2 uses for the apply.
+    let base_tree = stash_commit.parent(0)?.tree()?;
+    let stash_tree = stash_commit.tree()?;
+    repo.merge_trees(&base_tree, &head_tree, &stash_tree, None)
+}
+
+fn prediction_unavailable(reason: &str) -> PlanNote {
+    PlanNote::Stash(StashNote::PopPredictionUnavailable {
+        reason: reason.to_string(),
+    })
 }
 
 // ────────────────────────────────────────────────────────────
@@ -765,6 +844,9 @@ fn predict_stash_pop_conflict(
 ///    [`preflight_check`]).
 /// 2. The number of stash entries matches `expected_stash_count` — if another
 ///    process pushed or dropped a stash between planning and execution, abort.
+/// 3. The working tree is still clean (issue #280): apply/pop are planned
+///    against a clean tree, and a tree that turned dirty or conflicted between
+///    plan and execute is exactly what makes `stash_apply` write conflicts.
 ///
 /// # Errors
 ///
@@ -778,7 +860,31 @@ pub fn preflight_check_stash(
     // 1. Head check (re-use existing).
     preflight_check(repo, plan)?;
 
-    // 2. Stash count check.
+    // 2. Working tree must still be clean (issue #280) — apply/pop only; a
+    // standalone drop never touches the working tree, so it stays allowed on a
+    // dirty tree exactly as `plan_stash_drop` promises.
+    let needs_clean_tree = matches!(
+        plan.title,
+        PlanTitle::Stash(StashTitle::Apply { .. } | StashTitle::Pop { .. })
+    );
+    // Status only when it matters: working_tree_status walks every untracked
+    // directory, which is real time on a large repo, and a drop's preflight
+    // would pay it for nothing (#280 review, item 8).
+    if needs_clean_tree {
+        let status = working_tree_status(repo)?;
+        if !status.conflicted.is_empty() || !status.staged.is_empty() || !status.unstaged.is_empty()
+        {
+            return Err(GitError::Other(format!(
+                "Working tree changed since planning: {} staged, {} modified, {} conflicted. \
+                 Please re-plan before proceeding.",
+                status.staged.len(),
+                status.unstaged.len(),
+                status.conflicted.len(),
+            )));
+        }
+    }
+
+    // 3. Stash count check.
     let current_count = count_stashes(repo)?;
     if current_count != expected_stash_count {
         return Err(GitError::Other(format!(

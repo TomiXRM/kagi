@@ -1247,3 +1247,258 @@ fn per_hunk_accept_is_independent() {
         assert_eq!(hunks[1].choice, HunkChoice::AcceptIncoming);
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Issue #278 — abort must roll back the WHOLE merge result tree
+// ────────────────────────────────────────────────────────────
+
+/// Merge with one conflicting file, two cleanly-merged files, one file the
+/// merge adds, and one file the user dirtied that the merge never touches.
+fn wide_merge_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    write_file(dir, "a.txt", "base a\n");
+    write_file(dir, "b.txt", "base b\n");
+    write_file(dir, "sub/c.txt", "base c\n");
+    write_file(dir, "untouched.txt", "base untouched\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // feature: touches all three + adds one file.
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_file(dir, "a.txt", "FEATURE a\n");
+    write_file(dir, "b.txt", "FEATURE b\n");
+    write_file(dir, "sub/c.txt", "FEATURE c\n");
+    write_file(dir, "added.txt", "FEATURE added\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "feature change"]);
+
+    // main: touches only a.txt → a.txt conflicts, b/c merge cleanly.
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "a.txt", "MAIN a\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    // The user has an unrelated dirty file the merge never looks at.
+    write_file(dir, "untouched.txt", "USER EDIT\n");
+
+    git_allow_fail(dir, &["merge", "feature"]);
+    tmp
+}
+
+#[test]
+fn abort_restores_cleanly_merged_files_and_removes_added_files() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    // Pre-condition: the merge really did write the clean side to disk.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "FEATURE b\n"
+    );
+    assert!(dir.join("added.txt").exists());
+
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    assert_eq!(session.files.len(), 1, "only a.txt conflicts");
+
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort");
+
+    // Conflicting file back to the pre-merge content, no markers.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+    // Cleanly-merged incoming files rolled back (the #278 regression).
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "base b\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("sub/c.txt")).unwrap(),
+        "base c\n"
+    );
+    // File the merge added is gone (real `git merge --abort` behaviour).
+    assert!(
+        !dir.join("added.txt").exists(),
+        "merge-added file must be removed by abort"
+    );
+    // The user's own dirty file — untouched by the merge — survives.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("untouched.txt")).unwrap(),
+        "USER EDIT\n"
+    );
+
+    // Nothing else stray: the ONLY working-tree difference is the user's file,
+    // and it is unstaged (`git_output` trims, so the porcelain XY column is
+    // checked via the two diff lists instead).
+    assert_eq!(
+        git_output(dir, &["status", "--porcelain"]),
+        "M untouched.txt",
+        "abort left stray changes"
+    );
+    assert_eq!(git_output(dir, &["diff", "--name-only"]), "untouched.txt");
+    assert_eq!(git_output(dir, &["diff", "--cached", "--name-only"]), "");
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}
+
+#[test]
+fn abort_leaves_status_clean_without_user_dirt() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    // Undo the deliberate user dirt so the tree should end up perfectly clean.
+    write_file(dir, "untouched.txt", "base untouched\n");
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort");
+
+    assert_eq!(
+        git_output(dir, &["status", "--porcelain"]),
+        "",
+        "`git status --porcelain` must be empty after abort"
+    );
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}
+
+/// Rebase of two commits onto `main` where the FIRST replayed commit conflicts
+/// and the second is independent — so skipping must keep the second pick.
+fn rebase_two_step_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+    write_file(dir, "later.txt", "LATER\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "later commit"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git(dir, &["checkout", "-q", "side"]);
+    git_allow_fail(dir, &["rebase", "main"]);
+    tmp
+}
+
+#[test]
+fn skip_keeps_the_remaining_sequencer_picks() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = rebase_two_step_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("rebase conflict session");
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+    assert!(
+        !dir.join("later.txt").exists(),
+        "the second pick has not been replayed yet"
+    );
+
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_skip(&repo, &session, &buffer).expect("skip exec");
+
+    // The conflicting pick was dropped …
+    assert_eq!(
+        std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+        "MAIN\n"
+    );
+    // … but the REST of the sequence survived and was replayed (#278: the old
+    // `cleanup_state()` deleted rebase-merge/ and lost it silently).
+    assert!(
+        dir.join("later.txt").exists(),
+        "remaining pick must still be applied after skip"
+    );
+    let subjects = git_output(dir, &["log", "--format=%s", "-3"]);
+    assert!(
+        subjects.contains("later commit"),
+        "remaining pick must be committed, log was {:?}",
+        subjects
+    );
+
+    // The rebase finished cleanly: no sequencer state, HEAD attached to `side`.
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+    assert_eq!(
+        git_output(dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "side"
+    );
+    assert_eq!(git_output(dir, &["status", "--porcelain"]), "");
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}
+
+/// A cleanly-merged file edited DURING Conflict Mode must block the abort.
+///
+/// The abort's checkout is a pathspec-bounded force, justified by "whatever
+/// stands at a touched path is the operation's output" — true when the
+/// conflict state was entered, but the user can edit a non-conflicted file
+/// through the Editor before aborting. Real git refuses here
+/// ("Entry 'b.txt' not uptodate. Cannot merge.", verified against git 2.x);
+/// kagi must not silently destroy what git protects.
+#[test]
+fn abort_refuses_when_a_cleanly_merged_file_was_edited_mid_conflict() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    // The user edits a file the merge resolved cleanly.
+    std::fs::write(dir.join("b.txt"), "USER MID-MERGE EDIT\n").unwrap();
+
+    let err = execute_conflict_abort(&repo, &session, &buffer)
+        .expect_err("abort must refuse rather than overwrite the user's edit");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("b.txt"),
+        "the refusal must name the file: {msg}"
+    );
+
+    // Nothing was mutated: the edit survives and the conflict state is intact.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "USER MID-MERGE EDIT\n"
+    );
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "the refusal must leave the conflicted state fully intact"
+    );
+
+    // Reverting the edit unblocks the abort; editing the CONFLICTED file does
+    // not block it (abort discards resolution progress by design).
+    std::fs::write(dir.join("b.txt"), "FEATURE b\n").unwrap();
+    std::fs::write(dir.join("a.txt"), "half-resolved scribble\n").unwrap();
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort after revert");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+}

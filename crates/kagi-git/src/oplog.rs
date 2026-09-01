@@ -33,6 +33,15 @@ pub enum OpOutcome {
         /// Repository state immediately after execution.
         after: StateSummary,
     },
+    /// Operation was only PARTIALLY applied: the working tree was mutated but
+    /// did not fully succeed (issue #281). The recovery handle (e.g. discard's
+    /// backup blob SHAs) lives in `after.dirty`.
+    Partial {
+        /// Repository state immediately after the partial execution.
+        after: StateSummary,
+        /// Human-readable description of what failed.
+        error: String,
+    },
     /// Operation failed (preflight failure, execute error, etc.).
     Failed {
         /// Human-readable error description.
@@ -128,6 +137,13 @@ fn entry_to_json(entry: &OpLogEntry) -> String {
             format!(
                 "{{\"kind\":\"Success\",\"after\":{}}}",
                 state_summary_to_json(after)
+            )
+        }
+        OpOutcome::Partial { after, error } => {
+            format!(
+                "{{\"kind\":\"Partial\",\"after\":{},\"error\":{}}}",
+                state_summary_to_json(after),
+                escape_json_string(error)
             )
         }
         OpOutcome::Failed { error } => {
@@ -415,6 +431,16 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
             let dirty = extract_str_field(&after_obj, "dirty").unwrap_or_default();
             OpOutcome::Success {
                 after: super::ops::StateSummary { head, dirty },
+            }
+        }
+        "Partial" => {
+            let after_obj = extract_object_field(&outcome_obj, "after")?;
+            let head = extract_str_field(&after_obj, "head").unwrap_or_default();
+            let dirty = extract_str_field(&after_obj, "dirty").unwrap_or_default();
+            let error = extract_str_field(&outcome_obj, "error").unwrap_or_default();
+            OpOutcome::Partial {
+                after: super::ops::StateSummary { head, dirty },
+                error,
             }
         }
         "Failed" => {

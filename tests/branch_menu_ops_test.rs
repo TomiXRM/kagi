@@ -53,6 +53,18 @@ fn git_rev_parse(dir: &Path, rev: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+fn git_status_porcelain(dir: &Path) -> String {
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", dir)
+        .output()
+        .expect("git status failed to start");
+    assert!(output.status.success(), "git status --porcelain failed");
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
 fn init_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
     git(dir, &["init", "-q", "-b", "main", "."]);
@@ -383,7 +395,132 @@ fn switch_to_latest_fast_forwards_behind_branch() {
         c2,
         "local topic should be at C2"
     );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("topic.txt")).unwrap(),
+        "c2\n",
+        "working tree should reflect the fast-forwarded content"
+    );
+    assert_eq!(
+        git_status_porcelain(dir),
+        "",
+        "working tree/index should be clean after the fast-forward"
+    );
     // Keep the remote dir alive until the end.
+    let _ = remote_tmp;
+}
+
+/// Reproduction for issue #279: "switch to latest" must check out the tree
+/// BEFORE moving `refs/heads/<branch>`. When HEAD is already on the branch
+/// being switched, moving the ref first makes libgit2's implicit checkout
+/// baseline (the HEAD tree) equal the target tree, turning `checkout_tree`
+/// into a silent no-op while the ref still advances.
+#[test]
+fn switch_to_latest_head_on_target_branch_updates_working_tree() {
+    let (repo_tmp, remote_tmp, remote_url) = repo_with_pushed_topic();
+    let dir = repo_tmp.path();
+    // HEAD stays ON topic (repo_with_pushed_topic leaves it on main by default).
+    git(dir, &["checkout", "-q", "topic"]);
+    let repo = Repository::open(dir).unwrap();
+
+    // A second clone advances origin/topic to C2: modifies topic.txt and adds
+    // a new file, behind our back.
+    let clone_tmp = TempDir::new().unwrap();
+    let clone_dir = clone_tmp.path().join("b");
+    git(
+        clone_tmp.path(),
+        &["clone", "-q", &remote_url, clone_dir.to_str().unwrap()],
+    );
+    git(&clone_dir, &["config", "user.name", "Test"]);
+    git(&clone_dir, &["config", "user.email", "test@example.com"]);
+    git(&clone_dir, &["checkout", "-q", "topic"]);
+    write_file(&clone_dir, "topic.txt", "c2\n");
+    write_file(&clone_dir, "added.txt", "added\n");
+    git(&clone_dir, &["add", "topic.txt", "added.txt"]);
+    git(&clone_dir, &["commit", "-qm", "topic c2"]);
+    git(&clone_dir, &["push", "-q", "origin", "topic"]);
+    let c2 = git_rev_parse(&clone_dir, "HEAD");
+
+    // HEAD is already on topic (at C1), working tree clean.
+    assert_eq!(repo.head().unwrap().shorthand().unwrap(), "topic");
+    let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    execute_switch_to_latest(&repo, dir, &plan, "topic", "origin/topic").expect("execute");
+
+    assert_eq!(
+        git_rev_parse(dir, "refs/heads/topic"),
+        c2,
+        "refs/heads/topic should be advanced to C2"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("topic.txt")).unwrap(),
+        "c2\n",
+        "working tree must be updated to C2's content, not left stale at C1"
+    );
+    assert!(
+        dir.join("added.txt").exists(),
+        "added.txt from C2 must be checked out"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("added.txt")).unwrap(),
+        "added\n"
+    );
+    assert_eq!(
+        git_status_porcelain(dir),
+        "",
+        "working tree/index must be clean, not showing a stale reverse-diff"
+    );
+    let _ = remote_tmp;
+}
+
+/// The error-path half of issue #279: when checkout fails (dirty file
+/// conflicts with the incoming change), `refs/heads/<branch>` must NOT have
+/// already been force-moved to the remote tip.
+#[test]
+fn switch_to_latest_dirty_conflict_leaves_ref_unmoved() {
+    let (repo_tmp, remote_tmp, remote_url) = repo_with_pushed_topic();
+    let dir = repo_tmp.path();
+    git(dir, &["checkout", "-q", "topic"]);
+    let repo = Repository::open(dir).unwrap();
+    let c1 = git_rev_parse(dir, "refs/heads/topic");
+
+    // Advance origin/topic to C2 via a second clone, same as above.
+    let clone_tmp = TempDir::new().unwrap();
+    let clone_dir = clone_tmp.path().join("b");
+    git(
+        clone_tmp.path(),
+        &["clone", "-q", &remote_url, clone_dir.to_str().unwrap()],
+    );
+    git(&clone_dir, &["config", "user.name", "Test"]);
+    git(&clone_dir, &["config", "user.email", "test@example.com"]);
+    git(&clone_dir, &["checkout", "-q", "topic"]);
+    write_file(&clone_dir, "topic.txt", "c2\n");
+    git(&clone_dir, &["add", "topic.txt"]);
+    git(&clone_dir, &["commit", "-qm", "topic c2"]);
+    git(&clone_dir, &["push", "-q", "origin", "topic"]);
+
+    // Dirty, uncommitted local change to the same file that the incoming FF
+    // would also touch — safe-mode checkout must refuse to clobber it.
+    write_file(dir, "topic.txt", "dirty-local\n");
+
+    let plan = plan_switch_to_latest(&repo, "topic", "origin/topic").expect("plan");
+    // The plan itself flags this as dirty; execute is invoked directly here
+    // (bypassing the blocker) to exercise the execute-time failure path.
+    assert!(!plan.blockers.is_empty());
+
+    let result = execute_switch_to_latest(&repo, dir, &plan, "topic", "origin/topic");
+    assert!(result.is_err(), "expected checkout to fail on dirty file");
+
+    assert_eq!(
+        git_rev_parse(dir, "refs/heads/topic"),
+        c1,
+        "refs/heads/topic must NOT have moved when checkout failed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("topic.txt")).unwrap(),
+        "dirty-local\n",
+        "the dirty local file must be left untouched"
+    );
     let _ = remote_tmp;
 }
 

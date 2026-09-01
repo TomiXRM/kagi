@@ -7,7 +7,7 @@ use crate::{
     commit::CommitId,
     plan::{
         AmendMode, AmendOutcome, DiscardOutcome, PullOutcome, PushOutcome, RebaseOutcome,
-        UndoOutcome,
+        StashPopOutcome, UndoOutcome,
     },
 };
 
@@ -146,5 +146,6 @@ pub enum OperationOutcome {
     Discard(DiscardOutcome),
     MergeIntoConflict(Vec<String>),
     Rebase(RebaseOutcome),
+    StashPop(StashPopOutcome),
     Unit,
 }

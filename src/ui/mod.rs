@@ -1874,6 +1874,10 @@ impl KagiApp {
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
                 true,
             ),
+            OpOutcome::Partial { error, .. } => (
+                SharedString::from(format!("{}: partially applied — {}", op, error)),
+                false,
+            ),
             OpOutcome::Failed { error } => (
                 SharedString::from(format!("{}: failed — {}", op, error)),
                 false,

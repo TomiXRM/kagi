@@ -10,8 +10,8 @@ use super::{
     resolution::ResolutionBuffer, resolve_head, snapshot, staging, status, AmendMode, AmendOutcome,
     BranchRenameValidation, CommitId, CommitPreview, DiscardOutcome, FetchOutcome, FileDiff,
     FileDiffStat, FileHistory, FileHistoryRequest, FileSnapshotContent, FileStatus, GitError, Head,
-    MergeKind, OperationPlan, PullOutcome, PushOutcome, RawEcosystem, RepoSnapshot, UndoOutcome,
-    WorkingTreeStatus,
+    MergeKind, OperationPlan, PullOutcome, PushOutcome, RawEcosystem, RepoSnapshot,
+    StashPopOutcome, UndoOutcome, WorkingTreeStatus,
 };
 
 pub struct Backend {
@@ -595,7 +595,7 @@ impl Backend {
                 .map(|()| OperationOutcome::Unit),
             Operation::StashPop { index } => self
                 .execute_stash_pop(*index)
-                .map(|()| OperationOutcome::Unit),
+                .map(OperationOutcome::StashPop),
             Operation::CherryPick { id } => {
                 self.execute_cherry_pick(id).map(OperationOutcome::Commit)
             }
@@ -931,7 +931,7 @@ impl Backend {
         ops::plan_stash_pop(&mut self.repo, index)
     }
 
-    pub fn execute_stash_pop(&mut self, index: usize) -> Result<(), GitError> {
+    pub fn execute_stash_pop(&mut self, index: usize) -> Result<StashPopOutcome, GitError> {
         ops::execute_stash_pop(&mut self.repo, index)
     }
 

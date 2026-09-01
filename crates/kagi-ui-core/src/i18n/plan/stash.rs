@@ -57,13 +57,17 @@ pub fn note_ja(note: &StashNote) -> String {
                 files.join(", ")
             };
             format!(
-                "stash pop を実行すると {} 件のコンフリクトが発生します: {}。\
-                 stash entry を失わないよう pop はブロックされました。\
-                 代わりに 'Stash Apply' を使用してください: stash を削除せずに適用できるため、\
-                 安全にコンフリクトを解決できます。",
+                "stash pop を実行すると {} 件のファイルがコンフリクトします: {}。\
+                 stash entry は保持されます — コンフリクトを解決してから手動で drop してください。",
                 count, files_label
             )
         }
+        StashNote::PopPredictionUnavailable { reason } => format!(
+            "stash がクリーンに適用できるか検証できませんでした({})。\
+             pop は stash entry を削除するためブロックされました。\
+             代わりに 'Stash Apply' を使用してください: stash を削除せずに適用できます。",
+            reason
+        ),
         StashNote::RemoteDropIrreversible => {
             "リモートホスト上の stash entry を完全に削除します。Kagi から元に戻すことはできません。"
                 .to_string()

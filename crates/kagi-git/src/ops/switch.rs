@@ -364,6 +364,26 @@ pub fn execute_switch_to_latest(
             .unwrap_or(false);
 
     if can_ff {
+        // ORDER MATTERS: check out the remote tree while refs/heads/<branch>
+        // (and, if HEAD is already on it, HEAD itself) still point at the OLD
+        // tree. Safe checkout then sees old->new as the change set (updates
+        // modified files, creates new ones, writes the index). Moving the
+        // branch ref first makes the baseline equal the target when HEAD is
+        // already on this branch — checkout_tree's implicit baseline is the
+        // HEAD tree, so baseline==target turns it into a silent no-op and the
+        // working tree/index go stale (see pull.rs for the same trap).
+        // Inlined rather than via checkout_branch_tree, whose set_head would
+        // run BEFORE the ref move: a reference() failure (ref lock, packed-refs
+        // corruption) would then leave HEAD on branch@old with tree+index at
+        // new — the exact staged-reverse-diff symptom this fix removes. Same
+        // three-step order as pull.rs: checkout_tree → reference → set_head.
+        let mut cb = git2::build::CheckoutBuilder::new();
+        cb.safe();
+        repo.checkout_tree(remote_commit.as_object(), Some(&mut cb))
+            .map_err(|e| GitError::Other(format!("checkout_tree failed: {}", e.message())))?;
+
+        // Advance the branch ref to the remote tip (force=true only overwrites
+        // the ref we just validated as an ancestor — a safe FF).
         let refname = format!("refs/heads/{}", branch_name);
         repo.reference(
             &refname,
@@ -376,7 +396,8 @@ pub fn execute_switch_to_latest(
             ),
         )
         .map_err(|e| GitError::Other(format!("branch ref update failed: {}", e.message())))?;
-        checkout_branch_tree(repo, branch_name, remote_commit.as_object())?;
+        repo.set_head(&refname)
+            .map_err(|e| GitError::Other(format!("set_head failed: {}", e.message())))?;
     } else {
         // Diverged or ahead — switch to the branch at its current tip, no move.
         let local_commit = repo

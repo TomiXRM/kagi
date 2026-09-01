@@ -284,7 +284,30 @@ impl KagiApp {
         let task =
             cx.background_spawn(async move { discard_blocking(&bg_path, &bg_plan, &bg_paths) });
         self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok((summary, after)) => {
+            // #281: a partial discard mutated the working tree, so the oplog entry
+            // must carry the after-state (which holds the backup blob SHAs — the
+            // user's only handle on the overwritten content) AND the UI must
+            // reload so the display matches what is actually on disk.
+            Ok((_summary, after, Some(err_msg))) => {
+                klog!("async: discard partially applied — {}", err_msg);
+                app.record_op(
+                    "discard",
+                    plan.current.clone(),
+                    OpOutcome::Partial {
+                        after,
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "{}: {}",
+                    Msg::DiscardPartial.t(),
+                    err_msg
+                )));
+                app.reload(cx);
+            }
+            Ok((summary, after, None)) => {
                 klog!("async: discard finished");
                 app.record_op(
                     "discard",
@@ -318,6 +341,9 @@ impl KagiApp {
                     // re-confirming, so require the two-stage flow again.
                     confirm_armed: false,
                 });
+                // #281: never leave the UI showing a state that may no longer
+                // exist on disk — re-read even on the pure-failure path.
+                app.reload(cx);
             }
         });
     }

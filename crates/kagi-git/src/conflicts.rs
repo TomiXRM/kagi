@@ -1376,10 +1376,13 @@ pub fn plan_conflict_abort(
 /// Execute an `abort`: clean the operation state, restore HEAD's working tree to
 /// the pre-operation `ORIG_HEAD`, and preserve the resolution buffer.
 ///
-/// Restoration uses a **safe** checkout of the ORIG_HEAD tree (no
-/// `reset --hard`, no `clean`): the index/working tree are pointed back at the
-/// pre-op tree, then `cleanup_state` removes the `MERGE_HEAD` / sequencer
-/// metadata.  The branch ref is moved back to ORIG_HEAD so the aborted commit
+/// Restoration is a `checkout_tree` of the ORIG_HEAD tree **restricted to the
+/// paths the aborted operation itself wrote** (no `reset --hard`, no `clean`):
+/// the index is read back to the pre-op tree, those paths are rewritten from
+/// it (files the operation added are removed), then `cleanup_state` removes the
+/// `MERGE_HEAD` / sequencer metadata.  Paths the operation never touched are
+/// outside the pathspec and are never looked at, so unrelated local work
+/// survives.  The branch ref is moved back to ORIG_HEAD so the aborted commit
 /// chain is detached (recoverable via reflog).
 ///
 /// The `buffer` is flushed to the autosave directory first so a partial
@@ -1396,8 +1399,8 @@ pub fn execute_conflict_abort(
     // 2. Resolve ORIG_HEAD (the pre-operation HEAD).
     let orig_sha = read_orig_head(repo);
 
-    // 3. If we know ORIG_HEAD, restore the working tree + index to its tree via
-    //    a SAFE checkout (no force), then move the branch ref back.
+    // 3. If we know ORIG_HEAD, restore the working tree + index to its tree,
+    //    then move the branch ref back.
     if let Some(ref sha) = orig_sha {
         let oid = git2::Oid::from_str(sha)
             .map_err(|e| GitError::Other(format!("bad ORIG_HEAD {}: {}", sha, e.message())))?;
@@ -1408,25 +1411,45 @@ pub fn execute_conflict_abort(
             GitError::Other(format!("ORIG_HEAD tree lookup failed: {}", e.message()))
         })?;
 
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
-            .to_path_buf();
+        if repo.workdir().is_none() {
+            return Err(GitError::Other(
+                "repository has no working tree".to_string(),
+            ));
+        }
 
-        // Restore the working tree + index to the pre-operation tree without any
-        // force / `reset --hard` / `clean`.
+        // Restore the working tree + index to the pre-operation tree.
         //
-        // Two obstacles must be handled explicitly:
-        //   1. A safe checkout refuses while the index still holds conflict
-        //      stages ("unresolved conflicts exist in the index").
-        //   2. A conflicting working-tree file is full of markers, so after the
-        //      index is reset to ORIG_HEAD a safe checkout sees no index→tree
-        //      diff and skips it, leaving marker residue.
+        // The old implementation only rewrote `session.files` (the *conflicting*
+        // paths) and left every cleanly-merged incoming file — and every file
+        // the operation added — on disk (issue #278: 9,997 stray "modified"
+        // files after a 10k-file merge).  The operation checked out its whole
+        // result tree, so the whole result tree has to be rolled back.
         //
-        // We therefore (a) read the pre-op tree into the index to drop the
-        // conflict stages, then (b) write each conflicting path's pre-op blob
-        // content straight to the working tree (a targeted, per-path rewrite of
-        // exactly the files the aborted operation touched — not a broad reset).
+        // The path set is computed *before* anything is mutated, so a failure
+        // there leaves the conflicted state intact rather than half-restored.
+        let touched = op_touched_paths(repo, &tree, session)?;
+
+        // Refuse if the user edited a *cleanly-merged* file while in Conflict
+        // Mode.  The force-checkout below is justified by "whatever stands at
+        // a touched path is the operation's own output" — which is true when
+        // the conflict state was entered, but not necessarily at abort time:
+        // Conflict Mode is an editing session, and nothing stops the user
+        // from changing a non-conflicted file through the Editor meanwhile.
+        // Real git refuses exactly here ("Entry 'b.txt' not uptodate. Cannot
+        // merge.") and this matches it.  Conflicted paths are exempt: abort
+        // discards resolution progress by design.
+        //
+        // Checked BEFORE any mutation, so the refusal leaves the conflicted
+        // state fully intact.
+        let edited = mid_conflict_edits(repo, session, &touched)?;
+        if !edited.is_empty() {
+            return Err(GitError::Other(format!(
+                "abort refused: {} file(s) were edited during conflict resolution and would be overwritten: {}. Commit, stash or revert those edits first.",
+                edited.len(),
+                edited.join(", ")
+            )));
+        }
+
         {
             let mut index = repo
                 .index()
@@ -1439,27 +1462,7 @@ pub fn execute_conflict_abort(
                 .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
         }
 
-        for file in &session.files {
-            let abs = workdir.join(&file.path);
-            // The pre-op tree may not contain the file (e.g. it was added by the
-            // operation); in that case remove the conflicted working-tree copy.
-            match tree.get_path(&file.path) {
-                Ok(entry) => {
-                    if let Ok(blob) = repo.find_blob(entry.id()) {
-                        if let Some(parent) = abs.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        std::fs::write(&abs, blob.content()).map_err(|e| {
-                            GitError::Other(format!("restore {} failed: {}", abs.display(), e))
-                        })?;
-                    }
-                }
-                Err(_) => {
-                    // Not in the pre-op tree → remove the conflicted file.
-                    let _ = std::fs::remove_file(&abs);
-                }
-            }
-        }
+        checkout_paths_from_tree(repo, &tree, &touched)?;
 
         // Move the current branch ref (if attached) back to ORIG_HEAD.
         if let Ok(head_ref) = repo.head() {
@@ -1482,6 +1485,134 @@ pub fn execute_conflict_abort(
         restored_to: orig_sha,
         buffer_preserved_at,
     })
+}
+
+/// Paths among `touched` that are NOT conflicted and whose working-tree state
+/// differs from the index — i.e. files the user edited (or re-created) during
+/// Conflict Mode on top of the operation's output.  These are the paths the
+/// abort's force-checkout would destroy, so their presence blocks the abort.
+fn mid_conflict_edits(
+    repo: &Repository,
+    session: &ConflictSession,
+    touched: &[String],
+) -> Result<Vec<String>, GitError> {
+    let conflicted: std::collections::BTreeSet<&str> = session
+        .files
+        .iter()
+        .filter_map(|f| f.path.to_str())
+        .collect();
+    let mut opts = git2::DiffOptions::new();
+    // A file the op deleted and the user re-created shows up as untracked.
+    opts.include_untracked(true);
+    opts.disable_pathspec_match(true);
+    let mut any = false;
+    for p in touched {
+        if !conflicted.contains(p.as_str()) {
+            opts.pathspec(p.as_str());
+            any = true;
+        }
+    }
+    if !any {
+        return Ok(Vec::new());
+    }
+    let diff = repo
+        .diff_index_to_workdir(None, Some(&mut opts))
+        .map_err(|e| GitError::Other(format!("diff index → workdir failed: {}", e.message())))?;
+    let mut edited: Vec<String> = diff
+        .deltas()
+        .filter_map(|d| d.new_file().path().or_else(|| d.old_file().path()))
+        .filter_map(|p| p.to_str().map(|s| s.to_string()))
+        .collect();
+    edited.sort();
+    edited.dedup();
+    Ok(edited)
+}
+
+/// Every path the in-progress operation wrote into the working tree.
+///
+/// That is the diff between the pre-op `tree` and the operation-result index
+/// (cleanly-merged modifications, additions and deletions), plus the session's
+/// conflicting paths — those carry only stage 1/2/3 entries, so they can be
+/// reported inconsistently by a tree↔index diff and are added explicitly.
+///
+/// Non-UTF-8 paths are dropped: they cannot be expressed as a libgit2
+/// pathspec.  (Tracked separately as issue #293 — the whole codebase loses
+/// non-UTF-8 paths today; this function does not make that worse.)
+fn op_touched_paths(
+    repo: &Repository,
+    tree: &git2::Tree<'_>,
+    session: &ConflictSession,
+) -> Result<Vec<String>, GitError> {
+    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    let diff = repo
+        .diff_tree_to_index(Some(tree), None, None)
+        .map_err(|e| {
+            GitError::Other(format!("diff pre-op tree → index failed: {}", e.message()))
+        })?;
+    for delta in diff.deltas() {
+        for file in [delta.old_file(), delta.new_file()] {
+            if let Some(p) = file.path().and_then(|p| p.to_str()) {
+                paths.insert(p.to_string());
+            }
+        }
+    }
+
+    for file in &session.files {
+        if let Some(p) = file.path.to_str() {
+            paths.insert(p.to_string());
+        }
+    }
+
+    Ok(paths.into_iter().collect())
+}
+
+/// Check `tree` out over exactly `paths` (and nothing else), removing paths the
+/// tree does not contain.
+///
+/// # Why this is `force()` and still safe
+///
+/// A *safe* checkout cannot do this job: the index has just been read back to
+/// `tree`, so libgit2 sees no index→tree diff for these paths, treats the
+/// operation's own output on disk as a local modification and skips it —
+/// exactly the residue this is meant to clear.  `force()` compares the working
+/// tree against `tree` directly and rewrites it.
+///
+/// The force is bounded by the pathspec to the paths the aborted operation
+/// itself wrote, and whatever wrote them refused to overwrite local
+/// modifications: kagi's own merge/cherry-pick/revert use
+/// `CheckoutBuilder::safe()`, and the operations that did NOT go through a
+/// kagi checkout — rebase (shelled out to `git`, ops/rebase.rs) and conflicts
+/// entered from the CLI and picked up by the watcher — were written by real
+/// git, which equally refuses to clobber locally-modified files.  So the
+/// content standing at these paths is the operation's own output, never
+/// pre-operation user work — dropping it is precisely what
+/// `git merge --abort` does.  (Edits made DURING Conflict Mode are the one
+/// exception, and `mid_conflict_edits` blocks the abort on those first.)  Paths outside the pathspec (including unrelated
+/// dirty and untracked files) are not candidates — with the caveat that
+/// libgit2's `disable_pathspec_match` disables fnmatch but keeps dirname
+/// prefix matching, so a pathspec entry that names a directory (e.g. a
+/// gitlink delta) would cover its contents.  `remove_untracked` is
+/// likewise pathspec-bounded: it removes the files the operation *added*
+/// (untracked once the index is back at `tree`), which is again what real
+/// `git merge --abort` does.
+fn checkout_paths_from_tree(
+    repo: &Repository,
+    tree: &git2::Tree<'_>,
+    paths: &[String],
+) -> Result<(), GitError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.force();
+    cb.remove_untracked(true);
+    cb.disable_pathspec_match(true);
+    for path in paths {
+        cb.path(path.as_str());
+    }
+    repo.checkout_tree(tree.as_object(), Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("checkout_tree (abort) failed: {}", e.message())))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1545,16 +1676,16 @@ pub fn plan_conflict_skip(
 
 /// Execute a `skip` of the current sequencer step.
 ///
-/// Discards the conflicting step's changes safely (no `reset --hard`, no
-/// `clean`): the conflicting paths are restored to HEAD's tree content (or
-/// removed if absent in HEAD), the index conflict stages are dropped by reading
-/// HEAD's tree, and the current-step sequencer metadata is cleared via
-/// `cleanup_state`.  The resolution buffer is preserved first (ADR-0057).
+/// Shells out to `git <op> --skip` (`run_git`, matching
+/// [`execute_conflict_continue`]'s `--continue`), which drops the current
+/// pick's changes and advances the sequencer to the next one.  The resolution
+/// buffer is preserved first (ADR-0057).
 ///
-/// Driving a multi-step sequence forward to the *next* pick is deferred to the
-/// dedicated sequence executor (mirroring `execute_conflict_continue`'s
-/// `Staged` deferral); this backend half guarantees the current step is dropped
-/// safely and the index/working tree are left clean.
+/// This replaces a hand-rolled per-file restore + `cleanup_state()` (issue
+/// #278): `git_repository_state_cleanup` deletes `rebase-merge/` /
+/// `rebase-apply/` / `sequencer/` wholesale, so "skip one step" silently threw
+/// away every remaining pick and left HEAD detached mid-sequence.  Only real
+/// git's sequencer can advance one step; libgit2 exposes no such API.
 pub fn execute_conflict_skip(
     repo: &Repository,
     session: &ConflictSession,
@@ -1569,60 +1700,32 @@ pub fn execute_conflict_skip(
     // 1. Preserve the buffer first (never lose partial work).
     let buffer_preserved_at = buffer.autosave().ok();
 
-    // 2. HEAD's tree is the "drop to" state for the current step's conflicts.
-    let head_commit = repo
+    // 2. Everything else is one fallible step: either `git <op> --skip`
+    //    succeeds and the sequencer is coherently on the next pick, or it
+    //    fails and git left the current step untouched.  No half state.
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
+        .to_path_buf();
+    let slug = session.op.slug();
+    let out = run_git(&workdir, &[slug, "--skip"])
+        .map_err(|e| GitError::Other(format!("{} --skip failed to start: {}", slug, e)))?;
+    if out.status != 0 {
+        return Err(GitError::Other(format!(
+            "{} --skip failed (exit {}): {}",
+            slug,
+            out.status,
+            out.stderr.trim()
+        )));
+    }
+
+    // 3. HEAD as git left it (unchanged for a dropped single pick; advanced if
+    //    the sequencer replayed further commits).
+    let head_sha = repo
         .head()
         .ok()
         .and_then(|h| h.target())
-        .and_then(|oid| repo.find_commit(oid).ok());
-    let head_sha = head_commit.as_ref().map(|c| c.id().to_string());
-
-    if let Some(commit) = &head_commit {
-        let tree = commit
-            .tree()
-            .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
-            .to_path_buf();
-
-        // Drop the conflict stages from the index by reading HEAD's tree.
-        {
-            let mut index = repo
-                .index()
-                .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-            index
-                .read_tree(&tree)
-                .map_err(|e| GitError::Other(format!("index.read_tree failed: {}", e.message())))?;
-            index
-                .write()
-                .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
-        }
-
-        // Restore each conflicting path to HEAD's content (or remove it).
-        for file in &session.files {
-            let abs = workdir.join(&file.path);
-            match tree.get_path(&file.path) {
-                Ok(entry) => {
-                    if let Ok(blob) = repo.find_blob(entry.id()) {
-                        if let Some(parent) = abs.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        std::fs::write(&abs, blob.content()).map_err(|e| {
-                            GitError::Other(format!("restore {} failed: {}", abs.display(), e))
-                        })?;
-                    }
-                }
-                Err(_) => {
-                    let _ = std::fs::remove_file(&abs);
-                }
-            }
-        }
-    }
-
-    // 3. Clear the current-step sequencer metadata.
-    repo.cleanup_state()
-        .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
+        .map(|oid| oid.to_string());
 
     Ok(SkipOutcome {
         head: head_sha,

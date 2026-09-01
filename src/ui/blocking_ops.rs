@@ -10,6 +10,7 @@ use std::time::Instant;
 use kagi_git::{AmendMode, CommitId, Head, MergeKind, OperationPlan, PullOutcome, StateSummary};
 
 use crate::ui::i18n;
+use crate::ui::i18n::Msg;
 use crate::ui::{BranchPlanKind, BranchPlanModal, CheckoutPlanTarget};
 
 // W3-NOTIFY: blocking cores for pull / push
@@ -513,23 +514,49 @@ pub(crate) fn stash_pop_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     stash_index: usize,
-) -> Result<(String, StateSummary), String> {
+) -> Result<(String, StateSummary, bool), String> {
     let mut repo =
         kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
     // in one place. run() runs preflight_check_stash (HEAD + stash count) for
     // StashPop, so a concurrent stash push between plan and execute can't shift
     // indices and pop the WRONG entry.
+    //
+    // The third tuple field is `stash_kept`: true when the apply conflicted
+    // and the stash entry was retained (#280). BOTH callers — start_pop and
+    // the sync confirm_pop — must branch on it; interpreting the outcome here,
+    // once, is what fixed the Enter path recording "applied and dropped" for
+    // a conflicted pop.
     let op = kagi_git::Operation::StashPop { index: stash_index };
-    repo.run(&op, plan)
+    let outcome = repo
+        .run(&op, plan)
         .map_err(|e| i18n::op_failed(i18n::Op::Pop, e))?;
     klog!("executed: stash-pop index={}", stash_index);
+
+    // issue #280: a conflicted apply is NOT a failure — the stashed content is
+    // in the working tree (with markers) — but the stash entry was kept, so the
+    // oplog/footer must say so instead of "applied and dropped".
+    if let kagi_git::OperationOutcome::StashPop(kagi_git::StashPopOutcome::ConflictedStashKept {
+        files,
+    }) = outcome
+    {
+        klog!(
+            "executed: stash-pop index={} — conflicts in {} file(s), stash kept",
+            stash_index,
+            files.len()
+        );
+        let after = StateSummary {
+            head: plan.current.head.clone(),
+            dirty: format!("{} conflicted (stash kept)", files.len()),
+        };
+        return Ok((Msg::StashPopConflictedKept.t().to_string(), after, true));
+    }
 
     let after = StateSummary {
         head: plan.current.head.clone(),
         dirty: "changes restored (stash removed)".to_string(),
     };
-    Ok(("applied and dropped".to_string(), after))
+    Ok(("applied and dropped".to_string(), after, false))
 }
 
 /// Blocking part of standalone stash drop (ADR-0087). Deletes the stash entry
@@ -569,11 +596,16 @@ pub(crate) fn stash_drop_blocking(
 /// with the working-tree content written, so it runs on the background path.
 /// The returned `after` carries the path→blob backup list (the recovery handle)
 /// into the oplog entry.
+///
+/// The third tuple element is `Some(error)` when the discard was only PARTIALLY
+/// applied (issue #281): the working tree was mutated but not every target was
+/// discarded. The caller must record the oplog entry with the after-state (which
+/// carries the backup blob SHAs) and reload, NOT report success.
 pub(crate) fn discard_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     paths: &[String],
-) -> Result<(String, StateSummary), String> {
+) -> Result<(String, StateSummary, Option<String>), String> {
     let mut repo =
         kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
 
@@ -592,41 +624,59 @@ pub(crate) fn discard_blocking(
     klog!("executed: {}", summary);
 
     // Verify: re-read status; targets must have left the unstaged set.
-    let dirty = match repo.working_tree_status() {
+    // #282: compare against `outcome.backups[].path` — the repo-relative paths the
+    // git layer actually acted on — not the raw UI strings, so both sides of the
+    // comparison went through the same normalization.
+    let mut leftover: Vec<String> = Vec::new();
+    match repo.working_tree_status() {
         Ok(status) => {
             let still: std::collections::HashSet<String> = status
                 .unstaged
                 .iter()
                 .map(|f| f.path.to_string_lossy().replace('\\', "/"))
                 .collect();
-            let leftover = paths.iter().filter(|p| still.contains(*p)).count();
-            if leftover == 0 {
+            leftover = outcome
+                .backups
+                .iter()
+                .map(|b| b.path.clone())
+                .filter(|p| still.contains(p))
+                .collect();
+            if leftover.is_empty() {
                 eprintln!(
                     "[kagi] verified: {} target(s) left the unstaged set",
                     paths.len()
                 );
             } else {
-                klog!("verify: {} target(s) still unstaged", leftover);
+                klog!("verify: {} target(s) still unstaged", leftover.len());
             }
-            // Record the recovery handle (path→blob list) in the oplog after-state.
-            summary.clone()
         }
-        Err(e) => {
-            klog!("verify: status error: {}", e);
-            summary.clone()
-        }
-    };
+        Err(e) => klog!("verify: status error: {}", e),
+    }
 
+    // #281: a leftover target means the discard was only partially applied — it
+    // must NOT be reported as a plain success.
+    let partial = outcome.error.clone().or_else(|| {
+        (!leftover.is_empty()).then(|| {
+            format!(
+                "discard verify failed: {} target(s) not discarded: {}",
+                leftover.len(),
+                leftover.join(", ")
+            )
+        })
+    });
+
+    // The after-state carries the recovery handle (path→blob list) into the oplog,
+    // partial or not.
     let after = StateSummary {
         head: plan.current.head.clone(),
-        dirty,
+        dirty: summary,
     };
     let human = if outcome.backups.len() == 1 {
         format!("{} discarded", outcome.backups[0].path)
     } else {
         format!("{} files discarded", outcome.backups.len())
     };
-    Ok((human, after))
+    Ok((human, after, partial))
 }
 
 /// Blocking part of amend (history rewrite: tree-build + commit-replace).

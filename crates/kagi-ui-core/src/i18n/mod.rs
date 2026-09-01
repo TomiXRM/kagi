@@ -179,6 +179,8 @@ pub enum Msg {
     BusyPush,
     BusyStash,
     BusyStashPop,
+    /// issue #280: pop applied with conflicts; the stash entry was kept.
+    StashPopConflictedKept,
     BusyStashDrop,
     BusyCherryPick,
     BusyRevert,
@@ -186,6 +188,9 @@ pub enum Msg {
     BusyDeleteBranch,
     BusyDeleteBranchPlan,
     BusyDiscard,
+    /// Footer label when a discard mutated the working tree but did not finish
+    /// (issue #281). The backup blob SHAs are in the oplog entry.
+    DiscardPartial,
     BusyCommit,
     BusyCreateWorktree,
     /// Worktree context menu: unlock action label.
@@ -830,6 +835,12 @@ impl Msg {
             (Ja, BusyStash) => "stash 実行中…",
             (En, BusyStashPop) => "stash pop in progress…",
             (Ja, BusyStashPop) => "stash pop 実行中…",
+            (En, StashPopConflictedKept) => {
+                "applied with conflicts — the stash was KEPT. Resolve the conflicts, then drop the stash manually."
+            }
+            (Ja, StashPopConflictedKept) => {
+                "コンフリクトありで適用しました — stash は保持されています。コンフリクトを解決してから手動で drop してください。"
+            }
             (En, BusyStashDrop) => "stash drop in progress…",
             (Ja, BusyStashDrop) => "stash drop 実行中…",
             (En, BusyCherryPick) => "cherry-pick in progress…",
@@ -844,6 +855,8 @@ impl Msg {
             (Ja, BusyDeleteBranchPlan) => "delete branch 計画中…",
             (En, BusyDiscard) => "discard in progress…",
             (Ja, BusyDiscard) => "discard 実行中…",
+            (En, DiscardPartial) => "discard only partially applied (backup blobs are in the oplog)",
+            (Ja, DiscardPartial) => "discard は一部しか適用されていません (backup blob は oplog に記録済み)",
             (En, BusyCommit) => "commit in progress…",
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",

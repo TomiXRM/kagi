@@ -6,19 +6,47 @@ use super::*;
 
 /// Normalise a user/UI-supplied path to the repository-relative, forward-slash
 /// form that git status reports, so plan/execute and status comparisons line up.
-fn discard_rel_path(repo: &Repository, raw: &str) -> String {
+///
+/// **Never consults the process CWD** (issue #282). A *relative* input is already
+/// repo-relative (all three UI call sites pass repo-relative strings) and is only
+/// normalised lexically — feeding it to `fs::canonicalize` resolved it against the
+/// process CWD, which discarded a different, same-named file when kagi was started
+/// from inside the workdir. An *absolute* input has the workdir prefix stripped;
+/// `canonicalize` is safe there because an absolute path never depends on the CWD.
+fn discard_rel_path(workdir: &Path, raw: &str) -> String {
     let raw_path = Path::new(raw);
-    // Strip a workdir prefix if an absolute path was given.
-    let rel = repo
-        .workdir()
-        .and_then(|wd| std::fs::canonicalize(wd).ok())
-        .and_then(|wd| {
-            std::fs::canonicalize(raw_path)
-                .ok()
-                .and_then(|abs| abs.strip_prefix(&wd).ok().map(|p| p.to_path_buf()))
-        })
-        .unwrap_or_else(|| raw_path.to_path_buf());
-    normalize_path(&rel).to_string_lossy().replace('\\', "/")
+    let rel = if raw_path.is_absolute() {
+        // Try canonical and lexical forms of both sides so a symlinked workdir
+        // (e.g. /tmp → /private/tmp on macOS) still matches, and so an absolute
+        // path to a *deleted* file (canonicalize fails) still strips correctly.
+        let abs_forms = [
+            std::fs::canonicalize(raw_path).ok(),
+            Some(normalize_path(raw_path)),
+        ];
+        let wd_forms = [
+            std::fs::canonicalize(workdir).ok(),
+            Some(workdir.to_path_buf()),
+        ];
+        abs_forms
+            .iter()
+            .flatten()
+            .find_map(|abs| {
+                wd_forms
+                    .iter()
+                    .flatten()
+                    .find_map(|wd| abs.strip_prefix(wd).ok().map(|p| p.to_path_buf()))
+            })
+            .unwrap_or_else(|| normalize_path(raw_path))
+    } else {
+        normalize_path(raw_path)
+    };
+    rel.to_string_lossy().replace('\\', "/")
+}
+
+/// The workdir of `repo`, or an empty path for a bare repo (plan-time only —
+/// `execute_discard` refuses bare repositories outright).
+fn workdir_or_empty(repo: &Repository) -> PathBuf {
+    repo.workdir().map(|p| p.to_path_buf()).unwrap_or_default()
 }
 
 /// Analyse a discard of the given working-tree `paths` and return an
@@ -69,7 +97,11 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         .map(|p| p.to_string_lossy().replace('\\', "/"))
         .collect();
 
-    let rels: Vec<String> = paths.iter().map(|p| discard_rel_path(repo, p)).collect();
+    let plan_workdir = workdir_or_empty(repo);
+    let rels: Vec<String> = paths
+        .iter()
+        .map(|p| discard_rel_path(&plan_workdir, p))
+        .collect();
 
     if rels.is_empty() {
         blockers.push(PlanNote::Discard(DiscardNote::NothingSelected));
@@ -152,6 +184,12 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 /// Returns the [`DiscardOutcome`] (the path→blob backup list) so the caller can
 /// record it in the oplog as the recovery handle. The caller MUST have rejected
 /// conflicted targets at plan time.
+///
+/// **Failures after step 1** (issue #281) return `Ok` with
+/// [`DiscardOutcome::error`] set instead of `Err`: the working tree has already
+/// been mutated at that point, so the backup blob SHAs are the user's only route
+/// back to their content and must never be dropped. Only failures *before* any
+/// mutation (blockers, preflight, backup) return `Err`.
 pub fn execute_discard(
     repo: &Repository,
     plan: &OperationPlan,
@@ -171,7 +209,10 @@ pub fn execute_discard(
         .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
         .to_path_buf();
 
-    let rels: Vec<String> = paths.iter().map(|p| discard_rel_path(repo, p)).collect();
+    let rels: Vec<String> = paths
+        .iter()
+        .map(|p| discard_rel_path(&workdir, p))
+        .collect();
     if rels.is_empty() {
         return Err(GitError::Other("discard: no target paths".to_string()));
     }
@@ -229,22 +270,42 @@ pub fn execute_discard(
         for rel in &tracked_rels {
             cb.path(rel.as_str());
         }
-        repo.checkout_index(None, Some(&mut cb)).map_err(|e| {
-            GitError::Other(format!("discard: checkout_index failed: {}", e.message()))
-        })?;
+        // #281: the working tree may already be partly rewritten here, so a
+        // failure returns the PARTIAL outcome (backups included) rather than an
+        // `Err` that would drop the only handle on the overwritten content.
+        if let Err(e) = repo.checkout_index(None, Some(&mut cb)) {
+            // The untracked targets are unverified too: step 2b never runs on
+            // this path, so none of them were deleted (#280 review, item 7).
+            let unverified = tracked_rels
+                .iter()
+                .map(|r| (*r).clone())
+                .chain(untracked_rels.iter().map(|r| (*r).clone()))
+                .collect();
+            return Ok(DiscardOutcome {
+                backups,
+                unverified,
+                error: Some(format!("discard: checkout_index failed: {}", e.message())),
+            });
+        }
     }
 
     // ── 2b. DELETE untracked targets (ADR-0083; content backed up in step 1). ──
-    for rel in &untracked_rels {
+    // #281: a failure at target N leaves 1..N-1 already deleted, so it must
+    // report a PARTIAL outcome carrying the backups, not a bare `Err`.
+    for (i, rel) in untracked_rels.iter().enumerate() {
         let abs = workdir.join(rel);
         match std::fs::remove_file(&abs) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(GitError::Other(format!(
-                    "discard: failed to delete untracked file '{}': {}",
-                    rel, e
-                )));
+                return Ok(DiscardOutcome {
+                    backups,
+                    unverified: untracked_rels[i..].iter().map(|r| (*r).clone()).collect(),
+                    error: Some(format!(
+                        "discard: failed to delete untracked file '{}': {}",
+                        rel, e
+                    )),
+                });
             }
         }
     }
@@ -287,16 +348,84 @@ pub fn execute_discard(
             .filter(|r| still_untracked.contains(*r)),
     );
     if !leftover.is_empty() {
-        return Err(GitError::Other(format!(
-            "discard verify failed: {} target(s) not discarded: {}",
-            leftover.len(),
-            leftover
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
+        // #281: verify runs AFTER the working tree was rewritten — return the
+        // partial outcome so the backup blob SHAs reach the oplog.
+        let unverified: Vec<String> = leftover.iter().map(|s| (*s).clone()).collect();
+        return Ok(DiscardOutcome {
+            backups,
+            error: Some(format!(
+                "discard verify failed: {} target(s) not discarded: {}",
+                unverified.len(),
+                unverified.join(", ")
+            )),
+            unverified,
+        });
     }
 
-    Ok(DiscardOutcome { backups })
+    Ok(DiscardOutcome::complete(backups))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discard_rel_path;
+    use std::path::Path;
+
+    // Issue #282: a repo-relative input must resolve against the WORKDIR, never
+    // the process CWD. The function takes the base dir explicitly, so the ambient
+    // CWD is not even in the signature — the bug is unrepresentable, and the test
+    // needs no (unsafe, in a parallel test process) chdir.
+    #[test]
+    fn rel_input_is_repo_relative_regardless_of_cwd() {
+        let wd = Path::new("/repo");
+        assert_eq!(discard_rel_path(wd, "a.txt"), "a.txt");
+        assert_eq!(discard_rel_path(wd, "./a.txt"), "a.txt");
+        assert_eq!(discard_rel_path(wd, "src/a.txt"), "src/a.txt");
+    }
+
+    // The bug's exact shape: the process CWD is INSIDE the workdir and a file of
+    // the target's name exists there. The old code canonicalised the relative
+    // input against the CWD and returned "<subdir>/Cargo.toml" — a different
+    // file from the one the user selected. Reads the CWD but never changes it,
+    // so it is safe in a parallel test process.
+    #[test]
+    fn rel_input_ignores_a_shadow_file_in_the_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        assert!(
+            cwd.join("Cargo.toml").exists(),
+            "precondition: a shadow Cargo.toml exists in the CWD"
+        );
+        // Workdir = an ancestor of the CWD, i.e. the reachability condition from
+        // issue #282 (`cd <repo>/crates/kagi-git && kagi <repo>`).
+        let workdir = cwd.parent().unwrap().parent().unwrap();
+        assert_eq!(discard_rel_path(workdir, "Cargo.toml"), "Cargo.toml");
+    }
+
+    #[test]
+    fn absolute_input_strips_the_workdir_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        std::fs::create_dir_all(wd.join("src")).unwrap();
+        std::fs::write(wd.join("a.txt"), b"x").unwrap();
+        assert_eq!(
+            discard_rel_path(wd, wd.join("a.txt").to_str().unwrap()),
+            "a.txt"
+        );
+        // Absolute path to a file that no longer exists (an unstaged deletion):
+        // canonicalize fails, the lexical fallback still strips the prefix.
+        assert_eq!(
+            discard_rel_path(wd, wd.join("src/gone.txt").to_str().unwrap()),
+            "src/gone.txt"
+        );
+    }
+
+    #[test]
+    fn absolute_and_relative_forms_agree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        std::fs::write(wd.join("a.txt"), b"x").unwrap();
+        assert_eq!(
+            discard_rel_path(wd, "a.txt"),
+            discard_rel_path(wd, wd.join("a.txt").to_str().unwrap())
+        );
+    }
 }

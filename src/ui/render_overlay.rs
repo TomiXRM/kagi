@@ -177,6 +177,13 @@ impl gpui::Render for oplog_panel::OpLogPanel {
                                 SharedString::from(format!("Success \u{2192} {}", after.head)),
                                 theme().color_success,
                             ),
+                            OpOutcome::Partial { after, error } => (
+                                SharedString::from(format!(
+                                    "Partial \u{2192} {}: {}",
+                                    after.head, error
+                                )),
+                                theme().color_warning,
+                            ),
                             OpOutcome::Failed { error } => (
                                 SharedString::from(format!("Failed: {}", error)),
                                 theme().color_blocker,
@@ -273,6 +280,18 @@ impl gpui::Render for oplog_panel::OpLogPanel {
                                         "  dirty:   {}",
                                         after.dirty
                                     )));
+                                }
+                                OpOutcome::Partial { after, error } => {
+                                    detail_lines.push(SharedString::from(format!(
+                                        "  after:   {}",
+                                        after.head
+                                    )));
+                                    detail_lines.push(SharedString::from(format!(
+                                        "  dirty:   {}",
+                                        after.dirty
+                                    )));
+                                    detail_lines
+                                        .push(SharedString::from(format!("  error:   {}", error)));
                                 }
                                 OpOutcome::Failed { error } => {
                                     detail_lines

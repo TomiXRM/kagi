@@ -47,7 +47,7 @@
 //! - [`plan_stash_apply`]       — generate an [`OperationPlan`] for stash apply
 //! - [`execute_stash_apply`]    — apply a stash entry (apply only, no pop/drop)
 //! - [`plan_stash_pop`]         — generate an [`OperationPlan`] for stash pop (ADR-0009)
-//! - [`execute_stash_pop`]      — apply then drop on success (pop = apply + drop-if-clean)
+//! - [`execute_stash_pop`]      — apply then drop only on a conflict-free apply (issue #280)
 //! - [`preflight_check_stash`]  — verify HEAD + stash count unchanged since planning
 //! - [`plan_cherry_pick`]       — generate an [`OperationPlan`] for cherry-pick (in-memory, no WT touch)
 //! - [`execute_cherry_pick`]    — apply a cherry-pick commit (in-memory → commit → checkout_head safe)
@@ -85,7 +85,8 @@ pub(crate) use super::GitError;
 pub use kagi_domain::plan::{
     AmendMode, AmendOutcome, BranchNameError, BranchRenameValidation, DiscardBackup,
     DiscardOutcome, FetchOutcome, MergeKind, OperationPlan, PullOutcome, PushOutcome,
-    RebaseOutcome, StateSummary, UndoOutcome, WorktreePathError, WorktreeValidationError,
+    RebaseOutcome, StashPopOutcome, StateSummary, UndoOutcome, WorktreePathError,
+    WorktreeValidationError,
 };
 // ADR-0129: structured plan text. `OperationPlan` itself moved to kagi-domain
 // (shim re-export above); these are the note/title/recovery/disposition types

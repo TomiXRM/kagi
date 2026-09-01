@@ -185,6 +185,15 @@ pub fn unstage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
 pub fn unstaged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, GitError> {
+    // A conflicted path first: it has no stage-0 index entry, so the normal
+    // index→workdir diff emits a Conflicted delta that Patch::from_diff has no
+    // content for, and the pane painted "+0 −0" with no hunks (GUI report,
+    // after a conflicted stash pop). Show ours (stage 2) → worktree instead —
+    // exactly what the conflicted operation injected, markers included.
+    if let Some(fallback) = conflicted_file_diff(repo, path)? {
+        return Ok(fallback);
+    }
+
     let path_str = path.to_string_lossy();
     let mut diff_opts = DiffOptions::new();
     diff_opts.pathspec(path_str.as_ref());
@@ -198,6 +207,56 @@ pub fn unstaged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, Gi
         .map_err(|e| GitError::Other(format!("diff_index_to_workdir failed: {}", e.message())))?;
 
     patch_to_file_diff(&diff, path)
+}
+
+/// The diff shown for a path with unresolved index conflicts: ours (stage 2)
+/// against the working tree. `Ok(None)` when the path is not conflicted.
+fn conflicted_file_diff(repo: &Repository, path: &Path) -> Result<Option<FileDiff>, GitError> {
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    if !index.has_conflicts() {
+        return Ok(None);
+    }
+    let conflicts = index
+        .conflicts()
+        .map_err(|e| GitError::Other(format!("index.conflicts failed: {}", e.message())))?;
+    let entry = conflicts.flatten().find(|c| {
+        [&c.our, &c.their, &c.ancestor]
+            .into_iter()
+            .flatten()
+            .any(|e| std::str::from_utf8(&e.path).ok() == path.to_str())
+    });
+    let Some(entry) = entry else {
+        return Ok(None);
+    };
+
+    // Ours (stage 2) is the user's side. A delete/modify conflict may lack it;
+    // the ancestor is the next-best "before", and no entry at all means the
+    // whole worktree file reads as added.
+    let base_bytes: Vec<u8> = entry
+        .our
+        .as_ref()
+        .or(entry.ancestor.as_ref())
+        .and_then(|e| repo.find_blob(e.id).ok())
+        .map(|b| b.content().to_vec())
+        .unwrap_or_default();
+
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
+    let wt_bytes = std::fs::read(workdir.join(path)).unwrap_or_default();
+
+    let patch = git2::Patch::from_buffers(&base_bytes, Some(path), &wt_bytes, Some(path), None)
+        .map_err(|e| GitError::Other(format!("Patch::from_buffers failed: {}", e.message())))?;
+
+    Ok(Some(FileDiff {
+        old_path: Some(path.to_path_buf()),
+        new_path: Some(path.to_path_buf()),
+        change: ChangeKind::Modified,
+        hunks: patch_hunks(&patch)?,
+        is_binary: false,
+    }))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -688,7 +747,28 @@ fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, Gi
         }
     };
 
-    // Extract hunks and lines.
+    let hunks = patch_hunks(&patch)?;
+
+    // Same lazy-BINARY-flag workaround as diff.rs's diff_to_file_diff (the
+    // two builders are near-duplicates — consolidate when one grows again):
+    // workdir/index deltas only get their BINARY flag after content
+    // callbacks, so an image lands here as "0 hunks, not binary" and painted
+    // an EMPTY pane. A content change with no text hunks is binary.
+    let is_binary = hunks.is_empty()
+        && (delta.old_file().size() > 0 || delta.new_file().size() > 0)
+        && delta.old_file().id() != delta.new_file().id();
+
+    Ok(FileDiff {
+        old_path,
+        new_path,
+        change,
+        hunks,
+        is_binary,
+    })
+}
+
+/// The hunk/line extraction shared by every `git2::Patch` → [`FileDiff`] path.
+fn patch_hunks(patch: &git2::Patch<'_>) -> Result<Vec<Hunk>, GitError> {
     let num_hunks = patch.num_hunks();
     let mut hunks = Vec::with_capacity(num_hunks);
 
@@ -735,22 +815,7 @@ fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, Gi
         });
     }
 
-    // Same lazy-BINARY-flag workaround as diff.rs's diff_to_file_diff (the
-    // two builders are near-duplicates — consolidate when one grows again):
-    // workdir/index deltas only get their BINARY flag after content
-    // callbacks, so an image lands here as "0 hunks, not binary" and painted
-    // an EMPTY pane. A content change with no text hunks is binary.
-    let is_binary = hunks.is_empty()
-        && (delta.old_file().size() > 0 || delta.new_file().size() > 0)
-        && delta.old_file().id() != delta.new_file().id();
-
-    Ok(FileDiff {
-        old_path,
-        new_path,
-        change,
-        hunks,
-        is_binary,
-    })
+    Ok(hunks)
 }
 
 // ────────────────────────────────────────────────────────────

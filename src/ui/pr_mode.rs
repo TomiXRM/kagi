@@ -1498,7 +1498,12 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             ))
         });
 
-    col = col.child(header).child(views).child(strip);
+    // The commit strip is about "what is in this PR"; the Conflicts view is
+    // about one file at a time, and the strip only pushes the hunks down.
+    col = col.child(header).child(views);
+    if view != PrView::Conflicts {
+        col = col.child(strip);
+    }
     if show_review {
         return col
             .child(super::pr_conversation::render_conversation(

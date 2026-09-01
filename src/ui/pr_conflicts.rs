@@ -153,6 +153,7 @@ pub(crate) fn render_jump_nav(
     cx: &mut gpui::Context<crate::ui::KagiApp>,
 ) -> gpui::AnyElement {
     use gpui::{div, prelude::*};
+    use gpui_component::button::ButtonVariants as _;
     use gpui_component::Sizable as _;
 
     let total = jumps.len();
@@ -178,8 +179,12 @@ pub(crate) fn render_jump_nav(
         .child(
             gpui_component::button::Button::new("conflict-prev")
                 .label("‹")
-                .outline()
-                .small()
+                // Accent-coloured and xsmall: this sits in a header row of
+                // neutral controls, and it is the one thing there that moves
+                // you somewhere — worth being both smaller and louder than the
+                // outlined toggle beside it.
+                .primary()
+                .xsmall()
                 .on_click(cx.listener(step(-1))),
         )
         .child(
@@ -191,8 +196,8 @@ pub(crate) fn render_jump_nav(
         .child(
             gpui_component::button::Button::new("conflict-next")
                 .label("›")
-                .outline()
-                .small()
+                .primary()
+                .xsmall()
                 .on_click(cx.listener(step(1))),
         )
         .into_any_element()

@@ -26,7 +26,7 @@ src/ui/operations/branch.rs 1744
 src/ui/operations/commit.rs 1233
 src/ui/operations/conflict.rs 843
 src/ui/operations/modal_state.rs 953
-src/ui/pr_mode.rs 2276
+src/ui/pr_mode.rs 2281
 src/ui/render.rs 898
 src/ui/sidebar.rs 1988
 src/ui/tabs.rs 1164

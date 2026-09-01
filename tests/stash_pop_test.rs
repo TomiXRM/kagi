@@ -737,3 +737,58 @@ fn test_preflight_check_stash_rejects_dirty_tree() {
         "stash drop must stay allowed on a dirty tree"
     );
 }
+
+/// After a conflicted pop, the commit panel lists the file as conflicted —
+/// and clicking it must show something. A conflicted path has no stage-0
+/// index entry, so diff_index_to_workdir yields no delta and the pane painted
+/// "+0 −0" with no hunks (GUI report). The fallback diffs ours (stage 2)
+/// against the working tree, so the injected markers are visible.
+#[test]
+fn test_conflicted_pop_file_diff_shows_the_markers() {
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+    write_file(d, "f.txt", "line one\nbase\nline three\n");
+    git(d, &["add", "f.txt"]);
+    git(d, &["commit", "-qm", "base"]);
+    write_file(d, "f.txt", "line one\nSTASHED EDIT\nline three\n");
+    let mut repo = Repository::open(d).expect("open repo");
+    execute_stash_push(&mut repo, Some("work"), true).expect("push");
+    write_file(d, "f.txt", "line one\nMAINLINE V2\nline three\n");
+    git(d, &["add", "f.txt"]);
+    git(d, &["commit", "-qm", "mainline"]);
+
+    // Reopen: the handle above predates the external commit and libgit2's
+    // cached index snapshot would fail stash_apply's uncommitted-index guard.
+    let mut repo = Repository::open(d).expect("reopen repo");
+    let outcome = execute_stash_pop(&mut repo, 0).expect("pop");
+    assert!(matches!(
+        outcome,
+        StashPopOutcome::ConflictedStashKept { .. }
+    ));
+
+    let diff = kagi_git::unstaged_file_diff(&repo, std::path::Path::new("f.txt"))
+        .expect("unstaged_file_diff");
+    assert!(
+        !diff.hunks.is_empty(),
+        "a conflicted file must not render as an empty +0 −0 diff"
+    );
+    let body: String = diff
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .map(|l| l.content.as_str())
+        .collect();
+    for needle in [
+        "<<<<<<<",
+        "=======",
+        ">>>>>>>",
+        "STASHED EDIT",
+        "MAINLINE V2",
+    ] {
+        assert!(body.contains(needle), "diff must show {needle:?}:\n{body}");
+    }
+}

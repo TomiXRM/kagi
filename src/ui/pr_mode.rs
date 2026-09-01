@@ -322,19 +322,35 @@ impl KagiApp {
         if let Some(m) = self.pr_mode.as_mut() {
             if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
                 t.conflict_at = at;
-                if let Some(row) = row {
-                    // Side-by-side virtualizes over paired rows, so a unified
-                    // index scrolls somewhere else entirely. Map it first.
-                    let target = if super::theme::diff_split() {
-                        rows.and_then(|r| {
-                            let split = super::diff_split::split_rows(&r);
-                            super::diff_split::split_index_of(&split, row)
-                        })
-                        .unwrap_or(row)
+                if let (Some(row), Some(rows)) = (row, rows) {
+                    // Side-by-side virtualizes over *paired* rows, so a unified
+                    // index addresses a different element there.
+                    let split = super::theme::diff_split();
+                    let (count, target) = if split {
+                        let sp = super::diff_split::split_rows(&rows);
+                        let t = super::diff_split::split_index_of(&sp, row).unwrap_or(row);
+                        (sp.len(), t)
                     } else {
-                        row
+                        (rows.len(), row)
                     };
-                    t.conflict_scroll.scroll_to_reveal_item(target);
+                    // Sync the count first. `render_diff_list` resets the list
+                    // whenever its count disagrees, and `reset` clears
+                    // `logical_scroll_top` — so scrolling before the list has
+                    // been told how many rows there are is thrown away on the
+                    // very next frame, which is why this did nothing.
+                    if t.conflict_scroll.item_count() != count {
+                        t.conflict_scroll.reset(count);
+                    }
+                    // `scroll_to`, not `scroll_to_reveal_item`: revealing seeks
+                    // by accumulated height, and the list only measures rows it
+                    // has drawn, so downward targets land short. Setting the
+                    // top item is exact regardless of what has been measured —
+                    // and puts the conflict header at the top, which is where
+                    // it belongs.
+                    t.conflict_scroll.scroll_to(gpui::ListOffset {
+                        item_ix: target,
+                        offset_in_item: px(0.),
+                    });
                 }
             }
         }

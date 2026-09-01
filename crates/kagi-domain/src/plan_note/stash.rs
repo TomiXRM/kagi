@@ -47,6 +47,10 @@ pub enum StashNote {
     /// with HEAD predicts conflicts; pop is refused so the stash entry is
     /// not lost (recommends apply instead).
     PopWouldConflict { count: usize, files: Vec<String> },
+    /// blocker (`plan_stash_pop`, issue #280): the conflict prediction could
+    /// not be computed. Fail-closed — an unverifiable pop is refused, because
+    /// pop deletes the stash entry.
+    PopPredictionUnavailable { reason: String },
     /// warning (`plan_stash_drop_remote`, SSH): the remote drop cannot be
     /// undone from Kagi.
     RemoteDropIrreversible,
@@ -101,6 +105,12 @@ impl StashNote {
                     count, files_label
                 )
             }
+            StashNote::PopPredictionUnavailable { reason } => format!(
+                "Could not verify whether the stash applies cleanly ({}). \
+                 Pop is blocked because it deletes the stash entry. \
+                 Use 'Stash Apply' instead: it applies the stash without removing it.",
+                reason
+            ),
             StashNote::RemoteDropIrreversible => {
                 "This permanently removes the stash entry on the remote host. \
                  It cannot be undone from Kagi."

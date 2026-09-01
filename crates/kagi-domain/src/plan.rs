@@ -158,6 +158,25 @@ pub enum RebaseOutcome {
     Conflicted,
 }
 
+/// Outcome of a stash **pop** (issue #280).
+///
+/// `git_stash_apply` with default options writes conflicts into the index and
+/// still returns 0 — `Ok` means "the apply ran", not "the content was restored
+/// cleanly". Mirrors [`RebaseOutcome::Conflicted`]: a conflicted pop is not a
+/// failure (the stashed content IS in the working tree, with markers), but the
+/// stash entry is deliberately kept so nothing is lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StashPopOutcome {
+    /// Applied cleanly; the stash entry was dropped.
+    Applied,
+    /// The apply produced conflicts. The stash entry was **not** dropped —
+    /// resolve the conflicts, then drop the stash manually.
+    ConflictedStashKept {
+        /// Conflicting paths as reported by the index after the apply.
+        files: Vec<String>,
+    },
+}
+
 /// Result of a fetch: which remote was fetched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchOutcome {

@@ -99,7 +99,7 @@ pub use ops::{
     validate_branch_rename, validate_worktree_path, AmendMode, AmendOutcome,
     BranchRenameValidation, DiscardBackup, DiscardOutcome, FetchOutcome, HistoryMoveOutcome,
     MergeIntoKind, MergeKind, OperationPlan, PrConflictFile, PrConflictKind, PullOutcome,
-    PushOutcome, StateSummary, UndoOutcome,
+    PushOutcome, StashPopOutcome, StateSummary, UndoOutcome,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};

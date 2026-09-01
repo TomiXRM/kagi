@@ -15,7 +15,7 @@ use tempfile::TempDir;
 
 use kagi_git::{
     execute_stash_apply, execute_stash_drop, execute_stash_pop, execute_stash_push,
-    plan_stash_drop, plan_stash_pop, snapshot,
+    plan_stash_drop, plan_stash_pop, preflight_check_stash, snapshot, StashPopOutcome,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -503,5 +503,231 @@ fn test_stash_pop_removes_only_target_index() {
         snap_after.stashes.len(),
         1,
         "exactly 1 stash should remain after popping index 0"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// issue #280 — a conflicted apply must NOT drop the stash
+// ────────────────────────────────────────────────────────────
+
+/// Repo where a pop is guaranteed to conflict at apply time:
+/// base `shared.txt` = "base", stash = "stashed", HEAD moved to "head".
+fn build_conflicting_stash_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+
+    write_file(d, "shared.txt", "base\n");
+    git(d, &["add", "shared.txt"]);
+    git(d, &["commit", "-qm", "base"]);
+
+    write_file(d, "shared.txt", "stashed\n");
+    let mut repo = Repository::open(d).expect("open repo");
+    execute_stash_push(&mut repo, Some("conflict-stash"), true).expect("push failed");
+
+    write_file(d, "shared.txt", "head\n");
+    git(d, &["add", "shared.txt"]);
+    git(d, &["commit", "-qm", "head change"]);
+
+    // Re-open: the handle above cached the pre-commit index.
+    drop(repo);
+    let repo = Repository::open(d).expect("re-open repo");
+    (d.to_path_buf(), repo)
+}
+
+/// Acceptance criterion of issue #280: `execute_stash_pop` on an apply that
+/// conflicts reports `ConflictedStashKept` and leaves the stash list untouched.
+/// (Called directly, bypassing the plan blocker, because the whole point is
+/// that execute must be safe on its own.)
+#[test]
+fn test_stash_pop_conflicting_apply_keeps_stash() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, mut repo) = build_conflicting_stash_repo(&tmp);
+
+    let outcome = execute_stash_pop(&mut repo, 0).expect("execute_stash_pop must not hard-error");
+
+    match &outcome {
+        StashPopOutcome::ConflictedStashKept { files } => {
+            assert!(
+                files.iter().any(|f| f == "shared.txt"),
+                "conflicted files should name shared.txt, got: {:?}",
+                files
+            );
+        }
+        other => panic!("expected ConflictedStashKept, got {:?}", other),
+    }
+
+    // The stash entry MUST still be there — this is the data-loss regression.
+    let snap = snapshot(&mut repo, 100).expect("snapshot after conflicted pop");
+    assert_eq!(
+        snap.stashes.len(),
+        1,
+        "conflicted pop must NOT drop the stash entry (issue #280)"
+    );
+
+    // And the conflict really is in the tree.
+    let wt = std::fs::read_to_string(repo_dir.join("shared.txt")).expect("read shared.txt");
+    assert!(
+        wt.contains("<<<<<<<") && wt.contains(">>>>>>>"),
+        "working tree should hold conflict markers, got: {:?}",
+        wt
+    );
+    assert!(
+        !snap.status.conflicted.is_empty(),
+        "status should report the conflicted path"
+    );
+}
+
+/// The divergence scenario from issue #280: the stash was taken on a branch
+/// whose base is NOT an ancestor of the current HEAD, so `merge_base(HEAD,
+/// stash)` (the old prediction base) sees no conflict while the real apply
+/// (base = stash parent[0]) does. The prediction must now block it.
+#[test]
+fn test_stash_pop_prediction_uses_stash_parent_as_base() {
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    git(d, &["config", "user.name", "Test"]);
+    git(d, &["config", "user.email", "test@example.com"]);
+    git(d, &["config", "commit.gpgsign", "false"]);
+
+    // X (main): f = "old" — the common ancestor.
+    write_file(d, "f.txt", "old\n");
+    git(d, &["add", "f.txt"]);
+    git(d, &["commit", "-qm", "X"]);
+
+    // Branch A: commit B changes f to "mainline-v2", then stash "stashed".
+    git(d, &["checkout", "-q", "-b", "a"]);
+    write_file(d, "f.txt", "mainline-v2\n");
+    git(d, &["add", "f.txt"]);
+    git(d, &["commit", "-qm", "B"]);
+    write_file(d, "f.txt", "stashed\n");
+    let mut repo = Repository::open(d).expect("open repo");
+    execute_stash_push(&mut repo, Some("on-a"), true).expect("push failed");
+
+    // Branch C from X (does NOT contain B): f is still "old".
+    git(d, &["checkout", "-q", "-b", "c", "main"]);
+
+    let plan = plan_stash_pop(&mut repo, 0).expect("plan_stash_pop failed");
+    assert!(
+        !plan.blockers.is_empty(),
+        "prediction must use the stash's parent[0] as base and block this pop; \
+         merge_base(HEAD, stash) would have said 'clean'"
+    );
+
+    // Even if a caller ignored the blocker, the stash survives.
+    let outcome = execute_stash_pop(&mut repo, 0).expect("execute must not hard-error");
+    assert!(
+        matches!(outcome, StashPopOutcome::ConflictedStashKept { .. }),
+        "expected ConflictedStashKept, got {:?}",
+        outcome
+    );
+    let snap = snapshot(&mut repo, 100).expect("snapshot");
+    assert_eq!(snap.stashes.len(), 1, "stash must survive a conflicted pop");
+}
+
+/// Fail-closed: when the prediction cannot be computed (here: a stash ref whose
+/// commit is a root commit, so `parent(0)` errors), the plan must carry a
+/// blocker instead of silently reporting "clean".
+#[test]
+fn test_stash_pop_prediction_failure_is_fail_closed() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, mut repo) = build_clean_repo(&tmp);
+
+    // A real stash first, so refs/stash and its reflog exist.
+    write_file(&repo_dir, "README.md", "wip\n");
+    execute_stash_push(&mut repo, Some("real"), true).expect("push failed");
+
+    // A parentless commit reachable from refs/stash: stash_foreach lists it,
+    // but `parent(0)` — the apply base — does not exist.
+    let tree = Command::new("git")
+        .args(["hash-object", "-t", "tree", "-w", "--stdin"])
+        .current_dir(&repo_dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("hash-object failed");
+    let tree_oid = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+    let commit = Command::new("git")
+        .args(["commit-tree", &tree_oid, "-m", "WIP orphan stash"])
+        .current_dir(&repo_dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()
+        .expect("commit-tree failed");
+    let commit_oid = String::from_utf8_lossy(&commit.stdout).trim().to_string();
+    git(
+        &repo_dir,
+        &["update-ref", "refs/stash", &commit_oid, "-m", "WIP orphan"],
+    );
+
+    let plan = plan_stash_pop(&mut repo, 0).expect("plan_stash_pop failed");
+    assert!(
+        !plan.blockers.is_empty(),
+        "an uncomputable prediction must fail closed (blocker), got no blockers"
+    );
+    let msg = plan
+        .blockers
+        .iter()
+        .map(|b| b.message_en())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        msg.contains("Could not verify"),
+        "blocker should be the fail-closed prediction note, got: {}",
+        msg
+    );
+}
+
+/// issue #280: pop deletes the stash entry irreversibly, so its plan is
+/// Destructive class. (Was `destructive: false`; the expectation changed
+/// because the confirm UI must gate pop like drop/reset, not like apply.)
+#[test]
+fn test_stash_pop_plan_is_destructive() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, mut repo) = build_clean_repo(&tmp);
+
+    write_file(&repo_dir, "README.md", "wip\n");
+    execute_stash_push(&mut repo, Some("wip"), true).expect("push failed");
+
+    let plan = plan_stash_pop(&mut repo, 0).expect("plan_stash_pop failed");
+    assert!(
+        plan.destructive,
+        "stash pop plan must be marked destructive (it deletes the stash entry)"
+    );
+}
+
+/// issue #280: a tree that turned dirty between plan and execute is what makes
+/// `stash_apply` write conflicts — preflight must refuse.
+#[test]
+fn test_preflight_check_stash_rejects_dirty_tree() {
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, mut repo) = build_clean_repo(&tmp);
+
+    write_file(&repo_dir, "README.md", "wip\n");
+    execute_stash_push(&mut repo, Some("wip"), true).expect("push failed");
+
+    let plan = plan_stash_pop(&mut repo, 0).expect("plan_stash_pop failed");
+    let count = plan.stash_count_at_plan();
+    assert!(preflight_check_stash(&mut repo, &plan, count).is_ok());
+
+    // The tree goes dirty after the plan was confirmed.
+    write_file(&repo_dir, "README.md", "sneaky edit\n");
+    let err = preflight_check_stash(&mut repo, &plan, count)
+        .expect_err("preflight must reject a tree that turned dirty since planning");
+    assert!(
+        format!("{}", err).contains("Working tree changed since planning"),
+        "unexpected preflight error: {}",
+        err
+    );
+
+    // A standalone drop is unaffected: it never touches the working tree.
+    let drop_plan = plan_stash_drop(&mut repo, 0).expect("plan_stash_drop failed");
+    assert!(
+        preflight_check_stash(&mut repo, &drop_plan, drop_plan.stash_count_at_plan()).is_ok(),
+        "stash drop must stay allowed on a dirty tree"
     );
 }

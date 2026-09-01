@@ -10,6 +10,7 @@ use std::time::Instant;
 use kagi_git::{AmendMode, CommitId, Head, MergeKind, OperationPlan, PullOutcome, StateSummary};
 
 use crate::ui::i18n;
+use crate::ui::i18n::Msg;
 use crate::ui::{BranchPlanKind, BranchPlanModal, CheckoutPlanTarget};
 
 // W3-NOTIFY: blocking cores for pull / push
@@ -521,9 +522,29 @@ pub(crate) fn stash_pop_blocking(
     // StashPop, so a concurrent stash push between plan and execute can't shift
     // indices and pop the WRONG entry.
     let op = kagi_git::Operation::StashPop { index: stash_index };
-    repo.run(&op, plan)
+    let outcome = repo
+        .run(&op, plan)
         .map_err(|e| i18n::op_failed(i18n::Op::Pop, e))?;
     klog!("executed: stash-pop index={}", stash_index);
+
+    // issue #280: a conflicted apply is NOT a failure — the stashed content is
+    // in the working tree (with markers) — but the stash entry was kept, so the
+    // oplog/footer must say so instead of "applied and dropped".
+    if let kagi_git::OperationOutcome::StashPop(kagi_git::StashPopOutcome::ConflictedStashKept {
+        files,
+    }) = outcome
+    {
+        klog!(
+            "executed: stash-pop index={} — conflicts in {} file(s), stash kept",
+            stash_index,
+            files.len()
+        );
+        let after = StateSummary {
+            head: plan.current.head.clone(),
+            dirty: format!("{} conflicted (stash kept)", files.len()),
+        };
+        return Ok((Msg::StashPopConflictedKept.t().to_string(), after));
+    }
 
     let after = StateSummary {
         head: plan.current.head.clone(),

@@ -64,6 +64,12 @@ pub fn note_ja(note: &StashNote) -> String {
                 count, files_label
             )
         }
+        StashNote::PopPredictionUnavailable { reason } => format!(
+            "stash がクリーンに適用できるか検証できませんでした({})。\
+             pop は stash entry を削除するためブロックされました。\
+             代わりに 'Stash Apply' を使用してください: stash を削除せずに適用できます。",
+            reason
+        ),
         StashNote::RemoteDropIrreversible => {
             "リモートホスト上の stash entry を完全に削除します。Kagi から元に戻すことはできません。"
                 .to_string()

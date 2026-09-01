@@ -33,65 +33,14 @@ impl KagiApp {
         (eligible, skipped)
     }
 
-    /// Open the discard modal for a single unstaged row (by its index in the
-    /// commit panel's `unstaged` vector). Conflicted rows are not offered a
-    /// Discard menu; untracked rows are (they are deleted after an ODB backup,
-    /// ADR-0083).
-    pub fn open_discard_modal_for_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        let _repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        let path = match self.commit_panel.as_ref().and_then(|e| {
-            e.read(cx)
-                .state
-                .unstaged
-                .get(index)
-                .map(|f| f.path.to_string_lossy().replace('\\', "/"))
-        }) {
-            Some(p) => p,
-            None => return,
-        };
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
-                return;
-            }
-        };
-        let paths = vec![path];
-        match repo.plan_discard(&paths) {
-            Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: discard 1 target blockers={}",
-                    plan.blockers.len()
-                );
-                self.set_discard_modal(DiscardModal {
-                    plan: std::sync::Arc::new(plan),
-                    paths,
-                    skipped: Vec::new(),
-                    is_all: false,
-                    error: None,
-                    confirm_armed: false,
-                });
-            }
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Discard, e),
-                ));
-            }
-        }
-    }
-
-    /// Open the discard modal for a single repo-relative `path`, without
-    /// requiring a commit-panel unstaged index (T-WS-EDITOR-007: the Editor
-    /// Workspace tree context-menu's "Discard Changes…" — the tree doesn't
-    /// share the commit panel's row indices). Builds the exact same
-    /// `DiscardModal`/plan shape as `open_discard_modal_for_index`; the
-    /// tree-menu builder already gates this action to tracked, changed files,
-    /// so no conflicted/untracked filtering is needed here.
+    /// Open the discard modal for a single repo-relative `path`. Used both by the
+    /// unstaged-file context menu (issue #286: keyed by path, not row index, so an
+    /// external `git add` that renumbers `unstaged` can't shift the target) and by
+    /// the Editor Workspace tree context-menu's "Discard Changes…" (T-WS-EDITOR-007:
+    /// the tree doesn't share the commit panel's row indices). Conflicted rows are
+    /// not offered a Discard menu; untracked rows are (deleted after an ODB backup,
+    /// ADR-0083). The callers already gate this action to eligible files, so no
+    /// conflicted/untracked filtering is needed here.
     pub fn open_discard_modal_for_path(
         &mut self,
         path: std::path::PathBuf,

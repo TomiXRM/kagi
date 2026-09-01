@@ -48,3 +48,42 @@ impl DiffCaches {
         self.diffstat.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #286: caches are keyed by COMMIT ROW INDEX. After a graph renumber
+    /// (tab switch / external reload / solo toggle) row 5 points at a *different*
+    /// commit, so `clear()` — the single invalidation the fix routes every
+    /// renumber through (`apply_tab_view` / `graph_solo`) — must drop every
+    /// row-keyed field so a stale entry can never be served under a reused index.
+    #[test]
+    fn clear_drops_every_row_keyed_field() {
+        let mut c = DiffCaches::default();
+        c.changed_files.insert(5, None);
+        c.diffstat.insert(5, Vec::new());
+        c.remote_inflight.insert(5);
+        c.local_inflight.insert(5);
+        c.file_content.insert(
+            (5, 0),
+            Arc::new(FileDiff {
+                old_path: None,
+                new_path: None,
+                change: kagi_git::ChangeKind::Modified,
+                hunks: Vec::new(),
+                is_binary: false,
+            }),
+        );
+
+        c.clear();
+
+        // Row 5 must no longer resolve to the old commit's data on ANY field.
+        assert!(c.changed_files.is_empty());
+        assert!(c.diffstat.is_empty());
+        assert!(c.remote_inflight.is_empty());
+        assert!(c.local_inflight.is_empty());
+        assert!(c.file_content.is_empty());
+        assert!(c.changed_files.get(&5).is_none());
+    }
+}

@@ -436,7 +436,7 @@ impl Render for KagiApp {
         let editor_dirty_guard_modal = self.editor_dirty_guard_modal().cloned();
         let editor_fs_prompt_modal = self.editor_fs_prompt_modal().cloned();
         let editor_delete_confirm_modal = self.editor_delete_confirm_modal().cloned();
-        let file_menu = self.file_menu;
+        let file_menu = self.file_menu.clone();
         let modal_focus = self.modal_focus.clone();
         let stash_push_modal = self.stash_push_modal().cloned();
         let stash_push_focus = self.stash_push_focus.clone();

@@ -1229,9 +1229,11 @@ pub struct KagiApp {
     /// ADR-0140: open tag context menu (right-click on a sidebar tag row).
     pub tag_menu: Option<tag_menu::TagMenuState>,
     pub worktree_menu: Option<worktree_menu::WorktreeMenuState>,
-    /// Unstaged file-row context menu (right-click): (unstaged index, anchor).
-    /// Offers Discard for eligible (tracked, non-conflicted) rows.
-    pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    /// Unstaged file-row context menu (right-click): (repo-relative path, anchor).
+    /// Offers Discard for eligible (tracked, non-conflicted) rows. Keyed by PATH
+    /// not index (issue #286) so an external `git add` that renumbers `unstaged`
+    /// while the menu is open can never make Discard hit a different file.
+    pub file_menu: Option<(std::path::PathBuf, gpui::Point<gpui::Pixels>)>,
     /// Right-click context menu on an Inspector / Compare changed-file row
     /// (`Some((file_index, cursor_pos))` while open): History / Open in
     /// Editor / Copy Path. Replaces the old right-click-jumps-straight-to-
@@ -1662,22 +1664,27 @@ impl KagiApp {
 
         // Snapshot the preservation inputs the I/O step needs (prev selection /
         // editing index), then run the read-only Git/index/file I/O synchronously.
-        let (prev_selected, prev_editing_file) = self
+        // Issue #285: capture the previously-selected/editing files by PATH, not
+        // index — a per-file Save re-sorts `session.files`, so a stored index
+        // would silently follow to a different file after re-detection.
+        let (prev_selected_path, prev_editing_path) = self
             .conflict
             .as_ref()
             .map(|e| {
                 let v = e.read(cx);
-                (
-                    v.mode.as_ref().and_then(|c| c.selected_file),
-                    v.mode.as_ref().and_then(|c| c.editing_file),
-                )
+                let sel = v.mode.as_ref().and_then(|c| {
+                    c.selected_file
+                        .and_then(|i| c.session.files.get(i))
+                        .map(|f| f.path.clone())
+                });
+                (sel, v.editing.clone())
             })
             .unwrap_or((None, None));
         let current_branch = self.active_view.status_summary.branch.clone();
         let outcome = Self::detect_conflict_payload(
             &repo_path,
-            prev_selected,
-            prev_editing_file,
+            prev_selected_path,
+            prev_editing_path,
             current_branch,
         );
         self.apply_conflict_detect(outcome, cx);
@@ -1707,15 +1714,20 @@ impl KagiApp {
         }
         self.conflict_detected_for = Some(repo_path.clone());
 
-        let (prev_selected, prev_editing_file) = self
+        // Issue #285: capture the previously-selected/editing files by PATH, not
+        // index — a per-file Save re-sorts `session.files`, so a stored index
+        // would silently follow to a different file after re-detection.
+        let (prev_selected_path, prev_editing_path) = self
             .conflict
             .as_ref()
             .map(|e| {
                 let v = e.read(cx);
-                (
-                    v.mode.as_ref().and_then(|c| c.selected_file),
-                    v.mode.as_ref().and_then(|c| c.editing_file),
-                )
+                let sel = v.mode.as_ref().and_then(|c| {
+                    c.selected_file
+                        .and_then(|i| c.session.files.get(i))
+                        .map(|f| f.path.clone())
+                });
+                (sel, v.editing.clone())
             })
             .unwrap_or((None, None));
         let current_branch = self.active_view.status_summary.branch.clone();
@@ -1727,8 +1739,8 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             Self::detect_conflict_payload(
                 &repo_path,
-                prev_selected,
-                prev_editing_file,
+                prev_selected_path,
+                prev_editing_path,
                 current_branch,
             )
         });

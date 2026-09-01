@@ -607,7 +607,6 @@ impl KagiApp {
         });
     }
 
-    /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
     /// Map a finished pop to its oplog record and footer, shared by the
     /// button path (`start_pop`) and the Enter path (`confirm_pop`).
     ///
@@ -637,6 +636,7 @@ impl KagiApp {
         }
     }
 
+    /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
     pub fn confirm_pop(&mut self, cx: &mut Context<Self>) {
         let modal = match self.pop_modal().cloned() {
             Some(m) => m,

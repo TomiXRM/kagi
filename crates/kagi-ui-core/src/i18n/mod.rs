@@ -385,6 +385,8 @@ pub enum Msg {
     DiffUnavailable,
     /// Inspector co-author section caption.
     CoAuthoredBy,
+    /// Inspector trailers section caption (issue #336).
+    Trailers,
     /// Commit panel: subject-line input placeholder.
     CommitTitle,
     /// Commit panel: body input placeholder.
@@ -1185,6 +1187,7 @@ impl Msg {
             (En, DiffUnavailable) => "(diff unavailable)",
             (Ja, DiffUnavailable) => "(diff を取得できません)",
             (En, CoAuthoredBy) => "Co-authored by",
+            (En, Trailers) => "Trailers",
             (En, CommitTitle) => "Summary",
             (Ja, CommitTitle) => "概要",
             (En, CommitBody) => "Description (optional)",
@@ -1324,6 +1327,7 @@ impl Msg {
             (Ja, Template) => "テンプレート",
             (Ja, NoRecentAuthors) => "最近の履歴に他の作成者がいません",
             (Ja, CoAuthoredBy) => "共同作成者",
+            (Ja, Trailers) => "トレーラー",
             (En, Ready) => "Ready",
             (Ja, Ready) => "準備完了",
             (En, NoRepositoryOpenWelcome) => {

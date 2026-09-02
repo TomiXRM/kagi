@@ -22,7 +22,10 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 
-use kagi_git::{find_stat, parse_coauthors, ChangeKind, CommitId, FileDiffStat, FileStatus};
+use kagi_git::{
+    find_stat, is_url, parse_coauthors, parse_trailers, sanitize_trailer_value, ChangeKind,
+    CommitId, FileDiffStat, FileStatus,
+};
 
 use kagi_ui_core::file_tree::status_badge;
 
@@ -740,6 +743,68 @@ pub fn render_inspector(
         Some(block.into_any())
     };
 
+    // ── Trailer table (issue #336) ────────────────────────────────────────
+    // All `git interpret-trailers`-detected trailers as a key/value table
+    // below the body. URL values open in the external browser; every value is
+    // run through the control/ANSI sanitizer before display (#356 guard).
+    let trailers = parse_trailers(d.full_message.as_ref());
+    let trailer_rows: Vec<gpui::AnyElement> = trailers
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let key = SharedString::from(t.key.clone());
+            let value_str = sanitize_trailer_value(&t.value);
+            let value_el = if is_url(&t.value) {
+                let url = t.value.trim().to_string();
+                div()
+                    .id(("inspector-trailer-link", i))
+                    .cursor_pointer()
+                    .text_xs()
+                    .text_color(rgb(theme().color_head))
+                    .truncate()
+                    .child(SharedString::from(value_str))
+                    .on_mouse_down(MouseButton::Left, move |_e, _window, cx| {
+                        cx.open_url(&url);
+                    })
+                    .into_any()
+            } else {
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_main))
+                    .child(SharedString::from(value_str))
+                    .into_any()
+            };
+            div()
+                .flex()
+                .flex_row()
+                .items_baseline()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .child(key),
+                )
+                .child(div().flex_1().min_w(px(0.)).child(value_el))
+                .into_any()
+        })
+        .collect();
+    let trailers_block: Option<gpui::AnyElement> = if trailer_rows.is_empty() {
+        None
+    } else {
+        let mut block = div().flex().flex_col().gap_px().mb_2().child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::Trailers.t())),
+        );
+        for r in trailer_rows {
+            block = block.child(r);
+        }
+        Some(block.into_any())
+    };
+
     // ── Ref badges row ────────────────────────────────────────────────────
     let badges_row = {
         let mut row = div()
@@ -930,6 +995,7 @@ pub fn render_inspector(
         .child(title_el)
         .child(meta_row)
         .children(coauthors_block)
+        .children(trailers_block)
         .child(badges_row)
         .child(actions_row);
 

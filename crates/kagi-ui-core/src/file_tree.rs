@@ -90,6 +90,62 @@ pub fn build_file_tree_opt(files: &[(PathBuf, Option<ChangeKind>)]) -> Vec<TreeR
     out
 }
 
+impl TreeRow {
+    /// The nesting depth of this row.
+    fn depth(&self) -> usize {
+        match self {
+            TreeRow::Dir { depth, .. } => *depth,
+            TreeRow::File { depth, .. } => *depth,
+        }
+    }
+}
+
+/// Drop [`TreeRow::File`] rows whose `file_index` fails `keep`, then prune any
+/// [`TreeRow::Dir`] rows left with no surviving file descendant (issue #348 —
+/// used to remove generated files from the main tree without leaving empty
+/// directory labels behind).
+///
+/// Pure: operates on the flattened depth-first row list. A directory owns every
+/// subsequent row with a greater depth until a row at its own depth or
+/// shallower; if none of those are files after filtering, the directory row is
+/// removed. Runs to a fixpoint so nested empty directories are pruned too.
+pub fn retain_files(rows: Vec<TreeRow>, keep: impl Fn(usize) -> bool) -> Vec<TreeRow> {
+    // First drop the filtered-out file rows.
+    let mut rows: Vec<TreeRow> = rows
+        .into_iter()
+        .filter(|r| match r {
+            TreeRow::File { file_index, .. } => keep(*file_index),
+            TreeRow::Dir { .. } => true,
+        })
+        .collect();
+
+    // Then prune empty directories until stable.
+    loop {
+        let mut remove: Option<usize> = None;
+        for (i, row) in rows.iter().enumerate() {
+            let TreeRow::Dir { depth, .. } = row else {
+                continue;
+            };
+            // Look at the rows this dir owns (deeper) up to the next sibling.
+            let has_file = rows[i + 1..]
+                .iter()
+                .take_while(|r| r.depth() > *depth)
+                .any(|r| matches!(r, TreeRow::File { .. }));
+            if !has_file {
+                remove = Some(i);
+                break;
+            }
+        }
+        match remove {
+            Some(i) => {
+                rows.remove(i);
+            }
+            None => break,
+        }
+    }
+    rows
+}
+
 // ──────────────────────────────────────────────────────────────
 // Internal tree node types
 // ──────────────────────────────────────────────────────────────
@@ -504,5 +560,39 @@ mod tests {
             }
             other => panic!("expected File, got {:?}", other),
         }
+    }
+
+    // ── retain_files: drop generated files + prune empty dirs (issue #348) ──
+    #[test]
+    fn retain_files_prunes_emptied_directories() {
+        // dist/ holds only a generated bundle; src/ holds a real file.
+        let files = vec![added("dist/bundle.js"), added("src/main.rs")];
+        let rows = build_file_tree(&files);
+        // file_index 0 = dist/bundle.js (generated) → drop it.
+        let kept = retain_files(rows, |i| i != 0);
+
+        // Only src/main.rs and its dir survive; dist/ is pruned.
+        assert_file_count(&kept, 1);
+        let names: Vec<&str> = kept
+            .iter()
+            .map(|r| match r {
+                TreeRow::Dir { name, .. } => name.as_ref(),
+                TreeRow::File { name, .. } => name.as_ref(),
+            })
+            .collect();
+        assert!(!names.contains(&"dist"), "empty dist/ must be pruned");
+        assert!(names.contains(&"main.rs"));
+        // Surviving file keeps its ORIGINAL index (1).
+        assert!(kept
+            .iter()
+            .any(|r| matches!(r, TreeRow::File { file_index: 1, .. })));
+    }
+
+    #[test]
+    fn retain_files_keeps_all_when_predicate_true() {
+        let files = vec![added("a.txt"), added("dir/b.txt")];
+        let rows = build_file_tree(&files);
+        let kept = retain_files(rows.clone(), |_| true);
+        assert_eq!(kept, rows);
     }
 }

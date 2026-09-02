@@ -275,6 +275,69 @@ impl Backend {
         Ok(self.find_blob_at(id, path)?.map(|b| b.content().to_vec()))
     }
 
+    /// `.gitattributes` override for generated-file classification (issue #348).
+    ///
+    /// Returns `Some(true)` when the path is forced generated (`linguist-generated`
+    /// set, or `-diff` → fold), `Some(false)` when `linguist-generated` is
+    /// explicitly unset/false (force NOT generated), or `None` when neither
+    /// attribute applies. The attribute always wins over content classification.
+    fn generated_attr_override(&self, path: &Path) -> Option<bool> {
+        use git2::{AttrCheckFlags, AttrValue};
+        // `linguist-generated` decides first (set → generated, unset → not).
+        if let Ok(v) = self
+            .repo
+            .get_attr(path, "linguist-generated", AttrCheckFlags::default())
+        {
+            match AttrValue::from_string(v) {
+                AttrValue::True => return Some(true),
+                AttrValue::False => return Some(false),
+                AttrValue::String(s) if s.eq_ignore_ascii_case("true") => return Some(true),
+                AttrValue::String(s) if s.eq_ignore_ascii_case("false") => return Some(false),
+                _ => {}
+            }
+        }
+        // `-diff` (diff attribute unset) → fold as generated (issue §5).
+        if let Ok(v) = self.repo.get_attr(path, "diff", AttrCheckFlags::default()) {
+            if matches!(AttrValue::from_string(v), AttrValue::False) {
+                return Some(true);
+            }
+        }
+        None
+    }
+
+    /// Per-file "is generated" flags for a commit's changed files (issue #348).
+    ///
+    /// Aligned with `files` by index. For each file: reads its `.gitattributes`
+    /// override, reads up to the first 8 KiB of its blob at commit `id`, and
+    /// combines them via [`kagi_domain::generated::classify_generated`] (the
+    /// attribute wins). A file absent from the tree (pure deletion) is
+    /// classified from its path + empty content.
+    pub fn commit_generated_flags(&self, id: &CommitId, files: &[FileStatus]) -> Vec<bool> {
+        const HEAD_BYTES: usize = 8 * 1024;
+        files
+            .iter()
+            .map(|fs| {
+                let path = fs.path.as_path();
+                let path_str = path.to_string_lossy();
+                let attr = self.generated_attr_override(path);
+                // Attribute wins — skip the (costly) blob read when it decides.
+                if let Some(v) = attr {
+                    return v;
+                }
+                let head = self
+                    .blob_bytes_at(id, path)
+                    .ok()
+                    .flatten()
+                    .map(|mut b| {
+                        b.truncate(HEAD_BYTES);
+                        b
+                    })
+                    .unwrap_or_default();
+                kagi_domain::generated::classify_generated(&path_str, &head, None)
+            })
+            .collect()
+    }
+
     /// The file's full text content as of commit `id` (editor mode's
     /// right-pane History → middle-pane Snapshot tab).
     ///

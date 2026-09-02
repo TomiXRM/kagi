@@ -1156,6 +1156,10 @@ pub struct KagiApp {
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.
     pub inspector_tree_view: bool,
+    /// issue #348: when `true` the Inspector's "Generated (N)" section is
+    /// expanded to show the folded lockfiles / generated files. Default `false`
+    /// (folding on) — generated files start collapsed under the disclosure.
+    pub inspector_generated_expanded: bool,
     /// W7-INSPECTOR2: vertical split ratio between the message scroll box (top)
     /// and the changed-files list (bottom) inside the inspector.  `0.5` = 1:1.
     /// Clamped to `0.2..=0.8` when dragged via the `InspectorSplit` divider.
@@ -1511,6 +1515,7 @@ impl KagiApp {
             active_tab: 0,
             watcher_generation: 0,
             inspector_tree_view: true,
+            inspector_generated_expanded: false,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
@@ -2496,7 +2501,11 @@ impl KagiApp {
             let id = kagi_git::CommitId(sha);
             let files = repo.commit_changed_files(&id).ok();
             let stats = repo.commit_diffstat(&id).ok();
-            Some((files, stats))
+            // issue #348: classify each changed file as generated / lockfile so
+            // the Inspector can auto-fold them. Computed here (off the UI thread)
+            // because it reads blob heads + .gitattributes.
+            let generated = files.as_ref().map(|f| repo.commit_generated_flags(&id, f));
+            Some((files, stats, generated))
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -2511,12 +2520,15 @@ impl KagiApp {
                 if !still_current {
                     return;
                 }
-                let (files, stats) = result.unwrap_or((None, None));
+                let (files, stats, generated) = result.unwrap_or((None, None, None));
                 let n = files.as_ref().map(|v| v.len()).unwrap_or(0);
                 klog!("changed files: {}", n);
                 app.diff_caches.changed_files.insert(index, files);
                 if let Some(stats) = stats {
                     app.diff_caches.diffstat.insert(index, stats);
+                }
+                if let Some(generated) = generated {
+                    app.diff_caches.generated.insert(index, generated);
                 }
                 cx.notify();
             });

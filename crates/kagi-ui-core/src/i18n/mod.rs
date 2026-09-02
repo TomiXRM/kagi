@@ -801,6 +801,9 @@ pub enum Msg {
     EditorDeleteConfirmUnsavedWarning,
     /// Delete-confirm modal: the confirm button.
     EditorDeleteConfirmButton,
+    /// issue #348: Inspector "Generated (N)" fold section label (the count is
+    /// appended by the caller).
+    GeneratedFilesSection,
 }
 
 impl Msg {
@@ -1689,6 +1692,8 @@ impl Msg {
             }
             (En, EditorDeleteConfirmButton) => "Move to Trash",
             (Ja, EditorDeleteConfirmButton) => "ゴミ箱に移動",
+            (En, GeneratedFilesSection) => "Generated",
+            (Ja, GeneratedFilesSection) => "生成ファイル",
         }
     }
 }

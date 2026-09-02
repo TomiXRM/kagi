@@ -1502,3 +1502,63 @@ fn abort_refuses_when_a_cleanly_merged_file_was_edited_mid_conflict() {
         "MAIN a\n"
     );
 }
+
+/// #307: a non-conflicted file edited AND **staged** mid-conflict must block the
+/// abort too. The old `diff_index_to_workdir` guard missed this: `git add` makes
+/// index == workdir, so no delta showed, and `index.read_tree` + the pathspec
+/// force-checkout then wiped the staged content from both index and working tree.
+/// Real `git merge --abort` (= `reset --merge`) refuses to lose staged work, and
+/// kagi (safety-first) must too. The guard now reconstructs the merge's own clean
+/// output and refuses when the staged blob differs from it.
+#[test]
+fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    // Drop the fixture's unrelated dirt so the staged b.txt is the ONLY blocker
+    // (keeps the mutation-check unambiguous).
+    write_file(dir, "untouched.txt", "base untouched\n");
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    // The user edits a cleanly-merged (non-conflicted) file AND stages it, so
+    // index == workdir — exactly the case the old guard could not see.
+    write_file(dir, "b.txt", "USER STAGED EDIT\n");
+    git(dir, &["add", "b.txt"]);
+    assert_eq!(
+        git_output(dir, &["show", ":b.txt"]),
+        "USER STAGED EDIT",
+        "precondition: the edit is staged in the index"
+    );
+
+    let err = execute_conflict_abort(&repo, &session, &buffer)
+        .expect_err("abort must refuse rather than discard the staged edit");
+    assert!(
+        format!("{err}").contains("b.txt"),
+        "the refusal must name the staged file: {err}"
+    );
+
+    // The staged content survives in the index (not wiped by read_tree) and the
+    // conflict state is fully intact.
+    assert_eq!(
+        git_output(dir, &["show", ":b.txt"]),
+        "USER STAGED EDIT",
+        "staged content must remain in the index after the refusal"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "USER STAGED EDIT\n",
+        "working-tree content must remain after the refusal"
+    );
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "the refusal must leave the conflicted state fully intact"
+    );
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}

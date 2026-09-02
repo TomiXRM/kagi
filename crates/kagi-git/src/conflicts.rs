@@ -1793,7 +1793,7 @@ pub fn execute_conflict_abort(
         //
         // Checked BEFORE any mutation, so the refusal leaves the conflicted
         // state fully intact.
-        let edited = mid_conflict_edits(repo, session, &touched)?;
+        let edited = mid_conflict_edits(repo, session, &touched, oid, &tree)?;
         if !edited.is_empty() {
             return Err(GitError::Other(format!(
                 "abort refused: {} file(s) were edited during conflict resolution and would be overwritten: {}. Commit, stash or revert those edits first.",
@@ -1948,45 +1948,133 @@ pub fn execute_stash_conflict_abort(
     })
 }
 
-/// Paths among `touched` that are NOT conflicted and whose working-tree state
-/// differs from the index — i.e. files the user edited (or re-created) during
-/// Conflict Mode on top of the operation's output.  These are the paths the
-/// abort's force-checkout would destroy, so their presence blocks the abort.
+/// Paths among `touched` that are NOT conflicted and that the user edited (or
+/// re-created) during Conflict Mode on top of the operation's output.  These
+/// are the paths the abort's `read_tree` + force-checkout would destroy, so
+/// their presence blocks the abort.
+///
+/// Two kinds of mid-conflict edit are caught:
+///
+/// 1. **Unstaged** — working tree differs from the index (`diff_index_to_workdir`).
+/// 2. **Staged** (#307) — the user edited a non-conflicted file *and* `git add`ed
+///    it, so index == workdir and the diff in (1) sees nothing.  The staged blob
+///    would be silently lost by `index.read_tree(&tree)` and the force-checkout.
+///    Detect it by reconstructing the operation's *own* clean-merge output and
+///    flagging any non-conflicted path whose current index blob differs from it.
+///    Reconstruction (not a raw index→tree diff) is what keeps the operation's
+///    legitimate clean merges — including auto-merged hunks that match neither
+///    parent — from being false-flagged.
+///
+/// `orig_oid` / `orig_tree` are ORIG_HEAD's oid and tree (the abort target).
 fn mid_conflict_edits(
     repo: &Repository,
     session: &ConflictSession,
     touched: &[String],
+    orig_oid: git2::Oid,
+    orig_tree: &git2::Tree<'_>,
 ) -> Result<Vec<String>, GitError> {
     let conflicted: std::collections::BTreeSet<&str> = session
         .files
         .iter()
         .filter_map(|f| f.path.to_str())
         .collect();
-    let mut opts = git2::DiffOptions::new();
-    // A file the op deleted and the user re-created shows up as untracked.
-    opts.include_untracked(true);
-    opts.disable_pathspec_match(true);
-    let mut any = false;
-    for p in touched {
-        if !conflicted.contains(p.as_str()) {
-            opts.pathspec(p.as_str());
-            any = true;
+    let non_conflicted: Vec<&str> = touched
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !conflicted.contains(p))
+        .collect();
+
+    let mut edited: Vec<String> = Vec::new();
+
+    // (1) Unstaged edits: working tree differs from the index.
+    if !non_conflicted.is_empty() {
+        let mut opts = git2::DiffOptions::new();
+        // A file the op deleted and the user re-created shows up as untracked.
+        opts.include_untracked(true);
+        opts.disable_pathspec_match(true);
+        for p in &non_conflicted {
+            opts.pathspec(*p);
+        }
+        let diff = repo
+            .diff_index_to_workdir(None, Some(&mut opts))
+            .map_err(|e| {
+                GitError::Other(format!("diff index → workdir failed: {}", e.message()))
+            })?;
+        edited.extend(
+            diff.deltas()
+                .filter_map(|d| d.new_file().path().or_else(|| d.old_file().path()))
+                .filter_map(|p| p.to_str().map(str::to_string)),
+        );
+    }
+
+    // (2) Staged edits: current index blob differs from the operation's own
+    //     reconstructed clean-merge output (#307).
+    if let Some(result) = reconstruct_op_result(repo, session, orig_oid, orig_tree)? {
+        let current = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        for p in &non_conflicted {
+            let path = Path::new(p);
+            let cur = current.get_path(path, 0).map(|e| e.id);
+            let res = result.get_path(path, 0).map(|e| e.id);
+            if cur != res {
+                edited.push((*p).to_string());
+            }
         }
     }
-    if !any {
-        return Ok(Vec::new());
-    }
-    let diff = repo
-        .diff_index_to_workdir(None, Some(&mut opts))
-        .map_err(|e| GitError::Other(format!("diff index → workdir failed: {}", e.message())))?;
-    let mut edited: Vec<String> = diff
-        .deltas()
-        .filter_map(|d| d.new_file().path().or_else(|| d.old_file().path()))
-        .filter_map(|p| p.to_str().map(|s| s.to_string()))
-        .collect();
+
     edited.sort();
     edited.dedup();
     Ok(edited)
+}
+
+/// Reconstruct the operation's own clean-merge result index — what git wrote at
+/// conflict time before the user could touch it — so a staged mid-conflict edit
+/// (#307) can be told apart from the operation's legitimate output.
+///
+/// Only the **merge** case is reconstructed (ORIG_HEAD × MERGE_HEAD over their
+/// merge-base); it is the case the commit-panel staging path (#307) and the
+/// abort test-suite exercise.  For the sequencer ops (rebase / cherry-pick /
+/// revert) this returns `None`, so their guard keeps the pre-#307 unstaged-only
+/// behavior rather than risk a false refusal — a staged edit there still slips
+/// through as before (tracked as the remaining slice of #307).
+fn reconstruct_op_result<'r>(
+    repo: &'r Repository,
+    session: &ConflictSession,
+    orig_oid: git2::Oid,
+    orig_tree: &git2::Tree<'r>,
+) -> Result<Option<git2::Index>, GitError> {
+    if !matches!(session.op, ConflictOp::Merge { .. }) {
+        return Ok(None);
+    }
+    let merge_oid = match std::fs::read_to_string(repo.path().join("MERGE_HEAD"))
+        .ok()
+        .and_then(|s| git2::Oid::from_str(s.trim()).ok())
+    {
+        Some(o) => o,
+        None => return Ok(None),
+    };
+    let incoming_tree = repo
+        .find_commit(merge_oid)
+        .and_then(|c| c.tree())
+        .map_err(|e| GitError::Other(format!("MERGE_HEAD tree lookup failed: {}", e.message())))?;
+    let base_tree =
+        match repo.merge_base(orig_oid, merge_oid) {
+            Ok(base_oid) => Some(repo.find_commit(base_oid).and_then(|c| c.tree()).map_err(
+                |e| GitError::Other(format!("merge-base tree lookup failed: {}", e.message())),
+            )?),
+            // No common ancestor (unrelated histories): a base-less 2-way merge.
+            Err(_) => None,
+        };
+    let index = repo
+        .merge_trees(
+            base_tree.as_ref().unwrap_or(orig_tree),
+            orig_tree,
+            &incoming_tree,
+            None,
+        )
+        .map_err(|e| GitError::Other(format!("merge_trees reconstruct failed: {}", e.message())))?;
+    Ok(Some(index))
 }
 
 /// Every path the in-progress operation wrote into the working tree.

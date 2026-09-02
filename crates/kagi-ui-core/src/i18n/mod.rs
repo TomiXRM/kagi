@@ -310,6 +310,12 @@ pub enum Msg {
     ConflictResultPreview,
     ConflictPreviewHint,
     ConflictBinaryNoPreview,
+    // ── #321: binary / symlink / submodule side viewer ──
+    ConflictSymlinkTarget,
+    ConflictOpenBothExternal,
+    ConflictBinaryCompareHint,
+    ConflictImageTooLarge,
+    ConflictSubmoduleCommit,
     // ── W32-CONFLICT-EDITOR: hunk-level Conflict Editor ──────
     EditorCurrentSide,
     EditorIncomingSide,
@@ -1044,6 +1050,20 @@ impl Msg {
             (Ja, ConflictPreviewHint) => "上のボタンで側を選ぶと解決後のファイルをプレビューします。",
             (En, ConflictBinaryNoPreview) => "Binary file — choose a side; no text preview is available.",
             (Ja, ConflictBinaryNoPreview) => "binary ファイル — 側を選択してください。テキストプレビューはありません。",
+            (En, ConflictSymlinkTarget) => "Symlink target",
+            (Ja, ConflictSymlinkTarget) => "シンボリックリンクの参照先",
+            (En, ConflictOpenBothExternal) => "Open both sides in external editor",
+            (Ja, ConflictOpenBothExternal) => "両方の側を外部エディタで開く",
+            (En, ConflictBinaryCompareHint) => {
+                "Binary file — no inline preview. Open both sides to compare."
+            }
+            (Ja, ConflictBinaryCompareHint) => {
+                "binary ファイル — インラインプレビューはありません。両方の側を開いて比較してください。"
+            }
+            (En, ConflictImageTooLarge) => "Image too large to preview inline.",
+            (Ja, ConflictImageTooLarge) => "画像が大きすぎてインラインプレビューできません。",
+            (En, ConflictSubmoduleCommit) => "Submodule commit",
+            (Ja, ConflictSubmoduleCommit) => "サブモジュールのコミット",
             // ── W32-CONFLICT-EDITOR ──────────────────────────────────
             (En, EditorCurrentSide) => "Current",
             (Ja, EditorCurrentSide) => "現在の側",

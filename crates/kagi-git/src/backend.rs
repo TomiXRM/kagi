@@ -948,6 +948,28 @@ impl Backend {
         buffer.materialized_markers(&self.repo, path)
     }
 
+    /// Raw blob bytes of one side of a binary / symlink conflict (#321 viewer).
+    /// For a symlink the bytes ARE the link target; `None` for a submodule side
+    /// (no blob) or an absent side. UI-facing so the viewer never opens git2.
+    pub fn conflict_side_bytes(
+        &self,
+        buffer: &ResolutionBuffer,
+        path: &Path,
+        side: crate::resolution::SelectionSide,
+    ) -> Option<Vec<u8>> {
+        buffer.side_bytes(&self.repo, path, side)
+    }
+
+    /// (short OID, mode, size) of one side of a raw conflict (#321 viewer).
+    pub fn conflict_side_blob_info(
+        &self,
+        buffer: &ResolutionBuffer,
+        path: &Path,
+        side: crate::resolution::SelectionSide,
+    ) -> Option<crate::resolution::SideBlobInfo> {
+        buffer.side_blob_info(&self.repo, path, side)
+    }
+
     pub fn continue_blockers(
         &self,
         session: &conflicts::ConflictSession,

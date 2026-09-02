@@ -49,6 +49,23 @@ fn workdir_or_empty(repo: &Repository) -> PathBuf {
     repo.workdir().map(|p| p.to_path_buf()).unwrap_or_default()
 }
 
+/// git file mode for a gitlink / submodule entry (GIT_FILEMODE_COMMIT).
+const GITLINK_MODE: u32 = 0o160000;
+
+/// Whether the repo-relative `rel` is a submodule / gitlink (#324). The discard
+/// backup step does `fs::read(workdir/rel)`, which is a directory for a
+/// submodule (EISDIR) — so these must be blocked at plan time, never reaching
+/// execute. Detected from the index entry mode (a submodule is mode 160000).
+fn is_submodule_path(repo: &Repository, rel: &str) -> bool {
+    let Ok(index) = repo.index() else {
+        return false;
+    };
+    index
+        .get_path(Path::new(rel), 0)
+        .map(|e| e.mode == GITLINK_MODE)
+        .unwrap_or(false)
+}
+
 /// Analyse a discard of the given working-tree `paths` and return an
 /// [`OperationPlan`] with `destructive: true` (ADR-0046).
 ///
@@ -113,6 +130,13 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     for rel in &rels {
         if conflicted_set.contains(rel) {
             blockers.push(PlanNote::Discard(DiscardNote::TargetConflicted {
+                path: rel.clone(),
+            }));
+        } else if is_submodule_path(repo, rel) {
+            // #324: a dirty submodule shows as ` M sub` in the unstaged set but
+            // fs::read(workdir/sub) in execute would hit EISDIR and abort the
+            // whole batch. Reject it here so sibling targets still discard.
+            blockers.push(PlanNote::Discard(DiscardNote::TargetSubmodule {
                 path: rel.clone(),
             }));
         } else if untracked_set.contains(rel) {
@@ -255,16 +279,43 @@ pub fn execute_discard(
     let mut backups: Vec<DiscardBackup> = Vec::with_capacity(rels.len());
     for rel in &rels {
         let abs = workdir.join(rel);
-        // For an unstaged *deletion* the file is absent from the WT; back up an
-        // empty blob so the recovery handle still exists and is uniform.
-        let content: Vec<u8> = match std::fs::read(&abs) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => {
-                return Err(GitError::Other(format!(
-                    "discard aborted: cannot read '{}' for backup: {}",
-                    rel, e
-                )));
+        // #324 (mirrors #298): never read the backup THROUGH a symlink. `fs::read`
+        // follows links, so an untracked symlink pointing outside the repo (e.g.
+        // `/etc/…` or `../secret`) would pull repo-external bytes into the ODB
+        // backup blob — and a typechange means the link can't be restored from
+        // those bytes anyway. `symlink_metadata` never follows the link; for a
+        // symlink we back up the LINK TARGET PATH bytes (via `read_link`), not
+        // the dereferenced content. The on-disk delete stays `remove_file`, which
+        // already removes the link itself, not its target.
+        // ponytail: restore re-creates the raw link-path bytes as blob content,
+        // not an actual symlink — recover the target with `git cat-file -p <sha>`
+        // then `ln -s`. Full symlink re-creation on restore is a larger change,
+        // deferred; the security invariant (no outside bytes read/stored) holds.
+        let is_symlink = std::fs::symlink_metadata(&abs)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        let content: Vec<u8> = if is_symlink {
+            match std::fs::read_link(&abs) {
+                Ok(target) => target.to_string_lossy().into_owned().into_bytes(),
+                Err(e) => {
+                    return Err(GitError::Other(format!(
+                        "discard aborted: cannot read symlink '{}' for backup: {}",
+                        rel, e
+                    )));
+                }
+            }
+        } else {
+            // For an unstaged *deletion* the file is absent from the WT; back up an
+            // empty blob so the recovery handle still exists and is uniform.
+            match std::fs::read(&abs) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => {
+                    return Err(GitError::Other(format!(
+                        "discard aborted: cannot read '{}' for backup: {}",
+                        rel, e
+                    )));
+                }
             }
         };
         let oid = repo.blob(&content).map_err(|e| {

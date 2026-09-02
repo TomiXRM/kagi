@@ -15,6 +15,11 @@ pub fn note_ja(note: &DiscardNote) -> String {
         DiscardNote::NoUnstagedChanges { path } => {
             format!("'{}' には破棄できる未 stage の変更がありません。", path)
         }
+        DiscardNote::TargetSubmodule { path } => format!(
+            "'{}' はサブモジュールです。破棄はサブモジュールを扱えません。\
+             サブモジュール内部で変更を管理してください。",
+            path
+        ),
         DiscardNote::UntrackedWillBeDeleted { count } => format!(
             "⚠️ 未追跡ファイル {} 件がディスクから完全に削除されます(空になったフォルダも削除されます)。\
              削除前に各ファイルのバックアップ blob が oplog に保存されます — \

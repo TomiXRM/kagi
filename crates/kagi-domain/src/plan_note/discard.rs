@@ -10,6 +10,10 @@ pub enum DiscardNote {
     TargetConflicted { path: String },
     /// blocker — the target file has no unstaged changes.
     NoUnstagedChanges { path: String },
+    /// blocker — the target is a submodule / gitlink (mode 160000). The discard
+    /// backup-then-restore path cannot handle gitlinks (#324), so reject it at
+    /// plan time rather than aborting the whole batch at the backup read.
+    TargetSubmodule { path: String },
     /// warning — N untracked targets are deleted from disk (with ODB backup).
     UntrackedWillBeDeleted { count: usize },
 }
@@ -26,6 +30,11 @@ impl DiscardNote {
             DiscardNote::NoUnstagedChanges { path } => {
                 format!("'{}' has no unstaged changes to discard.", path)
             }
+            DiscardNote::TargetSubmodule { path } => format!(
+                "'{}' is a submodule. Discard cannot operate on submodules; \
+                 manage the change from inside the submodule instead.",
+                path
+            ),
             DiscardNote::UntrackedWillBeDeleted { count } => format!(
                 "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any \
                  now-empty folders removed). A backup blob is saved to the oplog first — \

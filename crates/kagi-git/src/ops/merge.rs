@@ -61,6 +61,14 @@ pub fn plan_merge_branch(
         }));
     }
 
+    // #299: a merge / rebase / cherry-pick / revert already in progress must
+    // block — `status.conflicted` goes empty the moment the unmerged entries
+    // are staged, so it cannot see a fully-staged in-progress operation or a
+    // `--no-commit` merge. `repo.state()` is the authoritative signal.
+    if let Some(op) = super::in_progress_op(repo) {
+        blockers.push(PlanNote::Merge(MergeNote::OperationInProgress { op }));
+    }
+
     // ADR-0105: dirty tracked working tree BLOCKS merge (mirrors cherry-pick /
     // revert). Merge writes conflict markers into the working files when a real
     // conflict occurs, which interleaves those markers with the user's
@@ -105,6 +113,15 @@ pub fn plan_merge_branch(
     {
         blockers.push(PlanNote::Merge(MergeNote::AlreadyContains {
             current: current_branch.clone(),
+            target: target.to_string(),
+        }));
+    } else if head_oid != git2::Oid::ZERO_SHA1 && repo.merge_base(head_oid, target_oid).is_err() {
+        // #299: no common ancestor. libgit2's `merge_commits` silently
+        // swallows compute_base's ENOTFOUND and merges against an empty base —
+        // i.e. it always behaves like `--allow-unrelated-histories`. Real git
+        // refuses; so do we. (An error from `merge_base` is ENOTFOUND here:
+        // both oids are valid commits we just resolved.)
+        blockers.push(PlanNote::Merge(MergeNote::UnrelatedHistories {
             target: target.to_string(),
         }));
     }
@@ -189,13 +206,22 @@ pub fn plan_merge_branch(
             // (it carries the merged-with-markers tree for the resolvable paths)
             // so the user sees the scope before confirming.
             let conflict_files = conflict_paths_from_index(&mut index)?;
+            // #301: the note lists at most MERGE_NOTE_FILE_CAP names but keeps
+            // the true count; the renderer appends "and N more". The full list
+            // still flows into MergeKind::Conflicts for Conflict Mode.
+            let true_count = conflict_files.len();
+            let shown: Vec<String> = conflict_files
+                .iter()
+                .take(super::MERGE_NOTE_FILE_CAP)
+                .cloned()
+                .collect();
             warnings.push(PlanNote::Merge(MergeNote::WillConflict {
-                count: conflict_files.len(),
-                files: conflict_files.clone(),
+                count: true_count,
+                files: shown,
             }));
             predicted_dirty = format!(
                 "{} conflicted file(s) (resolve in Conflict Mode)",
-                conflict_files.len()
+                true_count
             );
             kind = MergeKind::Conflicts(conflict_files);
             (
@@ -217,6 +243,29 @@ pub fn plan_merge_branch(
             let new_tree = repo.find_tree(new_tree_oid).map_err(|e| {
                 GitError::Other(format!("find_tree for preview failed: {}", e.message()))
             })?;
+            // #300: a clean merge result still has to land on disk. If an
+            // untracked file (the tracked tree is already clean here — dirty
+            // tracked files are a blocker above, returned before this point)
+            // would be overwritten by checking out the merge tree, real git
+            // refuses and names the files. Make it a plan-time blocker so we
+            // never write a merge commit that execution cannot check out.
+            let collisions = untracked_merge_collisions(repo, &new_tree, &status.untracked);
+            if !collisions.is_empty() {
+                let true_count = collisions.len();
+                let shown: Vec<String> = collisions
+                    .into_iter()
+                    .take(super::MERGE_NOTE_FILE_CAP)
+                    .collect();
+                blockers.push(PlanNote::Merge(MergeNote::UntrackedWouldBeOverwritten {
+                    count: true_count,
+                    files: shown,
+                }));
+                // Drop the now-contradictory "untracked files are untouched"
+                // warning for the colliding case (mirrors the dirty-blocker
+                // retain above).
+                warnings
+                    .retain(|w| !matches!(w, PlanNote::Common(CommonNote::UntrackedRemain { .. })));
+            }
             (
                 preview_files_between_trees(repo, &head_tree, &new_tree)?,
                 format!(
@@ -268,6 +317,14 @@ pub fn plan_merge_branch(
 /// ref. Non-fast-forward execution creates the merge commit without moving any
 /// ref, checks out the merge tree, then advances the current branch.
 pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId, GitError> {
+    // #299: refuse if a merge/rebase/cherry-pick/revert is in progress — never
+    // stack a second operation (which could drop a pending MERGE_HEAD).
+    if let Some(op) = super::in_progress_op(repo) {
+        return Err(GitError::Other(format!(
+            "{} is already in progress. Finish or abort it before merging.",
+            op.label_en()
+        )));
+    }
     let head_ref = repo
         .head()
         .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
@@ -348,6 +405,43 @@ pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId,
     let new_tree = repo
         .find_tree(new_tree_oid)
         .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
+
+    // #300: check out the merge tree BEFORE writing the commit. The old order
+    // (commit → checkout) left an orphaned, unreferenced merge commit in the
+    // ODB whenever the safe checkout failed (an untracked collision, or a
+    // tracked file changed since plan). A SAFE checkout is atomic — on any
+    // conflict it writes nothing and returns GIT_ECONFLICT — so doing it first
+    // means we never create a commit we cannot land. The notify callback
+    // collects the offending paths so we can name them like real git.
+    let conflicts = std::cell::RefCell::new(Vec::<String>::new());
+    let checkout_res = {
+        let mut cb = git2::build::CheckoutBuilder::new();
+        cb.safe();
+        cb.notify_on(git2::CheckoutNotificationType::CONFLICT);
+        cb.notify(|_why, path, _b, _t, _w| {
+            if let Some(p) = path {
+                conflicts.borrow_mut().push(p.display().to_string());
+            }
+            true
+        });
+        repo.checkout_tree(new_tree.as_object(), Some(&mut cb))
+    };
+    if let Err(e) = checkout_res {
+        let files = conflicts.into_inner();
+        if !files.is_empty() {
+            return Err(GitError::Other(format!(
+                "Your local changes to the following files would be overwritten by merge: {}. Commit, stash, or remove them, then re-plan.",
+                files.join(", ")
+            )));
+        }
+        return Err(GitError::Other(format!(
+            "checkout_tree after merge failed: {}",
+            e.message()
+        )));
+    }
+
+    // Checkout succeeded: the working tree and index now match the merge tree.
+    // Only now write the commit and move the ref (last).
     let committer = build_signature(repo)?;
     let author = committer.clone();
     let merge_message = format!("Merge branch '{}' into {}", target, current_branch);
@@ -362,12 +456,6 @@ pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId,
         )
         .map_err(|e| GitError::Other(format!("merge commit creation failed: {}", e.message())))?;
 
-    let mut cb = git2::build::CheckoutBuilder::new();
-    cb.safe();
-    repo.checkout_tree(new_tree.as_object(), Some(&mut cb))
-        .map_err(|e| {
-            GitError::Other(format!("checkout_tree after merge failed: {}", e.message()))
-        })?;
     let mut branch_ref = repo
         .find_reference(&refname)
         .map_err(|e| GitError::Other(format!("branch ref lookup failed: {}", e.message())))?;
@@ -403,6 +491,13 @@ pub fn execute_merge_into_conflict(
     repo: &Repository,
     target: &str,
 ) -> Result<Vec<String>, GitError> {
+    // #299: refuse if another operation is already in progress.
+    if let Some(op) = super::in_progress_op(repo) {
+        return Err(GitError::Other(format!(
+            "{} is already in progress. Finish or abort it before merging.",
+            op.label_en()
+        )));
+    }
     let head_ref = repo
         .head()
         .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;

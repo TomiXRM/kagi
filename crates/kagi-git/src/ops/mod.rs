@@ -247,6 +247,32 @@ pub(crate) fn conflict_paths_from_index(index: &mut git2::Index) -> Result<Vec<S
     Ok(conflict_files)
 }
 
+/// Cap on how many preview `FileStatus` rows a single plan collects. A merge of
+/// 10k files must not allocate a 10k-element Vec, clone it into the modal, and
+/// hand it to GPUI; the modal only ever renders the first handful anyway (issue
+/// #301). `Backend::snapshot` is likewise bounded.
+pub(crate) const PREVIEW_FILES_CAP: usize = 200;
+
+/// Cap on how many conflicting file names a merge plan note lists. The note
+/// still carries the true `count`; the renderer appends "and N more" (#301).
+pub(crate) const MERGE_NOTE_FILE_CAP: usize = 50;
+
+/// Map git2's repository state to the pure-domain [`InProgressOp`], or `None`
+/// when the repository is [`git2::RepositoryState::Clean`] (issue #299).
+pub(crate) fn in_progress_op(repo: &Repository) -> Option<kagi_domain::plan_note::InProgressOp> {
+    use git2::RepositoryState as S;
+    use kagi_domain::plan_note::InProgressOp as Op;
+    match repo.state() {
+        S::Clean => None,
+        S::Merge => Some(Op::Merge),
+        S::Rebase | S::RebaseInteractive | S::RebaseMerge => Some(Op::Rebase),
+        S::CherryPick | S::CherryPickSequence => Some(Op::CherryPick),
+        S::Revert | S::RevertSequence => Some(Op::Revert),
+        S::Bisect => Some(Op::Bisect),
+        _ => Some(Op::Other),
+    }
+}
+
 pub(crate) fn preview_files_between_trees(
     repo: &Repository,
     old_tree: &git2::Tree<'_>,
@@ -267,6 +293,11 @@ pub(crate) fn preview_files_between_trees(
 
     let mut preview_files = Vec::new();
     for delta in diff.deltas() {
+        // #301: bound the collection. The modal renders only a handful; a huge
+        // merge must not buffer every delta.
+        if preview_files.len() >= PREVIEW_FILES_CAP {
+            break;
+        }
         use git2::Delta;
         let change = match delta.status() {
             Delta::Added => ChangeKind::Added,
@@ -294,16 +325,63 @@ pub(crate) fn preview_files_between_trees(
     Ok(preview_files)
 }
 
+/// Working-tree paths where an untracked file would be overwritten by checking
+/// out `tree` — i.e. `tree` carries a blob at that path whose content differs
+/// from the file on disk (issue #300). This is a read-only, write-free twin of
+/// the check real git runs before a merge; it mirrors libgit2's SAFE-checkout
+/// "untracked file would be overwritten" rule (identical content is allowed).
+///
+/// git2's `CheckoutBuilder::dry_run` is unusable here: `GIT_CHECKOUT_NONE`
+/// reports no conflicts at all, and `safe()` would actually write to the
+/// working tree — neither is acceptable at plan time. Execution instead relies
+/// on the atomic SAFE checkout itself (it writes nothing on conflict).
+pub(crate) fn untracked_merge_collisions(
+    repo: &Repository,
+    tree: &git2::Tree<'_>,
+    untracked: &[std::path::PathBuf],
+) -> Vec<String> {
+    let workdir = match repo.workdir() {
+        Some(w) => w,
+        None => return Vec::new(),
+    };
+    let mut hits = Vec::new();
+    for rel in untracked {
+        let Ok(entry) = tree.get_path(rel) else {
+            continue; // the merge does not write this path
+        };
+        if entry.kind() != Some(git2::ObjectType::Blob) {
+            continue;
+        }
+        let Ok(blob) = repo.find_blob(entry.id()) else {
+            continue;
+        };
+        // Differing content is what git refuses; identical content is fine.
+        match std::fs::read(workdir.join(rel)) {
+            Ok(disk) if disk == blob.content() => {}
+            _ => hits.push(rel.display().to_string()),
+        }
+    }
+    hits
+}
+
 pub(crate) fn resolve_branch_commit<'repo>(
     repo: &'repo Repository,
     name: &str,
 ) -> Result<git2::Commit<'repo>, GitError> {
+    // #299: resolve only through named refs, never `revparse_single`. The
+    // latter accepts revision expressions (`HEAD~3`, `@{-1}`, `:/subject`),
+    // which must never become a merge / checkout target — real git rejects
+    // them there too. `resolve_reference_from_short_name` does the same DWIM
+    // over ref namespaces that a branch/tag name uses (so `v1` → `refs/tags/v1`
+    // still resolves, which the worktree-open flow relies on) but does NOT
+    // evaluate revision syntax — a revision expression is not a ref, so it
+    // fails cleanly.
     repo.find_branch(name, BranchType::Local)
         .or_else(|_| repo.find_branch(name, BranchType::Remote))
         .and_then(|branch| branch.get().peel_to_commit())
         .or_else(|_| {
-            repo.revparse_single(name)
-                .and_then(|obj| obj.peel_to_commit())
+            repo.resolve_reference_from_short_name(name)
+                .and_then(|r| r.peel_to_commit())
         })
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))
 }

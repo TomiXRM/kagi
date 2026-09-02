@@ -3,6 +3,22 @@
 
 use kagi_domain::plan_note::{MergeNote, MergeRecovery, MergeTitle};
 
+/// Capped file list (issue #301): shown names joined by `", "`, with
+/// "他 N 件" appended when the true `count` exceeds what is shown. Empty list
+/// renders "(不明なファイル)".
+fn capped_files_ja(count: usize, files: &[String]) -> String {
+    if files.is_empty() {
+        return "(不明なファイル)".to_string();
+    }
+    let shown = files.join(", ");
+    let more = count.saturating_sub(files.len());
+    if more > 0 {
+        format!("{}、他 {} 件", shown, more)
+    } else {
+        shown
+    }
+}
+
 /// Japanese rendering of one merge note.
 pub fn note_ja(note: &MergeNote) -> String {
     match note {
@@ -17,16 +33,29 @@ pub fn note_ja(note: &MergeNote) -> String {
             current, target
         ),
         MergeNote::WillConflict { count, files } => {
-            let files_label = if files.is_empty() {
-                "(不明なファイル)".to_string()
-            } else {
-                files.join(", ")
-            };
             format!(
                 "merge すると {} 件のコンフリクトが発生します: {}。Conflict Mode で解決してください。",
-                count, files_label
+                count,
+                capped_files_ja(*count, files)
             )
         }
+        MergeNote::UnrelatedHistories { target } => format!(
+            "'{}' と現在の branch には共通の履歴がありません。git は --allow-unrelated-histories なしではこれを拒否します。無関係なツリーの merge はほぼ間違いです。",
+            target
+        ),
+        MergeNote::OperationInProgress { op } => format!(
+            "{} が進行中です。merge する前に完了または中止してください。",
+            op.label_ja()
+        ),
+        MergeNote::UntrackedWouldBeOverwritten { count, files } => format!(
+            "{} 個の untracked ファイルが merge で上書きされます: {}。先に移動または削除してください。",
+            count,
+            capped_files_ja(*count, files)
+        ),
+        MergeNote::IntoUnrelatedHistories { target, source } => format!(
+            "'{}' と '{}' には共通の履歴がありません。git は --allow-unrelated-histories なしではこれを拒否します。無関係なツリーの merge はほぼ間違いです。",
+            source, target
+        ),
         MergeNote::IntoCheckedOutElsewhere { target, worktree } => format!(
             "branch '{}' は worktree '{}' でチェックアウトされています。ここから merge すると、その worktree の足元で ref が動き、ファイルと index が別の commit を指した状態になります。その worktree 側で merge してください。",
             target, worktree

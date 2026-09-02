@@ -267,7 +267,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            self.record_op(
+            self.record_op_persist(
                 "branch-cleanup",
                 modal.plan.current.clone(),
                 kagi_git::oplog::OpOutcome::Refused {
@@ -342,7 +342,7 @@ impl KagiApp {
                             // real and recoverable) with the failures in-line.
                             kagi_git::oplog::OpOutcome::Success { after }
                         };
-                        app.record_op(
+                        app.record_op_persist(
                             "branch-cleanup",
                             modal.plan.current.clone(),
                             outcome_kind,
@@ -360,7 +360,7 @@ impl KagiApp {
                         // Global refusal (HEAD moved / repo open failure) —
                         // nothing was deleted.
                         let err_msg = i18n::op_failed(i18n::Op::Cleanup, e);
-                        app.record_op(
+                        app.record_op_persist(
                             "branch-cleanup",
                             modal.plan.current.clone(),
                             kagi_git::oplog::OpOutcome::Failed {

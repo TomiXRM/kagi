@@ -54,9 +54,52 @@ pub enum OpOutcome {
     },
 }
 
+/// Who initiated an operation (ADR-0149 / #333). Serialized as the lowercase
+/// strings `human` / `mcp` / `cli`. Defaults to [`Actor::Human`] — including
+/// for pre-ADR-0149 log lines that predate the field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Actor {
+    /// A person driving the GUI.
+    #[default]
+    Human,
+    /// The MCP server (agent-facing write path).
+    Mcp,
+    /// The `kagi` CLI.
+    Cli,
+}
+
+impl Actor {
+    /// Wire form written to / read from the JSONL file.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Actor::Human => "human",
+            Actor::Mcp => "mcp",
+            Actor::Cli => "cli",
+        }
+    }
+
+    /// Parse the wire form; anything unrecognized (or missing) falls back to
+    /// [`Actor::Human`] so old / malformed lines still load.
+    pub fn from_wire(s: &str) -> Self {
+        match s {
+            "mcp" => Actor::Mcp,
+            "cli" => Actor::Cli,
+            _ => Actor::Human,
+        }
+    }
+}
+
 /// One entry in the operation log.
 #[derive(Debug, Clone)]
 pub struct OpLogEntry {
+    /// Monotonic sequence id, assigned at append time (ADR-0149 / #333). Gives
+    /// a total order even for entries recorded in the same wall-clock second.
+    /// For pre-ADR-0149 lines that lack the field, [`read_oplog_tail`]
+    /// reconstructs it from the 0-based index of the entry in the file.
+    pub id: u64,
+    /// Id of the previous entry (`None` for the first). Chains the log so a
+    /// future selective-undo can walk backwards. Reconstructed for old lines.
+    pub parent: Option<u64>,
     /// Unix epoch seconds at the time the operation was recorded.
     pub timestamp: i64,
     /// Operation name: `"checkout"`, `"create-branch"`, `"stash-push"`,
@@ -64,6 +107,11 @@ pub struct OpLogEntry {
     pub op: String,
     /// Absolute path to the repository working tree.
     pub repo: String,
+    /// Who initiated the operation. Defaults to [`Actor::Human`].
+    pub actor: Actor,
+    /// Absolute path to the worktree the operation ran in (`None` for old
+    /// lines that predate the field).
+    pub worktree: Option<String>,
     /// Repository state captured at plan time (before execution).
     pub before: StateSummary,
     /// Outcome of the operation.
@@ -72,6 +120,11 @@ pub struct OpLogEntry {
 
 impl OpLogEntry {
     /// Construct a new entry with `timestamp` set to the current wall time.
+    ///
+    /// `id`/`parent` are placeholders (`0` / `None`) here — [`append_oplog`]
+    /// assigns the real sequence id from the file's tail at write time.
+    /// `actor` defaults to [`Actor::Human`]; `worktree` to `None`. Use
+    /// [`OpLogEntry::with_actor`] / [`OpLogEntry::with_worktree`] to set them.
     pub fn new(
         op: impl Into<String>,
         repo: impl Into<String>,
@@ -83,12 +136,28 @@ impl OpLogEntry {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         OpLogEntry {
+            id: 0,
+            parent: None,
             timestamp,
             op: op.into(),
             repo: repo.into(),
+            actor: Actor::Human,
+            worktree: None,
             before,
             outcome,
         }
+    }
+
+    /// Builder: set the initiating actor.
+    pub fn with_actor(mut self, actor: Actor) -> Self {
+        self.actor = actor;
+        self
+    }
+
+    /// Builder: set the worktree path.
+    pub fn with_worktree(mut self, worktree: Option<String>) -> Self {
+        self.worktree = worktree;
+        self
     }
 }
 
@@ -162,11 +231,25 @@ fn entry_to_json(entry: &OpLogEntry) -> String {
         }
     };
 
+    // ADR-0149: `parent` / `worktree` serialize as JSON `null` when absent.
+    let parent_json = match entry.parent {
+        Some(p) => p.to_string(),
+        None => "null".to_string(),
+    };
+    let worktree_json = match &entry.worktree {
+        Some(w) => escape_json_string(w),
+        None => "null".to_string(),
+    };
+
     format!(
-        "{{\"timestamp\":{},\"op\":{},\"repo\":{},\"before\":{},\"outcome\":{}}}",
+        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{}}}",
+        entry.id,
+        parent_json,
         entry.timestamp,
         escape_json_string(&entry.op),
         escape_json_string(&entry.repo),
+        escape_json_string(entry.actor.as_str()),
+        worktree_json,
         state_summary_to_json(&entry.before),
         outcome_json,
     )
@@ -411,6 +494,25 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
     let op = extract_str_field(line, "op")?;
     let repo = extract_str_field(line, "repo")?;
 
+    // ADR-0149 fields. Absent (pre-ADR-0149 lines) → id/parent are fixed up by
+    // `read_oplog_tail`; actor defaults to Human; worktree stays None.
+    // A literal `null` scalar decodes to None. (A worktree path literally named
+    // "null" would be misread as None — accepted edge; paths are absolute.)
+    let id: u64 = extract_str_field(line, "id")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let parent: Option<u64> = match extract_str_field(line, "parent") {
+        Some(s) if s != "null" => s.parse().ok(),
+        _ => None,
+    };
+    let actor = extract_str_field(line, "actor")
+        .map(|s| Actor::from_wire(&s))
+        .unwrap_or_default();
+    let worktree: Option<String> = match extract_str_field(line, "worktree") {
+        Some(s) if s != "null" => Some(s),
+        _ => None,
+    };
+
     // "before" object.
     let before_obj = extract_object_field(line, "before")?;
     let before_head = extract_str_field(&before_obj, "head").unwrap_or_default();
@@ -455,9 +557,13 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
     };
 
     Some(OpLogEntry {
+        id,
+        parent,
         timestamp,
         op,
         repo,
+        actor,
+        worktree,
         before,
         outcome,
     })
@@ -481,12 +587,26 @@ pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
         Err(_) => return Vec::new(),
     };
 
-    // Collect the last `n` non-empty parseable lines (file is oldest-first).
-    let entries: Vec<OpLogEntry> = content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(parse_oplog_line)
-        .collect();
+    // Parse oldest-first, reconstructing id/parent for pre-ADR-0149 lines that
+    // lack an explicit `id`: id = 0-based index of the entry in the file,
+    // parent = previous entry's id. New lines carry their own id/parent.
+    let mut entries: Vec<OpLogEntry> = Vec::new();
+    let mut prev_id: Option<u64> = None;
+    let mut idx: u64 = 0;
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(mut entry) = parse_oplog_line(line) {
+            if !line.contains("\"id\":") {
+                entry.id = idx;
+                entry.parent = prev_id;
+            }
+            prev_id = Some(entry.id);
+            idx += 1;
+            entries.push(entry);
+        }
+    }
 
     // Return the tail (up to n), newest first.
     let start = entries.len().saturating_sub(n);
@@ -519,7 +639,25 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
         })?;
     }
 
-    let line = format!("{}\n", entry_to_json(entry));
+    // ADR-0149: assign the sequence id/parent from the current tail so ids are
+    // monotonic and each entry chains to the previous one. Placeholder id/parent
+    // on `entry` (from `OpLogEntry::new`) are overwritten here.
+    // ponytail: single-user oplog — no cross-process locking on the read→write
+    // window; add a lock if concurrent writers ever appear.
+    let mut entry = entry.clone();
+    let last = read_oplog_tail(1);
+    match last.first() {
+        Some(prev) => {
+            entry.id = prev.id.saturating_add(1);
+            entry.parent = Some(prev.id);
+        }
+        None => {
+            entry.id = 0;
+            entry.parent = None;
+        }
+    }
+
+    let line = format!("{}\n", entry_to_json(&entry));
 
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -540,258 +678,11 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
 // Unit tests
 // ────────────────────────────────────────────────────────────
 
+// Unit tests live in a child file to keep this file under the LOC ratchet
+// (escape/serialize/parse/append coverage).
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── escape_json_string ────────────────────────────────────
-
-    #[test]
-    fn escape_plain_string() {
-        assert_eq!(escape_json_string("hello"), "\"hello\"");
-    }
-
-    #[test]
-    fn escape_double_quote() {
-        assert_eq!(escape_json_string("say \"hi\""), "\"say \\\"hi\\\"\"");
-    }
-
-    #[test]
-    fn escape_backslash() {
-        assert_eq!(escape_json_string("a\\b"), "\"a\\\\b\"");
-    }
-
-    #[test]
-    fn escape_newline() {
-        assert_eq!(escape_json_string("a\nb"), "\"a\\nb\"");
-    }
-
-    #[test]
-    fn escape_carriage_return() {
-        assert_eq!(escape_json_string("a\rb"), "\"a\\rb\"");
-    }
-
-    #[test]
-    fn escape_tab() {
-        assert_eq!(escape_json_string("a\tb"), "\"a\\tb\"");
-    }
-
-    #[test]
-    fn escape_null_byte() {
-        assert_eq!(escape_json_string("a\x00b"), "\"a\\u0000b\"");
-    }
-
-    #[test]
-    fn escape_all_specials_together() {
-        // "a\b"<newline>  →  "\"a\\\\b\\\"\\n\""
-        let input = "a\\b\"\n";
-        let result = escape_json_string(input);
-        assert_eq!(result, "\"a\\\\b\\\"\\n\"");
-    }
-
-    // ── entry_to_json ─────────────────────────────────────────
-
-    #[test]
-    fn json_success_entry_contains_required_fields() {
-        let entry = OpLogEntry {
-            timestamp: 1_000_000,
-            op: "checkout".to_string(),
-            repo: "/tmp/repo".to_string(),
-            before: StateSummary {
-                head: "branch: main".to_string(),
-                dirty: "clean".to_string(),
-            },
-            outcome: OpOutcome::Success {
-                after: StateSummary {
-                    head: "branch: feature".to_string(),
-                    dirty: "clean".to_string(),
-                },
-            },
-        };
-        let json = entry_to_json(&entry);
-        assert!(json.contains("\"timestamp\":1000000"), "timestamp missing");
-        assert!(json.contains("\"op\":\"checkout\""), "op missing");
-        assert!(json.contains("\"repo\":\"/tmp/repo\""), "repo missing");
-        assert!(json.contains("\"kind\":\"Success\""), "kind missing");
-        assert!(
-            json.contains("\"head\":\"branch: main\""),
-            "before.head missing"
-        );
-        assert!(
-            json.contains("\"head\":\"branch: feature\""),
-            "after.head missing"
-        );
-    }
-
-    #[test]
-    fn json_refused_entry_contains_blockers() {
-        let entry = OpLogEntry {
-            timestamp: 2_000_000,
-            op: "checkout".to_string(),
-            repo: "/tmp/repo".to_string(),
-            before: StateSummary {
-                head: "branch: main".to_string(),
-                dirty: "1 modified".to_string(),
-            },
-            outcome: OpOutcome::Refused {
-                blockers: vec![
-                    "Working tree has changes".to_string(),
-                    "Branch 'x' does not exist".to_string(),
-                ],
-            },
-        };
-        let json = entry_to_json(&entry);
-        assert!(json.contains("\"kind\":\"Refused\""), "kind missing");
-        assert!(
-            json.contains("Working tree has changes"),
-            "blocker 1 missing"
-        );
-        assert!(json.contains("Branch"), "blocker 2 missing");
-    }
-
-    #[test]
-    fn json_failed_entry_contains_error() {
-        let entry = OpLogEntry {
-            timestamp: 3_000_000,
-            op: "stash-push".to_string(),
-            repo: "/tmp/repo".to_string(),
-            before: StateSummary {
-                head: "branch: main".to_string(),
-                dirty: "clean".to_string(),
-            },
-            outcome: OpOutcome::Failed {
-                error: "stash push failed: some error".to_string(),
-            },
-        };
-        let json = entry_to_json(&entry);
-        assert!(json.contains("\"kind\":\"Failed\""), "kind missing");
-        assert!(json.contains("stash push failed"), "error text missing");
-    }
-
-    #[test]
-    fn json_escapes_special_chars_in_repo_path() {
-        let entry = OpLogEntry {
-            timestamp: 0,
-            op: "checkout".to_string(),
-            repo: "/path/with \"quotes\" and \\backslash".to_string(),
-            before: StateSummary {
-                head: "branch: main".to_string(),
-                dirty: "clean".to_string(),
-            },
-            outcome: OpOutcome::Success {
-                after: StateSummary {
-                    head: "branch: main".to_string(),
-                    dirty: "clean".to_string(),
-                },
-            },
-        };
-        let json = entry_to_json(&entry);
-        // repo path with special chars must be properly escaped.
-        assert!(
-            json.contains("\\\"quotes\\\""),
-            "double-quote escaping failed"
-        );
-        assert!(json.contains("\\\\backslash"), "backslash escaping failed");
-    }
-
-    // ── append_oplog (integration-style, uses tempdir) ────────
-    //
-    // These tests manipulate the KAGI_LOG_DIR environment variable, which is
-    // process-global.  We serialise them with a mutex so parallel test threads
-    // do not interfere with each other.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn append_two_entries_creates_two_jsonl_lines() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let log_dir = dir.path().to_str().unwrap().to_string();
-
-        // Temporarily override the env var for this test.
-        let prev = std::env::var("KAGI_LOG_DIR").ok();
-        std::env::set_var("KAGI_LOG_DIR", &log_dir);
-
-        let make_entry = |op: &str, ts: i64| OpLogEntry {
-            timestamp: ts,
-            op: op.to_string(),
-            repo: "/tmp/testrepo".to_string(),
-            before: StateSummary {
-                head: "branch: main".to_string(),
-                dirty: "clean".to_string(),
-            },
-            outcome: OpOutcome::Success {
-                after: StateSummary {
-                    head: "branch: main".to_string(),
-                    dirty: "clean".to_string(),
-                },
-            },
-        };
-
-        let path1 = append_oplog(&make_entry("checkout", 1)).expect("first write");
-        let path2 = append_oplog(&make_entry("create-branch", 2)).expect("second write");
-        assert_eq!(path1, path2, "both writes should go to the same file");
-
-        let content = std::fs::read_to_string(&path1).expect("read log");
-        let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines.len(), 2, "expected 2 JSON lines, got: {:?}", lines);
-
-        // Each line must contain the op name.
-        assert!(
-            lines[0].contains("checkout"),
-            "first line should mention checkout"
-        );
-        assert!(
-            lines[1].contains("create-branch"),
-            "second line should mention create-branch"
-        );
-
-        // Restore env.
-        match prev {
-            Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
-            None => std::env::remove_var("KAGI_LOG_DIR"),
-        }
-    }
-
-    #[test]
-    fn append_includes_expected_json_fields() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let log_dir = dir.path().to_str().unwrap().to_string();
-
-        let prev = std::env::var("KAGI_LOG_DIR").ok();
-        std::env::set_var("KAGI_LOG_DIR", &log_dir);
-
-        let entry = OpLogEntry {
-            timestamp: 9_999,
-            op: "stash-apply".to_string(),
-            repo: "/my/repo".to_string(),
-            before: StateSummary {
-                head: "branch: feat".to_string(),
-                dirty: "2 modified".to_string(),
-            },
-            outcome: OpOutcome::Refused {
-                blockers: vec!["Working tree is dirty".to_string()],
-            },
-        };
-
-        let path = append_oplog(&entry).expect("write");
-        let line = std::fs::read_to_string(&path).expect("read");
-        let line = line.trim_end();
-
-        assert!(line.contains("\"timestamp\":9999"), "timestamp field");
-        assert!(line.contains("\"op\":\"stash-apply\""), "op field");
-        assert!(line.contains("\"repo\":\"/my/repo\""), "repo field");
-        assert!(line.contains("\"kind\":\"Refused\""), "outcome kind");
-        assert!(line.contains("Working tree is dirty"), "blocker text");
-        assert!(line.contains("\"head\":\"branch: feat\""), "before.head");
-        assert!(line.contains("\"dirty\":\"2 modified\""), "before.dirty");
-
-        match prev {
-            Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
-            None => std::env::remove_var("KAGI_LOG_DIR"),
-        }
-    }
-}
+#[path = "oplog_tests.rs"]
+mod tests;
 
 // ADR-0129 Phase 1 — oplog on-disk compatibility tests live in a child file
 // (`oplog_adr0129_tests.rs`) to keep this file under the LOC ratchet.

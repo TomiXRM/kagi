@@ -15,6 +15,7 @@ pub mod blocking_ops;
 pub mod branch_cleanup;
 pub mod branch_menu;
 pub mod button_style;
+pub mod command_palette;
 pub mod commands;
 pub mod commit_list;
 pub mod commit_panel;
@@ -1140,6 +1141,12 @@ pub struct KagiApp {
     /// section (the gitignore-format exclude file). Lazily created when Settings
     /// opens (needs a `Window`).
     pub analyze_ignore_input: Option<Entity<InputState>>,
+    /// Issue #352: the command-palette search box (lazily built when the palette
+    /// first opens; needs a `Window`). `None` until then / in headless paths.
+    pub command_palette_input: Option<Entity<InputState>>,
+    /// Issue #352: index of the highlighted row in the command palette's current
+    /// (filtered) result list. Reset to 0 on open and on every query change.
+    pub command_palette_selected: usize,
     /// Horizontal scroll offset (px) of the graph column. Lanes hidden by a
     /// narrow column width are revealed by horizontal scrolling (clamped in
     /// render against the current lane count).
@@ -1509,6 +1516,8 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             analyze_ignore_input: None,
+            command_palette_input: None,
+            command_palette_selected: 0,
             graph_scroll_x: 0.0,
             // W2-SIDEBAR
             // GitHub Phase 1: the "Others" PR sub-group starts collapsed — a

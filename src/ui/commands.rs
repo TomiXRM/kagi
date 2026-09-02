@@ -81,6 +81,8 @@ actions!(
         ToggleEditorWorkspace,
         TogglePrMode,
         ShowGraph,
+        // Command palette (issue #352): fuzzy-search every command.
+        OpenCommandPalette,
         // Repository
         Fetch,
         Pull,
@@ -535,6 +537,15 @@ pub const COMMANDS: &[Command] = &[
         dangerous: false,
     },
     Command {
+        // Issue #352: command palette. Cmd+Shift+P (the usual palette key) is
+        // already `view.togglePrMode`, so the nearest free key — Cmd/Ctrl+P — is
+        // used (verified free against every `KeyBinding::new`).
+        id: "view.commandPalette",
+        label: "Command Palette…",
+        keystroke: Some("secondary-p"),
+        dangerous: false,
+    },
+    Command {
         id: "repo.fetch",
         label: "Fetch",
         keystroke: Some("secondary-shift-f"),
@@ -762,6 +773,8 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "view.fullScreen"
         | "view.toggleSidebar"
         | "view.toggleTerminal"
+        // Command palette (issue #352) — always available.
+        | "view.commandPalette"
         | "window.minimize"
         | "window.zoom"
         | "window.close"
@@ -1160,6 +1173,8 @@ pub fn register_keybindings(cx: &mut App) {
         "view.toggleEditorWorkspace" => ToggleEditorWorkspace,
         "view.togglePrMode" => TogglePrMode,
         "view.showGraph" => ShowGraph,
+        // Issue #352: command palette (Cmd/Ctrl+P).
+        "view.commandPalette" => OpenCommandPalette,
         "repo.fetch" => Fetch,
         "repo.pull" => Pull,
         "repo.push" => Push,
@@ -1300,6 +1315,10 @@ pub enum MenuOverlay {
     /// T-SETTINGS-001 / ADR-0080: the OpenLogi-style Settings window
     /// (Appearance + Language pages). Hosted as an overlay (no sub-window yet).
     Settings,
+    /// Issue #352: the command palette (fuzzy search over [`COMMANDS`]). The
+    /// mutable palette state (search input + highlighted index) lives in
+    /// dedicated `KagiApp` fields; this is just the "which overlay" marker.
+    CommandPalette,
 }
 
 const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
@@ -1417,6 +1436,8 @@ impl KagiApp {
                     self.close_main_diff();
                 }
             }
+            // Issue #352: open the command palette.
+            "view.commandPalette" => self.open_command_palette(window, cx),
             // ── Workspace modes: Graph | PRs | Editor, mutually exclusive ──
             // Each button names the mode it selects (not what it toggles to)
             // and highlights while active — two morphing toggles could both
@@ -1789,6 +1810,8 @@ impl KagiApp {
                 window,
                 cx,
             )),
+            // Issue #352: command palette.
+            MenuOverlay::CommandPalette => Some(self.render_command_palette(window, cx)),
         }
     }
 

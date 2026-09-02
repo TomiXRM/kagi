@@ -1,0 +1,11 @@
+# Pin the toolchain so CI and every developer machine build with the SAME rustc.
+# Without this, each machine falls back to its rustup `default`, and a stale
+# `stable` (e.g. 1.87) is rejected by our transitive deps (cosmic-text ≥1.89,
+# tree-sitter-language ≥1.90, oo7 ≥1.92, …) — the "works in CI, fails locally"
+# divergence. rustup auto-installs this version on first use.
+#
+# Bump path: raise `channel` here (one line) AND the `dtolnay/rust-toolchain@<v>`
+# refs in .github/workflows/ci.yml + release.yml to the same version.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

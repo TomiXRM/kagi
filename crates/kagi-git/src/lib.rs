@@ -131,6 +131,10 @@ use git2::Repository;
 // Public types
 // ────────────────────────────────────────────────────────────
 
+#[allow(unused_imports)]
+pub use kagi_domain::generated::{
+    classify_generated, group_generated, is_generated, GeneratedGroup,
+};
 pub use kagi_domain::head::Head;
 #[allow(unused_imports)]
 pub use kagi_domain::history::{HistoryEntry, OperationHistory, OperationKind};

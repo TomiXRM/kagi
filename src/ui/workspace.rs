@@ -411,6 +411,9 @@ fn render_inspector_body(
     app: &mut KagiApp,
     files: Option<Vec<super::FileStatus>>,
     diffstat: Option<Vec<kagi_git::FileDiffStat>>,
+    // issue #348: per-file "is generated" flags aligned with `files`, so the
+    // list can fold lockfiles / generated files. `None` in compare mode.
+    generated: Option<Vec<bool>>,
     compare: Option<CompareView>,
     cx: &mut Context<KagiApp>,
 ) -> Option<AnyElement> {
@@ -451,6 +454,7 @@ fn render_inspector_body(
         Some(MainDiffSource::Compare { file_index, .. }) => Some(file_index),
         _ => None,
     };
+    let generated_expanded = app.inspector_generated_expanded;
     Some(
         inspector::render_inspector(
             d,
@@ -459,6 +463,8 @@ fn render_inspector_body(
             prs_here,
             files,
             diffstat,
+            generated,
+            generated_expanded,
             compare,
             active_commit_file,
             app.inspector_tree_view,
@@ -504,7 +510,8 @@ impl WorkspaceItem for InspectorItem {
             .and_then(|i| app.diff_caches.changed_files.get(&i).cloned())
             .flatten();
         let diffstat = selected.and_then(|i| app.diff_caches.diffstat.get(&i).cloned());
-        render_inspector_body(app, files, diffstat, None, cx)
+        let generated = selected.and_then(|i| app.diff_caches.generated.get(&i).cloned());
+        render_inspector_body(app, files, diffstat, generated, None, cx)
     }
     // The inspector has no per-repo entity: `inspector_visible` is a global
     // View-menu toggle and the detail derives from `selected` (cleared in
@@ -536,7 +543,7 @@ impl WorkspaceItem for CompareItem {
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let view = app.compare_view.as_ref()?.read(cx).view.clone();
-        render_inspector_body(app, Some(view.files.clone()), None, Some(view), cx)
+        render_inspector_body(app, Some(view.files.clone()), None, None, Some(view), cx)
     }
     // Per-repo: the compared base/files belong to the previous repo; drop the
     // entity on repo/tab switch like the other registered panes.

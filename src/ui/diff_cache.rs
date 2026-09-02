@@ -34,6 +34,10 @@ pub struct DiffCaches {
     /// Per-row diffstat (additions/deletions) for the Inspector changed-files
     /// list (W16-DIFFSTAT). Computed lazily alongside `changed_files`. (was `diffstat_cache`)
     pub diffstat: HashMap<usize, Vec<FileDiffStat>>,
+    /// Per-row "is generated" flags aligned with `changed_files` (issue #348 —
+    /// auto-fold lockfiles / generated files). Computed lazily alongside
+    /// `changed_files`; index i is `true` when that file is classified generated.
+    pub generated: HashMap<usize, Vec<bool>>,
 }
 
 impl DiffCaches {
@@ -46,6 +50,7 @@ impl DiffCaches {
         self.remote_inflight.clear();
         self.local_inflight.clear();
         self.diffstat.clear();
+        self.generated.clear();
     }
 }
 
@@ -63,6 +68,7 @@ mod tests {
         let mut c = DiffCaches::default();
         c.changed_files.insert(5, None);
         c.diffstat.insert(5, Vec::new());
+        c.generated.insert(5, Vec::new());
         c.remote_inflight.insert(5);
         c.local_inflight.insert(5);
         c.file_content.insert(
@@ -81,6 +87,7 @@ mod tests {
         // Row 5 must no longer resolve to the old commit's data on ANY field.
         assert!(c.changed_files.is_empty());
         assert!(c.diffstat.is_empty());
+        assert!(c.generated.is_empty());
         assert!(c.remote_inflight.is_empty());
         assert!(c.local_inflight.is_empty());
         assert!(c.file_content.is_empty());

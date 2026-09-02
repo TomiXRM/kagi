@@ -47,7 +47,7 @@ pub use conflicts::{
     plan_conflict_continue, plan_conflict_continue_route, plan_conflict_skip,
     resolve_selected_file, side_labels, stage_conflict_resolution, AbortOutcome, ConflictFile,
     ConflictKind, ConflictOp, ConflictSession, ConflictStatus, ContinueBlocker, ContinueOutcome,
-    ContinueRoute, SaveOutcome, SideLabel, SideLabels, SkipOutcome,
+    ContinueResult, ContinueRoute, SaveOutcome, SideLabel, SideLabels, SkipOutcome,
 };
 #[allow(unused_imports)]
 pub use diff::{
@@ -105,8 +105,8 @@ pub use ops::{
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
 pub use resolution::{
-    ConflictHunk, HunkChoice, HunkModel, LineOrigin, Region, ResolutionBuffer, ResolutionChoice,
-    ResolvedLine,
+    ConflictHunk, HunkChoice, HunkModel, LineOrigin, RawResolution, Region, ResolutionBuffer,
+    ResolutionChoice, ResolvedLine,
 };
 #[allow(unused_imports)]
 pub use snapshot::{snapshot, RepoSnapshot};

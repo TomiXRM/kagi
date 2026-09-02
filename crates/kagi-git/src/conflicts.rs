@@ -131,6 +131,17 @@ pub enum ConflictKind {
     RenameDelete,
     /// One side modified while the other deleted (stage 2 or stage 3 missing).
     ModifyDelete,
+    /// Both sides added the path independently with no common ancestor
+    /// (add/add). A text merge is possible (see `merge_addadd`); the UI needs
+    /// this signal to pick the base-less 3-way path (resolution.rs:601).
+    AddAdd,
+    /// A conflicted submodule / gitlink (git mode 160000). Resolved by staging a
+    /// side's commit OID directly (#297), never by a text merge.
+    Submodule,
+    /// A conflicted symlink (git mode 120000). Resolved by staging a side's
+    /// symlink blob OID directly (#297) — never by dereferencing the on-disk
+    /// link, which would write outside the repo (#298).
+    Symlink,
     /// At least one side is a binary blob (no usable text merge).
     Binary,
 }
@@ -142,8 +153,20 @@ impl ConflictKind {
             ConflictKind::Content => "content",
             ConflictKind::RenameDelete => "rename-delete",
             ConflictKind::ModifyDelete => "modify-delete",
+            ConflictKind::AddAdd => "add-add",
+            ConflictKind::Submodule => "submodule",
+            ConflictKind::Symlink => "symlink",
             ConflictKind::Binary => "binary",
         }
+    }
+
+    /// Whether this kind is structurally unmergeable and must be resolved by
+    /// staging a raw blob OID rather than a text buffer (#297).
+    pub fn is_raw(&self) -> bool {
+        matches!(
+            self,
+            ConflictKind::Binary | ConflictKind::Submodule | ConflictKind::Symlink
+        )
     }
 }
 
@@ -381,7 +404,11 @@ fn collect_conflict_files(repo: &Repository) -> Result<Vec<ConflictFile>, GitErr
     }
 
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    files.dedup_by(|a, b| a.path == b.path);
+    // Collapse only *exact* duplicate entries (same path AND kind). Keying the
+    // dedup on path alone dropped distinct sides of a rename/rename (git indexes
+    // it as three unmerged entries at three paths — ancestor, our-target,
+    // their-target); a same-path but different-kind pair (rare) also stays.
+    files.dedup_by(|a, b| a.path == b.path && a.kind == b.kind);
     Ok(files)
 }
 
@@ -430,6 +457,24 @@ fn classify_kind(repo: &Repository, conflict: &git2::IndexConflict) -> ConflictK
     let their = conflict.their.as_ref();
     let ancestor = conflict.ancestor.as_ref();
 
+    // Submodule / gitlink (mode 160000): no text merge — must stage a commit OID
+    // (#297). Checked before Binary because a gitlink has no readable blob.
+    if entry_has_mode(our, MODE_GITLINK)
+        || entry_has_mode(their, MODE_GITLINK)
+        || entry_has_mode(ancestor, MODE_GITLINK)
+    {
+        return ConflictKind::Submodule;
+    }
+
+    // Symlink (mode 120000): the blob is the link target *text*, but writing it
+    // through the on-disk link escapes the repo (#298) — stage the OID (#297).
+    if entry_has_mode(our, MODE_SYMLINK)
+        || entry_has_mode(their, MODE_SYMLINK)
+        || entry_has_mode(ancestor, MODE_SYMLINK)
+    {
+        return ConflictKind::Symlink;
+    }
+
     // Binary wins over every other classification (no usable text merge).
     if entry_is_binary(repo, our) || entry_is_binary(repo, their) || entry_is_binary(repo, ancestor)
     {
@@ -437,8 +482,16 @@ fn classify_kind(repo: &Repository, conflict: &git2::IndexConflict) -> ConflictK
     }
 
     match (our.is_some(), their.is_some()) {
-        // Both sides present → content conflict.
-        (true, true) => ConflictKind::Content,
+        // Both sides present.
+        (true, true) => {
+            // No common ancestor → add/add (each side added the path). The UI's
+            // base-less 3-way path (resolution.rs merge_addadd) needs this.
+            if ancestor.is_none() {
+                ConflictKind::AddAdd
+            } else {
+                ConflictKind::Content
+            }
+        }
         // Exactly one side present.  Distinguish rename/delete from
         // modify/delete: a rename leaves the surviving stage at a path that
         // differs from the ancestor's path.
@@ -461,6 +514,15 @@ fn classify_kind(repo: &Repository, conflict: &git2::IndexConflict) -> ConflictK
         // delete-delete; classify as modify/delete for UI purposes.
         (false, false) => ConflictKind::ModifyDelete,
     }
+}
+
+/// Git symlink / gitlink file modes (no text merge — resolved via a raw OID).
+const MODE_SYMLINK: u32 = 0o120000;
+const MODE_GITLINK: u32 = 0o160000;
+
+/// Whether a present index entry carries exactly `mode`.
+fn entry_has_mode(entry: Option<&git2::IndexEntry>, mode: u32) -> bool {
+    matches!(entry, Some(e) if e.mode == mode)
 }
 
 /// Probe whether an index entry's blob is binary.  A missing entry or
@@ -684,11 +746,12 @@ pub fn continue_blockers(
         out.push(ContinueBlocker::MarkerResidue(residue));
     }
 
-    // 3. Binary conflicts must have an explicit side chosen (no text merge).
+    // 3. Raw conflicts (binary / symlink / submodule) must have an explicit side
+    //    chosen — there is no text merge, so a side is staged by OID (#297).
     let binary_unresolved: Vec<String> = session
         .files
         .iter()
-        .filter(|f| f.kind == ConflictKind::Binary && !buffer.has_resolution(&f.path))
+        .filter(|f| f.kind.is_raw() && !buffer.has_resolution(&f.path))
         .map(|f| f.path.to_string_lossy().into_owned())
         .collect();
     if !binary_unresolved.is_empty() {
@@ -838,6 +901,18 @@ pub enum ContinueOutcome {
     Staged,
 }
 
+/// The result of [`execute_conflict_continue`]: the [`ContinueOutcome`] plus the
+/// **measured** post-continue repository state (#296). The caller records
+/// `after` in the oplog instead of the plan's *predicted* head, so a partial or
+/// failed continuation is never logged as a clean success.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContinueResult {
+    /// Whether the sequence committed / finished or is still mid-sequence.
+    pub outcome: ContinueOutcome,
+    /// The real HEAD + working-tree state after the continuation ran.
+    pub after: StateSummary,
+}
+
 /// Where a [`plan_conflict_continue_route`] routes the Continue action
 /// (ADR-0068 — Save/Continue/Commit are distinct operations).
 ///
@@ -957,7 +1032,7 @@ pub fn execute_conflict_continue(
     repo_path: &Path,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
-) -> Result<ContinueOutcome, GitError> {
+) -> Result<ContinueResult, GitError> {
     // 1. Materialize each resolved buffer file to the working tree and stage it
     //    (collapses stage 1/2/3 → stage 0), so the index carries no unmerged
     //    entries.
@@ -971,7 +1046,10 @@ pub fn execute_conflict_continue(
         let oid = create_merge_commit(repo, &mut index, None)?;
         repo.cleanup_state()
             .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
-        return Ok(ContinueOutcome::Committed(oid));
+        return Ok(ContinueResult {
+            outcome: ContinueOutcome::Committed(oid),
+            after: current_state_summary(repo)?,
+        });
     }
 
     // 3. Sequencer operations (rebase / cherry-pick / revert): advance via the
@@ -981,43 +1059,78 @@ pub fn execute_conflict_continue(
     // stops at the next conflict.
     //
     // A single `--continue` call is *usually* enough to run the whole
-    // remaining sequence (git's own rebase loop keeps going through
-    // non-conflicting commits internally), but some git versions/backends
-    // need an extra nudge per resolved step. Loop while: the repo is still
-    // mid-sequence AND the index carries no unmerged entries (i.e. nothing
-    // is blocking another `--continue` — a real new conflict always leaves
-    // unmerged index entries, which stops the loop immediately). Bounded by
-    // the sequence length so a genuine stuck state can't spin forever.
+    // remaining sequence. Loop, bounded by the sequence length, nudging once
+    // per resolved step.
+    //
+    // #296(a): `--continue` exit status is authoritative. EVERY other run_git
+    // caller checks `out.status`; this site used to ignore it, so a hard
+    // refusal (e.g. "The previous cherry-pick is now empty", "You must edit all
+    // merge conflicts") was swallowed and recorded as success. A non-zero exit
+    // that leaves a *fresh* conflict (new unmerged entries, still mid-op) is the
+    // normal "stop at the next conflict" — surfaced as `Staged`. A non-zero exit
+    // with NO unmerged entries is a genuine failure and is returned as an error.
     let slug = session.op.slug();
     let max_attempts = read_rebase_progress(repo.path()).1.max(1) + 1;
     for _attempt in 0..max_attempts {
-        run_git(repo_path, &[slug, "--continue"])
+        let out = run_git(repo_path, &[slug, "--continue"])
             .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
 
-        if repo.state() == git2::RepositoryState::Clean {
+        // #296(b): libgit2 caches the index on the long-lived session repo and
+        // does NOT re-read it after an external `git … --continue`. Force a
+        // fresh read so `has_conflicts()` / state reflect what git just wrote,
+        // not the pre-continue snapshot.
+        let has_unmerged = fresh_index_has_conflicts(repo);
+        let state = repo.state();
+
+        if out.status != 0 {
+            if has_unmerged && state != git2::RepositoryState::Clean {
+                // Advancing the sequence hit a new conflict on a later commit —
+                // legitimate; the reload + re-detect path picks it up.
+                break;
+            }
+            return Err(GitError::Other(format!(
+                "{} --continue failed (exit {}): {}",
+                slug,
+                out.status,
+                out.stderr.trim()
+            )));
+        }
+
+        if state == git2::RepositoryState::Clean {
             break;
         }
-        let no_conflicts_left = repo
-            .index()
-            .map(|idx| !idx.has_conflicts())
-            .unwrap_or(false);
-        if !no_conflicts_left {
+        if has_unmerged {
+            // Clean exit but a new conflict remains (some backends): stop and let
+            // the re-detect path present it.
             break;
         }
     }
 
-    // `repo.state()` is the authoritative signal: `Clean` means the whole
-    // sequence finished; anything else means it's still in progress (either
-    // a genuine new conflict, or the retry budget above was exhausted), and
-    // the normal reload + `detect_conflict_session` path picks up whatever
-    // comes next.
-    if repo.state() == git2::RepositoryState::Clean {
-        return Ok(match repo.head().ok().and_then(|h| h.target()) {
+    // Measure the REAL post-continue state (#296): `Clean` means the whole
+    // sequence finished; anything else means it's still mid-sequence.
+    let after = current_state_summary(repo)?;
+    let outcome = if repo.state() == git2::RepositoryState::Clean {
+        match repo.head().ok().and_then(|h| h.target()) {
             Some(oid) => ContinueOutcome::Committed(CommitId(oid.to_string())),
             None => ContinueOutcome::Staged,
-        });
+        }
+    } else {
+        ContinueOutcome::Staged
+    };
+    Ok(ContinueResult { outcome, after })
+}
+
+/// Force a fresh read of the on-disk index and report whether it has unmerged
+/// (conflict) entries. libgit2 caches the index on the long-lived `Repository`,
+/// so after an external `git … --continue` the cached copy is stale (#296b).
+fn fresh_index_has_conflicts(repo: &Repository) -> bool {
+    match repo.index() {
+        Ok(mut idx) => {
+            let _ = idx.read(true);
+            idx.has_conflicts()
+        }
+        Err(_) => false,
     }
-    Ok(ContinueOutcome::Staged)
 }
 
 /// Materialize every resolved buffer file to the working tree and stage it,
@@ -1062,9 +1175,17 @@ pub fn stage_conflict_resolution(
     // WT/index mismatch. Temp files are cleaned up on any error path.
     //
     // Collect (target, resolved_text) up front so a missing resolution aborts
-    // before any disk write touches anything.
+    // before any disk write touches anything. Raw conflicts (binary / symlink /
+    // gitlink, #297) carry no text — they are staged by OID below and never
+    // written through the working tree (so a conflicted symlink can never be
+    // dereferenced, #298).
     let mut resolutions: Vec<(std::path::PathBuf, String)> = Vec::new();
+    let mut raw_stages: Vec<(std::path::PathBuf, super::resolution::RawResolution)> = Vec::new();
     for file in &session.files {
+        if let Some(raw) = buffer.raw_resolution(&file.path) {
+            raw_stages.push((file.path.clone(), raw));
+            continue;
+        }
         let text = match buffer.resolved_text(&file.path) {
             Some(t) => t,
             None => {
@@ -1087,9 +1208,17 @@ pub fn stage_conflict_resolution(
                 GitError::Other(format!("mkdir {} failed: {}", parent.display(), e))
             })?;
         }
+        // #298: preserve the original file mode. Writing a fresh temp creates
+        // 0644; renaming it over a 0755 target and then `index.add_path` would
+        // silently drop the exec bit — making Continue disagree with the
+        // in-place per-file Save. Capture the target's mode (a symlink target is
+        // never reached here: symlinks are raw-staged above) and re-apply it to
+        // the temp before the rename.
+        let target_mode = original_file_mode(&abs);
         let tmp_abs = abs.with_extension(format!("kagi-resolve-tmp-{}", n));
         match std::fs::write(&tmp_abs, text.as_bytes()) {
             Ok(()) => {
+                apply_file_mode(&tmp_abs, target_mode);
                 temps.push((tmp_abs, abs));
             }
             Err(e) => {
@@ -1140,10 +1269,110 @@ pub fn stage_conflict_resolution(
             GitError::Other(format!("stage {} failed: {}", rel.display(), e.message()))
         })?;
     }
+    // Raw (binary / symlink / gitlink) resolutions: stage the chosen side's OID
+    // at stage 0 directly (#297) — byte-identical to the chosen side, exec bit /
+    // symlink / gitlink mode intact, and no working-tree write at all (#298).
+    for (rel, raw) in &raw_stages {
+        stage_raw_entry(&mut index, rel, *raw)?;
+    }
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
     Ok(())
+}
+
+/// Stage a raw resolution (a chosen side's blob/commit OID + git mode) at stage
+/// 0 by building an [`git2::IndexEntry`] and `index.add` (#297). No working-tree
+/// write happens, so a conflicted symlink is never dereferenced (#298) and a
+/// binary is staged byte-for-byte.
+fn stage_raw_entry(
+    index: &mut git2::Index,
+    rel: &Path,
+    raw: super::resolution::RawResolution,
+) -> Result<(), GitError> {
+    let path_bytes = path_to_index_bytes(rel).ok_or_else(|| {
+        GitError::Other(format!(
+            "cannot stage {}: non-representable path",
+            rel.display()
+        ))
+    })?;
+    // Drop the stage 1/2/3 conflict entries first: `index.add` of a stage-0
+    // entry does NOT displace higher-stage entries at the same path, so without
+    // this the path stays unmerged ("not fully merged index" on write_tree).
+    index.conflict_remove(rel).map_err(|e| {
+        GitError::Other(format!(
+            "clear conflict {} failed: {}",
+            rel.display(),
+            e.message()
+        ))
+    })?;
+    let entry = git2::IndexEntry {
+        ctime: git2::IndexTime::new(0, 0),
+        mtime: git2::IndexTime::new(0, 0),
+        dev: 0,
+        ino: 0,
+        mode: raw.mode,
+        uid: 0,
+        gid: 0,
+        file_size: 0,
+        id: raw.oid,
+        // flags == 0 → stage 0 (resolved). Setting a stage would re-conflict it.
+        flags: 0,
+        flags_extended: 0,
+        path: path_bytes,
+    };
+    index
+        .add(&entry)
+        .map_err(|e| GitError::Other(format!("stage {} failed: {}", rel.display(), e.message())))
+}
+
+/// Repository-relative path → index-entry path bytes (`/`-separated, byte
+/// faithful on Unix; lossy elsewhere, where non-UTF-8 is already unsupported).
+fn path_to_index_bytes(rel: &Path) -> Option<Vec<u8>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Some(rel.as_os_str().as_bytes().to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        rel.to_str().map(|s| s.as_bytes().to_vec())
+    }
+}
+
+/// The current git file mode of a working-tree path, if it exists as a regular
+/// file (`symlink_metadata` — never follows a symlink). `None` when absent.
+fn original_file_mode(abs: &Path) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::symlink_metadata(abs).ok()?;
+        if meta.file_type().is_symlink() {
+            return None;
+        }
+        Some(meta.permissions().mode())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = abs;
+        None
+    }
+}
+
+/// Re-apply a captured file mode to a freshly-written temp (best effort). On
+/// non-Unix, or when no prior mode was captured, this is a no-op.
+fn apply_file_mode(abs: &Path, mode: Option<u32>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(m) = mode {
+            let _ = std::fs::set_permissions(abs, std::fs::Permissions::from_mode(m));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (abs, mode);
+    }
 }
 
 /// Build a merge commit from the staged index with HEAD + MERGE_HEAD parents.
@@ -1219,6 +1448,23 @@ pub fn execute_conflict_save(
     buffer: &ResolutionBuffer,
     path: &Path,
 ) -> Result<SaveOutcome, GitError> {
+    // #297/#298: a raw (binary / symlink / gitlink) resolution stages the chosen
+    // side's OID directly — no working-tree write, so a conflicted symlink is
+    // never dereferenced and a binary is saved byte-for-byte, mode intact.
+    if let Some(raw) = buffer.raw_resolution(path) {
+        let mut index = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        stage_raw_entry(&mut index, path, raw)?;
+        index
+            .write()
+            .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+        return Ok(SaveOutcome {
+            path: path.to_path_buf(),
+            after_short: short_sha(&raw.oid.to_string()),
+        });
+    }
+
     let text = buffer.resolved_text(path).ok_or_else(|| {
         GitError::Other(format!(
             "no resolution to save for {} — choose a side or edit the result first",
@@ -1245,6 +1491,17 @@ pub fn execute_conflict_save(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| GitError::Other(format!("mkdir {} failed: {}", parent.display(), e)))?;
+    }
+    // #298: never write text *through* a symlink (that escapes the repo). A
+    // conflicted symlink is routed to the raw path above, so reaching here with
+    // a symlink on disk is anomalous — refuse rather than dereference it.
+    if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+        if meta.file_type().is_symlink() {
+            return Err(GitError::Other(format!(
+                "refusing to write {} through a symlink (resolve it as a symlink conflict)",
+                abs.display()
+            )));
+        }
     }
     std::fs::write(&abs, text.as_bytes())
         .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
@@ -1504,15 +1761,48 @@ pub fn execute_conflict_abort(
 
         checkout_paths_from_tree(repo, &tree, &touched)?;
 
-        // Move the current branch ref (if attached) back to ORIG_HEAD.
-        if let Ok(head_ref) = repo.head() {
-            if let Ok(name) = head_ref.name() {
-                let _ = repo.reference(
-                    name,
-                    oid,
-                    true,
-                    &format!("abort {}: restore ORIG_HEAD", session.op.slug()),
-                );
+        // Restore the branch ref back to ORIG_HEAD and reattach HEAD to it.
+        //
+        // #302: during a rebase HEAD is DETACHED, so `repo.head().name()` is
+        // literally "HEAD" — the old code then wrote `HEAD` as a *direct* ref
+        // pointing at ORIG_HEAD, stranding the user in detached HEAD. Real
+        // `git rebase --abort` returns to the branch. The pre-op branch name is
+        // recorded in `.git/rebase-merge/head-name` (merge backend) or
+        // `.git/rebase-apply/head-name` (apply backend); read it, point that
+        // branch at ORIG_HEAD, and `set_head` to it. Merge / cherry-pick /
+        // revert keep a symbolic HEAD, so `repo.head().name()` already yields
+        // the branch — that path is unchanged. The error is no longer swallowed.
+        let reflog = format!("abort {}: restore ORIG_HEAD", session.op.slug());
+        let branch_ref: Option<String> = match session.op {
+            ConflictOp::Rebase { .. } => read_rebase_head_name(repo.path()),
+            _ => repo
+                .head()
+                .ok()
+                .and_then(|h| h.name().map(str::to_string).ok())
+                .filter(|n| n != "HEAD"),
+        };
+        match branch_ref {
+            Some(name) => {
+                repo.reference(&name, oid, true, &reflog).map_err(|e| {
+                    GitError::Other(format!(
+                        "restore {} to ORIG_HEAD failed: {}",
+                        name,
+                        e.message()
+                    ))
+                })?;
+                repo.set_head(&name).map_err(|e| {
+                    GitError::Other(format!("reattach HEAD to {} failed: {}", name, e.message()))
+                })?;
+            }
+            None => {
+                // Genuinely detached (no branch to return to): point HEAD at
+                // ORIG_HEAD directly, as before.
+                repo.set_head_detached(oid).map_err(|e| {
+                    GitError::Other(format!(
+                        "set detached HEAD to ORIG_HEAD failed: {}",
+                        e.message()
+                    ))
+                })?;
             }
         }
     }
@@ -1781,6 +2071,22 @@ fn head_display(head: &Head) -> String {
         Head::Detached { target } => format!("detached: {}", short_sha(target)),
         Head::Unborn { branch } => format!("unborn ({})", branch),
     }
+}
+
+/// Read the pre-rebase branch ref name (e.g. `refs/heads/feature`) from
+/// `.git/rebase-merge/head-name` (merge backend) or `.git/rebase-apply/head-name`
+/// (apply backend). Returns `None` when neither file exists or it doesn't name a
+/// ref — the caller then falls back to a detached restore (#302).
+fn read_rebase_head_name(git_dir: &Path) -> Option<String> {
+    for sub in ["rebase-merge", "rebase-apply"] {
+        if let Ok(raw) = std::fs::read_to_string(git_dir.join(sub).join("head-name")) {
+            let name = raw.trim();
+            if name.starts_with("refs/") {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Read `ORIG_HEAD` as a 40-char sha string, if present.

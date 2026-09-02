@@ -17,6 +17,22 @@ pub use kagi_domain::resolution::{
     LineSelection, Region, ResolutionChoice, ResolvedLine, SelectionSide, TriState,
 };
 
+/// A byte-level resolution for a structurally-unmergeable conflict (#297):
+/// binary blobs, symlinks (git mode 120000) and submodules / gitlinks (git mode
+/// 160000).  These have no usable text buffer, so the chosen side is staged into
+/// the index by its blob **OID + mode** directly (see
+/// `stage_conflict_resolution`) rather than by writing lossy-UTF-8 text through
+/// the working tree — which would corrupt binaries and, for a conflicted
+/// symlink, dereference the on-disk link and write outside the repo (#298).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawResolution {
+    /// The chosen side's blob (or gitlink commit) object id.
+    pub oid: git2::Oid,
+    /// The chosen side's git file mode (e.g. 0o100644, 0o100755, 0o120000,
+    /// 0o160000).  Staged verbatim so the exec bit / symlink / gitlink survive.
+    pub mode: u32,
+}
+
 /// The Result draft for a single file: the materialized side texts plus the
 /// current resolution lines and an undo / redo history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +44,18 @@ struct FileResolution {
     incoming_text: Option<String>,
     /// Whether this file is a binary / non-text conflict (no line merge).
     binary: bool,
+    /// Whether this conflict must be resolved by staging a raw blob OID rather
+    /// than a text buffer (#297): binary, symlink (120000) or gitlink (160000).
+    raw: bool,
+    /// Current side blob OID + git mode (for the raw resolution path), when the
+    /// current side is present.
+    current_raw: Option<RawResolution>,
+    /// Incoming side blob OID + git mode (for the raw resolution path), when the
+    /// incoming side is present.
+    incoming_raw: Option<RawResolution>,
+    /// A chosen raw resolution (a whole side taken by OID).  Set by
+    /// [`ResolutionBuffer::apply_choice`] for `raw` files instead of `result`.
+    raw_result: Option<RawResolution>,
     /// The current Result lines (the editable draft).  `None` until a choice or
     /// manual edit produces a resolution.
     result: Option<Vec<ResolvedLine>>,
@@ -43,6 +71,10 @@ impl FileResolution {
             current_text: None,
             incoming_text: None,
             binary: false,
+            raw: false,
+            current_raw: None,
+            incoming_raw: None,
+            raw_result: None,
             result: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -123,6 +155,16 @@ impl ResolutionBuffer {
             fr.binary = entry_is_binary(repo, conflict.our.as_ref())
                 || entry_is_binary(repo, conflict.their.as_ref())
                 || entry_is_binary(repo, conflict.ancestor.as_ref());
+            // #297: structurally-unmergeable conflicts (binary / symlink /
+            // gitlink) are resolved by staging a side's blob OID directly.
+            // Record each present side's (oid, mode) and mark the file `raw` so
+            // `apply_choice` routes to the byte-level path.
+            fr.current_raw = side_raw(conflict.our.as_ref());
+            fr.incoming_raw = side_raw(conflict.their.as_ref());
+            fr.raw = fr.binary
+                || is_special_mode(conflict.our.as_ref())
+                || is_special_mode(conflict.their.as_ref())
+                || is_special_mode(conflict.ancestor.as_ref());
 
             // Seed an initial draft for content conflicts: the zdiff3
             // materialization is informational (markers + base context); the
@@ -133,6 +175,34 @@ impl ResolutionBuffer {
         }
 
         Ok(buffer)
+    }
+
+    /// Build from the live index (authoritative `raw`/`current_raw`/
+    /// `incoming_raw`/`binary` metadata) and overlay any autosaved *drafts*
+    /// (`result` for text conflicts, `raw_result` for binary/symlink/gitlink).
+    ///
+    /// This is the correct entry point for (re-)entering Conflict Mode. The old
+    /// `load().or_else(from_repo)` was a bug: an autosave (which does NOT persist
+    /// the index-derived `raw` fields — see [`parse_file_object`]) short-circuited
+    /// `from_repo`, leaving `raw = false` so a binary/symlink "take side" fell
+    /// into the text path and failed with "that side does not exist" (#297). Here
+    /// the index metadata always wins; only the user's chosen resolution is
+    /// carried over from autosave.
+    pub fn from_repo_with_autosave(repo: &Repository) -> Result<Self, GitError> {
+        let mut base = Self::from_repo(repo)?;
+        if let Some(saved) = Self::load(&base.repo_path) {
+            for (path, fr) in base.files.iter_mut() {
+                if let Some(s) = saved.files.get(path) {
+                    if s.result.is_some() {
+                        fr.result = s.result.clone();
+                    }
+                    if s.raw_result.is_some() {
+                        fr.raw_result = s.raw_result;
+                    }
+                }
+            }
+        }
+        Ok(base)
     }
 
     /// Return the zdiff3 (or standard fallback) materialized marker text for a
@@ -162,6 +232,32 @@ impl ResolutionBuffer {
         let fr = self.files.get_mut(path).ok_or_else(|| {
             GitError::Other(format!("not a tracked conflict: {}", path.display()))
         })?;
+
+        // #297: binary / symlink / gitlink conflicts have no text buffer — the
+        // chosen side is recorded as a raw blob OID + mode and staged directly.
+        // "Take current" / "Take incoming" map through here unchanged; the
+        // Both* combinations are meaningless for an unmergeable blob.
+        if fr.raw {
+            let raw = match choice {
+                ResolutionChoice::Current => fr
+                    .current_raw
+                    .ok_or_else(|| missing_side(path, "current"))?,
+                ResolutionChoice::Incoming => fr
+                    .incoming_raw
+                    .ok_or_else(|| missing_side(path, "incoming"))?,
+                ResolutionChoice::BothCurrentFirst | ResolutionChoice::BothIncomingFirst => {
+                    return Err(GitError::Other(format!(
+                        "cannot keep both sides of {}: a binary, symlink or submodule \
+                         conflict must take exactly one side",
+                        path.display()
+                    )));
+                }
+            };
+            fr.checkpoint();
+            fr.raw_result = Some(raw);
+            fr.result = None;
+            return Ok(());
+        }
 
         let current = fr.current_text.clone();
         let incoming = fr.incoming_text.clone();
@@ -401,11 +497,25 @@ impl ResolutionBuffer {
 
 impl ResolutionBuffer {
     /// Whether `path` has a Result draft (a side was chosen or text edited).
+    /// A raw (binary / symlink / gitlink) file counts as resolved once a side is
+    /// chosen via [`Self::apply_choice`] (#297).
     pub fn has_resolution(&self, path: &Path) -> bool {
         self.files
             .get(path)
-            .map(|fr| fr.result.is_some())
+            .map(|fr| fr.result.is_some() || fr.raw_result.is_some())
             .unwrap_or(false)
+    }
+
+    /// The chosen raw (byte-level) resolution for `path`, if this is a binary /
+    /// symlink / gitlink conflict whose side has been chosen (#297).  The
+    /// staging path uses this to add the OID at stage 0 directly.
+    pub fn raw_resolution(&self, path: &Path) -> Option<RawResolution> {
+        self.files.get(path).and_then(|fr| fr.raw_result)
+    }
+
+    /// Whether `path` is a raw (binary / symlink / gitlink) conflict.
+    pub fn is_raw(&self, path: &Path) -> bool {
+        self.files.get(path).map(|fr| fr.raw).unwrap_or(false)
     }
 
     /// The resolved text for `path` (lines joined with `\n`, trailing newline
@@ -683,6 +793,32 @@ fn blob_text(repo: &Repository, entry: Option<&IndexEntry>) -> Option<String> {
     Some(String::from_utf8_lossy(blob.content()).into_owned())
 }
 
+/// Git file modes that have no text merge and must be resolved by staging a raw
+/// OID (#297): symlink and gitlink / submodule.  (Regular blobs are 100644 /
+/// 100755; trees are 040000.)
+const MODE_SYMLINK: u32 = 0o120000;
+const MODE_GITLINK: u32 = 0o160000;
+
+/// Whether an index entry carries a symlink or gitlink mode.
+fn is_special_mode(entry: Option<&IndexEntry>) -> bool {
+    matches!(
+        entry.map(|e| e.mode),
+        Some(MODE_SYMLINK) | Some(MODE_GITLINK)
+    )
+}
+
+/// The (oid, mode) of a present index-entry side, for the raw resolution path.
+fn side_raw(entry: Option<&IndexEntry>) -> Option<RawResolution> {
+    let e = entry?;
+    if e.id.is_zero() {
+        return None;
+    }
+    Some(RawResolution {
+        oid: e.id,
+        mode: e.mode,
+    })
+}
+
 /// Whether an index entry's blob is binary.
 fn entry_is_binary(repo: &Repository, entry: Option<&IndexEntry>) -> bool {
     let entry = match entry {
@@ -845,13 +981,21 @@ fn file_to_json(path: &Path, fr: &FileResolution) -> String {
             format!("[{}]", items.join(","))
         }
     };
+    // #297: persist the chosen raw side (binary/symlink/gitlink) so a taken
+    // side survives re-detection/restart. `current_raw`/`incoming_raw`/`raw`
+    // themselves stay index-derived (re-filled by `from_repo_with_autosave`).
+    let raw_result = match &fr.raw_result {
+        None => "null".to_string(),
+        Some(r) => format!("{{\"oid\":\"{}\",\"mode\":{}}}", r.oid, r.mode),
+    };
     format!(
-        "{{\"path\":\"{}\",\"binary\":{},\"current\":{},\"incoming\":{},\"result\":{}}}",
+        "{{\"path\":\"{}\",\"binary\":{},\"current\":{},\"incoming\":{},\"result\":{},\"raw_result\":{}}}",
         escape_json(&path.to_string_lossy()),
         fr.binary,
         current,
         incoming,
-        result
+        result,
+        raw_result
     )
 }
 
@@ -897,16 +1041,52 @@ fn parse_file_object(obj: &str) -> Option<(PathBuf, FileResolution)> {
     let current = extract_nullable_string(obj, "current");
     let incoming = extract_nullable_string(obj, "incoming");
     let result = parse_result_array(obj);
+    let raw_result = parse_raw_result(obj);
 
+    // Raw (binary/symlink/gitlink) side OIDs are not persisted — a recovered
+    // session re-derives them from the live index via `from_repo` (the conflict
+    // still stands until Continue). Autosave restores text edits only (ADR-0057).
     let fr = FileResolution {
         current_text: current,
         incoming_text: incoming,
         binary,
+        raw: false,
+        current_raw: None,
+        incoming_raw: None,
+        raw_result,
         result,
         undo: Vec::new(),
         redo: Vec::new(),
     };
     Some((path, fr))
+}
+
+/// Parse a persisted `"raw_result":{"oid":"<hex>","mode":<u32>}` (or `null`).
+/// The `raw`/`current_raw`/`incoming_raw` metadata is NOT persisted — it is
+/// re-derived from the live index by [`ResolutionBuffer::from_repo_with_autosave`];
+/// only the *chosen* side round-trips here (#297).
+fn parse_raw_result(obj: &str) -> Option<RawResolution> {
+    let key = "\"raw_result\":";
+    let pos = obj.find(key)?;
+    let after = obj[pos + key.len()..].trim_start();
+    if after.starts_with("null") || !after.starts_with('{') {
+        return None;
+    }
+    let oid_hex = extract_string(after, "oid")?;
+    let oid = git2::Oid::from_str(&oid_hex).ok()?;
+    let mode = extract_u32(after, "mode")?;
+    Some(RawResolution { oid, mode })
+}
+
+/// Extract an unquoted integer field `"<key>":<n>` as u32.
+fn extract_u32(obj: &str, key: &str) -> Option<u32> {
+    let needle = format!("\"{}\":", key);
+    let pos = obj.find(&needle)? + needle.len();
+    let rest = obj[pos..].trim_start();
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
 }
 
 /// Parse the `"result":[...]` array of `{"t":..,"o":..}` items, or `None` when
@@ -1058,6 +1238,10 @@ mod tests {
             current_text: Some(current.to_string()),
             incoming_text: Some(incoming.to_string()),
             binary: false,
+            raw: false,
+            current_raw: None,
+            incoming_raw: None,
+            raw_result: None,
             result: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1151,6 +1335,10 @@ mod tests {
             current_text: Some("only current\n".to_string()),
             incoming_text: None, // modify/delete: incoming deleted
             binary: false,
+            raw: false,
+            current_raw: None,
+            incoming_raw: None,
+            raw_result: None,
             result: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -1190,6 +1378,10 @@ mod tests {
             current_text: Some("quote \"x\"\ttab\n".to_string()),
             incoming_text: None,
             binary: false,
+            raw: false,
+            current_raw: None,
+            incoming_raw: None,
+            raw_result: None,
             result: None,
             undo: Vec::new(),
             redo: Vec::new(),

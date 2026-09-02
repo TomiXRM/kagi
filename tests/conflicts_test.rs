@@ -311,8 +311,8 @@ fn add_add_text_conflict_materializes_as_text() {
         .expect("header.h should be a conflict");
     assert_eq!(
         file.kind,
-        ConflictKind::Content,
-        "an add/add text file must not be classified Binary"
+        ConflictKind::AddAdd,
+        "an add/add text file must be classified AddAdd (not Binary/Content)"
     );
 
     // The fix: an add/add text conflict materializes to marker text (it returned
@@ -543,7 +543,7 @@ fn execute_continue_merge_creates_merge_commit() {
 
     let outcome =
         kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue merge");
-    match outcome {
+    match outcome.outcome {
         kagi_git::ContinueOutcome::Committed(id) => {
             // The new commit is a merge (two parents).
             let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
@@ -579,7 +579,7 @@ fn execute_continue_cherry_pick_advances_and_finishes() {
 
     let outcome = kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer)
         .expect("continue cherry-pick");
-    match outcome {
+    match outcome.outcome {
         kagi_git::ContinueOutcome::Committed(id) => {
             // A real commit was created (not just staged) with a single parent
             // (cherry-pick, not a merge).
@@ -622,7 +622,7 @@ fn execute_continue_rebase_advances_and_finishes() {
     let outcome = kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer)
         .expect("continue rebase");
     assert!(
-        matches!(outcome, kagi_git::ContinueOutcome::Committed(_)),
+        matches!(outcome.outcome, kagi_git::ContinueOutcome::Committed(_)),
         "single-commit rebase should finish in one continue, got {:?}",
         outcome
     );

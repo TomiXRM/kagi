@@ -729,7 +729,7 @@ impl Backend {
         &self,
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
-    ) -> Result<conflicts::ContinueOutcome, GitError> {
+    ) -> Result<conflicts::ContinueResult, GitError> {
         conflicts::execute_conflict_continue(&self.repo, &self.path, session, buffer)
     }
 

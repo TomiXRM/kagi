@@ -49,6 +49,22 @@ pub enum WorktreeNote {
     LockStateUnreadable { name: String, err: String },
     /// blocker (`plan_unlock_worktree`) — the named worktree does not exist.
     WorktreeMissing { name: String },
+    /// warning (`plan_create_worktree_impl`) — files matched by
+    /// `.worktreeinclude` (and gitignored) that will be copied into the new
+    /// worktree. `sample` holds the first few names; `more` is how many names
+    /// are not shown (issue #339).
+    IncludeCopy {
+        count: usize,
+        total_bytes: u64,
+        sample: Vec<String>,
+        more: usize,
+    },
+    /// warning (`plan_create_worktree_impl`) — matched symlinks that are
+    /// skipped (symlinks are never copied; issue #339).
+    IncludeSkippedSymlinks { count: usize },
+    /// warning (`plan_create_worktree_impl`) — the matched set exceeds the
+    /// copy-size cap; copy still proceeds (issue #339).
+    IncludeOverCap { total_bytes: u64, cap_bytes: u64 },
 }
 
 impl WorktreeNote {
@@ -92,6 +108,35 @@ impl WorktreeNote {
             WorktreeNote::WorktreeMissing { name } => {
                 format!("Worktree '{}' does not exist.", name)
             }
+            WorktreeNote::IncludeCopy {
+                count,
+                total_bytes,
+                sample,
+                more,
+            } => {
+                let mut names = sample.join(", ");
+                if *more > 0 {
+                    names = format!("{} (+{} more)", names, more);
+                }
+                format!(
+                    "Copies {} .worktreeinclude file(s) ({}) into the new worktree: {}.",
+                    count,
+                    crate::worktree_include::human_bytes(*total_bytes),
+                    names
+                )
+            }
+            WorktreeNote::IncludeSkippedSymlinks { count } => format!(
+                "Skips {} matched symlink(s) — symlinks are not copied.",
+                count
+            ),
+            WorktreeNote::IncludeOverCap {
+                total_bytes,
+                cap_bytes,
+            } => format!(
+                ".worktreeinclude matches {}, over the {} copy cap — copy still proceeds but may be large (e.g. a node_modules match).",
+                crate::worktree_include::human_bytes(*total_bytes),
+                crate::worktree_include::human_bytes(*cap_bytes)
+            ),
         }
     }
 }
@@ -258,6 +303,50 @@ mod tests {
             }
             .message_en(),
             "Worktree 'no-such' does not exist."
+        );
+    }
+
+    #[test]
+    fn include_copy_with_and_without_more() {
+        assert_eq!(
+            WorktreeNote::IncludeCopy {
+                count: 2,
+                total_bytes: 1536,
+                sample: vec![".env".into(), "config.local".into()],
+                more: 0,
+            }
+            .message_en(),
+            "Copies 2 .worktreeinclude file(s) (1.5 KiB) into the new worktree: .env, config.local."
+        );
+        assert_eq!(
+            WorktreeNote::IncludeCopy {
+                count: 5,
+                total_bytes: 512,
+                sample: vec![".env".into()],
+                more: 4,
+            }
+            .message_en(),
+            "Copies 5 .worktreeinclude file(s) (512 B) into the new worktree: .env (+4 more)."
+        );
+    }
+
+    #[test]
+    fn include_skipped_symlinks() {
+        assert_eq!(
+            WorktreeNote::IncludeSkippedSymlinks { count: 2 }.message_en(),
+            "Skips 2 matched symlink(s) — symlinks are not copied."
+        );
+    }
+
+    #[test]
+    fn include_over_cap() {
+        assert_eq!(
+            WorktreeNote::IncludeOverCap {
+                total_bytes: 200 * 1024 * 1024,
+                cap_bytes: 100 * 1024 * 1024,
+            }
+            .message_en(),
+            ".worktreeinclude matches 200.0 MiB, over the 100.0 MiB copy cap — copy still proceeds but may be large (e.g. a node_modules match)."
         );
     }
 

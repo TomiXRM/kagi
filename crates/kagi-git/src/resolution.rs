@@ -651,7 +651,22 @@ fn conflict_path(conflict: &git2::IndexConflict) -> Option<PathBuf> {
         .or(conflict.their.as_ref())
         .or(conflict.ancestor.as_ref())
         .map(|e| e.path.clone())?;
-    Some(PathBuf::from(String::from_utf8_lossy(&bytes).into_owned()))
+    // #293: byte-faithful — a lossy path drives the resolution write path
+    // (`workdir.join(path)`), so a non-UTF-8 name would write a bogus renamed
+    // file and leave the real conflict unresolved. Unix uses the raw bytes;
+    // non-Unix skips a non-UTF-8 name (out of scope, #293).
+    if let Ok(s) = std::str::from_utf8(&bytes) {
+        return Some(PathBuf::from(s));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(&bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 /// Read an index entry's blob as decoded text, or `None` for a missing /

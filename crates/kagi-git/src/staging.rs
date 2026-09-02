@@ -160,8 +160,10 @@ pub fn unstage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
             // `git reset HEAD -- <path>`:
             // - If path exists in HEAD tree: restores index entry to HEAD content.
             // - If path does NOT exist in HEAD tree: removes it from index.
-            let path_str = path.to_string_lossy().to_string();
-            repo.reset_default(Some(&head_obj), [path_str.as_str()])
+            // #293: a lossy pathspec would make reset_default a silent no-op
+            // (U+FFFD matches nothing) — bail on a non-UTF-8 path instead.
+            let path_str = super::path_to_pathspec(path)?;
+            repo.reset_default(Some(&head_obj), [path_str])
                 .map_err(|e| GitError::Other(format!("reset_default failed: {}", e.message())))?;
         }
     }
@@ -194,9 +196,11 @@ pub fn unstaged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, Gi
         return Ok(fallback);
     }
 
-    let path_str = path.to_string_lossy();
     let mut diff_opts = DiffOptions::new();
-    diff_opts.pathspec(path_str.as_ref());
+    diff_opts.pathspec(super::path_to_pathspec(path)?);
+    // #292: treat the pathspec literally so glob metacharacters in the name
+    // ([ ] * ?) and glob-prefix collisions don't match a different file.
+    diff_opts.disable_pathspec_match(true);
     diff_opts.include_untracked(true);
     diff_opts.show_untracked_content(true);
     // Recurse into untracked dirs so single-file untracked entries are shown.
@@ -274,9 +278,10 @@ fn conflicted_file_diff(repo: &Repository, path: &Path) -> Result<Option<FileDif
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
 pub fn staged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, GitError> {
-    let path_str = path.to_string_lossy();
     let mut diff_opts = DiffOptions::new();
-    diff_opts.pathspec(path_str.as_ref());
+    diff_opts.pathspec(super::path_to_pathspec(path)?);
+    // #292: literal pathspec match (see unstaged_file_diff).
+    diff_opts.disable_pathspec_match(true);
 
     let head = resolve_head(repo)?;
 
@@ -690,14 +695,23 @@ fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, Gi
     }
 
     // Find the delta index matching `path`.
-    let delta_idx = (0..num_deltas)
-        .find(|&i| {
-            let delta = diff.get_delta(i).unwrap();
-            let np = delta.new_file().path();
-            let op = delta.old_file().path();
-            np == Some(path) || op == Some(path)
-        })
-        .unwrap_or(0);
+    // #292: no match → return an empty diff for THIS path. The old
+    // `.unwrap_or(0)` silently fell back to delta 0, i.e. a *different* file's
+    // content — a git client showing the wrong file's diff.
+    let Some(delta_idx) = (0..num_deltas).find(|&i| {
+        let delta = diff.get_delta(i).unwrap();
+        let np = delta.new_file().path();
+        let op = delta.old_file().path();
+        np == Some(path) || op == Some(path)
+    }) else {
+        return Ok(FileDiff {
+            old_path: None,
+            new_path: Some(path.to_path_buf()),
+            change: ChangeKind::Modified,
+            hunks: vec![],
+            is_binary: false,
+        });
+    };
 
     let delta = diff.get_delta(delta_idx).unwrap();
 
@@ -898,11 +912,13 @@ pub fn unstage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<
             let head_obj = repo.find_object(head_oid, None).map_err(|e| {
                 GitError::Other(format!("find_object(HEAD) failed: {}", e.message()))
             })?;
-            let path_strs: Vec<String> = paths
+            // #293: same silent-no-op hazard as unstage_file — a lossy pathspec
+            // matches nothing. Bail on any non-UTF-8 path rather than skipping it.
+            let path_strs: Vec<&str> = paths
                 .iter()
-                .map(|p| p.to_string_lossy().to_string())
-                .collect();
-            repo.reset_default(Some(&head_obj), path_strs.iter().map(|s| s.as_str()))
+                .map(|p| super::path_to_pathspec(p))
+                .collect::<Result<_, _>>()?;
+            repo.reset_default(Some(&head_obj), path_strs.iter().copied())
                 .map_err(|e| GitError::Other(format!("reset_default failed: {}", e.message())))?;
         }
     }

@@ -178,6 +178,28 @@ impl std::fmt::Display for GitError {
     }
 }
 
+/// Convert a repo-relative `path` to a libgit2 pathspec `&str`.
+///
+/// git2's `DiffOptions::pathspec` / `reset_default` only take `&str`, so a
+/// non-UTF-8 path (which #293 now preserves byte-faithfully in status) cannot
+/// be expressed as a pathspec at all. Rather than `to_string_lossy()` — which
+/// silently rewrites the bytes to U+FFFD and then matches a *different* file
+/// (#292) — we bail. A non-UTF-8 file is therefore listable in status but its
+/// per-file diff/unstage is unsupported; that is strictly better than showing
+/// the wrong file's content.
+///
+/// Callers must always pair the resulting pathspec with
+/// `DiffOptions::disable_pathspec_match(true)` so glob metacharacters in the
+/// name (`[ ] * ?`) and glob-prefix collisions are treated literally (#292).
+pub(crate) fn path_to_pathspec(path: &Path) -> Result<&str, GitError> {
+    path.to_str().ok_or_else(|| {
+        GitError::Other(format!(
+            "non-UTF-8 path cannot be expressed as a git pathspec: {}",
+            path.display()
+        ))
+    })
+}
+
 // ────────────────────────────────────────────────────────────
 // Public API
 // ────────────────────────────────────────────────────────────

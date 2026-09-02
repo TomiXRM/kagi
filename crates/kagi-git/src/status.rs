@@ -106,9 +106,14 @@ pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitEr
                     .and_then(|d| d.new_file().path())
                     .map(PathBuf::from)
                     .or_else(|| entry_path(&entry))
-                    .unwrap_or_default()
             } else {
-                entry_path(&entry).unwrap_or_default()
+                entry_path(&entry)
+            };
+            // #293: never fabricate an empty PathBuf — skip an entry whose path
+            // can't be built (non-UTF-8 on non-Unix) so it can't vanish from
+            // the overwrite guards under a bogus "" key.
+            let Some(path) = path else {
+                continue;
             };
 
             result.staged.push(FileStatus { path, change: kind });
@@ -136,7 +141,9 @@ pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitEr
                 ChangeKind::Modified
             };
 
-            let path = entry_path(&entry).unwrap_or_default();
+            let Some(path) = entry_path(&entry) else {
+                continue;
+            };
             result.unstaged.push(FileStatus { path, change: kind });
         }
 
@@ -210,18 +217,36 @@ fn is_nested_git_dir(workdir: Option<&Path>, rel: &Path) -> bool {
 // Internal helpers
 // ────────────────────────────────────────────────────────────
 
-/// Extract the file path from a status entry.
+/// Extract the file path from a status entry, byte-faithfully (#293).
 ///
-/// `StatusEntry::path()` returns `Result<&str, Error>`. On success we use the
-/// UTF-8 string directly; on failure (non-UTF-8 path) we fall back to the raw
-/// bytes from `path_bytes()`.
+/// `StatusEntry::path()` returns `Result<&str, Error>` and fails for a
+/// non-UTF-8 name. The old fallback re-ran the *same* UTF-8 check on
+/// `path_bytes()`, so a non-UTF-8 name still collapsed to `None` and the
+/// caller's `unwrap_or_default()` turned it into an **empty** `PathBuf` — which
+/// silently dropped the file from every overwrite guard.
+///
+/// On Unix the path is now built from the raw bytes via `OsStrExt::from_bytes`,
+/// which never loses information. On non-Unix targets there is no lossless
+/// bytes→path bridge, so a non-UTF-8 name yields `None` and the caller skips
+/// the entry (never a bogus empty path). Non-Unix non-UTF-8 handling is out of
+/// scope (#293).
 fn entry_path(entry: &git2::StatusEntry<'_>) -> Option<PathBuf> {
     // path() returns Result<&str, Error>; use it when the path is valid UTF-8.
     if let Ok(p) = entry.path() {
         return Some(PathBuf::from(p));
     }
-    // path_bytes() returns &[u8]; try to interpret as UTF-8.
-    std::str::from_utf8(entry.path_bytes())
-        .ok()
-        .map(PathBuf::from)
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(
+            entry.path_bytes(),
+        )))
+    }
+    #[cfg(not(unix))]
+    {
+        eprintln!(
+            "[kagi-git] status: skipping entry with non-UTF-8 path (unsupported on this platform)"
+        );
+        None
+    }
 }

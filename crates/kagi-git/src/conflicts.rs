@@ -393,13 +393,34 @@ fn conflict_path(conflict: &git2::IndexConflict) -> Option<PathBuf> {
         .or(conflict.their.as_ref())
         .or(conflict.ancestor.as_ref())
         .map(|e| e.path.clone())?;
-    Some(bytes_to_pathbuf(&bytes))
+    bytes_to_pathbuf(&bytes)
 }
 
 /// Convert index-entry path bytes (always `/`-separated, no NUL) to a
-/// `PathBuf` without byte-slicing user text — we go through a lossy `str`.
-fn bytes_to_pathbuf(bytes: &[u8]) -> PathBuf {
-    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+/// `PathBuf`, byte-faithfully (#293).
+///
+/// The old body went through `String::from_utf8_lossy`, so a non-UTF-8 conflict
+/// name became a *different* path — and the resolution write path
+/// (`workdir.join(rel)`) then created a bogus renamed file while the real
+/// conflict stayed unresolved. On Unix we build the path from raw bytes; on
+/// non-Unix a non-UTF-8 name yields `None` (the entry is skipped) rather than a
+/// silently-wrong path. Non-Unix non-UTF-8 handling is out of scope (#293).
+fn bytes_to_pathbuf(bytes: &[u8]) -> Option<PathBuf> {
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return Some(PathBuf::from(s));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        eprintln!(
+            "[kagi-git] conflicts: skipping conflict with non-UTF-8 path (unsupported on this platform)"
+        );
+        None
+    }
 }
 
 /// Classify the kind of a single index conflict from its stage presence pattern
@@ -733,7 +754,7 @@ fn conflict_path_local(conflict: &git2::IndexConflict) -> Option<PathBuf> {
         .or(conflict.their.as_ref())
         .or(conflict.ancestor.as_ref())
         .map(|e| e.path.clone())?;
-    Some(bytes_to_pathbuf(&bytes))
+    bytes_to_pathbuf(&bytes)
 }
 
 /// Whether the merge message (`MERGE_MSG`, comment lines stripped) is empty.

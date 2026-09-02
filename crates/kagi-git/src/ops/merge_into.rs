@@ -22,8 +22,22 @@ use kagi_domain::plan_note::{CommonNote, MergeNote, MergeRecovery, MergeTitle};
 pub enum MergeIntoKind {
     /// `target` has no commits of its own: its ref moves to `source`.
     FastForward,
-    /// A two-parent merge commit is written and `target` moves to it.
-    MergeCommit,
+    /// A two-parent merge commit is written and `target` moves to it. `tree` is
+    /// the merge tree the planner already computed and wrote to the ODB, so
+    /// execution reuses it instead of recomputing the merge (issue #301).
+    /// `git2::Oid::ZERO_SHA1` on the dummy kind paired with a blocked plan (never
+    /// executed).
+    MergeCommit { tree: git2::Oid },
+}
+
+impl MergeIntoKind {
+    /// The throwaway kind returned alongside a blocked plan (execute checks
+    /// `blockers` and errors before ever reading it).
+    fn blocked() -> Self {
+        MergeIntoKind::MergeCommit {
+            tree: git2::Oid::ZERO_SHA1,
+        }
+    }
 }
 
 /// Resolve a local branch's tip, or `None` if it is not a local branch.
@@ -151,21 +165,21 @@ pub fn plan_merge_into_branch(
         blockers.push(PlanNote::Merge(MergeNote::TargetIsCurrent {
             target: target.to_string(),
         }));
-        return Ok((blocked(blockers, warnings), MergeIntoKind::MergeCommit));
+        return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     }
     let Some(source_oid) = local_branch_oid(repo, source) else {
         blockers.push(PlanNote::Common(CommonNote::BranchMissing {
             name: source.to_string(),
             in_repo: true,
         }));
-        return Ok((blocked(blockers, warnings), MergeIntoKind::MergeCommit));
+        return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     };
     let Some(target_oid) = target_oid_opt else {
         blockers.push(PlanNote::Common(CommonNote::BranchMissing {
             name: target.to_string(),
             in_repo: true,
         }));
-        return Ok((blocked(blockers, warnings), MergeIntoKind::MergeCommit));
+        return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     };
     if let Some(remote_ref) = resolved.remote_ref.as_ref() {
         if resolved.create_at.is_some() {
@@ -192,7 +206,7 @@ pub fn plan_merge_into_branch(
         blockers.push(PlanNote::Merge(MergeNote::TargetIsCurrent {
             target: target.to_string(),
         }));
-        return Ok((blocked(blockers, warnings), MergeIntoKind::MergeCommit));
+        return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     }
     // …and not in a linked worktree, whose index and files would be left
     // describing a commit its HEAD no longer points at.
@@ -201,7 +215,7 @@ pub fn plan_merge_into_branch(
             target: target.to_string(),
             worktree: wt.name,
         }));
-        return Ok((blocked(blockers, warnings), MergeIntoKind::MergeCommit));
+        return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     }
 
     // ── 3. Nothing to do ─────────────────────────────────────────────────
@@ -214,7 +228,7 @@ pub fn plan_merge_into_branch(
             target: target.to_string(),
             source: source.to_string(),
         }));
-        return Ok((blocked(blockers, warnings), MergeIntoKind::MergeCommit));
+        return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     }
 
     let target_commit = repo
@@ -235,8 +249,19 @@ pub fn plan_merge_into_branch(
         }));
         MergeIntoKind::FastForward
     } else {
-        // In-memory only: no index or working-tree write happens here.
-        let index = repo
+        // #299: no common ancestor → unrelated histories. libgit2 would
+        // silently merge against an empty base; real git refuses. Blocker.
+        if repo.merge_base(target_oid, source_oid).is_err() {
+            blockers.push(PlanNote::Merge(MergeNote::IntoUnrelatedHistories {
+                target: target.to_string(),
+                source: source.to_string(),
+            }));
+            return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
+        }
+        // In-memory only: no index or working-tree write happens here. The
+        // resulting tree oid is carried in the kind so execution reuses it
+        // rather than recomputing the whole merge (issue #301).
+        let mut index = repo
             .merge_commits(&target_commit, &source_commit, None)
             .map_err(|e| {
                 GitError::Other(format!("merge_commits in-memory failed: {}", e.message()))
@@ -248,9 +273,12 @@ pub fn plan_merge_into_branch(
                 source: source.to_string(),
                 count,
             }));
-            return Ok((blocked(blockers, warnings), MergeIntoKind::MergeCommit));
+            return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
         }
-        MergeIntoKind::MergeCommit
+        let tree = index
+            .write_tree_to(repo)
+            .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
+        MergeIntoKind::MergeCommit { tree }
     };
 
     if !current_branch.is_empty() {
@@ -329,29 +357,16 @@ pub fn execute_merge_into_branch(
 
     let new_oid = match kind {
         MergeIntoKind::FastForward => source_oid,
-        MergeIntoKind::MergeCommit => {
+        // #301: reuse the tree the planner just wrote — no second merge.
+        MergeIntoKind::MergeCommit { tree } => {
             let target_commit = repo.find_commit(target_oid).map_err(|e| {
                 GitError::Other(format!("target commit lookup failed: {}", e.message()))
             })?;
             let source_commit = repo.find_commit(source_oid).map_err(|e| {
                 GitError::Other(format!("source commit lookup failed: {}", e.message()))
             })?;
-            let mut index = repo
-                .merge_commits(&target_commit, &source_commit, None)
-                .map_err(|e| {
-                    GitError::Other(format!("merge_commits in-memory failed: {}", e.message()))
-                })?;
-            if index.has_conflicts() {
-                return Err(GitError::Other(format!(
-                    "Merging '{}' into '{}' would conflict. Re-plan before executing.",
-                    source, target
-                )));
-            }
-            let tree_oid = index.write_tree_to(repo).map_err(|e| {
-                GitError::Other(format!("index.write_tree_to failed: {}", e.message()))
-            })?;
             let tree = repo
-                .find_tree(tree_oid)
+                .find_tree(tree)
                 .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
             let sig = build_signature(repo)?;
             repo.commit(
@@ -373,7 +388,9 @@ pub fn execute_merge_into_branch(
         MergeIntoKind::FastForward => {
             format!("merge: fast-forward {source} into {target} (off-branch)")
         }
-        MergeIntoKind::MergeCommit => format!("merge: {source} into {target} (off-branch)"),
+        MergeIntoKind::MergeCommit { .. } => {
+            format!("merge: {source} into {target} (off-branch)")
+        }
     };
     let mut branch_ref = repo
         .find_reference(&refname)

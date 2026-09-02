@@ -86,7 +86,7 @@ fn merging_into_a_branch_moves_only_that_branch() {
 
     let (plan, kind) = plan_merge_into_branch(&repo, "feature", "main").unwrap();
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
-    assert_eq!(kind, MergeIntoKind::MergeCommit);
+    assert!(matches!(kind, MergeIntoKind::MergeCommit { .. }));
 
     execute_merge_into_branch(&repo, "feature", "main").expect("merge");
 

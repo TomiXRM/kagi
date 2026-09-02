@@ -1,6 +1,46 @@
 //! MergeNote / MergeTitle / MergeRecovery — ADR-0129 appendix §B-6
 //! (+ §C title row / §D recovery row).
 
+/// The in-progress `.git/` operation a merge would collide with (issue #299).
+/// A pure-domain twin of `git2::RepositoryState`, mapped in the git layer so
+/// `kagi-domain` stays git2-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InProgressOp {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+    /// Any other non-clean state git2 reports.
+    Other,
+}
+
+impl InProgressOp {
+    /// English label used at the start of the "… is already in progress" line.
+    pub fn label_en(self) -> &'static str {
+        match self {
+            InProgressOp::Merge => "A merge",
+            InProgressOp::Rebase => "A rebase",
+            InProgressOp::CherryPick => "A cherry-pick",
+            InProgressOp::Revert => "A revert",
+            InProgressOp::Bisect => "A bisect",
+            InProgressOp::Other => "Another operation",
+        }
+    }
+
+    /// Japanese label used at the start of the "… が進行中です" line.
+    pub fn label_ja(self) -> &'static str {
+        match self {
+            InProgressOp::Merge => "merge",
+            InProgressOp::Rebase => "rebase",
+            InProgressOp::CherryPick => "cherry-pick",
+            InProgressOp::Revert => "revert",
+            InProgressOp::Bisect => "bisect",
+            InProgressOp::Other => "別の操作",
+        }
+    }
+}
+
 /// Plan notes for the merge op family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeNote {
@@ -11,10 +51,26 @@ pub enum MergeNote {
     /// blocker (no-op family) — the current branch already contains `target`.
     AlreadyContains { current: String, target: String },
     /// warning (W31) — a predicted merge conflict. NOT a blocker: the user
-    /// still confirms and resolves in Conflict Mode.
+    /// still confirms and resolves in Conflict Mode. `files` is capped for
+    /// display; `count` is the true total, so `message_en` appends
+    /// "and N more" when `files.len() < count` (issue #301).
     WillConflict { count: usize, files: Vec<String> },
     /// blocker (no-op family) — merging `target` would produce no changes.
     NoChanges { target: String },
+    /// blocker (#299) — the current branch and `target` share no common
+    /// ancestor. Real git refuses this without `--allow-unrelated-histories`;
+    /// libgit2's `merge_commits` would silently merge against an empty base.
+    UnrelatedHistories { target: String },
+    /// blocker (#299) — a merge / rebase / cherry-pick / revert is already in
+    /// progress, so merging would stack a second operation on top of it.
+    OperationInProgress { op: InProgressOp },
+    /// blocker (#300) — untracked working-tree files would be overwritten by
+    /// the incoming merge. `files` is capped for display; `count` is the true
+    /// total. Real git refuses and lists the files by name.
+    UntrackedWouldBeOverwritten { count: usize, files: Vec<String> },
+    /// blocker (#299) — `source` and `target` share no common ancestor
+    /// (off-branch merge variant of [`MergeNote::UnrelatedHistories`]).
+    IntoUnrelatedHistories { target: String, source: String },
 
     // ── Merging into a branch that is not checked out (ADR-0144) ─────────
     /// blocker — `target` is checked out in another worktree, so moving its
@@ -92,11 +148,7 @@ impl MergeNote {
                 current
             ),
             MergeNote::WillConflict { count, files } => {
-                let files_label = if files.is_empty() {
-                    "(unknown files)".to_string()
-                } else {
-                    files.join(", ")
-                };
+                let files_label = capped_files_en(*count, files);
                 format!(
                     "Merge will produce {} conflict(s): {}. You will resolve them in Conflict Mode.",
                     count, files_label
@@ -105,7 +157,40 @@ impl MergeNote {
             MergeNote::NoChanges { target } => {
                 format!("Merging '{}' would produce no changes.", target)
             }
+            MergeNote::UnrelatedHistories { target } => format!(
+                "'{}' and the current branch have no common history. git refuses this without --allow-unrelated-histories; merging unrelated trees is almost always a mistake.",
+                target
+            ),
+            MergeNote::OperationInProgress { op } => format!(
+                "{} is already in progress. Finish or abort it before merging.",
+                op.label_en()
+            ),
+            MergeNote::UntrackedWouldBeOverwritten { count, files } => format!(
+                "{} untracked file(s) would be overwritten by merge: {}. Move or remove them first.",
+                count,
+                capped_files_en(*count, files)
+            ),
+            MergeNote::IntoUnrelatedHistories { target, source } => format!(
+                "'{}' and '{}' have no common history. git refuses this without --allow-unrelated-histories; merging unrelated trees is almost always a mistake.",
+                source, target
+            ),
         }
+    }
+}
+
+/// Render a capped file list: the shown names joined by `", "`, with
+/// "and N more" appended when the true `count` exceeds what is shown. Empty
+/// list renders "(unknown files)" (legacy behaviour). Issue #301.
+fn capped_files_en(count: usize, files: &[String]) -> String {
+    if files.is_empty() {
+        return "(unknown files)".to_string();
+    }
+    let shown = files.join(", ");
+    let more = count.saturating_sub(files.len());
+    if more > 0 {
+        format!("{}, and {} more", shown, more)
+    } else {
+        shown
     }
 }
 
@@ -232,6 +317,59 @@ mod tests {
             }
             .message_en(),
             "Merge will produce 3 conflict(s): (unknown files). You will resolve them in Conflict Mode."
+        );
+    }
+
+    #[test]
+    fn will_conflict_capped_and_n_more() {
+        // 50 shown, count 1000 → "and 950 more" (issue #301 cap).
+        let files: Vec<String> = (0..50).map(|i| format!("f{i}.rs")).collect();
+        let msg = MergeNote::WillConflict {
+            count: 1000,
+            files: files.clone(),
+        }
+        .message_en();
+        assert!(msg.contains("1000 conflict(s)"));
+        assert!(msg.ends_with("and 950 more. You will resolve them in Conflict Mode."));
+        // Bounded: the whole rendered line stays small even for a 1000-conflict merge.
+        assert!(
+            msg.len() < 1000,
+            "rendered note must be bounded: {}",
+            msg.len()
+        );
+    }
+
+    #[test]
+    fn unrelated_histories() {
+        assert_eq!(
+            MergeNote::UnrelatedHistories {
+                target: "other".into()
+            }
+            .message_en(),
+            "'other' and the current branch have no common history. git refuses this without --allow-unrelated-histories; merging unrelated trees is almost always a mistake."
+        );
+    }
+
+    #[test]
+    fn operation_in_progress() {
+        assert_eq!(
+            MergeNote::OperationInProgress {
+                op: InProgressOp::Merge
+            }
+            .message_en(),
+            "A merge is already in progress. Finish or abort it before merging."
+        );
+    }
+
+    #[test]
+    fn untracked_would_be_overwritten() {
+        assert_eq!(
+            MergeNote::UntrackedWouldBeOverwritten {
+                count: 1,
+                files: vec!["a.txt".into()],
+            }
+            .message_en(),
+            "1 untracked file(s) would be overwritten by merge: a.txt. Move or remove them first."
         );
     }
 

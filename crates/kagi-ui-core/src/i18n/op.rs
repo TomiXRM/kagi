@@ -57,6 +57,10 @@ pub enum Op {
     StashPush,
     SwitchToLatest,
     UnlockWorktree,
+    RemoveWorktree,
+    LockWorktree,
+    PruneWorktrees,
+    RepairWorktrees,
     UnstageAll,
     RepoOpen,
 }
@@ -111,6 +115,10 @@ impl Op {
             StashPush => ("Stash push", "stash push"),
             SwitchToLatest => ("Switch to latest", "最新への切り替え"),
             UnlockWorktree => ("Unlock worktree", "worktree の unlock"),
+            RemoveWorktree => ("Remove worktree", "worktree の削除"),
+            LockWorktree => ("Lock worktree", "worktree の lock"),
+            PruneWorktrees => ("Prune worktrees", "worktree の prune"),
+            RepairWorktrees => ("Repair worktrees", "worktree の repair"),
             UnstageAll => ("Unstage all", "全ファイルの unstage"),
         }
     }

@@ -197,6 +197,20 @@ pub enum Msg {
     MenuUnlockWorktree,
     /// Worktree context menu: disabled reason when the worktree has no lock.
     MenuWorktreeNotLocked,
+    /// Worktree context menu: lock action label (issue #340).
+    MenuLockWorktree,
+    /// Worktree context menu: disabled reason when the worktree is already locked.
+    MenuWorktreeAlreadyLocked,
+    /// Worktree context menu: remove keeping the branch (issue #340).
+    MenuRemoveWorktreeKeepBranch,
+    /// Worktree context menu: remove and also delete the branch (issue #340).
+    MenuRemoveWorktreeAndBranch,
+    /// Worktree context menu: prune stale worktrees (issue #340).
+    MenuPruneWorktrees,
+    /// Worktree context menu: repair worktree links (issue #340).
+    MenuRepairWorktrees,
+    /// Default lock reason kagi records for a manual lock (issue #340).
+    WorktreeLockDefaultReason,
     BusyMerge,
 
     // ── Operation no-op toasts ──────────────────────────────────────
@@ -885,6 +899,20 @@ impl Msg {
             (Ja, MenuUnlockWorktree) => "worktree のロックを解除…",
             (En, MenuWorktreeNotLocked) => "This worktree is not locked",
             (Ja, MenuWorktreeNotLocked) => "この worktree はロックされていません",
+            (En, MenuLockWorktree) => "Lock worktree…",
+            (Ja, MenuLockWorktree) => "worktree をロック…",
+            (En, MenuWorktreeAlreadyLocked) => "This worktree is already locked",
+            (Ja, MenuWorktreeAlreadyLocked) => "この worktree は既にロックされています",
+            (En, MenuRemoveWorktreeKeepBranch) => "Remove worktree (keep branch)…",
+            (Ja, MenuRemoveWorktreeKeepBranch) => "worktree を削除(branch は残す)…",
+            (En, MenuRemoveWorktreeAndBranch) => "Remove worktree and branch…",
+            (Ja, MenuRemoveWorktreeAndBranch) => "worktree と branch を削除…",
+            (En, MenuPruneWorktrees) => "Prune stale worktrees…",
+            (Ja, MenuPruneWorktrees) => "古い worktree を prune…",
+            (En, MenuRepairWorktrees) => "Repair worktree links…",
+            (Ja, MenuRepairWorktrees) => "worktree リンクを修復…",
+            (En, WorktreeLockDefaultReason) => "locked in kagi",
+            (Ja, WorktreeLockDefaultReason) => "locked in kagi",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
 

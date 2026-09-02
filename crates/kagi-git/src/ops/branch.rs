@@ -758,12 +758,14 @@ pub fn execute_delete_branch(
             )));
         }
         // Clean: delete the working directory, then prune the admin entry.
-        std::fs::remove_dir_all(&wt.path).map_err(|e| {
-            GitError::Other(format!(
-                "failed to remove worktree dir '{}': {e}",
-                wt.path.display()
-            ))
-        })?;
+        // Routed through the containment-checked delete (issue #340) — this
+        // replaces the codebase's last unbounded `remove_dir_all` (#294): it
+        // refuses the main worktree, any repo-overlapping path, or a symlink.
+        let main_workdir = repo
+            .workdir()
+            .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
+            .to_path_buf();
+        super::worktree_lifecycle::remove_worktree_dir_checked(&main_workdir, &wt.path)?;
         let wt_handle = repo
             .find_worktree(&wt.name)
             .map_err(|e| GitError::Other(format!("worktree lookup failed: {}", e.message())))?;

@@ -140,6 +140,44 @@ pub struct UnlockWorktreeModal {
     pub name: String,
 }
 
+/// State for a remove-worktree confirmation (issue #340). `delete_branch`
+/// records whether the confirmed op also deletes the checked-out branch.
+#[derive(Clone)]
+pub struct RemoveWorktreeModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    /// Worktree registry name the plan was built for.
+    pub name: String,
+    /// True when the op also deletes the branch (vs keeping it).
+    pub delete_branch: bool,
+}
+
+/// State for a lock-worktree confirmation (issue #340). The reason is captured
+/// at open time; a free-text reason editor is a follow-up.
+#[derive(Clone)]
+pub struct LockWorktreeModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+    pub name: String,
+    /// Lock reason recorded in `git worktree lock --reason`.
+    pub reason: String,
+}
+
+/// State for a prune-stale-worktrees confirmation (issue #340). Repo-wide;
+/// the plan carries the dry-run preview (count + paths).
+#[derive(Clone)]
+pub struct PruneWorktreesModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
+/// State for a repair-worktree-links confirmation (issue #340). Repo-wide.
+#[derive(Clone)]
+pub struct RepairWorktreesModal {
+    pub plan: std::sync::Arc<OperationPlan>,
+    pub error: Option<SharedString>,
+}
+
 /// State for an in-progress push confirmation (T-HT-004).  Same shape as
 /// [`PullPlanModal`] but kept separate so the confirm path can't be mixed up.
 #[derive(Clone)]
@@ -625,6 +663,10 @@ pub enum ActiveModal {
     CreateTag(CreateTagModal),
     CreateWorktree(CreateWorktreeModal),
     UnlockWorktree(UnlockWorktreeModal),
+    RemoveWorktree(RemoveWorktreeModal),
+    LockWorktree(LockWorktreeModal),
+    PruneWorktrees(PruneWorktreesModal),
+    RepairWorktrees(RepairWorktreesModal),
     StashPush(StashPushModal),
     StashApply(StashApplyModal),
     CherryPick(CherryPickModal),

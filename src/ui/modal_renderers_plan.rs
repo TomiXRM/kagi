@@ -180,6 +180,77 @@ pub(crate) fn render_unlock_worktree_modal(
     )
 }
 
+/// Remove-worktree confirmation overlay (issue #340). Danger accent — the plan
+/// blocks a dirty/locked/main worktree; confirming deletes the working dir via
+/// the containment-checked path (and optionally the branch).
+pub(crate) fn render_remove_worktree_modal(
+    modal: RemoveWorktreeModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper_styled(
+        modal.plan,
+        modal.error,
+        "Remove",
+        None,
+        Some((IconName::WindowMinimize.into(), theme().color_blocker)),
+        |this, _cx| this.cancel_remove_worktree_modal(),
+        |this, cx| this.confirm_remove_worktree(cx),
+        cx,
+    )
+}
+
+/// Lock-worktree confirmation overlay (issue #340).
+pub(crate) fn render_lock_worktree_modal(
+    modal: LockWorktreeModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper_styled(
+        modal.plan,
+        modal.error,
+        "Lock",
+        None,
+        Some((IconName::WindowRestore.into(), theme().color_warning)),
+        |this, _cx| this.cancel_lock_worktree_modal(),
+        |this, cx| this.confirm_lock_worktree(cx),
+        cx,
+    )
+}
+
+/// Prune-stale-worktrees confirmation overlay (issue #340). The plan carries
+/// the dry-run preview (count + paths).
+pub(crate) fn render_prune_worktrees_modal(
+    modal: PruneWorktreesModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper_styled(
+        modal.plan,
+        modal.error,
+        "Prune",
+        None,
+        Some((IconName::WindowMinimize.into(), theme().color_warning)),
+        |this, _cx| this.cancel_prune_worktrees_modal(),
+        |this, cx| this.confirm_prune_worktrees(cx),
+        cx,
+    )
+}
+
+/// Repair-worktree-links confirmation overlay (issue #340).
+pub(crate) fn render_repair_worktrees_modal(
+    modal: RepairWorktreesModal,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper_styled(
+        modal.plan,
+        modal.error,
+        "Repair",
+        None,
+        Some((IconName::WindowRestore.into(), theme().color_branch)),
+        |this, _cx| this.cancel_repair_worktrees_modal(),
+        |this, cx| this.confirm_repair_worktrees(cx),
+        cx,
+    )
+}
+
 /// Push plan confirmation overlay (T-HT-004) — richer icon-badge card (see
 /// `render_pull_modal`), wired to `confirm_push`. Accent colour is
 /// `color_success` (green "sending" feel), distinct from Pull's blue so the

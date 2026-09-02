@@ -1185,6 +1185,57 @@ impl Backend {
         ops::execute_unlock_worktree(&self.repo, plan, name)
     }
 
+    // ── worktree lifecycle: remove / lock / prune / repair (issue #340) ──
+    pub fn plan_remove_worktree(
+        &self,
+        name: &str,
+        delete_branch: bool,
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_remove_worktree(&self.repo, name, delete_branch)
+    }
+
+    pub fn execute_remove_worktree(
+        &self,
+        plan: &OperationPlan,
+        name: &str,
+        delete_branch: bool,
+    ) -> Result<Vec<ops::DiscardBackup>, GitError> {
+        ops::execute_remove_worktree(&self.repo, plan, name, delete_branch)
+    }
+
+    pub fn plan_lock_worktree(
+        &self,
+        name: &str,
+        reason: Option<&str>,
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_lock_worktree(&self.repo, name, reason)
+    }
+
+    pub fn execute_lock_worktree(
+        &self,
+        plan: &OperationPlan,
+        name: &str,
+        reason: Option<&str>,
+    ) -> Result<(), GitError> {
+        ops::execute_lock_worktree(&self.repo, plan, name, reason)
+    }
+
+    pub fn plan_prune_worktrees(&self) -> Result<OperationPlan, GitError> {
+        ops::plan_prune_worktrees(&self.repo)
+    }
+
+    pub fn execute_prune_worktrees(&self, plan: &OperationPlan) -> Result<usize, GitError> {
+        ops::execute_prune_worktrees(&self.repo, plan)
+    }
+
+    pub fn plan_repair_worktrees(&self) -> Result<OperationPlan, GitError> {
+        ops::plan_repair_worktrees(&self.repo)
+    }
+
+    pub fn execute_repair_worktrees(&self, plan: &OperationPlan) -> Result<(), GitError> {
+        ops::execute_repair_worktrees(&self.repo, plan)
+    }
+
     pub fn plan_stash_push(
         &mut self,
         message: Option<&str>,

@@ -267,6 +267,15 @@ impl KagiApp {
             self.status_footer =
                 FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
         }
+
+        // #309: open the "drop the kept stash?" prompt AFTER the modal-clearing
+        // sweep above, so it survives this async reload (opening it before reload
+        // would have it wiped by `clear_stash_drop_modal`). Just plans + sets the
+        // modal — no further reload.
+        if let Some(i) = self.pending_stash_drop.take() {
+            self.open_stash_drop_modal(i);
+        }
+
         cx.notify();
     }
 

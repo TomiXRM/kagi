@@ -779,6 +779,18 @@ impl Backend {
         conflicts::execute_conflict_abort(&self.repo, session, buffer)
     }
 
+    /// #309: abort a stash-conflict — restore HEAD for the conflicted paths and
+    /// clear their unmerged index entries, leaving the stash entry intact. This
+    /// is NOT [`Self::execute_conflict_abort`] (which moves refs via ORIG_HEAD);
+    /// a conflicted stash apply writes no ORIG_HEAD / sequencer state.
+    pub fn execute_stash_conflict_abort(
+        &self,
+        session: &conflicts::ConflictSession,
+        buffer: &ResolutionBuffer,
+    ) -> Result<conflicts::AbortOutcome, GitError> {
+        conflicts::execute_stash_conflict_abort(&self.repo, session, buffer)
+    }
+
     pub fn plan_conflict_skip(
         &self,
         session: &conflicts::ConflictSession,

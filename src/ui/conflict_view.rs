@@ -468,6 +468,9 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
         ConflictKind::Content => Msg::ConflictKindContent.t(),
         ConflictKind::RenameDelete => Msg::ConflictKindRenameDelete.t(),
         ConflictKind::ModifyDelete => Msg::ConflictKindModifyDelete.t(),
+        ConflictKind::AddAdd => Msg::ConflictKindAddAdd.t(),
+        ConflictKind::Submodule => Msg::ConflictKindSubmodule.t(),
+        ConflictKind::Symlink => Msg::ConflictKindSymlink.t(),
         ConflictKind::Binary => Msg::ConflictKindBinary.t(),
     }
 }

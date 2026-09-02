@@ -311,13 +311,13 @@ impl KagiApp {
         let op_name = format!("{}-continue", mode.session.op.slug());
 
         match repo.execute_conflict_continue(&mode.session, &mode.buffer) {
-            Ok(_outcome) => {
+            Ok(result) => {
                 klog!("executed: {}", op_name);
                 let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                let after = StateSummary {
-                    head: plan.predicted.head.clone(),
-                    dirty: "staged".to_string(),
-                };
+                // #296: record the REAL measured post-continue state, not the
+                // plan's predicted head — a partial / new-conflict continuation
+                // must not be logged as a clean success.
+                let after = result.after.clone();
                 self.record_op(
                     &op_name,
                     plan.current.clone(),

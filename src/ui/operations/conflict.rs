@@ -654,8 +654,8 @@ impl KagiApp {
     /// preservation indices are captured by the caller from `self`.
     pub(crate) fn detect_conflict_payload(
         repo_path: &Path,
-        prev_selected: Option<usize>,
-        prev_editing_file: Option<usize>,
+        prev_selected_path: Option<PathBuf>,
+        prev_editing_path: Option<PathBuf>,
         current_branch: String,
     ) -> ConflictDetectOutcome {
         let repo = match kagi_git::Backend::open(repo_path) {
@@ -696,20 +696,18 @@ impl KagiApp {
             }
         }
 
-        // Preserve the previously-selected file across re-detections; otherwise
-        // open the first unresolved file (KDiff3-style "land on work to do").
-        let selected_file = prev_selected
-            .filter(|&i| i < session.files.len())
-            .or_else(|| {
-                session
-                    .files
-                    .iter()
-                    .position(|f| f.status == kagi_git::ConflictStatus::Unresolved)
-            })
-            .or_else(|| (!session.files.is_empty()).then_some(0));
+        // Preserve the previously-selected file across re-detections by PATH
+        // (issue #285): a per-file Save re-sorts / renumbers `files`, so the old
+        // index would silently point at a different file. Fall back to the first
+        // unresolved file (KDiff3-style "land on work to do"), then index 0.
+        let selected_file =
+            kagi_git::resolve_selected_file(&session.files, prev_selected_path.as_deref());
 
-        // W33: preserve the dashboard editing-file index across re-detection.
-        let editing_file = prev_editing_file.filter(|&i| i < session.files.len());
+        // W33: preserve the dashboard editing file across re-detection — by PATH,
+        // for the same reason (issue #285). Dropped if that file is gone.
+        let editing_file = prev_editing_path
+            .as_deref()
+            .and_then(|p| session.files.iter().position(|f| f.path == p));
 
         // The center A/B editor renders from the hunk model, which needs the repo
         // to materialize zdiff3 markers.  With auto-selection the user never
@@ -810,6 +808,7 @@ impl KagiApp {
                     // / editor inputs / before-text / scroll survive the reload.
                     Some(entity) => {
                         entity.update(cx, |v, _| {
+                            let prev_editing = v.editing.clone();
                             // W32: close the editor if the edited file is no longer
                             // conflicted (reads the entity's current `editing`).
                             if let Some(editing) = v.editing.clone() {
@@ -820,6 +819,12 @@ impl KagiApp {
                             v.mode = Some(mode);
                             if let Some(path) = editing_path {
                                 v.editing = Some(path);
+                            }
+                            // Issue #285: the editor file just changed, so the
+                            // stored hunk index belongs to the old file — reset it
+                            // (the new file may have fewer hunks).
+                            if v.editing != prev_editing {
+                                v.selected_hunk = 0;
                             }
                         });
                     }

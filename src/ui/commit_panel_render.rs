@@ -516,8 +516,16 @@ impl CommitPanelView {
         let weak_app = self.app.clone();
         cx.spawn_in(window, async move |_v, acx| {
             let _ = weak_app.update_in(acx, |app, _window, cx| {
-                app.file_menu = Some((fi, pos));
-                cx.notify();
+                // Issue #286: resolve the row index to a PATH now, at open time,
+                // so a later renumber (external `git add`) can't shift Discard.
+                if let Some(path) = app
+                    .commit_panel
+                    .as_ref()
+                    .and_then(|e| e.read(cx).state.unstaged.get(fi).map(|f| f.path.clone()))
+                {
+                    app.file_menu = Some((path, pos));
+                    cx.notify();
+                }
             });
         })
         .detach();

@@ -375,7 +375,7 @@ impl KagiApp {
         editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
         editor_fs_prompt_modal: Option<EditorFsPromptModal>,
         editor_delete_confirm_modal: Option<EditorDeleteConfirmModal>,
-        file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+        file_menu: Option<(std::path::PathBuf, gpui::Point<gpui::Pixels>)>,
         modal_focus: Option<FocusHandle>,
         stash_push_focus: Option<FocusHandle>,
         commit_panel_open: bool,
@@ -529,9 +529,9 @@ impl KagiApp {
             ))
         })
         // ── Unstaged file context menu (right-click → Discard) ──
-        .when_some(file_menu, |el, (fi, pos)| {
+        .when_some(file_menu, |el, (path, pos)| {
             el.child(render_file_menu_overlay(
-                fi,
+                path,
                 pos,
                 window.viewport_size(),
                 cx,

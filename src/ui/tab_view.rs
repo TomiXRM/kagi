@@ -226,6 +226,21 @@ impl KagiApp {
     /// happens elsewhere (inline in `reload`, or on a background thread for
     /// async tab switches).  It deliberately does *not* touch transient UI
     /// state (selection / modals / panels); callers reset those as needed.
+    /// Issue #286: drop every UI state keyed by commit-row index that a graph
+    /// renumber (tab switch, external reload, solo toggle) would otherwise leave
+    /// pointing at the wrong commit. `diff_caches` keys `changed_files` /
+    /// `diffstat` / `file_content` / `*_inflight` by row index; `main_diff` /
+    /// `compare_view` render the previously-selected row's diff; `commit_menu` /
+    /// `inspector_file_menu` are row/file-index context menus. `selected` is NOT
+    /// touched — callers re-resolve it by CommitId. (No `cx`; pure field reset.)
+    pub fn invalidate_caches_for_row_renumber(&mut self) {
+        self.diff_caches.clear();
+        self.main_diff = None;
+        self.compare_view = None;
+        self.commit_menu = None;
+        self.inspector_file_menu = None;
+    }
+
     pub fn apply_tab_view(&mut self, view: TabViewState) {
         // ADR-0075 P2: the active tab's view data is a single `TabViewState`, so
         // applying a freshly-built (or cached) view is one move — there is no
@@ -242,6 +257,15 @@ impl KagiApp {
         // forget; `render` re-arms the scans on the next frame. (This method
         // has no `cx`, and one of its callers runs before a `cx` exists.)
         self.scans_stale = true;
+
+        // Issue #286: `diff_caches` (and the commit inspector's changed-file
+        // menu) are keyed by COMMIT ROW INDEX. A fresh view renumbers rows, so a
+        // stale entry would show one commit's changed-file list under another
+        // commit's row (and a right-click Discard/menu would hit the wrong file).
+        // Centralize the invalidation here — the same reason `view_epoch` /
+        // `scans_stale` live here — so no apply site can forget it. Callers still
+        // re-resolve `selected` by CommitId (there is no `cx` here).
+        self.invalidate_caches_for_row_renumber();
 
         // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
         // lane_color(rank-in-worktrees-list), so record the same rank on the tab.

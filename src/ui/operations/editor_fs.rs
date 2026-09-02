@@ -6,7 +6,7 @@
 //!
 //! Stage/Unstage-by-path live in `operations/commit.rs` next to the existing
 //! by-index staging methods; Discard-by-path lives in `operations/discard.rs`
-//! next to `open_discard_modal_for_index` (per CLAUDE.md: keep a feature's
+//! next to `open_discard_modal_for_path` (per CLAUDE.md: keep a feature's
 //! `plan_/preflight_/execute_` neighbors together). This module is the
 //! dispatcher that calls into both, plus everything that's purely a `std::fs`
 //! / clipboard / process op.

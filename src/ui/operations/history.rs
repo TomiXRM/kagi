@@ -62,7 +62,10 @@ impl KagiApp {
 
     /// Apply a reflog read result to the in-session history (shared by the sync
     /// and async seed paths).  Caller guarantees the history is currently empty.
-    fn apply_reflog_seed(&mut self, result: Result<Vec<kagi_git::HistoryEntry>, String>) {
+    pub(crate) fn apply_reflog_seed(
+        &mut self,
+        result: Result<Vec<kagi_git::HistoryEntry>, String>,
+    ) {
         match result {
             Ok(entries) => {
                 if !entries.is_empty() {

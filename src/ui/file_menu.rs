@@ -12,7 +12,7 @@ use super::*;
 const FILE_MENU_ROW_H: f32 = 22.0;
 
 pub(crate) fn render_file_menu_overlay(
-    fi: usize,
+    path: std::path::PathBuf,
     pos: gpui::Point<gpui::Pixels>,
     viewport: gpui::Size<gpui::Pixels>,
     cx: &mut Context<KagiApp>,
@@ -23,32 +23,25 @@ pub(crate) fn render_file_menu_overlay(
         this.file_menu = None;
         cx.notify();
     });
+    // Issue #286: the menu is keyed by path, so every action targets that exact
+    // path regardless of any renumber that happened while it was open.
+    let discard_path = path.clone();
     let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
         this.file_menu = None;
-        this.open_discard_modal_for_index(fi, cx);
+        this.open_discard_modal_for_path(discard_path.clone(), cx);
         cx.notify();
     });
     // ADR-0089: open File History for this unstaged file.
+    let history_path = path.clone();
     let history_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
         this.file_menu = None;
-        if let Some(path) = this
-            .commit_panel
-            .as_ref()
-            .and_then(|e| e.read(cx).state.unstaged.get(fi).map(|f| f.path.clone()))
-        {
-            this.open_file_history(path, None, cx);
-        }
+        this.open_file_history(history_path.clone(), None, cx);
         cx.notify();
     });
+    let ext_path = path.clone();
     let wip_ext_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
         this.file_menu = None;
-        if let Some(path) = this
-            .commit_panel
-            .as_ref()
-            .and_then(|e| e.read(cx).state.unstaged.get(fi).map(|f| f.path.clone()))
-        {
-            this.open_in_external_editor(&path, None, cx);
-        }
+        this.open_in_external_editor(&ext_path, None, cx);
         cx.notify();
     });
     div()
@@ -75,7 +68,7 @@ pub(crate) fn render_file_menu_overlay(
                 .py(theme::scaled_px(2.))
                 .child(
                     div()
-                        .id(("file-menu-ext", fi))
+                        .id("file-menu-ext")
                         .px_3()
                         .py(theme::scaled_px(3.))
                         .text_sm()
@@ -86,7 +79,7 @@ pub(crate) fn render_file_menu_overlay(
                 )
                 .child(
                     div()
-                        .id(("file-menu-history", fi))
+                        .id("file-menu-history")
                         .px_3()
                         .py(theme::scaled_px(3.))
                         .text_sm()
@@ -97,7 +90,7 @@ pub(crate) fn render_file_menu_overlay(
                 )
                 .child(
                     div()
-                        .id(("file-menu-discard", fi))
+                        .id("file-menu-discard")
                         .px_3()
                         .py(theme::scaled_px(3.))
                         .text_sm()

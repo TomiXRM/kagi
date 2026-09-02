@@ -201,6 +201,23 @@ impl ConflictSession {
     }
 }
 
+/// Re-resolve the selected conflict file across a re-detection that may have
+/// re-sorted / renumbered `files` (issue #285). The stored index is meaningless
+/// after a per-file Save folds a path out of `index.conflicts()` and the list is
+/// rebuilt sorted-by-path, so selection must follow the **path**, not the index:
+/// prefer the same path as before; else the first Unresolved file ("land on work
+/// to do"); else index 0. Returns `None` only for an empty list.
+pub fn resolve_selected_file(files: &[ConflictFile], prev_path: Option<&Path>) -> Option<usize> {
+    prev_path
+        .and_then(|p| files.iter().position(|f| f.path == p))
+        .or_else(|| {
+            files
+                .iter()
+                .position(|f| f.status == ConflictStatus::Unresolved)
+        })
+        .or_else(|| (!files.is_empty()).then_some(0))
+}
+
 // ────────────────────────────────────────────────────────────
 // Detection (T-CONFLICT-001)
 // ────────────────────────────────────────────────────────────
@@ -1891,6 +1908,64 @@ mod tests {
     fn short_sha_is_char_safe() {
         assert_eq!(short_sha("0123456789abcdef"), "01234567");
         assert_eq!(short_sha("abc"), "abc");
+    }
+
+    // ── Issue #285: selection follows PATH across a re-sort/renumber ──
+
+    fn cf(path: &str, status: ConflictStatus) -> ConflictFile {
+        ConflictFile {
+            path: PathBuf::from(path),
+            kind: ConflictKind::Content,
+            status,
+        }
+    }
+
+    #[test]
+    fn resolve_selected_follows_path_across_renumber() {
+        use ConflictStatus::*;
+        // Before Save of c.txt: files sorted a,b,c,d — user on c.txt (index 2).
+        let before = [
+            cf("a.txt", Unresolved),
+            cf("b.txt", Unresolved),
+            cf("c.txt", Unresolved),
+            cf("d.txt", Unresolved),
+        ];
+        let prev = before[2].path.clone();
+        // After Save: c.txt folded out, list re-sorted a,b,d (index 2 == d.txt).
+        let after = [
+            cf("a.txt", Unresolved),
+            cf("b.txt", Unresolved),
+            cf("d.txt", Unresolved),
+        ];
+        // The OLD index (2) would land on d.txt — the bug. Path resolution must
+        // NOT: c.txt is gone, so fall back to the first Unresolved (a.txt), not d.
+        let idx = resolve_selected_file(&after, Some(&prev));
+        assert_eq!(idx, Some(0), "gone path must fall back to first unresolved");
+        assert_eq!(after[idx.unwrap()].path, PathBuf::from("a.txt"));
+    }
+
+    #[test]
+    fn resolve_selected_keeps_same_path_when_present() {
+        use ConflictStatus::*;
+        // A file was resolved above the current one, shifting its index down.
+        let after = [cf("b.txt", Unresolved), cf("c.txt", Unresolved)];
+        let prev = PathBuf::from("c.txt"); // was index 2, now index 1
+        let idx = resolve_selected_file(&after, Some(&prev));
+        assert_eq!(idx, Some(1));
+        assert_eq!(after[idx.unwrap()].path, PathBuf::from("c.txt"));
+    }
+
+    #[test]
+    fn resolve_selected_prefers_unresolved_then_zero() {
+        use ConflictStatus::*;
+        // No prev path: land on the first Unresolved even if a Resolved precedes.
+        let files = [cf("a.txt", Resolved), cf("b.txt", Unresolved)];
+        assert_eq!(resolve_selected_file(&files, None), Some(1));
+        // All resolved + no prev: fall back to index 0.
+        let all_done = [cf("a.txt", Resolved), cf("b.txt", Resolved)];
+        assert_eq!(resolve_selected_file(&all_done, None), Some(0));
+        // Empty list: None.
+        assert_eq!(resolve_selected_file(&[], Some(&PathBuf::from("x"))), None);
     }
 
     /// Assert no label role/name contains the forbidden words.

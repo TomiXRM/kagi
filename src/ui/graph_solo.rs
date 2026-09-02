@@ -58,6 +58,11 @@ impl KagiApp {
             .and_then(|idx| self.active_view.rows.get(idx))
             .map(|row| row.id.clone());
 
+        // Issue #286: every path below renumbers `rows`, so drop the row-index-
+        // keyed caches/menus (same reason `apply_tab_view` does). `selected` is
+        // re-resolved by CommitId in each branch, so it is left alone here.
+        self.invalidate_caches_for_row_renumber();
+
         if already_soloed {
             // Restore the full row set saved at solo-on.
             if let Some(solo) = self.active_view.branch_solo.take() {

@@ -1884,6 +1884,13 @@ impl KagiApp {
         Some((branch, sha))
     }
 
+    /// UI-side operation recording (toast / footer / history panel).
+    ///
+    /// ADR-0149: for ops routed through `Backend::run`, `run` is now the sole
+    /// oplog writer, so this path does NOT append the oplog for
+    /// Success/Partial/Failed (that would double-record). It DOES still append
+    /// `Refused` outcomes — those are rejected at plan time and never reach
+    /// `run`, so the UI remains their recorder.
     fn record_op(
         &mut self,
         op: &str,
@@ -1891,6 +1898,33 @@ impl KagiApp {
         outcome: OpOutcome,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
+    ) {
+        self.record_op_impl(op, before, outcome, repo_path, cx, false);
+    }
+
+    /// Like [`record_op`] but ALSO persists the oplog entry. For the operations
+    /// that do NOT go through `Backend::run` (conflict resolution, terminal
+    /// start, branch-cleanup batch, PR merge) — `run` cannot record those, so
+    /// the caller must. ADR-0149 §"non-run ops".
+    fn record_op_persist(
+        &mut self,
+        op: &str,
+        before: StateSummary,
+        outcome: OpOutcome,
+        repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_op_impl(op, before, outcome, repo_path, cx, true);
+    }
+
+    fn record_op_impl(
+        &mut self,
+        op: &str,
+        before: StateSummary,
+        outcome: OpOutcome,
+        repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
+        persist_non_run: bool,
     ) {
         // Build the footer message before moving `outcome`.
         let (footer_msg, footer_ok) = match &outcome {
@@ -1932,8 +1966,15 @@ impl KagiApp {
         let repo_str = repo_path.display().to_string();
         let entry = OpLogEntry::new(op, &repo_str, before, outcome);
 
-        if let Err(e) = append_oplog(&entry) {
-            klog!("oplog: write failed (non-fatal): {}", e);
+        // ADR-0149: `run` is the sole oplog writer for run-path ops. Here we
+        // persist only (a) `Refused` (never reaches `run`) or (b) non-run ops
+        // that opt in via `record_op_persist`. Otherwise skip to avoid a
+        // double-record; the entry is still shown in the in-memory panel below.
+        let should_persist = persist_non_run || matches!(entry.outcome, OpOutcome::Refused { .. });
+        if should_persist {
+            if let Err(e) = append_oplog(&entry) {
+                klog!("oplog: write failed (non-fatal): {}", e);
+            }
         }
 
         // T-BP-004: push to in-memory ring-buffer (newest at front) and collapse
@@ -2000,7 +2041,8 @@ impl KagiApp {
         if let Some(err) = failure_msg {
             use kagi_git::oplog::OpOutcome;
             use kagi_git::ops::StateSummary;
-            self.record_op(
+            // terminal start does not go through Backend::run — persist here.
+            self.record_op_persist(
                 "terminal-start",
                 StateSummary {
                     head: "n/a".to_string(),

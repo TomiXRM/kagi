@@ -267,7 +267,7 @@ impl KagiApp {
         // hidden too, but the Enter-to-confirm path shares this method).
         if !plan.blockers.is_empty() {
             klog!("refused: pr-merge plan has blockers, not executing");
-            self.record_op(
+            self.record_op_persist(
                 "pr-merge",
                 plan.current.clone(),
                 OpOutcome::Refused {
@@ -302,7 +302,7 @@ impl KagiApp {
                 match result {
                     Ok(out) => {
                         klog!("executed: pr-merge #{}", number);
-                        app.record_op(
+                        app.record_op_persist(
                             "pr-merge",
                             before.clone(),
                             OpOutcome::Success {
@@ -329,7 +329,7 @@ impl KagiApp {
                     Err(e) => {
                         let error = e.to_string();
                         klog!("pr-merge failed: {}", error);
-                        app.record_op(
+                        app.record_op_persist(
                             "pr-merge",
                             before.clone(),
                             OpOutcome::Failed {

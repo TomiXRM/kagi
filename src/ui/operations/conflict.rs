@@ -118,7 +118,7 @@ impl KagiApp {
                     ),
                     dirty: "clean".to_string(),
                 };
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     before,
                     OpOutcome::Success { after },
@@ -137,7 +137,7 @@ impl KagiApp {
             Err(e) => {
                 // Marker residue / write failure: hard block (ADR-0068).
                 let err_msg = format!("{}", e);
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     before,
                     OpOutcome::Refused {
@@ -204,7 +204,7 @@ impl KagiApp {
                 } else {
                     self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)), cx);
                 }
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     StateSummary {
                         head: format!("op={}", mode.session.op.slug()),
@@ -285,7 +285,7 @@ impl KagiApp {
                     Ok(result) => {
                         klog!("executed: {}", op_name);
                         let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                        self.record_op(
+                        self.record_op_persist(
                             &op_name,
                             StateSummary {
                                 head: format!("op={}", mode.session.op.slug()),
@@ -313,7 +313,7 @@ impl KagiApp {
                     Err(e) => {
                         let err_msg = format!("{}", e);
                         klog!("{} failed: {}", op_name, err_msg);
-                        self.record_op(
+                        self.record_op_persist(
                             &op_name,
                             StateSummary {
                                 head: format!("op={}", mode.session.op.slug()),
@@ -370,7 +370,7 @@ impl KagiApp {
                 // plan's predicted head — a partial / new-conflict continuation
                 // must not be logged as a clean success.
                 let after = result.after.clone();
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Success { after },
@@ -383,7 +383,7 @@ impl KagiApp {
             Err(e) => {
                 let err_msg = format!("{}", e);
                 klog!("{} failed: {}", op_name, err_msg);
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Failed {
@@ -461,7 +461,7 @@ impl KagiApp {
                     head: plan.predicted.head.clone(),
                     dirty: "clean".to_string(),
                 };
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Success { after },
@@ -473,7 +473,7 @@ impl KagiApp {
             Err(e) => {
                 let err_msg = format!("{}", e);
                 klog!("{} failed: {}", op_name, err_msg);
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Failed {
@@ -544,7 +544,7 @@ impl KagiApp {
                     head: plan.predicted.head.clone(),
                     dirty: "current step dropped".to_string(),
                 };
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Success { after },
@@ -556,7 +556,7 @@ impl KagiApp {
             Err(e) => {
                 let err_msg = format!("{}", e);
                 klog!("{} failed: {}", op_name, err_msg);
-                self.record_op(
+                self.record_op_persist(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Failed {

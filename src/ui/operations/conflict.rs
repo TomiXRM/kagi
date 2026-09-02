@@ -166,6 +166,9 @@ impl KagiApp {
     ///   confirmation modal (`conflict_continue_modal`); the sequencer runs only
     ///   when the user confirms (`confirm_conflict_continue`).
     pub fn conflict_continue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.reject_if_busy(cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -355,6 +358,9 @@ impl KagiApp {
     /// Abort is always available (no blockers); the partial resolution buffer is
     /// preserved by the backend (ADR-0057).
     pub fn conflict_abort(&mut self, cx: &mut Context<Self>) {
+        if self.reject_if_busy(cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -435,6 +441,9 @@ impl KagiApp {
     /// oplog → re-detect.  Merge has no skip (the button is hidden for merge;
     /// the backend `plan_conflict_skip` also errors for merge as a guard).
     pub fn conflict_skip(&mut self, cx: &mut Context<Self>) {
+        if self.reject_if_busy(cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,

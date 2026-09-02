@@ -723,7 +723,9 @@ impl Render for KagiApp {
             // off text fields and the terminal.
             .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
                 if this.operation_history.can_undo() {
-                    this.open_history_undo_modal();
+                    if !this.reject_if_busy(cx) {
+                        this.open_history_undo_modal();
+                    }
                 } else {
                     this.status_footer =
                         FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
@@ -732,7 +734,9 @@ impl Render for KagiApp {
             }))
             .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
                 if this.operation_history.can_redo() {
-                    this.open_history_redo_modal();
+                    if !this.reject_if_busy(cx) {
+                        this.open_history_redo_modal();
+                    }
                 } else {
                     this.status_footer =
                         FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));

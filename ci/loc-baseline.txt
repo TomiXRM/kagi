@@ -24,11 +24,12 @@ src/ui/inspector.rs 1097
 src/ui/mod.rs 4098
 src/ui/operations/branch.rs 1744
 src/ui/operations/commit.rs 1233
-src/ui/operations/conflict.rs 848
+src/ui/operations/conflict.rs 857
 src/ui/operations/modal_state.rs 953
 src/ui/operations/stash.rs 807
 src/ui/pr_mode.rs 2281
-src/ui/render.rs 898
+src/ui/render_header.rs 804
+src/ui/render.rs 902
 src/ui/sidebar.rs 1988
 src/ui/tabs.rs 1164
 src/ui/workspace.rs 1047

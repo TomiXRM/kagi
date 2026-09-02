@@ -1,11 +1,12 @@
 # `kagi` CLI JSON schema (#330)
 
-> **UNSTABLE / internal — v1.** The shapes below are derived directly from the
-> in-repo Rust types (`serde` derive on `kagi_domain::OperationPlan` /
-> `Operation`, ADR-0129). They are **not a stable public API yet**: field names
-> and enum encodings can change between Kagi versions without notice. Do not
-> build long-lived integrations against them. #331 (MCP server) is expected to
-> be the first frozen surface, layered on top of this CLI.
+> **UNSTABLE / internal — v1.** The shapes below are produced by hand in the bin
+> crate (`src/cli_main.rs`) from the domain types' public fields and their
+> `message_en()` renderers. `kagi-domain` stays **dependency-free** (no serde) —
+> JSON lives only at the CLI edge, matching the existing hand-rolled-JSON pattern
+> in `oplog.rs` / `resolution.rs` / `drafts.rs`. These shapes are **not a stable
+> public API yet**: field names can change between Kagi versions without notice.
+> #331 (MCP server) is expected to be the first frozen surface, layered on this.
 
 The headless CLI lets an agent drive Kagi's safety pipeline
 (`plan → confirm → preflight → execute → verify → oplog`) from outside the GUI.
@@ -39,39 +40,41 @@ More operations are a matter of adding a match arm in `src/cli_main.rs`
 
 ## `plan` — the envelope
 
-`kagi plan …` prints a side-effect-free **envelope** (it never touches the repo):
+`kagi plan …` prints a side-effect-free envelope (it never touches the repo). The
+**top-level** fields are what `confirm` reads back; the nested `plan` object is a
+human-readable display block for the agent (`confirm` ignores it):
 
 ```jsonc
 {
-  "plan_id": "ee04a5630ae2e617",          // content hash — see below
-  "operation": { "Checkout": { "branch": "feature" } },
-  "plan": {                                 // serialized OperationPlan (ADR-0129)
-    "title":     { "Checkout": { "Checkout": { "branch": "feature" } } },
+  "plan_id": "ee04a5630ae2e617",             // content hash — see below
+  "op": "checkout",                           // CLI op name (rebuilds the Operation)
+  "args": ["feature"],                        // CLI positional args
+  "head_at_plan": "branch: main @ 1a2b3c4d",  // staleness snapshot (primitives)…
+  "stash_count_at_plan": 0,
+  "worktree_digest": null,                    // u64, or null when op ignores the tree
+  "plan": {                                   // human display (message_en strings)
+    "title":     "Switch to 'feature'",
     "current":   { "head": "branch: main",    "dirty": "clean" },
     "predicted": { "head": "branch: feature", "dirty": "clean" },
-    "warnings":  [],                          // [] or PlanNote objects
+    "warnings":  [],                          // rendered strings
     "blockers":  [],                          // non-empty ⇒ confirm refuses
-    "recovery":  { "kind": { /* … */ }, "commands": [] },
-    "disposition": "Ready",                   // "Ready" | { "NoOp": … } | "Blocked"
-    "head_at_plan": { "Attached": { "branch": "main", "target": "<sha>" } },
-    "stash_count_at_plan": 0,
-    "worktree_digest": null,                  // or a u64 for tree-sensitive ops
-    "preview_files":   [],
-    "preview_commits": [],
+    "recovery":  null,                        // rendered string, or null
+    "disposition": "Ready",                   // Debug of PlanDisposition
     "destructive": false                      // true ⇒ confirm needs --yes
   }
 }
 ```
 
-`PlanNote` / `PlanTitle` / `RecoveryKind` serialize as their Rust enum trees
-(`{ "Category": { "Variant": { … } } }`). For human text, render blockers/warnings
-with the display strings the GUI uses — the CLI already surfaces those in the
-`confirm` refusal `detail.blockers`.
+`confirm` deserializes only `{ plan_id, op, args, head_at_plan,
+stash_count_at_plan, worktree_digest }` — never the `plan` tree. It re-plans from
+`op`+`args` and compares `plan_id`; the staleness snapshot is used only to name
+*what* changed on a mismatch.
 
 ## `plan_id` — the content hash (staleness detection)
 
 `plan_id` is a deterministic hash of exactly the inputs whose change would
-invalidate the plan (`OperationPlan::plan_id`):
+invalidate the plan (`OperationPlan::plan_id`, computed in `kagi-domain` with
+`std` only — no serde):
 
 - the **operation identity** (the title, which encodes op kind + targets),
 - **HEAD including its target SHA** (so a new commit shifts the id even on the
@@ -87,10 +90,11 @@ not a cross-version stable id.)
 ## `confirm`
 
 `confirm` reads the envelope back (from `--plan FILE` or stdin), rebuilds the
-operation, **re-plans**, and gates execution:
+operation from `op`+`args`, **re-plans**, and gates execution:
 
 1. **stale?** recomputed `plan_id` ≠ the envelope's → refuse; `detail.changed`
-   names what moved (HEAD / stash / working tree / operation target).
+   names what moved (HEAD / stash / working tree), comparing the envelope's
+   snapshot against the fresh plan.
 2. **blocked?** the fresh plan has blockers → refuse; `detail.blockers` lists them.
 3. **destructive without `--yes`?** → refuse.
 4. otherwise run through `Backend::run` (actor = `cli`) and print the result.
@@ -116,7 +120,7 @@ Error (exit 1): `{ "status": "error", "error": "…" }`.
 
 ## `status`
 
-Serialized `StateSummary`: `{ "head": "branch: main", "dirty": "clean" }`.
+`{ "head": "branch: main", "dirty": "clean" }`.
 
 ## `oplog`
 

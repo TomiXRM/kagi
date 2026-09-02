@@ -65,7 +65,7 @@ pub use worktree::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 /// Category-nested note shown in the plan modal's blockers/warnings lists
 /// (ADR-0129 §1). Flat 100+-variant enums are forbidden — one variant space
 /// per op category.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNote {
     /// Cross-op notes (dirty WT / conflicted / untracked / HEAD state — §A).
     Common(CommonNote),
@@ -133,7 +133,7 @@ impl std::fmt::Display for PlanNote {
 }
 
 /// The plan modal's one required title (ADR-0129 §1).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanTitle {
     /// Discard: `Discard changes to '<file>'` / `Discard changes to N file(s)`.
     Discard {
@@ -208,7 +208,7 @@ impl std::fmt::Display for PlanTitle {
 /// Recovery guidance: display text + the machine-usable command list
 /// (ADR-0129 appendix §D). `commands` is what consumers use instead of
 /// parsing the display text (kills the delete-branch `lines().nth(1)`).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanRecovery {
     /// The displayed recovery block.
     pub kind: RecoveryKind,
@@ -252,7 +252,7 @@ impl PlanRecovery {
 }
 
 /// Which recovery text to render.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecoveryKind {
     /// Discard: index-restore / delete-with-backup explanation.
     Discard,
@@ -280,7 +280,7 @@ pub enum RecoveryKind {
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to
 /// *parse display strings* to decide behavior. Invariant: no-op detection,
 /// recovery handling, and safety decisions never look at display text.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanDisposition {
     /// Executable as planned.
     Ready,
@@ -303,7 +303,7 @@ impl PlanDisposition {
 
 /// What kind of nothing-to-do (Phase 1 covers the two UI string-matches;
 /// Phase 2 producers add their kinds as they structure).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoOpKind {
     /// pull: local knowledge says already up to date (behind == 0).
     PullUpToDate,

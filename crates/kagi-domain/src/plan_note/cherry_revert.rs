@@ -13,7 +13,7 @@ use super::{DirtyParts, PlanOp};
 
 /// Plan notes for the cherry_revert op family (`plan_cherry_pick` /
 /// `plan_revert`).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CherryRevertNote {
     /// blocker — `id` is a merge commit; mainline selection is not supported
     /// in MVP. `op` selects the cherry-pick/revert wording.
@@ -110,7 +110,7 @@ impl CherryRevertNote {
 
 /// Plan titles for the cherry_revert op family (appendix §C `cherry-pick` /
 /// `revert` rows).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CherryRevertTitle {
     /// `plan_cherry_pick`: `Cherry-pick {sha} onto {branch}` (no commit
     /// summary yet — used at every early-return site, before/without the
@@ -156,7 +156,7 @@ impl CherryRevertTitle {
 
 /// Recovery kinds for the cherry_revert op family (appendix §D `cherry-pick`
 /// / `revert` rows).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CherryRevertRecovery {
     /// `plan_cherry_pick`'s sole recovery template — identical text at every
     /// return site (early blocker, predicted conflict, no-changes, success).

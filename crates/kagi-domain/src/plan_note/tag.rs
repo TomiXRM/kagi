@@ -7,7 +7,7 @@
 
 /// Keyed tag-name validation errors (mirrors `BranchNameError`, scoped to
 /// `refs/tags/`).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TagNameError {
     /// The name is empty.
     Empty,
@@ -38,7 +38,7 @@ impl TagNameError {
 }
 
 /// Plan notes for the tag op family (create, push).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TagNote {
     /// blocker (`plan_create_tag`) — a keyed tag-name validation failure.
     NameError(TagNameError),
@@ -84,7 +84,7 @@ impl TagNote {
 }
 
 /// Plan titles for the tag op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TagTitle {
     /// `plan_create_tag` — `Create tag '<name>' @ <at>`.
     CreateTag { name: String, at: String },
@@ -105,7 +105,7 @@ impl TagTitle {
 }
 
 /// Recovery kinds for the tag op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TagRecovery {
     /// `plan_create_tag` — the new tag can simply be `git tag -d`'d.
     CreateTag { name: String },

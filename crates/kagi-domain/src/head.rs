@@ -4,7 +4,7 @@
 //! the git-backend layer (`kagi::git`).
 
 /// The HEAD state of a repository, as defined in architecture.md section 3.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Head {
     /// HEAD points to a branch (normal state).
     Attached {

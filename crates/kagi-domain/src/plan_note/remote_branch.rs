@@ -4,7 +4,7 @@
 //! working tree — it only pushes a delete refspec to the remote.
 
 /// Plan notes for the remote-branch op family (delete).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteBranchNote {
     /// blocker (`plan_delete_remote_branch`) — the remote-tracking ref does
     /// not exist locally (nothing to delete, or already deleted/never fetched).
@@ -32,7 +32,7 @@ impl RemoteBranchNote {
 }
 
 /// Plan titles for the remote-branch op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteBranchTitle {
     /// `plan_delete_remote_branch` — `Delete remote branch '<remote>/<branch>'`.
     DeleteRemoteBranch { remote: String, branch: String },
@@ -50,7 +50,7 @@ impl RemoteBranchTitle {
 }
 
 /// Recovery kinds for the remote-branch op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteBranchRecovery {
     /// `plan_delete_remote_branch` — recreate the ref by pushing the last-known
     /// tip commit back, if still available in the object store.

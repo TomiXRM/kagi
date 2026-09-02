@@ -11,7 +11,7 @@
 //! `ContinueBlocker` enum directly and is out of scope for this note).
 
 /// Plan notes for the conflicts (continue/abort/skip) op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictsNote {
     /// blocker (continue) — one or more files have no resolution draft.
     UnresolvedFiles { files: Vec<String> },
@@ -95,7 +95,7 @@ impl ConflictsNote {
 /// Plan titles for the conflicts op family — `Continue {op}` / `Abort {op}` /
 /// `Skip {op} step`, where `op` is [`ConflictOp::slug()`](../../../kagi_git/enum.ConflictOp.html#method.slug)
 /// (`"merge"` / `"rebase"` / `"cherry-pick"` / `"revert"`).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictsTitle {
     /// `Continue {op}` — finish resolving (sequencer `--continue` plan, or the
     /// merge commit-panel route which never reaches this title).
@@ -118,7 +118,7 @@ impl ConflictsTitle {
 }
 
 /// Recovery kinds for the conflicts op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictsRecovery {
     /// continue: abort back to the pre-operation state via `git {op} --abort`.
     Continue { op: String },

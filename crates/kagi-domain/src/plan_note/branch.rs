@@ -14,7 +14,7 @@
 //! — not redefined here.
 
 /// Plan notes for the branch op family (create / rename / delete).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchNote {
     /// blocker (`plan_create_branch`) — the target commit does not exist.
     CommitMissing { sha: String },
@@ -102,7 +102,7 @@ impl BranchNote {
 }
 
 /// Plan titles for the branch op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchTitle {
     /// `plan_create_branch` / `plan_create_branch_with_checkout` —
     /// `Create branch '<name>' @ <at>` (+ ` and checkout` when `checkout`).
@@ -144,7 +144,7 @@ impl BranchTitle {
 }
 
 /// Recovery kinds for the branch op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchRecovery {
     /// `plan_create_branch` — the new branch can simply be `git branch -d`'d.
     CreateBranch { name: String },

@@ -113,7 +113,8 @@ fn plan_checkout_is_json_with_no_side_effects() {
     assert_eq!(r.code, 0, "plan exit; stdout={}", r.stdout);
     let v = json(&r.stdout);
     assert!(v["plan_id"].is_string(), "has plan_id: {}", r.stdout);
-    assert_eq!(v["operation"]["Checkout"]["branch"], "feature");
+    assert_eq!(v["op"], "checkout");
+    assert_eq!(v["args"][0], "feature");
     assert_eq!(v["plan"]["current"]["head"], "branch: main");
     assert_eq!(v["plan"]["predicted"]["head"], "branch: feature");
 

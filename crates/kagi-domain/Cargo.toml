@@ -7,10 +7,4 @@ edition = "2021"
 # kagi-domain is the PURE domain layer (ADR-0072): no gpui, no git2, no I/O.
 # Adding either of those as a dependency here is a design violation — keep this
 # section empty (or std-only crates) so the layer stays unit-testable in isolation.
-#
-# serde (derive only) is the one allowed exception (#330): it is pure, compile-
-# time, and I/O-free, so it does not break the layer's isolation or unit-tests.
-# It lets `OperationPlan`/`Operation` cross the process boundary as JSON for the
-# `kagi` CLI. The JSON schema is UNSTABLE/internal for v1 — see docs/plan-json.md.
 [dependencies]
-serde = { version = "1", features = ["derive"] }

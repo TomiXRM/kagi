@@ -10,7 +10,7 @@
 use crate::plan::{BranchNameError, WorktreePathError};
 
 /// The `…before {phrase}.` / `…before {phrase} if…` op phrase (§A1/A2/A11).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpPhrase {
     /// "undoing a commit"
     UndoingACommit,
@@ -65,7 +65,7 @@ impl OpPhrase {
 }
 
 /// The op discriminant for the per-op sentence tables (§A12/A13).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanOp {
     Undo,
     Amend,
@@ -79,7 +79,7 @@ pub enum PlanOp {
 /// The `"{n} staged, {n} modified"` fragment several dirty-working-tree
 /// sentences embed. Only the non-zero parts are rendered, joined by `", "`,
 /// exactly like the legacy per-site builders.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirtyParts {
     pub staged: usize,
     pub modified: usize,
@@ -100,7 +100,7 @@ impl DirtyParts {
 }
 
 /// Which sentence tail the untracked-files warning uses (§A4–A10).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UntrackedCtx {
     /// "…will remain after checkout."
     AfterCheckout,
@@ -119,7 +119,7 @@ pub enum UntrackedCtx {
 }
 
 /// Cross-op notes (ADR-0129 appendix §A).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommonNote {
     /// §A1 — blocker: conflicted files must be resolved first.
     ConflictedFiles { count: usize, before: OpPhrase },

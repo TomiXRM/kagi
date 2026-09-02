@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// A write operation request handled by the git backend pipeline.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operation {
     Commit {
         message: String,

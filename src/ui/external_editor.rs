@@ -98,6 +98,49 @@ impl KagiApp {
     }
 }
 
+impl KagiApp {
+    /// Open one or more ABSOLUTE paths in the external editor (#321: the two
+    /// materialized sides of a binary conflict, for a manual compare). Each path
+    /// is opened through the same `external_editor` template / OS-opener plumbing
+    /// as [`Self::open_in_external_editor`]; never blocks, never fails hard.
+    pub(crate) fn open_files_external(&mut self, abs_paths: &[PathBuf], cx: &mut Context<Self>) {
+        let template = settings::read_setting(KEY_EXTERNAL_EDITOR).filter(|t| !t.trim().is_empty());
+        for abs in abs_paths {
+            let spawned = match &template {
+                Some(t) => {
+                    let cmd = expand_template(t, abs, None);
+                    klog!("external-editor: {}", cmd);
+                    std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(&cmd)
+                        .spawn()
+                        .map(|_| ())
+                }
+                None => {
+                    klog!("external-editor: os-open {}", abs.display());
+                    std::process::Command::new(os_opener())
+                        .arg(abs)
+                        .spawn()
+                        .map(|_| ())
+                }
+            };
+            if let Err(e) = spawned {
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(format!("{}: {}", Msg::OpenInExternalEditor.t(), e)),
+                    cx,
+                );
+                return;
+            }
+        }
+        self.push_toast(
+            ToastKind::Info,
+            SharedString::from(Msg::ConflictOpenBothExternal.t()),
+            cx,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

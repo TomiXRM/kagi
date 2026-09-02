@@ -20,6 +20,7 @@ pub mod commit_list;
 pub mod commit_panel;
 mod commit_panel_render;
 pub mod compare_pane;
+pub mod conflict_binary_view;
 pub mod conflict_editor;
 pub mod conflict_view;
 pub mod context_menu;

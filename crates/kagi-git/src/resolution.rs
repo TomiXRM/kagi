@@ -33,6 +33,21 @@ pub struct RawResolution {
     pub mode: u32,
 }
 
+/// Per-side blob metadata for the binary/symlink/gitlink conflict viewer
+/// (#321): enough to label a side (short OID, git mode, byte size) without
+/// carrying the whole blob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SideBlobInfo {
+    /// Short (7-char) object id of the side's blob or gitlink commit.
+    pub oid_short: String,
+    /// Full object id string.
+    pub oid: String,
+    /// The side's git file mode (0o100644, 0o120000 symlink, 0o160000 gitlink).
+    pub mode: u32,
+    /// Blob size in bytes. `None` for a submodule / gitlink (no blob).
+    pub size: Option<u64>,
+}
+
 /// The Result draft for a single file: the materialized side texts plus the
 /// current resolution lines and an undo / redo history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -513,9 +528,70 @@ impl ResolutionBuffer {
         self.files.get(path).and_then(|fr| fr.raw_result)
     }
 
+    /// The absolute working-tree path this buffer was built for (#321 viewer:
+    /// lets the UI re-open the backend for blob bytes without a git2 dependency).
+    pub fn repo_path(&self) -> &Path {
+        &self.repo_path
+    }
+
     /// Whether `path` is a raw (binary / symlink / gitlink) conflict.
     pub fn is_raw(&self, path: &Path) -> bool {
         self.files.get(path).map(|fr| fr.raw).unwrap_or(false)
+    }
+
+    /// The (oid, mode) of one side of a raw conflict, or `None` when the file is
+    /// not tracked or that side is absent (modify-delete). (#321 viewer.)
+    fn side_raw_for(&self, path: &Path, side: SelectionSide) -> Option<RawResolution> {
+        let fr = self.files.get(path)?;
+        match side {
+            SelectionSide::Current => fr.current_raw,
+            SelectionSide::Incoming => fr.incoming_raw,
+        }
+    }
+
+    /// (oid string, git mode) of one side of a raw conflict, WITHOUT touching
+    /// the repository — so the UI can build a content-addressed preview cache key
+    /// per frame and only open the backend on a cache miss (#321 viewer).
+    pub fn side_raw_meta(&self, path: &Path, side: SelectionSide) -> Option<(String, u32)> {
+        let raw = self.side_raw_for(path, side)?;
+        Some((raw.oid.to_string(), raw.mode))
+    }
+
+    /// Raw blob bytes of one side of a binary / symlink conflict (#321 viewer).
+    ///
+    /// For a symlink (mode 120000) the returned bytes ARE the link target path.
+    /// Returns `None` when the side is absent or its object is not a blob (a
+    /// submodule / gitlink side is a commit OID, which has no blob to read).
+    pub fn side_bytes(
+        &self,
+        repo: &Repository,
+        path: &Path,
+        side: SelectionSide,
+    ) -> Option<Vec<u8>> {
+        let raw = self.side_raw_for(path, side)?;
+        let blob = repo.find_blob(raw.oid).ok()?;
+        Some(blob.content().to_vec())
+    }
+
+    /// (oid, mode, size) metadata of one side of a raw conflict (#321 viewer),
+    /// so the UI can label a side (short OID / mode / byte size) without holding
+    /// the whole blob. `size` is `None` for a submodule / gitlink (no blob).
+    pub fn side_blob_info(
+        &self,
+        repo: &Repository,
+        path: &Path,
+        side: SelectionSide,
+    ) -> Option<SideBlobInfo> {
+        let raw = self.side_raw_for(path, side)?;
+        let oid = raw.oid.to_string();
+        let oid_short = oid.chars().take(7).collect();
+        let size = repo.find_blob(raw.oid).ok().map(|b| b.size() as u64);
+        Some(SideBlobInfo {
+            oid_short,
+            oid,
+            mode: raw.mode,
+            size,
+        })
     }
 
     /// The resolved text for `path` (lines joined with `\n`, trailing newline

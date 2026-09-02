@@ -1688,7 +1688,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
     };
 
     let labels = mode.labels();
-    let is_binary = file.kind == ConflictKind::Binary;
+    let kind = file.kind;
     let path = file.path.clone();
 
     let keep_current_label = format!("{} ({})", Msg::ConflictKeepCurrent.t(), labels.current.name);
@@ -1747,7 +1747,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
             cx,
         ));
 
-    if !is_binary && file.kind == ConflictKind::Content {
+    if kind == ConflictKind::Content {
         choose_row = choose_row.child(choose_button(
             keep_both_label,
             theme().text_sub,
@@ -1756,7 +1756,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
         ));
     }
 
-    let preview = render_preview(mode, &path, is_binary);
+    let preview = render_preview(mode, &path, kind, &labels, cx);
 
     div()
         .flex()
@@ -1786,15 +1786,15 @@ where
 fn render_preview(
     mode: &ConflictMode,
     path: &std::path::Path,
-    is_binary: bool,
+    kind: ConflictKind,
+    labels: &SideLabels,
+    cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let body: gpui::AnyElement = if is_binary {
-        div()
-            .text_size(theme::scaled_px(12.))
-            .text_color(rgb(theme().text_muted))
-            .child(SharedString::from(Msg::ConflictBinaryNoPreview.t()))
-            .into_any_element()
-    } else if let Some(text) = mode.buffer.resolved_text(path) {
+    // #321: binary / symlink / submodule get an informative side-by-side viewer.
+    if kind.is_raw() {
+        return super::conflict_binary_view::render_raw_preview(mode, path, kind, labels, cx);
+    }
+    let body: gpui::AnyElement = if let Some(text) = mode.buffer.resolved_text(path) {
         let mut col = div().flex().flex_col();
         for line in text.split('\n') {
             col = col.child(

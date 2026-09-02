@@ -107,7 +107,7 @@ pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
 pub use resolution::{
     ConflictHunk, HunkChoice, HunkModel, LineOrigin, RawResolution, Region, ResolutionBuffer,
-    ResolutionChoice, ResolvedLine,
+    ResolutionChoice, ResolvedLine, SelectionSide, SideBlobInfo,
 };
 #[allow(unused_imports)]
 pub use snapshot::{snapshot, RepoSnapshot};

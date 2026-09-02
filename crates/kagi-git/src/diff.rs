@@ -187,9 +187,10 @@ pub fn commit_file_diff(
 
     // 2. Build diff with a pathspec so only the target file is included.
     //    pathspec uses the new-path of the file.
-    let path_str = path.to_string_lossy();
     let mut diff_opts = DiffOptions::new();
-    diff_opts.pathspec(path_str.as_ref());
+    diff_opts.pathspec(super::path_to_pathspec(path)?);
+    // #292: literal pathspec match — no glob interpretation of [ ] * ? etc.
+    diff_opts.disable_pathspec_match(true);
 
     let mut diff: Diff<'_> = repo
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(&mut diff_opts))
@@ -216,14 +217,22 @@ pub fn commit_file_diff(
         });
     }
 
-    let delta_idx = (0..num_deltas)
-        .find(|&i| {
-            let delta = diff.get_delta(i).unwrap();
-            let np = delta.new_file().path();
-            let op = delta.old_file().path();
-            np == Some(path) || op == Some(path)
-        })
-        .unwrap_or(0);
+    // #292: no matching delta → empty diff for THIS path, never delta 0
+    // (a different file's content).
+    let Some(delta_idx) = (0..num_deltas).find(|&i| {
+        let delta = diff.get_delta(i).unwrap();
+        let np = delta.new_file().path();
+        let op = delta.old_file().path();
+        np == Some(path) || op == Some(path)
+    }) else {
+        return Ok(FileDiff {
+            old_path: None,
+            new_path: Some(path.to_path_buf()),
+            change: ChangeKind::Modified,
+            hunks: vec![],
+            is_binary: false,
+        });
+    };
 
     let delta = diff.get_delta(delta_idx).unwrap();
 
@@ -380,7 +389,8 @@ pub fn compare_file_diff(
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
     let mut diff_opts = DiffOptions::new();
-    diff_opts.pathspec(path.to_string_lossy().as_ref());
+    diff_opts.pathspec(super::path_to_pathspec(path)?);
+    diff_opts.disable_pathspec_match(true); // #292: literal match.
     let mut diff = repo
         .diff_tree_to_tree(Some(&a_tree), Some(&b_tree), Some(&mut diff_opts))
         .map_err(|e| GitError::Other(e.message().to_string()))?;
@@ -418,7 +428,8 @@ pub fn compare_commit_to_workdir_file_diff(
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
     let mut diff_opts = workdir_compare_options();
-    diff_opts.pathspec(path.to_string_lossy().as_ref());
+    diff_opts.pathspec(super::path_to_pathspec(path)?);
+    diff_opts.disable_pathspec_match(true); // #292: literal match.
     let mut diff = repo
         .diff_tree_to_workdir_with_index(Some(&a_tree), Some(&mut diff_opts))
         .map_err(|e| GitError::Other(e.message().to_string()))?;
@@ -496,14 +507,21 @@ fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitEr
         });
     }
 
-    let delta_idx = (0..num_deltas)
-        .find(|&i| {
-            let delta = diff.get_delta(i).unwrap();
-            let np = delta.new_file().path();
-            let op = delta.old_file().path();
-            np == Some(path) || op == Some(path)
-        })
-        .unwrap_or(0);
+    // #292: no matching delta → empty diff for THIS path, never delta 0.
+    let Some(delta_idx) = (0..num_deltas).find(|&i| {
+        let delta = diff.get_delta(i).unwrap();
+        let np = delta.new_file().path();
+        let op = delta.old_file().path();
+        np == Some(path) || op == Some(path)
+    }) else {
+        return Ok(FileDiff {
+            old_path: None,
+            new_path: Some(path.to_path_buf()),
+            change: ChangeKind::Modified,
+            hunks: vec![],
+            is_binary: false,
+        });
+    };
 
     let delta = diff.get_delta(delta_idx).unwrap();
     let old_path = delta.old_file().path().map(PathBuf::from);

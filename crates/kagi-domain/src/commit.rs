@@ -13,7 +13,7 @@
 /// Wraps the full hex string so callers do not have to manage raw `Oid`
 /// conversions.  Use [`CommitId::short`] to obtain an 8-character prefix
 /// suitable for display.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CommitId(pub String);
 
 impl CommitId {

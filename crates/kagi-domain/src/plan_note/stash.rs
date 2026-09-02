@@ -14,7 +14,7 @@ use super::DirtyParts;
 
 /// Which stash op a dirty-working-tree blocker fired for (§B-7: same
 /// sentence shape, only the op word differs — "apply" vs "pop").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StashDirtyOp {
     /// "…stash apply is only allowed…"
     Apply,
@@ -23,7 +23,7 @@ pub enum StashDirtyOp {
 }
 
 /// Plan notes for the stash op family (ADR-0129 appendix §B-7).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum StashNote {
     /// blocker (`plan_stash_push`, no-op family): working tree is already
     /// clean — nothing to stash.
@@ -121,7 +121,7 @@ impl StashNote {
 }
 
 /// Plan titles for the stash op family (appendix §C stash-* rows).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum StashTitle {
     /// `plan_stash_push` — `next_count` is the stash count AFTER the push.
     Push { next_count: usize },
@@ -155,7 +155,7 @@ impl StashTitle {
 }
 
 /// Recovery kinds for the stash op family (appendix §D stash-* rows).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum StashRecovery {
     /// `plan_stash_push`. `message` is the stash message that will be used
     /// (or the literal `"(no message)"`).

@@ -6,7 +6,7 @@
 //! commits to it.
 
 /// Plan notes for the GitHub PR ops.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum GithubNote {
     /// blocker — GitHub reports the PR as not mergeable (conflicts, or a
     /// branch-protection gate that is not satisfied).
@@ -60,7 +60,7 @@ impl GithubNote {
 }
 
 /// Plan titles for the GitHub PR ops.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum GithubTitle {
     /// `Merge pull request #<n> (<method>)`.
     MergePr { number: u64, method: String },
@@ -78,7 +78,7 @@ impl GithubTitle {
 }
 
 /// Recovery kinds for the GitHub PR ops.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum GithubRecovery {
     /// A merged PR can be reverted on GitHub, or locally with `git revert -m 1`.
     MergePr { number: u64 },

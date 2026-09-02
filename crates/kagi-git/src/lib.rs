@@ -79,7 +79,7 @@ pub use message_gen::{
 };
 pub use message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
 #[allow(unused_imports)]
-pub use oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
+pub use oplog::{append_oplog, entry_to_json, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
 #[allow(unused_imports)]
 pub use ops::{
     branch_checked_out_worktree_path, default_tracking_branch_name, execute_amend,

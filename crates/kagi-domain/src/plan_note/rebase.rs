@@ -4,7 +4,7 @@
 //! category).
 
 /// Plan notes for the rebase-current-onto op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RebaseNote {
     /// blocker (`plan_rebase_current_onto`) — HEAD is detached; there is no
     /// current branch to rebase.
@@ -51,7 +51,7 @@ impl RebaseNote {
 }
 
 /// Plan titles for the rebase-current-onto op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RebaseTitle {
     /// `plan_rebase_current_onto` — `Rebase '<branch>' onto '<onto>'`.
     RebaseCurrentOnto { branch: String, onto: String },
@@ -69,7 +69,7 @@ impl RebaseTitle {
 }
 
 /// Recovery kinds for the rebase-current-onto op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RebaseRecovery {
     /// `plan_rebase_current_onto` — the branch's pre-rebase tip, recoverable
     /// via `git rebase --abort` while in progress, or a ref reset afterward.

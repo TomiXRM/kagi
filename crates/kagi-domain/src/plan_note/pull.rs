@@ -10,7 +10,7 @@
 use super::DirtyParts;
 
 /// Plan notes for the pull op family (ADR-0129 appendix §B-4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum PullNote {
     /// warning (`plan_pull`): dirty working tree may block the pull if the
     /// fetched update touches the same paths.
@@ -103,7 +103,7 @@ impl PullNote {
 }
 
 /// Plan titles for the pull op family (ADR-0129 appendix §C).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum PullTitle {
     /// `plan_pull_remote` (SSH). `behind == 0` renders the "up to date
     /// (local knowledge)" form; otherwise the "N commit(s) behind" form.
@@ -172,7 +172,7 @@ impl PullTitle {
 }
 
 /// Recovery kinds for the pull op family (ADR-0129 appendix §D).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum PullRecovery {
     /// `plan_pull`.
     Pull,

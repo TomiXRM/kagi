@@ -7,7 +7,7 @@
 //! semantically a `git reset --soft`, restricted to the current branch.
 
 /// Plan notes for the reset-current-to-head op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ResetNote {
     /// blocker (`plan_reset_current_to_head`) — HEAD is detached; there is no
     /// current branch to move.
@@ -57,7 +57,7 @@ impl ResetNote {
 }
 
 /// Plan titles for the reset-current-to-head op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ResetTitle {
     /// `plan_reset_current_to_head` — `Reset '<branch>' to <sha>`.
     ResetCurrentToHead { branch: String, to: String },
@@ -75,7 +75,7 @@ impl ResetTitle {
 }
 
 /// Recovery kinds for the reset-current-to-head op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ResetRecovery {
     /// `plan_reset_current_to_head` — move the branch ref back to its
     /// pre-reset tip.

@@ -2,7 +2,7 @@
 //! producer (Phase 1).
 
 /// Discard-file plan notes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum DiscardNote {
     /// blocker — no files were selected (no-op family).
     NothingSelected,

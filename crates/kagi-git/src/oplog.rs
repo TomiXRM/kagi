@@ -200,7 +200,7 @@ fn state_summary_to_json(s: &StateSummary) -> String {
 }
 
 /// Serialise an [`OpLogEntry`] as a single-line JSON object (no trailing newline).
-fn entry_to_json(entry: &OpLogEntry) -> String {
+pub fn entry_to_json(entry: &OpLogEntry) -> String {
     let outcome_json = match &entry.outcome {
         OpOutcome::Success { after } => {
             format!(

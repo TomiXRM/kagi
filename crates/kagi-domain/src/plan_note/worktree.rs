@@ -24,7 +24,7 @@
 
 /// Plan notes for the worktree op family (create-branch+checkout,
 /// create-worktree, unlock-worktree).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum WorktreeNote {
     /// blocker (`plan_create_branch_with_checkout`) — the working tree has
     /// staged/modified changes that the post-create checkout could clobber.
@@ -142,7 +142,7 @@ impl WorktreeNote {
 }
 
 /// Plan titles for the worktree op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum WorktreeTitle {
     /// `plan_create_branch_with_checkout` — `Create branch '<name>' @ <at> and
     /// checkout` (overrides the plain `BranchTitle::CreateBranch` title that
@@ -170,7 +170,7 @@ impl WorktreeTitle {
 }
 
 /// Recovery kinds for the worktree op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum WorktreeRecovery {
     /// `plan_create_branch_with_checkout` — remove the branch / switch back.
     CreateBranchCheckout { name: String, prev: String },

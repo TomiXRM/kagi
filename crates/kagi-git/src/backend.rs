@@ -81,6 +81,33 @@ impl Backend {
         })
     }
 
+    /// Open the repository that *contains* `path`, walking up to the git root
+    /// (`git2::Repository::discover`). Unlike [`Backend::open`], `path` may be a
+    /// subdirectory of the working tree — the natural behaviour for a CLI run
+    /// from anywhere inside a repo (#330).
+    pub fn discover(path: &Path) -> Result<Self, GitError> {
+        let path_str = path.display().to_string();
+        let repo = git2::Repository::discover(path).map_err(|e| {
+            use git2::ErrorCode;
+            match e.code() {
+                ErrorCode::NotFound => GitError::NotARepository(path_str.clone()),
+                _ => GitError::Other(e.message().to_string()),
+            }
+        })?;
+        if repo.is_bare() {
+            return Err(GitError::BareRepository(path_str));
+        }
+        let path = repo
+            .workdir()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.to_path_buf());
+        Ok(Self {
+            repo,
+            path,
+            actor: crate::oplog::Actor::Human,
+        })
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -94,6 +121,33 @@ impl Backend {
 
     pub fn head_state(&self) -> Result<Head, GitError> {
         resolve_head(&self.repo)
+    }
+
+    /// A [`StateSummary`] describing the repo right now (#330 `kagi status`).
+    /// Built the same way plan producers build their `current` summary: HEAD
+    /// display + a `"N staged, M modified, …"` (or `"clean"`) dirty line.
+    pub fn current_state(&self) -> Result<ops::StateSummary, GitError> {
+        let head_display = resolve_head(&self.repo)?.display();
+        let status = crate::status::working_tree_status(&self.repo)?;
+        let dirty_parts: Vec<String> = [
+            (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
+            (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
+            (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
+            (!status.conflicted.is_empty())
+                .then(|| format!("{} conflicted", status.conflicted.len())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let dirty = if dirty_parts.is_empty() {
+            "clean".to_string()
+        } else {
+            dirty_parts.join(", ")
+        };
+        Ok(ops::StateSummary {
+            head: head_display,
+            dirty,
+        })
     }
 
     pub fn head_commit_id(&self) -> Option<CommitId> {

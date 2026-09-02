@@ -12,7 +12,7 @@
 /// deliberately distinct from `CommonNote`'s `DirtyParts` (staged/modified):
 /// `plan_commit`'s leftover warning covers what will NOT be committed
 /// (unstaged + untracked), never the staged count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitLeftoverParts {
     pub modified: usize,
     pub untracked: usize,
@@ -33,7 +33,7 @@ impl CommitLeftoverParts {
 }
 
 /// Plan notes for the commit op family (`staging.rs::plan_commit`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CommitNote {
     /// blocker — the commit message is empty after trimming.
     EmptyMessage,
@@ -72,7 +72,7 @@ impl CommitNote {
 
 /// Plan titles for the commit op family (`staging.rs::plan_commit` +
 /// `backend.rs::plan_merge_commit`'s override).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CommitTitle {
     /// `Commit: "{summary}"` — `summary` is the message, trimmed and
     /// truncated to 72 chars (matching the legacy `msg_summary` builder).
@@ -92,7 +92,7 @@ impl CommitTitle {
 }
 
 /// Recovery kinds for the commit op family (`staging.rs::plan_commit`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CommitRecovery {
     /// The sole commit recovery template: amend / revert HEAD, listing the
     /// staged file paths that were just committed.

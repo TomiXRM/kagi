@@ -3378,6 +3378,9 @@ dependencies = [
 [[package]]
 name = "kagi-domain"
 version = "0.3.11"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "kagi-git"

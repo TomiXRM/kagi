@@ -9,28 +9,50 @@ use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
 
+/// Pure partition decision for "Discard all": a row goes to `skipped` if it is
+/// conflicted OR a submodule, otherwise to `eligible`. Kept free of GPUI/backend
+/// so it is unit-testable (#326). Input is `(rel, conflicted, submodule)`.
+fn partition_discard_rows(
+    rows: impl IntoIterator<Item = (String, bool, bool)>,
+) -> (Vec<String>, Vec<String>) {
+    let mut eligible = Vec::new();
+    let mut skipped = Vec::new();
+    for (rel, conflicted, submodule) in rows {
+        // Conflicted rows are not discardable. A dirty submodule is a gitlink
+        // whose backup read would hit EISDIR (#324) — skip it so the rest of the
+        // batch still discards, instead of the whole plan being blocked (#326).
+        // Untracked rows (surfaced as `Added`) ARE discardable — deleted from
+        // disk after an ODB backup (ADR-0083).
+        if conflicted || submodule {
+            skipped.push(rel);
+        } else {
+            eligible.push(rel);
+        }
+    }
+    (eligible, skipped)
+}
+
 impl KagiApp {
-    /// Collect the eligible unstaged paths (excluding untracked / conflicted)
-    /// plus the skipped set, from the current commit-panel status.
+    /// Collect the eligible unstaged paths (excluding untracked / conflicted /
+    /// submodule) plus the skipped set, from the current commit-panel status.
     /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
     fn discard_partition(&self, cx: &Context<Self>) -> (Vec<String>, Vec<String>) {
-        let mut eligible = Vec::new();
-        let mut skipped = Vec::new();
-        if let Some(entity) = self.commit_panel.as_ref() {
+        let backend = self.repo_session.as_ref().map(|s| s.backend());
+        let rows = self.commit_panel.as_ref().into_iter().flat_map(|entity| {
             let panel = &entity.read(cx).state;
-            for f in &panel.unstaged {
-                let rel = f.path.to_string_lossy().replace('\\', "/");
-                // Conflicted rows are not discardable. Untracked rows (surfaced as
-                // `Added` entries) ARE discardable — they are deleted from disk
-                // after an ODB backup (ADR-0083).
-                if panel.is_conflicted(&f.path) {
-                    skipped.push(rel);
-                } else {
-                    eligible.push(rel);
-                }
-            }
-        }
-        (eligible, skipped)
+            panel
+                .unstaged
+                .iter()
+                .map(|f| {
+                    let rel = f.path.to_string_lossy().replace('\\', "/");
+                    let conflicted = panel.is_conflicted(&f.path);
+                    // gitlink check lives in the backend — no git2 in the UI (#326).
+                    let submodule = backend.map(|b| b.is_submodule(&rel)).unwrap_or(false);
+                    (rel, conflicted, submodule)
+                })
+                .collect::<Vec<_>>()
+        });
+        partition_discard_rows(rows)
     }
 
     /// Open the discard modal for a single repo-relative `path`. Used both by the
@@ -295,5 +317,26 @@ impl KagiApp {
                 app.reload(cx);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::partition_discard_rows;
+
+    // #326: a mixed batch — a regular dirty file, a conflicted file, and a
+    // submodule — partitions the submodule (and the conflict) into `skipped`,
+    // leaving the regular file actionable. Mutation check: dropping `submodule`
+    // from the skip predicate moves "sub" into `eligible` and fails this test.
+    #[test]
+    fn submodule_and_conflict_are_skipped_regular_stays_eligible() {
+        let rows = vec![
+            ("a.txt".to_string(), false, false),       // regular dirty
+            ("conflict.txt".to_string(), true, false), // conflicted
+            ("sub".to_string(), false, true),          // submodule (gitlink)
+        ];
+        let (eligible, skipped) = partition_discard_rows(rows);
+        assert_eq!(eligible, vec!["a.txt".to_string()]);
+        assert_eq!(skipped, vec!["conflict.txt".to_string(), "sub".to_string()]);
     }
 }

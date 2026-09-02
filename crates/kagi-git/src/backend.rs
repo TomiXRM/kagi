@@ -1344,6 +1344,14 @@ impl Backend {
         ops::plan_discard(&self.repo, paths)
     }
 
+    /// Whether the repo-relative `rel` is a submodule (gitlink, mode 160000).
+    /// The UI uses this to route submodules into the discard "skipped" set so a
+    /// dirty submodule no longer blocks a whole "Discard all" batch (#326). No
+    /// git2 leaks into the UI — the gitlink check stays here in the backend.
+    pub fn is_submodule(&self, rel: &str) -> bool {
+        ops::is_submodule_path(&self.repo, rel)
+    }
+
     pub fn execute_discard(
         &self,
         plan: &OperationPlan,

@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 /// The type of change recorded for a file.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChangeKind {
     /// File was added (did not exist in the previous tree/index).
     Added,
@@ -37,7 +37,7 @@ impl ChangeKind {
 }
 
 /// Status of a single file within the working tree.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileStatus {
     /// Path of the file relative to the repository root.
     pub path: PathBuf,
@@ -76,7 +76,7 @@ pub struct WorkingTreeStatus {
 /// a file's *contents* change while its classification stays the same: that is
 /// not a classification shift, and hashing content would make every keystroke
 /// in an open editor invalidate the plan.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorktreeDigest(pub u64);
 
 impl WorkingTreeStatus {

@@ -11,7 +11,7 @@
 //! strings — do not merge them until Phase 3.
 
 /// Which punctuation variant a punctuation-twin template uses (appendix §G-2).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushPunct {
     /// `plan_push`'s form (` — …`).
     EmDash,
@@ -21,7 +21,7 @@ pub enum PushPunct {
 
 /// Plan notes for the push op family (`plan_push` / `plan_push_branch` /
 /// `plan_set_upstream`).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PushNote {
     /// warning — non-fast-forward pushes are rejected, never forced.
     /// `plan_push` uses [`PushPunct::EmDash`]; `plan_push_branch` uses
@@ -89,7 +89,7 @@ impl PushNote {
 }
 
 /// Plan titles for the push op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PushTitle {
     /// `plan_push`, not blocked: `Push '<branch>' to '<remote>' (set upstream)`
     /// / `Push '<branch>' to '<remote>'`.
@@ -142,7 +142,7 @@ impl PushTitle {
 }
 
 /// Recovery kinds for the push op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PushRecovery {
     /// `plan_push`, not blocked.
     Push,

@@ -8,7 +8,7 @@ use crate::commit::CommitId;
 /// One-line summary of repository state for display in the plan modal.
 ///
 /// Example: `head = "branch: main"`, `dirty = "1 modified, 1 untracked"`.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateSummary {
     /// Description of HEAD, e.g. `"branch: main"` or `"detached: a1b2c3d4"`.
     pub head: String,
@@ -18,7 +18,7 @@ pub struct StateSummary {
 }
 
 /// Keyed, user-facing reason why a branch name is rejected (W29-I18N-WAVE2).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchNameError {
     /// create-branch: name is empty. -> "Branch name must not be empty."
     EmptyCreate,
@@ -75,7 +75,7 @@ impl std::fmt::Display for BranchNameError {
 }
 
 /// Keyed, user-facing reason why a worktree path is rejected (W29-I18N-WAVE2).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorktreePathError {
     /// Path was empty.
     Empty,
@@ -207,7 +207,7 @@ pub struct UndoOutcome {
 }
 
 /// Which parts of the HEAD commit an amend should rewrite.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AmendMode {
     /// Replace only the commit message; the tree is the old HEAD tree.
     MessageOnly,
@@ -322,7 +322,7 @@ use crate::status::FileStatus;
 /// ADR-0129: `title`/`warnings`/`blockers`/`recovery` are structured values
 /// localized by the display layer; `disposition` carries the semantic state
 /// the UI used to infer by parsing display strings.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct OperationPlan {
     /// The plan modal's title (one, required).
     pub title: PlanTitle,

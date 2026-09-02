@@ -8,7 +8,7 @@
 //! recovery, so no `ChecklistTitle`/`ChecklistRecovery` exist.
 
 /// Findings from the staged-content checklist (ADR-0043 rules 4/5/6).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChecklistNote {
     /// warning (rule 5, file-name heuristic) — the staged file's name looks
     /// like a secret (`.env`, `id_rsa`, `*.pem`, …).

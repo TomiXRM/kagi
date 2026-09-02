@@ -22,7 +22,7 @@ use crate::plan::AmendMode;
 /// reusing `common::PlanOp`: these templates only ever fire for undo/amend,
 /// and `PlanOp` also carries cherry-pick/revert/pull/push/merge, which have
 /// no sentence here.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryOp {
     Undo,
     Amend,
@@ -36,7 +36,7 @@ pub enum HistoryOp {
 /// renderer into a stringly-typed lookup with a lossy `_ => "操作"` fallback —
 /// the one untyped hole in the ADR-0129 pipeline. Typed, the JA match is
 /// exhaustive and a new direction is a compile error.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryMoveDir {
     Undo,
     Redo,
@@ -69,7 +69,7 @@ impl HistoryMoveDir {
 }
 
 /// Plan notes for the history op family (undo-commit / amend / undo·redo).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryNote {
     /// blocker — HEAD is a merge commit; op-specific "not supported" tail.
     MergeCommitUnsupported {
@@ -204,7 +204,7 @@ impl HistoryNote {
 }
 
 /// Plan titles for the history op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryTitle {
     /// Undo last commit: normal or blocked form.
     UndoCommit {
@@ -283,7 +283,7 @@ impl HistoryTitle {
 }
 
 /// Recovery kinds for the history op family.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryRecovery {
     /// undo-commit: normal or blocked form.
     Undo { sha: String, blocked: bool },

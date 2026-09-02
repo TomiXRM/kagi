@@ -7,13 +7,19 @@
 //! execute → verify → oplog, ADR-0104/0149). `status` and `oplog` are
 //! read-only introspection.
 //!
+//! Serialization lives HERE (the bin crate), not in `kagi-domain`, which stays
+//! dependency-free (CLAUDE.md invariant #2): `serde`/`serde_json` are only used
+//! in this file, reading the domain types' public fields + `message_en()`
+//! renderers. `confirm` never deserializes the full plan tree — it re-plans from
+//! `{plan_id, op, args}` and compares `plan_id`.
+//!
 //! Design (§5 decisions on #330):
 //! - **plan-id = content hash** ([`OperationPlan::plan_id`]). The id itself is
 //!   the staleness check: `confirm` recomputes the plan against the repo *now*
 //!   and refuses if the recomputed id differs (TOCTOU, no server-side state).
 //! - **standalone `confirm`**: the plan is not stored. The agent pipes the plan
-//!   JSON that `plan` emitted back into `confirm` (stdin or `--plan <file>`),
-//!   which carries the operation + the id to verify.
+//!   JSON that `plan` emitted back into `confirm` (stdin or `--plan <file>`); it
+//!   carries the op + args to rebuild + the id to verify.
 //! - **destructive ops require `--yes`** (mirrors the GUI two-stage confirm).
 //! - lives on the existing `kagi` binary — [`dispatch`] runs when argv[1] is a
 //!   known subcommand, otherwise `main` takes the normal GUI path.
@@ -36,14 +42,22 @@ pub fn is_cli_subcommand(args: &[String]) -> bool {
         .is_some_and(|a| SUBCOMMANDS.contains(&a.as_str()))
 }
 
-/// Envelope emitted by `plan` and consumed by `confirm`. Self-contained: it
-/// carries the operation (so `confirm` can rebuild it), the full plan, and the
-/// content-hash id to verify. Schema is UNSTABLE for v1 (see docs/plan-json.md).
-#[derive(serde::Serialize, serde::Deserialize)]
-struct PlanEnvelope {
+/// The slice of the `plan` envelope that `confirm` actually needs: enough to
+/// rebuild the operation and re-verify the id, plus the plan-time staleness
+/// snapshot (primitives) so a mismatch can name *what* changed. The `plan`
+/// display block that `plan` also emits is ignored (unknown fields are dropped).
+#[derive(serde::Deserialize)]
+struct ConfirmInput {
     plan_id: String,
-    operation: Operation,
-    plan: OperationPlan,
+    op: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    head_at_plan: String,
+    #[serde(default)]
+    stash_count_at_plan: usize,
+    #[serde(default)]
+    worktree_digest: Option<u64>,
 }
 
 /// Run the headless CLI. Returns a process exit code:
@@ -84,9 +98,9 @@ fn usage() -> i32 {
 
 // ── flag helpers ────────────────────────────────────────────
 
-/// Pull `--repo PATH` out of `args` (default: current dir), returning the
-/// remaining positional/flag args. `--json` is accepted everywhere and dropped
-/// (JSON is the only output format in v1).
+/// Pull `--repo PATH` / `--plan FILE` / `--yes` out of `args` (repo default:
+/// current dir), returning the remaining positional args. `--json` is accepted
+/// everywhere and dropped (JSON is the only output format in v1).
 fn take_flags(args: &[String]) -> (PathBuf, Option<String>, bool, Vec<String>) {
     let mut repo = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut plan_file: Option<String> = None;
@@ -176,16 +190,38 @@ fn cmd_plan(args: &[String]) -> Result<i32, String> {
     let op = build_operation(&backend, op_name, op_args)?;
     // Planning is side-effect-free: `Backend::plan` never mutates the repo.
     let plan = backend.plan(&op).map_err(|e| format!("{}", e))?;
-    let envelope = PlanEnvelope {
-        plan_id: plan.plan_id(),
-        operation: op,
-        plan,
-    };
+    // Top-level: what `confirm` reads back (op + args + id + staleness snapshot).
+    // `plan`: a human-readable display block for the agent (ignored by confirm).
+    let out = serde_json::json!({
+        "plan_id": plan.plan_id(),
+        "op": op_name,
+        "args": op_args,
+        "head_at_plan": head_desc(&plan.head_at_plan),
+        "stash_count_at_plan": plan.stash_count_at_plan(),
+        "worktree_digest": plan.worktree_digest().map(|d| d.0),
+        "plan": plan_body(&plan),
+    });
     println!(
         "{}",
-        serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?
+        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
     );
     Ok(0)
+}
+
+/// Human-readable plan block. Uses the domain types' `message_en()` renderers
+/// (the same strings the GUI/oplog use) instead of serializing the enum tree —
+/// so `kagi-domain` needs no serde derive.
+fn plan_body(p: &OperationPlan) -> serde_json::Value {
+    serde_json::json!({
+        "title": p.title.message_en(),
+        "current": { "head": p.current.head, "dirty": p.current.dirty },
+        "predicted": { "head": p.predicted.head, "dirty": p.predicted.dirty },
+        "warnings": p.warnings.iter().map(|n| n.message_en()).collect::<Vec<_>>(),
+        "blockers": p.blockers.iter().map(|n| n.message_en()).collect::<Vec<_>>(),
+        "recovery": p.recovery.as_ref().map(|r| r.message_en()),
+        "disposition": format!("{:?}", p.disposition),
+        "destructive": p.destructive,
+    })
 }
 
 // ── confirm ─────────────────────────────────────────────────
@@ -204,21 +240,20 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
             buf
         }
     };
-    let envelope: PlanEnvelope =
+    let input: ConfirmInput =
         serde_json::from_str(&raw).map_err(|e| format!("invalid plan JSON: {}", e))?;
 
     let mut backend = open_backend(&repo)?;
+    let op = build_operation(&backend, &input.op, &input.args)?;
     // Re-plan against the repo NOW. If nothing moved, the recomputed id equals
     // the id the agent holds; if it differs, the repo changed (TOCTOU).
-    let fresh = backend
-        .plan(&envelope.operation)
-        .map_err(|e| format!("{}", e))?;
+    let fresh = backend.plan(&op).map_err(|e| format!("{}", e))?;
 
-    if fresh.plan_id() != envelope.plan_id {
-        let changed = describe_changes(&envelope.plan, &fresh);
+    if fresh.plan_id() != input.plan_id {
+        let changed = describe_changes(&input, &fresh);
         return Ok(refuse(
             "repo changed since plan — re-plan and try again",
-            serde_json::json!({ "changed": changed, "expected_plan_id": envelope.plan_id, "actual_plan_id": fresh.plan_id() }),
+            serde_json::json!({ "changed": changed, "expected_plan_id": input.plan_id, "actual_plan_id": fresh.plan_id() }),
         ));
     }
 
@@ -242,9 +277,7 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
     // Execute through the one true write path: preflight → execute → verify →
     // oplog all happen inside `Backend::run` (#329). Actor=cli tags the log.
     backend.set_actor(Actor::Cli);
-    let outcome = backend
-        .run(&envelope.operation, &fresh)
-        .map_err(|e| format!("{}", e))?;
+    let outcome = backend.run(&op, &fresh).map_err(|e| format!("{}", e))?;
 
     // The oplog entry `run` just wrote (newest-first tail).
     let last = kagi_git::read_oplog_tail(1);
@@ -255,37 +288,34 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
 
     println!(
         "{{\"status\":\"ok\",\"op\":{},\"plan_id\":{},\"outcome\":{},\"oplog\":{}}}",
-        json_str(envelope.operation_name()),
-        json_str(&envelope.plan_id),
+        json_str(op.oplog_name()),
+        json_str(&input.plan_id),
         json_str(&format!("{:?}", outcome)),
         oplog_json,
     );
     Ok(0)
 }
 
-/// Compare the plan the agent planned against a freshly recomputed one and name
-/// which staleness dimension(s) moved (head / stash / worktree / operation).
-fn describe_changes(old: &OperationPlan, fresh: &OperationPlan) -> Vec<String> {
+/// Name which staleness dimension(s) moved between the agent's plan (the
+/// snapshot carried in the envelope) and a freshly recomputed plan.
+fn describe_changes(old: &ConfirmInput, fresh: &OperationPlan) -> Vec<String> {
     let mut out = Vec::new();
-    if old.head_at_plan != fresh.head_at_plan {
+    let fresh_head = head_desc(&fresh.head_at_plan);
+    if old.head_at_plan != fresh_head {
         out.push(format!(
             "HEAD changed (was {}, now {})",
-            head_desc(&old.head_at_plan),
-            head_desc(&fresh.head_at_plan)
+            old.head_at_plan, fresh_head
         ));
     }
-    if old.stash_count_at_plan() != fresh.stash_count_at_plan() {
+    if old.stash_count_at_plan != fresh.stash_count_at_plan() {
         out.push(format!(
             "stash count changed (was {}, now {})",
-            old.stash_count_at_plan(),
+            old.stash_count_at_plan,
             fresh.stash_count_at_plan()
         ));
     }
-    if old.worktree_digest() != fresh.worktree_digest() {
+    if old.worktree_digest != fresh.worktree_digest().map(|d| d.0) {
         out.push("working tree changed".to_string());
-    }
-    if old.title.message_en() != fresh.title.message_en() {
-        out.push("operation target changed".to_string());
     }
     if out.is_empty() {
         // The ids differed for a reason not captured above (e.g. destructive
@@ -313,9 +343,10 @@ fn cmd_status(args: &[String]) -> Result<i32, String> {
     let (repo, _pf, _yes, _rest) = take_flags(args);
     let backend = open_backend(&repo)?;
     let state = backend.current_state().map_err(|e| format!("{}", e))?;
+    let out = serde_json::json!({ "head": state.head, "dirty": state.dirty });
     println!(
         "{}",
-        serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?
+        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
     );
     Ok(0)
 }
@@ -357,10 +388,4 @@ fn refuse(reason: &str, detail: serde_json::Value) -> i32 {
 
 fn print_error(msg: &str) {
     println!("{{\"status\":\"error\",\"error\":{}}}", json_str(msg));
-}
-
-impl PlanEnvelope {
-    fn operation_name(&self) -> &'static str {
-        self.operation.oplog_name()
-    }
 }

@@ -97,6 +97,12 @@ pub enum ConflictOp {
         /// One-line summary of the commit being undone.
         source_summary: Option<String>,
     },
+    /// A `git stash apply` / `pop` left conflicts (#309). Unlike the other ops
+    /// this leaves `RepositoryState::Clean` (no MERGE_HEAD / sequencer state) —
+    /// only the index carries unmerged entries. It is **not** a commit-producing
+    /// operation: "continue" merely stages the resolved paths, and "abort"
+    /// restores HEAD for the conflicted paths while leaving the stash intact.
+    StashConflict,
 }
 
 impl ConflictOp {
@@ -107,13 +113,20 @@ impl ConflictOp {
             ConflictOp::Rebase { .. } => "rebase",
             ConflictOp::CherryPick { .. } => "cherry-pick",
             ConflictOp::Revert { .. } => "revert",
+            ConflictOp::StashConflict => "stash",
         }
     }
 
     /// Whether this operation is part of a sequencer (rebase / cherry-pick /
     /// revert sequences support `skip`; a plain merge does not).
     pub fn is_sequencer(&self) -> bool {
-        !matches!(self, ConflictOp::Merge { .. })
+        // Explicit allow-list (#309): only these three support `skip`. A merge
+        // never did; a StashConflict (no sequencer state) must not either. Do not
+        // reduce this to "anything but Merge".
+        matches!(
+            self,
+            ConflictOp::Rebase { .. } | ConflictOp::CherryPick { .. } | ConflictOp::Revert { .. }
+        )
     }
 }
 
@@ -302,8 +315,24 @@ fn classify_op(repo: &Repository, state: RepositoryState) -> Option<ConflictOp> 
                 source_summary,
             })
         }
-        _ => None,
+        // #309: a conflicted `git stash apply`/`pop` leaves the repo Clean (no
+        // MERGE_HEAD / sequencer state) but writes unmerged entries into the
+        // index. Named-state arms above still win; this is only the
+        // Clean-plus-unmerged-index case.
+        _ => {
+            if index_has_conflicts(repo) {
+                Some(ConflictOp::StashConflict)
+            } else {
+                None
+            }
+        }
     }
+}
+
+/// Whether the repository index currently has unmerged (conflict) entries.
+/// Best effort: any read failure reports `false` (no conflict to surface).
+fn index_has_conflicts(repo: &Repository) -> bool {
+    matches!(repo.index(), Ok(idx) if idx.has_conflicts())
 }
 
 /// Read a `.git/<name>` file holding a single object id, returning the short
@@ -650,6 +679,14 @@ pub fn side_labels(op: &ConflictOp, current_branch: &str) -> SideLabels {
             base,
             result,
         },
+        // #309: a stash apply/pop has no incoming commit — the "incoming" side is
+        // the stashed changes themselves. Never "ours"/"theirs" (ADR-0058).
+        ConflictOp::StashConflict => SideLabels {
+            current: SideLabel::new("Current branch", current_branch),
+            incoming: SideLabel::new("Stashed changes", "your stash"),
+            base,
+            result,
+        },
     }
 }
 
@@ -932,6 +969,10 @@ pub enum ContinueRoute {
     /// rebase / cherry-pick / revert: confirm this `<op> --continue` plan, then
     /// continue the sequencer.
     SequencerPlan(Box<OperationPlan>),
+    /// #309 stash conflict: staging the resolved paths is the whole "continue"
+    /// (no commit, no `<op> --continue`). After staging, the UI offers to drop
+    /// the kept stash. The resolution is staged by [`execute_conflict_continue`].
+    StashComplete,
 }
 
 /// Outcome of saving a single file's resolution (ADR-0068 Save resolution).
@@ -1037,6 +1078,18 @@ pub fn execute_conflict_continue(
     //    (collapses stage 1/2/3 → stage 0), so the index carries no unmerged
     //    entries.
     stage_conflict_resolution(repo, session, buffer)?;
+
+    // 1b. #309 stash conflict: staging IS the continuation. A stash apply is not
+    // a commit — do NOT create a merge commit and do NOT run `git stash
+    // --continue` (which is not a command). The unmerged entries are now
+    // collapsed to stage 0, so the index is conflict-free / commit-able, and the
+    // kept stash is left for the UI's optional drop prompt. HEAD is unchanged.
+    if let ConflictOp::StashConflict = session.op {
+        return Ok(ContinueResult {
+            outcome: ContinueOutcome::Staged,
+            after: current_state_summary(repo)?,
+        });
+    }
 
     // 2. For a merge, create the merge commit and clear the state.
     if let ConflictOp::Merge { .. } = session.op {
@@ -1567,6 +1620,8 @@ pub fn plan_conflict_continue_route(
             let message = prefilled_merge_message(repo, &session.op, current_branch);
             Ok(ContinueRoute::MergeCommitPanel { message })
         }
+        // #309: staging is the whole continue for a stash conflict.
+        ConflictOp::StashConflict => Ok(ContinueRoute::StashComplete),
         _ => {
             let plan = plan_conflict_continue(repo, session, buffer)?;
             Ok(ContinueRoute::SequencerPlan(Box::new(plan)))
@@ -1813,6 +1868,82 @@ pub fn execute_conflict_abort(
 
     Ok(AbortOutcome {
         restored_to: orig_sha,
+        buffer_preserved_at,
+    })
+}
+
+/// Abort a stash-conflict (#309 / ADR-0148): restore HEAD's content for the
+/// **conflicted paths only** and clear their unmerged index entries, leaving the
+/// stash entry intact.
+///
+/// A conflicted `git stash apply`/`pop` writes **no** `ORIG_HEAD`, `MERGE_HEAD`
+/// or sequencer state — the branch never moved and the pre-apply tree is exactly
+/// HEAD (apply requires a clean tree). So this must NOT reuse
+/// [`execute_conflict_abort`]'s ORIG_HEAD path: there is no ref to move and no
+/// operation state to clean up. It only:
+///
+/// 1. preserves the resolution buffer (ADR-0057),
+/// 2. drops the stage 1/2/3 conflict entries for the session's files, and
+/// 3. force-checks-out HEAD over exactly those paths (pathspec-bounded — never a
+///    repo-wide `reset --hard`), which repopulates them at stage 0 and rewrites
+///    the working tree.
+///
+/// The stash entry is left untouched (dropping it, if wanted, is a separate,
+/// explicit stash-drop op).
+pub fn execute_stash_conflict_abort(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer: &ResolutionBuffer,
+) -> Result<AbortOutcome, GitError> {
+    // 1. Preserve the buffer BEFORE touching the repo (never lose partial work).
+    let buffer_preserved_at = buffer.autosave().ok();
+
+    if repo.workdir().is_none() {
+        return Err(GitError::Other(
+            "repository has no working tree".to_string(),
+        ));
+    }
+
+    // 2. Resolve the HEAD commit + tree (the pre-apply state).
+    let head_commit = repo
+        .head()
+        .ok()
+        .and_then(|h| h.target())
+        .and_then(|oid| repo.find_commit(oid).ok())
+        .ok_or_else(|| GitError::Other("HEAD commit lookup failed".to_string()))?;
+    let tree = head_commit
+        .tree()
+        .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
+
+    // 3. Conflicted paths only (pathspec-bounded restore).
+    let paths: Vec<String> = session
+        .files
+        .iter()
+        .filter_map(|f| f.path.to_str().map(str::to_string))
+        .collect();
+
+    // 4. Drop the stage 1/2/3 conflict entries so the paths are no longer
+    //    unmerged; the checkout below repopulates them at stage 0 from HEAD.
+    {
+        let mut index = repo
+            .index()
+            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        for f in &session.files {
+            // Best effort: a path with no conflict entry is already resolved.
+            let _ = index.conflict_remove(&f.path);
+        }
+        index
+            .write()
+            .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
+    }
+
+    // 5. Restore HEAD content for exactly those paths (force, pathspec-bounded).
+    checkout_paths_from_tree(repo, &tree, &paths)?;
+
+    // NOTE: no `cleanup_state`, no ref move, no ORIG_HEAD — there is none. The
+    // stash entry is deliberately left intact.
+    Ok(AbortOutcome {
+        restored_to: Some(head_commit.id().to_string()),
         buffer_preserved_at,
     })
 }

@@ -1,7 +1,7 @@
 crates/kagi-domain/src/message_gen.rs 895
 crates/kagi-domain/src/resolution.rs 972
-crates/kagi-git/src/backend.rs 1342
-crates/kagi-git/src/conflicts.rs 2311
+crates/kagi-git/src/backend.rs 1354
+crates/kagi-git/src/conflicts.rs 2442
 crates/kagi-git/src/message_gen.rs 807
 crates/kagi-git/src/ops/cherry_revert.rs 972
 crates/kagi-git/src/ops/history.rs 1218
@@ -24,7 +24,7 @@ src/ui/inspector.rs 1097
 src/ui/mod.rs 4098
 src/ui/operations/branch.rs 1744
 src/ui/operations/commit.rs 1233
-src/ui/operations/conflict.rs 861
+src/ui/operations/conflict.rs 920
 src/ui/operations/modal_state.rs 953
 src/ui/operations/stash.rs 807
 src/ui/pr_mode.rs 2281

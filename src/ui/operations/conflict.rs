@@ -277,6 +277,57 @@ impl KagiApp {
                     error: None,
                 });
             }
+            kagi_git::ContinueRoute::StashComplete => {
+                // #309: a stash conflict is not a commit — "continue" just stages
+                // the resolved paths (execute_conflict_continue collapses the
+                // unmerged entries to stage 0). No merge commit, no `--continue`.
+                match repo.execute_conflict_continue(&mode.session, &mode.buffer) {
+                    Ok(result) => {
+                        klog!("executed: {}", op_name);
+                        let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
+                        self.record_op(
+                            &op_name,
+                            StateSummary {
+                                head: format!("op={}", mode.session.op.slug()),
+                                dirty: "resolving".to_string(),
+                            },
+                            OpOutcome::Success {
+                                after: result.after.clone(),
+                            },
+                            &repo_path,
+                            cx,
+                        );
+                        // Conflicts are gone → re-detect clears Conflict Mode.
+                        self.reload(cx);
+                        // Offer to drop the kept stash (opt-in — the standard
+                        // conflicted `stash pop` keeps stash@{0}). The drop-confirm
+                        // modal shows the stash label, so a wrong target is visible
+                        // before the user confirms.
+                        // ponytail: index 0 is the standard pop target; threading
+                        // the real popped index through Conflict Mode would need the
+                        // stash op to persist it — add that if deeper-stash pops
+                        // become common.
+                        self.open_stash_drop_modal(0);
+                    }
+                    Err(e) => {
+                        let err_msg = format!("{}", e);
+                        klog!("{} failed: {}", op_name, err_msg);
+                        self.record_op(
+                            &op_name,
+                            StateSummary {
+                                head: format!("op={}", mode.session.op.slug()),
+                                dirty: "resolving".to_string(),
+                            },
+                            OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                            cx,
+                        );
+                        self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
+                    }
+                }
+            }
         }
         cx.notify();
     }
@@ -394,7 +445,15 @@ impl KagiApp {
         };
         let op_name = format!("{}-abort", mode.session.op.slug());
 
-        match repo.execute_conflict_abort(&mode.session, &mode.buffer) {
+        // #309: a stash conflict has no ORIG_HEAD / sequencer state — abort
+        // restores HEAD for the conflicted paths and keeps the stash, rather than
+        // moving refs back via ORIG_HEAD (execute_conflict_abort's path).
+        let abort_result = if matches!(mode.session.op, kagi_git::ConflictOp::StashConflict) {
+            repo.execute_stash_conflict_abort(&mode.session, &mode.buffer)
+        } else {
+            repo.execute_conflict_abort(&mode.session, &mode.buffer)
+        };
+        match abort_result {
             Ok(_outcome) => {
                 klog!("executed: {}", op_name);
                 let after = StateSummary {

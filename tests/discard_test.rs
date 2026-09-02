@@ -691,3 +691,177 @@ fn discard_absolute_path_matches_relative_form() {
     assert_eq!(outcome.backups[0].path, "tracked.txt");
     assert_eq!(read_file(&d, "tracked.txt"), "committed\n");
 }
+
+/// git hash-object of `bytes` (does NOT write), for "does this blob exist" checks.
+fn hash_object(dir: &Path, bytes: &[u8]) -> String {
+    use std::io::Write;
+    let mut child = Command::new("git")
+        .args(["hash-object", "--stdin"])
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let out = child.wait_with_output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Whether object `sha` exists in `dir`'s ODB (`git cat-file -e`).
+fn object_exists(dir: &Path, sha: &str) -> bool {
+    Command::new("git")
+        .args(["cat-file", "-e", sha])
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", dir)
+        .status()
+        .unwrap()
+        .success()
+}
+
+// ────────────────────────────────────────────────────────────
+// TC-DISCARD-324a (#324): discarding an untracked symlink must NOT read
+// through the link — no repo-external bytes reach the ODB, the outside file
+// is untouched, and the link itself is removed from disk.
+// ────────────────────────────────────────────────────────────
+
+#[cfg(unix)]
+#[test]
+fn discard_untracked_symlink_does_not_ingest_target_bytes() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let repo = Repository::open(&d).unwrap();
+
+    // A file OUTSIDE the repo with known, secret bytes.
+    let outside = TempDir::new().unwrap();
+    let secret_path = outside.path().join("secret.txt");
+    let secret_bytes = b"OUTSIDE-REPO-SECRET-DO-NOT-INGEST\n";
+    std::fs::write(&secret_path, secret_bytes).unwrap();
+
+    // An untracked symlink inside the repo pointing at the outside file.
+    let link = d.join("link");
+    std::os::unix::fs::symlink(&secret_path, &link).unwrap();
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+
+    let paths = vec!["link".to_string()];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    let outcome = execute_discard(&repo, &plan, &paths).expect("execute");
+
+    // (a) the outside file is untouched.
+    assert_eq!(
+        std::fs::read(&secret_path).unwrap(),
+        secret_bytes,
+        "the symlink target outside the repo must not be modified"
+    );
+
+    // (b) NO blob equal to the outside bytes was written to the ODB. The blob
+    // SHA the outside bytes WOULD hash to must not exist — its presence is
+    // exactly the #324 leak (fs::read followed the link into the ODB).
+    let leaked_sha = hash_object(&d, secret_bytes);
+    assert!(
+        !object_exists(&d, &leaked_sha),
+        "a blob equal to the outside bytes ({leaked_sha}) was written to the ODB \
+         — the backup read followed the symlink (#324 leak)"
+    );
+
+    // The backup blob stores the LINK TARGET PATH, not the dereferenced content.
+    let backup = outcome
+        .backups
+        .iter()
+        .find(|b| b.path == "link")
+        .expect("a backup for the discarded link");
+    let stored = git_out(&d, &["cat-file", "-p", &backup.blob]);
+    assert_eq!(
+        stored,
+        secret_path.to_string_lossy(),
+        "backup must store the link target path, not the target's content"
+    );
+
+    // (c) the link is removed from disk.
+    assert!(
+        std::fs::symlink_metadata(&link).is_err(),
+        "the symlink must be removed from the working tree"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// TC-DISCARD-324b (#324): a dirty submodule is a plan-time blocker, so it
+// never reaches the backup read (which would EISDIR-abort the whole batch).
+// Discarding the OTHER dirty files completes.
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+
+    // Build a separate repo to embed as a submodule.
+    let subsrc = TempDir::new().unwrap();
+    let s = subsrc.path();
+    git(s, &["init", "-q", "-b", "main", "."]);
+    git(s, &["config", "user.name", "Test"]);
+    git(s, &["config", "user.email", "test@example.com"]);
+    git(s, &["config", "commit.gpgsign", "false"]);
+    write_file(s, "inner.txt", "inner v1\n");
+    git(s, &["add", "inner.txt"]);
+    git(s, &["commit", "-qm", "sub initial"]);
+
+    // Add it as a submodule at path `sub` (file protocol needs opt-in).
+    let url = s.to_string_lossy().to_string();
+    git(
+        &d,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            &url,
+            "sub",
+        ],
+    );
+    git(&d, &["commit", "-qm", "add submodule"]);
+
+    // Make the submodule dirty (new commit inside → gitlink moves) → ` M sub`.
+    let subwd = d.join("sub");
+    write_file(&subwd, "inner.txt", "inner v2\n");
+    git(&subwd, &["commit", "-aqm", "sub change"]);
+
+    // And an ordinary dirty tracked file alongside it.
+    write_file(&d, "tracked.txt", "DIRTY\n");
+
+    let repo = Repository::open(&d).unwrap();
+
+    // The submodule must be a plan-time BLOCKER (this is the #324 fix; reverting
+    // it removes the blocker and execute would EISDIR-abort on fs::read(sub)).
+    let plan_with_sub =
+        plan_discard(&repo, &["sub".to_string(), "tracked.txt".to_string()]).expect("plan");
+    assert!(
+        plan_with_sub.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Discard(DiscardNote::TargetSubmodule { path }) if path == "sub"
+        )),
+        "dirty submodule must be a plan-time blocker: {:?}",
+        plan_with_sub.blockers
+    );
+
+    // Discard-all of the OTHER files (submodule excluded) completes.
+    let paths = vec!["tracked.txt".to_string()];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    execute_discard(&repo, &plan, &paths).expect("execute");
+    assert_eq!(read_file(&d, "tracked.txt"), "committed\n");
+
+    // The submodule change is untouched (still dirty), never mangled.
+    let status = working_tree_status(&repo).expect("status");
+    assert!(
+        status.unstaged.iter().any(|f| f.path == Path::new("sub")),
+        "submodule must remain dirty (not discarded, not aborted): {:?}",
+        status.unstaged
+    );
+}

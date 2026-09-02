@@ -340,6 +340,14 @@ mod tests {
             "'dir/file.txt' has no unstaged changes to discard."
         );
         assert_eq!(
+            DiscardNote::TargetSubmodule {
+                path: "vendor/sub".into()
+            }
+            .message_en(),
+            "'vendor/sub' is a submodule. Discard cannot operate on submodules; \
+             manage the change from inside the submodule instead."
+        );
+        assert_eq!(
             DiscardNote::UntrackedWillBeDeleted { count: 3 }.message_en(),
             "⚠️ 3 untracked file(s) will be PERMANENTLY DELETED from disk (and any \
              now-empty folders removed). A backup blob is saved to the oplog first — \

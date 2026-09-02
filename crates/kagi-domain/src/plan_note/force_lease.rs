@@ -8,7 +8,7 @@
 //! else's work — the entire reason `--force-with-lease` exists over `--force`.
 
 /// Plan notes for the force-with-lease-push op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ForceLeaseNote {
     /// blocker (`plan_force_with_lease_push`) — no upstream is configured for
     /// the current branch, so there is nothing to lease-check against.
@@ -49,7 +49,7 @@ impl ForceLeaseNote {
 }
 
 /// Plan titles for the force-with-lease-push op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ForceLeaseTitle {
     /// `plan_force_with_lease_push` — `Force-with-lease push '<branch>' to '<remote>'`.
     ForceLeasePush { branch: String, remote: String },
@@ -67,7 +67,7 @@ impl ForceLeaseTitle {
 }
 
 /// Recovery kinds for the force-with-lease-push op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ForceLeaseRecovery {
     /// `plan_force_with_lease_push` — push the remote's pre-force tip back,
     /// itself lease-protected against the just-completed push.

@@ -9,7 +9,7 @@
 //! switch-specific templates.
 
 /// Plan notes for the switch op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum SwitchNote {
     /// blocker — tracking-checkout: the new local branch name is empty.
     LocalNameEmpty,
@@ -82,7 +82,7 @@ impl SwitchNote {
 }
 
 /// Plan titles for the switch op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum SwitchTitle {
     /// `Checkout {remote} as local branch {local}`.
     CheckoutTracking { remote: String, local: String },
@@ -105,7 +105,7 @@ impl SwitchTitle {
 }
 
 /// Recovery kinds for the switch op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum SwitchRecovery {
     /// tracking-checkout: switch back and delete the new branch if unwanted.
     CheckoutTracking { local: String },

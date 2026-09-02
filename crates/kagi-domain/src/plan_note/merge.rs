@@ -4,7 +4,7 @@
 /// The in-progress `.git/` operation a merge would collide with (issue #299).
 /// A pure-domain twin of `git2::RepositoryState`, mapped in the git layer so
 /// `kagi-domain` stays git2-free.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InProgressOp {
     Merge,
     Rebase,
@@ -42,7 +42,7 @@ impl InProgressOp {
 }
 
 /// Plan notes for the merge op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum MergeNote {
     /// blocker — `target` is already the current branch (merge into self).
     TargetIsCurrent { target: String },
@@ -195,7 +195,7 @@ fn capped_files_en(count: usize, files: &[String]) -> String {
 }
 
 /// Plan titles for the merge op family (appendix §C `merge` row).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum MergeTitle {
     /// `Merge {target} into {current}` / `Merge {target} into current branch`
     /// (`current: None` when HEAD had no branch name at plan time).
@@ -222,7 +222,7 @@ impl MergeTitle {
 }
 
 /// Recovery kinds for the merge op family (appendix §D `merge` row).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum MergeRecovery {
     /// The sole merge recovery template: reflog + `git revert -m 1`.
     AfterMerge,

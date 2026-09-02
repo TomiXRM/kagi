@@ -5,7 +5,7 @@
 //! reuses `CommonNote` (verified against source; no shared shapes here).
 
 /// Plan notes for the branch-cleanup op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CleanupNote {
     /// blocker — no branches were selected for deletion.
     NoSelection,
@@ -56,7 +56,7 @@ impl CleanupNote {
 }
 
 /// Plan titles for the branch-cleanup op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CleanupTitle {
     /// `plan_delete_merged_branches` — `Delete <count> merged branch(es)`.
     CleanupDelete { count: usize },
@@ -74,7 +74,7 @@ impl CleanupTitle {
 }
 
 /// Recovery kinds for the branch-cleanup op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CleanupRecovery {
     /// `plan_delete_merged_branches` — every deleted tip OID is recorded in
     /// the oplog; the two restore commands are TEMPLATES (`<name>`/`<oid>`

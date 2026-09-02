@@ -21,7 +21,7 @@
 use super::common::DirtyParts;
 
 /// Plan notes for the checkout op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutNote {
     /// blocker (`plan_checkout`) — target branch is already the current HEAD
     /// branch (no-op family, ADR-0129 appendix §F).
@@ -82,7 +82,7 @@ impl CheckoutNote {
 }
 
 /// Plan titles for the checkout op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutTitle {
     /// `plan_checkout` — `Checkout branch '<branch>'`.
     Checkout { branch: String },
@@ -103,7 +103,7 @@ impl CheckoutTitle {
 }
 
 /// Recovery kinds for the checkout op family.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutRecovery {
     /// `plan_checkout` — return to the previous branch.
     Checkout { previous: String },

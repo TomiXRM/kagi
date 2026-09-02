@@ -573,3 +573,68 @@ fn rename_rename_not_collapsed() {
     assert!(paths.contains(&"c.txt".to_string()), "got {paths:?}");
     assert_eq!(paths.len(), 3, "rename/rename must not collapse: {paths:?}");
 }
+
+/// #297 regression (the real GUI path): once an autosave exists, re-entering
+/// Conflict Mode must STILL let you take a side of a binary conflict, and the
+/// chosen side must survive the next re-detection.
+///
+/// The GUI builds the buffer on every (re-)detection. The old code did
+/// `load().or_else(from_repo)`, so as soon as an autosave existed it
+/// short-circuited `from_repo` — and autosave does not persist the
+/// index-derived `raw` metadata, leaving `raw = false`. A binary "take side"
+/// then fell into the text path and failed with "that side does not exist"
+/// (exactly the `[kagi] conflict-mode: choice failed … (modify/delete or
+/// binary)` seen in the GUI). `from_repo_with_autosave` makes the index
+/// metadata authoritative and overlays only the saved drafts.
+#[test]
+fn binary_choice_works_and_survives_reload_through_autosave() {
+    // Hermetic autosave dir (this is the only test that exercises autosave).
+    let logdir = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", logdir.path());
+
+    let (tmp, main_bytes, _side_bytes) = binary_merge_conflict();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert_eq!(session.files[0].kind, ConflictKind::Binary);
+
+    // Simulate the on-open autosave BEFORE any choice (this is what used to
+    // poison the next detection: an autosave with raw=false).
+    ResolutionBuffer::from_repo(&repo)
+        .unwrap()
+        .autosave()
+        .unwrap();
+
+    // Re-enter Conflict Mode: with the fix, raw metadata is re-derived so a
+    // side can be taken. (Under the old load()-only path this apply_choice
+    // fails with "that side does not exist".)
+    let mut buffer = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("blob.bin"), ResolutionChoice::Current)
+        .expect("take-side must work even after an autosave exists (#297)");
+    assert!(
+        continue_blockers(&repo, &session, &buffer).is_empty(),
+        "Continue must enable after choosing a binary side"
+    );
+
+    // Persist the choice, then re-detect again: the chosen raw side must
+    // survive (raw_result is now persisted).
+    buffer.autosave().unwrap();
+    let buffer2 = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    assert!(
+        buffer2.has_resolution(Path::new("blob.bin")),
+        "the chosen binary side must survive re-detection (raw_result persisted)"
+    );
+    assert!(
+        continue_blockers(&repo, &session, &buffer2).is_empty(),
+        "Continue must stay enabled across re-detection"
+    );
+
+    // And it actually commits the chosen (current) bytes.
+    let result =
+        execute_conflict_continue(&repo, dir, &session, &buffer2).expect("continue binary merge");
+    assert!(matches!(result.outcome, ContinueOutcome::Committed(_)));
+    assert_eq!(head_blob_bytes(&repo, "blob.bin"), main_bytes);
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}

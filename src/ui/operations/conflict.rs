@@ -686,9 +686,13 @@ impl KagiApp {
         // Build / reload the resolution buffer.  A previously-autosaved buffer
         // (e.g. from before a restart) is preferred so partial work survives;
         // otherwise materialize a fresh buffer from the index conflicts.
-        let mut buffer = kagi_git::ResolutionBuffer::load(repo_path)
-            .or_else(|| repo.resolution_buffer_from_repo().ok())
-            .unwrap_or_else(|| kagi_git::ResolutionBuffer::new(repo_path));
+        // #297: index-authoritative buffer with autosaved drafts overlaid. The
+        // old `load().or_else(from_repo)` let an autosave (which does not persist
+        // the index-derived `raw` metadata) short-circuit `from_repo`, so a
+        // binary/symlink "take side" failed with "that side does not exist".
+        let mut buffer = repo
+            .resolution_buffer_from_repo_with_autosave()
+            .unwrap_or_else(|_| kagi_git::ResolutionBuffer::new(repo_path));
 
         // Recompute per-file status from the buffer (detection seeds Unresolved).
         let mut session = session;

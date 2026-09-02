@@ -177,6 +177,34 @@ impl ResolutionBuffer {
         Ok(buffer)
     }
 
+    /// Build from the live index (authoritative `raw`/`current_raw`/
+    /// `incoming_raw`/`binary` metadata) and overlay any autosaved *drafts*
+    /// (`result` for text conflicts, `raw_result` for binary/symlink/gitlink).
+    ///
+    /// This is the correct entry point for (re-)entering Conflict Mode. The old
+    /// `load().or_else(from_repo)` was a bug: an autosave (which does NOT persist
+    /// the index-derived `raw` fields — see [`parse_file_object`]) short-circuited
+    /// `from_repo`, leaving `raw = false` so a binary/symlink "take side" fell
+    /// into the text path and failed with "that side does not exist" (#297). Here
+    /// the index metadata always wins; only the user's chosen resolution is
+    /// carried over from autosave.
+    pub fn from_repo_with_autosave(repo: &Repository) -> Result<Self, GitError> {
+        let mut base = Self::from_repo(repo)?;
+        if let Some(saved) = Self::load(&base.repo_path) {
+            for (path, fr) in base.files.iter_mut() {
+                if let Some(s) = saved.files.get(path) {
+                    if s.result.is_some() {
+                        fr.result = s.result.clone();
+                    }
+                    if s.raw_result.is_some() {
+                        fr.raw_result = s.raw_result;
+                    }
+                }
+            }
+        }
+        Ok(base)
+    }
+
     /// Return the zdiff3 (or standard fallback) materialized marker text for a
     /// file, for the UI to show inside the 3-way view.  `None` when the file is
     /// not in the buffer or has no usable text merge.
@@ -953,13 +981,21 @@ fn file_to_json(path: &Path, fr: &FileResolution) -> String {
             format!("[{}]", items.join(","))
         }
     };
+    // #297: persist the chosen raw side (binary/symlink/gitlink) so a taken
+    // side survives re-detection/restart. `current_raw`/`incoming_raw`/`raw`
+    // themselves stay index-derived (re-filled by `from_repo_with_autosave`).
+    let raw_result = match &fr.raw_result {
+        None => "null".to_string(),
+        Some(r) => format!("{{\"oid\":\"{}\",\"mode\":{}}}", r.oid, r.mode),
+    };
     format!(
-        "{{\"path\":\"{}\",\"binary\":{},\"current\":{},\"incoming\":{},\"result\":{}}}",
+        "{{\"path\":\"{}\",\"binary\":{},\"current\":{},\"incoming\":{},\"result\":{},\"raw_result\":{}}}",
         escape_json(&path.to_string_lossy()),
         fr.binary,
         current,
         incoming,
-        result
+        result,
+        raw_result
     )
 }
 
@@ -1005,6 +1041,7 @@ fn parse_file_object(obj: &str) -> Option<(PathBuf, FileResolution)> {
     let current = extract_nullable_string(obj, "current");
     let incoming = extract_nullable_string(obj, "incoming");
     let result = parse_result_array(obj);
+    let raw_result = parse_raw_result(obj);
 
     // Raw (binary/symlink/gitlink) side OIDs are not persisted — a recovered
     // session re-derives them from the live index via `from_repo` (the conflict
@@ -1016,12 +1053,40 @@ fn parse_file_object(obj: &str) -> Option<(PathBuf, FileResolution)> {
         raw: false,
         current_raw: None,
         incoming_raw: None,
-        raw_result: None,
+        raw_result,
         result,
         undo: Vec::new(),
         redo: Vec::new(),
     };
     Some((path, fr))
+}
+
+/// Parse a persisted `"raw_result":{"oid":"<hex>","mode":<u32>}` (or `null`).
+/// The `raw`/`current_raw`/`incoming_raw` metadata is NOT persisted — it is
+/// re-derived from the live index by [`ResolutionBuffer::from_repo_with_autosave`];
+/// only the *chosen* side round-trips here (#297).
+fn parse_raw_result(obj: &str) -> Option<RawResolution> {
+    let key = "\"raw_result\":";
+    let pos = obj.find(key)?;
+    let after = obj[pos + key.len()..].trim_start();
+    if after.starts_with("null") || !after.starts_with('{') {
+        return None;
+    }
+    let oid_hex = extract_string(after, "oid")?;
+    let oid = git2::Oid::from_str(&oid_hex).ok()?;
+    let mode = extract_u32(after, "mode")?;
+    Some(RawResolution { oid, mode })
+}
+
+/// Extract an unquoted integer field `"<key>":<n>` as u32.
+fn extract_u32(obj: &str, key: &str) -> Option<u32> {
+    let needle = format!("\"{}\":", key);
+    let pos = obj.find(&needle)? + needle.len();
+    let rest = obj[pos..].trim_start();
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
 }
 
 /// Parse the `"result":[...]` array of `{"t":..,"o":..}` items, or `None` when

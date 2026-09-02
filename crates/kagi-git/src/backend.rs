@@ -696,6 +696,13 @@ impl Backend {
         ResolutionBuffer::from_repo(&self.repo)
     }
 
+    /// Index-authoritative buffer with autosaved drafts overlaid (#297). The
+    /// correct entry point for entering Conflict Mode — see
+    /// [`ResolutionBuffer::from_repo_with_autosave`].
+    pub fn resolution_buffer_from_repo_with_autosave(&self) -> Result<ResolutionBuffer, GitError> {
+        ResolutionBuffer::from_repo_with_autosave(&self.repo)
+    }
+
     pub fn materialized_markers(&self, buffer: &ResolutionBuffer, path: &Path) -> Option<String> {
         buffer.materialized_markers(&self.repo, path)
     }

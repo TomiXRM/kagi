@@ -6,7 +6,7 @@
 //! KAGI_LOG_DIR is a process-global env var shared by all test threads.
 //! We serialize all tests in this file with ENV_LOCK to prevent races.
 
-use kagi_git::oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
 use kagi_git::ops::StateSummary;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -23,6 +23,10 @@ fn make_summary(head: &str, dirty: &str) -> StateSummary {
 
 fn make_entry(op: &str, ts: i64, outcome: OpOutcome) -> OpLogEntry {
     OpLogEntry {
+        id: 0,
+        parent: None,
+        actor: Actor::Human,
+        worktree: None,
         timestamp: ts,
         op: op.to_string(),
         repo: "/test/repo".to_string(),
@@ -209,6 +213,10 @@ fn special_chars_escaped_in_output() {
     std::env::set_var("KAGI_LOG_DIR", &log_dir);
 
     let entry = OpLogEntry {
+        id: 0,
+        parent: None,
+        actor: Actor::Human,
+        worktree: None,
         timestamp: 0,
         op: "checkout".to_string(),
         repo: "/path/with \"quotes\"".to_string(),
@@ -492,6 +500,10 @@ fn read_tail_restores_escaped_strings() {
     std::env::set_var("KAGI_LOG_DIR", &log_dir);
 
     let entry = OpLogEntry {
+        id: 0,
+        parent: None,
+        actor: Actor::Human,
+        worktree: None,
         timestamp: 42,
         op: "checkout".to_string(),
         repo: "/path/with \"quotes\" and \\backslash".to_string(),

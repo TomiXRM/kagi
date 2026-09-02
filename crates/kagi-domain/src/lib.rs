@@ -39,3 +39,4 @@ pub mod resolution;
 pub mod status;
 pub mod trailers;
 pub mod update;
+pub mod worktree_include;

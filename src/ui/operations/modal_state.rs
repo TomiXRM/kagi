@@ -12,8 +12,9 @@ use super::super::modals::{
     ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
     DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
     EditorDirtyGuardModal, EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal,
-    MergePlanModal, PopPlanModal, PrMergeModal, PullPlanModal, PushPlanModal, PushTagModal,
-    RebaseCurrentOntoModal, RenameBranchModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
+    LockWorktreeModal, MergePlanModal, PopPlanModal, PrMergeModal, PruneWorktreesModal,
+    PullPlanModal, PushPlanModal, PushTagModal, RebaseCurrentOntoModal, RemoveWorktreeModal,
+    RenameBranchModal, RepairWorktreesModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
     StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
     TrackingCheckoutPlanModal, UnlockWorktreeModal,
 };
@@ -174,6 +175,103 @@ impl KagiApp {
     pub fn unlock_worktree_modal_mut(&mut self) -> Option<&mut UnlockWorktreeModal> {
         match &mut self.active_modal {
             Some(ActiveModal::UnlockWorktree(m)) => Some(m),
+            _ => None,
+        }
+    }
+    // ── issue #340: remove / lock / prune / repair worktree modals ──
+    #[inline]
+    pub fn remove_worktree_modal(&self) -> Option<&RemoveWorktreeModal> {
+        match &self.active_modal {
+            Some(ActiveModal::RemoveWorktree(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_remove_worktree_modal(&mut self, m: RemoveWorktreeModal) {
+        self.active_modal = Some(ActiveModal::RemoveWorktree(m));
+    }
+    #[inline]
+    pub fn clear_remove_worktree_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::RemoveWorktree(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn remove_worktree_modal_mut(&mut self) -> Option<&mut RemoveWorktreeModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::RemoveWorktree(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn lock_worktree_modal(&self) -> Option<&LockWorktreeModal> {
+        match &self.active_modal {
+            Some(ActiveModal::LockWorktree(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_lock_worktree_modal(&mut self, m: LockWorktreeModal) {
+        self.active_modal = Some(ActiveModal::LockWorktree(m));
+    }
+    #[inline]
+    pub fn clear_lock_worktree_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::LockWorktree(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn lock_worktree_modal_mut(&mut self) -> Option<&mut LockWorktreeModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::LockWorktree(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn prune_worktrees_modal(&self) -> Option<&PruneWorktreesModal> {
+        match &self.active_modal {
+            Some(ActiveModal::PruneWorktrees(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_prune_worktrees_modal(&mut self, m: PruneWorktreesModal) {
+        self.active_modal = Some(ActiveModal::PruneWorktrees(m));
+    }
+    #[inline]
+    pub fn clear_prune_worktrees_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::PruneWorktrees(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn prune_worktrees_modal_mut(&mut self) -> Option<&mut PruneWorktreesModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::PruneWorktrees(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn repair_worktrees_modal(&self) -> Option<&RepairWorktreesModal> {
+        match &self.active_modal {
+            Some(ActiveModal::RepairWorktrees(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_repair_worktrees_modal(&mut self, m: RepairWorktreesModal) {
+        self.active_modal = Some(ActiveModal::RepairWorktrees(m));
+    }
+    #[inline]
+    pub fn clear_repair_worktrees_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::RepairWorktrees(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn repair_worktrees_modal_mut(&mut self) -> Option<&mut RepairWorktreesModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::RepairWorktrees(m)) => Some(m),
             _ => None,
         }
     }

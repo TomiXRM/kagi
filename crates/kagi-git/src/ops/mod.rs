@@ -122,6 +122,7 @@ mod stash;
 mod switch;
 mod tag;
 mod worktree;
+mod worktree_lifecycle;
 
 pub use branch::*;
 pub use branch_cleanup::*;
@@ -144,6 +145,7 @@ pub use stash::*;
 pub use switch::*;
 pub use tag::*;
 pub use worktree::*;
+pub use worktree_lifecycle::*;
 
 // ────────────────────────────────────────────────────────────
 // Public types

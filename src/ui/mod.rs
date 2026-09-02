@@ -3097,6 +3097,14 @@ impl KagiApp {
             self.confirm_stash_push(cx);
         } else if self.unlock_worktree_modal().is_some() {
             self.confirm_unlock_worktree(cx);
+        } else if self.remove_worktree_modal().is_some() {
+            self.confirm_remove_worktree(cx);
+        } else if self.lock_worktree_modal().is_some() {
+            self.confirm_lock_worktree(cx);
+        } else if self.prune_worktrees_modal().is_some() {
+            self.confirm_prune_worktrees(cx);
+        } else if self.repair_worktrees_modal().is_some() {
+            self.confirm_repair_worktrees(cx);
         } else if self.create_worktree_modal().is_some() {
             self.start_create_worktree(cx);
         } else if self.create_branch_modal().is_some() {
@@ -3175,6 +3183,14 @@ impl KagiApp {
             self.cancel_stash_push_modal();
         } else if self.unlock_worktree_modal().is_some() {
             self.cancel_unlock_worktree_modal();
+        } else if self.remove_worktree_modal().is_some() {
+            self.cancel_remove_worktree_modal();
+        } else if self.lock_worktree_modal().is_some() {
+            self.cancel_lock_worktree_modal();
+        } else if self.prune_worktrees_modal().is_some() {
+            self.cancel_prune_worktrees_modal();
+        } else if self.repair_worktrees_modal().is_some() {
+            self.cancel_repair_worktrees_modal();
         } else if self.create_worktree_modal().is_some() {
             self.cancel_create_worktree_modal();
         } else if self.create_branch_modal().is_some() {

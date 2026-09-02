@@ -418,6 +418,19 @@ impl KagiApp {
         .when_some(unlock_worktree_modal, |el, modal| {
             el.child(render_unlock_worktree_modal(modal, cx))
         })
+        // ── Worktree lifecycle confirmations (issue #340) ──
+        .when_some(self.remove_worktree_modal().cloned(), |el, modal| {
+            el.child(render_remove_worktree_modal(modal, cx))
+        })
+        .when_some(self.lock_worktree_modal().cloned(), |el, modal| {
+            el.child(render_lock_worktree_modal(modal, cx))
+        })
+        .when_some(self.prune_worktrees_modal().cloned(), |el, modal| {
+            el.child(render_prune_worktrees_modal(modal, cx))
+        })
+        .when_some(self.repair_worktrees_modal().cloned(), |el, modal| {
+            el.child(render_repair_worktrees_modal(modal, cx))
+        })
         // ── Push plan modal overlay (T-HT-004) ──────────
         .when_some(push_modal, |el, modal| {
             el.child(render_push_modal(modal, cx))

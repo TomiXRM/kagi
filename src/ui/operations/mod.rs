@@ -22,6 +22,7 @@ pub mod stash;
 pub mod tag;
 pub mod worktree;
 
+use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;
 use crate::ui::KagiApp;
 use gpui::{Context, SharedString, Task};
@@ -48,6 +49,14 @@ enum OpDisposition {
 /// (the result belongs to a tab the user has since left). Mirrors the sibling
 /// async guards in `reload.rs` / `mod.rs` — using both signals is strictly
 /// safer than either alone.
+/// Whether a state-changing op may start right now. `busy_op` is the single
+/// in-flight-op latch; a mutation started while another is running is exactly
+/// the concurrent-mutation hazard #283 is about, so every entry point that
+/// begins one consults this. Pure so the gate is testable without a Context.
+pub(crate) fn op_may_start(busy_op: Option<&'static str>) -> bool {
+    busy_op.is_none()
+}
+
 fn op_result_applies(
     current_repo: Option<&Path>,
     current_gen: u64,
@@ -92,6 +101,17 @@ impl KagiApp {
     ///   keeping the update closure reachable — and `busy_op` is cleared
     ///   unconditionally at its top, so no outcome (stale, panic, or success)
     ///   can leave it stuck.
+    /// Reject a state-changing op if another is in flight (#283 stage 1).
+    /// Returns true (and sets the footer) when the caller must bail out.
+    pub(crate) fn reject_if_busy(&mut self, cx: &mut Context<Self>) -> bool {
+        if op_may_start(self.busy_op) {
+            return false;
+        }
+        self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        cx.notify();
+        true
+    }
+
     fn finish_op_on_main<R, F>(&mut self, cx: &mut Context<Self>, task: Task<R>, on_done: F)
     where
         R: 'static,
@@ -142,6 +162,16 @@ impl KagiApp {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn op_may_start_only_when_no_op_is_in_flight() {
+        // #283: the single in-flight-op latch is the concurrent-mutation gate.
+        assert!(op_may_start(None), "idle must allow a new op");
+        assert!(
+            !op_may_start(Some("merge")),
+            "an op in flight must block a new one"
+        );
+    }
 
     #[test]
     fn applies_when_repo_and_generation_match() {

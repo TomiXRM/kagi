@@ -257,7 +257,9 @@ impl KagiApp {
         let undo_on = self.operation_history.can_undo();
         let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if this.operation_history.can_undo() {
-                this.open_history_undo_modal();
+                if !this.reject_if_busy(cx) {
+                    this.open_history_undo_modal();
+                }
             } else {
                 this.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
             }
@@ -268,7 +270,9 @@ impl KagiApp {
         let redo_on = self.operation_history.can_redo();
         let redo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if this.operation_history.can_redo() {
-                this.open_history_redo_modal();
+                if !this.reject_if_busy(cx) {
+                    this.open_history_redo_modal();
+                }
             } else {
                 this.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
             }

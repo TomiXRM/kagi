@@ -297,17 +297,18 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        // Conflicts are gone → re-detect clears Conflict Mode.
-                        self.reload(cx);
                         // Offer to drop the kept stash (opt-in — the standard
-                        // conflicted `stash pop` keeps stash@{0}). The drop-confirm
-                        // modal shows the stash label, so a wrong target is visible
-                        // before the user confirms.
+                        // conflicted `stash pop` keeps stash@{0}). reload() is
+                        // ASYNC and its apply clears every modal, so opening the
+                        // drop prompt here would be wiped; instead arm a one-shot
+                        // that reload consumes AFTER the clear sweep.
                         // ponytail: index 0 is the standard pop target; threading
                         // the real popped index through Conflict Mode would need the
                         // stash op to persist it — add that if deeper-stash pops
                         // become common.
-                        self.open_stash_drop_modal(0);
+                        self.pending_stash_drop = Some(0);
+                        // Conflicts are gone → re-detect clears Conflict Mode.
+                        self.reload(cx);
                     }
                     Err(e) => {
                         let err_msg = format!("{}", e);

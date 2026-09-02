@@ -1294,6 +1294,11 @@ pub struct KagiApp {
     /// watcher) — kept off `ConflictState` so the upcoming `ConflictView` entity
     /// flip never has to be leased just to test the gate (ADR-0118 Mechanism B).
     pub conflict_merge_pending: bool,
+    /// #309 one-shot: after a stash-conflict Continue stages the resolution, the
+    /// kept stash's index to offer for dropping. Set before `reload`; consumed
+    /// (via `take`) at the END of the reload apply, so the drop-confirm modal is
+    /// opened AFTER reload's `clear_*_modal()` sweep instead of being wiped by it.
+    pub pending_stash_drop: Option<usize>,
     /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
     /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
     /// index entries).  This is the "ready to create the merge commit" state — the
@@ -1549,6 +1554,7 @@ impl KagiApp {
             conflict: None,
             conflict_detected_for: None,
             conflict_merge_pending: false,
+            pending_stash_drop: None,
             merge_commit_ready: false,
             update_available: None,
             update_checked: false,

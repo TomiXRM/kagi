@@ -546,6 +546,12 @@ pub(crate) fn render_diff_list<V: 'static>(
     // render of an open diff pane (index pairs only — content is shared).
     let split = super::theme::diff_split();
     let srows = split.then(|| std::sync::Arc::new(super::diff_split::split_rows(&view.rows)));
+    // #349 move detection: computed once per open diff pane, shared across rows.
+    let moved = std::sync::Arc::new(if split {
+        super::diff_split::moved_rows(&view.rows)
+    } else {
+        std::collections::HashSet::new()
+    });
     let row_count = srows
         .as_ref()
         .map(|s| s.len())
@@ -725,6 +731,7 @@ pub(crate) fn render_diff_list<V: 'static>(
                                 s,
                                 ix,
                                 sel_key,
+                                &moved,
                             ),
                             None => render_main_diff_row(&rows_for_list, ix, sel_key),
                         }

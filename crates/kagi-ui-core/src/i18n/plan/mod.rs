@@ -25,6 +25,7 @@ pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
 pub mod snapshot;
+pub mod ruleset;
 pub mod stash;
 pub mod switch;
 pub mod tag;
@@ -62,6 +63,7 @@ pub fn plan_note_text(note: &PlanNote) -> String {
             PlanNote::Github(n) => github::note_ja(n),
             PlanNote::Rebase(n) => rebase::note_ja(n),
             PlanNote::Snapshot(n) => snapshot::note_ja(n),
+            PlanNote::Ruleset(n) => ruleset::note_ja(n),
         },
     }
 }

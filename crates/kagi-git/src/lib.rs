@@ -26,6 +26,7 @@ pub mod oplog;
 pub mod ops;
 use kagi_domain::refs; // ADR-0121: was a shim file
 pub mod resolution;
+pub mod ruleset;
 pub mod session;
 mod snapshot;
 mod staging;

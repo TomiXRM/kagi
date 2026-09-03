@@ -35,6 +35,7 @@ pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
 pub mod snapshot;
+pub mod ruleset;
 pub mod stash;
 pub mod switch;
 pub mod tag;
@@ -59,6 +60,7 @@ pub use rebase::{RebaseNote, RebaseRecovery, RebaseTitle};
 pub use remote_branch::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};
 pub use reset::{ResetNote, ResetRecovery, ResetTitle};
 pub use snapshot::{SnapshotNote, SnapshotRecovery, SnapshotTitle};
+pub use ruleset::{RuleField, RulesetNote};
 pub use stash::{StashNote, StashRecovery, StashTitle};
 pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
 pub use tag::{TagNote, TagRecovery, TagTitle};
@@ -95,6 +97,8 @@ pub enum PlanNote {
     Github(GithubNote),
     Rebase(RebaseNote),
     Snapshot(SnapshotNote),
+    /// GitHub-ruleset findings (#346 — no title/recovery).
+    Ruleset(RulesetNote),
 }
 
 impl PlanNote {
@@ -126,6 +130,7 @@ impl PlanNote {
             PlanNote::Github(n) => n.message_en(),
             PlanNote::Rebase(n) => n.message_en(),
             PlanNote::Snapshot(n) => n.message_en(),
+            PlanNote::Ruleset(n) => n.message_en(),
         }
     }
 }
@@ -439,6 +444,7 @@ mod tests {
             PlanNote::Github(GithubNote::RemoteSideEffect),
             PlanNote::Rebase(RebaseNote::DetachedHead),
             PlanNote::Snapshot(SnapshotNote::SavepointFirst),
+            PlanNote::Ruleset(RulesetNote::ConstraintsUnknown),
         ];
 
         for note in &cases {
@@ -467,6 +473,7 @@ mod tests {
                 PlanNote::Github(n) => n.message_en(),
                 PlanNote::Rebase(n) => n.message_en(),
                 PlanNote::Snapshot(n) => n.message_en(),
+                PlanNote::Ruleset(n) => n.message_en(),
             };
             assert_eq!(note.message_en(), inner, "dispatch arm for {note:?}");
             // … which is never empty, and reaches Display unchanged.

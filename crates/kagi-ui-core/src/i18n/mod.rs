@@ -858,6 +858,13 @@ pub enum Msg {
     UnsafeUnicodeBadge,
     /// Tooltip explaining the [`Msg::UnsafeUnicodeBadge`] badge.
     UnsafeUnicodeTooltip,
+    // ── issue #346: GitHub-ruleset live-validation badge ─────────────
+    /// Small badge shown next to the commit-message / branch-name field when
+    /// the current input would violate the fetched GitHub branch ruleset.
+    RulesetBadge,
+    /// Tooltip lead-in for [`Msg::RulesetBadge`] (the specific finding text is
+    /// appended by the caller).
+    RulesetBadgeTooltip,
 }
 
 impl Msg {
@@ -870,6 +877,12 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (lang(), self) {
+            // ── issue #346: ruleset badge ───────────────────────────
+            (En, RulesetBadge) => "Ruleset",
+            (Ja, RulesetBadge) => "Ruleset",
+            (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
+            (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
+
             // ── Generic guards ──────────────────────────────────────
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",

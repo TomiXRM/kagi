@@ -483,7 +483,7 @@ mod tests {
 
         // One fixture per `PlanNote` variant — bump this when a category is
         // added (and add its row above).
-        assert_eq!(cases.len(), 23, "one fixture per PlanNote variant");
+        assert_eq!(cases.len(), 24, "one fixture per PlanNote variant");
     }
 
     #[test]

@@ -277,12 +277,19 @@ pub fn augment_commit_plan(
     apply_findings(plan, findings);
 }
 
-/// Fold the cached ruleset for the *new* branch `name` into `plan` (#346):
-/// branch_name pattern + creation rule. Cache-only; a no-op when uncached.
+/// Fold the branch ruleset into `plan` for a create of `name` (#346):
+/// branch_name pattern + creation rule. The candidate branch does not exist
+/// yet and is never fetched, so we key the cache on the **current branch**
+/// (the ruleset `fetch_remote` actually refreshes, #401) and evaluate the
+/// pattern against `name`. Cache-only; a no-op when uncached.
 pub fn augment_branch_create_plan(plan: &mut OperationPlan, repo: &git2::Repository, name: &str) {
+    let base = match crate::resolve_head(repo) {
+        Ok(crate::Head::Attached { branch, .. }) | Ok(crate::Head::Unborn { branch }) => branch,
+        _ => return,
+    };
     if let Some(rs) = repo
         .workdir()
-        .and_then(|w| ruleset_cached(w, name))
+        .and_then(|w| ruleset_cached(w, &base))
         .and_then(|s| s.active().cloned())
     {
         apply_findings(plan, rs.validate_branch_create(name));

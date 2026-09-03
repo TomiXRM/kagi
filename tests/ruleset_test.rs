@@ -143,10 +143,13 @@ fn plan_create_branch_surfaces_branch_name_pattern_violation() {
     let head = repo.head().unwrap().target().unwrap().to_string();
     let at = CommitId(head);
 
-    // Ruleset is keyed by the *new* branch name (branch need not exist yet).
+    // Production only ever populates the cache for the *current* branch
+    // (fetch_remote refreshes `main`); a prospective branch is never fetched.
+    // Seed the key production writes so this fails if the lookup is keyed on
+    // the new name again (#401).
     seed_active(
         &repo,
-        "hotfix-1",
+        "main",
         Ruleset {
             branch_name: Some(pat(PatternOp::StartsWith, "feature/")),
             ..Ruleset::default()

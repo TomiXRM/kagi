@@ -112,8 +112,12 @@ impl KagiApp {
         true
     }
 
-    fn finish_op_on_main<R, F>(&mut self, cx: &mut Context<Self>, task: Task<R>, on_done: F)
-    where
+    pub(crate) fn finish_op_on_main<R, F>(
+        &mut self,
+        cx: &mut Context<Self>,
+        task: Task<R>,
+        on_done: F,
+    ) where
         R: 'static,
         F: FnOnce(&mut Self, R, &mut Context<Self>) + 'static,
     {
@@ -192,6 +196,38 @@ mod tests {
         let now = PathBuf::from("/repo/b");
         let owner = PathBuf::from("/repo/a");
         assert!(!op_result_applies(Some(&now), 7, Some(&owner), 7));
+    }
+
+    #[test]
+    fn pr_merge_is_blocked_while_another_op_is_in_flight() {
+        // #402: a PR merge is a write op — with any op latched (its own tag or
+        // a local git op) `reject_if_busy` must refuse it, same as every other
+        // start_*. Guards the regression where start_pr_merge never read
+        // busy_op.
+        assert!(
+            !op_may_start(Some("pr-merge")),
+            "a pr-merge in flight must block a new op"
+        );
+        assert!(
+            !op_may_start(Some("checkout")),
+            "a local op in flight must block a pr-merge"
+        );
+    }
+
+    #[test]
+    fn pr_merge_result_dropped_when_tab_switched() {
+        // #402: switching to another repo tab mid-merge must drop the result
+        // so pr_mode_close_tab_for / fetch_async can't land on the wrong repo.
+        let owner = PathBuf::from("/repo/pr");
+        let now = PathBuf::from("/repo/other");
+        assert!(
+            !op_result_applies(Some(&now), 3, Some(&owner), 3),
+            "merge result must not apply after the repo tab changed"
+        );
+        assert!(
+            !op_result_applies(Some(&owner), 4, Some(&owner), 3),
+            "merge result must not apply after the tab-switch generation moved"
+        );
     }
 
     #[test]

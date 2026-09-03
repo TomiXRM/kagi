@@ -546,7 +546,7 @@ impl EditorWorkspaceView {
             diff_scroll: new_diff_list_state(),
             show_tree: true,
             tree_menu: None,
-            show_blame: false,
+            show_blame: kagi_ui_core::settings::Settings::load().blame_inline(),
             blame: None,
             blame_loading: false,
             preview_markdown: false,
@@ -1092,6 +1092,11 @@ impl EditorWorkspaceView {
         klog!(
             "editor-ws: blame {}",
             if self.show_blame { "on" } else { "off" }
+        );
+        // Persist the preference so it survives a restart (issue #350 follow-up).
+        kagi_ui_core::settings::write_setting(
+            "blame_inline",
+            Some(if self.show_blame { "true" } else { "false" }),
         );
         self.maybe_load_blame(cx);
         cx.notify();

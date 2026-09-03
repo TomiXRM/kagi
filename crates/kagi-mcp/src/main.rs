@@ -1,7 +1,11 @@
 //! `kagi-mcp` binary — an MCP server over stdio JSON-RPC (#331).
 //!
 //! Usage:
-//!   kagi-mcp stdio --repo <path>
+//!   kagi-mcp stdio --repo <path> [--readonly]
+//!
+//! Read-only mode (#332): `--readonly` (or env `KAGI_MCP_READONLY=1|true`)
+//! removes the write tool `kagi_confirm` from `tools/list`; calling it returns
+//! method-not-found. The CLI flag wins over any other source of the setting.
 //!
 //! The repository is fixed at startup (PM-locked §5): tools take no `repo_path`,
 //! so an agent connected to this server cannot reach any other repository.
@@ -19,7 +23,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("stdio") => {}
         _ => {
-            eprintln!("usage: kagi-mcp stdio --repo <path>");
+            eprintln!("usage: kagi-mcp stdio --repo <path> [--readonly]");
             return ExitCode::from(2);
         }
     }
@@ -41,7 +45,15 @@ fn main() -> ExitCode {
         );
     }
 
+    // CLI flag wins; the env var is the fallback source (#332).
+    let readonly = args.iter().any(|a| a == "--readonly")
+        || matches!(
+            std::env::var("KAGI_MCP_READONLY").as_deref(),
+            Ok("1") | Ok("true")
+        );
+
     let mut server = Server::new(repo);
+    server.set_readonly(readonly);
     let stdin = io::stdin();
     let stdout = io::stdout();
     if let Err(e) = serve_stdio(&mut server, BufReader::new(stdin.lock()), stdout.lock()) {

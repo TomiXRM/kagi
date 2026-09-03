@@ -1,11 +1,17 @@
 //! Tool catalogue for `tools/list` — names, descriptions, input schemas, and
 //! MCP annotations (#331 / #332).
 //!
-//! Annotation mapping (PM-locked, mirrors the #332 table):
-//! - read tools → `readOnlyHint: true`
-//! - `kagi_plan` → `readOnlyHint: true` (returns a plan, mutates nothing)
-//! - `kagi_confirm` → `destructiveHint: true` (the one tool the host prompts on)
-//! - fetch/push plan ops carry `openWorldHint: true` on `kagi_confirm`.
+//! Annotation mapping (PM-locked, #332): annotations are DERIVED from Kagi's
+//! existing danger classification, not hand-tabled per tool:
+//! - read tools (and `kagi_plan`, which mutates nothing) → `readOnlyHint: true`
+//! - `kagi_confirm` folds `OperationPlan.destructive` (ADR-0004/0023) over the
+//!   supported op set (`write::SUPPORTED_OPS`) → `destructiveHint`
+//! - `openWorldHint` follows op kind: true only if a network op (fetch/push)
+//!   is in the set. None is today, so `kagi_confirm` derives to `false`.
+//!
+//! The fold constants in `write.rs` are pinned to real `OperationPlan`s by the
+//! `tools_list_annotations_derive_from_plan_classification` test, so the
+//! advertised hints and the classification cannot drift.
 //!
 //! **Intentionally absent tools**: there is no force-push, no `reset --hard`,
 //! and no `git clean`. This is Kagi's reason to exist — destructive history/
@@ -41,17 +47,38 @@ pub fn is_read_tool(name: &str) -> bool {
     READ_TOOLS.contains(&name)
 }
 
-/// The full `tools/list` array.
-pub fn tool_list() -> Vec<Value> {
+/// The full `tools/list` array. In read-only mode (#332) the write tool
+/// `kagi_confirm` is removed entirely — it does not exist, rather than
+/// existing-but-refusing. `kagi_plan` stays: planning is pure inspection.
+pub fn tool_list(readonly: bool) -> Vec<Value> {
     let mut v = read_tools();
     v.push(plan_tool());
-    v.push(confirm_tool());
+    if !readonly {
+        v.push(confirm_tool());
+    }
     v
 }
 
-/// `{ readOnlyHint: true }` — a read tool never mutates the repo.
+/// Derive an MCP annotation object from Kagi's classification (#332). This is
+/// the ONLY place annotation JSON is built — callers pass a classification,
+/// never a hand-written hint object.
+pub fn derive_annotations(read_only: bool, destructive: bool, network: bool) -> Value {
+    if read_only {
+        json!({ "readOnlyHint": true, "openWorldHint": network })
+    } else {
+        json!({
+            "readOnlyHint": false,
+            "destructiveHint": destructive,
+            "idempotentHint": false,
+            "openWorldHint": network,
+        })
+    }
+}
+
+/// A read tool never mutates the repo. `kagi_diff` included: diff-cache
+/// warming is an internal optimization, not an observable side effect (#332).
 fn read_only() -> Value {
-    json!({ "readOnlyHint": true, "openWorldHint": false })
+    derive_annotations(true, false, false)
 }
 
 fn obj(props: Value, required: &[&str]) -> Value {
@@ -178,13 +205,14 @@ fn plan_tool() -> Value {
             &["op"],
         ),
         // Planning mutates nothing.
-        json!({ "readOnlyHint": true, "openWorldHint": false }),
+        derive_annotations(true, false, false),
     )
 }
 
-/// `kagi_confirm` — the single destructive-annotated tool. Calling it IS the
-/// approval; the host prompts here. `openWorldHint: true` because the supported
-/// ops may include fetch/push (network) in future — hosts treat it as such.
+/// `kagi_confirm` — the single write tool. Calling it IS the approval; the
+/// host prompts here. Its hints are DERIVED: `destructiveHint` is the fold of
+/// `OperationPlan.destructive` over `write::SUPPORTED_OPS`, and
+/// `openWorldHint` follows op kind (no fetch/push op exists → false).
 fn confirm_tool() -> Value {
     tool(
         "kagi_confirm",
@@ -198,6 +226,10 @@ fn confirm_tool() -> Value {
             json!({ "plan_id": { "type": "string", "description": "plan_id from kagi_plan" } }),
             &["plan_id"],
         ),
-        json!({ "destructiveHint": true, "openWorldHint": true, "idempotentHint": false }),
+        derive_annotations(
+            false,
+            crate::write::CONFIRM_DESTRUCTIVE,
+            crate::write::CONFIRM_NETWORK,
+        ),
     )
 }

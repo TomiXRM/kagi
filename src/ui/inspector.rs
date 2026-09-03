@@ -77,6 +77,13 @@ pub fn render_inspector(
     // W16-DIFFSTAT: per-file additions/deletions for the changed files (commit
     // vs parent). `None` when unavailable or in compare mode.
     changed_diffstat: Option<Vec<FileDiffStat>>,
+    // issue #348: per-file "is generated" flags aligned with `changed_files`.
+    // Generated / lockfile entries are folded under a collapsed "Generated (N)"
+    // section. `None` (compare mode / not yet computed) → nothing folded.
+    generated: Option<Vec<bool>>,
+    // issue #348: whether the "Generated (N)" section is expanded. Default
+    // `false` (folding on).
+    generated_expanded: bool,
     compare_view: Option<CompareView>,
     active_file: Option<usize>,
     tree_view: bool,
@@ -129,12 +136,24 @@ pub fn render_inspector(
         &kagi_domain::message::reflow_message(d.full_message.as_ref()),
     ));
 
-    // ── Tree rows ─────────────────────────────────────────────────────────
-    let tree_rows = truncated_files
-        .as_ref()
-        .map(|files| file_tree::build_file_tree(files));
+    // ── Generated-file grouping (issue #348) ──────────────────────────────
+    // Align the generated flags with the (truncated) file list; a missing or
+    // mismatched vec means "nothing generated" so folding is a no-op.
+    let n_files = truncated_files.as_ref().map(|f| f.len()).unwrap_or(0);
+    let gen_flags: Vec<bool> = match &generated {
+        Some(g) if g.len() >= n_files => g[..n_files].to_vec(),
+        _ => vec![false; n_files],
+    };
+    let has_generated = gen_flags.iter().any(|&g| g);
+    let generated_count = gen_flags.iter().filter(|&&g| g).count();
 
-    let tree_element_rows: Vec<_> = if tree_view {
+    // ── Tree rows (generated files removed; folded separately below) ──────
+    let tree_rows = truncated_files.as_ref().map(|files| {
+        let rows = file_tree::build_file_tree(files);
+        file_tree::retain_files(rows, |i| !gen_flags.get(i).copied().unwrap_or(false))
+    });
+
+    let mut tree_element_rows: Vec<_> = if tree_view {
         match &tree_rows {
             None => vec![],
             Some(rows) => rows
@@ -222,66 +241,70 @@ pub fn render_inspector(
                 .collect(),
         }
     } else {
-        // ── Flat path list ─────────────────────────────────────────────────
+        // ── Flat path list (generated files folded separately) ──────────────
         match truncated_files.as_ref() {
             None => vec![],
             Some(files) => files
                 .iter()
                 .enumerate()
-                .map(|(fi, fs)| {
-                    let (badge_char, badge_color, _) = status_badge(Some(&fs.change), false);
-                    let path_text = SharedString::from(fs.path.to_string_lossy().into_owned());
-                    let stat = changed_diffstat
-                        .as_ref()
-                        .and_then(|stats| find_stat(stats, &fs.path));
-                    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_main_diff_inspector_file(fi, cx);
-                        cx.notify();
-                    });
-                    // Right-click → context menu (History / Edit / Copy Path);
-                    // used to jump straight to File History.
-                    let menu_click =
-                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                            this.inspector_file_menu = Some((fi, e.position));
-                            cx.stop_propagation();
-                            cx.notify();
-                        });
-                    div()
-                        .id(("file-flat", fi))
-                        .on_mouse_down(MouseButton::Right, menu_click)
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .mb_px()
-                        .flex_shrink_0()
-                        .when(active_file == Some(fi), |el| {
-                            el.bg(rgb(theme().selected)).rounded_sm()
-                        })
-                        .on_click(click)
-                        .child(
-                            div()
-                                .w(theme::scaled_px(14.))
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(rgb(badge_color))
-                                .child(SharedString::from(badge_char)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .truncate()
-                                .child(path_text),
-                        )
-                        .child(diffstat_unit(fi, stat))
-                        .into_any()
-                })
+                .filter(|(fi, _)| !gen_flags.get(*fi).copied().unwrap_or(false))
+                .map(|(fi, fs)| flat_file_row(fi, fs, active_file, changed_diffstat.as_ref(), cx))
                 .collect(),
         }
     };
+
+    // ── Generated / lockfile fold (issue #348) ────────────────────────────
+    // Collapsed by default: a "Generated (N)" disclosure row; expanded, it
+    // lists the folded files (flat, whatever the view mode).
+    if has_generated {
+        let expanded = generated_expanded;
+        let arrow = if expanded { "▾" } else { "▸" };
+        let label = format!(
+            "{arrow} {} ({generated_count})",
+            i18n::Msg::GeneratedFilesSection.t()
+        );
+        let toggle = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+            this.inspector_generated_expanded = !this.inspector_generated_expanded;
+            cx.notify();
+        });
+        tree_element_rows.push(
+            div()
+                .id("generated-fold-header")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .mt_1()
+                .mb_px()
+                .flex_shrink_0()
+                .on_click(toggle)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_sm()
+                        .text_color(rgb(theme().text_sub))
+                        .truncate()
+                        .child(SharedString::from(label)),
+                )
+                .into_any(),
+        );
+        if expanded {
+            if let Some(files) = truncated_files.as_ref() {
+                for (fi, fs) in files.iter().enumerate() {
+                    if gen_flags.get(fi).copied().unwrap_or(false) {
+                        tree_element_rows.push(flat_file_row(
+                            fi,
+                            fs,
+                            active_file,
+                            changed_diffstat.as_ref(),
+                            cx,
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     // ── "Create branch here" button ──────────────────────────────────────
     let at_for_create = at.clone();
@@ -1110,6 +1133,62 @@ fn action_button(
     } else {
         btn
     }
+}
+
+/// One flat changed-file row (badge + path + diffstat), clickable to open the
+/// diff and right-clickable for the file context menu. Shared by the flat file
+/// list and the folded "Generated (N)" section (issue #348).
+fn flat_file_row(
+    fi: usize,
+    fs: &FileStatus,
+    active_file: Option<usize>,
+    diffstat: Option<&Vec<FileDiffStat>>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let (badge_char, badge_color, _) = status_badge(Some(&fs.change), false);
+    let path_text = SharedString::from(fs.path.to_string_lossy().into_owned());
+    let stat = diffstat.and_then(|stats| find_stat(stats, &fs.path));
+    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.open_main_diff_inspector_file(fi, cx);
+        cx.notify();
+    });
+    let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
+        this.inspector_file_menu = Some((fi, e.position));
+        cx.stop_propagation();
+        cx.notify();
+    });
+    div()
+        .id(("file-flat", fi))
+        .on_mouse_down(MouseButton::Right, menu_click)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .mb_px()
+        .flex_shrink_0()
+        .when(active_file == Some(fi), |el| {
+            el.bg(rgb(theme().selected)).rounded_sm()
+        })
+        .on_click(click)
+        .child(
+            div()
+                .w(theme::scaled_px(14.))
+                .flex_shrink_0()
+                .text_sm()
+                .text_color(rgb(badge_color))
+                .child(SharedString::from(badge_char)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_sm()
+                .text_color(rgb(theme().text_main))
+                .truncate()
+                .child(path_text),
+        )
+        .child(diffstat_unit(fi, stat))
+        .into_any()
 }
 
 /// W16-DIFFSTAT: look up the [`FileDiffStat`] for the file at `file_index` in

@@ -94,6 +94,19 @@ pub struct CommitPanelState {
     pub unstaged_stat_index: std::collections::HashMap<PathBuf, usize>,
     /// PERF: O(1) lookup from staged file path → index into `staged_stats`.
     pub staged_stat_index: std::collections::HashMap<PathBuf, usize>,
+    /// issue #348: indices into `unstaged` of files classified generated
+    /// (folded under "Generated (N)"). Built in [`reload_status`].
+    pub unstaged_gen_files: Vec<usize>,
+    /// issue #348: indices into `unstaged` of NON-generated files, in order —
+    /// the flat-list row → file-index map when generated files are folded out.
+    pub unstaged_normal_files: Vec<usize>,
+    /// issue #348: generated / normal index lists for the staged section.
+    pub staged_gen_files: Vec<usize>,
+    /// issue #348: non-generated staged file indices (flat-list row map).
+    pub staged_normal_files: Vec<usize>,
+    /// issue #348: whether the "Generated (N)" sections are expanded. Default
+    /// `false` (folding on) — generated files start collapsed.
+    pub generated_expanded: bool,
 }
 
 impl CommitPanelState {
@@ -113,6 +126,11 @@ impl CommitPanelState {
             staged_tree: Vec::new(),
             unstaged_stat_index: std::collections::HashMap::new(),
             staged_stat_index: std::collections::HashMap::new(),
+            unstaged_gen_files: Vec::new(),
+            unstaged_normal_files: Vec::new(),
+            staged_gen_files: Vec::new(),
+            staged_normal_files: Vec::new(),
+            generated_expanded: false,
         };
         state.reload_status(repo_path);
         state
@@ -170,11 +188,15 @@ impl CommitPanelState {
                     Vec::new()
                 };
                 self.staged_stats = backend.staged_diffstat().unwrap_or_default();
+                // issue #348: classify each side's files as generated / lockfile
+                // (reads blob heads + .gitattributes) so the panel can fold them.
+                let unstaged_gen = backend.wip_generated_flags(&self.unstaged, false);
+                let staged_gen = backend.wip_generated_flags(&self.staged, true);
                 // Clear selection on status change.
                 self.selected_file = None;
                 // PERF: recompute the cached tree rows and diffstat indices once
                 // per status change (NOT per frame).
-                self.rebuild_derived();
+                self.rebuild_derived(&unstaged_gen, &staged_gen);
             }
             Err(e) => {
                 klog!("commit_panel: working_tree_status error: {}", e);
@@ -185,9 +207,25 @@ impl CommitPanelState {
     /// PERF: rebuild the cached tree rows and diffstat path→index maps from the
     /// current `unstaged`/`staged`/`*_stats` lists.  Called once per status
     /// change from [`reload_status`], so render is O(visible rows) not O(N²).
-    fn rebuild_derived(&mut self) {
-        self.unstaged_tree = file_tree::build_file_tree(&self.unstaged);
-        self.staged_tree = file_tree::build_file_tree(&self.staged);
+    fn rebuild_derived(&mut self, unstaged_gen: &[bool], staged_gen: &[bool]) {
+        // issue #348: split each side into generated / normal index lists and
+        // prune generated files (and now-empty dirs) from the tree rows so the
+        // main list shows only normal files; generated files fold separately.
+        let ug = kagi_domain::generated::group_generated(unstaged_gen);
+        let sg = kagi_domain::generated::group_generated(staged_gen);
+        self.unstaged_gen_files = ug.generated;
+        self.unstaged_normal_files = ug.normal;
+        self.staged_gen_files = sg.generated;
+        self.staged_normal_files = sg.normal;
+
+        let unstaged_full = file_tree::build_file_tree(&self.unstaged);
+        let staged_full = file_tree::build_file_tree(&self.staged);
+        self.unstaged_tree = file_tree::retain_files(unstaged_full, |i| {
+            !unstaged_gen.get(i).copied().unwrap_or(false)
+        });
+        self.staged_tree = file_tree::retain_files(staged_full, |i| {
+            !staged_gen.get(i).copied().unwrap_or(false)
+        });
 
         self.unstaged_stat_index = self
             .unstaged_stats
@@ -201,6 +239,24 @@ impl CommitPanelState {
             .enumerate()
             .map(|(i, s)| (s.path.clone(), i))
             .collect();
+    }
+
+    /// issue #348: number of extra rows the "Generated (N)" fold adds to a
+    /// section — 0 when nothing is generated, else 1 (the disclosure header)
+    /// plus the folded file rows when expanded.
+    pub fn generated_extra_rows(&self, staged: bool) -> usize {
+        let gen = if staged {
+            &self.staged_gen_files
+        } else {
+            &self.unstaged_gen_files
+        };
+        if gen.is_empty() {
+            0
+        } else if self.generated_expanded {
+            1 + gen.len()
+        } else {
+            1
+        }
     }
 
     /// O(1) lookup of the unstaged [`FileDiffStat`] for `path`.
@@ -546,3 +602,77 @@ impl CommitPanelView {
 // Moved to kagi-ui-core::file_tree (ADR-0121 C4) so the Editor Workspace
 // crate can share it; re-exported here so call sites are unchanged.
 pub use kagi_ui_core::file_tree::status_badge;
+
+#[cfg(test)]
+mod generated_fold_tests {
+    use super::*;
+
+    /// Build an empty state (no repo) so `rebuild_derived` can be exercised
+    /// in isolation.
+    fn empty_state() -> CommitPanelState {
+        CommitPanelState {
+            unstaged: Vec::new(),
+            staged: Vec::new(),
+            unstaged_stats: Vec::new(),
+            staged_stats: Vec::new(),
+            conflicted_paths: std::collections::HashSet::new(),
+            selected_file: None,
+            commit_msg: String::new(),
+            plan_modal: None,
+            tree_view: false,
+            unstaged_tree: Vec::new(),
+            staged_tree: Vec::new(),
+            unstaged_stat_index: std::collections::HashMap::new(),
+            staged_stat_index: std::collections::HashMap::new(),
+            unstaged_gen_files: Vec::new(),
+            unstaged_normal_files: Vec::new(),
+            staged_gen_files: Vec::new(),
+            staged_normal_files: Vec::new(),
+            generated_expanded: false,
+        }
+    }
+
+    fn modified(path: &str) -> FileStatus {
+        FileStatus {
+            path: PathBuf::from(path),
+            change: ChangeKind::Modified,
+        }
+    }
+
+    /// issue #348: rebuild splits generated files out of the flat/tree lists and
+    /// the fold defaults collapsed (only the header row shows until expanded).
+    #[test]
+    fn rebuild_folds_generated_files() {
+        let mut s = empty_state();
+        // Matches the reported bug: Cargo.lock + main.rs unstaged.
+        s.unstaged = vec![modified("Cargo.lock"), modified("src/main.rs")];
+        // Cargo.lock (index 0) is generated; main.rs (index 1) is not.
+        s.rebuild_derived(&[true, false], &[]);
+
+        assert_eq!(s.unstaged_gen_files, vec![0]);
+        assert_eq!(s.unstaged_normal_files, vec![1]);
+        // Pruned tree (flat has 1 dir-less file 'main.rs'): no Cargo.lock row.
+        assert!(s.unstaged_tree.iter().all(|r| !matches!(
+            r,
+            kagi_ui_core::file_tree::TreeRow::File { file_index: 0, .. }
+        )));
+
+        // Collapsed by default → 1 extra row (the header only).
+        assert!(!s.generated_expanded);
+        assert_eq!(s.generated_extra_rows(false), 1);
+        // Expanded → header + the 1 generated file.
+        s.generated_expanded = true;
+        assert_eq!(s.generated_extra_rows(false), 2);
+    }
+
+    /// No generated files → no fold, no extra rows.
+    #[test]
+    fn no_generated_no_fold() {
+        let mut s = empty_state();
+        s.unstaged = vec![modified("src/a.rs"), modified("src/b.rs")];
+        s.rebuild_derived(&[false, false], &[]);
+        assert!(s.unstaged_gen_files.is_empty());
+        assert_eq!(s.unstaged_normal_files, vec![0, 1]);
+        assert_eq!(s.generated_extra_rows(false), 0);
+    }
+}

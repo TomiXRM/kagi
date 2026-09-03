@@ -1562,3 +1562,61 @@ fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
 
     std::env::remove_var("KAGI_LOG_DIR");
 }
+
+/// #369: the staged-edit abort guard must protect the SEQUENCER ops too, not
+/// only merge. A cherry-pick with a conflicted `file.txt` and a cleanly-carried
+/// `b.txt`: staging an edit to `b.txt` mid-conflict must make abort refuse
+/// (reconstruct_op_result now covers cherry-pick via CHERRY_PICK_HEAD).
+#[test]
+fn abort_refuses_staged_non_conflicted_edit_during_cherry_pick() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    // Base carries both files; `side` and `main` diverge only on file.txt, so a
+    // cherry-pick of side onto main conflicts on file.txt while b.txt stays clean.
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+    write_file(dir, "file.txt", "base\n");
+    write_file(dir, "b.txt", "base b\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+    let side_sha = git_output(dir, &["rev-parse", "HEAD"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+    git_allow_fail(dir, &["cherry-pick", &side_sha]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("cherry-pick conflict session");
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    // Stage an edit to the non-conflicted b.txt — index == workdir.
+    write_file(dir, "b.txt", "USER STAGED EDIT\n");
+    git(dir, &["add", "b.txt"]);
+
+    let err = execute_conflict_abort(&repo, &session, &buffer)
+        .expect_err("abort must refuse rather than discard the staged edit");
+    assert!(
+        format!("{err}").contains("b.txt"),
+        "the refusal must name the staged file: {err}"
+    );
+    assert_eq!(
+        git_output(dir, &["show", ":b.txt"]),
+        "USER STAGED EDIT",
+        "staged content must remain after the refusal"
+    );
+    assert!(
+        dir.join(".git/CHERRY_PICK_HEAD").exists(),
+        "the refusal must leave the cherry-pick state intact"
+    );
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}

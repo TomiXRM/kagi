@@ -1791,7 +1791,26 @@ pub fn execute_conflict_abort(
     let buffer_preserved_at = buffer.autosave().ok();
 
     // 2. Resolve ORIG_HEAD (the pre-operation HEAD).
-    let orig_sha = read_orig_head(repo);
+    //
+    // #369: `git cherry-pick` and `git revert` do NOT write ORIG_HEAD (only
+    // merge / rebase / reset do), yet HEAD has not moved — they fail before
+    // committing — so the pre-op tree is exactly the current HEAD. Fall back to
+    // it for those ops, otherwise the whole restore-and-guard block below is
+    // skipped and a mid-conflict staged edit to a non-conflicted file slips
+    // through unprotected (and the working tree keeps its conflict markers).
+    let orig_sha = read_orig_head(repo).or_else(|| {
+        matches!(
+            session.op,
+            ConflictOp::CherryPick { .. } | ConflictOp::Revert { .. }
+        )
+        .then(|| {
+            repo.head()
+                .ok()
+                .and_then(|h| h.target())
+                .map(|o| o.to_string())
+        })
+        .flatten()
+    });
 
     // 3. If we know ORIG_HEAD, restore the working tree + index to its tree,
     //    then move the branch ref back.
@@ -2070,49 +2089,97 @@ fn mid_conflict_edits(
     Ok(edited)
 }
 
-/// Reconstruct the operation's own clean-merge result index — what git wrote at
-/// conflict time before the user could touch it — so a staged mid-conflict edit
-/// (#307) can be told apart from the operation's legitimate output.
+/// Read a commit-oid sidecar file under `.git` (e.g. `MERGE_HEAD`,
+/// `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `REBASE_HEAD`) and resolve it.
+fn read_head_oid(repo: &Repository, name: &str) -> Option<git2::Oid> {
+    std::fs::read_to_string(repo.path().join(name))
+        .ok()
+        .and_then(|s| git2::Oid::from_str(s.trim()).ok())
+}
+
+/// First-parent tree of a commit, or `None` for a root commit (no parents).
+fn first_parent_tree<'r>(
+    repo: &'r Repository,
+    oid: git2::Oid,
+) -> Result<Option<git2::Tree<'r>>, GitError> {
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
+    match commit.parent(0) {
+        Ok(parent) => Ok(Some(parent.tree().map_err(|e| {
+            GitError::Other(format!("parent tree lookup failed: {}", e.message()))
+        })?)),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Commit's own tree.
+fn commit_tree<'r>(repo: &'r Repository, oid: git2::Oid) -> Result<git2::Tree<'r>, GitError> {
+    repo.find_commit(oid)
+        .and_then(|c| c.tree())
+        .map_err(|e| GitError::Other(format!("commit tree lookup failed: {}", e.message())))
+}
+
+/// Reconstruct the clean-merge output index of the in-flight operation, so the
+/// staged-edit abort guard (#307) can tell an operation-produced staged entry
+/// from a user's mid-conflict edit to a non-conflicted file. Extended in #369
+/// to the sequencer ops (rebase / cherry-pick / revert), not just merge.
 ///
-/// Only the **merge** case is reconstructed (ORIG_HEAD × MERGE_HEAD over their
-/// merge-base); it is the case the commit-panel staging path (#307) and the
-/// abort test-suite exercise.  For the sequencer ops (rebase / cherry-pick /
-/// revert) this returns `None`, so their guard keeps the pre-#307 unstaged-only
-/// behavior rather than risk a false refusal — a staged edit there still slips
-/// through as before (tracked as the remaining slice of #307).
+/// Each op maps to the same 3-way `merge_trees(base, ours=HEAD, theirs)` git
+/// itself performs:
+/// - **merge**: base = merge-base(HEAD, MERGE_HEAD), theirs = MERGE_HEAD tree.
+/// - **cherry-pick / rebase** (replay commit `C`): base = `C^` tree, theirs = `C` tree.
+/// - **revert** (undo commit `C`): base = `C` tree, theirs = `C^` tree.
 fn reconstruct_op_result<'r>(
     repo: &'r Repository,
     session: &ConflictSession,
     orig_oid: git2::Oid,
     orig_tree: &git2::Tree<'r>,
 ) -> Result<Option<git2::Index>, GitError> {
-    if !matches!(session.op, ConflictOp::Merge { .. }) {
-        return Ok(None);
-    }
-    let merge_oid = match std::fs::read_to_string(repo.path().join("MERGE_HEAD"))
-        .ok()
-        .and_then(|s| git2::Oid::from_str(s.trim()).ok())
-    {
-        Some(o) => o,
-        None => return Ok(None),
+    // (base_tree, theirs_tree) for the 3-way; `None` base = 2-way / empty base.
+    let (base_tree, theirs_tree): (Option<git2::Tree<'r>>, git2::Tree<'r>) = match session.op {
+        ConflictOp::Merge { .. } => {
+            let Some(merge_oid) = read_head_oid(repo, "MERGE_HEAD") else {
+                return Ok(None);
+            };
+            let base = match repo.merge_base(orig_oid, merge_oid) {
+                Ok(b) => Some(commit_tree(repo, b)?),
+                // Unrelated histories: base-less 2-way merge.
+                Err(_) => None,
+            };
+            (base, commit_tree(repo, merge_oid)?)
+        }
+        // Rebase and cherry-pick both *replay* commit C onto HEAD: base = C^, theirs = C.
+        ConflictOp::CherryPick { .. } | ConflictOp::Rebase { .. } => {
+            let head = if matches!(session.op, ConflictOp::CherryPick { .. }) {
+                "CHERRY_PICK_HEAD"
+            } else {
+                "REBASE_HEAD"
+            };
+            let Some(oid) = read_head_oid(repo, head) else {
+                return Ok(None);
+            };
+            (first_parent_tree(repo, oid)?, commit_tree(repo, oid)?)
+        }
+        // Revert *undoes* commit C: base = C, theirs = C^ (the inverse patch).
+        ConflictOp::Revert { .. } => {
+            let Some(oid) = read_head_oid(repo, "REVERT_HEAD") else {
+                return Ok(None);
+            };
+            let Some(parent) = first_parent_tree(repo, oid)? else {
+                // Reverting a root commit has no parent tree to move toward.
+                return Ok(None);
+            };
+            (Some(commit_tree(repo, oid)?), parent)
+        }
+        // StashConflict has no commit-producing output to reconstruct.
+        ConflictOp::StashConflict => return Ok(None),
     };
-    let incoming_tree = repo
-        .find_commit(merge_oid)
-        .and_then(|c| c.tree())
-        .map_err(|e| GitError::Other(format!("MERGE_HEAD tree lookup failed: {}", e.message())))?;
-    let base_tree =
-        match repo.merge_base(orig_oid, merge_oid) {
-            Ok(base_oid) => Some(repo.find_commit(base_oid).and_then(|c| c.tree()).map_err(
-                |e| GitError::Other(format!("merge-base tree lookup failed: {}", e.message())),
-            )?),
-            // No common ancestor (unrelated histories): a base-less 2-way merge.
-            Err(_) => None,
-        };
     let index = repo
         .merge_trees(
             base_tree.as_ref().unwrap_or(orig_tree),
             orig_tree,
-            &incoming_tree,
+            &theirs_tree,
             None,
         )
         .map_err(|e| GitError::Other(format!("merge_trees reconstruct failed: {}", e.message())))?;

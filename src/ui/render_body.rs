@@ -519,3 +519,62 @@ impl KagiApp {
         body_row
     }
 }
+
+/// W6-TABSPEED / ADR-0030: center-pane placeholder shown while an uncached tab
+/// is loading on a background thread.  The tab strip stays operable above it.
+/// ADR-0165: while the load is in flight, a cute mini "commit graph" — three
+/// theme-colored dots bobbing in sequence — replaces the old static ⟳ glyph.
+/// Same `.with_animation` idiom as the ecosystem loader / sync spinner. The
+/// animated block must stay outside any `overflow_y_scroll` container
+/// (`with_animation` doesn't tick there — see `kagi-ui-ecosystem/render.rs`).
+/// No reduce-motion setting exists yet, so the motion is kept gentle by
+/// default: small amplitude, slow cycle, sine easing.
+fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
+    use gpui::AnimationExt as _;
+    const BOB_MS: u64 = 1400;
+    const AMPLITUDE: f32 = 11.0;
+    // Commit-node colors: branch / accent / success — reads as a tiny graph.
+    let colors = [theme().color_branch, theme().accent, theme().color_success];
+    let mut dots = div()
+        .flex()
+        .flex_row()
+        .items_end()
+        .gap_2()
+        .h(theme::scaled_px(22.0));
+    for (i, color) in colors.into_iter().enumerate() {
+        let phase = i as f32 * 0.15; // stagger: a little wave, left to right
+        dots = dots.child(
+            div()
+                .w(theme::scaled_px(9.0))
+                .h(theme::scaled_px(9.0))
+                .rounded_full()
+                .bg(rgb(color))
+                .with_animation(
+                    ("kagi-loading-dot", i),
+                    gpui::Animation::new(Duration::from_millis(BOB_MS)).repeat(),
+                    move |el, delta| {
+                        let t = ((delta + phase) % 1.0) * std::f32::consts::TAU;
+                        // Positive half of a sine: hop up, rest, hop again.
+                        let lift = t.sin().max(0.0) * AMPLITUDE;
+                        el.mb(theme::scaled_px(lift))
+                    },
+                ),
+        );
+    }
+    div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .bg(rgb(theme().bg_base))
+        .child(dots)
+        .child(
+            div()
+                .text_lg()
+                .text_color(rgb(theme().text_sub))
+                .child(label),
+        )
+}

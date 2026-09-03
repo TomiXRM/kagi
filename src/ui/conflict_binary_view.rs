@@ -282,6 +282,8 @@ pub fn render_raw_preview(
             div()
                 .flex()
                 .flex_row()
+                .w_full()
+                .justify_center()
                 .gap(theme::scaled_px(12.))
                 .child(side_column(
                     &format!("{} · {}", Msg::ConflictRoleCurrent.t(), labels.current.name),
@@ -370,11 +372,14 @@ fn side_column(header: &str, data: &SideData) -> gpui::AnyElement {
         }
     };
 
+    // #377: size each column to the image box (not flex-grow to half the pane),
+    // so the two previews sit adjacent — the row centers the pair with a small
+    // gap instead of stranding two fixed-size images at opposite edges.
     div()
         .flex()
         .flex_col()
-        .flex_grow(1.)
-        .flex_basis(px(0.))
+        .w(theme::scaled_px(IMAGE_MAX_PX))
+        .flex_shrink_0()
         .min_w(px(0.))
         .gap(px(4.))
         .child(

@@ -7,10 +7,12 @@
 //! that head is enough for the first-40-lines / average-line-length checks.
 //!
 //! Truncation caveat: the source-map check looks at the **last two lines of
-//! `head`**. If the real file is larger than the slice passed in, its trailing
-//! `sourceMappingURL` line is in the part we never saw, so a >8 KiB minified
-//! bundle whose only generated signal is that tail may be missed. Lockfiles,
-//! Go, protobuf, and minified detection do not depend on the tail.
+//! `head`**. A head of at least [`HEAD_BYTES`] is treated as truncated and the
+//! tail check is suppressed entirely (issue #410) — its "last two lines" are
+//! whatever straddles the byte cut, not the file's real tail. So a >8 KiB
+//! minified bundle whose only generated signal is that tail is missed (the
+//! safe direction: shown, not folded). Lockfiles, Go, protobuf, and minified
+//! detection do not depend on the tail.
 //!
 //! `.gitattributes` (`linguist-generated` / `-diff`) is read in the git layer
 //! (needs a repo) and passed here as [`classify_generated`]'s `attr_override`.
@@ -105,8 +107,25 @@ fn is_minified(path: &str, lines: &[String]) -> bool {
     (total as f64 / lines.len() as f64) > 110.0
 }
 
-/// `sourceMappingURL` in the last two lines of the (possibly truncated) head.
-fn has_source_map_tail(lines: &[String]) -> bool {
+/// Head slice size callers pass to [`is_generated`] / [`classify_generated`].
+/// A head of at least this length is treated as truncated: the real tail was
+/// never seen, so tail-dependent rules must not run on it (issue #410).
+pub const HEAD_BYTES: usize = 8 * 1024;
+
+/// `sourceMappingURL` in the last two lines of the head (issue #410).
+///
+/// Gated like Linguist's source-map rule: only a `.map` file or minified
+/// content qualifies — a hand-written file of any other type that merely
+/// mentions the string in its tail must not fold out of review. Suppressed
+/// entirely on a truncated head, whose "last two lines" are whatever straddles
+/// an arbitrary byte cut.
+fn has_source_map_tail(path: &str, lines: &[String], truncated: bool) -> bool {
+    if truncated {
+        return false;
+    }
+    if ext_lower(path) != ".map" && !is_minified(path, lines) {
+        return false;
+    }
     let start = lines.len().saturating_sub(2);
     lines[start..]
         .iter()
@@ -123,10 +142,11 @@ pub fn is_generated(path: &str, head: &[u8]) -> bool {
         return true;
     }
     let lines = head_lines(head);
+    let truncated = head.len() >= HEAD_BYTES;
     is_generated_go(path, &lines)
         || is_generated_protobuf(&lines)
         || is_minified(path, &lines)
-        || has_source_map_tail(&lines)
+        || has_source_map_tail(path, &lines, truncated)
 }
 
 /// Combine the content classifier with a `.gitattributes` override.
@@ -311,10 +331,50 @@ mod tests {
     }
 
     // ── source-map tail ─────────────────────────────────────────────
+    /// MUTATION GUARD (#410): the tail rule fires only for a `.map` file or
+    /// minified content. A minified `.js` referencing a `.js.map` is generated;
+    /// so is a `.map` file itself.
     #[test]
     fn source_map_url_in_last_two_lines() {
-        let src = b"console.log(1)\n//# sourceMappingURL=app.js.map\n";
-        assert!(is_generated("app.js", src));
+        let mut src = "x".repeat(200); // minified: avg line length > 110
+        src.push_str("\n//# sourceMappingURL=app.js.map\n");
+        assert!(is_generated("app.js", src.as_bytes()));
+        assert!(is_generated(
+            "app.js.map",
+            b"{\"file\":\"app.js\"}\n//# sourceMappingURL=x\n"
+        ));
+    }
+
+    /// MUTATION GUARD (#410): a hand-written file — of any extension — whose
+    /// last line merely mentions `sourceMappingURL` must NOT be folded out of
+    /// review. Reverting the extension/minified gate flips every assert.
+    #[test]
+    fn source_map_tail_not_generated_for_handwritten_files() {
+        let src = b"// keep devtool on so the sourceMappingURL comment is emitted\nmodule.exports = config;\n";
+        assert!(!is_generated("webpack.config.js", src));
+        assert!(!is_generated("docs/adr/0099-source-maps.md", src));
+        assert!(!is_generated("scripts/strip-source-maps.sh", src));
+        assert!(!is_generated("src/build/sourcemap.rs", src));
+    }
+
+    /// MUTATION GUARD (#410): a head of exactly HEAD_BYTES is a truncated head
+    /// — its "last two lines" straddle an arbitrary byte cut, so the tail rule
+    /// must not act on it. The same content one line shorter (a genuine
+    /// end-of-file) fires; reverting either the `truncated` guard or the tail
+    /// rule itself flips one of the two asserts.
+    #[test]
+    fn source_map_tail_suppressed_on_truncated_head() {
+        let tail = "//# sourceMappingURL=app.js\n"; // 28 bytes
+        let mut src = "y\n".repeat((HEAD_BYTES - tail.len()) / 2);
+        src.push_str(tail);
+        assert_eq!(src.len(), HEAD_BYTES);
+        // Genuine tail (< HEAD_BYTES): the `.map` rule fires.
+        assert!(is_generated("app.js.map", &src.as_bytes()[2..]));
+        // Truncated head (== HEAD_BYTES): suppressed.
+        assert!(
+            !is_generated("app.js.map", src.as_bytes()),
+            "tail rule must not act on a truncated head"
+        );
     }
 
     #[test]

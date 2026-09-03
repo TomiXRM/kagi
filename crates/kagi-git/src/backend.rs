@@ -448,7 +448,7 @@ impl Backend {
     /// attribute wins). A file absent from the tree (pure deletion) is
     /// classified from its path + empty content.
     pub fn commit_generated_flags(&self, id: &CommitId, files: &[FileStatus]) -> Vec<bool> {
-        const HEAD_BYTES: usize = 8 * 1024;
+        use kagi_domain::generated::HEAD_BYTES;
         files
             .iter()
             .map(|fs| {
@@ -479,8 +479,8 @@ impl Backend {
     /// disk (unstaged side). Reads at most 8 KiB. The `.gitattributes` override
     /// wins and skips the content read.
     pub fn wip_generated_flags(&self, files: &[FileStatus], staged: bool) -> Vec<bool> {
+        use kagi_domain::generated::HEAD_BYTES;
         use std::io::Read;
-        const HEAD_BYTES: usize = 8 * 1024;
         files
             .iter()
             .map(|fs| {

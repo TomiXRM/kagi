@@ -823,6 +823,13 @@ pub enum Msg {
     AgentArtifactsSection,
     /// issue #338: emphasis badge on a convention-body file (AGENTS.md etc.).
     AgentConventionBadge,
+
+    // ── issue #356: unsafe-unicode row badge (bidi / zero-width) ─────
+    /// Small badge shown on a diff / review / conflict row that contains
+    /// bidirectional-control or zero-width codepoints.
+    UnsafeUnicodeBadge,
+    /// Tooltip explaining the [`Msg::UnsafeUnicodeBadge`] badge.
+    UnsafeUnicodeTooltip,
 }
 
 impl Msg {
@@ -1731,6 +1738,16 @@ impl Msg {
             (Ja, AgentArtifactsSection) => "エージェント成果物",
             (En, AgentConventionBadge) => "Rule",
             (Ja, AgentConventionBadge) => "Rule",
+
+            // ── issue #356: unsafe-unicode badge ────────────────────
+            (En, UnsafeUnicodeBadge) => "hidden chars",
+            (Ja, UnsafeUnicodeBadge) => "不可視文字",
+            (En, UnsafeUnicodeTooltip) => {
+                "This line contains bidirectional-control or zero-width characters that can hide or reorder text."
+            }
+            (Ja, UnsafeUnicodeTooltip) => {
+                "この行には表示順を偽装できる双方向制御文字、または不可視のゼロ幅文字が含まれています。"
+            }
         }
     }
 }

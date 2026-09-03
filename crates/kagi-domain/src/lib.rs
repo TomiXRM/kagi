@@ -40,6 +40,7 @@ pub mod remote_diff;
 pub mod remote_snapshot;
 pub mod resolution;
 pub mod status;
+pub mod text_safety;
 pub mod trailers;
 pub mod update;
 pub mod word_diff;

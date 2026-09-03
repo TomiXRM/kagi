@@ -210,23 +210,13 @@ pub fn is_url(value: &str) -> bool {
 }
 
 /// Escape control / ANSI bytes in a trailer value as `\xHH` so a hostile
-/// trailer cannot inject terminal escape sequences (interim guard until #356).
+/// trailer cannot inject terminal escape sequences.
 ///
-/// Legitimate multi-byte UTF-8 (CJK, emoji) is preserved unchanged — only
-/// `char::is_control()` code points (C0, DEL, C1) are escaped, byte-by-byte.
+/// Thin alias over [`crate::text_safety::sanitize_control_bytes`] (issue #356),
+/// which is now the single canonical control-byte escaper across the app.
+/// Legitimate multi-byte UTF-8 (CJK, emoji) is preserved unchanged.
 pub fn sanitize_trailer_value(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let mut buf = [0u8; 4];
-    for c in value.chars() {
-        if c.is_control() {
-            for b in c.encode_utf8(&mut buf).as_bytes() {
-                out.push_str(&format!("\\x{b:02x}"));
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    crate::text_safety::sanitize_control_bytes(value)
 }
 
 /// Split a `token: value` line. Returns `None` when it is not trailer-form
@@ -384,7 +374,7 @@ mod trailer_tests {
         let raw = "value\u{1b}[31mHACKED\u{1b}[0m";
         let out = sanitize_trailer_value(raw);
         assert!(!out.contains('\u{1b}'), "ESC must be escaped: {out:?}");
-        assert_eq!(out, "value\\x1b[31mHACKED\\x1b[0m");
+        assert_eq!(out, "value\\x1B[31mHACKED\\x1B[0m");
     }
 
     #[test]

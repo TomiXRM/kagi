@@ -88,7 +88,11 @@ fn commit_to_detail(c: &Commit) -> CommitDetail {
 
     // Message: trim trailing whitespace; cap at 2000 chars to avoid extreme heights.
     // No ZWSP — render layer splits on '\n' and truncates per line.
-    let raw_msg = c.message.trim_end();
+    // issue #356: the commit message is remote-origin text; neutralize terminal
+    // control bytes (ANSI escapes, bare CR, DEL, C1) before display. CJK/emoji
+    // are preserved by `sanitize_control_bytes`.
+    let sanitized_msg = kagi_domain::text_safety::sanitize_control_bytes(c.message.trim_end());
+    let raw_msg = sanitized_msg.trim_end();
     const MAX_MSG_CHARS: usize = 2000;
     let capped: String = if raw_msg.chars().count() > MAX_MSG_CHARS {
         let s: String = raw_msg.chars().take(MAX_MSG_CHARS - 1).collect();
@@ -300,5 +304,33 @@ mod tests {
         assert!(stored.contains("\n\n"), "double newlines must be preserved");
         // Must not contain ZWSP.
         assert!(!stored.contains('\u{200B}'));
+    }
+
+    #[test]
+    fn commit_message_control_bytes_sanitized_cjk_preserved() {
+        // issue #356 acceptance: ANSI escapes in a commit message are
+        // neutralized, while legitimate CJK/emoji survive intact.
+        use kagi_git::{CommitId, Signature};
+        let msg = "fix: 日本語の修正 🎉\n\nbody \x1b[31mred\x07 and 中文";
+        let sig = Signature {
+            name: "A".to_string(),
+            email: "a@b.com".to_string(),
+            time: 1,
+        };
+        let c = Commit {
+            id: CommitId("c".repeat(40)),
+            summary: "fix".to_string(),
+            message: msg.to_string(),
+            author: sig.clone(),
+            committer: sig,
+            parents: vec![],
+        };
+        let stored = commit_to_detail(&c).full_message;
+        assert!(!stored.contains('\x1b'), "ESC must be escaped");
+        assert!(!stored.contains('\x07'), "BEL must be escaped");
+        assert!(stored.contains("\\x1B"), "ESC rendered as visible escape");
+        assert!(stored.contains("日本語の修正"), "CJK preserved");
+        assert!(stored.contains("🎉"), "emoji preserved");
+        assert!(stored.contains("中文"), "CJK preserved");
     }
 }

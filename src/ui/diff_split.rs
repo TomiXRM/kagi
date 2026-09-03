@@ -316,7 +316,10 @@ fn word_emphasis_bg(kind: &DiffLineKind) -> Hsla {
         DiffLineKind::Context => theme::theme().text_muted,
     };
     let mut hsla: Hsla = rgb(base).into();
-    hsla.a = 0.40;
+    // Lighter than before: the emphasis now also carries an opaque underline
+    // (see merge_highlights), so the fill can stay subtle and keep the syntax
+    // text readable instead of washing it out (#349 review feedback).
+    hsla.a = 0.22;
     hsla
 }
 
@@ -357,6 +360,17 @@ fn merge_highlights(
         }
         if emphasis.iter().any(|r| r.start <= a && b <= r.end) {
             style.background_color = Some(emph_bg);
+            // A hue-independent signal so the changed span stays legible even
+            // when the syntax text colour is close to the emphasis tint (e.g.
+            // red syntax on the removed side). The underline reads regardless
+            // of the text/background hue clash (#349 review feedback).
+            let mut ul = emph_bg;
+            ul.a = 1.0;
+            style.underline = Some(gpui::UnderlineStyle {
+                thickness: px(1.5),
+                color: Some(ul),
+                wavy: false,
+            });
             any = true;
         }
         if any {

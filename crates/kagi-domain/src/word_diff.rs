@@ -69,15 +69,35 @@ fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
+/// Lines longer than this (bytes, either side) skip the LCS entirely
+/// (issue #398): punctuation-dense text tokenizes to ~1 token per char, so a
+/// 100 KB minified line would cost O(n·m) DP cells. Above the cap the pair is
+/// treated as a full rewrite — whole-line emphasis, no intra-line highlight.
+pub const MAX_WORD_DIFF_LEN: usize = 4096;
+
 /// Compute the changed spans between `old` and `new` at word granularity.
 ///
 /// - identical input → no spans;
 /// - a single changed token → one span covering just that token;
 /// - a full rewrite (no shared tokens) → one span per side covering the whole
-///   line.
+///   line;
+/// - either side longer than [`MAX_WORD_DIFF_LEN`] bytes → whole-line spans
+///   without running the LCS (issue #398).
 pub fn word_diff(old: &str, new: &str) -> Vec<Span> {
     if old == new {
         return Vec::new();
+    }
+    if old.len().max(new.len()) > MAX_WORD_DIFF_LEN {
+        let mut spans = Vec::new();
+        for (side, s) in [(Side::Old, old), (Side::New, new)] {
+            if !s.is_empty() {
+                spans.push(Span {
+                    side,
+                    range: 0..s.len(),
+                });
+            }
+        }
+        return spans;
     }
     let ot = tokenize(old);
     let nt = tokenize(new);
@@ -113,37 +133,69 @@ fn push_changed(out: &mut Vec<Span>, side: Side, toks: &[Token<'_>], common: &[b
     }
 }
 
-/// Standard LCS DP over token text; returns `(old_common, new_common)` boolean
-/// masks marking which tokens are part of a longest common subsequence.
+/// LCS over token text; returns `(old_common, new_common)` boolean masks
+/// marking which tokens are part of a longest common subsequence.
+///
+/// Hirschberg's algorithm (issue #398): O(n·m) time but O(min(n, m)) memory —
+/// two rolling DP rows in flat `Vec<u32>`s instead of the previous dense
+/// `Vec<Vec<u32>>` matrix.
 fn lcs_flags(ot: &[Token<'_>], nt: &[Token<'_>]) -> (Vec<bool>, Vec<bool>) {
-    let (n, m) = (ot.len(), nt.len());
-    // dp[i][j] = LCS length of ot[i..] and nt[j..].
-    let mut dp = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            dp[i][j] = if ot[i].text == nt[j].text {
-                dp[i + 1][j + 1] + 1
-            } else {
-                dp[i + 1][j].max(dp[i][j + 1])
-            };
-        }
-    }
-    let mut old_common = vec![false; n];
-    let mut new_common = vec![false; m];
-    let (mut i, mut j) = (0, 0);
-    while i < n && j < m {
-        if ot[i].text == nt[j].text {
-            old_common[i] = true;
-            new_common[j] = true;
-            i += 1;
-            j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
+    let o: Vec<&str> = ot.iter().map(|t| t.text).collect();
+    let n: Vec<&str> = nt.iter().map(|t| t.text).collect();
+    let mut old_common = vec![false; o.len()];
+    let mut new_common = vec![false; n.len()];
+    // DP rows are sized by the second sequence — pass the shorter one there so
+    // memory is O(min(n, m)). LCS is symmetric, so the masks just swap roles.
+    if n.len() <= o.len() {
+        hirschberg(&o, &n, 0, 0, &mut old_common, &mut new_common);
+    } else {
+        hirschberg(&n, &o, 0, 0, &mut new_common, &mut old_common);
     }
     (old_common, new_common)
+}
+
+/// Mark one LCS of `a[ao..]` vs `b[bo..]` in the `ac` / `bc` masks (indices
+/// offset by `ao` / `bo` into the full sequences). Divide-and-conquer on `a`;
+/// each level's split point comes from two rolling-row LCS length passes.
+fn hirschberg(a: &[&str], b: &[&str], ao: usize, bo: usize, ac: &mut [bool], bc: &mut [bool]) {
+    if a.is_empty() || b.is_empty() {
+        return;
+    }
+    if a.len() == 1 {
+        if let Some(j) = b.iter().position(|t| *t == a[0]) {
+            ac[ao] = true;
+            bc[bo + j] = true;
+        }
+        return;
+    }
+    let mid = a.len() / 2;
+    let fwd = lcs_last_row(&a[..mid], b, false);
+    let rev = lcs_last_row(&a[mid..], b, true);
+    let split = (0..=b.len())
+        .max_by_key(|&j| fwd[j] + rev[b.len() - j])
+        .unwrap_or(0);
+    hirschberg(&a[..mid], &b[..split], ao, bo, ac, bc);
+    hirschberg(&a[mid..], &b[split..], ao + mid, bo + split, ac, bc);
+}
+
+/// Final DP row of LCS lengths between `a` and every prefix of `b`
+/// (`rev` = both sequences reversed). Two rolling rows, flat allocations.
+fn lcs_last_row(a: &[&str], b: &[&str], rev: bool) -> Vec<u32> {
+    let mut prev = vec![0u32; b.len() + 1];
+    let mut cur = vec![0u32; b.len() + 1];
+    for i in 0..a.len() {
+        let at = if rev { a[a.len() - 1 - i] } else { a[i] };
+        for j in 0..b.len() {
+            let bt = if rev { b[b.len() - 1 - j] } else { b[j] };
+            cur[j + 1] = if at == bt {
+                prev[j] + 1
+            } else {
+                cur[j].max(prev[j + 1])
+            };
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev
 }
 
 #[cfg(test)]
@@ -207,6 +259,21 @@ mod tests {
         let n = news(&s);
         assert_eq!(n.len(), 1);
         assert_eq!("a b c"[n[0].clone()].trim(), "b");
+    }
+
+    #[test]
+    fn very_long_line_skips_the_lcs_and_spans_whole_lines() {
+        // issue #398: above MAX_WORD_DIFF_LEN the LCS must not run at all —
+        // a punctuation-dense 10 KB pair is ~10k tokens/side (~100M DP cells;
+        // a real 100 KB minified line would abort on allocation). The cap
+        // returns whole-line emphasis instead. Mutation guard: without the
+        // cap the LCS would match the shared dots and emit only a tiny
+        // new-side span (and take orders of magnitude longer).
+        let old = ".".repeat(MAX_WORD_DIFF_LEN + 5_000);
+        let new = format!("{old}!");
+        let s = word_diff(&old, &new);
+        assert_eq!(olds(&s), vec![0..old.len()]);
+        assert_eq!(news(&s), vec![0..new.len()]);
     }
 
     #[test]

@@ -11,12 +11,20 @@
 //! least [`MOVE_MIN_ALNUM`] alphanumeric characters — the same "≥ 20 alnum"
 //! floor git uses to avoid flagging trivial lines (`}`, `return;`) as moves.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 /// Minimum alphanumeric characters in a block for it to count as a move
 /// (git `--color-moved` uses the same floor). Below this a coincidental line
 /// match is not treated as a move.
 pub const MOVE_MIN_ALNUM: usize = 20;
+
+/// Work budget for one [`detect_moves`] call: total line comparisons before it
+/// bails with whatever moves it has found so far (issue #399). A reformatted
+/// lockfile — thousands of lines all trimming to `}` / `,` — is otherwise
+/// O(added · removed · run-length). Move highlighting is a visual hint, so a
+/// truncated (or empty) result on a pathological diff is fine.
+pub const MOVE_DETECT_BUDGET: usize = 4_000_000;
 
 /// A block that was removed in one place and added in another.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,16 +43,32 @@ pub struct MovedBlock {
 /// lines. Lines are compared after `trim_start` (indentation-insensitive);
 /// blank lines never match.
 pub fn detect_moves(removed: &[&str], added: &[&str]) -> Vec<MovedBlock> {
+    // issue #399: trimmed removed text → anchor indices (ascending), so each
+    // added line only visits removed lines that can actually start a run
+    // instead of scanning all of `removed`. Blank lines never match, so they
+    // are never anchors.
+    let mut anchors: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (r, line) in removed.iter().enumerate() {
+        let t = line.trim_start();
+        if !t.is_empty() {
+            anchors.entry(t).or_default().push(r);
+        }
+    }
+    let mut budget = MOVE_DETECT_BUDGET;
     let mut moves = Vec::new();
     let mut used_removed = vec![false; removed.len()];
     let mut a = 0;
     while a < added.len() {
         let mut best: Option<(usize, usize)> = None; // (removed_start, len)
-        for r in 0..removed.len() {
-            if used_removed[r] || !lines_match(added[a], removed[r]) {
+        let candidates = anchors
+            .get(added[a].trim_start())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        for &r in candidates {
+            if used_removed[r] {
                 continue;
             }
-            let mut len = 0;
+            let mut len = 1;
             while a + len < added.len()
                 && r + len < removed.len()
                 && !used_removed[r + len]
@@ -54,6 +78,12 @@ pub fn detect_moves(removed: &[&str], added: &[&str]) -> Vec<MovedBlock> {
             }
             if best.is_none_or(|(_, bl)| len > bl) {
                 best = Some((r, len));
+            }
+            budget = budget.saturating_sub(len);
+            if budget == 0 {
+                // Pathological diff (issue #399): return what we have rather
+                // than lock the UI. Partial move highlighting is acceptable.
+                return moves;
             }
         }
         if let Some((r, len)) = best {
@@ -163,6 +193,38 @@ mod tests {
         let refs: Vec<&str> = added.iter().map(|s| s.as_ref()).collect();
         let moves = detect_moves(removed, &refs);
         assert_eq!(moves.len(), 1);
+    }
+
+    #[test]
+    fn pathological_identical_short_lines_finish_in_bounded_time() {
+        // issue #399: thousands of lines that all trim to the same short
+        // token (a reformatted lockfile) previously cost O(A·R·L) — here
+        // ~1.3e10 comparisons. The work budget caps it at MOVE_DETECT_BUDGET.
+        // Mutation guard: removing the budget makes this test hang for
+        // minutes; with it the call is a few milliseconds.
+        let line = "}".to_string();
+        let side: Vec<&str> = (0..3000).map(|_| line.as_str()).collect();
+        let start = std::time::Instant::now();
+        let moves = detect_moves(&side, &side);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "detect_moves exceeded its work budget"
+        );
+        // `}` runs never clear MOVE_MIN_ALNUM, so no moves either way.
+        assert!(moves.is_empty());
+    }
+
+    #[test]
+    fn distinct_unmatched_lines_stay_linear() {
+        // issue #399: with the anchor map, a huge diff with no matching lines
+        // is O(A + R), not O(A·R). 50k×50k would be 2.5e9 comparisons before.
+        let removed: Vec<String> = (0..50_000).map(|i| format!("old line {i};")).collect();
+        let added: Vec<String> = (0..50_000).map(|i| format!("new line {i};")).collect();
+        let r: Vec<&str> = removed.iter().map(String::as_str).collect();
+        let a: Vec<&str> = added.iter().map(String::as_str).collect();
+        let start = std::time::Instant::now();
+        assert!(detect_moves(&r, &a).is_empty());
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

@@ -64,13 +64,37 @@ pub(crate) fn split_rows(rows: &[DiffRow]) -> Vec<SplitDiffRow> {
     out
 }
 
+/// Memoized [`moved_rows`] (issue #399). `render_diff_list` runs once per
+/// FRAME (scroll included), so move detection must not be recomputed there.
+/// Keyed by the same title+row-count identity as
+/// [`super::diff_selection::surface_key`]; a tiny FIFO holds the last few
+/// diffs so every embedding (main / File History / Editor / PR) shares hits.
+/// The lock is uncontended — renders are main-thread only.
+static MOVED_CACHE: std::sync::Mutex<Vec<(u64, std::sync::Arc<HashSet<usize>>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn moved_rows_cached(key: u64, rows: &[DiffRow]) -> std::sync::Arc<HashSet<usize>> {
+    let mut cache = MOVED_CACHE.lock().unwrap();
+    if let Some((_, set)) = cache.iter().find(|(k, _)| *k == key) {
+        return set.clone();
+    }
+    let set = std::sync::Arc::new(moved_rows(rows));
+    if cache.len() >= 8 {
+        // ponytail: FIFO of 8 diffs; make it LRU if panes ever thrash.
+        cache.remove(0);
+    }
+    cache.push((key, set.clone()));
+    set
+}
+
 /// Row indices (into `rows`) that belong to a moved block (issue #349).
 ///
 /// Feeds the pure [`kagi_domain::moves::detect_moves`] the diff's removed and
 /// added *content* lines (sigil stripped) and maps the returned block ranges
 /// back to `DiffRow` indices. A moved line is one git `--color-moved` would show
-/// as relocated rather than a genuine add/delete. Cheap: one O(rows) walk plus
-/// the greedy match, computed once per open diff pane.
+/// as relocated rather than a genuine add/delete. One O(rows) walk plus the
+/// (budget-capped) greedy match — call through [`moved_rows_cached`] from
+/// render paths so it runs once per diff, not once per frame (issue #399).
 pub(crate) fn moved_rows(rows: &[DiffRow]) -> HashSet<usize> {
     let mut removed_text: Vec<&str> = Vec::new();
     let mut removed_ix: Vec<usize> = Vec::new();
@@ -498,6 +522,23 @@ mod split_rows_tests {
             new_lineno: None,
             highlights: Vec::new(),
         }
+    }
+
+    #[test]
+    fn moved_rows_cached_reuses_the_same_set_per_key() {
+        // issue #399: the second render of the same diff must hit the cache
+        // (same Arc back), not rerun detect_moves.
+        let rows = vec![line(DiffLineKind::Removed), line(DiffLineKind::Added)];
+        let key = crate::ui::diff_selection::surface_key("cache-test.rs", rows.len());
+        let first = super::moved_rows_cached(key, &rows);
+        let second = super::moved_rows_cached(key, &rows);
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+        // A different diff identity gets its own entry.
+        let other_key = crate::ui::diff_selection::surface_key("other.rs", rows.len());
+        assert!(!std::sync::Arc::ptr_eq(
+            &first,
+            &super::moved_rows_cached(other_key, &rows)
+        ));
     }
 
     /// `Full(i)` -> `("full", i, i)`, `Pair` -> `("pair", left, right)` with

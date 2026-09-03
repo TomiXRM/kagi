@@ -199,5 +199,11 @@ pub enum OperationOutcome {
     MergeIntoConflict(Vec<String>),
     Rebase(RebaseOutcome),
     StashPop(StashPopOutcome),
+    /// A snapshot restore. Carries the id of the savepoint taken of the
+    /// pre-restore working tree — the recovery handle (#418). It must reach the
+    /// oplog and UI so the overwritten state is recoverable.
+    RestoreSnapshot {
+        savepoint: String,
+    },
     Unit,
 }

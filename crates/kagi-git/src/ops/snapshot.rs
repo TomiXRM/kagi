@@ -320,7 +320,17 @@ pub fn execute_restore_snapshot(repo: &Repository, id: &str) -> Result<String, G
         .map_err(|e| GitError::Other(format!("restore: checkout_tree failed: {}", e.message())))?;
 
     // ── 3. Verify every file the snapshot recorded now matches on disk. ──
-    verify_restore_snapshot(repo, &tree)?;
+    // #418: the working tree is already overwritten here, so a verify failure
+    // must NOT drop the savepoint id — it is the only handle back to the
+    // pre-restore state. Keep it in the error so the caller (and the oplog
+    // Failed entry) can surface the recovery handle.
+    if let Err(e) = verify_restore_snapshot(repo, &tree) {
+        return Err(GitError::Other(format!(
+            "restore verify failed after overwriting the working tree; \
+             recover the previous state from savepoint {}: {}",
+            savepoint.id, e
+        )));
+    }
 
     Ok(savepoint.id)
 }

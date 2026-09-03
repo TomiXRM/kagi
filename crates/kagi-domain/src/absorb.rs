@@ -113,6 +113,13 @@ pub struct AbsorbPlan {
     pub head_at_plan: String,
     /// How many commits back from HEAD were considered mutable (config, PM §5).
     pub window: usize,
+    /// Content fingerprint of the HEAD→working-tree diff at plan time (#417).
+    /// The distribution table is reasoned against a specific set of hunks at
+    /// specific line coordinates; `preflight_absorb` recomputes this and refuses
+    /// to execute if it no longer matches, so an edit made after planning can
+    /// never be silently (mis)absorbed and the outcome counts stay accurate.
+    /// `0` when there was no diff / HEAD is detached-unborn (no absorb possible).
+    pub worktree_digest: u64,
     /// One row per hunk, in file / position order.
     pub assignments: Vec<HunkAssignment>,
     /// Conditions preventing execution.
@@ -222,6 +229,7 @@ mod tests {
             branch: Some("feature".into()),
             head_at_plan: "deadbeef".into(),
             window: 10,
+            worktree_digest: 0,
             assignments: vec![
                 absorb_row("a.rs", "aaaaaaaaaaaa", false),
                 absorb_row("b.rs", "aaaaaaaaaaaa", false), // same target
@@ -248,6 +256,7 @@ mod tests {
             branch: Some("main".into()),
             head_at_plan: "deadbeef".into(),
             window: 10,
+            worktree_digest: 0,
             assignments: vec![keep_row(KeepReason::PureAddition)],
             blockers: vec![],
         };

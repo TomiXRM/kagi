@@ -174,8 +174,8 @@ fn read_tools() -> Vec<Value> {
         ),
         tool(
             "kagi_oplog",
-            "Kagi's operation log (every write Kagi has performed, newest first), \
-             tagged by actor (human / cli / mcp).",
+            "Kagi's operation log for THIS repository (every write Kagi has \
+             performed here, newest first), tagged by actor (human / cli / mcp).",
             obj(
                 json!({ "limit": { "type": "integer", "minimum": 1, "description": "default 20" } }),
                 &[],

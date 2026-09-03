@@ -24,7 +24,7 @@
 //! commits stay reachable via the reflog). The branch ref is moved with a
 //! reflog-logged `reference(...)`, the same ref-order rule amend/undo follow.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -39,6 +39,10 @@ use kagi_domain::status::WorkingTreeStatus;
 /// Default size of the mutable window (how many commits back from HEAD count as
 /// candidate targets). Configurable by the caller; PM §5 default is 10.
 pub const DEFAULT_ABSORB_WINDOW: usize = 10;
+
+/// Identifies one hunk during the rebuild: `(file, old_start, old_lines,
+/// new_start)`. Matches a freshly recomputed diff hunk back to a plan row.
+type HunkKey = (String, u32, u32, u32);
 
 /// A candidate commit on HEAD's first-parent chain within the window.
 struct Candidate {
@@ -156,6 +160,47 @@ fn staged_count(repo: &Repository, head_tree: &git2::Tree<'_>) -> usize {
         .unwrap_or(0)
 }
 
+/// Content fingerprint of the absorb diff (#417): file paths + each hunk's
+/// old/new coordinates + every line's origin and bytes, in the diff's
+/// deterministic enumeration order. The distribution table is reasoned against
+/// exactly these hunks at exactly these coordinates, so any post-plan edit
+/// (even one that only shifts line numbers) changes this value. `preflight`
+/// compares it to `plan.worktree_digest` and refuses on mismatch.
+fn diff_content_digest(diff: &git2::Diff<'_>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    for delta_idx in 0..diff.deltas().len() {
+        let patch = match Patch::from_diff(diff, delta_idx) {
+            Ok(Some(p)) => p,
+            _ => continue,
+        };
+        let delta = patch.delta();
+        let path = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        path.hash(&mut h);
+        for hi in 0..patch.num_hunks() {
+            if let Ok((hunk, _)) = patch.hunk(hi) {
+                hunk.old_start().hash(&mut h);
+                hunk.old_lines().hash(&mut h);
+                hunk.new_start().hash(&mut h);
+                hunk.new_lines().hash(&mut h);
+            }
+            let nl = patch.num_lines_in_hunk(hi).unwrap_or(0);
+            for l in 0..nl {
+                if let Ok(line) = patch.line_in_hunk(hi, l) {
+                    (line.origin() as u8).hash(&mut h);
+                    line.content().hash(&mut h);
+                }
+            }
+        }
+    }
+    h.finish()
+}
+
 /// Analyse the working tree and build the absorb distribution table.
 pub fn plan_absorb(repo: &Repository, window: usize) -> Result<AbsorbPlan, GitError> {
     let head = resolve_head(repo)?;
@@ -206,6 +251,7 @@ pub fn plan_absorb(repo: &Repository, window: usize) -> Result<AbsorbPlan, GitEr
                 branch,
                 head_at_plan: String::new(),
                 window,
+                worktree_digest: 0,
                 assignments: Vec::new(),
                 blockers,
             })
@@ -273,11 +319,16 @@ pub fn plan_absorb(repo: &Repository, window: usize) -> Result<AbsorbPlan, GitEr
         blockers.push(AbsorbBlocker::NothingToAbsorb);
     }
 
+    // #417: fingerprint the exact hunks this plan was built from so preflight can
+    // refuse if the working tree changes before execute.
+    let worktree_digest = diff_content_digest(&diff);
+
     Ok(AbsorbPlan {
         current,
         branch,
         head_at_plan: head_oid.to_string(),
         window,
+        worktree_digest,
         assignments,
         blockers,
     })
@@ -391,6 +442,28 @@ pub fn preflight_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<(), GitE
         }
     }
 
+    // #417: pin the working tree. The plan's distribution table (and its
+    // reported counts) were reasoned against a specific set of hunks at specific
+    // line coordinates. If the tree changed since — an edit shifts line numbers,
+    // a hunk is added/removed, or content was staged — refuse rather than move
+    // the branch ref while silently mis-absorbing hunks whose coords no longer
+    // match. The caller must re-plan.
+    let head_tree = head_commit
+        .tree()
+        .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?;
+    if staged_count(repo, &head_tree) > 0 {
+        return Err(GitError::Other(
+            "staged changes appeared since the plan was built; re-plan absorb".to_string(),
+        ));
+    }
+    let diff = absorb_diff(repo, &head_tree)?;
+    if diff_content_digest(&diff) != plan.worktree_digest {
+        return Err(GitError::Other(
+            "working tree changed since the plan was built (stale absorb plan); re-plan"
+                .to_string(),
+        ));
+    }
+
     // No merge commit may sit in [HEAD .. oldest_target].
     let mut cur = Some(head_commit);
     let mut depth = 0usize;
@@ -453,7 +526,7 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
         .collect();
 
     // hunk key (old_start, old_lines, new_start) + file → target depth.
-    let mut hunk_depth: HashMap<(String, u32, u32, u32), usize> = HashMap::new();
+    let mut hunk_depth: HashMap<HunkKey, usize> = HashMap::new();
     let mut max_depth = 0usize;
     for a in plan.absorbed() {
         let t = a.target().unwrap();
@@ -467,6 +540,12 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
         );
     }
     let hunk_depth = Rc::new(hunk_depth);
+    // #417: count what is ACTUALLY absorbed, not what the plan predicted. Each
+    // hunk-callback that returns `true` records its key here; the set dedups the
+    // repeated applications a hunk gets as its change propagates forward through
+    // the rebuilt chain, so `len()` is the number of distinct hunks folded in.
+    let applied_keys: Rc<std::cell::RefCell<HashSet<HunkKey>>> =
+        Rc::new(std::cell::RefCell::new(HashSet::new()));
 
     // base = parent of the oldest target — `None` when the oldest target is the
     // root commit (it stays a root in the rebuilt history).
@@ -492,6 +571,7 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
         let cp_delta = current_path.clone();
         let cp_hunk = current_path.clone();
         let hd = hunk_depth.clone();
+        let applied = applied_keys.clone();
 
         let mut apply_opts = ApplyOptions::new();
         apply_opts.delta_callback(move |delta| {
@@ -513,7 +593,11 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
                 hunk.old_lines(),
                 hunk.new_start(),
             );
-            matches!(hd.get(&key), Some(&td) if td >= d)
+            let take = matches!(hd.get(&key), Some(&td) if td >= d);
+            if take {
+                applied.borrow_mut().insert(key);
+            }
+            take
         });
 
         let new_index = repo
@@ -579,11 +663,25 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
         .write()
         .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
 
+    // #417: build the outcome from what was actually applied, so the reported
+    // counts can never disagree with reality. (With the preflight digest guard
+    // in place these equal the plan's predictions, but deriving them from the
+    // applied set makes that a fact, not an assumption.)
+    let applied = applied_keys.borrow();
+    let absorbed_hunks = applied.len();
+    let kept_hunks = plan.assignments.len() - absorbed_hunks;
+    let mut depths: Vec<usize> = applied
+        .iter()
+        .filter_map(|k| hunk_depth.get(k).copied())
+        .collect();
+    depths.sort_unstable();
+    depths.dedup();
+
     Ok(AbsorbOutcome {
         new_head: new_head.to_string(),
-        absorbed_hunks: plan.absorb_count(),
-        kept_hunks: plan.keep_count(),
-        targets_rewritten: plan.targets_rewritten(),
+        absorbed_hunks,
+        kept_hunks,
+        targets_rewritten: depths.len(),
     })
 }
 

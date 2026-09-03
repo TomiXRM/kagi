@@ -16,7 +16,7 @@
 //! - [`OpLogEntry`] — one log record
 //! - [`append_oplog`] — write `entry` to the JSONL file
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{ops::StateSummary, GitError};
@@ -578,6 +578,58 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
 /// Lines that cannot be parsed are silently skipped.
 /// Returns an empty `Vec` if the file does not exist or cannot be read.
 pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
+    let entries = read_all_oplog_entries();
+    // Return the tail (up to n), newest first.
+    let start = entries.len().saturating_sub(n);
+    entries[start..].iter().rev().cloned().collect()
+}
+
+/// Read the last `n` oplog entries whose repository matches `repo`, newest
+/// first — repo confinement for `kagi_oplog` / `kagi oplog --repo` (#421).
+///
+/// The oplog is a single global JSONL file; the MCP server and the CLI must
+/// only ever surface the **bound** repository's history, never another repo's.
+/// Paths are normalized (resolved to the repo workdir, then canonicalized) on
+/// both sides before comparison, so a trailing slash, a `.` component, or a
+/// symlink cannot defeat the filter.
+///
+/// Entries written from a *linked worktree* of the same repo are logged under
+/// the worktree's own path (`Backend::run` records `self.path` for both `repo`
+/// and `worktree`) and are therefore a **separate scope** — they are not
+/// included here.
+///
+/// The global id/parent chain (ADR-0149) is reconstructed over the *whole* file
+/// before filtering, so ids stay global; a filtered `parent` may point at an
+/// entry that is not in the returned set (a future selective-undo must walk
+/// backwards within the filtered set — noted for #334).
+pub fn read_oplog_tail_for_repo(repo: &Path, n: usize) -> Vec<OpLogEntry> {
+    let want = normalize_repo_path(repo);
+    let entries: Vec<OpLogEntry> = read_all_oplog_entries()
+        .into_iter()
+        .filter(|e| normalize_repo_path(Path::new(&e.repo)) == want)
+        .collect();
+    let start = entries.len().saturating_sub(n);
+    entries[start..].iter().rev().cloned().collect()
+}
+
+/// Normalize a repository path for oplog filtering: resolve to the repo workdir
+/// (so `--repo <subdir>` or a `.git` path still matches entries logged under
+/// the workdir root), then canonicalize to fold trailing slashes, `.`
+/// components, and symlinks. Falls back to the raw path when the repo can't be
+/// discovered (e.g. an entry whose repo was since deleted).
+fn normalize_repo_path(path: &Path) -> PathBuf {
+    let base = git2::Repository::discover(path)
+        .ok()
+        .and_then(|r| r.workdir().map(Path::to_path_buf))
+        .unwrap_or_else(|| path.to_path_buf());
+    std::fs::canonicalize(&base).unwrap_or(base)
+}
+
+/// Read and parse the entire oplog file, oldest-first, reconstructing id/parent
+/// for pre-ADR-0149 lines that lack an explicit `id`: id = 0-based index of the
+/// entry in the file, parent = previous entry's id. New lines carry their own
+/// id/parent. Returns an empty `Vec` if the file is missing/unreadable.
+fn read_all_oplog_entries() -> Vec<OpLogEntry> {
     let path = match log_file_path() {
         Some(p) => p,
         None => return Vec::new(),
@@ -587,9 +639,6 @@ pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
         Err(_) => return Vec::new(),
     };
 
-    // Parse oldest-first, reconstructing id/parent for pre-ADR-0149 lines that
-    // lack an explicit `id`: id = 0-based index of the entry in the file,
-    // parent = previous entry's id. New lines carry their own id/parent.
     let mut entries: Vec<OpLogEntry> = Vec::new();
     let mut prev_id: Option<u64> = None;
     let mut idx: u64 = 0;
@@ -607,10 +656,7 @@ pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
             entries.push(entry);
         }
     }
-
-    // Return the tail (up to n), newest first.
-    let start = entries.len().saturating_sub(n);
-    entries[start..].iter().rev().cloned().collect()
+    entries
 }
 
 /// Append `entry` to the operation log file as a JSON Lines record.

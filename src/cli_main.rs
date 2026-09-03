@@ -354,9 +354,12 @@ fn cmd_status(args: &[String]) -> Result<i32, String> {
 // ── oplog ───────────────────────────────────────────────────
 
 fn cmd_oplog(args: &[String]) -> Result<i32, String> {
+    // `--repo PATH` (default: current dir) via the shared helper — #421: the
+    // oplog is scoped to one repo, matching the `[--repo PATH]` usage line.
+    let (repo, _plan, _yes, rest) = take_flags(args);
     // `--limit N` is a positional-free flag; default 20.
     let mut limit = 20usize;
-    let mut it = args.iter();
+    let mut it = rest.iter();
     while let Some(a) = it.next() {
         if a == "--limit" {
             if let Some(n) = it.next() {
@@ -364,7 +367,7 @@ fn cmd_oplog(args: &[String]) -> Result<i32, String> {
             }
         }
     }
-    let entries = kagi_git::read_oplog_tail(limit);
+    let entries = kagi_git::read_oplog_tail_for_repo(&repo, limit);
     let items: Vec<String> = entries.iter().map(kagi_git::entry_to_json).collect();
     println!("[{}]", items.join(","));
     Ok(0)

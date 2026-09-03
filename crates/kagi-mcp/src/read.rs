@@ -34,7 +34,7 @@ pub fn call(repo: &Path, name: &str, args: &Value) -> ToolResult {
         "kagi_worktrees" => worktrees(repo),
         "kagi_conflicts" => conflicts(repo),
         "kagi_stashes" => stashes(repo),
-        "kagi_oplog" => oplog(args),
+        "kagi_oplog" => oplog(repo, args),
         other => Err(format!("unknown read tool '{}'", other)),
     }
 }
@@ -277,9 +277,12 @@ fn stashes(repo: &Path) -> ToolResult {
     Ok(json!({ "stashes": list }))
 }
 
-fn oplog(args: &Value) -> ToolResult {
+fn oplog(repo: &Path, args: &Value) -> ToolResult {
     let limit = limit_arg(args, "limit", 20);
-    let entries = kagi_git::read_oplog_tail(limit);
+    // Repo confinement (#421): only this bound repo's history, never the global
+    // log. Every read tool now takes `repo` — the `lib.rs` isolation argument
+    // rests on "all tools go through the bound repo", not "no repo_path arg".
+    let entries = kagi_git::read_oplog_tail_for_repo(repo, limit);
     let items: Vec<Value> = entries
         .iter()
         .map(|e| serde_json::from_str(&kagi_git::entry_to_json(e)).unwrap_or(Value::Null))

@@ -36,8 +36,12 @@ pub mod write;
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// A running MCP server bound to a single repository fixed at startup
-/// (PM-locked §5: no `repo_path` argument on tools, so an agent cannot reach
-/// another repo). The `plans` map is the server-side plan store: `kagi_plan`
+/// (PM-locked §5). No tool takes a `repo_path` argument, and **every** read and
+/// write tool routes through this bound `repo` — including `kagi_oplog`, which
+/// filters the global operation log to this repository (#421). That "all tools
+/// go through the bound repo" property, not merely "no `repo_path` arg", is what
+/// prevents an agent from reaching another repo. The `plans` map is the
+/// server-side plan store: `kagi_plan`
 /// records `plan_id → (op, args)` and `kagi_confirm(plan_id)` looks it up,
 /// re-plans, and executes. It is in-memory and per-process.
 pub struct Server {
@@ -268,6 +272,63 @@ mod tests {
             ))
             .unwrap();
         resp["result"].clone()
+    }
+
+    // #421: env-guarded because KAGI_LOG_DIR is process-global.
+    static OPLOG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn kagi_oplog_is_confined_to_the_bound_repo() {
+        // A server bound to repo A must never surface repo B's operation log,
+        // even though both live in the single global oplog file (#421).
+        let _guard = OPLOG_ENV_LOCK.lock().unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let log_dir = base.path().join("logs");
+        std::fs::create_dir_all(&log_dir).unwrap();
+        let prev = std::env::var("KAGI_LOG_DIR").ok();
+        std::env::set_var("KAGI_LOG_DIR", log_dir.to_str().unwrap());
+
+        let repo_a = temp_repo();
+        let repo_b = temp_repo();
+
+        let mk = |repo: &std::path::Path, op: &str| {
+            kagi_git::OpLogEntry::new(
+                op,
+                repo.display().to_string(),
+                kagi_domain::plan::StateSummary {
+                    head: "branch: main".to_string(),
+                    dirty: "clean".to_string(),
+                },
+                kagi_git::OpOutcome::Success {
+                    after: kagi_domain::plan::StateSummary {
+                        head: "branch: main".to_string(),
+                        dirty: "clean".to_string(),
+                    },
+                },
+            )
+        };
+        kagi_git::append_oplog(&mk(repo_a.path(), "checkout-a")).unwrap();
+        kagi_git::append_oplog(&mk(repo_b.path(), "checkout-b")).unwrap();
+
+        let mut server = Server::new(repo_a.path());
+        let result = call(&mut server, "kagi_oplog", json!({ "limit": 50 }));
+        let entries = result["structuredContent"]["entries"]
+            .as_array()
+            .expect("entries array");
+
+        assert!(
+            entries.iter().any(|e| e["op"] == "checkout-a"),
+            "bound repo A's entry must be present"
+        );
+        assert!(
+            !entries.iter().any(|e| e["op"] == "checkout-b"),
+            "repo B's entry must NOT leak through A's server"
+        );
+
+        match prev {
+            Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
+            None => std::env::remove_var("KAGI_LOG_DIR"),
+        }
     }
 
     #[test]

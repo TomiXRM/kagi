@@ -878,6 +878,13 @@ pub enum Msg {
     /// Tooltip lead-in for [`Msg::RulesetBadge`] (the specific finding text is
     /// appended by the caller).
     RulesetBadgeTooltip,
+
+    /// issue #350: blame legend tooltip for the `*` marker on a line whose
+    /// commit is listed in `.git-blame-ignore-revs`.
+    BlameIgnoredMarkTip,
+    /// issue #350: blame legend tooltip for the `?` marker on an unblamable
+    /// (uncommitted) line.
+    BlameUnblamableMarkTip,
 }
 
 impl Msg {
@@ -1860,7 +1867,24 @@ impl Msg {
             (Ja, UnsafeUnicodeTooltip) => {
                 "この行には表示順を偽装できる双方向制御文字、または不可視のゼロ幅文字が含まれています。"
             }
+            (En, BlameIgnoredMarkTip) => "* commit is in .git-blame-ignore-revs",
+            (Ja, BlameIgnoredMarkTip) => "* commit は .git-blame-ignore-revs に含まれます",
+            (En, BlameUnblamableMarkTip) => "? line is not yet committed",
+            (Ja, BlameUnblamableMarkTip) => "? まだ commit されていない行",
         }
+    }
+}
+
+/// issue #350: the "N revisions ignored" indicator shown on a blame view when a
+/// `.git-blame-ignore-revs` file took effect. `n` is the number of distinct
+/// ignored commits that actually appear in the blamed file.
+pub fn blame_revisions_ignored(n: usize) -> String {
+    match lang() {
+        Lang::En => {
+            let plural = if n == 1 { "" } else { "s" };
+            format!("{n} revision{plural} ignored")
+        }
+        Lang::Ja => format!("{n} 件の revision を無視中"),
     }
 }
 

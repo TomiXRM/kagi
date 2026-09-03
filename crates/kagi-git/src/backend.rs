@@ -21,6 +21,10 @@ pub struct Backend {
     /// on every oplog entry `run` writes. Defaults to [`Actor::Human`]; the
     /// future MCP/CLI front-ends set `Mcp`/`Cli` via [`Backend::set_actor`].
     actor: crate::oplog::Actor,
+    /// Whether `run` takes an automatic savepoint snapshot before executing a
+    /// destructive op (ADR-0154 / #335). Default `true`; the UI sets it from
+    /// the `auto_snapshot` setting via [`Backend::set_auto_snapshot`].
+    auto_snapshot: bool,
 }
 
 /// Map a `Backend::run` dispatch result into the oplog [`OpOutcome`] (ADR-0149).
@@ -78,6 +82,7 @@ impl Backend {
             repo,
             path,
             actor: crate::oplog::Actor::Human,
+            auto_snapshot: true,
         })
     }
 
@@ -105,6 +110,7 @@ impl Backend {
             repo,
             path,
             actor: crate::oplog::Actor::Human,
+            auto_snapshot: true,
         })
     }
 
@@ -117,6 +123,48 @@ impl Backend {
     /// set `Mcp`/`Cli` so the log shows who initiated each write.
     pub fn set_actor(&mut self, actor: crate::oplog::Actor) {
         self.actor = actor;
+    }
+
+    /// Enable/disable the automatic pre-destructive savepoint snapshot
+    /// (ADR-0154). The UI wires this from the `auto_snapshot` setting.
+    pub fn set_auto_snapshot(&mut self, on: bool) {
+        self.auto_snapshot = on;
+    }
+
+    // ── Snapshots (working-tree savepoints, `refs/kagi/snapshots/`, ADR-0154).
+    // Creating/listing/pruning are non-destructive (they only add or drop refs)
+    // so they are plain facade calls; RESTORE goes through `run` (plan → oplog).
+
+    /// Capture the current working tree as a snapshot with `message`.
+    pub fn create_snapshot(&self, message: &str) -> Result<ops::SnapshotEntry, GitError> {
+        ops::create_snapshot(&self.repo, message)
+    }
+
+    /// All snapshots, newest-first.
+    pub fn list_snapshots(&self) -> Result<Vec<ops::SnapshotEntry>, GitError> {
+        ops::list_snapshots(&self.repo)
+    }
+
+    /// Evict snapshots beyond the generation `cap` (oldest first).
+    pub fn prune_snapshots(&self, cap: usize) -> Result<Vec<String>, GitError> {
+        ops::prune_snapshots(&self.repo, cap)
+    }
+
+    /// Explicitly delete one snapshot.
+    pub fn delete_snapshot(&self, id: &str) -> Result<(), GitError> {
+        ops::delete_snapshot(&self.repo, id)
+    }
+
+    /// Plan a restore of the working tree to snapshot `id` (destructive op).
+    pub fn plan_restore_snapshot(&self, id: &str) -> Result<OperationPlan, GitError> {
+        ops::plan_restore_snapshot(&self.repo, id)
+    }
+
+    /// Execute a restore (savepoint → checkout → verify). Returns the savepoint
+    /// id. Prefer `run(&Operation::RestoreSnapshot, plan)` so the oplog records
+    /// it; this is the raw executor `run` dispatches to.
+    pub fn execute_restore_snapshot(&self, id: &str) -> Result<String, GitError> {
+        ops::execute_restore_snapshot(&self.repo, id)
     }
 
     pub fn head_state(&self) -> Result<Head, GitError> {
@@ -695,6 +743,7 @@ impl Backend {
             Operation::ForceWithLeasePush => self.plan_force_with_lease_push(),
             Operation::RebaseCurrentOnto { onto } => self.plan_rebase_current_onto(onto),
             Operation::Discard { paths } => self.plan_discard(paths),
+            Operation::RestoreSnapshot { id } => self.plan_restore_snapshot(id),
         }
     }
 
@@ -747,6 +796,33 @@ impl Backend {
                 },
             );
             return Err(e);
+        }
+
+        // ── Auto-snapshot (ADR-0154 / #335): before a destructive op mutates
+        // the repo, take a savepoint under `refs/kagi/snapshots/` so the work
+        // is recoverable in git's own terms. Gated by `auto_snapshot` (default
+        // on). Skipped for RestoreSnapshot itself (it takes its own savepoint)
+        // and when the plan is a no-op. A snapshot failure is logged but never
+        // blocks the user's operation.
+        if self.auto_snapshot
+            && plan.destructive
+            && !matches!(op, Operation::RestoreSnapshot { .. })
+        {
+            match ops::create_snapshot(
+                &self.repo,
+                &format!("auto snapshot before {}", op.oplog_name()),
+            ) {
+                Ok(_) => {
+                    let _ = ops::prune_snapshots(&self.repo, ops::DEFAULT_SNAPSHOT_CAP);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "kagi: auto-snapshot before {} failed: {}",
+                        op.oplog_name(),
+                        e
+                    );
+                }
+            }
         }
 
         // ── Dispatch (behaviour-identical to the former execute(op)). ──
@@ -872,6 +948,9 @@ impl Backend {
             Operation::Discard { paths } => self
                 .execute_discard(plan, paths)
                 .map(OperationOutcome::Discard),
+            Operation::RestoreSnapshot { id } => self
+                .execute_restore_snapshot(id)
+                .map(|_savepoint| OperationOutcome::Unit),
         };
 
         // ── Oplog (ADR-0149 / #329): record synchronously here so EVERY caller

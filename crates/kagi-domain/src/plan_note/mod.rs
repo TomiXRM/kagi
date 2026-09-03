@@ -34,6 +34,7 @@ pub mod push;
 pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
+pub mod snapshot;
 pub mod stash;
 pub mod switch;
 pub mod tag;
@@ -57,6 +58,7 @@ pub use push::{PushNote, PushRecovery, PushTitle};
 pub use rebase::{RebaseNote, RebaseRecovery, RebaseTitle};
 pub use remote_branch::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};
 pub use reset::{ResetNote, ResetRecovery, ResetTitle};
+pub use snapshot::{SnapshotNote, SnapshotRecovery, SnapshotTitle};
 pub use stash::{StashNote, StashRecovery, StashTitle};
 pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
 pub use tag::{TagNote, TagRecovery, TagTitle};
@@ -92,6 +94,7 @@ pub enum PlanNote {
     ForceLease(ForceLeaseNote),
     Github(GithubNote),
     Rebase(RebaseNote),
+    Snapshot(SnapshotNote),
 }
 
 impl PlanNote {
@@ -122,6 +125,7 @@ impl PlanNote {
             PlanNote::ForceLease(n) => n.message_en(),
             PlanNote::Github(n) => n.message_en(),
             PlanNote::Rebase(n) => n.message_en(),
+            PlanNote::Snapshot(n) => n.message_en(),
         }
     }
 }
@@ -161,6 +165,7 @@ pub enum PlanTitle {
     ForceLease(ForceLeaseTitle),
     Github(GithubTitle),
     Rebase(RebaseTitle),
+    Snapshot(SnapshotTitle),
 }
 
 impl PlanTitle {
@@ -186,6 +191,7 @@ impl PlanTitle {
             PlanTitle::ForceLease(t) => t.message_en(),
             PlanTitle::Github(t) => t.message_en(),
             PlanTitle::Rebase(t) => t.message_en(),
+            PlanTitle::Snapshot(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -240,6 +246,7 @@ impl PlanRecovery {
             RecoveryKind::ForceLease(r) => r.message_en(),
             RecoveryKind::Github(r) => r.message_en(),
             RecoveryKind::Rebase(r) => r.message_en(),
+            RecoveryKind::Snapshot(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -275,6 +282,7 @@ pub enum RecoveryKind {
     ForceLease(ForceLeaseRecovery),
     Github(GithubRecovery),
     Rebase(RebaseRecovery),
+    Snapshot(SnapshotRecovery),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to
@@ -430,6 +438,7 @@ mod tests {
             }),
             PlanNote::Github(GithubNote::RemoteSideEffect),
             PlanNote::Rebase(RebaseNote::DetachedHead),
+            PlanNote::Snapshot(SnapshotNote::SavepointFirst),
         ];
 
         for note in &cases {
@@ -457,6 +466,7 @@ mod tests {
                 PlanNote::ForceLease(n) => n.message_en(),
                 PlanNote::Github(n) => n.message_en(),
                 PlanNote::Rebase(n) => n.message_en(),
+                PlanNote::Snapshot(n) => n.message_en(),
             };
             assert_eq!(note.message_en(), inner, "dispatch arm for {note:?}");
             // … which is never empty, and reaches Display unchanged.
@@ -466,7 +476,7 @@ mod tests {
 
         // One fixture per `PlanNote` variant — bump this when a category is
         // added (and add its row above).
-        assert_eq!(cases.len(), 22, "one fixture per PlanNote variant");
+        assert_eq!(cases.len(), 23, "one fixture per PlanNote variant");
     }
 
     #[test]

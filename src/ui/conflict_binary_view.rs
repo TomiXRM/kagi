@@ -110,18 +110,33 @@ pub fn viewer_mode(kind: ConflictKind, is_image: bool, size: Option<u64>) -> Bin
 }
 
 // ────────────────────────────────────────────────────────────
-// Preview cache (content-addressed by blob OID) — decode each blob once
+// Preview cache (content-addressed by blob OID) — resolve each side once
 // ────────────────────────────────────────────────────────────
 
 thread_local! {
-    // ponytail: session-lifetime cache, never evicted. Keyed by blob OID so it
-    // is content-addressed (no stale entries across repos/sessions); a conflict
-    // session has a handful of files, so unbounded growth is not a concern.
-    // Upgrade path: LRU if a huge multi-repo session ever makes this matter.
-    static IMAGE_CACHE: RefCell<HashMap<String, Option<Arc<Image>>>> = RefCell::new(HashMap::new());
+    // ponytail: session-lifetime cache, never evicted. Keyed by blob OID (+
+    // conflict kind) so it is content-addressed (no stale entries across
+    // repos/sessions); a conflict session has a handful of files, so unbounded
+    // growth is not a concern. Upgrade path: LRU if a huge multi-repo session
+    // ever makes this matter.
+    static SIDE_CACHE: RefCell<HashMap<String, SideData>> = RefCell::new(HashMap::new());
+}
+
+/// Cache-first lookup (#409): consult [`SIDE_CACHE`] BEFORE any repository
+/// access. `build` (which opens the backend and reads the blob) runs only on a
+/// miss and its result is cached; a `None` from `build` (backend open failure)
+/// is not cached so a later frame can retry.
+fn cached_or_build(key: &str, build: impl FnOnce() -> Option<SideData>) -> Option<SideData> {
+    if let Some(hit) = SIDE_CACHE.with(|c| c.borrow().get(key).cloned()) {
+        return Some(hit);
+    }
+    let data = build()?;
+    SIDE_CACHE.with(|c| c.borrow_mut().insert(key.to_string(), data.clone()));
+    Some(data)
 }
 
 /// Everything the viewer needs for one side, resolved once via the backend.
+#[derive(Clone)]
 struct SideData {
     present: bool,
     oid_short: String,
@@ -190,23 +205,15 @@ fn build_side(
     if within_cap {
         if let Some(bytes) = backend.conflict_side_bytes(buffer, path, side) {
             if let Some(fmt) = image_format_for(path, Some(&bytes)) {
-                let n = bytes.len();
-                image = IMAGE_CACHE.with(|c| {
-                    let mut m = c.borrow_mut();
-                    if !m.contains_key(&info.oid) {
-                        klog!(
-                            "conflict-view: image decoded oid={} fmt={:?} src={}bytes",
-                            info.oid_short,
-                            fmt,
-                            n
-                        );
-                        m.insert(
-                            info.oid.clone(),
-                            Some(Arc::new(Image::from_bytes(fmt, bytes))),
-                        );
-                    }
-                    m.get(&info.oid).cloned().flatten()
-                });
+                // #409: build_side only runs on a SIDE_CACHE miss, so this
+                // decode (and the blob read above) happens once per blob.
+                klog!(
+                    "conflict-view: image decoded oid={} fmt={:?} src={}bytes",
+                    info.oid_short,
+                    fmt,
+                    bytes.len()
+                );
+                image = Some(Arc::new(Image::from_bytes(fmt, bytes)));
             }
         }
     }
@@ -234,12 +241,28 @@ pub fn render_raw_preview(
     labels: &SideLabels,
     _cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let backend = match kagi_git::Backend::open(mode.buffer.repo_path()) {
-        Ok(b) => b,
-        Err(_) => return raw_error_box(),
+    // #409: the cache key comes from the buffer alone (`side_raw_meta`, no
+    // repository access) and SIDE_CACHE is consulted first — the backend is
+    // opened, and blob bytes read, only when a side misses the cache. Before
+    // this, every repaint on the one screen where the user types opened a
+    // git2 Repository and copied both sides' full blobs.
+    let mut backend: Option<kagi_git::Backend> = None;
+    let mut side = |s: SelectionSide| -> Option<SideData> {
+        let Some((oid, _)) = mode.buffer.side_raw_meta(path, s) else {
+            return Some(SideData::absent());
+        };
+        cached_or_build(&format!("{oid}:{kind:?}"), || {
+            if backend.is_none() {
+                backend = kagi_git::Backend::open(mode.buffer.repo_path()).ok();
+            }
+            let b = backend.as_ref()?;
+            Some(build_side(b, &mode.buffer, path, s, kind))
+        })
     };
-    let current = build_side(&backend, &mode.buffer, path, SelectionSide::Current, kind);
-    let incoming = build_side(&backend, &mode.buffer, path, SelectionSide::Incoming, kind);
+    let (current, incoming) = match (side(SelectionSide::Current), side(SelectionSide::Incoming)) {
+        (Some(c), Some(i)) => (c, i),
+        _ => return raw_error_box(),
+    };
 
     // Any non-image binary side offers the external-compare action.
     let show_external =
@@ -463,6 +486,30 @@ mod tests {
     use super::*;
 
     const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+    /// MUTATION GUARD (#409): the cache is consulted BEFORE the expensive
+    /// build. On a hit the builder must not run at all (it panics here); on a
+    /// miss it runs exactly once and the result is cached for the next frame.
+    #[test]
+    fn side_cache_consulted_before_build() {
+        SIDE_CACHE.with(|c| {
+            c.borrow_mut()
+                .insert("hit-oid:Binary".into(), SideData::absent())
+        });
+        let hit = cached_or_build("hit-oid:Binary", || {
+            panic!("cache hit must not open the backend / read the blob")
+        });
+        assert!(hit.is_some());
+
+        let mut builds = 0;
+        for _frame in 0..3 {
+            let _ = cached_or_build("miss-oid:Binary", || {
+                builds += 1;
+                Some(SideData::absent())
+            });
+        }
+        assert_eq!(builds, 1, "blob must be read once, not per frame");
+    }
 
     #[test]
     fn image_detected_by_extension() {

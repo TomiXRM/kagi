@@ -110,7 +110,11 @@ pub fn sanitize_markdown_for_view(src: &str) -> String {
             }
         }
     }
-    out
+    // issue #356: PR bodies / review comments are remote-origin text. CR was
+    // already folded to '\n' above; neutralize the remaining terminal control
+    // bytes (ANSI escapes, DEL, C1) before the text reaches a display run.
+    // CJK/emoji are preserved.
+    crate::text_safety::sanitize_control_bytes(&out)
 }
 
 /// Remove `<!-- … -->` comments and HTML tags, keeping text content. Code
@@ -211,6 +215,22 @@ mod markdown_sanitize_tests {
     fn fenced_blocks_are_left_alone() {
         let s = "```\nlet a;\nlet b;\n```\n";
         assert_eq!(sanitize_markdown_for_view(s), s);
+    }
+
+    #[test]
+    fn control_bytes_escaped_cjk_preserved() {
+        // issue #356: a PR body / review comment carrying ANSI escapes is
+        // neutralized while legitimate CJK/emoji pass through.
+        let s = "見出し 🎉\n\nbody \x1b[31mred\x07 中文";
+        let out = sanitize_markdown_for_view(s);
+        assert!(!out.contains('\x1b'), "ESC escaped: {out}");
+        assert!(!out.contains('\x07'), "BEL escaped: {out}");
+        assert!(out.contains("\\x1B"), "visible escape: {out}");
+        assert!(out.contains("見出し"), "CJK preserved: {out}");
+        assert!(out.contains("🎉"), "emoji preserved: {out}");
+        assert!(out.contains("中文"), "CJK preserved: {out}");
+        // LF (paragraph break) must survive.
+        assert!(out.contains('\n'), "newlines preserved: {out}");
     }
 }
 

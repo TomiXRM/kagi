@@ -14,8 +14,9 @@ use gpui::{div, prelude::*, px, rgb, SharedString};
 use kagi_git::{CommitId, DiffLineKind, FileDiff, FileStatus};
 
 use super::theme;
-use super::{commit_panel, diff_view, KagiApp};
+use super::{commit_panel, diff_view, KagiApp, Msg};
 use gpui::Context;
+use gpui_component::tooltip::Tooltip;
 
 /// Per-row syntax-highlight spans: `(row_index, [(byte_range, style), …])`.
 /// Named to keep the diff-highlight signatures readable (clippy::type_complexity).
@@ -98,6 +99,25 @@ impl FileDiffView {
                     });
                 }
             }
+        }
+
+        // issue #356: diff content is remote-origin. Scan the built rows once
+        // (not per-frame) for bidi-control / zero-width codepoints and emit a
+        // single contract line so the badge shown per row has a headless
+        // counterpart. The text is NOT rewritten — the chars may be legitimate.
+        let unsafe_lines = rows
+            .iter()
+            .filter(|r| {
+                matches!(r, DiffRow::Line { text, .. }
+                    if kagi_domain::text_safety::has_unsafe_unicode(text))
+            })
+            .count();
+        if unsafe_lines > 0 {
+            klog!(
+                "text-safety: unsafe unicode in diff — {} line(s) in {}",
+                unsafe_lines,
+                file_name
+            );
         }
 
         FileDiffView {
@@ -689,6 +709,35 @@ pub(crate) fn render_main_diff_row(
                 )
                 // Content (sigil + highlighted text)
                 .child(content_el)
+                // issue #356: line-level badge when the row carries bidi-control
+                // or zero-width codepoints (Trojan Source / invisible chars).
+                .when(
+                    kagi_domain::text_safety::has_unsafe_unicode(text.as_ref()),
+                    |el| {
+                        // Same tinted-fill grammar as the provenance badge: a soft
+                        // warning-hue fill + border with theme-aware readable text,
+                        // so it stays legible in both light and dark themes.
+                        let (bg, border, text) = theme::badge_style(theme::theme().color_warning);
+                        el.child(
+                            div()
+                                .id(("diff-unsafe-badge", i))
+                                .flex_shrink_0()
+                                .ml_2()
+                                .px_1()
+                                .rounded_sm()
+                                .text_xs()
+                                .bg(gpui::rgba(bg))
+                                .border_1()
+                                .border_color(gpui::rgba(border))
+                                .text_color(rgb(text))
+                                .tooltip(|window, cx| {
+                                    Tooltip::new(SharedString::from(Msg::UnsafeUnicodeTooltip.t()))
+                                        .build(window, cx)
+                                })
+                                .child(SharedString::from(Msg::UnsafeUnicodeBadge.t())),
+                        )
+                    },
+                )
                 .into_any()
         }
         DiffRow::Binary => div()
@@ -1372,6 +1421,84 @@ impl KagiApp {
         self.main_diff = None;
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
         self.pending_headless_diff = None;
+    }
+}
+
+#[cfg(test)]
+mod unsafe_unicode_tests {
+    use super::*;
+    use kagi_git::{ChangeKind, DiffLine, DiffLineKind, FileDiff, Hunk};
+    use std::path::PathBuf;
+
+    fn line(kind: DiffLineKind, content: &str, n: u32) -> DiffLine {
+        DiffLine {
+            kind,
+            content: content.to_string(),
+            old_lineno: Some(n),
+            new_lineno: Some(n),
+        }
+    }
+
+    fn one_file(lines: Vec<DiffLine>) -> FileDiff {
+        FileDiff {
+            old_path: Some(PathBuf::from("f.rs")),
+            new_path: Some(PathBuf::from("f.rs")),
+            change: ChangeKind::Modified,
+            hunks: vec![Hunk {
+                old_range: (1, lines.len() as u32),
+                new_range: (1, lines.len() as u32),
+                lines,
+            }],
+            is_binary: false,
+        }
+    }
+
+    fn unsafe_row_count(view: &FileDiffView) -> usize {
+        view.rows
+            .iter()
+            .filter(|r| {
+                matches!(r, DiffRow::Line { text, .. }
+                    if kagi_domain::text_safety::has_unsafe_unicode(text))
+            })
+            .count()
+    }
+
+    #[test]
+    fn bidi_control_in_diff_flags_a_row() {
+        // issue #356 acceptance: an RLO (Trojan-Source) in a diff line is
+        // detected so the badge / klog path fires.
+        let view = FileDiffView::from_file_diff(
+            &one_file(vec![
+                line(DiffLineKind::Context, "clean line\n", 1),
+                line(DiffLineKind::Added, "if (x)\u{202E} evil\n", 2),
+            ]),
+            0,
+        );
+        assert_eq!(unsafe_row_count(&view), 1);
+    }
+
+    #[test]
+    fn zero_width_in_diff_flags_a_row() {
+        // issue #356 acceptance: a zero-width space is detected.
+        let view = FileDiffView::from_file_diff(
+            &one_file(vec![line(DiffLineKind::Added, "let a\u{200B}b = 1;\n", 1)]),
+            0,
+        );
+        assert_eq!(unsafe_row_count(&view), 1);
+    }
+
+    #[test]
+    fn clean_cjk_diff_flags_nothing() {
+        // Legitimate CJK/emoji must not trip the detector.
+        let view = FileDiffView::from_file_diff(
+            &one_file(vec![line(
+                DiffLineKind::Added,
+                "let s = \"日本語 🎉\";\n",
+                1,
+            )]),
+            0,
+        );
+        assert_eq!(unsafe_row_count(&view), 0);
     }
 }
 

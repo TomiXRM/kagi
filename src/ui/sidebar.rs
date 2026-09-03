@@ -1044,10 +1044,13 @@ fn build_local_branch_leaf(
             )
         });
 
+    // issue #356: branch names are remote-origin — neutralize control bytes in
+    // the visible label (the raw `branch_name` operand stays untouched).
+    let display_label = kagi_domain::text_safety::sanitize_control_bytes(display_label);
     let label = if is_head {
         SharedString::from(format!("\u{2713} {}", display_label))
     } else {
-        SharedString::from(display_label.to_string())
+        SharedString::from(display_label)
     };
     let text_color = if is_head {
         theme().color_success
@@ -1327,7 +1330,9 @@ fn build_tag_row(
     tag_target: CommitId,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let tag_label = SharedString::from(tag_name.to_string());
+    // issue #356: tag names are remote-origin — neutralize control bytes in
+    // the visible label (the raw `tag_name` operand stays untouched).
+    let tag_label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(tag_name));
     let full_name = SharedString::from(tag_name.to_string());
     let can_jump = this.active_view.commit_row_index.contains_key(&tag_target);
     // Right-click → the tag menu (ADR-0140). Tags were the only sidebar ref
@@ -1377,10 +1382,14 @@ fn build_worktree_row(
     locked: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    // issue #356: worktree name/path are remote/filesystem-origin text —
+    // neutralize control bytes in the visible label.
+    let name_s = kagi_domain::text_safety::sanitize_control_bytes(name);
+    let path_s = kagi_domain::text_safety::sanitize_control_bytes(path_label);
     let label = if is_current {
-        SharedString::from(format!("\u{2713} {}  {}", name, path_label))
+        SharedString::from(format!("\u{2713} {}  {}", name_s, path_s))
     } else {
-        SharedString::from(format!("{}  {}", name, path_label))
+        SharedString::from(format!("{}  {}", name_s, path_s))
     };
     let full_name = label.clone();
     let text_color = if is_current {

@@ -72,6 +72,15 @@ jobs:
             exit 1
           fi
           echo "OK: every [kagi] line routes through klog!."
+      - name: Assert no new wrapped [kagi] lines (ratchet, #396)
+        shell: bash
+        run: |
+          # The grep above is line-based, so it misses rustfmt-wrapped calls
+          # where `eprintln!(` and `"[kagi]` sit on different lines. This
+          # whole-file scan catches those too, ratcheted per file against
+          # ci/klog-baseline.txt so pre-existing violations don't red the
+          # board while new ones are blocked (#396).
+          ci/check-klog.sh
 
   # ── BLOCKING: kagi-ui-core layering (ADR-0121 Phase C, same shape as ADR-0078) ──
   invariant-ui-core-layering:

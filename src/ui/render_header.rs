@@ -66,6 +66,7 @@ impl KagiApp {
         let el = menu_act!(el, cmds::Fetch, "repo.fetch");
         let el = menu_act!(el, cmds::Pull, "repo.pull");
         let el = menu_act!(el, cmds::Push, "repo.push");
+        let el = menu_act!(el, cmds::CreateSnapshot, "repo.createSnapshot");
         let el = menu_act!(el, cmds::OpenInFinder, "repo.openInFinder");
         let el = menu_act!(el, cmds::NewBranch, "branch.new");
         let el = menu_act!(el, cmds::CheckoutBranch, "branch.checkout");

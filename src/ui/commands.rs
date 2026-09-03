@@ -87,6 +87,8 @@ actions!(
         Fetch,
         Pull,
         Push,
+        // ADR-0154 / #335: capture the working tree as a savepoint snapshot.
+        CreateSnapshot,
         OpenInFinder,
         // Branch
         NewBranch,
@@ -290,6 +292,8 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("repo.fetch"),
             MenuNode::Command("repo.pull"),
             MenuNode::Command("repo.push"),
+            MenuNode::Separator,
+            MenuNode::Command("repo.createSnapshot"),
             MenuNode::Separator,
             MenuNode::Command("repo.openInFinder"),
             MenuNode::Command("file.openInTerminal"),
@@ -564,6 +568,14 @@ pub const COMMANDS: &[Command] = &[
         dangerous: false,
     },
     Command {
+        // ADR-0154 / #335: capture a working-tree savepoint under
+        // `refs/kagi/snapshots/`. Non-destructive (only adds a ref).
+        id: "repo.createSnapshot",
+        label: "Create Snapshot",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
         id: "repo.openInFinder",
         label: "Open in Finder",
         keystroke: None,
@@ -823,7 +835,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         }
 
         // ── Repo required + not busy (state-changing git) ────────────────
-        "repo.fetch" | "repo.pull" | "repo.push" | "branch.new"
+        "repo.fetch" | "repo.pull" | "repo.push" | "repo.createSnapshot" | "branch.new"
         | "branch.checkout" | "branch.delete" | "branch.rename" => {
             if !has_repo {
                 Disabled(Msg::NoRepoOpen.t())
@@ -928,6 +940,7 @@ fn action_menu_item(id: &str) -> MenuItem {
         "repo.fetch" => MenuItem::action(label, Fetch),
         "repo.pull" => MenuItem::action(label, Pull),
         "repo.push" => MenuItem::action(label, Push),
+        "repo.createSnapshot" => MenuItem::action(label, CreateSnapshot),
         "repo.openInFinder" => MenuItem::action(label, OpenInFinder),
         // Branch
         "branch.new" => MenuItem::action(label, NewBranch),
@@ -1325,6 +1338,37 @@ const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
 const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
 
 impl KagiApp {
+    /// ADR-0154 / #335: capture the current working tree as a savepoint
+    /// snapshot under `refs/kagi/snapshots/`. Non-destructive (only adds a ref),
+    /// so it needs no plan/confirm — a menu action + toast is the whole flow.
+    /// Restore lives in the oplog panel (#334), which consumes the tested
+    /// `Backend::plan_restore_snapshot` / `run(Operation::RestoreSnapshot)` path.
+    fn create_snapshot_now(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let result = kagi_git::Backend::open(&repo_path).and_then(|backend| {
+            let entry = backend.create_snapshot("manual snapshot")?;
+            // Enforce the generation cap so the ODB does not grow unbounded.
+            let _ = backend.prune_snapshots(kagi_git::DEFAULT_SNAPSHOT_CAP);
+            Ok(entry)
+        });
+        match result {
+            Ok(entry) => {
+                klog!("snapshot: created {}", entry.id);
+                self.push_toast(ToastKind::Success, Msg::SnapshotCreated.t(), cx);
+            }
+            Err(e) => {
+                klog!("snapshot: create failed: {}", e);
+                self.push_toast(
+                    ToastKind::Error,
+                    format!("{}: {e}", Msg::SnapshotFailed.t()),
+                    cx,
+                );
+            }
+        }
+    }
+
     /// Route a menu command (by registry id) to its handler.  This is the only
     /// place menu actions do work; the behaviour reuses existing safe paths
     /// (plan → confirm modals, `dispatch_commit_action`, tabs, etc.).
@@ -1363,6 +1407,7 @@ impl KagiApp {
             }
             "file.cloneRepository" => { /* placeholder — disabled, never dispatched */ }
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
+            "repo.createSnapshot" => self.create_snapshot_now(cx),
             "file.connectRemote" => self.open_remote_browse_modal(cx),
             "file.refresh" => {
                 // ADR-0089 Phase 2b: a remote read-only view re-snapshots over

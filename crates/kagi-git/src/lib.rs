@@ -103,6 +103,12 @@ pub use ops::{
     MergeIntoKind, MergeKind, OperationPlan, PrConflictFile, PrConflictKind, PullOutcome,
     PushOutcome, StashPopOutcome, StateSummary, UndoOutcome,
 };
+// Snapshots (working-tree savepoints under `refs/kagi/snapshots/`, ADR-0154).
+pub use ops::{
+    create_snapshot, delete_snapshot, execute_restore_snapshot, list_snapshots,
+    plan_restore_snapshot, preflight_restore_snapshot, prune_snapshots, snapshot_exists,
+    verify_restore_snapshot, SnapshotEntry, DEFAULT_SNAPSHOT_CAP, SNAPSHOT_REF_PREFIX,
+};
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]

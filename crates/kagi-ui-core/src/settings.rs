@@ -148,6 +148,15 @@ impl Settings {
             .map(|s| kagi_domain::provenance::AgentPattern::parse_list(&s))
             .unwrap_or_default()
     }
+
+    /// Automatic pre-destructive savepoint snapshots (`"auto_snapshot"`,
+    /// ADR-0154 / #335). Default ON — only an explicit `"false"` disables it.
+    /// The UI feeds this to `Backend::set_auto_snapshot`.
+    pub fn auto_snapshot(&self) -> bool {
+        self.get_str("auto_snapshot")
+            .map(|s| s.trim() != "false")
+            .unwrap_or(true)
+    }
 }
 
 /// Default contents of the `analyze_ignore` file (gitignore syntax), seeded on

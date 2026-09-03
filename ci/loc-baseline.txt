@@ -1,6 +1,6 @@
 crates/kagi-domain/src/message_gen.rs 895
 crates/kagi-domain/src/resolution.rs 972
-crates/kagi-git/src/backend.rs 1676
+crates/kagi-git/src/backend.rs 1755
 crates/kagi-git/src/conflicts.rs 2530
 crates/kagi-git/src/message_gen.rs 807
 crates/kagi-git/src/ops/cherry_revert.rs 972
@@ -9,13 +9,13 @@ crates/kagi-git/src/ops/pull.rs 818
 crates/kagi-git/src/ops/stash.rs 953
 crates/kagi-git/src/resolution.rs 1537
 crates/kagi-git/src/staging.rs 926
-crates/kagi-ui-core/src/i18n/mod.rs 2337
+crates/kagi-ui-core/src/i18n/mod.rs 2345
 crates/kagi-ui-core/src/theme.rs 2151
 crates/kagi-ui-editor/src/lib.rs 3205
-src/ui/blocking_ops.rs 990
+src/ui/blocking_ops.rs 979
 src/ui/branch_cleanup.rs 1064
 src/ui/branch_menu.rs 915
-src/ui/commands.rs 2070
+src/ui/commands.rs 2115
 src/ui/commit_panel_render.rs 1410
 src/ui/conflict_editor.rs 1328
 src/ui/conflict_view.rs 1986
@@ -28,7 +28,7 @@ src/ui/operations/conflict.rs 921
 src/ui/operations/modal_state.rs 1051
 src/ui/operations/stash.rs 807
 src/ui/pr_mode.rs 2345
-src/ui/render_header.rs 806
+src/ui/render_header.rs 807
 src/ui/render.rs 902
 src/ui/sidebar.rs 1997
 src/ui/tabs.rs 1164

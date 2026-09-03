@@ -133,6 +133,13 @@ pub enum Operation {
     Discard {
         paths: Vec<String>,
     },
+    /// Restore the working tree to a saved snapshot (`refs/kagi/snapshots/<id>`,
+    /// ADR-0154). Rewrites the working tree through the full safe path; a
+    /// pre-restore savepoint snapshot is taken first so the restore is itself
+    /// reversible. Never deletes files (no `git clean`).
+    RestoreSnapshot {
+        id: String,
+    },
 }
 
 impl Operation {
@@ -175,6 +182,7 @@ impl Operation {
             Operation::ForceWithLeasePush => "force-with-lease-push",
             Operation::RebaseCurrentOnto { .. } => "rebase",
             Operation::Discard { .. } => "discard",
+            Operation::RestoreSnapshot { .. } => "restore-snapshot",
         }
     }
 }

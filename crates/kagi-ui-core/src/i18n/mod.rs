@@ -298,6 +298,10 @@ pub enum Msg {
 
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
+    /// Toast after a manual working-tree snapshot (ADR-0154 / #335).
+    SnapshotCreated,
+    /// Toast prefix when a manual snapshot fails (ADR-0154 / #335).
+    SnapshotFailed,
     OpenedInFinder,
     /// Label on the "load more commits" row at the bottom of the commit list.
     LoadMoreCommits,
@@ -1074,6 +1078,10 @@ impl Msg {
             // ── Misc footers ────────────────────────────────────────
             (En, Refreshed) => "Refreshed",
             (Ja, Refreshed) => "更新しました",
+            (En, SnapshotCreated) => "Snapshot created",
+            (Ja, SnapshotCreated) => "スナップショットを作成しました",
+            (En, SnapshotFailed) => "Snapshot failed",
+            (Ja, SnapshotFailed) => "スナップショットの作成に失敗しました",
             (En, LoadMoreCommits) => "Load more commits",
             (Ja, LoadMoreCommits) => "commit をさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",

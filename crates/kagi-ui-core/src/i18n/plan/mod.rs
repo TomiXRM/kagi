@@ -24,6 +24,7 @@ pub mod push;
 pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
+pub mod snapshot;
 pub mod stash;
 pub mod switch;
 pub mod tag;
@@ -60,6 +61,7 @@ pub fn plan_note_text(note: &PlanNote) -> String {
             PlanNote::ForceLease(n) => force_lease::note_ja(n),
             PlanNote::Github(n) => github::note_ja(n),
             PlanNote::Rebase(n) => rebase::note_ja(n),
+            PlanNote::Snapshot(n) => snapshot::note_ja(n),
         },
     }
 }
@@ -88,6 +90,7 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::ForceLease(t) => force_lease::title_ja(t),
             PlanTitle::Github(t) => github::title_ja(t),
             PlanTitle::Rebase(t) => rebase::title_ja(t),
+            PlanTitle::Snapshot(t) => snapshot::title_ja(t),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
     }
@@ -121,6 +124,7 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
             RecoveryKind::ForceLease(r) => force_lease::recovery_ja(r),
             RecoveryKind::Github(r) => github::recovery_ja(r),
             RecoveryKind::Rebase(r) => rebase::recovery_ja(r),
+            RecoveryKind::Snapshot(r) => snapshot::recovery_ja(r),
             RecoveryKind::Discard => discard::recovery_ja(),
         },
     }

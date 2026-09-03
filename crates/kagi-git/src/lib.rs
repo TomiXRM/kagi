@@ -119,7 +119,9 @@ pub use staging::{
 #[allow(unused_imports)]
 pub use status::{working_tree_status, ChangeKind, FileStatus, WorkingTreeStatus};
 #[allow(unused_imports)]
-pub use trailers::{parse_coauthors, CoAuthor};
+pub use trailers::{
+    is_url, parse_coauthors, parse_trailers, sanitize_trailer_value, CoAuthor, Trailer,
+};
 
 use std::path::{Path, PathBuf};
 

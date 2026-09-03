@@ -157,6 +157,11 @@ pub enum ConflictKind {
     Symlink,
     /// At least one side is a binary blob (no usable text merge).
     Binary,
+    /// A directory/file collision (#320): one side committed `path` as a file,
+    /// the other as a directory (entries under `path/`). Resolved by keeping one
+    /// side wholesale (see `ops::dir_file_conflict`), never by a text merge —
+    /// the two namespaces cannot coexist in one tree.
+    DirFile,
 }
 
 impl ConflictKind {
@@ -170,6 +175,7 @@ impl ConflictKind {
             ConflictKind::Submodule => "submodule",
             ConflictKind::Symlink => "symlink",
             ConflictKind::Binary => "binary",
+            ConflictKind::DirFile => "dir-file",
         }
     }
 
@@ -414,6 +420,14 @@ fn collect_conflict_files(repo: &Repository) -> Result<Vec<ConflictFile>, GitErr
         .conflicts()
         .map_err(|e| GitError::Other(format!("index.conflicts() failed: {}", e.message())))?;
 
+    // All index entry paths (as `/`-separated bytes). A directory/file conflict
+    // leaves the file side as a one-sided unmerged entry at `path` while the
+    // directory side sits as *clean* stage-0 entries under `path/` (verified
+    // against libgit2's `repo.merge`, both merge directions, #320). Those
+    // stage-0 children never appear in `index.conflicts()`, so detecting the
+    // collision needs the full entry list, not just the conflict iterator.
+    let all_paths: Vec<Vec<u8>> = index.iter().map(|e| e.path).collect();
+
     let mut files: Vec<ConflictFile> = Vec::new();
     for entry in conflicts {
         let conflict = match entry {
@@ -424,7 +438,7 @@ fn collect_conflict_files(repo: &Repository) -> Result<Vec<ConflictFile>, GitErr
             Some(p) => p,
             None => continue,
         };
-        let kind = classify_kind(repo, &conflict);
+        let kind = classify_kind(repo, &conflict, &path, &all_paths);
         files.push(ConflictFile {
             path,
             kind,
@@ -481,10 +495,25 @@ fn bytes_to_pathbuf(bytes: &[u8]) -> Option<PathBuf> {
 
 /// Classify the kind of a single index conflict from its stage presence pattern
 /// and a binary probe of the present blobs.
-fn classify_kind(repo: &Repository, conflict: &git2::IndexConflict) -> ConflictKind {
+fn classify_kind(
+    repo: &Repository,
+    conflict: &git2::IndexConflict,
+    path: &Path,
+    all_paths: &[Vec<u8>],
+) -> ConflictKind {
     let our = conflict.our.as_ref();
     let their = conflict.their.as_ref();
     let ancestor = conflict.ancestor.as_ref();
+
+    // Directory/file collision (#320): a one-sided unmerged entry at `path`
+    // whose namespace is also occupied by a `path/…` entry (the directory side,
+    // staged clean). Checked before the stage-pattern match below, which would
+    // otherwise misread it as modify/delete. A same-path binary/symlink/gitlink
+    // still classifies by mode above — this only reroutes the plain one-sided
+    // case. Requires exactly one side present (the file that lost the D/F race).
+    if our.is_some() != their.is_some() && index_has_dir_prefix(path, all_paths) {
+        return ConflictKind::DirFile;
+    }
 
     // Submodule / gitlink (mode 160000): no text merge — must stage a commit OID
     // (#297). Checked before Binary because a gitlink has no readable blob.
@@ -543,6 +572,19 @@ fn classify_kind(repo: &Repository, conflict: &git2::IndexConflict) -> ConflictK
         // delete-delete; classify as modify/delete for UI purposes.
         (false, false) => ConflictKind::ModifyDelete,
     }
+}
+
+/// Whether the index holds any entry under `<path>/` — i.e. `path`'s name is
+/// also occupied as a directory. The signature of a directory/file conflict
+/// (#320): the file side is the one-sided unmerged entry at `path`, the
+/// directory side its clean `path/…` children.
+fn index_has_dir_prefix(path: &Path, all_paths: &[Vec<u8>]) -> bool {
+    let mut prefix = match path_to_index_bytes(path) {
+        Some(b) => b,
+        None => return false,
+    };
+    prefix.push(b'/');
+    all_paths.iter().any(|p| p.starts_with(&prefix))
 }
 
 /// Git symlink / gitlink file modes (no text merge — resolved via a raw OID).
@@ -1381,7 +1423,7 @@ fn stage_raw_entry(
 
 /// Repository-relative path → index-entry path bytes (`/`-separated, byte
 /// faithful on Unix; lossy elsewhere, where non-UTF-8 is already unsupported).
-fn path_to_index_bytes(rel: &Path) -> Option<Vec<u8>> {
+pub(crate) fn path_to_index_bytes(rel: &Path) -> Option<Vec<u8>> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;

@@ -19,6 +19,31 @@ pub enum ResolutionChoice {
     BothIncomingFirst,
 }
 
+/// Which side of a directory/file conflict to keep (#320 / ADR-0164).
+///
+/// A directory/file conflict is a path that one side committed as a **file** and
+/// the other as a **directory** (files under `path/`). The two cannot coexist in
+/// one tree, so — unlike a content conflict — there is no merge, only a single
+/// binary choice. This is the whole "FSM": two terminal states, no intermediate
+/// hunk model. Pure data; the git layer maps it onto index entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirFileChoice {
+    /// Keep the directory side: drop the file blob, keep the `path/` entries.
+    KeepDirectory,
+    /// Keep the file side: drop the `path/` entries, stage the file blob.
+    KeepFile,
+}
+
+impl DirFileChoice {
+    /// Stable identifier for oplog / tests / logging.
+    pub fn slug(&self) -> &'static str {
+        match self {
+            DirFileChoice::KeepDirectory => "keep-directory",
+            DirFileChoice::KeepFile => "keep-file",
+        }
+    }
+}
+
 /// Where a single Result line came from (per-line provenance, ADR-0057).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineOrigin {

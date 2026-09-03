@@ -1090,6 +1090,19 @@ impl Backend {
         conflicts::execute_conflict_save(&self.repo, buffer, path)
     }
 
+    /// Resolve a directory/file conflict (#320) by keeping one side wholesale,
+    /// staging the result into the index and recording it to the oplog. Mirrors
+    /// [`Self::execute_conflict_save`]: no commit, the caller re-detects so the
+    /// resolved path leaves the conflict set.
+    pub fn execute_dir_file_resolution(
+        &self,
+        path: &Path,
+        choice: crate::ops::DirFileChoice,
+    ) -> Result<(), GitError> {
+        let plan = crate::ops::plan_dir_file_resolution(&self.repo, path, choice)?;
+        crate::ops::execute_dir_file_resolution(&self.repo, &self.path, &plan)
+    }
+
     /// Materialize + stage every resolved buffer file (collapsing unmerged index
     /// stages → stage 0) without creating a commit. Used by the UI merge route
     /// before opening the commit panel, so the index carries no unmerged entries

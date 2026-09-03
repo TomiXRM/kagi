@@ -155,6 +155,77 @@ impl KagiApp {
         }
     }
 
+    /// Resolve a directory/file conflict (#320 / ADR-0164) by keeping one side.
+    /// Runs the git-layer plan/execute (index stage + oplog written there), then
+    /// re-detects so the resolved path leaves the conflict set — mirroring
+    /// `conflict_editor_save`. `execute_dir_file_resolution` is the sole oplog
+    /// writer for this op, so the UI records with `record_op` (no double-record).
+    pub fn resolve_dir_file(
+        &mut self,
+        path: &std::path::Path,
+        choice: kagi_git::DirFileChoice,
+        cx: &mut Context<Self>,
+    ) {
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let repo = match self.repo_session.as_ref() {
+            Some(s) => s.backend(),
+            None => {
+                self.push_toast(
+                    ToastKind::Error,
+                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
+                    cx,
+                );
+                return;
+            }
+        };
+        let op_name = format!("conflict-dir-file:{}", choice.slug());
+        let before = StateSummary {
+            head: format!("dir-file conflict {}", path.display()),
+            dirty: format!("choice={}", choice.slug()),
+        };
+        match repo.execute_dir_file_resolution(path, choice) {
+            Ok(()) => {
+                let after = StateSummary {
+                    head: format!("kept {} side of {}", choice.slug(), path.display()),
+                    dirty: "staged (stage 0)".to_string(),
+                };
+                self.record_op(
+                    &op_name,
+                    before,
+                    OpOutcome::Success { after },
+                    &repo_path,
+                    cx,
+                );
+                // Re-detect so the resolved path leaves the conflicted index set.
+                self.conflict_detected_for = None;
+                self.detect_conflict_mode(cx);
+                self.push_toast(
+                    ToastKind::Success,
+                    SharedString::from(Msg::EditorSavedResolved.t()),
+                    cx,
+                );
+            }
+            Err(e) => {
+                self.record_op(
+                    &op_name,
+                    before,
+                    OpOutcome::Failed {
+                        error: format!("{}", e),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)), cx);
+            }
+        }
+    }
+
     /// Continue the in-progress operation (ADR-0068 routing — T-CONFLICT-FLOW-030/
     /// 032).  Gates through `plan_conflict_continue_route`, then:
     ///

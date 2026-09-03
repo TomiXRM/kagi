@@ -1,6 +1,6 @@
 crates/kagi-domain/src/message_gen.rs 895
 crates/kagi-domain/src/resolution.rs 997
-crates/kagi-git/src/backend.rs 1961
+crates/kagi-git/src/backend.rs 1968
 crates/kagi-git/src/conflicts.rs 2572
 crates/kagi-git/src/message_gen.rs 807
 crates/kagi-git/src/ops/branch.rs 807

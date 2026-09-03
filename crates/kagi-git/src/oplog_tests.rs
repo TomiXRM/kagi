@@ -271,3 +271,79 @@ fn append_includes_expected_json_fields() {
         None => std::env::remove_var("KAGI_LOG_DIR"),
     }
 }
+
+// ── #421: repo confinement for read_oplog_tail_for_repo ─────
+
+#[test]
+fn oplog_filter_scopes_to_bound_repo() {
+    // The global oplog holds entries for many repos. A server/CLI bound to repo
+    // A must only ever see A's entries, never repo B's — and the filter must
+    // survive path-shape differences (trailing slash, `.`, symlinked $TMPDIR).
+    let _guard = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let log_dir = dir.path().join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", log_dir.to_str().unwrap());
+
+    // Two real repositories so path normalization (discover→workdir→canonicalize)
+    // actually resolves.
+    let repo_a = dir.path().join("A");
+    let repo_b = dir.path().join("B");
+    git2::Repository::init(&repo_a).unwrap();
+    git2::Repository::init(&repo_b).unwrap();
+
+    let mk = |repo: &std::path::Path, op: &str| OpLogEntry {
+        id: 0,
+        parent: None,
+        actor: Actor::Human,
+        worktree: None,
+        timestamp: 1,
+        op: op.to_string(),
+        repo: repo.display().to_string(),
+        before: StateSummary {
+            head: "branch: main".to_string(),
+            dirty: "clean".to_string(),
+        },
+        outcome: OpOutcome::Success {
+            after: StateSummary {
+                head: "branch: main".to_string(),
+                dirty: "clean".to_string(),
+            },
+        },
+    };
+    append_oplog(&mk(&repo_a, "checkout-a")).expect("write a1");
+    append_oplog(&mk(&repo_b, "checkout-b")).expect("write b1");
+    append_oplog(&mk(&repo_a, "branch-a")).expect("write a2");
+
+    // Query A via a messy `A/.` path to exercise normalization.
+    let messy_a = repo_a.join(".");
+    let tail = read_oplog_tail_for_repo(&messy_a, 50);
+
+    // A's own entries ARE returned (guards against a filter that drops all).
+    assert!(
+        tail.iter().any(|e| e.op == "checkout-a") && tail.iter().any(|e| e.op == "branch-a"),
+        "bound repo A's entries must be returned: {:?}",
+        tail.iter().map(|e| &e.op).collect::<Vec<_>>()
+    );
+    // B never leaks — by op label and by normalized repo path.
+    let want_a = normalize_repo_path(&repo_a);
+    assert!(
+        tail.iter()
+            .all(|e| normalize_repo_path(std::path::Path::new(&e.repo)) == want_a),
+        "every returned entry must belong to repo A"
+    );
+    assert!(
+        !tail.iter().any(|e| e.op == "checkout-b"),
+        "repo B's entry must never appear in A's oplog"
+    );
+
+    // The unfiltered global read still sees both (GUI behaviour unchanged).
+    let global = read_oplog_tail(50);
+    assert!(global.iter().any(|e| e.op == "checkout-b"));
+
+    match prev {
+        Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
+        None => std::env::remove_var("KAGI_LOG_DIR"),
+    }
+}

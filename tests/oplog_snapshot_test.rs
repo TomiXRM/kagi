@@ -238,17 +238,32 @@ fn restore_goes_through_plan_and_oplog() {
             &plan,
         )
         .expect("run");
-    assert!(matches!(outcome, OperationOutcome::Unit));
+    // #418: the savepoint id (recovery handle) must reach the caller, not be
+    // dropped as `OperationOutcome::Unit`.
+    let savepoint = match &outcome {
+        OperationOutcome::RestoreSnapshot { savepoint } => savepoint.clone(),
+        other => panic!("expected RestoreSnapshot outcome carrying a savepoint, got {other:?}"),
+    };
+    assert!(
+        !savepoint.is_empty(),
+        "savepoint id (recovery handle) must be present"
+    );
 
     let tail = read_oplog_tail(10);
     let entry = tail
         .iter()
         .find(|e| e.op == "restore-snapshot")
         .expect("oplog has a restore-snapshot entry (proves run→oplog path)");
-    assert!(
-        matches!(entry.outcome, OpOutcome::Success { .. }),
-        "restore recorded as Success"
-    );
+    // #418: the recovery handle must be persisted in the oplog `after`, mirroring
+    // how discard records its backup blob SHA.
+    match &entry.outcome {
+        OpOutcome::Success { after } => assert!(
+            after.dirty.contains(&savepoint),
+            "oplog `after` must record the savepoint id {savepoint}, got dirty={:?}",
+            after.dirty
+        ),
+        other => panic!("restore must be recorded as Success, got {other:?}"),
+    }
 
     match prev {
         Some(v) => std::env::set_var("KAGI_LOG_DIR", v),

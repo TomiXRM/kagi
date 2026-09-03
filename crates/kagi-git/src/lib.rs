@@ -88,7 +88,10 @@ pub use message_gen::{
 };
 pub use message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
 #[allow(unused_imports)]
-pub use oplog::{append_oplog, entry_to_json, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
+pub use oplog::{
+    append_oplog, entry_to_json, read_oplog_tail, read_oplog_tail_for_repo, Actor, OpLogEntry,
+    OpOutcome,
+};
 pub use ops::{
     branch_checked_out_worktree_path, default_tracking_branch_name, execute_amend,
     execute_checkout, execute_checkout_commit, execute_checkout_tracking_branch,

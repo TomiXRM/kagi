@@ -303,6 +303,127 @@ fn test_absorb_protected_branch_blocked() {
     assert!(preflight_absorb(&repo, &plan).is_err());
 }
 
+#[test]
+fn test_absorb_worktree_changed_after_plan_refused() {
+    // #417: an edit made AFTER planning shifts every subsequent line number, so
+    // the plan's hunk coordinates no longer match the tree. Absorb must refuse
+    // rather than move the branch ref while silently failing to fold the hunk.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write(dir, "a.txt", "alpha\nbeta\ngamma\n");
+    git(dir, &["add", "a.txt"]);
+    git(dir, &["commit", "-qm", "add a.txt"]);
+    write(dir, "b.txt", "one\n");
+    git(dir, &["add", "b.txt"]);
+    git(dir, &["commit", "-qm", "add b.txt"]);
+
+    // Uncommitted edit owned by commit A.
+    write(dir, "a.txt", "alpha\nBETA\ngamma\n");
+
+    let repo = git2::Repository::open(dir).unwrap();
+    let plan = plan_absorb(&repo, WINDOW).unwrap();
+    assert_eq!(plan.absorb_count(), 1);
+    let head_before = rev(dir, "HEAD");
+
+    // Insert a line at the TOP of a.txt after planning.
+    write(dir, "a.txt", "PROLOGUE\nalpha\nBETA\ngamma\n");
+
+    assert!(
+        preflight_absorb(&repo, &plan).is_err(),
+        "changed working tree must be refused at preflight"
+    );
+    assert!(
+        execute_absorb(&repo, &plan).is_err(),
+        "changed working tree must be refused at execute"
+    );
+    assert_eq!(
+        rev(dir, "HEAD"),
+        head_before,
+        "HEAD must not move when a stale plan is refused"
+    );
+}
+
+#[test]
+fn test_absorb_staged_after_plan_refused() {
+    // #417: content staged AFTER planning must also be refused — the executor's
+    // index.read_tree would otherwise silently drop it from the index.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write(dir, "a.txt", "alpha\nbeta\ngamma\n");
+    git(dir, &["add", "a.txt"]);
+    git(dir, &["commit", "-qm", "add a.txt"]);
+    write(dir, "b.txt", "one\n");
+    git(dir, &["add", "b.txt"]);
+    git(dir, &["commit", "-qm", "add b.txt"]);
+
+    write(dir, "a.txt", "alpha\nBETA\ngamma\n");
+    let repo = git2::Repository::open(dir).unwrap();
+    let plan = plan_absorb(&repo, WINDOW).unwrap();
+    assert_eq!(plan.absorb_count(), 1);
+
+    // Stage an unrelated new file after planning.
+    write(dir, "c.txt", "new\n");
+    git(dir, &["add", "c.txt"]);
+
+    assert!(
+        preflight_absorb(&repo, &plan).is_err(),
+        "staged changes appearing after the plan must be refused"
+    );
+}
+
+#[test]
+fn test_absorb_outcome_counts_match_reality() {
+    // #417: the outcome's counts are derived from what was ACTUALLY applied, not
+    // copied from the plan's prediction. One absorbable hunk + one kept
+    // pure-addition hunk → absorbed 1, kept 1, one target rewritten.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    // A 10-line file so an edit near the top and a pure addition at the bottom
+    // land in two SEPARATE hunks (default 3-line context can't merge them).
+    write(dir, "a.txt", "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n");
+    git(dir, &["add", "a.txt"]);
+    git(dir, &["commit", "-qm", "add a.txt"]);
+    write(dir, "b.txt", "one\n");
+    git(dir, &["add", "b.txt"]);
+    git(dir, &["commit", "-qm", "add b.txt"]);
+
+    // Hunk 1: modify l2 (a line owned by commit A) → absorbable.
+    // Hunk 2: append l11 (pure addition, nothing to blame) → kept.
+    write(
+        dir,
+        "a.txt",
+        "l1\nL2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\n",
+    );
+
+    let repo = git2::Repository::open(dir).unwrap();
+    let plan = plan_absorb(&repo, WINDOW).unwrap();
+    assert_eq!(plan.assignments.len(), 2, "two distinct hunks expected");
+    assert_eq!(plan.absorb_count(), 1);
+    assert_eq!(plan.keep_count(), 1);
+
+    let outcome = execute_absorb(&repo, &plan).unwrap();
+
+    // Counts are derived from what was ACTUALLY applied and match reality.
+    assert_eq!(outcome.absorbed_hunks, 1, "one hunk folded in");
+    assert_eq!(outcome.kept_hunks, 1, "one hunk kept");
+    assert_eq!(
+        outcome.absorbed_hunks + outcome.kept_hunks,
+        plan.assignments.len()
+    );
+    assert_eq!(outcome.targets_rewritten, 1);
+    // The kept pure-addition hunk really is still in the working tree.
+    assert!(
+        !status_porcelain(dir).is_empty(),
+        "the kept hunk must remain uncommitted in the working tree"
+    );
+}
+
 // small helper kept below the tests that use it.
 fn rev(dir: &Path, r: &str) -> String {
     let out = Command::new("git")

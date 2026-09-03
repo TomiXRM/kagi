@@ -48,6 +48,13 @@ pub fn oplog_outcome_from(
             after: predicted.clone(),
             error: d.error.clone().unwrap_or_default(),
         },
+        // #418: persist the restore's recovery handle (savepoint id) in `after`.
+        Ok(OperationOutcome::RestoreSnapshot { savepoint }) => crate::oplog::OpOutcome::Success {
+            after: ops::StateSummary {
+                head: predicted.head.clone(),
+                dirty: format!("savepoint {savepoint}"),
+            },
+        },
         Ok(_) => crate::oplog::OpOutcome::Success {
             after: predicted.clone(),
         },
@@ -1019,7 +1026,7 @@ impl Backend {
                 .map(OperationOutcome::Discard),
             Operation::RestoreSnapshot { id } => self
                 .execute_restore_snapshot(id)
-                .map(|_savepoint| OperationOutcome::Unit),
+                .map(|savepoint| OperationOutcome::RestoreSnapshot { savepoint }),
         };
 
         // ── Oplog (ADR-0149 / #329): record synchronously here so EVERY caller

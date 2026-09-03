@@ -406,6 +406,11 @@ pub(crate) fn render_rows(
                         .truncate()
                         .child(row.summary.clone()),
                 )
+                // Issue #337: AI-agent provenance badge (nothing when the
+                // commit is unclassifiable — prefer no badge to a false one).
+                .when_some(row.provenance.as_ref(), |el, prov| {
+                    el.child(badges::render_provenance_badge(prov, ix))
+                })
                 .child(
                     // W28: author/date columns scale so the (rem-scaled) text
                     // fits its box at any zoom.

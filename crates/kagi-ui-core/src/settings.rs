@@ -137,6 +137,17 @@ impl Settings {
     pub fn auto_fetch(&self) -> Option<bool> {
         self.get_str("auto_fetch").map(|s| s.trim() != "false")
     }
+
+    /// User-extensible agent-provenance detection patterns (`"agent_patterns"`,
+    /// issue #337 / ADR-0150). A comma-separated list of `label:needle` entries
+    /// (bare `needle` uses itself as the label) layered on top of the built-in
+    /// defaults in `kagi_domain::provenance`. Empty when unset — the built-ins
+    /// still apply. Kept as a flat string on disk per the settings rules.
+    pub fn agent_patterns(&self) -> Vec<kagi_domain::provenance::AgentPattern> {
+        self.get_str("agent_patterns")
+            .map(|s| kagi_domain::provenance::AgentPattern::parse_list(&s))
+            .unwrap_or_default()
+    }
 }
 
 /// Default contents of the `analyze_ignore` file (gitignore syntax), seeded on

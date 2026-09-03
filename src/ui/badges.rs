@@ -393,6 +393,43 @@ pub(crate) fn render_badges_column(
         })
 }
 
+/// Render the AI-agent provenance badge for a commit row (issue #337).
+///
+/// Colour-blind safe (#354): the badge always carries a 🤖 glyph and the
+/// agent's name as text, so it is legible without relying on hue. A
+/// `Reviewed-by:` trailer appends a neutral, non-judgmental "reviewed"
+/// qualifier. `row_ix` only disambiguates the element id for the tooltip.
+pub(crate) fn render_provenance_badge(
+    prov: &kagi_domain::provenance::Provenance,
+    row_ix: usize,
+) -> impl IntoElement {
+    use crate::ui::i18n::Msg;
+    // Agent violet — distinct from lane/ref colours; hue is decorative only.
+    let (bg, border, text) = theme::badge_style(0x8b5cf6);
+    let mut label = format!("🤖 {}", prov.agent.label());
+    if prov.reviewed {
+        label.push_str(" · ");
+        label.push_str(Msg::AgentReviewed.t());
+    }
+    let tip = if prov.reviewed {
+        Msg::AgentReviewedTooltip.t()
+    } else {
+        Msg::AgentCreatedTooltip.t()
+    };
+    div()
+        .id(("prov-badge", row_ix))
+        .px_1()
+        .rounded_sm()
+        .bg(gpui::rgba(bg))
+        .border_1()
+        .border_color(gpui::rgba(border))
+        .text_color(rgb(text))
+        .text_sm()
+        .flex_shrink_0()
+        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip).build(window, cx))
+        .child(SharedString::from(label))
+}
+
 #[cfg(test)]
 mod badge_priority_tests {
     use super::badge_priority;

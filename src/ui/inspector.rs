@@ -32,6 +32,8 @@ use kagi_ui_core::file_tree::status_badge;
 // Badge sort order is shared with the graph column — one definition only
 // (a second copy silently drifts and the two views disagree).
 use super::badges::badge_priority;
+// issue #414: PR title/url in the inspector tooltip are gh-sourced — sanitize.
+use super::render_helpers::safe_text;
 
 use super::{
     avatar::{avatar_color, avatar_initial},
@@ -914,7 +916,7 @@ pub fn render_inspector(
                 this.open_pr_in_browser(&pr_click);
                 cx.notify();
             });
-            let tip = SharedString::from(format!("#{} {}\n{}", pr.number, pr.title, pr.url));
+            let tip = safe_text(&format!("#{} {}\n{}", pr.number, pr.title, pr.url));
             row = row.child(
                 div()
                     .id(("inspector-pr", pr.number as usize))

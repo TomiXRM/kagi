@@ -491,17 +491,23 @@ fn commit_to_row(
 ) -> CommitRow {
     let short_id = SharedString::from(c.id.short().to_string());
 
+    // issue #414: commit summary + author are remote-origin text shown on every
+    // graph row (the list the user looks at continuously). Neutralize terminal
+    // control bytes before truncation/display, matching the detail panel.
+    let safe_summary = kagi_domain::text_safety::sanitize_control_bytes(&c.summary);
     // Truncate summary at 72 chars to keep rows manageable.
     // Count chars (not bytes): byte slicing would panic on multi-byte
     // summaries (e.g. Japanese commit messages).
-    let summary = if c.summary.chars().count() > 72 {
-        let truncated: String = c.summary.chars().take(71).collect();
+    let summary = if safe_summary.chars().count() > 72 {
+        let truncated: String = safe_summary.chars().take(71).collect();
         SharedString::from(format!("{truncated}…"))
     } else {
-        SharedString::from(c.summary.clone())
+        SharedString::from(safe_summary)
     };
 
-    let author = SharedString::from(c.author.name.clone());
+    let author = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+        &c.author.name,
+    ));
     let author_email = c.author.email.clone();
     let date = SharedString::from(relative_time(c.author.time, now_secs));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();

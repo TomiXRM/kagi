@@ -21,6 +21,13 @@ use super::*;
 pub(crate) use super::badges::*;
 pub(crate) use super::file_menu::*;
 
+/// issue #414: chokepoint that neutralizes terminal control bytes in remote-origin
+/// display text (PR titles/handles/refs/check names, branch & stash labels) before
+/// it reaches a render site. Bidi/zero-width are left intact (may be legitimate).
+pub(crate) fn safe_text(s: &str) -> gpui::SharedString {
+    gpui::SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(s))
+}
+
 /// Left pad (px) applied to the graph lane geometry in swimlane mode so lane 0
 /// clears the column's left edge (room for the avatar node). 0 in classic mode.
 /// Must match between the main rows and the stash rows so their lanes line up.

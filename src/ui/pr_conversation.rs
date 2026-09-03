@@ -9,6 +9,8 @@ use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
 
 use super::i18n::Msg;
 use super::pr_mode::{card_bg, card_border, card_pane_bg, ci_glyph};
+// issue #414: `@login` handles come straight from `gh` JSON — sanitize before render.
+use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::KagiApp;
@@ -71,7 +73,7 @@ pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) ->
             div()
                 .text_xs()
                 .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(format!("@{}", pr.author))),
+                .child(safe_text(&format!("@{}", pr.author))),
         )
         .child(
             div()
@@ -274,7 +276,7 @@ pub(super) fn render_conversation(
                             div()
                                 .text_sm()
                                 .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(format!("@{}", e.author))),
+                                .child(safe_text(&format!("@{}", e.author))),
                         )
                         .children(e.tag.as_ref().map(|t| {
                             use kagi_domain::github::TagSeverity;

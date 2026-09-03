@@ -399,6 +399,38 @@ pub(crate) fn render_badges_column(
 /// agent's name as text, so it is legible without relying on hue. A
 /// `Reviewed-by:` trailer appends a neutral, non-judgmental "reviewed"
 /// qualifier. `row_ix` only disambiguates the element id for the tooltip.
+/// Maximum visible chars of an agent name in the provenance tooltip. Caps the
+/// megabyte-scale payload an unfolded `Co-authored-by:` trailer can carry (#412).
+const MAX_AGENT_LABEL_CHARS: usize = 64;
+
+/// Build the provenance tooltip's leading "detail" text (agent name, plus a
+/// `· reviewed` qualifier when a human vouched for the commit).
+///
+/// issue #412: for `AgentKind::Named` the label is a raw, attacker-controlled
+/// trailer value (an unfolded `Co-authored-by:` — can be megabytes long and
+/// carry ANSI/C1 control bytes or bidi overrides). This is the one trailer
+/// display path that skipped the #356 sanitizer. Neutralize control bytes and
+/// cap the length; when bidi/zero-width (which `sanitize_control_bytes` does not
+/// rewrite, by design) is present, fall back to a generic label rather than let
+/// a reordering override reach the text layer.
+fn provenance_detail(prov: &kagi_domain::provenance::Provenance) -> String {
+    use crate::ui::i18n::Msg;
+    let raw_label = prov.agent.label();
+    let agent_name: String = if kagi_domain::text_safety::has_unsafe_unicode(raw_label) {
+        Msg::AgentUnnamed.t().to_string()
+    } else {
+        kagi_domain::text_safety::sanitize_control_bytes(raw_label)
+            .chars()
+            .take(MAX_AGENT_LABEL_CHARS)
+            .collect()
+    };
+    if prov.reviewed {
+        format!("{} · {}", agent_name, Msg::AgentReviewed.t())
+    } else {
+        agent_name
+    }
+}
+
 pub(crate) fn render_provenance_badge(
     prov: &kagi_domain::provenance::Provenance,
     row_ix: usize,
@@ -414,11 +446,7 @@ pub(crate) fn render_provenance_badge(
     };
     let (bg, border, _text) = theme::badge_style(hue);
     // Tooltip still names the agent (and review state) so hover carries the detail.
-    let detail = if prov.reviewed {
-        format!("{} · {}", prov.agent.label(), Msg::AgentReviewed.t())
-    } else {
-        prov.agent.label().to_string()
-    };
+    let detail = provenance_detail(prov);
     let base_tip = if prov.reviewed {
         Msg::AgentReviewedTooltip.t()
     } else {
@@ -463,5 +491,89 @@ mod badge_priority_tests {
         );
         assert!(matches!(kinds[0], BadgeKind::HeadBranch));
         assert!(matches!(kinds[3], BadgeKind::Remote));
+    }
+}
+
+#[cfg(test)]
+mod provenance_detail_tests {
+    use super::provenance_detail;
+    use kagi_domain::provenance::{AgentKind, Provenance};
+
+    fn named(name: &str) -> Provenance {
+        Provenance {
+            agent: AgentKind::Named(name.to_string()),
+            source_url: None,
+            reviewed: false,
+        }
+    }
+
+    /// issue #412: control bytes in the attacker-controlled `Named` label must be
+    /// escaped, never reach the tooltip verbatim.
+    #[test]
+    fn escapes_control_bytes_in_named_label() {
+        let detail = provenance_detail(&named("Evil\x1b[31m\x07bot"));
+        assert!(
+            !detail.contains('\x1b'),
+            "ESC leaked into tooltip: {detail:?}"
+        );
+        assert!(
+            !detail.contains('\x07'),
+            "BEL leaked into tooltip: {detail:?}"
+        );
+        assert!(detail.contains("\\x1B"), "expected escaped ESC: {detail:?}");
+    }
+
+    /// issue #412: a megabyte-scale unfolded trailer value must be capped.
+    #[test]
+    fn caps_overlong_named_label() {
+        let detail = provenance_detail(&named(&"A".repeat(1_000_000)));
+        assert!(
+            detail.chars().count() <= 64,
+            "not capped: {} chars",
+            detail.chars().count()
+        );
+    }
+
+    /// issue #412: bidi overrides (Trojan Source) are not rewritten by the
+    /// sanitizer, so the tooltip falls back to a generic label instead.
+    #[test]
+    fn bidi_label_falls_back_to_generic() {
+        let detail = provenance_detail(&named("Evil\u{202E}bot"));
+        assert!(
+            !detail.contains('\u{202E}'),
+            "RLO leaked into tooltip: {detail:?}"
+        );
+        assert!(!detail.contains("Evil"), "raw label leaked: {detail:?}");
+    }
+
+    /// Well-known agents (fixed labels) pass through unchanged.
+    #[test]
+    fn known_agent_label_unchanged() {
+        let prov = Provenance {
+            agent: AgentKind::ClaudeCode,
+            source_url: None,
+            reviewed: false,
+        };
+        assert_eq!(provenance_detail(&prov), "Claude Code");
+    }
+}
+
+#[cfg(test)]
+mod safe_text_tests {
+    use super::safe_text;
+
+    /// issue #414: the shared chokepoint for remote-origin display text (PR
+    /// titles/handles/refs/check names, branch & stash labels) must escape
+    /// terminal control bytes. Every #414 render site routes through this.
+    #[test]
+    fn safe_text_escapes_control_bytes() {
+        let out = safe_text("evil\x1b[31mred");
+        assert!(!out.contains('\x1b'), "ESC leaked: {out:?}");
+        assert!(out.contains("\\x1B"), "expected escaped ESC: {out:?}");
+    }
+
+    #[test]
+    fn safe_text_preserves_cjk() {
+        assert_eq!(safe_text("日本語 branch").as_ref(), "日本語 branch");
     }
 }

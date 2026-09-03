@@ -170,6 +170,14 @@ impl KagiApp {
             None => return,
         };
 
+        // issue #341: the plan visibly enumerated the (escaped) command steps and
+        // said confirming trusts them. Confirming IS that consent, so record the
+        // repository-level trust now; execute then runs the command steps.
+        if kagi_git::ops::plan_requires_worktree_trust(&plan) {
+            let _ = kagi_git::ops::trust_worktree_config_at(&repo_path);
+            klog!("worktree: trusted .kagi/worktree.toml (post_create)");
+        }
+
         self.busy_op = Some("create-worktree");
         self.clear_create_worktree_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
@@ -332,6 +340,13 @@ impl KagiApp {
         let Some(repo) = self.worktree_backend("remove-worktree") else {
             return;
         };
+        // issue #341: confirming a plan whose pre_remove note is trust-required
+        // records repository-level trust so the command steps may run; an
+        // untrusted (or failing) pre_remove command aborts the removal below.
+        if kagi_git::ops::plan_requires_worktree_trust(&modal.plan) {
+            let _ = repo.trust_worktree_config_for_worktree(&modal.name);
+            klog!("worktree: trusted .kagi/worktree.toml (pre_remove)");
+        }
         match repo.execute_remove_worktree(&modal.plan, &modal.name, modal.delete_branch) {
             Ok(backups) => {
                 klog!(

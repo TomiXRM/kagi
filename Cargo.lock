@@ -3384,10 +3384,13 @@ name = "kagi-git"
 version = "0.1.0"
 dependencies = [
  "git2",
+ "hex",
  "ignore",
  "kagi-domain",
  "serde_json",
+ "sha2",
  "tempfile",
+ "toml 0.8.23",
  "ureq",
 ]
 

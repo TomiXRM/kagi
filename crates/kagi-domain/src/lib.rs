@@ -42,6 +42,7 @@ pub mod remote;
 pub mod remote_diff;
 pub mod remote_snapshot;
 pub mod resolution;
+pub mod ruleset;
 pub mod status;
 pub mod text_safety;
 pub mod trailers;

@@ -127,7 +127,7 @@ pub fn plan_create_branch(
         commands: vec![format!("git branch -d {}", name)],
     };
 
-    Ok(OperationPlan {
+    let mut plan = OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Branch(BranchTitle::CreateBranch {
             name: name.to_string(),
@@ -145,7 +145,14 @@ pub fn plan_create_branch(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
-    })
+    };
+
+    // GitHub ruleset pre-verification (#346, ADR-0150): if a ruleset for the
+    // *new* branch name is cached, fold in branch_name / creation findings.
+    // Cache-only (no network at plan time); a no-op when nothing is cached.
+    crate::ruleset::augment_branch_create_plan(&mut plan, repo, name);
+
+    Ok(plan)
 }
 
 // ────────────────────────────────────────────────────────────

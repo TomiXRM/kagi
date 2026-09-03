@@ -1473,7 +1473,72 @@ impl Backend {
     }
 
     pub fn fetch_remote(&self) -> Result<FetchOutcome, GitError> {
-        ops::fetch_remote(&self.repo, &self.path)
+        let outcome = ops::fetch_remote(&self.repo, &self.path)?;
+        // Refresh the branch ruleset on fetch (#346, ADR-0150): rulesets are
+        // changed by others, so fetch is the natural refresh point (§5).
+        if let Some(branch) = self.current_branch_name() {
+            let _ = self.refresh_ruleset(&branch);
+        }
+        Ok(outcome)
+    }
+
+    /// The current branch's short name (`None` when detached/unborn) — used to
+    /// key the GitHub ruleset cache.
+    pub fn current_branch_name(&self) -> Option<String> {
+        match resolve_head(&self.repo).ok()? {
+            Head::Attached { branch, .. } | Head::Unborn { branch } => Some(branch),
+            Head::Detached { .. } => None,
+        }
+    }
+
+    /// Cache-first GitHub ruleset for `branch` (#346). May spawn `gh` on a
+    /// cache miss; returns [`RulesetStatus::Disabled`] when `gh` is missing or
+    /// unauthenticated.
+    pub fn ruleset_for(&self, branch: &str) -> kagi_domain::ruleset::RulesetStatus {
+        match self.repo.workdir() {
+            Some(w) => crate::ruleset::ruleset_for(w, branch),
+            None => kagi_domain::ruleset::RulesetStatus::Disabled,
+        }
+    }
+
+    /// Cache-only GitHub ruleset lookup — never spawns `gh`. `None` = not yet
+    /// fetched. Used by live UI validation so typing never blocks on the
+    /// network.
+    pub fn ruleset_cached(&self, branch: &str) -> Option<kagi_domain::ruleset::RulesetStatus> {
+        crate::ruleset::ruleset_cached(self.repo.workdir()?, branch)
+    }
+
+    /// Force a ruleset refresh for `branch` (fetch + cache overwrite).
+    pub fn refresh_ruleset(&self, branch: &str) -> kagi_domain::ruleset::RulesetStatus {
+        match self.repo.workdir() {
+            Some(w) => crate::ruleset::refresh_ruleset(w, branch),
+            None => kagi_domain::ruleset::RulesetStatus::Disabled,
+        }
+    }
+
+    /// Local ruleset findings for a candidate commit `message` on the current
+    /// branch — for the commit panel's live badge. Cache-only; empty when no
+    /// ruleset is cached or `gh` is unavailable (conventional flow intact).
+    pub fn ruleset_message_findings(&self, message: &str) -> Vec<kagi_domain::ruleset::Finding> {
+        let branch = match self.current_branch_name() {
+            Some(b) => b,
+            None => return Vec::new(),
+        };
+        // Only the message pattern is meaningful for a live, per-keystroke
+        // check; email / file rules are surfaced by the commit plan.
+        self.ruleset_cached(&branch)
+            .and_then(|s| s.active().cloned())
+            .map(|rs| rs.validate_message(message))
+            .unwrap_or_default()
+    }
+
+    /// Local ruleset findings for a candidate branch `name` — for the
+    /// branch-create modal's live badge. Cache-only.
+    pub fn ruleset_branch_findings(&self, name: &str) -> Vec<kagi_domain::ruleset::Finding> {
+        match self.ruleset_cached(name).and_then(|s| s.active().cloned()) {
+            Some(rs) => rs.validate_branch_create(name),
+            None => Vec::new(),
+        }
     }
 
     /// Fetch a single remote branch's refspec (`"<remote>/<branch>"`,

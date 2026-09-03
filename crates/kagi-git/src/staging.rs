@@ -586,7 +586,7 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     // Use staged file list as preview_files.
     let preview_files: Vec<FileStatus> = status.staged.clone();
 
-    Ok(OperationPlan {
+    let mut plan = OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Commit(CommitTitle::Commit {
             summary: msg_summary,
@@ -602,7 +602,14 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
         preview_files,
         preview_commits: Vec::new(),
         destructive: false,
-    })
+    };
+
+    // GitHub ruleset pre-verification (#346, ADR-0150): fold in any local
+    // findings from the cached branch ruleset. Cache-only — never a network
+    // call at plan time; a no-op when nothing is cached / `gh` is unavailable.
+    crate::ruleset::augment_commit_plan(&mut plan, repo, &status, &branch_name, message);
+
+    Ok(plan)
 }
 
 // ────────────────────────────────────────────────────────────

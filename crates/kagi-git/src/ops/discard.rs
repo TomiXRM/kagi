@@ -56,7 +56,7 @@ const GITLINK_MODE: u32 = 0o160000;
 /// backup step does `fs::read(workdir/rel)`, which is a directory for a
 /// submodule (EISDIR) — so these must be blocked at plan time, never reaching
 /// execute. Detected from the index entry mode (a submodule is mode 160000).
-fn is_submodule_path(repo: &Repository, rel: &str) -> bool {
+pub fn is_submodule_path(repo: &Repository, rel: &str) -> bool {
     let Ok(index) = repo.index() else {
         return false;
     };

@@ -796,12 +796,10 @@ fn discard_untracked_symlink_does_not_ingest_target_bytes() {
 // Discarding the OTHER dirty files completes.
 // ────────────────────────────────────────────────────────────
 
-#[test]
-fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
-    let tmp = TempDir::new().unwrap();
-    let d = build_repo(&tmp);
-
-    // Build a separate repo to embed as a submodule.
+// Embed a fresh repo as a submodule at `sub` in `d`, make it dirty (` M sub`),
+// and leave an ordinary dirty tracked file alongside it. `subsrc` must outlive
+// the caller (the TempDir owns the submodule's source repo on disk).
+fn add_dirty_submodule(d: &Path) -> TempDir {
     let subsrc = TempDir::new().unwrap();
     let s = subsrc.path();
     git(s, &["init", "-q", "-b", "main", "."]);
@@ -815,7 +813,7 @@ fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
     // Add it as a submodule at path `sub` (file protocol needs opt-in).
     let url = s.to_string_lossy().to_string();
     git(
-        &d,
+        d,
         &[
             "-c",
             "protocol.file.allow=always",
@@ -825,7 +823,7 @@ fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
             "sub",
         ],
     );
-    git(&d, &["commit", "-qm", "add submodule"]);
+    git(d, &["commit", "-qm", "add submodule"]);
 
     // Make the submodule dirty (new commit inside → gitlink moves) → ` M sub`.
     let subwd = d.join("sub");
@@ -833,7 +831,39 @@ fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
     git(&subwd, &["commit", "-aqm", "sub change"]);
 
     // And an ordinary dirty tracked file alongside it.
-    write_file(&d, "tracked.txt", "DIRTY\n");
+    write_file(d, "tracked.txt", "DIRTY\n");
+    subsrc
+}
+
+// #326: Backend::is_submodule tags a gitlink path (and only that), so the UI can
+// route submodules into the "skipped" set. Mutation check: if is_submodule_path
+// stops detecting the gitlink mode, the first assert flips and this test fails.
+#[test]
+fn backend_is_submodule_detects_gitlink_only() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let _subsrc = add_dirty_submodule(&d);
+
+    let backend = kagi_git::Backend::open(&d).expect("open backend");
+    assert!(
+        backend.is_submodule("sub"),
+        "gitlink path must be a submodule"
+    );
+    assert!(
+        !backend.is_submodule("tracked.txt"),
+        "a regular file must not be a submodule"
+    );
+    assert!(
+        !backend.is_submodule("does-not-exist"),
+        "a missing path must not be a submodule"
+    );
+}
+
+#[test]
+fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let _subsrc = add_dirty_submodule(&d);
 
     let repo = Repository::open(&d).unwrap();
 

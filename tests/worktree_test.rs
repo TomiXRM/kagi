@@ -522,6 +522,231 @@ fn worktreeinclude_skips_symlinks() {
     );
 }
 
+// ────────────────────────────────────────────────────────────
+// issue #340 — worktree lifecycle: remove / lock / prune / repair
+// ────────────────────────────────────────────────────────────
+
+use kagi_git::ops::{
+    execute_lock_worktree, execute_prune_worktrees, execute_remove_worktree,
+    execute_repair_worktrees, plan_lock_worktree, plan_prune_worktrees, plan_remove_worktree,
+    plan_repair_worktrees,
+};
+
+/// Worktree-only remove leaves the branch (§6). `delete_branch=false`.
+#[test]
+fn remove_worktree_only_keeps_branch() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    let wt = add_worktree(tmp.path(), "wt-rm");
+
+    let plan = plan_remove_worktree(&repo, "wt-rm", false).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+
+    let backups = execute_remove_worktree(&repo, &plan, "wt-rm", false).expect("execute");
+    assert!(backups.is_empty(), "clean worktree needs no backup");
+    assert!(!wt.exists(), "worktree dir must be gone");
+    assert!(
+        repo.find_branch("wt-rm", git2::BranchType::Local).is_ok(),
+        "branch must survive a worktree-only remove"
+    );
+    assert!(repo.find_worktree("wt-rm").is_err(), "admin entry gone");
+}
+
+/// Also-delete-branch removes both the worktree and its (merged) branch.
+#[test]
+fn remove_worktree_also_deletes_branch_when_asked() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    add_worktree(tmp.path(), "wt-rm2");
+
+    let plan = plan_remove_worktree(&repo, "wt-rm2", true).expect("plan");
+    execute_remove_worktree(&repo, &plan, "wt-rm2", true).expect("execute");
+    assert!(
+        repo.find_branch("wt-rm2", git2::BranchType::Local).is_err(),
+        "branch must be deleted when delete_branch=true"
+    );
+}
+
+/// A dirty worktree is a remove blocker (no --force). Mutation-verify: execute
+/// also refuses while the blocker stands (reverting the guard lets it through).
+#[test]
+fn remove_dirty_worktree_is_blocked() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    let wt = add_worktree(tmp.path(), "wt-dirty");
+    write_file(&wt, "scratch.txt", "uncommitted work\n"); // untracked = dirty
+
+    let plan = plan_remove_worktree(&repo, "wt-dirty", false).expect("plan");
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::RemoveDirty { .. }))),
+        "dirty worktree must be a blocker: {:?}",
+        plan.blockers
+    );
+    assert!(
+        execute_remove_worktree(&repo, &plan, "wt-dirty", false).is_err(),
+        "execute must refuse a plan carrying blockers"
+    );
+    assert!(wt.exists(), "the dirty worktree must be left untouched");
+}
+
+/// The main worktree is never removable (§6). Mutation-verify: execute refuses.
+#[test]
+fn remove_main_worktree_is_always_refused() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+
+    let plan = plan_remove_worktree(&repo, "main", false).expect("plan");
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::RemoveMainRefused))),
+        "main worktree removal must be refused: {:?}",
+        plan.blockers
+    );
+    assert!(
+        execute_remove_worktree(&repo, &plan, "main", false).is_err(),
+        "execute must refuse to remove the main worktree"
+    );
+}
+
+/// `lock --reason` records the reason in `git worktree list --porcelain` (§6).
+#[test]
+fn lock_worktree_reason_appears_in_porcelain() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    add_worktree(tmp.path(), "wt-lock");
+
+    let plan = plan_lock_worktree(&repo, "wt-lock", Some("agent running")).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    execute_lock_worktree(&repo, &plan, "wt-lock", Some("agent running")).expect("execute");
+
+    let out = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("git worktree list");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("locked agent running"),
+        "porcelain must show the lock reason, got:\n{}",
+        text
+    );
+
+    // Re-locking is a no-op blocker.
+    let plan2 = plan_lock_worktree(&repo, "wt-lock", Some("again")).expect("plan2");
+    assert!(
+        plan2
+            .blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::AlreadyLocked { .. }))),
+        "an already-locked worktree must block: {:?}",
+        plan2.blockers
+    );
+}
+
+/// A hand-deleted worktree directory is detected as prunable and pruned (§6).
+#[test]
+fn hand_deleted_worktree_is_prunable_and_pruned() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    let wt = add_worktree(tmp.path(), "wt-orphan");
+
+    std::fs::remove_dir_all(&wt).expect("hand-delete the worktree dir");
+
+    let plan = plan_prune_worktrees(&repo).expect("plan");
+    assert!(
+        plan.warnings.iter().any(|w| matches!(
+            w,
+            PlanNote::Worktree(WorktreeNote::PrunePreview { count, .. }) if *count >= 1
+        )),
+        "the hand-deleted worktree must show as prunable: {:?} / {:?}",
+        plan.warnings,
+        plan.blockers
+    );
+
+    let pruned = execute_prune_worktrees(&repo, &plan).expect("execute");
+    assert_eq!(pruned, 1);
+    assert!(
+        repo.find_worktree("wt-orphan").is_err(),
+        "admin entry pruned"
+    );
+}
+
+/// Nothing prunable → a no-op blocker (empty dry-run preview).
+#[test]
+fn prune_with_nothing_to_prune_is_a_blocker() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    add_worktree(tmp.path(), "wt-live"); // present, not prunable
+
+    let plan = plan_prune_worktrees(&repo).expect("plan");
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::PruneNothing))),
+        "nothing-to-prune must be a blocker: {:?}",
+        plan.blockers
+    );
+}
+
+/// Moving the main worktree breaks the linked worktree's `.git` link; `repair`
+/// run from the moved main restores it (§6, case 1).
+#[test]
+fn repair_restores_links_after_moving_main() {
+    let base = TempDir::new().unwrap();
+    let main1 = base.path().join("main");
+    std::fs::create_dir(&main1).unwrap();
+    git(&main1, &["init", "-q", "-b", "main", "."]);
+    git(&main1, &["config", "user.name", "Test"]);
+    git(&main1, &["config", "user.email", "test@example.com"]);
+    git(&main1, &["config", "commit.gpgsign", "false"]);
+    write_file(&main1, "README.md", "# test\n");
+    git(&main1, &["add", "README.md"]);
+    git(&main1, &["commit", "-qm", "initial"]);
+
+    let wt = base.path().join("wt-repair");
+    git(
+        &main1,
+        &["worktree", "add", "-b", "feat", wt.to_str().unwrap()],
+    );
+
+    // Move the main worktree — the linked worktree's .git link now dangles.
+    let main2 = base.path().join("main-moved");
+    std::fs::rename(&main1, &main2).unwrap();
+    assert!(
+        Repository::open(&wt).is_err(),
+        "the linked worktree must be broken after the main moved"
+    );
+
+    let repo = Repository::open(&main2).expect("open moved main");
+    let plan = plan_repair_worktrees(&repo).expect("plan");
+    assert!(plan.blockers.is_empty());
+    execute_repair_worktrees(&repo, &plan).expect("execute repair");
+
+    let linked = Repository::open(&wt).expect("linked worktree must resolve after repair");
+    assert_eq!(linked.head().unwrap().shorthand().ok(), Some("feat"));
+}
+
+/// The containment-checked delete (issue #340) refuses to delete the main
+/// worktree even via the branch-delete path — proving the branch.rs:756
+/// integration closed the unbounded delete. A branch checked out in the main
+/// worktree is HEAD, so delete-branch blocks anyway; here we assert the
+/// remove path never touches the repo root.
+#[test]
+fn remove_never_deletes_repo_root() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    // "main" resolves to no admin entry → refused before any fs touch.
+    let plan = plan_remove_worktree(&repo, "main", true).expect("plan");
+    let _ = execute_remove_worktree(&repo, &plan, "main", true);
+    assert!(
+        tmp.path().join("README.md").exists(),
+        "the repository root must never be deleted"
+    );
+}
+
 #[test]
 fn create_worktree_auto_creates_missing_parent_and_copies() {
     let repo_tmp = TempDir::new().unwrap();

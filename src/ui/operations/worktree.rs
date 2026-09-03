@@ -245,8 +245,383 @@ impl KagiApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
+        use worktree_menu::WorktreeAction::*;
         match action {
-            worktree_menu::WorktreeAction::Unlock => self.open_unlock_worktree_modal(state.name),
+            Unlock => self.open_unlock_worktree_modal(state.name),
+            Remove { delete_branch } => self.open_remove_worktree_modal(state.name, delete_branch),
+            Lock => self.open_lock_worktree_modal(state.name),
+            Prune => self.open_prune_worktrees_modal(),
+            Repair => self.open_repair_worktrees_modal(),
+        }
+    }
+
+    // ── issue #340: remove / lock / prune / repair (plan → confirm) ──
+
+    /// Open a backend `Backend`, returning `None` and setting the footer on
+    /// failure. Shared by the four lifecycle open_* methods below.
+    fn worktree_backend(&mut self, op: &str) -> Option<kagi_git::Backend> {
+        let repo_path = self.repo_path.clone()?;
+        match kagi_git::Backend::open(&repo_path) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    "{}: repo open error: {}",
+                    op, e
+                )));
+                None
+            }
+        }
+    }
+
+    pub fn open_remove_worktree_modal(&mut self, name: String, delete_branch: bool) {
+        let Some(repo) = self.worktree_backend("remove-worktree") else {
+            return;
+        };
+        match repo.plan_remove_worktree(&name, delete_branch) {
+            Ok(plan) => {
+                klog!(
+                    "plan: remove-worktree {} delete_branch={}",
+                    name,
+                    delete_branch
+                );
+                self.set_remove_worktree_modal(RemoveWorktreeModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                    name,
+                    delete_branch,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::RemoveWorktree, e),
+                ));
+            }
+        }
+    }
+
+    pub fn cancel_remove_worktree_modal(&mut self) {
+        self.clear_remove_worktree_modal();
+    }
+
+    /// Confirm remove: preflight → ODB-backup → containment-checked delete →
+    /// prune → optional branch delete → verify → oplog → reload.
+    pub fn confirm_remove_worktree(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.remove_worktree_modal().cloned() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            klog!("refused: remove-worktree plan has blockers, not executing");
+            self.record_op(
+                "remove-worktree",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            self.clear_remove_worktree_modal();
+            cx.notify();
+            return;
+        }
+        let Some(repo) = self.worktree_backend("remove-worktree") else {
+            return;
+        };
+        match repo.execute_remove_worktree(&modal.plan, &modal.name, modal.delete_branch) {
+            Ok(backups) => {
+                klog!(
+                    "executed: remove-worktree {} (backups={})",
+                    modal.name,
+                    backups.len()
+                );
+                self.record_op(
+                    "remove-worktree",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success {
+                        after: modal.plan.predicted.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                self.clear_remove_worktree_modal();
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "removed worktree '{}'",
+                    modal.name
+                )));
+                self.reload(cx);
+            }
+            Err(e) => {
+                let err_msg = i18n::op_failed(i18n::Op::RemoveWorktree, e);
+                self.record_op(
+                    "remove-worktree",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(m) = self.remove_worktree_modal_mut() {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+            }
+        }
+    }
+
+    pub fn open_lock_worktree_modal(&mut self, name: String) {
+        // Free-text reason entry is a follow-up; kagi records a default reason
+        // so the lock is attributable in `git worktree list --porcelain`.
+        let reason = Msg::WorktreeLockDefaultReason.t().to_string();
+        let Some(repo) = self.worktree_backend("lock-worktree") else {
+            return;
+        };
+        match repo.plan_lock_worktree(&name, Some(&reason)) {
+            Ok(plan) => {
+                klog!("plan: lock-worktree {}", name);
+                self.set_lock_worktree_modal(LockWorktreeModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                    name,
+                    reason,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::LockWorktree, e),
+                ));
+            }
+        }
+    }
+
+    pub fn cancel_lock_worktree_modal(&mut self) {
+        self.clear_lock_worktree_modal();
+    }
+
+    pub fn confirm_lock_worktree(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.lock_worktree_modal().cloned() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            klog!("refused: lock-worktree plan has blockers, not executing");
+            self.record_op(
+                "lock-worktree",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            self.clear_lock_worktree_modal();
+            cx.notify();
+            return;
+        }
+        let Some(repo) = self.worktree_backend("lock-worktree") else {
+            return;
+        };
+        match repo.execute_lock_worktree(&modal.plan, &modal.name, Some(&modal.reason)) {
+            Ok(()) => {
+                klog!("executed: lock-worktree {}", modal.name);
+                self.record_op(
+                    "lock-worktree",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success {
+                        after: modal.plan.predicted.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                self.clear_lock_worktree_modal();
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "locked worktree '{}'",
+                    modal.name
+                )));
+                self.reload(cx);
+            }
+            Err(e) => {
+                let err_msg = i18n::op_failed(i18n::Op::LockWorktree, e);
+                self.record_op(
+                    "lock-worktree",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(m) = self.lock_worktree_modal_mut() {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+            }
+        }
+    }
+
+    pub fn open_prune_worktrees_modal(&mut self) {
+        let Some(repo) = self.worktree_backend("prune-worktrees") else {
+            return;
+        };
+        match repo.plan_prune_worktrees() {
+            Ok(plan) => {
+                klog!("plan: prune-worktrees");
+                self.set_prune_worktrees_modal(PruneWorktreesModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::PruneWorktrees, e),
+                ));
+            }
+        }
+    }
+
+    pub fn cancel_prune_worktrees_modal(&mut self) {
+        self.clear_prune_worktrees_modal();
+    }
+
+    pub fn confirm_prune_worktrees(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.prune_worktrees_modal().cloned() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        if !modal.plan.blockers.is_empty() {
+            klog!("refused: prune-worktrees plan has blockers, not executing");
+            self.record_op(
+                "prune-worktrees",
+                modal.plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            self.clear_prune_worktrees_modal();
+            cx.notify();
+            return;
+        }
+        let Some(repo) = self.worktree_backend("prune-worktrees") else {
+            return;
+        };
+        match repo.execute_prune_worktrees(&modal.plan) {
+            Ok(pruned) => {
+                klog!("executed: prune-worktrees ({} pruned)", pruned);
+                self.record_op(
+                    "prune-worktrees",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success {
+                        after: modal.plan.predicted.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                self.clear_prune_worktrees_modal();
+                self.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "pruned {} stale worktree(s)",
+                    pruned
+                )));
+                self.reload(cx);
+            }
+            Err(e) => {
+                let err_msg = i18n::op_failed(i18n::Op::PruneWorktrees, e);
+                self.record_op(
+                    "prune-worktrees",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(m) = self.prune_worktrees_modal_mut() {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+            }
+        }
+    }
+
+    pub fn open_repair_worktrees_modal(&mut self) {
+        let Some(repo) = self.worktree_backend("repair-worktrees") else {
+            return;
+        };
+        match repo.plan_repair_worktrees() {
+            Ok(plan) => {
+                klog!("plan: repair-worktrees");
+                self.set_repair_worktrees_modal(RepairWorktreesModal {
+                    plan: std::sync::Arc::new(plan),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    i18n::op_plan_failed(i18n::Op::RepairWorktrees, e),
+                ));
+            }
+        }
+    }
+
+    pub fn cancel_repair_worktrees_modal(&mut self) {
+        self.clear_repair_worktrees_modal();
+    }
+
+    pub fn confirm_repair_worktrees(&mut self, cx: &mut Context<Self>) {
+        let modal = match self.repair_worktrees_modal().cloned() {
+            Some(m) => m,
+            None => return,
+        };
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let Some(repo) = self.worktree_backend("repair-worktrees") else {
+            return;
+        };
+        match repo.execute_repair_worktrees(&modal.plan) {
+            Ok(()) => {
+                klog!("executed: repair-worktrees");
+                self.record_op(
+                    "repair-worktrees",
+                    modal.plan.current.clone(),
+                    OpOutcome::Success {
+                        after: modal.plan.predicted.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                self.clear_repair_worktrees_modal();
+                self.status_footer =
+                    FooterStatus::Success(SharedString::from("repaired worktree links"));
+                self.reload(cx);
+            }
+            Err(e) => {
+                let err_msg = i18n::op_failed(i18n::Op::RepairWorktrees, e);
+                self.record_op(
+                    "repair-worktrees",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(m) = self.repair_worktrees_modal_mut() {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+            }
         }
     }
 

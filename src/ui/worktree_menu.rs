@@ -24,29 +24,92 @@ pub struct WorktreeMenuState {
     pub position: Point<Pixels>,
 }
 
-/// Actions available on a linked worktree.
+/// Actions available on a linked worktree (issue #340).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorktreeAction {
     Unlock,
+    /// Remove the worktree; `delete_branch` also deletes its branch.
+    Remove {
+        delete_branch: bool,
+    },
+    Lock,
+    /// Repo-wide: prune stale worktree admin entries.
+    Prune,
+    /// Repo-wide: repair broken worktree `.git` links.
+    Repair,
 }
 
-/// Build the worktree menu groups. Unlock is disabled (with a reason) when the
-/// worktree has no lock.
+/// Build the worktree menu groups. Unlock is enabled only while locked, Lock
+/// only while unlocked; the two remove variants and the repo-wide prune/repair
+/// route through their plan → confirm modals.
 pub fn build_worktree_menu(locked: bool) -> Vec<MenuGroup<WorktreeAction>> {
-    let state = if locked {
+    let unlock_state = if locked {
         ItemState::Enabled
     } else {
         ItemState::Disabled(SharedString::from(Msg::MenuWorktreeNotLocked.t()))
     };
-    vec![MenuGroup {
-        title: None,
-        items: vec![MenuItem {
-            action: WorktreeAction::Unlock,
-            label: SharedString::from(Msg::MenuUnlockWorktree.t()),
-            state,
-            dangerous: false,
-        }],
-    }]
+    let lock_state = if locked {
+        ItemState::Disabled(SharedString::from(Msg::MenuWorktreeAlreadyLocked.t()))
+    } else {
+        ItemState::Enabled
+    };
+    vec![
+        MenuGroup {
+            title: None,
+            items: vec![
+                MenuItem {
+                    action: WorktreeAction::Remove {
+                        delete_branch: false,
+                    },
+                    label: SharedString::from(Msg::MenuRemoveWorktreeKeepBranch.t()),
+                    state: ItemState::Enabled,
+                    dangerous: true,
+                },
+                MenuItem {
+                    action: WorktreeAction::Remove {
+                        delete_branch: true,
+                    },
+                    label: SharedString::from(Msg::MenuRemoveWorktreeAndBranch.t()),
+                    state: ItemState::Enabled,
+                    dangerous: true,
+                },
+            ],
+        },
+        MenuGroup {
+            title: None,
+            items: vec![
+                MenuItem {
+                    action: WorktreeAction::Lock,
+                    label: SharedString::from(Msg::MenuLockWorktree.t()),
+                    state: lock_state,
+                    dangerous: false,
+                },
+                MenuItem {
+                    action: WorktreeAction::Unlock,
+                    label: SharedString::from(Msg::MenuUnlockWorktree.t()),
+                    state: unlock_state,
+                    dangerous: false,
+                },
+            ],
+        },
+        MenuGroup {
+            title: None,
+            items: vec![
+                MenuItem {
+                    action: WorktreeAction::Prune,
+                    label: SharedString::from(Msg::MenuPruneWorktrees.t()),
+                    state: ItemState::Enabled,
+                    dangerous: false,
+                },
+                MenuItem {
+                    action: WorktreeAction::Repair,
+                    label: SharedString::from(Msg::MenuRepairWorktrees.t()),
+                    state: ItemState::Enabled,
+                    dangerous: false,
+                },
+            ],
+        },
+    ]
 }
 
 pub fn render_worktree_menu_overlay(

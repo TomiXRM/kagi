@@ -65,6 +65,50 @@ pub enum WorktreeNote {
     /// warning (`plan_create_worktree_impl`) — the matched set exceeds the
     /// copy-size cap; copy still proceeds (issue #339).
     IncludeOverCap { total_bytes: u64, cap_bytes: u64 },
+
+    // ── issue #340: worktree lifecycle (remove / lock / prune / repair) ──
+    /// blocker (`plan_remove_worktree`) — the target is the main worktree,
+    /// which is never removable.
+    RemoveMainRefused,
+    /// blocker (`plan_remove_worktree`) — the worktree has uncommitted changes;
+    /// removal is refused (kagi never forces).
+    RemoveDirty { path: String, summary: String },
+    /// blocker (`plan_remove_worktree`) — the worktree is locked; unlock it
+    /// before removing (kagi never forces past a lock).
+    RemoveLocked {
+        path: String,
+        reason: Option<String>,
+    },
+    /// warning (`plan_remove_worktree`) — describes the removal and whether the
+    /// branch is kept or also deleted.
+    RemovesWorktree {
+        path: String,
+        branch: Option<String>,
+        delete_branch: bool,
+    },
+    /// warning (`plan_lock_worktree`) — describes the lock about to be placed.
+    LocksWorktree {
+        path: String,
+        reason: Option<String>,
+    },
+    /// blocker (`plan_lock_worktree`) — the worktree is already locked.
+    AlreadyLocked {
+        name: String,
+        reason: Option<String>,
+    },
+    /// warning (`plan_prune_worktrees`) — dry-run preview of the prunable
+    /// worktrees kagi will prune. `sample` holds the first few paths; `more` is
+    /// how many are not shown.
+    PrunePreview {
+        count: usize,
+        sample: Vec<String>,
+        more: usize,
+    },
+    /// blocker (`plan_prune_worktrees`) — nothing is prunable (no-op).
+    PruneNothing,
+    /// warning (`plan_repair_worktrees`) — describes what `git worktree repair`
+    /// fixes (moved main / moved linked / both).
+    RepairsWorktrees,
 }
 
 impl WorktreeNote {
@@ -137,6 +181,83 @@ impl WorktreeNote {
                 crate::worktree_include::human_bytes(*total_bytes),
                 crate::worktree_include::human_bytes(*cap_bytes)
             ),
+            WorktreeNote::RemoveMainRefused => {
+                "This is the main worktree — it cannot be removed.".to_string()
+            }
+            WorktreeNote::RemoveDirty { path, summary } => format!(
+                "Worktree '{}' has uncommitted changes ({}) — commit or stash them first (removal never forces).",
+                path, summary
+            ),
+            WorktreeNote::RemoveLocked { path, reason } => {
+                let reason_display = match reason {
+                    Some(r) => format!("\"{}\"", r),
+                    None => "(no reason recorded)".to_string(),
+                };
+                format!(
+                    "Worktree '{}' is locked ({}) — unlock it before removing (kagi never forces).",
+                    path, reason_display
+                )
+            }
+            WorktreeNote::RemovesWorktree {
+                path,
+                branch,
+                delete_branch,
+            } => {
+                let branch_display = branch.as_deref().unwrap_or("(detached HEAD)");
+                if *delete_branch {
+                    format!(
+                        "Removes the linked worktree at '{}' and also deletes its branch '{}'.",
+                        path, branch_display
+                    )
+                } else {
+                    format!(
+                        "Removes the linked worktree at '{}' — branch '{}' is kept.",
+                        path, branch_display
+                    )
+                }
+            }
+            WorktreeNote::LocksWorktree { path, reason } => {
+                let reason_display = match reason {
+                    Some(r) => format!("\"{}\"", r),
+                    None => "(no reason)".to_string(),
+                };
+                format!(
+                    "Locks the worktree at '{}' with reason: {}.",
+                    path, reason_display
+                )
+            }
+            WorktreeNote::AlreadyLocked { name, reason } => {
+                let reason_display = match reason {
+                    Some(r) => format!("\"{}\"", r),
+                    None => "(no reason recorded)".to_string(),
+                };
+                format!(
+                    "Worktree '{}' is already locked ({}).",
+                    name, reason_display
+                )
+            }
+            WorktreeNote::PrunePreview {
+                count,
+                sample,
+                more,
+            } => {
+                let mut names = sample.join(", ");
+                if *more > 0 {
+                    names = format!("{} (+{} more)", names, more);
+                }
+                format!(
+                    "Prunes {} stale worktree admin entry(ies) whose working directory is gone: {}.",
+                    count, names
+                )
+            }
+            WorktreeNote::PruneNothing => {
+                "No prunable worktrees — nothing to prune.".to_string()
+            }
+            WorktreeNote::RepairsWorktrees => {
+                "Repairs worktree administrative links: fixes a moved main worktree, a moved \
+                 linked worktree, or both. This never touches your files — only the .git links."
+                    .to_string()
+            }
         }
     }
 }
@@ -152,6 +273,14 @@ pub enum WorktreeTitle {
     CreateWorktree { branch: String, start: String },
     /// `plan_unlock_worktree` — `Unlock worktree '<name>'`.
     UnlockWorktree { name: String },
+    /// `plan_remove_worktree` — `Remove worktree '<name>'`.
+    RemoveWorktree { name: String },
+    /// `plan_lock_worktree` — `Lock worktree '<name>'`.
+    LockWorktree { name: String },
+    /// `plan_prune_worktrees` — `Prune stale worktrees`.
+    PruneWorktrees,
+    /// `plan_repair_worktrees` — `Repair worktree links`.
+    RepairWorktrees,
 }
 
 impl WorktreeTitle {
@@ -165,6 +294,10 @@ impl WorktreeTitle {
                 format!("Create worktree '{}' @ {}", branch, start)
             }
             WorktreeTitle::UnlockWorktree { name } => format!("Unlock worktree '{}'", name),
+            WorktreeTitle::RemoveWorktree { name } => format!("Remove worktree '{}'", name),
+            WorktreeTitle::LockWorktree { name } => format!("Lock worktree '{}'", name),
+            WorktreeTitle::PruneWorktrees => "Prune stale worktrees".to_string(),
+            WorktreeTitle::RepairWorktrees => "Repair worktree links".to_string(),
         }
     }
 }
@@ -178,6 +311,17 @@ pub enum WorktreeRecovery {
     CreateWorktree { path: String, branch: String },
     /// `plan_unlock_worktree` — re-lock if needed.
     Unlock { name: String },
+    /// `plan_remove_worktree` — re-create the worktree if needed.
+    RemoveWorktree {
+        path: String,
+        branch: Option<String>,
+    },
+    /// `plan_lock_worktree` — unlock if needed.
+    LockWorktree { name: String },
+    /// `plan_prune_worktrees` — prune only drops admin entries; re-add if needed.
+    Prune,
+    /// `plan_repair_worktrees` — repair is idempotent; re-run if needed.
+    Repair,
 }
 
 impl WorktreeRecovery {
@@ -196,6 +340,30 @@ impl WorktreeRecovery {
                 "Re-lock the worktree if needed:\n  git worktree lock --reason \"<why>\" <path-of-{}>",
                 name
             ),
+            WorktreeRecovery::RemoveWorktree { path, branch } => match branch {
+                Some(b) => format!(
+                    "Re-create the worktree if needed:\n  git worktree add {} {}",
+                    path, b
+                ),
+                None => format!(
+                    "Re-create the worktree if needed:\n  git worktree add {} <branch-or-commit>",
+                    path
+                ),
+            },
+            WorktreeRecovery::LockWorktree { name } => format!(
+                "Unlock the worktree if needed:\n  git worktree unlock <path-of-{}>",
+                name
+            ),
+            WorktreeRecovery::Prune => {
+                "Prune only removes stale admin entries whose working directory is already gone. \
+                 Re-create any worktree you still need with:\n  git worktree add <path> <branch>"
+                    .to_string()
+            }
+            WorktreeRecovery::Repair => {
+                "Repair is idempotent and only fixes .git links. If a link is still wrong, run it \
+                 again from the main worktree:\n  git worktree repair [<path>...]"
+                    .to_string()
+            }
         }
     }
 }
@@ -406,6 +574,74 @@ mod tests {
             }
             .message_en(),
             "Remove the linked worktree if needed:\n  git worktree remove /repo/../wt\nThe branch can then be removed with:\n  git branch -d feat/x"
+        );
+    }
+
+    // ── issue #340 lifecycle variants ──
+    #[test]
+    fn remove_lifecycle_messages() {
+        assert_eq!(
+            WorktreeNote::RemoveMainRefused.message_en(),
+            "This is the main worktree — it cannot be removed."
+        );
+        assert_eq!(
+            WorktreeNote::RemoveDirty {
+                path: "/wt/x".into(),
+                summary: "2 modified".into()
+            }
+            .message_en(),
+            "Worktree '/wt/x' has uncommitted changes (2 modified) — commit or stash them first (removal never forces)."
+        );
+        assert_eq!(
+            WorktreeNote::RemovesWorktree {
+                path: "/wt/x".into(),
+                branch: Some("feat/x".into()),
+                delete_branch: false
+            }
+            .message_en(),
+            "Removes the linked worktree at '/wt/x' — branch 'feat/x' is kept."
+        );
+        assert_eq!(
+            WorktreeNote::RemovesWorktree {
+                path: "/wt/x".into(),
+                branch: Some("feat/x".into()),
+                delete_branch: true
+            }
+            .message_en(),
+            "Removes the linked worktree at '/wt/x' and also deletes its branch 'feat/x'."
+        );
+    }
+
+    #[test]
+    fn lock_prune_repair_messages() {
+        assert_eq!(
+            WorktreeNote::LocksWorktree {
+                path: "/wt/x".into(),
+                reason: Some("agent running".into())
+            }
+            .message_en(),
+            "Locks the worktree at '/wt/x' with reason: \"agent running\"."
+        );
+        assert_eq!(
+            WorktreeNote::AlreadyLocked {
+                name: "wt-x".into(),
+                reason: None
+            }
+            .message_en(),
+            "Worktree 'wt-x' is already locked ((no reason recorded))."
+        );
+        assert_eq!(
+            WorktreeNote::PrunePreview {
+                count: 2,
+                sample: vec!["/wt/a".into(), "/wt/b".into()],
+                more: 0
+            }
+            .message_en(),
+            "Prunes 2 stale worktree admin entry(ies) whose working directory is gone: /wt/a, /wt/b."
+        );
+        assert_eq!(
+            WorktreeNote::PruneNothing.message_en(),
+            "No prunable worktrees — nothing to prune."
         );
     }
 

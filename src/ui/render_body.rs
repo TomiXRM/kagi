@@ -532,7 +532,7 @@ impl KagiApp {
 fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
     use gpui::AnimationExt as _;
     const BOB_MS: u64 = 1400;
-    const AMPLITUDE: f32 = 5.0;
+    const AMPLITUDE: f32 = 11.0;
     // Commit-node colors: branch / accent / success — reads as a tiny graph.
     let colors = [theme().color_branch, theme().accent, theme().color_success];
     let mut dots = div()
@@ -540,7 +540,7 @@ fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
         .flex_row()
         .items_end()
         .gap_2()
-        .h(theme::scaled_px(16.0));
+        .h(theme::scaled_px(22.0));
     for (i, color) in colors.into_iter().enumerate() {
         let phase = i as f32 * 0.15; // stagger: a little wave, left to right
         dots = dots.child(

@@ -76,6 +76,10 @@ pub struct PrTab {
     /// for. On a real PR the full set came to 50 MB across 537 files to show
     /// one of them, so the text is fetched per selection instead.
     pub conflict_text: Option<(PathBuf, Option<String>)>,
+    /// #347: `mergeStateStatus` + merge-queue position + unresolved-thread
+    /// count, fetched once per tab open via `gh api graphql`. `None` = not
+    /// fetched yet (or non-GitHub host / old `gh` — degrade to no card).
+    pub merge_status: Option<kagi_git::github::PrMergeStatus>,
 }
 
 /// Which body the PR tab shows.
@@ -229,6 +233,7 @@ impl KagiApp {
             conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
             conflict_text: None,
             conflict_at: 0,
+            merge_status: None,
         };
         if !tab.files.is_empty() {
             tab.selected_file = Some(0);
@@ -259,10 +264,14 @@ impl KagiApp {
                     // / Codex put code suggestions — not exposed by --json).
                     let convo = kagi_git::github::pr_conversation(&repo2, number);
                     let lines = kagi_git::github::pr_review_comments(&repo2, number);
-                    (convo, lines)
+                    // #347: mergeStateStatus + merge-queue position. A failure
+                    // (non-GitHub host, old gh, no MQ) is not fatal — the card
+                    // just does not appear.
+                    let merge_status = kagi_git::github::pr_merge_status(&repo2, number).ok();
+                    (convo, lines, merge_status)
                 })
                 .await;
-            let (Ok((reviews, comments)), lines) = result else {
+            let (Ok((reviews, comments)), lines, merge_status) = result else {
                 return;
             };
             let line_comments = lines.unwrap_or_default();
@@ -276,9 +285,18 @@ impl KagiApp {
                             comments.len(),
                             line_comments.len()
                         );
+                        if let Some(s) = &merge_status {
+                            klog!(
+                                "pr-mode: merge-status #{} state={:?} queued={}",
+                                number,
+                                s.state,
+                                s.queue.is_some()
+                            );
+                        }
                         t.reviews = reviews;
                         t.comments = comments;
                         t.line_comments = line_comments;
+                        t.merge_status = merge_status;
                         cx.notify();
                     }
                 }
@@ -1111,6 +1129,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         conflict_scroll,
         conflict_text,
         conflict_at,
+        merge_status,
     ) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
@@ -1124,6 +1143,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.conflict_scroll.clone(),
             t.conflict_text.clone(),
             t.conflict_at,
+            t.merge_status.clone(),
         )
     };
     let show_description = view == PrView::Overview;
@@ -1516,6 +1536,14 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             .into_any_element();
     }
     if show_description {
+        // #347: the merge-status card above the description — the four
+        // `mergeStateStatus` actions, queue position, and what is still missing.
+        if let Some(status) = &merge_status {
+            let view = super::pr_merge_status::view_from(status, pr.review);
+            if let Some(card) = super::pr_merge_status::render(&view, cx) {
+                col = col.child(card);
+            }
+        }
         return col
             .child(super::pr_conversation::render_description(&pr, cx))
             .into_any_element();
@@ -2230,6 +2258,7 @@ mod stack_tests {
             number,
             title: String::new(),
             head: head.into(),
+            head_sha: String::new(),
             base: base.into(),
             is_draft: false,
             ci: CiState::None,

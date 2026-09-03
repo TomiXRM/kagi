@@ -27,6 +27,11 @@ pub struct PullRequest {
     pub title: String,
     /// Head (source) branch name, without the remote prefix.
     pub head: String,
+    /// Head commit SHA (`headRefOid`). Passed to `gh pr merge` as
+    /// `--match-head-commit` so a merge is refused if someone pushed to the
+    /// head branch after the plan was shown (PR-side force-with-lease, #347).
+    /// Empty when the caller requested a reduced field set.
+    pub head_sha: String,
     /// Base (target) branch name.
     pub base: String,
     pub is_draft: bool,
@@ -202,6 +207,7 @@ mod tests {
             number: n,
             title: String::new(),
             head: head.into(),
+            head_sha: String::new(),
             base: base.into(),
             is_draft: false,
             ci: CiState::None,
@@ -224,6 +230,7 @@ mod tests {
             number: n,
             title: String::new(),
             head: head.into(),
+            head_sha: String::new(),
             base: base.into(),
             is_draft: false,
             ci: CiState::None,
@@ -259,6 +266,7 @@ mod tests {
             number: n,
             title: String::new(),
             head: head.into(),
+            head_sha: String::new(),
             base: base.into(),
             is_draft: false,
             ci: CiState::None,
@@ -298,6 +306,7 @@ mod tests {
             number: 1,
             title: String::new(),
             head: "feat/x".into(),
+            head_sha: String::new(),
             base: "main".into(),
             is_draft: false,
             ci: CiState::None,
@@ -480,6 +489,7 @@ mod attention_tests {
             number: 1,
             title: "t".into(),
             head: "feat".into(),
+            head_sha: String::new(),
             base: "main".into(),
             is_draft: false,
             ci: CiState::Success,

@@ -32,7 +32,7 @@ pub fn gh_available() -> bool {
     })
 }
 
-const FIELDS: &str = "number,title,headRefName,baseRefName,isDraft,reviewDecision,\
+const FIELDS: &str = "number,title,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,\
 statusCheckRollup,url,author,reviewRequests,body,mergeable";
 
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
@@ -174,6 +174,7 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
         number: v.get("number")?.as_u64()?,
         title: s("title"),
         head: s("headRefName"),
+        head_sha: s("headRefOid"),
         base: s("baseRefName"),
         is_draft: v.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false),
         ci: fold_ci(&refs),
@@ -430,6 +431,32 @@ pub fn plan_pr_merge(
     }
 }
 
+/// Build the `gh pr merge` argument vector. Pure and unit-tested so the
+/// **safety invariant** — `--match-head-commit <SHA>` is *always* present — is
+/// checked without spawning `gh`. That flag makes GitHub refuse the merge if
+/// the head branch moved after the plan was shown (PR-side force-with-lease,
+/// #347): the same principle as force-with-lease, applied to the merge button.
+pub fn merge_args(
+    number: u64,
+    method: MergeMethod,
+    delete_branch: bool,
+    head_sha: &str,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "pr".into(),
+        "merge".into(),
+        number.to_string(),
+        method.flag().into(),
+        // ALWAYS present — never gate this behind a flag or a branch.
+        "--match-head-commit".into(),
+        head_sha.to_string(),
+    ];
+    if delete_branch {
+        args.push("--delete-branch".into());
+    }
+    args
+}
+
 /// Merge a PR through `gh pr merge` (execute step — the plan/confirm live in
 /// the UI layer, per the write-op invariant). `delete_branch` maps to
 /// `--delete-branch`; nothing here touches the local working tree.
@@ -438,16 +465,9 @@ pub fn merge_pr(
     number: u64,
     method: MergeMethod,
     delete_branch: bool,
+    head_sha: &str,
 ) -> Result<String, GitError> {
-    let mut args: Vec<String> = vec![
-        "pr".into(),
-        "merge".into(),
-        number.to_string(),
-        method.flag().into(),
-    ];
-    if delete_branch {
-        args.push("--delete-branch".into());
-    }
+    let args = merge_args(number, method, delete_branch, head_sha);
     let out = Command::new("gh")
         .args(&args)
         .current_dir(workdir)
@@ -467,6 +487,15 @@ pub fn merge_pr(
         }))
     }
 }
+
+// #347 merge-lifecycle backend (version detection, mergeStateStatus + merge
+// queue, enqueue/dequeue) lives in `github_merge` and is re-exported here so
+// the public path stays `kagi_git::github::*`.
+pub use crate::github_merge::{
+    dequeue_args, dequeue_pr, enqueue_args, enqueue_pr, gh_at_least, gh_version, parse_gh_version,
+    parse_merge_status, pr_merge_status, BypassCapability, MergeQueueEntryState, MergeStateStatus,
+    MissingRequirements, PrMergeStatus, QueuePosition,
+};
 
 #[cfg(test)]
 mod tests {
@@ -568,6 +597,31 @@ mod tests {
         assert_eq!(MergeMethod::Squash.flag(), "--squash");
         assert_eq!(MergeMethod::Rebase.flag(), "--rebase");
         assert_eq!(MergeMethod::Merge.flag(), "--merge");
+    }
+
+    /// Acceptance §6, the core safety guarantee: `gh pr merge` ALWAYS carries
+    /// `--match-head-commit <SHA>`, for every method, with or without
+    /// `--delete-branch`.
+    #[test]
+    fn merge_always_matches_head_commit() {
+        for method in [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase] {
+            for delete in [false, true] {
+                let args = merge_args(42, method, delete, "deadbeef");
+                let i = args
+                    .iter()
+                    .position(|a| a == "--match-head-commit")
+                    .expect("--match-head-commit is always present");
+                assert_eq!(args.get(i + 1).map(String::as_str), Some("deadbeef"));
+            }
+        }
+    }
+
+    #[test]
+    fn head_sha_parsed_from_list() {
+        let json = r#"[{"number":1,"title":"t","headRefName":"h","headRefOid":"abc123",
+          "baseRefName":"main","isDraft":false,"mergeable":"MERGEABLE"}]"#;
+        let prs = parse_pr_list(json).unwrap();
+        assert_eq!(prs[0].head_sha, "abc123");
     }
 
     #[test]

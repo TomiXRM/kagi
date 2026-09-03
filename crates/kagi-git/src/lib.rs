@@ -17,6 +17,7 @@ mod diffstat;
 pub mod drafts;
 mod file_history;
 pub mod github;
+pub mod github_merge;
 pub mod hotspot;
 mod log;
 pub mod message_gen;

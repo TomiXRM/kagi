@@ -290,9 +290,19 @@ fn side_column(header: &str, data: &SideData) -> gpui::AnyElement {
     } else {
         match data.mode {
             BinaryViewMode::Image => match &data.image {
-                Some(img) => gpui::img(gpui::ImageSource::Image(img.clone()))
-                    .max_w(px(IMAGE_MAX_PX))
-                    .max_h(px(IMAGE_MAX_PX))
+                // Mirror the working avatar/inspector precedent
+                // (render_helpers.rs:608): a SIZED container + `object_fit`.
+                // `max_w/max_h` alone in a flex_basis(0)/min_w(0) column
+                // collapses the image box to zero, painting nothing (#362).
+                Some(img) => div()
+                    .w_full()
+                    .h(px(IMAGE_MAX_PX))
+                    .child(
+                        gpui::img(gpui::ImageSource::Image(img.clone()))
+                            .max_w_full()
+                            .max_h_full()
+                            .object_fit(gpui::ObjectFit::Contain),
+                    )
                     .into_any_element(),
                 None => muted(Msg::ConflictImageTooLarge.t()),
             },

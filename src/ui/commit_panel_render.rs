@@ -135,6 +135,7 @@ fn render_cp_file_row(
                     .bg(rgb(theme().color_warning))
                     .text_size(px(9.))
                     .line_height(px(14.))
+                    .font_weight(gpui::FontWeight::BOLD)
                     .text_color(rgb(theme().bg_base))
                     .child(SharedString::from(Msg::AgentConventionBadge.t())),
             )

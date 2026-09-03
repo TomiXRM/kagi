@@ -3,6 +3,12 @@
 # ADR-0072 (v1.0 re-architecture): crates/* host the layered workspace; the pure
 # `kagi-domain` crate is the first extracted layer (strangler migration).
 members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-mcp", "crates/kagi-ui-core", "crates/kagi-ui-ecosystem", "crates/kagi-ui-editor", "crates/kagi-ui-file-history", "crates/kagi-web"]
+# Feature resolver v2 (already implied by the root package's edition 2021) made
+# explicit: ADR-0166's guarantee that `gpui/test-support` (a dev-dependency
+# feature) never reaches the release binary depends on dev-dep features NOT
+# being unified into normal builds — which is exactly resolver v2 behaviour.
+# Pinning it here keeps that guarantee robust against future member/edition changes.
+resolver = "2"
 
 [package]
 name = "kagi"
@@ -75,6 +81,21 @@ winresource = "0.1"
 # Distributed/release builds run compute-heavy paths (tree-sitter highlighting,
 # git2 diffs, commit-graph layout), so tune past Cargo's default release profile
 # (opt-level=3, lto=off, codegen-units=16) for faster runtime + a smaller binary.
+# ── Test-only GPUI visual-test support (ADR-0166, GUI E2E PoC) ─────────────
+# `gpui`'s `test-support` feature unlocks `VisualTestAppContext` (macOS: real
+# off-screen Metal rendering, deterministic TestDispatcher, keyboard/mouse/
+# Action injection, `capture_screenshot`). Declared ONLY here as a dev-dep, so
+# it is compiled into test/bench/example targets but NOT the release binary:
+# the root package is edition 2021 with no explicit `resolver`, so Cargo's
+# feature resolver v2 is in effect and dev-dependency features are not unified
+# into a normal `cargo build`. Same git source (no rev) as the normal `gpui`
+# dep above → cargo unifies them to one crate, only the feature set differs by
+# target kind. `image` matches gpui's transitive version so `RgbaImage::save`
+# uses the same crate the screenshot came from.
+[dev-dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", features = ["test-support"] }
+image = "0.25"
+
 # Trade-off: longer link time in CI. Applies workspace-wide (this is the root).
 [profile.release]
 lto = "thin"

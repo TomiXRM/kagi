@@ -404,30 +404,40 @@ pub(crate) fn render_provenance_badge(
     row_ix: usize,
 ) -> impl IntoElement {
     use crate::ui::i18n::Msg;
-    // Agent violet — distinct from lane/ref colours; hue is decorative only.
-    let (bg, border, text) = theme::badge_style(0x8b5cf6);
-    let mut label = format!("🤖 {}", prov.agent.label());
-    if prov.reviewed {
-        label.push_str(" · ");
-        label.push_str(Msg::AgentReviewed.t());
-    }
-    let tip = if prov.reviewed {
+    use kagi_domain::provenance::AgentKind;
+    // Icon-only badge; the agent is conveyed by the background hue, not text.
+    // Claude → orange, every other agent → violet. Hue is a supplement; the 🤖
+    // glyph itself is the colour-independent signal (aligns #354).
+    let hue = match prov.agent {
+        AgentKind::ClaudeCode => 0xf97316, // orange
+        _ => 0x8b5cf6,                     // violet
+    };
+    let (bg, border, _text) = theme::badge_style(hue);
+    // Tooltip still names the agent (and review state) so hover carries the detail.
+    let detail = if prov.reviewed {
+        format!("{} · {}", prov.agent.label(), Msg::AgentReviewed.t())
+    } else {
+        prov.agent.label().to_string()
+    };
+    let base_tip = if prov.reviewed {
         Msg::AgentReviewedTooltip.t()
     } else {
         Msg::AgentCreatedTooltip.t()
     };
+    let tip = format!("{} — {}", detail, base_tip);
     div()
         .id(("prov-badge", row_ix))
-        .px_1()
+        .px(px(3.))
         .rounded_sm()
         .bg(gpui::rgba(bg))
         .border_1()
         .border_color(gpui::rgba(border))
-        .text_color(rgb(text))
         .text_sm()
         .flex_shrink_0()
-        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip).build(window, cx))
-        .child(SharedString::from(label))
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+        })
+        .child(SharedString::from("🤖"))
 }
 
 #[cfg(test)]

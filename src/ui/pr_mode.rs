@@ -2142,19 +2142,24 @@ fn render_pr_card(
                         .text_color(rgb(c))
                         .child(SharedString::from(g))
                 }))
-                // Issue #337: "agent-created" badge (🤖 glyph + agent name so
-                // it reads without relying on hue). Nothing when unclassifiable.
+                // Issue #337: "agent-created" badge — 🤖 glyph only; the agent is
+                // conveyed by hue (Claude → orange, others → violet). Glyph is the
+                // colour-independent signal. Nothing when unclassifiable.
                 .children(pr_provenance(pr).map(|prov| {
-                    let (bg, border, text) = theme::badge_style(0x8b5cf6);
+                    use kagi_domain::provenance::AgentKind;
+                    let hue = match prov.agent {
+                        AgentKind::ClaudeCode => 0xf97316,
+                        _ => 0x8b5cf6,
+                    };
+                    let (bg, border, _text) = theme::badge_style(hue);
                     div()
                         .flex_shrink_0()
-                        .px_1()
+                        .px(px(3.))
                         .rounded_sm()
                         .bg(gpui::rgba(bg))
                         .border_1()
                         .border_color(gpui::rgba(border))
-                        .text_color(rgb(text))
-                        .child(SharedString::from(format!("🤖 {}", prov.agent.label())))
+                        .child(SharedString::from("🤖"))
                 }))
                 .child(
                     div()

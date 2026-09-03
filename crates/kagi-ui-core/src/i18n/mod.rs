@@ -1729,8 +1729,8 @@ impl Msg {
             (Ja, GeneratedFilesSection) => "生成ファイル",
             (En, AgentArtifactsSection) => "Agent artifacts",
             (Ja, AgentArtifactsSection) => "エージェント成果物",
-            (En, AgentConventionBadge) => "Agent rule",
-            (Ja, AgentConventionBadge) => "規約",
+            (En, AgentConventionBadge) => "Rule",
+            (Ja, AgentConventionBadge) => "Rule",
         }
     }
 }

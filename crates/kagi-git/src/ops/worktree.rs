@@ -153,6 +153,31 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     out
 }
 
+/// Canonicalize the longest existing prefix of `path` (resolving symlinks) and
+/// re-append the components that don't exist yet. Lets worktree containment be
+/// checked even when the target's parent directory hasn't been created.
+fn canonicalize_nearest_existing(path: &Path) -> std::io::Result<PathBuf> {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path;
+    loop {
+        match std::fs::canonicalize(cur) {
+            Ok(mut real) => {
+                for part in tail.iter().rev() {
+                    real.push(part);
+                }
+                return Ok(real);
+            }
+            Err(e) => match (cur.file_name(), cur.parent()) {
+                (Some(name), Some(parent)) => {
+                    tail.push(name.to_os_string());
+                    cur = parent;
+                }
+                _ => return Err(e),
+            },
+        }
+    }
+}
+
 /// Validate and normalize a worktree path entered by the user.
 ///
 /// Relative paths are interpreted relative to `repo_root`.  The target path
@@ -198,18 +223,16 @@ pub fn validate_worktree_path_keyed(
     let parent = candidate
         .parent()
         .ok_or_else(|| Other("Worktree path must have a parent directory.".to_string()))?;
-    if !parent.exists() {
-        return Err(Other(format!(
-            "Parent directory '{}' does not exist.",
-            parent.display()
-        )));
-    }
-
-    let parent = std::fs::canonicalize(parent)
-        .map_err(|e| Other(format!("Parent directory is not accessible: {}", e)))?;
     let filename = candidate
         .file_name()
         .ok_or_else(|| Other("Worktree path must name a directory.".to_string()))?;
+
+    // The immediate parent need not exist yet — the default worktree path is
+    // `../<repo>-worktrees/<branch>` and `execute_create_worktree` creates the
+    // parent before adding the worktree. Resolve symlinks on the longest
+    // existing prefix so the containment check below is still symlink-safe.
+    let parent = canonicalize_nearest_existing(parent)
+        .map_err(|e| Other(format!("Parent directory is not accessible: {}", e)))?;
     let candidate_real_parent = normalize_path(&parent.join(filename));
 
     if candidate_real_parent == repo_root || candidate_real_parent.starts_with(&repo_root) {
@@ -500,6 +523,15 @@ fn execute_create_worktree_impl(
         .map_err(|e| GitError::Other(format!("branch ref lookup failed: {}", e.message())))?;
     let mut opts = WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
+
+    // The default path's parent (`../<repo>-worktrees/`) may not exist yet;
+    // libgit2 will not create it, so create it here (containment already
+    // verified by validate_worktree_path above).
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            GitError::Other(format!("could not create worktree parent directory: {}", e))
+        })?;
+    }
 
     let worktree_name = worktree_name_from_path(&target_path, branch);
     repo.worktree(&worktree_name, &target_path, Some(&opts))

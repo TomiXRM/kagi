@@ -523,6 +523,32 @@ fn worktreeinclude_skips_symlinks() {
 }
 
 #[test]
+fn create_worktree_auto_creates_missing_parent_and_copies() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo_with_worktreeinclude(&repo_tmp);
+    let at = head_commit_id(&repo);
+    // Parent dir `<...>/nope-worktrees` does NOT exist yet (the default UI
+    // path shape). This must not block the plan nor fail execute.
+    let path = worktrees_tmp.path().join("nope-worktrees").join("wt");
+    assert!(!path.parent().unwrap().exists());
+
+    let plan = plan_create_worktree(&repo, "wt", &path, &at).expect("plan");
+    assert!(
+        plan.blockers.is_empty(),
+        "missing parent must not block: {:?}",
+        plan.blockers
+    );
+
+    execute_create_worktree(&repo, "wt", &path, &at).expect("execute");
+    assert!(path.is_dir(), "worktree dir (and parent) must be created");
+    assert_eq!(
+        std::fs::read_to_string(path.join(".env")).expect(".env copied"),
+        "TOKEN=abc\n"
+    );
+}
+
+#[test]
 fn no_worktreeinclude_leaves_plan_unchanged() {
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();

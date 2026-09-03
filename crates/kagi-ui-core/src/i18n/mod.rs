@@ -1983,9 +1983,8 @@ pub fn worktree_path_error(e: &kagi_domain::plan::WorktreePathError) -> String {
 /// English in both languages per ADR-0048 (Fetch / Pull / Push / Cherry-pick /
 /// Revert / theme + language names), or for unknown ids — the caller then falls
 /// back to the registry's English `label`. Kept here (not in `commands.rs`)
-/// because `crates/kagi-git`/`src/ui` layering forbids the UI's command table
-/// from reaching into this pure crate, and translations belong with the rest of
-/// the i18n table.
+/// because the crate layering (ADR-0121) keeps this pure crate below the UI's
+/// command table, and translations belong with the rest of the i18n table.
 pub fn command_label_ja(id: &str) -> Option<&'static str> {
     Some(match id {
         "app.about" => "kagi について",

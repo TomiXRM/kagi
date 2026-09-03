@@ -16,8 +16,66 @@ permissions:
   contents: write
 
 jobs:
+  # ── Gate: the released commit must have green blocking CI (#395) ──────────
+  # v0.30.0 shipped from a red main because this workflow only verified that
+  # the build compiles. Query the check runs on the tagged commit and require
+  # every blocking ci.yml job to have concluded success before building.
+  ci-green:
+    name: verify blocking CI is green
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+    steps:
+      - name: Assert blocking ci jobs succeeded for ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          # The blocking jobs from ci.yml (advisory continue-on-error legs
+          # excluded). Keep this list in sync with ci.yml job display names.
+          required=(
+            "invariant — UI is git2-free"
+            "invariant — kagi-mcp is gpui-free"
+            "invariant — [kagi] lines go through klog!"
+            "invariant — kagi-ui-core is git-free; no lateral ui-crate imports"
+            "invariant — PlanNote/PlanTitle/RecoveryKind have no Verbatim escape hatch"
+            "test (macOS)"
+          )
+          # A tag is often pushed right after the merge, while ci is still
+          # running on the same commit — poll instead of failing instantly.
+          for attempt in $(seq 1 30); do
+            pending=0 red=0
+            for name in "${required[@]}"; do
+              # filter=latest (the API default) dedupes re-runs; a missing
+              # check run reads as "pending" and is retried, then fails.
+              conclusion=$(gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+                -f check_name="$name" \
+                --jq '.check_runs[0].conclusion // "pending"')
+              echo "$name: $conclusion"
+              case "$conclusion" in
+                success) ;;
+                pending) pending=1 ;;
+                *) red=1 ;;
+              esac
+            done
+            if [ "$red" -eq 1 ]; then
+              echo "::error::blocking CI is red on ${GITHUB_SHA} — a red commit must not produce a release (#395). Fix main, retag."
+              exit 1
+            fi
+            if [ "$pending" -eq 0 ]; then
+              echo "OK: all blocking CI checks are green on ${GITHUB_SHA}."
+              exit 0
+            fi
+            echo "CI not finished on ${GITHUB_SHA} — waiting 60s (attempt ${attempt}/30)…"
+            sleep 60
+          done
+          echo "::error::blocking CI never went green on ${GITHUB_SHA} within 30 min — check that ci ran on this commit (#395)."
+          exit 1
+
   build:
     name: build ${{ matrix.target }}
+    needs: ci-green
     runs-on: ${{ matrix.os }}
     # Per-leg opt-in: the linux-arm64 leg sets continue-on-error so a missing
     # private-repo arm64 runner does not block the release (ADR-0047 追補).

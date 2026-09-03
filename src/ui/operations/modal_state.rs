@@ -16,7 +16,7 @@ use super::super::modals::{
     PullPlanModal, PushPlanModal, PushTagModal, RebaseCurrentOntoModal, RemoveWorktreeModal,
     RenameBranchModal, RepairWorktreesModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
     StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
-    TrackingCheckoutPlanModal, UnlockWorktreeModal,
+    TrackingCheckoutPlanModal, TrustRepoModal, UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -134,6 +134,23 @@ impl KagiApp {
 
     pub fn clear_push_tag_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::PushTag(_))) {
+            self.active_modal = None;
+        }
+    }
+
+    pub fn trust_repo_modal(&self) -> Option<&TrustRepoModal> {
+        match &self.active_modal {
+            Some(ActiveModal::TrustRepo(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_trust_repo_modal(&mut self, m: TrustRepoModal) {
+        self.active_modal = Some(ActiveModal::TrustRepo(m));
+    }
+    #[inline]
+    pub fn clear_trust_repo_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::TrustRepo(_))) {
             self.active_modal = None;
         }
     }

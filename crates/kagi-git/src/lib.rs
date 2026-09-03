@@ -31,6 +31,7 @@ pub mod session;
 mod snapshot;
 mod staging;
 mod status;
+pub mod trust;
 use kagi_domain::trailers; // ADR-0121: was a shim file
 pub mod worker;
 
@@ -182,8 +183,20 @@ pub enum GitError {
     /// The repository is bare (has no working tree); bare repos are not
     /// supported in the MVP.
     BareRepository(String),
+    /// The repository workdir is owned by a different uid than this process and
+    /// has not been trusted (ADR-0160). Reads are still allowed; mutating ops
+    /// are refused until the user confirms trust. Carries the workdir path.
+    Untrusted(String),
     /// Any other libgit2 error.
     Other(String),
+}
+
+impl GitError {
+    /// True for [`GitError::Untrusted`] — the UI branches on this to raise a
+    /// trust-confirmation prompt instead of a plain error.
+    pub fn is_untrusted(&self) -> bool {
+        matches!(self, GitError::Untrusted(_))
+    }
 }
 
 impl std::fmt::Display for GitError {
@@ -192,6 +205,11 @@ impl std::fmt::Display for GitError {
             GitError::PathNotFound(p) => write!(f, "path not found: {}", p),
             GitError::NotARepository(p) => write!(f, "not a git repository: {}", p),
             GitError::BareRepository(p) => write!(f, "bare repository (no working tree): {}", p),
+            GitError::Untrusted(p) => write!(
+                f,
+                "repository is not trusted for writes (owned by another user): {}",
+                p
+            ),
             GitError::Other(msg) => write!(f, "git error: {}", msg),
         }
     }

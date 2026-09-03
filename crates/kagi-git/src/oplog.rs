@@ -280,7 +280,7 @@ fn log_file_path() -> Option<PathBuf> {
 /// Minimal home-directory resolution without adding a crate dependency.
 ///
 /// Tries `$HOME` (Unix) then `$USERPROFILE` (Windows).
-fn dirs_home() -> Option<PathBuf> {
+pub(crate) fn dirs_home() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .or_else(|| std::env::var("USERPROFILE").ok())

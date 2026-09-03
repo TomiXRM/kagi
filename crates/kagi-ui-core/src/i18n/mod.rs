@@ -775,6 +775,14 @@ pub enum Msg {
     /// Editor Workspace header: the "Editor Workspace" title label.
     EditorWorkspaceTitle,
 
+    // ── Repository owner-trust prompt (ADR-0160 / issue #310) ────
+    /// Trust-confirmation title: repo owned by another user (git2 path).
+    TrustRepoTitle,
+    /// Trust-confirmation body: why writes are blocked + what confirming does.
+    TrustRepoBody,
+    /// Trust-confirmation: the "trust this repository" confirm button.
+    TrustRepoConfirm,
+
     // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ─
     /// Right-pane tab: the open file's WIP hunks (default, unchanged v1
     /// behaviour).
@@ -1742,6 +1750,18 @@ impl Msg {
             (Ja, EditorWorkspaceBackToGraph) => "\u{2190} グラフ",
             (En, EditorWorkspaceTitle) => "Editor Workspace",
             (Ja, EditorWorkspaceTitle) => "エディタワークスペース",
+
+            // ── Repository owner-trust prompt (ADR-0160) ──
+            (En, TrustRepoTitle) => "This repository is owned by another user",
+            (Ja, TrustRepoTitle) => "このリポジトリは別のユーザーが所有しています",
+            (En, TrustRepoBody) => {
+                "It can be inspected safely, but writes are blocked until you confirm you trust it. Trust only repositories whose config you would run yourself."
+            }
+            (Ja, TrustRepoBody) => {
+                "閲覧は安全に行えますが、信頼を確認するまで書き込みはブロックされます。設定を自分で実行してもよいと思えるリポジトリだけを信頼してください。"
+            }
+            (En, TrustRepoConfirm) => "Trust this repository",
+            (Ja, TrustRepoConfirm) => "このリポジトリを信頼する",
 
             // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ──
             (En, EditorRightTabDiff) => "Diff",

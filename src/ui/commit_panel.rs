@@ -262,8 +262,28 @@ impl CommitPanelState {
                 })
                 .collect::<Vec<_>>()
         };
-        let us_art = art_flags(&self.unstaged);
-        let st_art = art_flags(&self.staged);
+        // issue #411: a conflicted file must NEVER be folded away — an unresolved
+        // conflict (e.g. Cargo.lock after a merge) has to stay a visible row in
+        // the Commit Panel. Mask conflicted paths out of BOTH the artifact and
+        // generated axes below, mirroring the "convention bodies are never
+        // folded" carve-out (#378).
+        let conf_flags = |files: &[FileStatus]| -> Vec<bool> {
+            files
+                .iter()
+                .map(|f| self.conflicted_paths.contains(&f.path))
+                .collect::<Vec<_>>()
+        };
+        let us_conf = conf_flags(&self.unstaged);
+        let st_conf = conf_flags(&self.staged);
+
+        let mut us_art = art_flags(&self.unstaged);
+        let mut st_art = art_flags(&self.staged);
+        for (a, c) in us_art.iter_mut().zip(&us_conf) {
+            *a &= !c;
+        }
+        for (a, c) in st_art.iter_mut().zip(&st_conf) {
+            *a &= !c;
+        }
         self.unstaged_artifact_files = idx_where(&us_art);
         self.staged_artifact_files = idx_where(&st_art);
 
@@ -271,14 +291,17 @@ impl CommitPanelState {
         // prune generated files (and now-empty dirs) from the tree rows so the
         // main list shows only normal files; generated files fold separately.
         // Artifacts win over generated, so mask them out of the generated flags.
-        let mask = |gen: &[bool], art: &[bool]| -> Vec<bool> {
+        let mask = |gen: &[bool], art: &[bool], conf: &[bool]| -> Vec<bool> {
             gen.iter()
                 .enumerate()
-                .map(|(i, &g)| g && !art.get(i).copied().unwrap_or(false))
+                .map(|(i, &g)| {
+                    g && !art.get(i).copied().unwrap_or(false)
+                        && !conf.get(i).copied().unwrap_or(false)
+                })
                 .collect::<Vec<_>>()
         };
-        let us_gen = mask(unstaged_gen, &us_art);
-        let st_gen = mask(staged_gen, &st_art);
+        let us_gen = mask(unstaged_gen, &us_art, &us_conf);
+        let st_gen = mask(staged_gen, &st_art, &st_conf);
         let ug = kagi_domain::generated::group_generated(&us_gen);
         let sg = kagi_domain::generated::group_generated(&st_gen);
         self.unstaged_gen_files = ug.generated;
@@ -678,109 +701,5 @@ impl CommitPanelView {
 pub use kagi_ui_core::file_tree::status_badge;
 
 #[cfg(test)]
-mod generated_fold_tests {
-    use super::*;
-
-    /// Build an empty state (no repo) so `rebuild_derived` can be exercised
-    /// in isolation.
-    fn empty_state() -> CommitPanelState {
-        CommitPanelState {
-            unstaged: Vec::new(),
-            staged: Vec::new(),
-            unstaged_stats: Vec::new(),
-            staged_stats: Vec::new(),
-            conflicted_paths: std::collections::HashSet::new(),
-            selected_file: None,
-            commit_msg: String::new(),
-            plan_modal: None,
-            tree_view: false,
-            unstaged_tree: Vec::new(),
-            staged_tree: Vec::new(),
-            unstaged_stat_index: std::collections::HashMap::new(),
-            staged_stat_index: std::collections::HashMap::new(),
-            unstaged_gen_files: Vec::new(),
-            unstaged_normal_files: Vec::new(),
-            staged_gen_files: Vec::new(),
-            staged_normal_files: Vec::new(),
-            generated_expanded: false,
-            unstaged_artifact_files: Vec::new(),
-            staged_artifact_files: Vec::new(),
-            agent_expanded: false,
-        }
-    }
-
-    fn modified(path: &str) -> FileStatus {
-        FileStatus {
-            path: PathBuf::from(path),
-            change: ChangeKind::Modified,
-        }
-    }
-
-    /// issue #348: rebuild splits generated files out of the flat/tree lists and
-    /// the fold defaults collapsed (only the header row shows until expanded).
-    #[test]
-    fn rebuild_folds_generated_files() {
-        let mut s = empty_state();
-        // Matches the reported bug: Cargo.lock + main.rs unstaged.
-        s.unstaged = vec![modified("Cargo.lock"), modified("src/main.rs")];
-        // Cargo.lock (index 0) is generated; main.rs (index 1) is not.
-        s.rebuild_derived(&[true, false], &[]);
-
-        assert_eq!(s.unstaged_gen_files, vec![0]);
-        assert_eq!(s.unstaged_normal_files, vec![1]);
-        // Pruned tree (flat has 1 dir-less file 'main.rs'): no Cargo.lock row.
-        assert!(s.unstaged_tree.iter().all(|r| !matches!(
-            r,
-            kagi_ui_core::file_tree::TreeRow::File { file_index: 0, .. }
-        )));
-
-        // Collapsed by default → 1 extra row (the header only).
-        assert!(!s.generated_expanded);
-        assert_eq!(s.generated_extra_rows(false), 1);
-        // Expanded → header + the 1 generated file.
-        s.generated_expanded = true;
-        assert_eq!(s.generated_extra_rows(false), 2);
-    }
-
-    /// No generated files → no fold, no extra rows.
-    #[test]
-    fn no_generated_no_fold() {
-        let mut s = empty_state();
-        s.unstaged = vec![modified("src/a.rs"), modified("src/b.rs")];
-        s.rebuild_derived(&[false, false], &[]);
-        assert!(s.unstaged_gen_files.is_empty());
-        assert_eq!(s.unstaged_normal_files, vec![0, 1]);
-        assert_eq!(s.generated_extra_rows(false), 0);
-    }
-
-    /// issue #338: ArtifactConfig files fold under a collapsed "Agent artifacts"
-    /// group; a convention body (CLAUDE.md) stays in the main list; and the
-    /// artifact axis takes precedence over the generated fold.
-    #[test]
-    fn rebuild_folds_agent_artifacts() {
-        let mut s = empty_state();
-        s.unstaged = vec![
-            modified("src/main.rs"),           // 0: normal
-            modified(".claude/settings.json"), // 1: artifact
-            modified("CLAUDE.md"),             // 2: convention body (inline, badged)
-            modified(".mcp.json"),             // 3: artifact
-        ];
-        // .claude/settings.json (index 1) is ALSO flagged generated by #348 →
-        // artifact precedence must keep it in the artifact fold, out of the
-        // generated group.
-        s.rebuild_derived(&[false, true, false, false], &[]);
-
-        assert_eq!(s.unstaged_artifact_files, vec![1, 3]);
-        // Convention body + normal remain in the main list (not folded).
-        assert_eq!(s.unstaged_normal_files, vec![0, 2]);
-        // Generated group must NOT contain the artifact even though it was
-        // flagged generated (artifact precedence).
-        assert!(s.unstaged_gen_files.is_empty());
-
-        // Collapsed by default → 1 extra row (header only).
-        assert!(!s.agent_expanded);
-        assert_eq!(s.agent_extra_rows(false), 1);
-        s.agent_expanded = true;
-        assert_eq!(s.agent_extra_rows(false), 3); // header + 2 files
-    }
-}
+#[path = "commit_panel_tests.rs"]
+mod generated_fold_tests;

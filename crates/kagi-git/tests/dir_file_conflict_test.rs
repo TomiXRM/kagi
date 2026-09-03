@@ -150,6 +150,11 @@ fn keep_file_yields_file_side() {
 
 /// The resolution is recorded to the oplog. Mutation: drop the `append_oplog`
 /// call in `execute_dir_file_resolution` and this asserts fails (no entry).
+///
+/// Also guards #408: the destructive choice must take a savepoint under
+/// `refs/kagi/snapshots/` and record its id as a recovery handle in the oplog.
+/// Mutation: drop the `create_snapshot` call and both the ref count and the
+/// `snapshot=` assertion fail.
 #[test]
 fn resolution_recorded_in_oplog() {
     let logdir = TempDir::new().unwrap();
@@ -160,12 +165,80 @@ fn resolution_recorded_in_oplog() {
         plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
     execute_dir_file_resolution(&repo, repo.workdir().unwrap(), &plan).unwrap();
 
+    // #408: a savepoint ref must now exist (recovery in git's own terms).
+    let snap_count = repo
+        .references_glob("refs/kagi/snapshots/*")
+        .unwrap()
+        .count();
+    assert!(
+        snap_count >= 1,
+        "destructive dir-file resolution must create a snapshot ref"
+    );
+
     let log = std::fs::read_to_string(logdir.path().join("operations.jsonl"))
         .expect("oplog file must exist");
     assert!(
         log.contains("conflict-dir-file:keep-file"),
         "oplog must record the dir-file resolution, got: {log}"
     );
+    // #408: the recovery handle (snapshot id) must be embedded in the oplog.
+    assert!(
+        log.contains("snapshot="),
+        "oplog must record the snapshot recovery handle, got: {log}"
+    );
 
     std::env::remove_var("KAGI_LOG_DIR");
+}
+
+/// #407: after KeepDirectory the working tree must agree with the index — the
+/// losing file side is removed from disk and the kept directory child exists.
+///
+/// libgit2's merge leaves the *directory* on disk in both directions, so to
+/// exercise the broken path this first forces the working tree to hold the
+/// losing *file* namespace (the exact "working tree still holds the other
+/// namespace" state the issue describes). Mutation: drop the `reconcile_worktree`
+/// call and both assertions fail (nothing rewrites the working tree).
+#[test]
+fn keep_directory_reconciles_working_tree() {
+    let (_td, repo) = df_conflict("file-side", "dir-side");
+    let wd = repo.workdir().unwrap().to_path_buf();
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepDirectory).unwrap();
+
+    // Put the losing (file) namespace on disk so the resolution must reconcile it.
+    std::fs::remove_dir_all(wd.join("thing")).unwrap();
+    std::fs::write(wd.join("thing"), b"stale file on disk\n").unwrap();
+
+    execute_dir_file_resolution(&repo, &wd, &plan).unwrap();
+
+    assert!(
+        !wd.join("thing").is_file(),
+        "losing file side must be removed from the working tree"
+    );
+    assert!(
+        wd.join("thing/child").exists(),
+        "kept directory child must exist in the working tree"
+    );
+}
+
+/// #407: after KeepFile the working tree must agree with the index — the losing
+/// directory side is removed from disk and the kept file exists. Checks out the
+/// dir side first so the working tree genuinely holds the losing namespace.
+/// Mutation: drop the `reconcile_worktree` call and the dir-gone assertion fails.
+#[test]
+fn keep_file_reconciles_working_tree() {
+    let (_td, repo) = df_conflict("dir-side", "file-side");
+    let wd = repo.workdir().unwrap().to_path_buf();
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+    execute_dir_file_resolution(&repo, &wd, &plan).unwrap();
+
+    assert!(
+        wd.join("thing").is_file(),
+        "kept file side must exist in the working tree"
+    );
+    assert!(
+        !wd.join("thing/child").exists(),
+        "losing directory side must be removed from the working tree"
+    );
 }

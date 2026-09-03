@@ -22,6 +22,7 @@
 //! the workspace isn't a dead end), drag-resizable tree/hunks panes, and a
 //! header toolbar button.
 
+mod blame;
 pub mod markdown;
 mod panes;
 
@@ -84,6 +85,10 @@ pub enum EditorWorkspaceEvent {
     /// `Backend`); seed the result via `seed_snapshot(req, …)`. Same
     /// path-resolution note as `HistoryDiffRequested`.
     SnapshotRequested { req: u64, commit_hash: String },
+    /// issue #350: blame `path` (needs `Backend::blame_file`); seed the
+    /// result via `seed_blame(req, …)`. Only emitted while the inline-blame
+    /// toggle is on — the file is never blamed eagerly.
+    BlameRequested { req: u64, path: PathBuf },
 }
 
 impl EventEmitter<EditorWorkspaceEvent> for EditorWorkspaceView {}
@@ -469,6 +474,18 @@ pub struct EditorWorkspaceView {
     /// never re-entering this leased entity.
     pub tree_menu: Option<(TreeMenuTarget, gpui::Point<gpui::Pixels>)>,
 
+    /// issue #350: inline-blame toggle (chip in the center pane). Opt-in per
+    /// GitLens convention — defaults to off, per-session, workspace-wide
+    /// (survives file switches; the blame DATA below is per-file).
+    pub show_blame: bool,
+    /// The open file's blame, seeded by the bin ([`seed_blame`]
+    /// (Self::seed_blame)) once the toggle is on. `None` until then — the
+    /// file is never blamed eagerly. Not tab-cached (recomputed on switch;
+    /// same ponytail reasoning as the History panel).
+    pub blame: Option<kagi_domain::blame::BlameResult>,
+    /// `true` while the blame load is in flight.
+    pub blame_loading: bool,
+
     /// Markdown preview mode for the open buffer (context-menu "Preview
     /// Markdown" / center-pane toggle). Cleared when switching files.
     pub preview_markdown: bool,
@@ -529,6 +546,9 @@ impl EditorWorkspaceView {
             diff_scroll: new_diff_list_state(),
             show_tree: true,
             tree_menu: None,
+            show_blame: kagi_ui_core::settings::Settings::load().blame_inline(),
+            blame: None,
+            blame_loading: false,
             preview_markdown: false,
             mermaid: HashMap::new(),
         }
@@ -706,6 +726,7 @@ impl EditorWorkspaceView {
             self.load_selected(cx);
         }
         self.maybe_load_history(cx);
+        self.maybe_load_blame(cx);
         cx.notify();
     }
 
@@ -786,6 +807,8 @@ impl EditorWorkspaceView {
         self.external_changed = false;
         self.file_loading = false;
         self.diff = None;
+        self.blame = None;
+        self.blame_loading = false;
     }
 
     /// Whether the tab holding `path` (active or cached) has unsaved edits.
@@ -862,6 +885,11 @@ impl EditorWorkspaceView {
             .is_some_and(|f| matches!(f.change, Some(ChangeKind::Deleted)));
         self.file_loading = true;
         self.file_req = self.file_req.wrapping_add(1);
+        // The on-disk text is about to be re-read — any loaded blame may
+        // no longer line up with it (issue #350). Re-requested (if the
+        // toggle is on) once the fresh content lands below.
+        self.blame = None;
+        self.blame_loading = false;
         let file_req = self.file_req;
         let repo_path = self.repo_path.clone();
         let bg_path = path.clone();
@@ -945,6 +973,7 @@ impl EditorWorkspaceView {
                 // ONCE here (load time), not every render.
                 v.content_sig = text.as_ref().map(|t| buffer_sig(&path, t)).unwrap_or(0);
                 v.content = text;
+                v.maybe_load_blame(cx);
                 cx.notify();
             });
         })
@@ -1053,6 +1082,64 @@ impl EditorWorkspaceView {
         }
         self.history_loading = false;
         self.history = result.ok();
+        cx.notify();
+    }
+
+    /// Inline-blame chip click (issue #350): flip the toggle, and lazily
+    /// kick off the blame load the first time it turns on for this file.
+    pub fn toggle_blame(&mut self, cx: &mut Context<Self>) {
+        self.show_blame = !self.show_blame;
+        klog!(
+            "editor-ws: blame {}",
+            if self.show_blame { "on" } else { "off" }
+        );
+        // Persist the preference so it survives a restart (issue #350 follow-up).
+        kagi_ui_core::settings::write_setting(
+            "blame_inline",
+            Some(if self.show_blame { "true" } else { "false" }),
+        );
+        self.maybe_load_blame(cx);
+        cx.notify();
+    }
+
+    /// Ask the host to blame the open file — only while the toggle is on and
+    /// nothing is loaded/in flight (the acceptance criterion: a file is
+    /// never blamed eagerly).
+    fn maybe_load_blame(&mut self, cx: &mut Context<Self>) {
+        if !self.show_blame || self.blame.is_some() || self.blame_loading {
+            return;
+        }
+        let Some(path) = self.open_path.clone() else {
+            return;
+        };
+        self.blame_loading = true;
+        cx.emit(EditorWorkspaceEvent::BlameRequested {
+            req: self.file_req,
+            path,
+        });
+    }
+
+    /// The bin's answer to [`EditorWorkspaceEvent::BlameRequested`]. Same
+    /// staleness guard as [`Self::seed_history`].
+    pub fn seed_blame(
+        &mut self,
+        req: u64,
+        path: &Path,
+        result: Option<kagi_domain::blame::BlameResult>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_req != req || self.open_path.as_deref() != Some(path) {
+            return;
+        }
+        self.blame_loading = false;
+        if let Some(b) = &result {
+            klog!(
+                "editor-ws: blame {} lines, {} ignored",
+                b.lines.len(),
+                b.ignored_revs
+            );
+        }
+        self.blame = result;
         cx.notify();
     }
 
@@ -1268,6 +1355,20 @@ impl EditorWorkspaceView {
                         buf.dirty = dirty;
                         cx.notify();
                     }
+                }
+            })
+            .detach();
+            // issue #350: the inline-blame label follows the CURSOR line,
+            // but `InputEvent` has no cursor/selection variant — observe the
+            // editor's notifies instead (cursor moves, scrolls, blinks) and
+            // re-render this view so the label tracks the cursor. Gated on
+            // `show_blame` so the toggle being off costs nothing.
+            // ponytail: re-renders the whole workspace on every editor
+            // notify while blame is on; a cursor-only event upstream in
+            // gpui-component would be the tighter fix.
+            cx.observe(&state, |this: &mut Self, _, cx| {
+                if this.show_blame {
+                    cx.notify();
                 }
             })
             .detach();
@@ -2691,49 +2792,88 @@ fn render_center_pane(
         .open_path
         .as_deref()
         .is_some_and(crate::markdown::is_markdown_path);
+    // Chip row above the editor: inline-blame toggle (issue #350) + the
+    // markdown-preview toggle (md buffers only). The "N revisions ignored"
+    // indicator sits beside the chips whenever the loaded blame says a
+    // `.git-blame-ignore-revs` file took effect.
+    let mut chips = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .flex_shrink_0()
+        .w_full()
+        .gap_2()
+        .px_2()
+        .py_1();
+    if view.show_blame {
+        if let Some(n) = view
+            .blame
+            .as_ref()
+            .map(|b| b.ignored_revs)
+            .filter(|n| *n > 0)
+        {
+            chips = chips.child(div().text_xs().text_color(rgb(theme().text_muted)).child(
+                SharedString::from(kagi_ui_core::i18n::blame_revisions_ignored(n)),
+            ));
+        }
+    }
+    let blame_on = view.show_blame;
+    chips = chips.child(
+        div()
+            .id("ews-blame-toggle")
+            .px_2()
+            .py_px()
+            .rounded_sm()
+            .cursor_pointer()
+            .text_xs()
+            .bg(rgb(if blame_on {
+                theme().selected
+            } else {
+                theme().surface
+            }))
+            .text_color(rgb(theme().text_main))
+            .hover(|s| s.bg(rgb(theme().selected)))
+            .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+                this.toggle_blame(cx);
+            }))
+            .child(Msg::EditorWorkspaceBlame.t()),
+    );
     if is_md {
         let previewing = view.preview_markdown;
         let toggle = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
             this.set_markdown_preview(!previewing, cx);
         });
-        pane = pane.child(
+        chips = chips.child(
             div()
-                .flex()
-                .flex_row()
-                .justify_end()
-                .flex_shrink_0()
-                .w_full()
+                .id("ews-md-toggle")
                 .px_2()
-                .py_1()
-                .child(
-                    div()
-                        .id("ews-md-toggle")
-                        .px_2()
-                        .py_px()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .text_xs()
-                        .bg(rgb(theme().surface))
-                        .text_color(rgb(theme().text_main))
-                        .hover(|s| s.bg(rgb(theme().selected)))
-                        .on_click(toggle)
-                        .child(if previewing {
-                            Msg::EditorWorkspacePreviewEdit.t()
-                        } else {
-                            Msg::EditorWorkspacePreviewShow.t()
-                        }),
-                ),
+                .py_px()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_xs()
+                .bg(rgb(theme().surface))
+                .text_color(rgb(theme().text_main))
+                .hover(|s| s.bg(rgb(theme().selected)))
+                .on_click(toggle)
+                .child(if previewing {
+                    Msg::EditorWorkspacePreviewEdit.t()
+                } else {
+                    Msg::EditorWorkspacePreviewShow.t()
+                }),
         );
-        if view.preview_markdown {
-            return pane
-                .child(crate::markdown::render_markdown_preview(view, window, cx))
-                .into_any_element();
-        }
+    }
+    pane = pane.child(chips);
+    if is_md && view.preview_markdown {
+        return pane
+            .child(crate::markdown::render_markdown_preview(view, window, cx))
+            .into_any_element();
     }
 
     let Some(editor) = view.editor.clone() else {
         return pane.into_any_element();
     };
+    let blame_overlay = blame::render_inline_blame(view, cx);
     pane.child(
         div()
             .id("ews-editor")
@@ -2759,7 +2899,8 @@ fn render_center_pane(
                     .appearance(false)
                     .bordered(false)
                     .h_full(),
-            ),
+            )
+            .children(blame_overlay),
     )
     .into_any_element()
 }

@@ -894,6 +894,9 @@ pub enum Msg {
     /// issue #350: blame legend tooltip for the `?` marker on an unblamable
     /// (uncommitted) line.
     BlameUnblamableMarkTip,
+    /// issue #350: the Editor Workspace's inline-blame toggle chip. "Blame"
+    /// is a Git term of art (ADR-0048) — verbatim in both languages.
+    EditorWorkspaceBlame,
 }
 
 impl Msg {
@@ -1884,6 +1887,8 @@ impl Msg {
             (Ja, BlameIgnoredMarkTip) => "* commit は .git-blame-ignore-revs に含まれます",
             (En, BlameUnblamableMarkTip) => "? line is not yet committed",
             (Ja, BlameUnblamableMarkTip) => "? まだ commit されていない行",
+            (En, EditorWorkspaceBlame) => "Blame",
+            (Ja, EditorWorkspaceBlame) => "Blame",
         }
     }
 }

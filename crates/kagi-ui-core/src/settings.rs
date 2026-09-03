@@ -122,6 +122,15 @@ impl Settings {
         self.get_str("diff_split").map(|s| s.trim() == "true")
     }
 
+    /// Inline-blame toggle (`"blame_inline"`, `"true"`/`"false"`; issue #350).
+    /// Persists the Editor Workspace's blame chip across sessions. Default off
+    /// — only an explicit `"true"` turns it on.
+    pub fn blame_inline(&self) -> bool {
+        self.get_str("blame_inline")
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false)
+    }
+
     /// Swimlane-visuals flag (`"graph_lane_compact"`, `"true"`/`"false"`).
     /// When `true` the commit graph draws swimlane visuals (avatar nodes,
     /// lane tint band, lane padding). The lane *layout* itself is always

@@ -171,7 +171,37 @@ impl KagiApp {
             EditorWorkspaceEvent::SnapshotRequested { req, commit_hash } => {
                 self.start_editor_snapshot_load(view, *req, commit_hash.clone(), cx);
             }
+            EditorWorkspaceEvent::BlameRequested { req, path } => {
+                self.start_editor_blame_load(view, *req, path.clone(), cx);
+            }
         }
+    }
+
+    /// `Backend` half of the crate's inline-blame load (`BlameRequested` →
+    /// `seed_blame`, issue #350): `Backend::blame_file` with its built-in
+    /// `.git-blame-ignore-revs` handling, run off-thread like every other
+    /// editor-workspace Backend read here. A failure (e.g. an untracked
+    /// file, which has no blame) seeds `None` — the label just doesn't draw.
+    fn start_editor_blame_load(
+        &mut self,
+        view: Entity<EditorWorkspaceView>,
+        req: u64,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_path = view.read(cx).repo_path.clone();
+        let bg_path = path.clone();
+        let task = cx.background_spawn(async move {
+            kagi_git::Backend::open(&repo_path)
+                .ok()
+                .and_then(|repo| repo.blame_file(&bg_path).ok())
+        });
+        let view = view.downgrade();
+        cx.spawn(async move |_app, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |v, cx| v.seed_blame(req, &path, result, cx));
+        })
+        .detach();
     }
 
     /// `Backend` half of the crate's file-list load (`FilesRequested` →

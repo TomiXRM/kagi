@@ -32,7 +32,6 @@ src/ui/operations/stash.rs 807
 src/ui/operations/worktree.rs 840
 src/ui/pr_mode.rs 2349
 src/ui/render_header.rs 807
-src/ui/render_helpers.rs 802
 src/ui/render.rs 902
 src/ui/sidebar.rs 2007
 src/ui/tabs.rs 1168

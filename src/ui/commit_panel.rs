@@ -107,6 +107,43 @@ pub struct CommitPanelState {
     /// issue #348: whether the "Generated (N)" sections are expanded. Default
     /// `false` (folding on) — generated files start collapsed.
     pub generated_expanded: bool,
+    /// issue #338: indices into `unstaged` of ArtifactConfig files, folded
+    /// under "Agent artifacts (N)". Built in [`reload_status`].
+    pub unstaged_artifact_files: Vec<usize>,
+    /// issue #338: ArtifactConfig indices into `staged`.
+    pub staged_artifact_files: Vec<usize>,
+    /// issue #338: whether the "Agent artifacts (N)" sections are expanded.
+    /// Default `false` (folding on) — artifacts start collapsed.
+    pub agent_expanded: bool,
+}
+
+/// Indices where `flags[i]` is true, in order.
+fn idx_where(flags: &[bool]) -> Vec<usize> {
+    flags
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &b)| b.then_some(i))
+        .collect()
+}
+
+/// Indices where neither `a[i]` nor `b[i]` is true, in order (the "normal"
+/// main-list files: not generated and not an agent artifact).
+fn idx_where_not(a: &[bool], b: &[bool]) -> Vec<usize> {
+    (0..a.len().max(b.len()))
+        .filter(|&i| !a.get(i).copied().unwrap_or(false) && !b.get(i).copied().unwrap_or(false))
+        .collect()
+}
+
+/// Extra rows a collapsible fold contributes: 0 when empty, 1 (header) when
+/// collapsed, 1 + count when expanded. Shared by the generated and agent folds.
+fn fold_extra_rows(count: usize, expanded: bool) -> usize {
+    if count == 0 {
+        0
+    } else if expanded {
+        1 + count
+    } else {
+        1
+    }
 }
 
 impl CommitPanelState {
@@ -131,6 +168,9 @@ impl CommitPanelState {
             staged_gen_files: Vec::new(),
             staged_normal_files: Vec::new(),
             generated_expanded: false,
+            unstaged_artifact_files: Vec::new(),
+            staged_artifact_files: Vec::new(),
+            agent_expanded: false,
         };
         state.reload_status(repo_path);
         state
@@ -208,23 +248,52 @@ impl CommitPanelState {
     /// current `unstaged`/`staged`/`*_stats` lists.  Called once per status
     /// change from [`reload_status`], so render is O(visible rows) not O(N²).
     fn rebuild_derived(&mut self, unstaged_gen: &[bool], staged_gen: &[bool]) {
+        // issue #338: classify agent artifacts (pure, path-only) — this is a
+        // separate axis from #348's generated flags. ArtifactConfig files fold
+        // under "Agent artifacts (N)" and take DISPLAY PRECEDENCE over the
+        // generated fold: a file that is both is shown once, in the agent group.
+        use kagi_domain::agent_artifacts::{classify_agent_artifact, AgentArtifactKind};
+        let art_flags = |files: &[FileStatus]| -> Vec<bool> {
+            files
+                .iter()
+                .map(|f| {
+                    classify_agent_artifact(&f.path.to_string_lossy())
+                        == AgentArtifactKind::ArtifactConfig
+                })
+                .collect::<Vec<_>>()
+        };
+        let us_art = art_flags(&self.unstaged);
+        let st_art = art_flags(&self.staged);
+        self.unstaged_artifact_files = idx_where(&us_art);
+        self.staged_artifact_files = idx_where(&st_art);
+
         // issue #348: split each side into generated / normal index lists and
         // prune generated files (and now-empty dirs) from the tree rows so the
         // main list shows only normal files; generated files fold separately.
-        let ug = kagi_domain::generated::group_generated(unstaged_gen);
-        let sg = kagi_domain::generated::group_generated(staged_gen);
+        // Artifacts win over generated, so mask them out of the generated flags.
+        let mask = |gen: &[bool], art: &[bool]| -> Vec<bool> {
+            gen.iter()
+                .enumerate()
+                .map(|(i, &g)| g && !art.get(i).copied().unwrap_or(false))
+                .collect::<Vec<_>>()
+        };
+        let us_gen = mask(unstaged_gen, &us_art);
+        let st_gen = mask(staged_gen, &st_art);
+        let ug = kagi_domain::generated::group_generated(&us_gen);
+        let sg = kagi_domain::generated::group_generated(&st_gen);
         self.unstaged_gen_files = ug.generated;
-        self.unstaged_normal_files = ug.normal;
         self.staged_gen_files = sg.generated;
-        self.staged_normal_files = sg.normal;
+        // Main-list "normal" files exclude BOTH generated and artifact files.
+        self.unstaged_normal_files = idx_where_not(&us_gen, &us_art);
+        self.staged_normal_files = idx_where_not(&st_gen, &st_art);
 
         let unstaged_full = file_tree::build_file_tree(&self.unstaged);
         let staged_full = file_tree::build_file_tree(&self.staged);
         self.unstaged_tree = file_tree::retain_files(unstaged_full, |i| {
-            !unstaged_gen.get(i).copied().unwrap_or(false)
+            !us_gen.get(i).copied().unwrap_or(false) && !us_art.get(i).copied().unwrap_or(false)
         });
         self.staged_tree = file_tree::retain_files(staged_full, |i| {
-            !staged_gen.get(i).copied().unwrap_or(false)
+            !st_gen.get(i).copied().unwrap_or(false) && !st_art.get(i).copied().unwrap_or(false)
         });
 
         self.unstaged_stat_index = self
@@ -250,13 +319,18 @@ impl CommitPanelState {
         } else {
             &self.unstaged_gen_files
         };
-        if gen.is_empty() {
-            0
-        } else if self.generated_expanded {
-            1 + gen.len()
+        fold_extra_rows(gen.len(), self.generated_expanded)
+    }
+
+    /// issue #338: number of extra rows the "Agent artifacts (N)" fold adds to
+    /// a section (mirrors [`Self::generated_extra_rows`]).
+    pub fn agent_extra_rows(&self, staged: bool) -> usize {
+        let art = if staged {
+            &self.staged_artifact_files
         } else {
-            1
-        }
+            &self.unstaged_artifact_files
+        };
+        fold_extra_rows(art.len(), self.agent_expanded)
     }
 
     /// O(1) lookup of the unstaged [`FileDiffStat`] for `path`.
@@ -629,6 +703,9 @@ mod generated_fold_tests {
             staged_gen_files: Vec::new(),
             staged_normal_files: Vec::new(),
             generated_expanded: false,
+            unstaged_artifact_files: Vec::new(),
+            staged_artifact_files: Vec::new(),
+            agent_expanded: false,
         }
     }
 
@@ -674,5 +751,36 @@ mod generated_fold_tests {
         assert!(s.unstaged_gen_files.is_empty());
         assert_eq!(s.unstaged_normal_files, vec![0, 1]);
         assert_eq!(s.generated_extra_rows(false), 0);
+    }
+
+    /// issue #338: ArtifactConfig files fold under a collapsed "Agent artifacts"
+    /// group; a convention body (CLAUDE.md) stays in the main list; and the
+    /// artifact axis takes precedence over the generated fold.
+    #[test]
+    fn rebuild_folds_agent_artifacts() {
+        let mut s = empty_state();
+        s.unstaged = vec![
+            modified("src/main.rs"),           // 0: normal
+            modified(".claude/settings.json"), // 1: artifact
+            modified("CLAUDE.md"),             // 2: convention body (inline, badged)
+            modified(".mcp.json"),             // 3: artifact
+        ];
+        // .claude/settings.json (index 1) is ALSO flagged generated by #348 →
+        // artifact precedence must keep it in the artifact fold, out of the
+        // generated group.
+        s.rebuild_derived(&[false, true, false, false], &[]);
+
+        assert_eq!(s.unstaged_artifact_files, vec![1, 3]);
+        // Convention body + normal remain in the main list (not folded).
+        assert_eq!(s.unstaged_normal_files, vec![0, 2]);
+        // Generated group must NOT contain the artifact even though it was
+        // flagged generated (artifact precedence).
+        assert!(s.unstaged_gen_files.is_empty());
+
+        // Collapsed by default → 1 extra row (header only).
+        assert!(!s.agent_expanded);
+        assert_eq!(s.agent_extra_rows(false), 1);
+        s.agent_expanded = true;
+        assert_eq!(s.agent_extra_rows(false), 3); // header + 2 files
     }
 }

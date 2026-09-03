@@ -818,6 +818,11 @@ pub enum Msg {
     /// issue #348: Inspector "Generated (N)" fold section label (the count is
     /// appended by the caller).
     GeneratedFilesSection,
+    /// issue #338: "Agent artifacts (N)" fold section label (count appended by
+    /// the caller).
+    AgentArtifactsSection,
+    /// issue #338: emphasis badge on a convention-body file (AGENTS.md etc.).
+    AgentConventionBadge,
 }
 
 impl Msg {
@@ -1722,6 +1727,10 @@ impl Msg {
             (Ja, EditorDeleteConfirmButton) => "ゴミ箱に移動",
             (En, GeneratedFilesSection) => "Generated",
             (Ja, GeneratedFilesSection) => "生成ファイル",
+            (En, AgentArtifactsSection) => "Agent artifacts",
+            (Ja, AgentArtifactsSection) => "エージェント成果物",
+            (En, AgentConventionBadge) => "Agent rule",
+            (Ja, AgentConventionBadge) => "規約",
         }
     }
 }

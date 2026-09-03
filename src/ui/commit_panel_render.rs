@@ -55,6 +55,7 @@ fn render_cp_file_row(
     wip_hit: bool,
     indent: f32,
     stat: Option<&kagi_git::FileDiffStat>,
+    convention: bool,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::Stateful<gpui::Div> {
     let (row_id, btn_id, conflict_id) = match (staged, tree) {
@@ -121,6 +122,22 @@ fn render_cp_file_row(
                 .truncate()
                 .child(name),
         )
+        .when(convention, |el| {
+            // issue #338: emphasis badge on a convention-body file — these steer
+            // agent behaviour, so they are highlighted, never folded.
+            el.child(
+                div()
+                    .ml_1()
+                    .px_1()
+                    .py_px()
+                    .rounded_sm()
+                    .flex_shrink_0()
+                    .bg(rgb(theme().color_warning))
+                    .text_xs()
+                    .text_color(rgb(theme().bg_base))
+                    .child(SharedString::from(Msg::AgentConventionBadge.t())),
+            )
+        })
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
@@ -192,16 +209,63 @@ fn render_cp_generated_header(
     expanded: bool,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::AnyElement {
-    let arrow = if expanded { "▾" } else { "▸" };
-    let label = format!("{arrow} {} ({count})", i18n::Msg::GeneratedFilesSection.t());
     let id = if staged {
         "cp-st-generated-header"
     } else {
         "cp-us-generated-header"
     };
+    render_cp_fold_header(
+        id,
+        i18n::Msg::GeneratedFilesSection.t(),
+        count,
+        expanded,
+        false,
+        cx,
+    )
+}
+
+/// issue #338: the collapsible "Agent artifacts (N)" disclosure header row.
+/// Clicking it toggles `agent_expanded` (shared by both sections).
+fn render_cp_agent_header(
+    staged: bool,
+    count: usize,
+    expanded: bool,
+    cx: &mut Context<CommitPanelView>,
+) -> gpui::AnyElement {
+    let id = if staged {
+        "cp-st-agent-header"
+    } else {
+        "cp-us-agent-header"
+    };
+    render_cp_fold_header(
+        id,
+        i18n::Msg::AgentArtifactsSection.t(),
+        count,
+        expanded,
+        true,
+        cx,
+    )
+}
+
+/// Shared collapsible fold header (issue #348 generated + #338 agent). `agent`
+/// selects which expansion flag the click toggles.
+fn render_cp_fold_header(
+    id: &'static str,
+    section_label: &str,
+    count: usize,
+    expanded: bool,
+    agent: bool,
+    cx: &mut Context<CommitPanelView>,
+) -> gpui::AnyElement {
+    let arrow = if expanded { "▾" } else { "▸" };
+    let label = format!("{arrow} {section_label} ({count})");
     let toggle = cx.listener(
-        |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _window, cx| {
-            view.state.generated_expanded = !view.state.generated_expanded;
+        move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _window, cx| {
+            if agent {
+                view.state.agent_expanded = !view.state.agent_expanded;
+            } else {
+                view.state.generated_expanded = !view.state.generated_expanded;
+            }
             cx.notify();
         },
     );
@@ -225,6 +289,12 @@ fn render_cp_generated_header(
                 .child(SharedString::from(label)),
         )
         .into_any_element()
+}
+
+/// issue #338: whether `path` is an agent convention body (badge, never folded).
+fn is_convention(path: &std::path::Path) -> bool {
+    use kagi_domain::agent_artifacts::{classify_agent_artifact, AgentArtifactKind};
+    classify_agent_artifact(&path.to_string_lossy()) == AgentArtifactKind::ConventionBody
 }
 
 /// One unstaged file row (flat style) by index `fi` into `unstaged`. Shared by
@@ -258,6 +328,7 @@ fn cp_unstaged_file_element(
             wip_hit,
             0.0,
             panel.unstaged_stat(&f.path),
+            is_convention(&f.path),
             cx,
         )
         .into_any_element(),
@@ -293,14 +364,71 @@ fn cp_staged_file_element(
             wip_hit,
             0.0,
             panel.staged_stat(&f.path),
+            is_convention(&f.path),
             cx,
         )
         .into_any_element(),
     )
 }
 
+/// One file row (flat style) for either side, dispatched by `staged`.
+fn cp_file_element(
+    view: &CommitPanelView,
+    staged: bool,
+    fi: usize,
+    cx: &mut Context<CommitPanelView>,
+) -> Option<gpui::AnyElement> {
+    if staged {
+        cp_staged_file_element(view, fi, cx)
+    } else {
+        cp_unstaged_file_element(view, fi, cx)
+    }
+}
+
+/// The two trailing fold regions of a section, after the base (normal/tree)
+/// rows: first "Generated (N)" (issue #348), then "Agent artifacts (N)"
+/// (issue #338). `j` is the display-row offset past the base region.
+fn render_cp_fold_regions(
+    view: &CommitPanelView,
+    j: usize,
+    staged: bool,
+    cx: &mut Context<CommitPanelView>,
+) -> Option<gpui::AnyElement> {
+    let panel = &view.state;
+    let (gen_files, art_files) = if staged {
+        (&panel.staged_gen_files, &panel.staged_artifact_files)
+    } else {
+        (&panel.unstaged_gen_files, &panel.unstaged_artifact_files)
+    };
+    let gen_extra = panel.generated_extra_rows(staged);
+    if j < gen_extra {
+        if j == 0 {
+            return Some(render_cp_generated_header(
+                staged,
+                gen_files.len(),
+                panel.generated_expanded,
+                cx,
+            ));
+        }
+        let fi = *gen_files.get(j - 1)?;
+        return cp_file_element(view, staged, fi, cx);
+    }
+    // Agent-artifacts fold, immediately after the generated region.
+    let k = j - gen_extra;
+    if k == 0 {
+        return Some(render_cp_agent_header(
+            staged,
+            art_files.len(),
+            panel.agent_expanded,
+            cx,
+        ));
+    }
+    let fi = *art_files.get(k - 1)?;
+    cp_file_element(view, staged, fi, cx)
+}
+
 /// PERF: build one unstaged row in flat view. `i` is a display-row index:
-/// normal (non-generated) files first, then the "Generated (N)" fold.
+/// normal files first, then the "Generated" / "Agent artifacts" folds.
 pub(crate) fn render_unstaged_flat_row(
     view: &CommitPanelView,
     i: usize,
@@ -311,18 +439,7 @@ pub(crate) fn render_unstaged_flat_row(
     if i < normal.len() {
         return cp_unstaged_file_element(view, normal[i], cx);
     }
-    // Folded "Generated (N)" section.
-    let j = i - normal.len();
-    if j == 0 {
-        return Some(render_cp_generated_header(
-            false,
-            panel.unstaged_gen_files.len(),
-            panel.generated_expanded,
-            cx,
-        ));
-    }
-    let fi = *panel.unstaged_gen_files.get(j - 1)?;
-    cp_unstaged_file_element(view, fi, cx)
+    render_cp_fold_regions(view, i - normal.len(), false, cx)
 }
 
 /// PERF: build one unstaged tree row. `i` indexes the pruned tree first, then
@@ -335,17 +452,7 @@ pub(crate) fn render_unstaged_tree_row(
     let panel = &view.state;
     let tree_len = panel.unstaged_tree.len();
     if i >= tree_len {
-        let j = i - tree_len;
-        if j == 0 {
-            return Some(render_cp_generated_header(
-                false,
-                panel.unstaged_gen_files.len(),
-                panel.generated_expanded,
-                cx,
-            ));
-        }
-        let fi = *panel.unstaged_gen_files.get(j - 1)?;
-        return cp_unstaged_file_element(view, fi, cx);
+        return render_cp_fold_regions(view, i - tree_len, false, cx);
     }
     match panel.unstaged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
@@ -377,6 +484,7 @@ pub(crate) fn render_unstaged_tree_row(
                     wip_hit,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.unstaged_stat(p)),
+                    path.map(|p| is_convention(p)).unwrap_or(false),
                     cx,
                 )
                 .into_any_element(),
@@ -397,17 +505,7 @@ pub(crate) fn render_staged_flat_row(
     if i < normal.len() {
         return cp_staged_file_element(view, normal[i], cx);
     }
-    let j = i - normal.len();
-    if j == 0 {
-        return Some(render_cp_generated_header(
-            true,
-            panel.staged_gen_files.len(),
-            panel.generated_expanded,
-            cx,
-        ));
-    }
-    let fi = *panel.staged_gen_files.get(j - 1)?;
-    cp_staged_file_element(view, fi, cx)
+    render_cp_fold_regions(view, i - normal.len(), true, cx)
 }
 
 /// PERF: build one staged tree row. `i` indexes the pruned tree first, then the
@@ -420,17 +518,7 @@ pub(crate) fn render_staged_tree_row(
     let panel = &view.state;
     let tree_len = panel.staged_tree.len();
     if i >= tree_len {
-        let j = i - tree_len;
-        if j == 0 {
-            return Some(render_cp_generated_header(
-                true,
-                panel.staged_gen_files.len(),
-                panel.generated_expanded,
-                cx,
-            ));
-        }
-        let fi = *panel.staged_gen_files.get(j - 1)?;
-        return cp_staged_file_element(view, fi, cx);
+        return render_cp_fold_regions(view, i - tree_len, true, cx);
     }
     match panel.staged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
@@ -461,6 +549,7 @@ pub(crate) fn render_staged_tree_row(
                     wip_hit,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.staged_stat(p)),
+                    path.map(|p| is_convention(p)).unwrap_or(false),
                     cx,
                 )
                 .into_any_element(),
@@ -860,7 +949,8 @@ impl CommitPanelView {
             panel.unstaged_tree.len()
         } else {
             panel.unstaged_normal_files.len()
-        } + panel.generated_extra_rows(false);
+        } + panel.generated_extra_rows(false)
+            + panel.agent_extra_rows(false);
 
         // ── Staged section ───────────────────────────────────────
         // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
@@ -907,7 +997,8 @@ impl CommitPanelView {
             panel.staged_tree.len()
         } else {
             panel.staged_normal_files.len()
-        } + panel.generated_extra_rows(true);
+        } + panel.generated_extra_rows(true)
+            + panel.agent_extra_rows(true);
 
         // ── Commit button ─────────────────────────────────────────
         // No destination branch in the label: ADR-0134 put it here as "one

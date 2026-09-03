@@ -10,6 +10,7 @@
 //! during the migration.
 
 pub mod activity;
+pub mod agent_artifacts;
 pub mod branch_cleanup;
 pub mod checklist;
 pub mod commit;

@@ -148,6 +148,19 @@ impl Backend {
         self.trust = trust;
     }
 
+    /// Owner-trust gate for mutating methods that bypass [`Backend::run`]
+    /// (ADR-0160, #416). `run` guards `Operation`-dispatched writes at its
+    /// entry, but the many `pub` `execute_*` mutators the UI calls directly
+    /// never reach it — so each of those calls this first. Returns the same
+    /// [`GitError::Untrusted`] `run` produces. Read-only inspection methods are
+    /// intentionally NOT guarded (inspection stays allowed on an untrusted repo).
+    fn require_trust(&self) -> Result<(), GitError> {
+        if !self.trust.is_trusted() {
+            return Err(GitError::Untrusted(self.path.display().to_string()));
+        }
+        Ok(())
+    }
+
     /// Set the actor recorded on oplog entries written by [`Backend::run`]
     /// (ADR-0149). The GUI leaves the default [`Actor::Human`]; MCP/CLI callers
     /// set `Mcp`/`Cli` so the log shows who initiated each write.
@@ -167,6 +180,7 @@ impl Backend {
 
     /// Capture the current working tree as a snapshot with `message`.
     pub fn create_snapshot(&self, message: &str) -> Result<ops::SnapshotEntry, GitError> {
+        self.require_trust()?;
         ops::create_snapshot(&self.repo, message)
     }
 
@@ -177,6 +191,7 @@ impl Backend {
 
     /// Evict snapshots beyond the generation `cap` (oldest first).
     pub fn prune_snapshots(&self, cap: usize) -> Result<Vec<String>, GitError> {
+        self.require_trust()?;
         ops::prune_snapshots(&self.repo, cap)
     }
 
@@ -642,18 +657,22 @@ impl Backend {
     }
 
     pub fn stage_file(&self, path: &Path) -> Result<(), GitError> {
+        self.require_trust()?;
         staging::stage_file(&self.repo, path)
     }
 
     pub fn unstage_file(&self, path: &Path) -> Result<(), GitError> {
+        self.require_trust()?;
         staging::unstage_file(&self.repo, path)
     }
 
     pub fn stage_files(&self, paths: &[PathBuf]) -> Result<usize, GitError> {
+        self.require_trust()?;
         staging::stage_files(&self.repo, paths)
     }
 
     pub fn unstage_files(&self, paths: &[PathBuf]) -> Result<usize, GitError> {
+        self.require_trust()?;
         staging::unstage_files(&self.repo, paths)
     }
 
@@ -1155,6 +1174,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
     ) -> Result<conflicts::ContinueResult, GitError> {
+        self.require_trust()?;
         conflicts::execute_conflict_continue(&self.repo, &self.path, session, buffer)
     }
 
@@ -1163,6 +1183,7 @@ impl Backend {
         buffer: &ResolutionBuffer,
         path: &Path,
     ) -> Result<conflicts::SaveOutcome, GitError> {
+        self.require_trust()?;
         conflicts::execute_conflict_save(&self.repo, buffer, path)
     }
 
@@ -1175,6 +1196,7 @@ impl Backend {
         path: &Path,
         choice: crate::ops::DirFileChoice,
     ) -> Result<(), GitError> {
+        self.require_trust()?;
         let plan = crate::ops::plan_dir_file_resolution(&self.repo, path, choice)?;
         crate::ops::execute_dir_file_resolution(&self.repo, &self.path, &plan)
     }
@@ -1188,6 +1210,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
     ) -> Result<(), GitError> {
+        self.require_trust()?;
         conflicts::stage_conflict_resolution(&self.repo, session, buffer)
     }
 
@@ -1207,6 +1230,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
     ) -> Result<conflicts::AbortOutcome, GitError> {
+        self.require_trust()?;
         conflicts::execute_conflict_abort(&self.repo, session, buffer)
     }
 
@@ -1219,6 +1243,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
     ) -> Result<conflicts::AbortOutcome, GitError> {
+        self.require_trust()?;
         conflicts::execute_stash_conflict_abort(&self.repo, session, buffer)
     }
 
@@ -1234,6 +1259,7 @@ impl Backend {
         session: &conflicts::ConflictSession,
         buffer: &ResolutionBuffer,
     ) -> Result<conflicts::SkipOutcome, GitError> {
+        self.require_trust()?;
         conflicts::execute_conflict_skip(&self.repo, session, buffer)
     }
 
@@ -1368,6 +1394,7 @@ impl Backend {
         plan: &OperationPlan,
         name: &str,
     ) -> Result<(), GitError> {
+        self.require_trust()?;
         ops::execute_unlock_worktree(&self.repo, plan, name)
     }
 
@@ -1386,6 +1413,7 @@ impl Backend {
         name: &str,
         delete_branch: bool,
     ) -> Result<DiscardOutcome, GitError> {
+        self.require_trust()?;
         ops::execute_remove_worktree(&self.repo, plan, name, delete_branch)
     }
 
@@ -1403,6 +1431,7 @@ impl Backend {
         name: &str,
         reason: Option<&str>,
     ) -> Result<(), GitError> {
+        self.require_trust()?;
         ops::execute_lock_worktree(&self.repo, plan, name, reason)
     }
 
@@ -1411,6 +1440,7 @@ impl Backend {
     }
 
     pub fn execute_prune_worktrees(&self, plan: &OperationPlan) -> Result<usize, GitError> {
+        self.require_trust()?;
         ops::execute_prune_worktrees(&self.repo, plan)
     }
 
@@ -1419,6 +1449,7 @@ impl Backend {
     }
 
     pub fn execute_repair_worktrees(&self, plan: &OperationPlan) -> Result<(), GitError> {
+        self.require_trust()?;
         ops::execute_repair_worktrees(&self.repo, plan)
     }
 
@@ -1459,6 +1490,7 @@ impl Backend {
     }
 
     pub fn execute_stash_drop(&mut self, index: usize) -> Result<String, GitError> {
+        self.require_trust()?;
         ops::execute_stash_drop(&mut self.repo, index)
     }
 
@@ -1777,11 +1809,13 @@ impl Backend {
 
     /// Execute an undo: safe ref move of `branch` from `after` to `before`.
     pub fn execute_undo(&self, entry: &HistoryEntry) -> Result<ops::HistoryMoveOutcome, GitError> {
+        self.require_trust()?;
         ops::execute_undo(&self.repo, &entry.branch, &entry.before, &entry.after)
     }
 
     /// Execute a redo: safe ref move of `branch` from `before` to `after`.
     pub fn execute_redo(&self, entry: &HistoryEntry) -> Result<ops::HistoryMoveOutcome, GitError> {
+        self.require_trust()?;
         ops::execute_redo(&self.repo, &entry.branch, &entry.before, &entry.after)
     }
 
@@ -1943,6 +1977,7 @@ impl Backend {
         plan: &OperationPlan,
         targets: &[ops::CleanupDeleteTarget],
     ) -> Result<ops::CleanupOutcome, GitError> {
+        self.require_trust()?;
         ops::execute_delete_merged_branches(&self.repo, &self.path, plan, targets)
     }
 

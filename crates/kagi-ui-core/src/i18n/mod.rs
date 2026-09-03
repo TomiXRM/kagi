@@ -880,6 +880,11 @@ pub enum Msg {
     /// appended by the caller).
     RulesetBadgeTooltip,
 
+    /// issue #412: generic agent name shown in the provenance tooltip when the
+    /// real `Co-authored-by:` label carries bidi / zero-width codepoints that
+    /// `sanitize_control_bytes` deliberately does not rewrite.
+    AgentUnnamed,
+
     /// issue #350: blame legend tooltip for the `*` marker on a line whose
     /// commit is listed in `.git-blame-ignore-revs`.
     BlameIgnoredMarkTip,
@@ -929,6 +934,8 @@ impl Msg {
             (Ja, AgentCreatedTooltip) => "AI エージェントによる作成",
             (En, AgentReviewedTooltip) => "Created by an AI agent, reviewed by a human",
             (Ja, AgentReviewedTooltip) => "AI エージェントが作成 / 人がレビュー済み",
+            (En, AgentUnnamed) => "AI agent",
+            (Ja, AgentUnnamed) => "AI エージェント",
 
             // ── Placeholders ────────────────────────────────────────
             (En, CloneUnimplemented) => "clone is not implemented yet",

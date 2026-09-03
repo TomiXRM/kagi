@@ -967,6 +967,8 @@ fn build_group_header(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let arrow = if collapsed { "\u{25b8}" } else { "\u{25be}" };
+    // issue #414: `label_text` is a remote name / branch prefix (remote-origin).
+    let label_text = kagi_domain::text_safety::sanitize_control_bytes(label_text);
     let glabel = SharedString::from(format!("{} {} ({})", arrow, label_text, count));
     let key_for_toggle = key.to_string();
     let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
@@ -1262,8 +1264,13 @@ fn build_remote_leaf(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let can_jump = this.active_view.commit_row_index.contains_key(&rb_target);
-    let full_name = SharedString::from(display.to_string());
-    let label = SharedString::from(display_label.to_string());
+    // issue #414: remote branch names are the most literally remote-derived
+    // strings in the sidebar. Neutralize control bytes in the *displayed* label
+    // and tooltip; the raw `display` operand (drag/menu/id) stays untouched.
+    let full_name = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(display));
+    let label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+        display_label,
+    ));
     let drag_name = display.to_string();
     let left_pad = match depth {
         0 => theme::scaled_px(12.),
@@ -1442,6 +1449,9 @@ fn build_worktree_row(
 /// A stash leaf — left-click **pops** (apply + remove); right-click opens a
 /// menu (Apply / Drop). User request: clicking a stash should consume it.
 fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    // issue #414: a stash message embeds a commit subject, which is remote-origin
+    // after a pull. Neutralize control bytes before display.
+    let message = kagi_domain::text_safety::sanitize_control_bytes(message);
     let raw_label = format!("stash@{{{}}}: {}", index, message);
     let full_name = SharedString::from(raw_label.clone());
     // #236: click PEEKS (read-only), same as the graph's stash row; Pop lives

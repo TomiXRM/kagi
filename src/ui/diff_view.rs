@@ -60,6 +60,20 @@ pub struct FileDiffView {
     pub file_index: usize,
 }
 
+/// issue #400: build the `text-safety: unsafe unicode in diff` contract line
+/// with the file path neutralized of terminal control bytes. Unlike every GPUI
+/// render site, `klog!` writes to stderr — a REAL terminal that interprets ANSI
+/// — so a crafted filename (git paths may contain any byte but NUL/`/`) would
+/// otherwise inject ESC sequences (cursor moves, screen clear) here. The
+/// `[kagi] ` prefix and wording are the headless contract and stay byte-identical.
+fn unsafe_unicode_diff_log(unsafe_lines: usize, file_name: &str) -> String {
+    format!(
+        "text-safety: unsafe unicode in diff — {} line(s) in {}",
+        unsafe_lines,
+        kagi_domain::text_safety::sanitize_control_bytes(file_name)
+    )
+}
+
 impl FileDiffView {
     /// Build a [`FileDiffView`] from a [`FileDiff`] result.
     pub fn from_file_diff(file_diff: &FileDiff, file_index: usize) -> Self {
@@ -113,11 +127,7 @@ impl FileDiffView {
             })
             .count();
         if unsafe_lines > 0 {
-            klog!(
-                "text-safety: unsafe unicode in diff — {} line(s) in {}",
-                unsafe_lines,
-                file_name
-            );
+            klog!("{}", unsafe_unicode_diff_log(unsafe_lines, &file_name));
         }
 
         FileDiffView {
@@ -1499,6 +1509,20 @@ mod unsafe_unicode_tests {
             0,
         );
         assert_eq!(unsafe_row_count(&view), 0);
+    }
+
+    /// issue #400: the klog! contract line goes to a REAL terminal (stderr), so
+    /// a crafted file path with an ESC byte must be neutralized before emission.
+    #[test]
+    fn diff_log_sanitizes_control_bytes_in_path() {
+        let line = unsafe_unicode_diff_log(3, "ev\x1b[2Jil.txt");
+        assert!(
+            !line.contains('\x1b'),
+            "raw ESC reached the terminal: {line:?}"
+        );
+        assert!(line.contains("\\x1B"), "expected escaped ESC: {line:?}");
+        // Contract wording/format is preserved.
+        assert!(line.starts_with("text-safety: unsafe unicode in diff — 3 line(s) in "));
     }
 }
 

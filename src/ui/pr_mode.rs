@@ -30,8 +30,12 @@ use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
 
 use super::diff_view::{build_main_diff_view, MainDiffView};
+// issue #414: `gh`-sourced PR text (title, @login, ref names, check names) is the
+// most attacker-controllable text in the app — anyone can open a PR. Route every
+// such display string through `safe_text` (control-byte neutralization).
 use super::i18n::Msg;
 use super::render_helpers::render_diff_list;
+use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, MainDiffSource};
@@ -1204,7 +1208,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                         .build(w, cx)
                 })
                 .on_click(toggle)
-                .child(SharedString::from(pr.title.clone()))
+                .child(safe_text(&pr.title))
         })
         .child(
             div()
@@ -1395,14 +1399,14 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                         .min_w(px(0.))
                         .truncate()
                         .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(cmt.summary.clone())),
+                        .child(safe_text(&cmt.summary)),
                 )
                 .child(
                     div()
                         .flex_shrink_0()
                         .text_xs()
                         .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(cmt.author.name.clone())),
+                        .child(safe_text(&cmt.author.name)),
                 )
                 .child(
                     div()
@@ -1720,7 +1724,7 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
                                                 .truncate()
                                                 .text_sm()
                                                 .text_color(rgb(theme().text_main))
-                                                .child(SharedString::from(pr.title.clone())),
+                                                .child(safe_text(&pr.title)),
                                         )
                                         .child(
                                             div()
@@ -1742,7 +1746,7 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
                                                 .min_w(px(0.))
                                                 .truncate()
                                                 .text_color(rgb(theme().text_muted))
-                                                .child(SharedString::from(format!(
+                                                .child(safe_text(&format!(
                                                     "{} \u{2192} {} \u{00B7} @{}",
                                                     pr.head, pr.base, pr.author
                                                 ))),
@@ -1862,7 +1866,7 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
                                 } else {
                                     theme().text_sub
                                 }))
-                                .child(SharedString::from(label)),
+                                .child(safe_text(&label)),
                         ),
                 );
             }
@@ -2121,7 +2125,7 @@ fn render_pr_card(
                 .text_sm()
                 .line_height(theme::scaled_px(18.))
                 .text_color(rgb(theme().text_main))
-                .child(SharedString::from(pr.title.clone())),
+                .child(safe_text(&pr.title)),
         )
         // Line 2 — everything else, one row.
         .child(
@@ -2194,7 +2198,7 @@ fn render_pr_card(
                         .flex_shrink_0()
                         .max_w(theme::scaled_px(70.))
                         .truncate()
-                        .child(SharedString::from(pr.author.clone())),
+                        .child(safe_text(&pr.author)),
                 ),
         )
         .into_any_element()

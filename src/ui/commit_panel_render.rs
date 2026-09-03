@@ -128,6 +128,7 @@ fn render_cp_file_row(
             el.child(
                 div()
                     .ml_1()
+                    .mr_2()
                     .px(px(3.))
                     .rounded_sm()
                     .flex_shrink_0()

@@ -34,6 +34,26 @@ jobs:
           fi
           echo "OK: src/ui has zero git2 usage."
 
+  # ── BLOCKING: the MCP server must never depend on gpui (ADR-0163 / #331) ──────
+  invariant-mcp-no-gpui:
+    name: invariant — kagi-mcp is gpui-free
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no gpui usage in crates/kagi-mcp
+        shell: bash
+        run: |
+          # kagi-mcp → kagi-git → kagi-domain. The MCP server exposes git to
+          # agents and MUST NOT pull in the GUI layer, so it runs headless / in
+          # CI (ADR-0163 / #331). Same shape as the src/ui git2 gate: match
+          # actual dependency usage (manifest dep line / import / path), not the
+          # word "gpui" in prose.
+          if grep -rnE 'gpui *=|use +gpui|gpui::' crates/kagi-mcp/; then
+            echo "::error::crates/kagi-mcp must not depend on gpui (ADR-0163 / #331)."
+            exit 1
+          fi
+          echo "OK: crates/kagi-mcp has zero gpui usage."
+
   # ── BLOCKING: the `[kagi]` contract is a single channel (klog! only) (ADR-0096) ──
   invariant-klog-single-channel:
     name: invariant — [kagi] lines go through klog!

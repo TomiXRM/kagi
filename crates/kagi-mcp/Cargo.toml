@@ -1,0 +1,29 @@
+[package]
+name = "kagi-mcp"
+version = "0.1.0"
+license = "MIT"
+edition = "2021"
+
+# kagi-mcp exposes Kagi's git Backend as an MCP (Model Context Protocol) server
+# over stdio JSON-RPC (#331). Dependency direction: kagi-mcp → kagi-git →
+# kagi-domain. It MUST NOT depend on gpui (enforced by a CI grep gate) and never
+# touches git2 directly — every git access goes through `kagi_git::Backend`, and
+# every write goes through `Backend::run` (plan → confirm → preflight → execute →
+# verify → oplog). Serde/JSON lives only here, at the MCP edge; kagi-domain stays
+# pure. No heavy MCP SDK: the JSON-RPC 2.0 framing is hand-rolled and auditable.
+[dependencies]
+kagi-domain = { path = "../kagi-domain" }
+kagi-git = { path = "../kagi-git" }
+serde_json = "1"
+
+[dev-dependencies]
+# Throwaway repos for the JSON-RPC handler tests (already in the workspace lock).
+tempfile = "3"
+
+[[bin]]
+name = "kagi-mcp"
+path = "src/main.rs"
+
+[lib]
+name = "kagi_mcp"
+path = "src/lib.rs"

@@ -202,6 +202,9 @@ pub enum Msg {
     DiscardPartial,
     BusyCommit,
     BusyCreateWorktree,
+    /// Footer label while a worktree removal runs off the main thread (issue
+    /// #404): a `pre_remove` command can take minutes, so removal is async.
+    BusyRemoveWorktree,
     /// Worktree context menu: unlock action label.
     MenuUnlockWorktree,
     /// Worktree context menu: disabled reason when the worktree has no lock.
@@ -984,6 +987,8 @@ impl Msg {
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",
             (Ja, BusyCreateWorktree) => "create worktree 実行中…",
+            (En, BusyRemoveWorktree) => "remove worktree in progress…",
+            (Ja, BusyRemoveWorktree) => "remove worktree 実行中…",
             (En, MenuUnlockWorktree) => "Unlock worktree…",
             (Ja, MenuUnlockWorktree) => "worktree のロックを解除…",
             (En, MenuWorktreeNotLocked) => "This worktree is not locked",

@@ -252,6 +252,9 @@ pub struct CommitRow {
     pub date: SharedString,
     /// Ref badges for this commit, if any.
     pub badges: Vec<RefBadge>,
+    /// AI-agent provenance verdict (issue #337). `None` = show no agent badge
+    /// (unclassifiable commits deliberately render nothing).
+    pub provenance: Option<kagi_domain::provenance::Provenance>,
     // ── Graph layout fields (T009) ────────────────────────────
     /// Lane index for the commit node (●) in this row.
     pub lane: usize,
@@ -283,6 +286,7 @@ impl CommitRow {
             author_email: String::new(),
             date: SharedString::default(),
             badges: Vec::new(),
+            provenance: None,
             lane: 0,
             node_color: 0,
             edges: Vec::new(),
@@ -316,6 +320,10 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
     let graph = layout(&snap.commits);
     let lane_count = graph.lane_count;
 
+    // Issue #337: user-extensible agent-provenance patterns, layered on the
+    // built-in defaults. Loaded once per build (not per row).
+    let agent_patterns = kagi_ui_core::settings::Settings::load().agent_patterns();
+
     snap.commits
         .iter()
         .enumerate()
@@ -328,7 +336,16 @@ pub fn build_commit_rows(snap: &RepoSnapshot) -> Vec<CommitRow> {
             let is_head = head_sha.map(|sha| c.id.0 == sha).unwrap_or(false);
             let is_merge = c.parents.len() >= 2;
             commit_to_row(
-                c, &badge_map, now_secs, lane, node_color, edges, lane_count, is_head, is_merge,
+                c,
+                &badge_map,
+                now_secs,
+                lane,
+                node_color,
+                edges,
+                lane_count,
+                is_head,
+                is_merge,
+                &agent_patterns,
             )
         })
         .collect()
@@ -470,6 +487,7 @@ fn commit_to_row(
     lane_count: usize,
     is_head: bool,
     is_merge: bool,
+    agent_patterns: &[kagi_domain::provenance::AgentPattern],
 ) -> CommitRow {
     let short_id = SharedString::from(c.id.short().to_string());
 
@@ -488,6 +506,21 @@ fn commit_to_row(
     let date = SharedString::from(relative_time(c.author.time, now_secs));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
+    // Issue #337: classify agent provenance from trailers + author/committer +
+    // any local branch badge on this commit. `None` renders no badge.
+    let trailers = kagi_domain::trailers::parse_trailers(&c.message);
+    let branch_label = badges
+        .iter()
+        .find(|b| matches!(b.kind, BadgeKind::HeadBranch | BadgeKind::Branch))
+        .map(|b| b.label.as_ref());
+    let provenance = kagi_domain::provenance::classify_provenance(
+        &trailers,
+        &c.author,
+        &c.committer,
+        branch_label,
+        agent_patterns,
+    );
+
     CommitRow {
         id: c.id.clone(),
         short_id,
@@ -496,6 +529,7 @@ fn commit_to_row(
         author_email,
         date,
         badges,
+        provenance,
         lane,
         node_color,
         edges,

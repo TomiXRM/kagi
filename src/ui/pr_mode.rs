@@ -2003,6 +2003,22 @@ fn stack_for(pr: &PullRequest, all: &[PullRequest]) -> Vec<StackRow> {
 /// A Focus-Queue card: identity, size, and — the point — the one line that
 /// says what state it is in and why. Replaces the one-line row: at a glance
 /// the user should know which PR to touch next without decoding glyphs.
+/// Classify a PR as agent-created from its author login and head branch
+/// (issue #337). PRs carry no commit trailers/committer, so only the
+/// author-login and branch-prefix routes apply. `None` = no badge.
+///
+/// ponytail: built-in patterns only (empty `extra`) — reusing the shared
+/// classifier avoids per-frame `Settings::load()` I/O on every card. Add the
+/// settings-extensible list here too if PR-specific agents ever need it.
+fn pr_provenance(pr: &PullRequest) -> Option<kagi_domain::provenance::Provenance> {
+    let author = kagi_domain::commit::Signature {
+        name: pr.author.clone(),
+        email: String::new(),
+        time: 0,
+    };
+    kagi_domain::provenance::classify_provenance(&[], &author, &author, Some(pr.head.as_str()), &[])
+}
+
 fn render_pr_card(
     pr: &PullRequest,
     bucket: PrAttention,
@@ -2125,6 +2141,25 @@ fn render_pr_card(
                         .flex_shrink_0()
                         .text_color(rgb(c))
                         .child(SharedString::from(g))
+                }))
+                // Issue #337: "agent-created" badge — 🤖 glyph only; the agent is
+                // conveyed by hue (Claude → orange, others → violet). Glyph is the
+                // colour-independent signal. Nothing when unclassifiable.
+                .children(pr_provenance(pr).map(|prov| {
+                    use kagi_domain::provenance::AgentKind;
+                    let hue = match prov.agent {
+                        AgentKind::ClaudeCode => 0xf97316,
+                        _ => 0x8b5cf6,
+                    };
+                    let (bg, border, _text) = theme::badge_style(hue);
+                    div()
+                        .flex_shrink_0()
+                        .px(px(3.))
+                        .rounded_sm()
+                        .bg(gpui::rgba(bg))
+                        .border_1()
+                        .border_color(gpui::rgba(border))
+                        .child(SharedString::from("🤖"))
                 }))
                 .child(
                     div()

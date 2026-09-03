@@ -240,7 +240,7 @@ fn split_trailer(line: &str) -> Option<(String, String)> {
 /// Only splits on the ASCII markers `<` and `>`, never byte-slicing into a
 /// multi-byte sequence.  The name is trimmed; the email is taken verbatim
 /// between the angle brackets (also trimmed).
-fn split_name_email(value: &str) -> (String, String) {
+pub fn split_name_email(value: &str) -> (String, String) {
     if let Some(lt) = value.find('<') {
         let name = value[..lt].trim().to_string();
         let rest = &value[lt + 1..];

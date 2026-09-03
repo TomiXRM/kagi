@@ -167,6 +167,15 @@ pub enum Msg {
     /// History pane and File History's detail pane.
     CommitHeaderSelectPrompt,
 
+    // ── Agent provenance (issue #337) ───────────────────────────────
+    /// Neutral qualifier appended to an agent badge when a `Reviewed-by:`
+    /// trailer is present. Non-judgmental.
+    AgentReviewed,
+    /// Tooltip for an agent-provenance badge (no human-review qualifier).
+    AgentCreatedTooltip,
+    /// Tooltip for an agent-provenance badge that also carries a review.
+    AgentReviewedTooltip,
+
     // ── Placeholder / unimplemented menu reasons ────────────────────
     CloneUnimplemented,
     MultiWindowUnsupported,
@@ -859,6 +868,14 @@ impl Msg {
             (Ja, DiffViewUnified) => "1カラムで表示",
             (En, CommitHeaderSelectPrompt) => "Select a commit to see its details.",
             (Ja, CommitHeaderSelectPrompt) => "commit を選択すると詳細が表示されます。",
+
+            // ── Agent provenance (issue #337) ───────────────────────
+            (En, AgentReviewed) => "reviewed",
+            (Ja, AgentReviewed) => "レビュー済み",
+            (En, AgentCreatedTooltip) => "Created by an AI agent",
+            (Ja, AgentCreatedTooltip) => "AI エージェントによる作成",
+            (En, AgentReviewedTooltip) => "Created by an AI agent, reviewed by a human",
+            (Ja, AgentReviewedTooltip) => "AI エージェントが作成 / 人がレビュー済み",
 
             // ── Placeholders ────────────────────────────────────────
             (En, CloneUnimplemented) => "clone is not implemented yet",

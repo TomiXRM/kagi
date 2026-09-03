@@ -298,6 +298,44 @@ impl Backend {
             .collect()
     }
 
+    /// Per-file "is generated" flags for the working-tree Commit Panel (issue
+    /// #348). Aligned with `files` by index. `staged` chooses the content
+    /// source for the head bytes: the index blob (staged side) or the file on
+    /// disk (unstaged side). Reads at most 8 KiB. The `.gitattributes` override
+    /// wins and skips the content read.
+    pub fn wip_generated_flags(&self, files: &[FileStatus], staged: bool) -> Vec<bool> {
+        use std::io::Read;
+        const HEAD_BYTES: usize = 8 * 1024;
+        files
+            .iter()
+            .map(|fs| {
+                let path = fs.path.as_path();
+                let path_str = path.to_string_lossy();
+                if let Some(v) = self.generated_attr_override(path) {
+                    return v;
+                }
+                let head: Vec<u8> = if staged {
+                    self.blob_bytes_index(path)
+                        .ok()
+                        .flatten()
+                        .map(|mut b| {
+                            b.truncate(HEAD_BYTES);
+                            b
+                        })
+                        .unwrap_or_default()
+                } else {
+                    // Unstaged: read the working-tree file (up to 8 KiB).
+                    let mut buf = Vec::new();
+                    if let Ok(f) = std::fs::File::open(self.path.join(path)) {
+                        let _ = f.take(HEAD_BYTES as u64).read_to_end(&mut buf);
+                    }
+                    buf
+                };
+                kagi_domain::generated::classify_generated(&path_str, &head, None)
+            })
+            .collect()
+    }
+
     /// The file's full text content as of commit `id` (editor mode's
     /// right-pane History → middle-pane Snapshot tab).
     ///

@@ -184,8 +184,53 @@ fn render_cp_dir_row(prefix: &str, depth: usize, name: &SharedString) -> gpui::A
         .into_any_element()
 }
 
-/// PERF: build one unstaged row in flat view (index `fi` into `unstaged`).
-pub(crate) fn render_unstaged_flat_row(
+/// issue #348: the collapsible "Generated (N)" disclosure header row for a
+/// section. Clicking it toggles `generated_expanded` (shared by both sections).
+fn render_cp_generated_header(
+    staged: bool,
+    count: usize,
+    expanded: bool,
+    cx: &mut Context<CommitPanelView>,
+) -> gpui::AnyElement {
+    let arrow = if expanded { "▾" } else { "▸" };
+    let label = format!("{arrow} {} ({count})", i18n::Msg::GeneratedFilesSection.t());
+    let id = if staged {
+        "cp-st-generated-header"
+    } else {
+        "cp-us-generated-header"
+    };
+    let toggle = cx.listener(
+        |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _window, cx| {
+            view.state.generated_expanded = !view.state.generated_expanded;
+            cx.notify();
+        },
+    );
+    div()
+        .id(id)
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_2()
+        .py_px()
+        .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
+        .on_click(toggle)
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_xs()
+                .text_color(rgb(theme().text_label))
+                .truncate()
+                .child(SharedString::from(label)),
+        )
+        .into_any_element()
+}
+
+/// One unstaged file row (flat style) by index `fi` into `unstaged`. Shared by
+/// the flat list, the tree list's folded section, and the folded "Generated"
+/// rows (issue #348).
+fn cp_unstaged_file_element(
     view: &CommitPanelView,
     fi: usize,
     cx: &mut Context<CommitPanelView>,
@@ -219,14 +264,90 @@ pub(crate) fn render_unstaged_flat_row(
     )
 }
 
-/// PERF: build one unstaged tree row (index `row_index` into `unstaged_tree`).
-pub(crate) fn render_unstaged_tree_row(
+/// One staged file row (flat style) by index `fi` into `staged` (issue #348).
+fn cp_staged_file_element(
     view: &CommitPanelView,
-    row_index: usize,
+    fi: usize,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
-    match panel.unstaged_tree.get(row_index)? {
+    let f = panel.staged.get(fi)?;
+    let name = f
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
+    let wip_hit = view
+        .active_wip
+        .as_ref()
+        .is_some_and(|(st, p)| *st && &f.path == p);
+    Some(
+        render_cp_file_row(
+            true,
+            false,
+            fi,
+            SharedString::from(name),
+            Some(&f.change),
+            false,
+            panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
+            wip_hit,
+            0.0,
+            panel.staged_stat(&f.path),
+            cx,
+        )
+        .into_any_element(),
+    )
+}
+
+/// PERF: build one unstaged row in flat view. `i` is a display-row index:
+/// normal (non-generated) files first, then the "Generated (N)" fold.
+pub(crate) fn render_unstaged_flat_row(
+    view: &CommitPanelView,
+    i: usize,
+    cx: &mut Context<CommitPanelView>,
+) -> Option<gpui::AnyElement> {
+    let panel = &view.state;
+    let normal = &panel.unstaged_normal_files;
+    if i < normal.len() {
+        return cp_unstaged_file_element(view, normal[i], cx);
+    }
+    // Folded "Generated (N)" section.
+    let j = i - normal.len();
+    if j == 0 {
+        return Some(render_cp_generated_header(
+            false,
+            panel.unstaged_gen_files.len(),
+            panel.generated_expanded,
+            cx,
+        ));
+    }
+    let fi = *panel.unstaged_gen_files.get(j - 1)?;
+    cp_unstaged_file_element(view, fi, cx)
+}
+
+/// PERF: build one unstaged tree row. `i` indexes the pruned tree first, then
+/// the "Generated (N)" fold (issue #348).
+pub(crate) fn render_unstaged_tree_row(
+    view: &CommitPanelView,
+    i: usize,
+    cx: &mut Context<CommitPanelView>,
+) -> Option<gpui::AnyElement> {
+    let panel = &view.state;
+    let tree_len = panel.unstaged_tree.len();
+    if i >= tree_len {
+        let j = i - tree_len;
+        if j == 0 {
+            return Some(render_cp_generated_header(
+                false,
+                panel.unstaged_gen_files.len(),
+                panel.generated_expanded,
+                cx,
+            ));
+        }
+        let fi = *panel.unstaged_gen_files.get(j - 1)?;
+        return cp_unstaged_file_element(view, fi, cx);
+    }
+    match panel.unstaged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
             Some(render_cp_dir_row("cp-us-dir", *depth, name))
         }
@@ -264,50 +385,54 @@ pub(crate) fn render_unstaged_tree_row(
     }
 }
 
-/// PERF: build one staged row in flat view (index `fi` into `staged`).
+/// PERF: build one staged row in flat view. `i` is a display-row index:
+/// normal files first, then the "Generated (N)" fold (issue #348).
 pub(crate) fn render_staged_flat_row(
     view: &CommitPanelView,
-    fi: usize,
+    i: usize,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
-    let f = panel.staged.get(fi)?;
-    let name = f
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
-    let wip_hit = view
-        .active_wip
-        .as_ref()
-        .is_some_and(|(st, p)| *st && &f.path == p);
-    Some(
-        render_cp_file_row(
+    let normal = &panel.staged_normal_files;
+    if i < normal.len() {
+        return cp_staged_file_element(view, normal[i], cx);
+    }
+    let j = i - normal.len();
+    if j == 0 {
+        return Some(render_cp_generated_header(
             true,
-            false,
-            fi,
-            SharedString::from(name),
-            Some(&f.change),
-            // Staged rows never take the conflicted treatment.
-            false,
-            panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
-            wip_hit,
-            0.0,
-            panel.staged_stat(&f.path),
+            panel.staged_gen_files.len(),
+            panel.generated_expanded,
             cx,
-        )
-        .into_any_element(),
-    )
+        ));
+    }
+    let fi = *panel.staged_gen_files.get(j - 1)?;
+    cp_staged_file_element(view, fi, cx)
 }
 
-/// PERF: build one staged tree row (index `row_index` into `staged_tree`).
+/// PERF: build one staged tree row. `i` indexes the pruned tree first, then the
+/// "Generated (N)" fold (issue #348).
 pub(crate) fn render_staged_tree_row(
     view: &CommitPanelView,
-    row_index: usize,
+    i: usize,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
-    match panel.staged_tree.get(row_index)? {
+    let tree_len = panel.staged_tree.len();
+    if i >= tree_len {
+        let j = i - tree_len;
+        if j == 0 {
+            return Some(render_cp_generated_header(
+                true,
+                panel.staged_gen_files.len(),
+                panel.generated_expanded,
+                cx,
+            ));
+        }
+        let fi = *panel.staged_gen_files.get(j - 1)?;
+        return cp_staged_file_element(view, fi, cx);
+    }
+    match panel.staged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
             Some(render_cp_dir_row("cp-st-dir", *depth, name))
         }
@@ -734,8 +859,8 @@ impl CommitPanelView {
         let unstaged_row_count = if tree_view {
             panel.unstaged_tree.len()
         } else {
-            unstaged_count
-        };
+            panel.unstaged_normal_files.len()
+        } + panel.generated_extra_rows(false);
 
         // ── Staged section ───────────────────────────────────────
         // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
@@ -781,8 +906,8 @@ impl CommitPanelView {
         let staged_row_count = if tree_view {
             panel.staged_tree.len()
         } else {
-            staged_count
-        };
+            panel.staged_normal_files.len()
+        } + panel.generated_extra_rows(true);
 
         // ── Commit button ─────────────────────────────────────────
         // No destination branch in the label: ADR-0134 put it here as "one

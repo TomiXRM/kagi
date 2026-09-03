@@ -401,3 +401,172 @@ fn execute_open_worktree_for_branch_checks_out_the_existing_branch() {
         "the worktree must sit on the existing branch tip, not a new branch"
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// issue #339 — .worktreeinclude copies gitignored files into a new worktree
+// ────────────────────────────────────────────────────────────
+
+/// Repo with `.gitignore` + `.worktreeinclude` both listing `.env`, and a
+/// present, gitignored `.env`.
+fn build_repo_with_worktreeinclude(tmp: &TempDir) -> Repository {
+    let d = tmp.path();
+    let repo = build_repo(tmp);
+    write_file(d, ".gitignore", ".env\n");
+    write_file(d, ".worktreeinclude", ".env\n");
+    git(d, &["add", ".gitignore", ".worktreeinclude"]);
+    git(d, &["commit", "-qm", "add ignore + include"]);
+    write_file(d, ".env", "TOKEN=abc\n");
+    repo
+}
+
+#[test]
+fn worktreeinclude_copies_ignored_env() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo_with_worktreeinclude(&repo_tmp);
+    let at = head_commit_id(&repo);
+    let path = worktrees_tmp.path().join("wt");
+
+    let plan = plan_create_worktree(&repo, "wt", &path, &at).expect("plan");
+    let listed = plan.warnings.iter().any(
+        |w| matches!(w, PlanNote::Worktree(WorktreeNote::IncludeCopy { count, .. }) if *count >= 1),
+    );
+    assert!(
+        listed,
+        "plan must list the include copy: {:?}",
+        plan.warnings
+    );
+
+    execute_create_worktree(&repo, "wt", &path, &at).expect("execute");
+    assert_eq!(
+        std::fs::read_to_string(path.join(".env")).expect(".env copied"),
+        "TOKEN=abc\n"
+    );
+}
+
+#[test]
+fn worktreeinclude_does_not_copy_tracked_file() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let d = repo_tmp.path();
+    let repo = build_repo(&repo_tmp);
+    // config.toml is TRACKED but also matches .worktreeinclude.
+    write_file(d, ".worktreeinclude", "config.toml\n");
+    write_file(d, "config.toml", "tracked=1\n");
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-qm", "track config"]);
+    let at = head_commit_id(&repo);
+    let path = worktrees_tmp.path().join("wt");
+
+    let plan = plan_create_worktree(&repo, "wt", &path, &at).expect("plan");
+    assert!(
+        !plan
+            .warnings
+            .iter()
+            .any(|w| matches!(w, PlanNote::Worktree(WorktreeNote::IncludeCopy { .. }))),
+        "tracked files must not appear in the copy set: {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn worktreeinclude_does_not_copy_non_ignored_file() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let d = repo_tmp.path();
+    let repo = build_repo(&repo_tmp);
+    write_file(d, ".worktreeinclude", "notes.txt\n");
+    git(d, &["add", ".worktreeinclude"]);
+    git(d, &["commit", "-qm", "include"]);
+    // notes.txt is untracked but NOT gitignored.
+    write_file(d, "notes.txt", "hi\n");
+    let at = head_commit_id(&repo);
+    let path = worktrees_tmp.path().join("wt");
+
+    execute_create_worktree(&repo, "wt", &path, &at).expect("execute");
+    assert!(
+        !path.join("notes.txt").exists(),
+        "a matched but non-ignored file must not be copied"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn worktreeinclude_skips_symlinks() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let d = repo_tmp.path();
+    let repo = build_repo(&repo_tmp);
+    write_file(d, ".gitignore", "link\n");
+    write_file(d, ".worktreeinclude", "link\n");
+    git(d, &["add", ".gitignore", ".worktreeinclude"]);
+    git(d, &["commit", "-qm", "include link"]);
+    std::os::unix::fs::symlink("README.md", d.join("link")).unwrap();
+    let at = head_commit_id(&repo);
+    let path = worktrees_tmp.path().join("wt");
+
+    let plan = plan_create_worktree(&repo, "wt", &path, &at).expect("plan");
+    assert!(
+        plan.warnings.iter().any(|w| matches!(
+            w,
+            PlanNote::Worktree(WorktreeNote::IncludeSkippedSymlinks { count }) if *count == 1
+        )),
+        "plan must note the skipped symlink: {:?}",
+        plan.warnings
+    );
+
+    execute_create_worktree(&repo, "wt", &path, &at).expect("execute");
+    assert!(
+        !path.join("link").exists(),
+        "matched symlinks must not be copied"
+    );
+}
+
+#[test]
+fn create_worktree_auto_creates_missing_parent_and_copies() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo_with_worktreeinclude(&repo_tmp);
+    let at = head_commit_id(&repo);
+    // Parent dir `<...>/nope-worktrees` does NOT exist yet (the default UI
+    // path shape). This must not block the plan nor fail execute.
+    let path = worktrees_tmp.path().join("nope-worktrees").join("wt");
+    assert!(!path.parent().unwrap().exists());
+
+    let plan = plan_create_worktree(&repo, "wt", &path, &at).expect("plan");
+    assert!(
+        plan.blockers.is_empty(),
+        "missing parent must not block: {:?}",
+        plan.blockers
+    );
+
+    execute_create_worktree(&repo, "wt", &path, &at).expect("execute");
+    assert!(path.is_dir(), "worktree dir (and parent) must be created");
+    assert_eq!(
+        std::fs::read_to_string(path.join(".env")).expect(".env copied"),
+        "TOKEN=abc\n"
+    );
+}
+
+#[test]
+fn no_worktreeinclude_leaves_plan_unchanged() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo(&repo_tmp);
+    let at = head_commit_id(&repo);
+    let path = worktrees_tmp.path().join("wt");
+
+    let plan = plan_create_worktree(&repo, "wt", &path, &at).expect("plan");
+    assert!(
+        !plan.warnings.iter().any(|w| matches!(
+            w,
+            PlanNote::Worktree(
+                WorktreeNote::IncludeCopy { .. }
+                    | WorktreeNote::IncludeSkippedSymlinks { .. }
+                    | WorktreeNote::IncludeOverCap { .. }
+            )
+        )),
+        "no .worktreeinclude → no include notes: {:?}",
+        plan.warnings
+    );
+}

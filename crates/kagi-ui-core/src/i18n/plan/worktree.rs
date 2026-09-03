@@ -42,6 +42,34 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         WorktreeNote::WorktreeMissing { name } => {
             format!("worktree '{}' は存在しません。", name)
         }
+        WorktreeNote::IncludeCopy {
+            count,
+            total_bytes,
+            sample,
+            more,
+        } => {
+            let mut names = sample.join(", ");
+            if *more > 0 {
+                names = format!("{} (他 {} 件)", names, more);
+            }
+            format!(
+                ".worktreeinclude に一致する {} 個のファイル ({}) を新しい worktree にコピーします: {}。",
+                count,
+                kagi_domain::worktree_include::human_bytes(*total_bytes),
+                names
+            )
+        }
+        WorktreeNote::IncludeSkippedSymlinks { count } => {
+            format!("一致した symlink {} 個はスキップします(symlink はコピーしません)。", count)
+        }
+        WorktreeNote::IncludeOverCap {
+            total_bytes,
+            cap_bytes,
+        } => format!(
+            ".worktreeinclude の一致は {} で、コピー上限 {} を超えています — コピーは続行しますが大きくなる可能性があります(例: node_modules の一致)。",
+            kagi_domain::worktree_include::human_bytes(*total_bytes),
+            kagi_domain::worktree_include::human_bytes(*cap_bytes)
+        ),
     }
 }
 

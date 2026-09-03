@@ -1,7 +1,136 @@
 use super::*;
+use ignore::gitignore::GitignoreBuilder;
+use ignore::WalkBuilder;
 use kagi_domain::plan_note::{
     CommonNote, DirtyParts, OpPhrase, UntrackedCtx, WorktreeNote, WorktreeRecovery, WorktreeTitle,
 };
+use kagi_domain::worktree_include::{
+    select_worktree_include, WorktreeIncludeCandidate, WorktreeIncludeSelection,
+    WORKTREE_INCLUDE_CAP_BYTES,
+};
+
+// ────────────────────────────────────────────────────────────
+// .worktreeinclude — copy gitignored files into a new worktree (issue #339)
+// ────────────────────────────────────────────────────────────
+
+/// Scan the main worktree for files that match `.worktreeinclude`, annotating
+/// each with the git facts the pure selector needs. Returns an empty vec when
+/// there is no `.worktreeinclude` (preserving the previous behaviour).
+fn scan_worktree_include(repo: &Repository, repo_root: &Path) -> Vec<WorktreeIncludeCandidate> {
+    let content = match std::fs::read_to_string(repo_root.join(".worktreeinclude")) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut builder = GitignoreBuilder::new(repo_root);
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let _ = builder.add_line(None, line);
+    }
+    let matcher = match builder.build() {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+
+    // Walk everything (including gitignored files — those are exactly what we
+    // want) but never descend into `.git`.
+    let walker = WalkBuilder::new(repo_root)
+        .standard_filters(false)
+        .hidden(false)
+        .parents(false)
+        .filter_entry(|e| e.file_name() != ".git")
+        .build();
+
+    let mut out = Vec::new();
+    for entry in walker.flatten() {
+        let rel = match entry.path().strip_prefix(repo_root) {
+            Ok(r) if !r.as_os_str().is_empty() => r,
+            _ => continue,
+        };
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        // `matched_path_or_any_parents` so a matched directory (e.g.
+        // `node_modules/`) selects every file beneath it.
+        if !matcher.matched_path_or_any_parents(rel, is_dir).is_ignore() {
+            continue;
+        }
+        if is_dir {
+            continue; // only files are copied
+        }
+        let is_symlink = entry.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+        let is_ignored = repo.is_path_ignored(rel).unwrap_or(false);
+        let is_tracked = repo
+            .index()
+            .ok()
+            .and_then(|idx| idx.get_path(rel, 0))
+            .is_some();
+        let size = if is_symlink {
+            0
+        } else {
+            std::fs::metadata(entry.path())
+                .map(|m| m.len())
+                .unwrap_or(0)
+        };
+        out.push(WorktreeIncludeCandidate {
+            path: rel.to_string_lossy().replace('\\', "/"),
+            is_tracked,
+            is_ignored,
+            is_symlink,
+            size,
+        });
+    }
+    out
+}
+
+/// Compute the `.worktreeinclude` selection for the repo's main worktree.
+fn worktree_include_selection(repo: &Repository, repo_root: &Path) -> WorktreeIncludeSelection {
+    let candidates = scan_worktree_include(repo, repo_root);
+    select_worktree_include(&candidates, WORKTREE_INCLUDE_CAP_BYTES)
+}
+
+/// Turn a selection into the plan warnings that preview the copy (issue #339).
+fn worktree_include_warnings(sel: &WorktreeIncludeSelection) -> Vec<PlanNote> {
+    const SAMPLE: usize = 5;
+    let mut notes = Vec::new();
+    if !sel.copy.is_empty() {
+        let sample: Vec<String> = sel.copy.iter().take(SAMPLE).cloned().collect();
+        notes.push(PlanNote::Worktree(WorktreeNote::IncludeCopy {
+            count: sel.copy.len(),
+            total_bytes: sel.total_bytes,
+            sample,
+            more: sel.copy.len().saturating_sub(SAMPLE),
+        }));
+    }
+    if !sel.skipped_symlinks.is_empty() {
+        notes.push(PlanNote::Worktree(WorktreeNote::IncludeSkippedSymlinks {
+            count: sel.skipped_symlinks.len(),
+        }));
+    }
+    if sel.over_cap {
+        notes.push(PlanNote::Worktree(WorktreeNote::IncludeOverCap {
+            total_bytes: sel.total_bytes,
+            cap_bytes: sel.cap_bytes,
+        }));
+    }
+    notes
+}
+
+/// Copy the selected `.worktreeinclude` files into a freshly created worktree.
+/// Best-effort: never overwrites an existing destination, never fails the
+/// worktree creation (the worktree already exists at this point).
+fn copy_worktree_include(sel: &WorktreeIncludeSelection, repo_root: &Path, target: &Path) {
+    for rel in &sel.copy {
+        let dst = target.join(rel);
+        if dst.exists() {
+            continue; // no overwrite (issue #339 §5)
+        }
+        if let Some(parent) = dst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::copy(repo_root.join(rel), &dst);
+    }
+}
 
 // ────────────────────────────────────────────────────────────
 // create-worktree helpers
@@ -22,6 +151,31 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Canonicalize the longest existing prefix of `path` (resolving symlinks) and
+/// re-append the components that don't exist yet. Lets worktree containment be
+/// checked even when the target's parent directory hasn't been created.
+fn canonicalize_nearest_existing(path: &Path) -> std::io::Result<PathBuf> {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path;
+    loop {
+        match std::fs::canonicalize(cur) {
+            Ok(mut real) => {
+                for part in tail.iter().rev() {
+                    real.push(part);
+                }
+                return Ok(real);
+            }
+            Err(e) => match (cur.file_name(), cur.parent()) {
+                (Some(name), Some(parent)) => {
+                    tail.push(name.to_os_string());
+                    cur = parent;
+                }
+                _ => return Err(e),
+            },
+        }
+    }
 }
 
 /// Validate and normalize a worktree path entered by the user.
@@ -69,18 +223,16 @@ pub fn validate_worktree_path_keyed(
     let parent = candidate
         .parent()
         .ok_or_else(|| Other("Worktree path must have a parent directory.".to_string()))?;
-    if !parent.exists() {
-        return Err(Other(format!(
-            "Parent directory '{}' does not exist.",
-            parent.display()
-        )));
-    }
-
-    let parent = std::fs::canonicalize(parent)
-        .map_err(|e| Other(format!("Parent directory is not accessible: {}", e)))?;
     let filename = candidate
         .file_name()
         .ok_or_else(|| Other("Worktree path must name a directory.".to_string()))?;
+
+    // The immediate parent need not exist yet — the default worktree path is
+    // `../<repo>-worktrees/<branch>` and `execute_create_worktree` creates the
+    // parent before adding the worktree. Resolve symlinks on the longest
+    // existing prefix so the containment check below is still symlink-safe.
+    let parent = canonicalize_nearest_existing(parent)
+        .map_err(|e| Other(format!("Parent directory is not accessible: {}", e)))?;
     let candidate_real_parent = normalize_path(&parent.join(filename));
 
     if candidate_real_parent == repo_root || candidate_real_parent.starts_with(&repo_root) {
@@ -304,6 +456,10 @@ fn plan_create_worktree_impl(
             start: start.short().to_string(),
         }));
 
+    // issue #339: preview the .worktreeinclude copy set (no-op if absent).
+    let sel = worktree_include_selection(repo, repo_root);
+    plan.warnings.extend(worktree_include_warnings(&sel));
+
     Ok(plan)
 }
 
@@ -368,9 +524,24 @@ fn execute_create_worktree_impl(
     let mut opts = WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
 
+    // The default path's parent (`../<repo>-worktrees/`) may not exist yet;
+    // libgit2 will not create it, so create it here (containment already
+    // verified by validate_worktree_path above).
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            GitError::Other(format!("could not create worktree parent directory: {}", e))
+        })?;
+    }
+
     let worktree_name = worktree_name_from_path(&target_path, branch);
     repo.worktree(&worktree_name, &target_path, Some(&opts))
         .map_err(|e| GitError::Other(format!("worktree creation failed: {}", e.message())))?;
+
+    // issue #339: copy .worktreeinclude files into the fresh worktree. Computed
+    // fresh (not from the plan) since execute has no plan handle here; best-
+    // effort so a copy hiccup never undoes a created worktree.
+    let sel = worktree_include_selection(repo, repo_root);
+    copy_worktree_include(&sel, repo_root, &target_path);
 
     Ok(())
 }
@@ -535,5 +706,38 @@ pub fn execute_unlock_worktree(
             "worktree '{}' still reports locked after unlock — unexpected state",
             name
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `copy_worktree_include` must never overwrite an existing destination
+    /// file, and must create a fresh one (issue #339 §5 no-overwrite).
+    #[test]
+    fn copy_worktree_include_never_overwrites() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("keep"), "SOURCE").unwrap();
+        std::fs::write(src.path().join("new"), "SOURCE").unwrap();
+        std::fs::write(dst.path().join("keep"), "EXISTING").unwrap();
+
+        let sel = WorktreeIncludeSelection {
+            copy: vec!["keep".into(), "new".into()],
+            ..Default::default()
+        };
+        copy_worktree_include(&sel, src.path(), dst.path());
+
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("keep")).unwrap(),
+            "EXISTING",
+            "existing dest must not be overwritten"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("new")).unwrap(),
+            "SOURCE",
+            "absent dest must be copied"
+        );
     }
 }

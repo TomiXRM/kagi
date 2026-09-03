@@ -256,6 +256,16 @@ impl Backend {
         self.repo.workdir().map(Path::to_path_buf)
     }
 
+    /// Line-level blame for `repo_relative_path` (issue #350). Attributes each
+    /// line to its last-touching commit and respects a repository-root
+    /// `.git-blame-ignore-revs`. See [`crate::blame::blame_file`].
+    pub fn blame_file(
+        &self,
+        repo_relative_path: &Path,
+    ) -> Result<crate::blame::BlameResult, GitError> {
+        crate::blame::blame_file(&self.repo, repo_relative_path)
+    }
+
     /// The URL configured for the remote named `name`, if it exists.
     pub fn remote_url_named(&self, name: &str) -> Option<String> {
         self.repo

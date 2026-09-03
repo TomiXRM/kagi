@@ -9,6 +9,7 @@
 
 pub mod authoring;
 pub mod backend;
+pub mod blame;
 mod checklist;
 pub mod cli;
 pub mod conflicts;
@@ -39,6 +40,11 @@ pub mod worker;
 pub use authoring::{load_commit_template, recent_authors, AuthorCandidate};
 #[allow(unused_imports)]
 pub use backend::{oplog_outcome_from, Backend};
+#[allow(unused_imports)]
+pub use blame::{
+    blame_file, parse_blame_ignore_revs, BlameLine, BlameResult, IGNORED_MARK, IGNORE_REVS_FILE,
+    UNBLAMABLE_MARK,
+};
 #[allow(unused_imports)]
 pub use checklist::{checklist, text_has_conflict_marker};
 #[allow(unused_imports)]

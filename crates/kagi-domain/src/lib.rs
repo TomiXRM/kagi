@@ -12,6 +12,7 @@
 pub mod absorb;
 pub mod activity;
 pub mod agent_artifacts;
+pub mod blame;
 pub mod branch_cleanup;
 pub mod checklist;
 pub mod codeowners;

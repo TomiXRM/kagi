@@ -55,7 +55,7 @@ impl KagiApp {
                 self.repo_session = kagi_git::session::RepoSession::open(&modal.repo_path).ok();
             }
             Err(e) => {
-                eprintln!("[kagi] trust grant failed: {e}");
+                klog!("trust grant failed: {e}");
             }
         }
         self.clear_trust_repo_modal();

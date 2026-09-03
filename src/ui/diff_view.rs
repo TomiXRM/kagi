@@ -714,6 +714,10 @@ pub(crate) fn render_main_diff_row(
                 .when(
                     kagi_domain::text_safety::has_unsafe_unicode(text.as_ref()),
                     |el| {
+                        // Same tinted-fill grammar as the provenance badge: a soft
+                        // warning-hue fill + border with theme-aware readable text,
+                        // so it stays legible in both light and dark themes.
+                        let (bg, border, text) = theme::badge_style(theme::theme().color_warning);
                         el.child(
                             div()
                                 .id(("diff-unsafe-badge", i))
@@ -722,8 +726,10 @@ pub(crate) fn render_main_diff_row(
                                 .px_1()
                                 .rounded_sm()
                                 .text_xs()
-                                .bg(rgb(theme::theme().color_warning))
-                                .text_color(rgb(theme::theme().bg_base))
+                                .bg(gpui::rgba(bg))
+                                .border_1()
+                                .border_color(gpui::rgba(border))
+                                .text_color(rgb(text))
                                 .tooltip(|window, cx| {
                                     Tooltip::new(SharedString::from(Msg::UnsafeUnicodeTooltip.t()))
                                         .build(window, cx)

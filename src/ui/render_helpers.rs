@@ -475,41 +475,8 @@ pub(crate) fn render_load_more_row(
 
 // Note: render_detail_panel was extracted to src/ui/inspector.rs (W2-INSPECTOR).
 
-// ──────────────────────────────────────────────────────────────
-// T-UI-003: Main pane diff renderer (full-width)
-// ──────────────────────────────────────────────────────────────
-
-/// Render the full-width main pane diff view.
-///
-/// Layout (fills remaining width after sidebar + divider):
-/// - Header row: `← Back` + file name + stats
-/// - Body: `uniform_list` id `"main-diff-list"` with line numbers
-///
-/// W6-TABSPEED / ADR-0030: center-pane placeholder shown while an uncached tab
-/// is loading on a background thread.  The tab strip stays operable above it.
-pub(crate) fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
-    div()
-        .flex_1()
-        .h_full()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .bg(rgb(theme().bg_base))
-        .child(
-            div()
-                .text_lg()
-                .text_color(rgb(theme().text_sub))
-                .child(label),
-        )
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("\u{27f3}")), // ⟳
-        )
-}
+// Note: render_loading_placeholder lives in render_body.rs (its only caller;
+// moved there under the ADR-0165 change to keep this file under 800 LOC).
 
 /// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item count
 /// 0 — the caller syncs it to the real row count via `render_diff_list`'s

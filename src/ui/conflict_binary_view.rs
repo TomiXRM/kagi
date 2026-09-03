@@ -190,11 +190,22 @@ fn build_side(
     if within_cap {
         if let Some(bytes) = backend.conflict_side_bytes(buffer, path, side) {
             if let Some(fmt) = image_format_for(path, Some(&bytes)) {
+                let n = bytes.len();
                 image = IMAGE_CACHE.with(|c| {
-                    c.borrow_mut()
-                        .entry(info.oid.clone())
-                        .or_insert_with(|| Some(Arc::new(Image::from_bytes(fmt, bytes))))
-                        .clone()
+                    let mut m = c.borrow_mut();
+                    if !m.contains_key(&info.oid) {
+                        klog!(
+                            "conflict-view: image decoded oid={} fmt={:?} src={}bytes",
+                            info.oid_short,
+                            fmt,
+                            n
+                        );
+                        m.insert(
+                            info.oid.clone(),
+                            Some(Arc::new(Image::from_bytes(fmt, bytes))),
+                        );
+                    }
+                    m.get(&info.oid).cloned().flatten()
                 });
             }
         }
@@ -290,17 +301,19 @@ fn side_column(header: &str, data: &SideData) -> gpui::AnyElement {
     } else {
         match data.mode {
             BinaryViewMode::Image => match &data.image {
-                // Mirror the working avatar/inspector precedent
-                // (render_helpers.rs:608): a SIZED container + `object_fit`.
-                // `max_w/max_h` alone in a flex_basis(0)/min_w(0) column
-                // collapses the image box to zero, painting nothing (#362).
+                // Mirror the WORKING avatar path (inspector.rs:558): an
+                // EXPLICIT-pixel-size, flex_shrink_0 container + img.size_full().
+                // `w_full` here resolves to 0 inside the flex_basis(0)/min_w(0)
+                // column, so the image box collapsed and painted nothing (#362).
+                // object_fit(Contain) keeps aspect ratio inside the fixed box.
                 Some(img) => div()
-                    .w_full()
+                    .w(px(IMAGE_MAX_PX))
                     .h(px(IMAGE_MAX_PX))
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .child(
                         gpui::img(gpui::ImageSource::Image(img.clone()))
-                            .max_w_full()
-                            .max_h_full()
+                            .size_full()
                             .object_fit(gpui::ObjectFit::Contain),
                     )
                     .into_any_element(),

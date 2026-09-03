@@ -109,6 +109,42 @@ pub enum WorktreeNote {
     /// warning (`plan_repair_worktrees`) — describes what `git worktree repair`
     /// fixes (moved main / moved linked / both).
     RepairsWorktrees,
+
+    // ── issue #341: typed post-create / pre-remove steps + trust ──
+    /// warning (`plan_create_worktree_impl`) — the `post_create` steps from
+    /// `.kagi/worktree.toml`, enumerated by type. `trust_required` is set when
+    /// a `command` step is present and the config is not yet trusted, so
+    /// confirming the plan doubles as the trust prompt (issue #341 §5).
+    PostCreateSteps {
+        steps: Vec<crate::worktree_steps::WorktreeStep>,
+        trust_required: bool,
+    },
+    /// warning (`plan_remove_worktree`) — the `pre_remove` steps from
+    /// `.kagi/worktree.toml`, enumerated by type. A failed or untrusted
+    /// `command` here **aborts the removal** (issue #341 §5).
+    PreRemoveSteps {
+        steps: Vec<crate::worktree_steps::WorktreeStep>,
+        trust_required: bool,
+    },
+}
+
+/// Render a step list ("`  • copy: … → …`" per line) plus an optional trust
+/// line. Shared by EN/JA so the enumeration format stays in one place.
+pub fn worktree_steps_lines(
+    steps: &[crate::worktree_steps::WorktreeStep],
+    trust_required: bool,
+    trust_line: &str,
+) -> String {
+    let mut out = String::new();
+    for s in steps {
+        out.push_str("\n  • ");
+        out.push_str(&s.describe());
+    }
+    if trust_required {
+        out.push('\n');
+        out.push_str(trust_line);
+    }
+    out
 }
 
 impl WorktreeNote {
@@ -258,6 +294,33 @@ impl WorktreeNote {
                  linked worktree, or both. This never touches your files — only the .git links."
                     .to_string()
             }
+            WorktreeNote::PostCreateSteps {
+                steps,
+                trust_required,
+            } => format!(
+                "Runs {} post-create step(s) from .kagi/worktree.toml:{}",
+                steps.len(),
+                worktree_steps_lines(
+                    steps,
+                    *trust_required,
+                    "  ⚠ Confirming TRUSTS this config to run the command step(s) above \
+                     (committed config is untrusted by default)."
+                )
+            ),
+            WorktreeNote::PreRemoveSteps {
+                steps,
+                trust_required,
+            } => format!(
+                "Runs {} pre-remove step(s) from .kagi/worktree.toml (a failed or untrusted \
+                 command aborts the removal):{}",
+                steps.len(),
+                worktree_steps_lines(
+                    steps,
+                    *trust_required,
+                    "  ⚠ Confirming TRUSTS this config to run the command step(s) above \
+                     (committed config is untrusted by default)."
+                )
+            ),
         }
     }
 }

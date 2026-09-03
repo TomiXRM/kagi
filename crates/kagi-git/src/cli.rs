@@ -264,7 +264,7 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
 /// error) the child is **killed and reaped** and `None` is returned, so a hung
 /// `git` process never leaks (issue #294). The reap is bounded — after a kill,
 /// the child exits promptly — so this never blocks indefinitely.
-fn wait_or_kill(
+pub(crate) fn wait_or_kill(
     child: &mut std::process::Child,
     timeout: Duration,
 ) -> Option<std::process::ExitStatus> {

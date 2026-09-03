@@ -460,6 +460,15 @@ fn plan_create_worktree_impl(
     let sel = worktree_include_selection(repo, repo_root);
     plan.warnings.extend(worktree_include_warnings(&sel));
 
+    // issue #341: enumerate the typed post_create steps (no-op if no config).
+    // A command step in an untrusted config marks the note trust-required, so
+    // confirming this plan doubles as the trust prompt.
+    if let Ok(Some(cfg)) = load_worktree_config(repo_root) {
+        if let Some(note) = post_create_note(&cfg) {
+            plan.warnings.push(note);
+        }
+    }
+
     Ok(plan)
 }
 
@@ -542,6 +551,18 @@ fn execute_create_worktree_impl(
     // effort so a copy hiccup never undoes a created worktree.
     let sel = worktree_include_selection(repo, repo_root);
     copy_worktree_include(&sel, repo_root, &target_path);
+
+    // issue #341: run the typed post_create steps. Best-effort — the worktree
+    // already exists, so a step failure never undoes it. copy/symlink always
+    // run; command runs only when the config is trusted (and never headless).
+    if let Ok(Some(cfg)) = load_worktree_config(repo_root) {
+        let trusted = is_worktree_config_trusted(&cfg);
+        let env = StepEnv {
+            main_root: repo_root.to_path_buf(),
+            worktree: target_path.clone(),
+        };
+        let _report = run_post_create(&cfg.steps.post_create, &env, trusted);
+    }
 
     Ok(())
 }

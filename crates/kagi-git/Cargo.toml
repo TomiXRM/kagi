@@ -22,3 +22,9 @@ ignore = "0.4"
 # `gh pr list --json` parsing (github.rs). Already in the workspace lock via
 # the bin's settings.json handling, so no new download.
 serde_json = "1"
+# Typed `.kagi/worktree.toml` parsing + repository-level trust keying by content
+# hash (issue #341 / ADR-0161). All three are already in Cargo.lock, so they add
+# no new download. kagi-domain stays dependency-free — these live only here.
+toml = "0.8"
+sha2 = "0.10"
+hex = "0.4"

@@ -139,6 +139,32 @@ pub fn note_ja(note: &WorktreeNote) -> String {
              ファイルには一切触れず、.git のリンクのみを修復します。"
                 .to_string()
         }
+        WorktreeNote::PostCreateSteps {
+            steps,
+            trust_required,
+        } => format!(
+            ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}",
+            steps.len(),
+            kagi_domain::plan_note::worktree::worktree_steps_lines(
+                steps,
+                *trust_required,
+                "  ⚠ 確認すると、この設定を信頼して上記の command ステップを実行します\
+                 (コミットされた設定は既定で未信頼です)。"
+            )
+        ),
+        WorktreeNote::PreRemoveSteps {
+            steps,
+            trust_required,
+        } => format!(
+            ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}",
+            steps.len(),
+            kagi_domain::plan_note::worktree::worktree_steps_lines(
+                steps,
+                *trust_required,
+                "  ⚠ 確認すると、この設定を信頼して上記の command ステップを実行します\
+                 (コミットされた設定は既定で未信頼です)。"
+            )
+        ),
     }
 }
 

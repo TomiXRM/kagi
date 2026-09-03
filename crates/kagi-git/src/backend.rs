@@ -1304,6 +1304,18 @@ impl Backend {
         ops::execute_open_worktree_for_branch(&self.repo, branch, path)
     }
 
+    // ── issue #341: typed worktree steps + trust ──
+    /// Trust the `.kagi/worktree.toml` of the linked worktree named `name`,
+    /// resolving its path internally (so the UI never handles worktree paths).
+    /// The UI calls this when confirming a remove plan whose pre_remove note is
+    /// `trust_required`.
+    pub fn trust_worktree_config_for_worktree(&self, name: &str) -> Result<(), GitError> {
+        let wt = self.repo.find_worktree(name).map_err(|e| {
+            GitError::Other(format!("worktree '{name}' not found: {}", e.message()))
+        })?;
+        ops::trust_worktree_config_at(wt.path())
+    }
+
     pub fn plan_unlock_worktree(&self, name: &str) -> Result<OperationPlan, GitError> {
         ops::plan_unlock_worktree(&self.repo, name)
     }

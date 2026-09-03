@@ -126,6 +126,7 @@ mod switch;
 mod tag;
 mod worktree;
 mod worktree_lifecycle;
+mod worktree_steps;
 
 pub use absorb::*;
 pub use branch::*;
@@ -152,6 +153,7 @@ pub use switch::*;
 pub use tag::*;
 pub use worktree::*;
 pub use worktree_lifecycle::*;
+pub use worktree_steps::*;
 
 // ────────────────────────────────────────────────────────────
 // Public types

@@ -210,11 +210,19 @@ pub fn plan_remove_worktree(
         }));
     }
 
-    let warnings = vec![PlanNote::Worktree(WorktreeNote::RemovesWorktree {
+    let mut warnings = vec![PlanNote::Worktree(WorktreeNote::RemovesWorktree {
         path: path_str.clone(),
         branch: branch.clone(),
         delete_branch,
     })];
+    // issue #341: enumerate the typed pre_remove steps from the worktree's own
+    // committed config. A command step in an untrusted config marks the note
+    // trust-required (and, at execute time, aborts the removal until trusted).
+    if let Ok(Some(cfg)) = load_worktree_config(&path) {
+        if let Some(note) = pre_remove_note(&cfg) {
+            warnings.push(note);
+        }
+    }
     let recovery = Some(PlanRecovery {
         kind: RecoveryKind::Worktree(WorktreeRecovery::RemoveWorktree {
             path: path_str,
@@ -260,6 +268,19 @@ pub fn execute_remove_worktree(
         .find_worktree(name)
         .map_err(|e| GitError::Other(format!("worktree '{}' not found: {}", name, e.message())))?;
     let wt_path = wt.path().to_path_buf();
+
+    // issue #341: run the typed pre_remove steps as a precondition of deletion.
+    // A failed, untrusted, or headless-blocked command returns Err here — BEFORE
+    // any destructive step — so the worktree survives (matches preflight ethos:
+    // "docker compose down" failing must not orphan the container by proceeding).
+    if let Ok(Some(cfg)) = load_worktree_config(&wt_path) {
+        let trusted = is_worktree_config_trusted(&cfg);
+        let env = StepEnv {
+            main_root: main_workdir.clone(),
+            worktree: wt_path.clone(),
+        };
+        run_pre_remove(&cfg.steps.pre_remove, &env, trusted)?;
+    }
 
     // Belt-and-suspenders: the plan blocks dirt, but a race could have dirtied
     // the worktree since. Back up any uncommitted content into the main ODB

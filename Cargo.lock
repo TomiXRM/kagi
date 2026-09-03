@@ -3392,6 +3392,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kagi-mcp"
+version = "0.1.0"
+dependencies = [
+ "kagi-domain",
+ "kagi-git",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "kagi-ui-core"
 version = "0.1.0"
 dependencies = [

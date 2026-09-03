@@ -72,6 +72,29 @@ validates against it.
 exists — not an omission, the product thesis. `tools/list` descriptions and the
 `initialize.instructions` say so, so an agent understands "Kagi cannot do that".
 
+## Read-only mode + annotation derivation (#332)
+
+**Annotations are derived, not hand-tabled.** `tools::derive_annotations(
+read_only, destructive, network)` is the only place annotation JSON is built.
+Read tools and `kagi_plan` are `readOnlyHint: true` (`kagi_diff` included —
+diff-cache warming is an internal optimization, not an observable side effect).
+`kagi_confirm`'s `destructiveHint` is the fold of `OperationPlan.destructive`
+(ADR-0004/0023) over `write::SUPPORTED_OPS`; `openWorldHint` follows op kind
+and derives to `false` because no network op (fetch/push) is exposed yet. The
+fold is a pinned const (`tools/list` has no repo to plan against), but the
+`tools_list_annotations_derive_from_plan_classification` test rebuilds it from
+real `OperationPlan`s in a temp repo — the advertised hints cannot drift from
+the classification.
+
+**Read-only mode.** `kagi-mcp stdio --repo <path> --readonly` (or env
+`KAGI_MCP_READONLY=1|true`; the CLI flag wins over any other source) removes
+`kagi_confirm` from `tools/list` entirely — the tool does not exist, rather
+than existing-but-refusing — and calling it returns JSON-RPC method-not-found
+(`-32601`). `kagi_plan` stays: planning is pure inspection. The mode is fixed
+at startup, so no `notifications/tools/list_changed` is needed; a runtime
+toggle (e.g. from the GUI) is an optional follow-up that would require sending
+that notification.
+
 ## Consequences
 
 - Agents get a safe git surface with zero new destructive capability; the oplog

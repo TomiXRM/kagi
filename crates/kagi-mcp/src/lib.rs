@@ -43,6 +43,11 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 pub struct Server {
     repo: PathBuf,
     plans: HashMap<String, StoredPlan>,
+    /// Read-only mode (#332): `kagi_confirm` is removed from `tools/list` and
+    /// calling it returns JSON-RPC method-not-found. `kagi_plan` stays
+    /// (inspection only). Fixed at startup — no runtime toggle, so no
+    /// `notifications/tools/list_changed` is ever needed.
+    readonly: bool,
 }
 
 /// What `kagi_confirm` needs to rebuild + re-verify a plan by id alone.
@@ -58,7 +63,13 @@ impl Server {
         Server {
             repo: repo.into(),
             plans: HashMap::new(),
+            readonly: false,
         }
+    }
+
+    /// Enable read-only mode (#332). Startup-only: set before serving.
+    pub fn set_readonly(&mut self, on: bool) {
+        self.readonly = on;
     }
 
     /// The repository this server is bound to.
@@ -80,7 +91,7 @@ impl Server {
         let result = match method {
             "initialize" => Ok(self.initialize()),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools::tool_list() })),
+            "tools/list" => Ok(json!({ "tools": tools::tool_list(self.readonly) })),
             "tools/call" => self.tools_call(&params),
             other => Err(RpcError::method_not_found(other)),
         };
@@ -115,6 +126,12 @@ impl Server {
             .get("arguments")
             .cloned()
             .unwrap_or_else(|| json!({}));
+
+        // Read-only mode: the write tool does not exist. Method-not-found, not
+        // a tool error — the host must see the tool as absent (#332).
+        if self.readonly && name == "kagi_confirm" {
+            return Err(RpcError::method_not_found(name));
+        }
 
         let outcome = match name {
             "kagi_plan" => write::plan(self, &args),
@@ -442,6 +459,102 @@ mod tests {
         let r = call(&mut s, "kagi_confirm", json!({ "plan_id": plan_id }));
         assert_eq!(r["isError"], json!(true), "blocked plan must be refused");
         assert!(branch_exists(dir.path(), "main"));
+    }
+
+    #[test]
+    fn tools_list_annotations_derive_from_plan_classification() {
+        // #332 PM-locked: annotations come from OperationPlan.destructive
+        // (ADR-0004/0023), not a hand-written table. Rebuild the fold from
+        // REAL plans and require tools/list to advertise exactly that — this
+        // fails if anyone hardcodes a wrong hint or the classification moves.
+        let dir = temp_repo();
+        let backend = kagi_git::Backend::discover(dir.path()).unwrap();
+        let head = head_sha(dir.path());
+        let mut any_destructive = false;
+        for op_name in write::SUPPORTED_OPS {
+            let args: Vec<String> = match *op_name {
+                "checkout" | "create-branch" | "delete-branch" => vec!["main".into()],
+                "discard" => vec!["a.txt".into()],
+                "reset" => vec![head.clone()],
+                other => panic!("no representative args for op '{}'", other),
+            };
+            let op = write::build_operation(&backend, op_name, &args).unwrap();
+            let plan = backend.plan(&op).unwrap();
+            any_destructive |= plan.destructive;
+        }
+        // No network op (fetch/push) is in the supported set.
+        let any_network = write::SUPPORTED_OPS
+            .iter()
+            .any(|op| matches!(*op, "fetch" | "push" | "pull"));
+
+        let mut s = Server::new(dir.path());
+        let resp = s.handle(&req(1, "tools/list", json!({}))).unwrap();
+        let tools = resp["result"]["tools"].as_array().unwrap().clone();
+        for t in &tools {
+            let name = t["name"].as_str().unwrap();
+            let ann = &t["annotations"];
+            if name == "kagi_confirm" {
+                assert_eq!(
+                    ann["destructiveHint"],
+                    json!(any_destructive),
+                    "kagi_confirm destructiveHint must equal the fold of \
+                     OperationPlan.destructive over SUPPORTED_OPS"
+                );
+                assert_eq!(ann["openWorldHint"], json!(any_network));
+                assert_eq!(ann["readOnlyHint"], json!(false));
+            } else {
+                // Every other tool (reads + kagi_plan) is side-effect-free.
+                assert_eq!(ann["readOnlyHint"], json!(true), "{} not readOnly", name);
+                assert_ne!(ann["destructiveHint"], json!(true), "{}", name);
+            }
+        }
+    }
+
+    #[test]
+    fn readonly_removes_confirm_from_tools_list_but_keeps_plan() {
+        let mut s = Server::new(".");
+        s.set_readonly(true);
+        let resp = s.handle(&req(1, "tools/list", json!({}))).unwrap();
+        let names: Vec<&str> = resp["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(
+            !names.contains(&"kagi_confirm"),
+            "write tool must be absent"
+        );
+        assert!(
+            names.contains(&"kagi_plan"),
+            "plan is inspection — it stays"
+        );
+        assert!(names.contains(&"kagi_repo_status"));
+    }
+
+    #[test]
+    fn readonly_confirm_call_is_method_not_found() {
+        let dir = temp_repo();
+        let mut s = Server::new(dir.path());
+        s.set_readonly(true);
+        let resp = s
+            .handle(&req(
+                1,
+                "tools/call",
+                json!({ "name": "kagi_confirm", "arguments": { "plan_id": "x" } }),
+            ))
+            .unwrap();
+        assert_eq!(resp["error"]["code"], json!(-32601), "resp: {}", resp);
+        // Reads and planning still work in read-only mode.
+        let r = call(&mut s, "kagi_repo_status", json!({}));
+        assert_eq!(r["isError"], json!(false));
+        let p = call(
+            &mut s,
+            "kagi_plan",
+            json!({ "op": "create-branch", "args": ["ro-branch"] }),
+        );
+        assert_eq!(p["isError"], json!(false));
+        assert!(!branch_exists(dir.path(), "ro-branch"));
     }
 
     // ── helpers ──

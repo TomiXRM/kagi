@@ -22,6 +22,27 @@ use crate::{Server, StoredPlan};
 /// as an `isError: true` tool result.
 type ToolResult = Result<Value, String>;
 
+/// The op set exposed over MCP — exactly what [`build_operation`] dispatches on.
+pub const SUPPORTED_OPS: &[&str] = &[
+    "checkout",
+    "create-branch",
+    "delete-branch",
+    "discard",
+    "reset",
+];
+
+/// `kagi_confirm`'s list-time `destructiveHint`: the fold of
+/// `OperationPlan.destructive` (ADR-0004/0023) over [`SUPPORTED_OPS`] — true
+/// because discard and reset plan as destructive.
+// ponytail: the fold is a pinned const (tools/list has no repo to plan
+// against); the derivation test rebuilds it from real OperationPlans in a
+// temp repo, so this value cannot drift from the classification.
+pub const CONFIRM_DESTRUCTIVE: bool = true;
+
+/// `kagi_confirm`'s `openWorldHint`: true only if a network op (fetch/push)
+/// is in [`SUPPORTED_OPS`]. None is — the MCP surface has no network op yet.
+pub const CONFIRM_NETWORK: bool = false;
+
 fn open(server: &Server) -> Result<Backend, String> {
     Backend::discover(server.repo()).map_err(|e| e.to_string())
 }

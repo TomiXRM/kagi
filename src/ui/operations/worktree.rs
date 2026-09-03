@@ -174,7 +174,24 @@ impl KagiApp {
         // said confirming trusts them. Confirming IS that consent, so record the
         // repository-level trust now; execute then runs the command steps.
         if kagi_git::ops::plan_requires_worktree_trust(&plan) {
-            let _ = kagi_git::ops::trust_worktree_config_at(&repo_path);
+            // issue #393: trust ONLY the exact config the plan showed. If it
+            // changed between plan and confirm, refuse — do not trust or run the
+            // unreviewed content; leave the modal open for a re-review.
+            let sha = kagi_git::ops::plan_worktree_config_sha(&plan).unwrap_or("");
+            if let Err(e) = kagi_git::ops::trust_worktree_config_at(&repo_path, sha) {
+                klog!("refused: create-worktree config changed after plan, not executing");
+                self.status_footer = FooterStatus::Failed(SharedString::from(e.to_string()));
+                self.record_op(
+                    "create-worktree",
+                    plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: e.to_string(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                return;
+            }
             klog!("worktree: trusted .kagi/worktree.toml (post_create)");
         }
 
@@ -344,7 +361,25 @@ impl KagiApp {
         // records repository-level trust so the command steps may run; an
         // untrusted (or failing) pre_remove command aborts the removal below.
         if kagi_git::ops::plan_requires_worktree_trust(&modal.plan) {
-            let _ = repo.trust_worktree_config_for_worktree(&modal.name);
+            // issue #393: trust ONLY the exact config the plan showed.
+            let sha = kagi_git::ops::plan_worktree_config_sha(&modal.plan).unwrap_or("");
+            if let Err(e) = repo.trust_worktree_config_for_worktree(&modal.name, sha) {
+                klog!("refused: remove-worktree config changed after plan, not executing");
+                let err_msg = e.to_string();
+                self.record_op(
+                    "remove-worktree",
+                    modal.plan.current.clone(),
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(m) = self.remove_worktree_modal_mut() {
+                    m.error = Some(SharedString::from(err_msg));
+                }
+                return;
+            }
             klog!("worktree: trusted .kagi/worktree.toml (pre_remove)");
         }
         match repo.execute_remove_worktree(&modal.plan, &modal.name, modal.delete_branch) {

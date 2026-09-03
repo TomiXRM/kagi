@@ -71,7 +71,7 @@
 //! | `KAGI_DELETE_BRANCH=<name>`    | generate a delete-branch plan for `<name>` and emit a plan log |
 //! | `KAGI_AUTO_CONFIRM=1`          | **(TEST-ONLY)** if there are no blockers, proceed directly to execute after planning. **Never set this in normal use.** |
 
-pub(crate) use std::path::{Component, Path, PathBuf};
+pub(crate) use std::path::{Path, PathBuf};
 
 pub(crate) use git2::{BranchType, Repository, StashFlags, WorktreeAddOptions};
 pub(crate) use kagi_domain::head::Head;
@@ -126,6 +126,7 @@ mod switch;
 mod tag;
 mod worktree;
 mod worktree_lifecycle;
+mod worktree_paths;
 mod worktree_steps;
 
 pub use absorb::*;
@@ -153,6 +154,7 @@ pub use switch::*;
 pub use tag::*;
 pub use worktree::*;
 pub use worktree_lifecycle::*;
+pub(crate) use worktree_paths::*;
 pub use worktree_steps::*;
 
 // ────────────────────────────────────────────────────────────

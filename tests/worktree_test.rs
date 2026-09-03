@@ -523,6 +523,86 @@ fn worktreeinclude_skips_symlinks() {
 }
 
 // ────────────────────────────────────────────────────────────
+// issue #419 — .worktreeinclude copy must not follow a symlink planted by the
+// checked-out branch tree and write a victim's ignored file outside the repo.
+// ────────────────────────────────────────────────────────────
+
+/// Variant A: the checked-out branch commits the selected path itself as a
+/// dangling symlink pointing outside the repo. The copy must refuse (the
+/// no-overwrite guard must lstat, not follow) — nothing is written outside.
+#[cfg(unix)]
+#[test]
+fn worktreeinclude_refuses_terminal_symlink_out_of_tree() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let d = repo_tmp.path();
+    let repo = build_repo(&repo_tmp);
+
+    write_file(d, ".gitignore", ".env\n");
+    write_file(d, ".worktreeinclude", ".env\n");
+    git(d, &["add", ".gitignore", ".worktreeinclude"]);
+    git(d, &["commit", "-qm", "ignore+include"]);
+
+    // evil branch: commit `.env` as a symlink pointing OUTSIDE the repo.
+    let pwned = outside.path().join("pwned.txt");
+    git(d, &["checkout", "-q", "-b", "evil"]);
+    std::os::unix::fs::symlink(&pwned, d.join(".env")).unwrap();
+    git(d, &["add", "-f", ".env"]);
+    git(d, &["commit", "-qm", "evil symlink"]);
+    git(d, &["checkout", "-q", "main"]);
+
+    // main: the victim's real, untracked+ignored `.env` (what the copy selects).
+    write_file(d, ".env", "SECRET=hunter2\n");
+
+    let wt_path = worktrees_tmp.path().join("wt-evil");
+    execute_open_worktree_for_branch(&repo, "evil", &wt_path).expect("execute");
+
+    assert!(
+        !pwned.exists(),
+        "victim secret must NOT be written through the planted symlink"
+    );
+}
+
+/// Variant B: the checked-out branch commits the selected file's PARENT as a
+/// symlink to an existing outside directory. The containment check must refuse.
+#[cfg(unix)]
+#[test]
+fn worktreeinclude_refuses_symlinked_parent_dir() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let d = repo_tmp.path();
+    let repo = build_repo(&repo_tmp);
+
+    write_file(d, ".gitignore", "cfg/\n");
+    write_file(d, ".worktreeinclude", "cfg/\n");
+    git(d, &["add", ".gitignore", ".worktreeinclude"]);
+    git(d, &["commit", "-qm", "ignore+include"]);
+
+    // evil branch: commit `cfg` as a symlink to an existing outside directory.
+    let victim_dir = outside.path().join("victim-agents");
+    std::fs::create_dir(&victim_dir).unwrap();
+    git(d, &["checkout", "-q", "-b", "evil"]);
+    std::os::unix::fs::symlink(&victim_dir, d.join("cfg")).unwrap();
+    git(d, &["add", "cfg"]);
+    git(d, &["commit", "-qm", "evil parent symlink"]);
+    git(d, &["checkout", "-q", "main"]);
+
+    // main: the victim's real, untracked+ignored cfg/evil.plist (selected).
+    std::fs::create_dir(d.join("cfg")).unwrap();
+    write_file(d, "cfg/evil.plist", "<plist>PAYLOAD</plist>\n");
+
+    let wt_path = worktrees_tmp.path().join("wt-evil");
+    execute_open_worktree_for_branch(&repo, "evil", &wt_path).expect("execute");
+
+    assert!(
+        !victim_dir.join("evil.plist").exists(),
+        "must not write into the outside dir through a symlinked parent"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
 // issue #340 — worktree lifecycle: remove / lock / prune / repair
 // ────────────────────────────────────────────────────────────
 

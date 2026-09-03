@@ -274,6 +274,11 @@ pub fn execute_remove_worktree(
     // any destructive step — so the worktree survives (matches preflight ethos:
     // "docker compose down" failing must not orphan the container by proceeding).
     if let Ok(Some(cfg)) = load_worktree_config(&wt_path) {
+        // issue #393: bind execution to the exact config the plan showed. If it
+        // changed since planning, refuse rather than run unreviewed content.
+        if let Some(expected) = plan_worktree_config_sha(plan) {
+            verify_worktree_config_sha(&wt_path, expected)?;
+        }
         let trusted = is_worktree_config_trusted(&cfg);
         let env = StepEnv {
             main_root: main_workdir.clone(),

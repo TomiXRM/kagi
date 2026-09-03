@@ -119,64 +119,47 @@ fn worktree_include_warnings(sel: &WorktreeIncludeSelection) -> Vec<PlanNote> {
 /// Copy the selected `.worktreeinclude` files into a freshly created worktree.
 /// Best-effort: never overwrites an existing destination, never fails the
 /// worktree creation (the worktree already exists at this point).
+///
+/// Path-confined (issue #419): the checked-out branch tree is already on disk
+/// when this runs, so a hostile branch can plant a symlink at (or above) a
+/// selected path. Every source and destination is therefore resolved
+/// symlink-safely and refused if it escapes the repo / worktree; the
+/// no-overwrite guard uses `symlink_metadata` (lstat) so it never follows a
+/// planted symlink out of the tree.
 fn copy_worktree_include(sel: &WorktreeIncludeSelection, repo_root: &Path, target: &Path) {
+    let (Ok(root), Ok(wt)) = (
+        std::fs::canonicalize(repo_root),
+        std::fs::canonicalize(target),
+    ) else {
+        return;
+    };
     for rel in &sel.copy {
-        let dst = target.join(rel);
-        if dst.exists() {
-            continue; // no overwrite (issue #339 §5)
+        // `rel` comes from a repo-relative scan, but validate defensively.
+        if reject_escaping_relative("worktreeinclude entry", rel).is_err() {
+            continue;
         }
+        let dst_lexical = wt.join(rel);
+        // No overwrite, and never follow a symlink already sitting at the dest
+        // (a dangling one makes `exists()` lie — issue #419 variant A).
+        if std::fs::symlink_metadata(&dst_lexical).is_ok() {
+            continue;
+        }
+        let (Ok(dst), Ok(src)) = (
+            resolve_contained(&wt, &dst_lexical),
+            resolve_contained(&root, &root.join(rel)),
+        ) else {
+            continue; // resolves outside the tree (e.g. a symlinked parent) — skip
+        };
         if let Some(parent) = dst.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::copy(repo_root.join(rel), &dst);
+        let _ = std::fs::copy(&src, &dst);
     }
 }
 
 // ────────────────────────────────────────────────────────────
 // create-worktree helpers
 // ────────────────────────────────────────────────────────────
-
-/// Lexically normalize a path without requiring the final path to exist.
-pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
-            Component::RootDir => out.push(component.as_os_str()),
-            Component::Normal(part) => out.push(part),
-        }
-    }
-    out
-}
-
-/// Canonicalize the longest existing prefix of `path` (resolving symlinks) and
-/// re-append the components that don't exist yet. Lets worktree containment be
-/// checked even when the target's parent directory hasn't been created.
-fn canonicalize_nearest_existing(path: &Path) -> std::io::Result<PathBuf> {
-    let mut tail: Vec<std::ffi::OsString> = Vec::new();
-    let mut cur = path;
-    loop {
-        match std::fs::canonicalize(cur) {
-            Ok(mut real) => {
-                for part in tail.iter().rev() {
-                    real.push(part);
-                }
-                return Ok(real);
-            }
-            Err(e) => match (cur.file_name(), cur.parent()) {
-                (Some(name), Some(parent)) => {
-                    tail.push(name.to_os_string());
-                    cur = parent;
-                }
-                _ => return Err(e),
-            },
-        }
-    }
-}
 
 /// Validate and normalize a worktree path entered by the user.
 ///

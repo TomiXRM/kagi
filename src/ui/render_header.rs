@@ -61,6 +61,8 @@ impl KagiApp {
         );
         let el = menu_act!(el, cmds::TogglePrMode, "view.togglePrMode");
         let el = menu_act!(el, cmds::ShowGraph, "view.showGraph");
+        // Issue #352: command palette (Cmd/Ctrl+P).
+        let el = menu_act!(el, cmds::OpenCommandPalette, "view.commandPalette");
         let el = menu_act!(el, cmds::Fetch, "repo.fetch");
         let el = menu_act!(el, cmds::Pull, "repo.pull");
         let el = menu_act!(el, cmds::Push, "repo.push");

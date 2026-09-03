@@ -267,6 +267,12 @@ pub enum Msg {
     NoLocalBranches,
     NoOperationsYet,
 
+    // ── Command palette (issue #352) ─────────────────────────────────
+    /// Placeholder text in the palette's search box.
+    CommandPalettePlaceholder,
+    /// Shown when the query matches no command.
+    CommandPaletteNoResults,
+
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
     OpenedInFinder,
@@ -977,6 +983,10 @@ impl Msg {
             // ── Empty states ────────────────────────────────────────
             (En, NoLocalBranches) => "No local branches",
             (Ja, NoLocalBranches) => "ローカル branch がありません",
+            (En, CommandPalettePlaceholder) => "Search commands…",
+            (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
+            (En, CommandPaletteNoResults) => "No matching commands",
+            (Ja, CommandPaletteNoResults) => "一致するコマンドがありません",
             (En, NoOperationsYet) => "No operations yet",
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
 
@@ -1965,6 +1975,62 @@ pub fn worktree_path_error(e: &kagi_domain::plan::WorktreePathError) -> String {
         Empty => Msg::WorktreePathEmpty.t().to_string(),
         Exists(path) => worktree_exists_fmt(path),
     }
+}
+
+/// Japanese label for a command-registry id (issue #352, command palette).
+///
+/// Returns `None` for ids whose English label is a domain word that stays
+/// English in both languages per ADR-0048 (Fetch / Pull / Push / Cherry-pick /
+/// Revert / theme + language names), or for unknown ids — the caller then falls
+/// back to the registry's English `label`. Kept here (not in `commands.rs`)
+/// because the crate layering (ADR-0121) keeps this pure crate below the UI's
+/// command table, and translations belong with the rest of the i18n table.
+pub fn command_label_ja(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "app.about" => "kagi について",
+        "app.settings" => "設定…",
+        "app.quit" => "kagi を終了",
+        "file.newTab" => "新規タブ",
+        "file.closeTab" => "タブを閉じる",
+        "file.cloneRepository" => "リポジトリを clone…",
+        "file.openRepository" => "リポジトリを開く…",
+        "file.openInTerminal" => "リポジトリをターミナルで開く",
+        "file.connectRemote" => "リモートホストに接続…",
+        "file.refresh" => "リポジトリを再読み込み",
+        "view.zoomIn" => "拡大",
+        "view.zoomOut" => "縮小",
+        "view.zoomReset" => "実際のサイズ",
+        "view.fullScreen" => "フルスクリーンにする",
+        "view.toggleSidebar" => "サイドバーの表示切替",
+        "view.toggleTerminal" => "ターミナルの表示切替",
+        "view.toggleCommitDetails" => "commit 詳細の表示切替",
+        "view.toggleDiffView" => "diff 表示の切替",
+        "view.toggleEditorWorkspace" => "エディタワークスペースの切替",
+        "view.togglePrMode" => "Pull Request モード",
+        "view.showGraph" => "グラフモード",
+        "view.commandPalette" => "コマンドパレット…",
+        "repo.openInFinder" => "Finder で開く",
+        "branch.new" => "新規 branch…",
+        "branch.checkout" => "branch を checkout…",
+        "branch.rename" => "branch の名前を変更…",
+        "branch.delete" => "branch を削除…",
+        "commit.copyHash" => "commit ハッシュをコピー",
+        "commit.checkout" => "commit を checkout",
+        "commit.createBranch" => "commit から branch を作成…",
+        "commit.reset" => "HEAD を commit に reset…",
+        "commit.compareWorkingTree" => "作業ツリーと比較",
+        "window.minimize" => "最小化",
+        "window.zoom" => "ズーム",
+        "window.new" => "新規ウィンドウ",
+        "window.close" => "ウィンドウを閉じる",
+        "help.shortcuts" => "キーボードショートカット",
+        "help.documentation" => "ドキュメント",
+        "help.reportIssue" => "問題を報告",
+        // Domain words / proper nouns stay English (ADR-0048): repo.fetch,
+        // repo.pull, repo.push, commit.cherryPick, commit.revert, theme.*,
+        // lang.* — return None so the caller uses the English registry label.
+        _ => return None,
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

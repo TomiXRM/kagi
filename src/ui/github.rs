@@ -243,6 +243,7 @@ impl KagiApp {
             plan: std::sync::Arc::new(plan),
             error: None,
             number: pr.number,
+            head_sha: pr.head_sha.clone(),
             method,
             delete_branch,
         });
@@ -280,6 +281,7 @@ impl KagiApp {
             return;
         }
         let (number, method, delete_branch) = (modal.number, modal.method, modal.delete_branch);
+        let head_sha = modal.head_sha.clone();
         let before = plan.current.clone();
         let predicted = plan.predicted.clone();
         self.clear_pr_merge_modal();
@@ -294,9 +296,9 @@ impl KagiApp {
             let rp = repo_path.clone();
             let result = acx
                 .background_executor()
-                .spawn(
-                    async move { kagi_git::github::merge_pr(&rp, number, method, delete_branch) },
-                )
+                .spawn(async move {
+                    kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha)
+                })
                 .await;
             let _ = this.update(acx, |app, cx| {
                 match result {

@@ -106,6 +106,10 @@ pub struct PrMergeModal {
     pub plan: std::sync::Arc<OperationPlan>,
     pub error: Option<SharedString>,
     pub number: u64,
+    /// Head SHA captured when the plan was shown; passed to `gh pr merge` as
+    /// `--match-head-commit` so the merge is refused if the head branch moved
+    /// meanwhile (#347).
+    pub head_sha: String,
     pub method: kagi_git::github::MergeMethod,
     pub delete_branch: bool,
 }

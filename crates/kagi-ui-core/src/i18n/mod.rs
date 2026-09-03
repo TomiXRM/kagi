@@ -776,7 +776,8 @@ pub enum Msg {
     EditorWorkspaceTitle,
 
     // ── Repository owner-trust prompt (ADR-0160 / issue #310) ────
-    /// Trust-confirmation title: repo owned by another user (git2 path).
+    /// Trust-confirmation title: repo owned by another user (in-process
+    /// library open path — ADR-0160).
     TrustRepoTitle,
     /// Trust-confirmation body: why writes are blocked + what confirming does.
     TrustRepoBody,

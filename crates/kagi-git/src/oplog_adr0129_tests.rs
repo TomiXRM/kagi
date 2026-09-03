@@ -41,6 +41,10 @@ fn mixed_old_and_new_lines_parse_together() {
         PlanNote::Discard(DiscardNote::NothingSelected),
     ];
     let new_entry = OpLogEntry {
+        id: 0,
+        parent: None,
+        actor: Actor::Human,
+        worktree: None,
         timestamp: 1_752_000_000,
         op: "discard".to_string(),
         repo: "/tmp/repo".to_string(),
@@ -75,6 +79,10 @@ fn mixed_old_and_new_lines_parse_together() {
 #[test]
 fn structured_notes_serialize_as_plain_string_array() {
     let entry = OpLogEntry {
+        id: 0,
+        parent: None,
+        actor: Actor::Human,
+        worktree: None,
         timestamp: 1,
         op: "discard".to_string(),
         repo: "/r".to_string(),

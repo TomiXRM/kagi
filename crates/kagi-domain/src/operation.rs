@@ -135,6 +135,50 @@ pub enum Operation {
     },
 }
 
+impl Operation {
+    /// Short, stable slug used as the `op` field in the oplog (ADR-0149).
+    /// `Backend::run` records this so every write path names the op the same
+    /// way, regardless of caller (GUI / MCP / CLI).
+    pub fn oplog_name(&self) -> &'static str {
+        match self {
+            Operation::Commit { .. } => "commit",
+            Operation::MergeCommit { .. } => "merge-commit",
+            Operation::Checkout { .. } => "checkout",
+            Operation::CheckoutCommit { .. } => "checkout-commit",
+            Operation::CreateBranch { .. } => "create-branch",
+            Operation::CreateBranchWithCheckout { .. } => "create-branch",
+            Operation::CreateTag { .. } => "create-tag",
+            Operation::PushTag { .. } => "push-tag",
+            Operation::CreateWorktree { .. } => "create-worktree",
+            Operation::OpenWorktreeForBranch { .. } => "open-worktree",
+            Operation::StashPush { .. } => "stash-push",
+            Operation::StashApply { .. } => "stash-apply",
+            Operation::StashPop { .. } => "stash-pop",
+            Operation::CherryPick { .. } => "cherry-pick",
+            Operation::MergeBranch { .. } => "merge",
+            Operation::MergeIntoConflict { .. } => "merge",
+            Operation::MergeIntoBranch { .. } => "merge-into",
+            Operation::CheckoutTrackingBranch { .. } => "checkout-tracking",
+            Operation::SwitchToLatestBranch { .. } => "switch-to-latest",
+            Operation::Revert { .. } => "revert",
+            Operation::Pull => "pull",
+            Operation::Push => "push",
+            Operation::PullBranchFf { .. } => "pull",
+            Operation::PushBranch { .. } => "push",
+            Operation::SetUpstream { .. } => "set-upstream",
+            Operation::RenameBranch { .. } => "rename-branch",
+            Operation::UndoCommit => "undo",
+            Operation::Amend { .. } => "amend",
+            Operation::DeleteBranch { .. } => "delete-branch",
+            Operation::DeleteRemoteBranch { .. } => "delete-remote-branch",
+            Operation::ResetCurrentToHead { .. } => "reset",
+            Operation::ForceWithLeasePush => "force-with-lease-push",
+            Operation::RebaseCurrentOnto { .. } => "rebase",
+            Operation::Discard { .. } => "discard",
+        }
+    }
+}
+
 /// The successful result of executing an [`Operation`].
 #[derive(Debug, Clone)]
 pub enum OperationOutcome {

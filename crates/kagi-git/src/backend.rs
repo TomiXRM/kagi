@@ -17,6 +17,35 @@ use super::{
 pub struct Backend {
     repo: Repository,
     path: PathBuf,
+    /// Who is driving writes through this backend (ADR-0149 / #329). Recorded
+    /// on every oplog entry `run` writes. Defaults to [`Actor::Human`]; the
+    /// future MCP/CLI front-ends set `Mcp`/`Cli` via [`Backend::set_actor`].
+    actor: crate::oplog::Actor,
+}
+
+/// Map a `Backend::run` dispatch result into the oplog [`OpOutcome`] (ADR-0149).
+///
+/// A partially-applied discard (#281) becomes [`OpOutcome::Partial`]; any other
+/// `Ok` becomes [`OpOutcome::Success`] with the plan's predicted after-state;
+/// an `Err` becomes [`OpOutcome::Failed`]. Pure + `pub` so the mapping (notably
+/// the `is_partial` branch) is unit-testable without forcing a real repo
+/// failure.
+pub fn oplog_outcome_from(
+    result: &Result<OperationOutcome, GitError>,
+    predicted: &ops::StateSummary,
+) -> crate::oplog::OpOutcome {
+    match result {
+        Ok(OperationOutcome::Discard(d)) if d.is_partial() => crate::oplog::OpOutcome::Partial {
+            after: predicted.clone(),
+            error: d.error.clone().unwrap_or_default(),
+        },
+        Ok(_) => crate::oplog::OpOutcome::Success {
+            after: predicted.clone(),
+        },
+        Err(e) => crate::oplog::OpOutcome::Failed {
+            error: e.to_string(),
+        },
+    }
 }
 
 impl Backend {
@@ -45,11 +74,22 @@ impl Backend {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| path.to_path_buf());
 
-        Ok(Self { repo, path })
+        Ok(Self {
+            repo,
+            path,
+            actor: crate::oplog::Actor::Human,
+        })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Set the actor recorded on oplog entries written by [`Backend::run`]
+    /// (ADR-0149). The GUI leaves the default [`Actor::Human`]; MCP/CLI callers
+    /// set `Mcp`/`Cli` so the log shows who initiated each write.
+    pub fn set_actor(&mut self, actor: crate::oplog::Actor) {
+        self.actor = actor;
     }
 
     pub fn head_state(&self) -> Result<Head, GitError> {
@@ -610,8 +650,10 @@ impl Backend {
     /// (`plan → confirm → preflight → execute → verify` — ADR-0104):
     /// **every** caller that mutates the repository MUST go through `run`,
     /// so the preflight check (HEAD / stash-count unchanged since the plan
-    /// was built) cannot be bypassed. The oplog/toast/footer recording stays
-    /// with the UI's `record_op`; `run`'s job is the safety gate + dispatch.
+    /// was built) cannot be bypassed. As of ADR-0149 `run` ALSO writes the
+    /// oplog entry synchronously (one per op, `actor` from the backend), so
+    /// every write path is recorded; the UI's `record_op` handles only the
+    /// toast/footer/history-panel and no longer touches the oplog.
     ///
     /// `plan` must be a plan previously built via `plan(op)` and confirmed by
     /// the user (the confirm modal is the UI's responsibility). Operations
@@ -629,20 +671,32 @@ impl Backend {
         plan: &OperationPlan,
     ) -> Result<OperationOutcome, GitError> {
         // ── Preflight: refuse if the repo changed between plan and execute. ──
-        match op {
+        let preflight = match op {
             Operation::StashApply { .. } | Operation::StashPop { .. } => {
                 // Stash ops also verify the stash list hasn't shifted.
-                self.preflight_check_stash(plan, plan.stash_count_at_plan())?;
+                self.preflight_check_stash(plan, plan.stash_count_at_plan())
             }
             // Discard/DeleteBranch already re-plan in the legacy execute path;
             // keep a HEAD preflight for the rest. Commit is non-mutating of
             // HEAD in a way the preflight detects (it advances HEAD), so it is
             // also gated: a confirmed commit plan captures the pre-commit HEAD.
-            _ => self.preflight_check(plan)?,
+            _ => self.preflight_check(plan),
+        };
+        if let Err(e) = preflight {
+            // ADR-0149: a preflight refusal is still a failed attempt — record
+            // it so no write path has an unlogged hole, then propagate.
+            self.record_run_oplog(
+                op,
+                plan,
+                crate::oplog::OpOutcome::Failed {
+                    error: e.to_string(),
+                },
+            );
+            return Err(e);
         }
 
         // ── Dispatch (behaviour-identical to the former execute(op)). ──
-        match op {
+        let result: Result<OperationOutcome, GitError> = match op {
             Operation::Commit { message } => {
                 self.execute_commit(message).map(OperationOutcome::Commit)
             }
@@ -764,7 +818,39 @@ impl Backend {
             Operation::Discard { paths } => self
                 .execute_discard(plan, paths)
                 .map(OperationOutcome::Discard),
-        }
+        };
+
+        // ── Oplog (ADR-0149 / #329): record synchronously here so EVERY caller
+        // — GUI, MCP, CLI, headless, tests — produces exactly one entry per op.
+        // The UI's `record_op` no longer writes the oplog (no double-record).
+        let outcome = oplog_outcome_from(&result, &plan.predicted);
+        self.record_run_oplog(op, plan, outcome);
+
+        result
+    }
+
+    // (see free fn `oplog_outcome_from` below for the result → OpOutcome mapping)
+
+    /// Build and append the oplog entry for an op run through [`Backend::run`]
+    /// (ADR-0149). `before` comes from `plan.current`; `actor`/`worktree` from
+    /// this backend. Write failures are non-fatal (logged to stderr by
+    /// `append_oplog`), mirroring the previous UI behaviour.
+    fn record_run_oplog(
+        &self,
+        op: &Operation,
+        plan: &OperationPlan,
+        outcome: crate::oplog::OpOutcome,
+    ) {
+        let repo = self.path.display().to_string();
+        let entry = crate::oplog::OpLogEntry::new(
+            op.oplog_name(),
+            repo.clone(),
+            plan.current.clone(),
+            outcome,
+        )
+        .with_actor(self.actor)
+        .with_worktree(Some(repo));
+        let _ = crate::oplog::append_oplog(&entry);
     }
 
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {

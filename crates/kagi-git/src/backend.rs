@@ -1702,6 +1702,47 @@ impl Backend {
         ops::execute_amend(&self.repo, mode, message)
     }
 
+    /// Build the absorb distribution table (issue #345 / ADR-0151). `window` is
+    /// how many commits back from HEAD count as mutable targets
+    /// ([`ops::DEFAULT_ABSORB_WINDOW`] when the caller has no preference).
+    pub fn plan_absorb(&self, window: usize) -> Result<kagi_domain::absorb::AbsorbPlan, GitError> {
+        ops::plan_absorb(&self.repo, window)
+    }
+
+    /// Execute absorb and record the run in the oplog. Absorb is not part of the
+    /// `Operation` enum (its plan carries the whole distribution table), so —
+    /// unlike ops routed through [`Backend::run`] — it appends its own oplog
+    /// entry here so every caller records exactly one entry.
+    pub fn execute_absorb(
+        &self,
+        plan: &kagi_domain::absorb::AbsorbPlan,
+    ) -> Result<kagi_domain::absorb::AbsorbOutcome, GitError> {
+        let result = ops::execute_absorb(&self.repo, plan);
+        let outcome = match &result {
+            Ok(_) => {
+                let head = crate::resolve_head(&self.repo)
+                    .map(|h| h.display())
+                    .unwrap_or_default();
+                let dirty = crate::status::working_tree_status(&self.repo)
+                    .map(|s| ops::status_summary_display(&s))
+                    .unwrap_or_default();
+                crate::oplog::OpOutcome::Success {
+                    after: ops::StateSummary { head, dirty },
+                }
+            }
+            Err(e) => crate::oplog::OpOutcome::Failed {
+                error: e.to_string(),
+            },
+        };
+        let repo = self.path.display().to_string();
+        let entry =
+            crate::oplog::OpLogEntry::new("absorb", repo.clone(), plan.current.clone(), outcome)
+                .with_actor(self.actor)
+                .with_worktree(Some(repo));
+        let _ = crate::oplog::append_oplog(&entry);
+        result
+    }
+
     pub fn plan_delete_branch(&self, name: &str) -> Result<OperationPlan, GitError> {
         ops::plan_delete_branch(&self.repo, name)
     }

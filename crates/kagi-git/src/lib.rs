@@ -82,7 +82,6 @@ pub use message_gen::{
 pub use message_template::{assemble, parse_message, TemplateFields, TYPE_CHOICES};
 #[allow(unused_imports)]
 pub use oplog::{append_oplog, entry_to_json, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
-#[allow(unused_imports)]
 pub use ops::{
     branch_checked_out_worktree_path, default_tracking_branch_name, execute_amend,
     execute_checkout, execute_checkout_commit, execute_checkout_tracking_branch,
@@ -109,6 +108,10 @@ pub use ops::{
     create_snapshot, delete_snapshot, execute_restore_snapshot, list_snapshots,
     plan_restore_snapshot, preflight_restore_snapshot, prune_snapshots, snapshot_exists,
     verify_restore_snapshot, SnapshotEntry, DEFAULT_SNAPSHOT_CAP, SNAPSHOT_REF_PREFIX,
+};
+#[allow(unused_imports)]
+pub use ops::{
+    execute_absorb, plan_absorb, preflight_absorb, verify_absorb, DEFAULT_ABSORB_WINDOW,
 };
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};

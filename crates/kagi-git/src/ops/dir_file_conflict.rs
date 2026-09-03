@@ -120,9 +120,17 @@ pub fn preflight_dir_file_resolution(
 /// - **KeepFile**: remove every `path/…` child and the unmerged file entry, then
 ///   stage the file blob (OID + mode) at stage 0, so the tree keeps the file.
 ///
-/// No working-tree write happens for the index surgery (a kept symlink file side
-/// is never dereferenced, #298); the checkout of the resolved path is left to the
-/// caller's re-detection / continue, exactly as `conflict-save` does.
+/// After the index surgery the working tree is **reconciled** so it agrees with
+/// the index at `path` (#407): the losing namespace is removed from disk and the
+/// kept side is written back (a kept symlink file side is written as a symlink,
+/// never dereferenced — #298). The two namespaces cannot coexist,
+/// so leaving the working tree holding the other side would make `git status`
+/// report a spurious deletion + untracked leftover and break a later checkout.
+///
+/// A savepoint under `refs/kagi/snapshots/` is taken first (#408) — a real commit
+/// capturing worktree + index (`add -A`) so every removed blob (including the
+/// untracked directory-side children) stays referenced and gc-safe. Its id is
+/// the recovery handle recorded in the oplog.
 pub fn execute_dir_file_resolution(
     repo: &Repository,
     repo_path: &Path,
@@ -130,13 +138,34 @@ pub fn execute_dir_file_resolution(
 ) -> Result<(), GitError> {
     preflight_dir_file_resolution(repo, plan)?;
 
+    // #408: the resolution drops one namespace from the index and rewrites the
+    // working tree (removing the losing side's on-disk files). Take a savepoint
+    // FIRST so the operation is recoverable in git's own terms — mirrors the
+    // auto-snapshot `Backend::run` takes before any destructive op.
+    let recovery = match crate::ops::create_snapshot(
+        repo,
+        &format!(
+            "auto snapshot before conflict-dir-file:{} {}",
+            plan.choice.slug(),
+            plan.path.display()
+        ),
+    ) {
+        Ok(s) => format!("snapshot={} commit={}", s.id, s.commit),
+        Err(e) => {
+            // Non-fatal, matching `Backend::run` — a snapshot failure is logged
+            // but never blocks the user's operation.
+            eprintln!("kagi-git: dir-file snapshot failed (non-fatal): {}", e);
+            "snapshot=unavailable".to_string()
+        }
+    };
+
     let before = StateSummary {
         head: format!("dir-file conflict {}", plan.path.display()),
-        dirty: format!("choice={}", plan.choice.slug()),
+        dirty: format!("choice={}; {}", plan.choice.slug(), recovery),
     };
     let op_name = format!("conflict-dir-file:{}", plan.choice.slug());
 
-    let result = apply_to_index(repo, plan);
+    let result = apply_to_index(repo, plan).and_then(|()| reconcile_worktree(repo, plan));
 
     let outcome = match &result {
         Ok(()) => OpOutcome::Success {
@@ -146,7 +175,10 @@ pub fn execute_dir_file_resolution(
                     plan.choice.slug(),
                     plan.path.display()
                 ),
-                dirty: "staged (stage 0)".to_string(),
+                // Recovery handle: the savepoint plus the kept file OID. The
+                // dropped directory-side child OIDs are all referenced by the
+                // snapshot commit.
+                dirty: format!("staged (stage 0); file_oid={}; {}", plan.file_oid, recovery),
             },
         },
         Err(e) => OpOutcome::Failed {
@@ -225,6 +257,130 @@ fn apply_to_index(repo: &Repository, plan: &DirFilePlan) -> Result<(), GitError>
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))
+}
+
+/// Reconcile the working tree with the index at the resolved path (#407): remove
+/// the losing namespace from disk, then materialize the kept side — a direct blob
+/// write for the file side, `checkout_index` for the directory children. Without
+/// this the index says `path` is a file (or directory) while the working tree
+/// still holds the other namespace — a spurious deletion + untracked leftover
+/// that a later checkout cannot clear.
+///
+/// The savepoint taken in [`execute_dir_file_resolution`] already captured the
+/// removed content, so the on-disk removal here is recoverable.
+fn reconcile_worktree(repo: &Repository, plan: &DirFilePlan) -> Result<(), GitError> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("bare repository has no working tree".to_string()))?;
+    let abs = workdir.join(&plan.path);
+    let on_disk = std::fs::symlink_metadata(&abs).ok();
+
+    match plan.choice {
+        DirFileChoice::KeepFile => {
+            // Losing side is the directory: remove it if present on disk, then
+            // write the kept file directly from its blob. `checkout_index` is
+            // unreliable here — HEAD's tree still records `path` as a *tree*, so
+            // the checkout sees a D/F clash and skips writing the blob — so the
+            // single known file side is written by hand (symlink-safe, #298).
+            if on_disk.as_ref().is_some_and(|m| m.is_dir()) {
+                std::fs::remove_dir_all(&abs).map_err(|e| {
+                    GitError::Other(format!(
+                        "reconcile: remove directory {} failed: {}",
+                        plan.path.display(),
+                        e
+                    ))
+                })?;
+            }
+            write_file_side(repo, &abs, plan)
+        }
+        DirFileChoice::KeepDirectory => {
+            // Losing side is the file (regular or symlink): remove it if present,
+            // then write the kept directory children from the index.
+            if on_disk.as_ref().is_some_and(|m| !m.is_dir()) {
+                std::fs::remove_file(&abs).map_err(|e| {
+                    GitError::Other(format!(
+                        "reconcile: remove file {} failed: {}",
+                        plan.path.display(),
+                        e
+                    ))
+                })?;
+            }
+            checkout_paths(repo, &plan.dir_children)
+        }
+    }
+}
+
+/// Write the kept file side directly to `abs` from its blob, preserving the git
+/// mode: a symlink (0o120000) is recreated as a symlink (never dereferenced,
+/// #298), an executable (0o100755) keeps its exec bit, everything else is a plain
+/// file. Parent dirs are created as needed.
+fn write_file_side(repo: &Repository, abs: &Path, plan: &DirFilePlan) -> Result<(), GitError> {
+    let blob = repo.find_blob(plan.file_oid).map_err(|e| {
+        GitError::Other(format!(
+            "reconcile: blob {} lookup failed: {}",
+            plan.file_oid,
+            e.message()
+        ))
+    })?;
+    let content = blob.content().to_vec();
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            GitError::Other(format!(
+                "reconcile: mkdir {} failed: {}",
+                parent.display(),
+                e
+            ))
+        })?;
+    }
+
+    if plan.file_mode == 0o120000 {
+        // Symlink: the blob bytes ARE the link target.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let target = PathBuf::from(std::ffi::OsStr::from_bytes(&content));
+            // Remove any existing node first so symlink() does not fail on EEXIST.
+            let _ = std::fs::remove_file(abs);
+            std::os::unix::fs::symlink(&target, abs).map_err(|e| {
+                GitError::Other(format!(
+                    "reconcile: symlink {} failed: {}",
+                    abs.display(),
+                    e
+                ))
+            })?;
+            return Ok(());
+        }
+    }
+
+    std::fs::write(abs, &content).map_err(|e| {
+        GitError::Other(format!("reconcile: write {} failed: {}", abs.display(), e))
+    })?;
+    #[cfg(unix)]
+    if plan.file_mode == 0o100755 {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(abs, std::fs::Permissions::from_mode(0o755));
+    }
+    Ok(())
+}
+
+/// `checkout_index` restricted to `paths`, force + `update_index(false)` so the
+/// working tree is rewritten from the (already-written) index without touching
+/// the staged state — the same shape `ops::discard` uses (discard.rs). Used for
+/// the directory side (KeepDirectory), whose children can be many and nested.
+fn checkout_paths(repo: &Repository, paths: &[PathBuf]) -> Result<(), GitError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.force();
+    cb.recreate_missing(true);
+    cb.update_index(false);
+    cb.disable_pathspec_match(true);
+    for p in paths {
+        cb.path(p);
+    }
+    repo.checkout_index(None, Some(&mut cb))
+        .map_err(|e| GitError::Other(format!("reconcile: checkout_index failed: {}", e.message())))
 }
 
 /// Local byte→path (Unix-faithful) copy for reading child entry paths.

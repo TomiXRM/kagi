@@ -8,6 +8,7 @@
 // #[macro_use] keeps it available unqualified crate-wide, as before.
 #[macro_use]
 extern crate kagi_ui_core;
+mod cli_main;
 mod headless;
 mod shell_env;
 mod single_instance;
@@ -86,6 +87,14 @@ fn main() {
 
     // Collect CLI arguments (skip argv[0]).
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // ── Headless CLI (#330) ──────────────────────────────────
+    // If argv[1] is a known subcommand (plan/confirm/status/oplog), run the
+    // agent-facing CLI and exit before any GUI bootstrap. Everything else falls
+    // through to the normal window launch below.
+    if cli_main::is_cli_subcommand(&args) {
+        std::process::exit(cli_main::dispatch(&args));
+    }
 
     // W9-THEME / ADR-0036: resolve the active colour theme before anything
     // renders.  Priority: KAGI_THEME env → ~/.kagi/settings.json → default

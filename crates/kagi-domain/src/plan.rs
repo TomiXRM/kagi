@@ -383,4 +383,42 @@ impl OperationPlan {
     pub fn worktree_digest(&self) -> Option<crate::status::WorktreeDigest> {
         self.worktree_digest
     }
+
+    /// A content-derived id for this plan (#330). Deterministic across process
+    /// runs: it hashes exactly the inputs whose change would invalidate the
+    /// plan — the operation identity (title, which encodes op kind + targets),
+    /// the HEAD **including its target SHA** (so a new commit shifts the id even
+    /// though the branch name is unchanged), the stash count, and the worktree
+    /// classification digest. The `kagi confirm` CLI re-plans and compares this
+    /// id; a mismatch means the repo moved between plan and confirm (TOCTOU),
+    /// so the id itself is the staleness check (same idea as ADR-0147's digest).
+    ///
+    /// v1 uses `DefaultHasher` (SipHash, fixed keys — stable across processes on
+    /// the same target). The schema is UNSTABLE — see `docs/plan-json.md`.
+    pub fn plan_id(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        // Operation identity: title encodes op kind + targets (ADR-0129).
+        self.title.message_en().hash(&mut h);
+        // HEAD at plan — branch AND target SHA both matter for staleness.
+        match &self.head_at_plan {
+            Head::Attached { branch, target } => {
+                "A".hash(&mut h);
+                branch.hash(&mut h);
+                target.hash(&mut h);
+            }
+            Head::Detached { target } => {
+                "D".hash(&mut h);
+                target.hash(&mut h);
+            }
+            Head::Unborn { branch } => {
+                "U".hash(&mut h);
+                branch.hash(&mut h);
+            }
+        }
+        self.stash_count_at_plan.hash(&mut h);
+        self.worktree_digest.map(|d| d.0).hash(&mut h);
+        self.destructive.hash(&mut h);
+        format!("{:016x}", h.finish())
+    }
 }

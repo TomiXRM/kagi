@@ -1632,13 +1632,13 @@ impl Backend {
             .unwrap_or_default()
     }
 
-    /// Local ruleset findings for a candidate branch `name` — for the
-    /// branch-create modal's live badge. Cache-only.
+    /// Live-badge ruleset findings for candidate branch `name`: cache-only,
+    /// keyed on the current branch (never the unfetched candidate), #401.
     pub fn ruleset_branch_findings(&self, name: &str) -> Vec<kagi_domain::ruleset::Finding> {
-        match self.ruleset_cached(name).and_then(|s| s.active().cloned()) {
-            Some(rs) => rs.validate_branch_create(name),
-            None => Vec::new(),
-        }
+        self.current_branch_name()
+            .and_then(|b| self.ruleset_cached(&b).and_then(|s| s.active().cloned()))
+            .map(|rs| rs.validate_branch_create(name))
+            .unwrap_or_default()
     }
 
     /// Fetch a single remote branch's refspec (`"<remote>/<branch>"`,

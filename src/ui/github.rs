@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use gpui::{Context, SharedString};
+use gpui::{AppContext, Context, SharedString};
 use kagi_domain::github::PullRequest;
 
 use super::i18n::{self, Msg};
@@ -264,6 +264,12 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        // Concurrency gate (#402, bug class #283–#289): a PR merge is a write
+        // op like any other, so it must take the single in-flight latch and
+        // route completion through the stale-tab-aware shell.
+        if self.reject_if_busy(cx) {
+            return;
+        }
         // Defence in depth: never execute a blocked plan (the button is
         // hidden too, but the Enter-to-confirm path shares this method).
         if !plan.blockers.is_empty() {
@@ -285,6 +291,7 @@ impl KagiApp {
         let before = plan.current.clone();
         let predicted = plan.predicted.clone();
         self.clear_pr_merge_modal();
+        self.busy_op = Some("pr-merge");
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
             "{} #{}…",
             Msg::PrModeMerge.t(),
@@ -292,60 +299,53 @@ impl KagiApp {
         )));
         cx.notify();
 
-        cx.spawn(async move |this, acx| {
-            let rp = repo_path.clone();
-            let result = acx
-                .background_executor()
-                .spawn(async move {
-                    kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha)
-                })
-                .await;
-            let _ = this.update(acx, |app, cx| {
-                match result {
-                    Ok(out) => {
-                        klog!("executed: pr-merge #{}", number);
-                        app.record_op_persist(
-                            "pr-merge",
-                            before.clone(),
-                            OpOutcome::Success {
-                                after: predicted.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.push_toast(
-                            ToastKind::Info,
-                            SharedString::from(if out.is_empty() {
-                                format!("{} #{}", Msg::PrModeMergeDone.t(), number)
-                            } else {
-                                out
-                            }),
-                            cx,
-                        );
-                        // The merged PR leaves the open list, and the base
-                        // branch moved — refresh both views.
-                        app.pr_mode_close_tab_for(number, cx);
-                        app.refresh_github_prs(cx);
-                        app.fetch_async(true, cx);
-                    }
-                    Err(e) => {
-                        let error = e.to_string();
-                        klog!("pr-merge failed: {}", error);
-                        app.record_op_persist(
-                            "pr-merge",
-                            before.clone(),
-                            OpOutcome::Failed {
-                                error: error.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.push_toast(ToastKind::Error, SharedString::from(error), cx);
-                    }
+        let rp = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha)
+        });
+        self.finish_op_on_main(cx, task, move |app, result, cx| {
+            match result {
+                Ok(out) => {
+                    klog!("executed: pr-merge #{}", number);
+                    app.record_op_persist(
+                        "pr-merge",
+                        before.clone(),
+                        OpOutcome::Success {
+                            after: predicted.clone(),
+                        },
+                        &repo_path,
+                        cx,
+                    );
+                    app.push_toast(
+                        ToastKind::Info,
+                        SharedString::from(if out.is_empty() {
+                            format!("{} #{}", Msg::PrModeMergeDone.t(), number)
+                        } else {
+                            out
+                        }),
+                        cx,
+                    );
+                    // The merged PR leaves the open list, and the base
+                    // branch moved — refresh both views.
+                    app.pr_mode_close_tab_for(number, cx);
+                    app.refresh_github_prs(cx);
+                    app.fetch_async(true, cx);
                 }
-                cx.notify();
-            });
-        })
-        .detach();
+                Err(e) => {
+                    let error = e.to_string();
+                    klog!("pr-merge failed: {}", error);
+                    app.record_op_persist(
+                        "pr-merge",
+                        before.clone(),
+                        OpOutcome::Failed {
+                            error: error.clone(),
+                        },
+                        &repo_path,
+                        cx,
+                    );
+                    app.push_toast(ToastKind::Error, SharedString::from(error), cx);
+                }
+            }
+        });
     }
 }

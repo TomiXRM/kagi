@@ -34,6 +34,9 @@ pub mod ecosystem;
 pub mod editor_fs_ops;
 #[cfg(test)]
 mod env_tests;
+// ADR-0166: macOS-only in-process GUI E2E PoC (VisualTestAppContext).
+#[cfg(all(test, target_os = "macos"))]
+mod gui_e2e_poc;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 mod diff_selection;
 pub mod editor_tree_menu;

@@ -551,12 +551,16 @@ pub(crate) fn render_diff_list<V: 'static>(
     // render of an open diff pane (index pairs only — content is shared).
     let split = super::theme::diff_split();
     let srows = split.then(|| std::sync::Arc::new(super::diff_split::split_rows(&view.rows)));
-    // #349 move detection: computed once per open diff pane, shared across rows.
-    let moved = std::sync::Arc::new(if split {
-        super::diff_split::moved_rows(&view.rows)
+    // R1: one selection surface per diff (title+count identity). Also the
+    // memoization key for move detection below.
+    let sel_key = super::diff_selection::surface_key(view.title.as_ref(), view.rows.len());
+    // #349 move detection: memoized per diff identity (issue #399) — this
+    // helper runs every frame, so the detection itself must not.
+    let moved = if split {
+        super::diff_split::moved_rows_cached(sel_key, &view.rows)
     } else {
-        std::collections::HashSet::new()
-    });
+        std::sync::Arc::new(std::collections::HashSet::new())
+    };
     let row_count = srows
         .as_ref()
         .map(|s| s.len())
@@ -570,8 +574,6 @@ pub(crate) fn render_diff_list<V: 'static>(
     // Already an `Arc` on the view — this is a refcount bump, not a copy.
     let rows = view.rows;
     let rows_for_list = rows.clone();
-    // R1: one selection surface per diff (title+count identity).
-    let sel_key = super::diff_selection::surface_key(view.title.as_ref(), rows.len());
 
     // ADR-0124: unified ⇄ side-by-side toggle. The label names the mode the
     // click switches TO; the flag is global (kagi-ui-core atomic) and

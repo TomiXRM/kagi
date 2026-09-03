@@ -408,6 +408,7 @@ fn symlink_impl(_target: &Path, _link: &Path) -> Result<(), GitError> {
 /// process PATH already carries the login-shell PATH (see `shell_env.rs`), so
 /// tools like `npm` resolve.
 fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
+    use std::io::Read;
     use std::process::{Command, Stdio};
 
     // Whitespace argv split — no shell, so there is no quoting/expansion.
@@ -431,20 +432,73 @@ fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
         .spawn()
         .map_err(|e| GitError::Other(format!("failed to start '{program}': {e}")))?;
 
-    let Some(status) =
-        crate::cli::wait_or_kill(&mut child, Duration::from_secs(COMMAND_TIMEOUT_SECS))
-    else {
+    // Drain stdout and stderr on dedicated threads so a command that emits more
+    // than one pipe buffer (~64 KiB — e.g. `npm ci`) can never deadlock in
+    // write(2) while we wait for it to exit (issues #294/#403): the readers keep
+    // draining regardless of what the wait loop is doing. Mirrors `cli::run_git`.
+    // ponytail: kills only the direct child, not its process group — a `command`
+    // whose grandchildren outlive it (node/docker) can still leak. Killing the
+    // group is a platform-specific follow-up; the deadlock is the P1 here.
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = out_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    // Killing on timeout closes the pipes, which unblocks the reader threads so
+    // they join cleanly.
+    let status = crate::cli::wait_or_kill(&mut child, Duration::from_secs(COMMAND_TIMEOUT_SECS));
+    let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
+    let stderr = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
+
+    let Some(status) = status else {
         return Err(GitError::Other(format!(
-            "command '{run}' timed out after {COMMAND_TIMEOUT_SECS}s and was killed"
+            "command '{run}' timed out after {COMMAND_TIMEOUT_SECS}s and was killed{}",
+            output_tail(&stdout, &stderr)
         )));
     };
     if status.success() {
         Ok(())
     } else {
         Err(GitError::Other(format!(
-            "command '{run}' exited with status {}",
-            status.code().unwrap_or(-1)
+            "command '{run}' exited with status {}{}",
+            status.code().unwrap_or(-1),
+            output_tail(&stdout, &stderr)
         )))
+    }
+}
+
+/// The tail of a failed command's output (stderr, else stdout) for the error /
+/// oplog line — the diagnostic that was previously discarded (issue #403).
+/// Empty when both streams were empty.
+fn output_tail(stdout: &str, stderr: &str) -> String {
+    let src = if !stderr.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+    let trimmed = src.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    const MAX_CHARS: usize = 800;
+    let count = trimmed.chars().count();
+    if count > MAX_CHARS {
+        let tail: String = trimmed.chars().skip(count - MAX_CHARS).collect();
+        format!(" — output tail: …{tail}")
+    } else {
+        format!(" — output: {trimmed}")
     }
 }
 
@@ -729,6 +783,47 @@ run = "docker compose down"
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    // ── issue #403: a command that fills the pipe buffer must not deadlock ──
+
+    #[test]
+    #[cfg(unix)]
+    fn do_command_drains_large_output_without_deadlock() {
+        let (_root, main, wt, _outside) = containment_fixture();
+        let env = StepEnv {
+            main_root: main,
+            worktree: wt,
+        };
+        // `seq 1 200000` writes ~1.2 MB to stdout, far exceeding the ~64 KiB pipe
+        // buffer. Without a concurrent drain the child blocks in write(2) and
+        // wait_or_kill only returns after the 600s timeout (issue #403). With the
+        // reader threads it finishes near-instantly.
+        let start = std::time::Instant::now();
+        do_command(&env, "seq 1 200000").expect("large-output command must complete, not deadlock");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "command deadlocked on a full pipe buffer (issue #403)"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn do_command_reports_output_tail_on_failure() {
+        let (_root, main, wt, _outside) = containment_fixture();
+        let env = StepEnv {
+            main_root: main,
+            worktree: wt,
+        };
+        // `ls` on a missing path exits non-zero and writes to stderr; the tail
+        // must reach the error (issue #403: output was previously discarded).
+        let err = do_command(&env, "ls /no/such/path/kagi-403").unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("exited with status"), "got: {msg}");
+        assert!(
+            msg.contains("output"),
+            "the captured tail must surface: {msg}"
+        );
     }
 
     // ── issue #393: trust / execute bind to the exact plan-shown content ──

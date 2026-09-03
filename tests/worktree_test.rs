@@ -622,8 +622,9 @@ fn remove_worktree_only_keeps_branch() {
     let plan = plan_remove_worktree(&repo, "wt-rm", false).expect("plan");
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
 
-    let backups = execute_remove_worktree(&repo, &plan, "wt-rm", false).expect("execute");
-    assert!(backups.is_empty(), "clean worktree needs no backup");
+    let outcome = execute_remove_worktree(&repo, &plan, "wt-rm", false).expect("execute");
+    assert!(outcome.backups.is_empty(), "clean worktree needs no backup");
+    assert!(outcome.error.is_none(), "a clean remove is not partial");
     assert!(!wt.exists(), "worktree dir must be gone");
     assert!(
         repo.find_branch("wt-rm", git2::BranchType::Local).is_ok(),
@@ -824,6 +825,114 @@ fn remove_never_deletes_repo_root() {
     assert!(
         tmp.path().join("README.md").exists(),
         "the repository root must never be deleted"
+    );
+}
+
+/// issue #405: a worktree dirtied AFTER the plan (the TOCTOU window) must be
+/// re-detected at execute time and refused — the plan's dirty blocker is
+/// point-in-time. Mutation-verify: dropping the execute-time re-check deletes
+/// the dirty worktree (work lost).
+#[test]
+fn remove_refuses_worktree_dirtied_after_plan() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    let wt = add_worktree(tmp.path(), "wt-race");
+
+    let plan = plan_remove_worktree(&repo, "wt-race", false).expect("plan");
+    assert!(plan.blockers.is_empty(), "clean at plan time");
+
+    // Dirty it only now (untracked = dirty), after the plan was built.
+    write_file(&wt, "raced.txt", "uncommitted work\n");
+
+    assert!(
+        execute_remove_worktree(&repo, &plan, "wt-race", false).is_err(),
+        "execute must re-check dirt and refuse (issue #405 TOCTOU)"
+    );
+    assert!(wt.exists(), "the raced-dirty worktree must survive");
+    assert!(
+        wt.join("raced.txt").exists(),
+        "the uncommitted work must not be deleted"
+    );
+}
+
+/// issue #405: a worktree LOCKED after the plan is likewise re-detected and
+/// refused at execute time (lock = "do not touch this").
+#[test]
+fn remove_refuses_worktree_locked_after_plan() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    let wt = add_worktree(tmp.path(), "wt-race2");
+
+    let plan = plan_remove_worktree(&repo, "wt-race2", false).expect("plan");
+    assert!(plan.blockers.is_empty(), "unlocked at plan time");
+
+    // Lock it only now, after the plan was built.
+    git(tmp.path(), &["worktree", "lock", wt.to_str().unwrap()]);
+
+    assert!(
+        execute_remove_worktree(&repo, &plan, "wt-race2", false).is_err(),
+        "execute must re-check the lock and refuse (issue #405 TOCTOU)"
+    );
+    assert!(wt.exists(), "a locked worktree must survive");
+}
+
+/// issue #391: a `git worktree repair` that cannot fix a link must NOT be
+/// reported as success. Moving main dangles the worktree's `.git` file; making
+/// that file immutable means repair cannot rewrite it, so `git worktree repair`
+/// exits non-zero. Before the fix `run_git(...)?` ignored `out.status` and
+/// returned `Ok(())`, recording a false Success in the oplog (same class as
+/// #296). macOS-only: it uses `chflags uchg` for a truly unwritable file
+/// (a read-only mode alone does not stop git on macOS; Linux would use
+/// `chattr +i`, which needs privileges).
+#[test]
+#[cfg(target_os = "macos")]
+fn repair_reports_failure_instead_of_false_success() {
+    let base = TempDir::new().unwrap();
+    let main1 = base.path().join("main");
+    std::fs::create_dir(&main1).unwrap();
+    git(&main1, &["init", "-q", "-b", "main", "."]);
+    git(&main1, &["config", "user.name", "Test"]);
+    git(&main1, &["config", "user.email", "test@example.com"]);
+    git(&main1, &["config", "commit.gpgsign", "false"]);
+    write_file(&main1, "README.md", "# t\n");
+    git(&main1, &["add", "README.md"]);
+    git(&main1, &["commit", "-qm", "init"]);
+
+    let wt = base.path().join("wt-broken");
+    git(
+        &main1,
+        &["worktree", "add", "-b", "feat", wt.to_str().unwrap()],
+    );
+
+    // Move main → the linked worktree's `.git` file now dangles and needs repair.
+    let main2 = base.path().join("main-moved");
+    std::fs::rename(&main1, &main2).unwrap();
+
+    // Make the worktree `.git` file immutable so repair cannot rewrite it → git
+    // exits non-zero.
+    let dotgit = wt.join(".git");
+    let chflags = |flag: &str| {
+        Command::new("chflags")
+            .args([flag, dotgit.to_str().unwrap()])
+            .status()
+            .expect("chflags")
+            .success()
+    };
+    assert!(chflags("uchg"), "chflags uchg failed");
+
+    let repo = Repository::open(&main2).expect("open moved main");
+    let plan = plan_repair_worktrees(&repo).expect("plan");
+    let res = execute_repair_worktrees(&repo, &plan);
+
+    // Clear the immutable flag so the TempDir can be cleaned up.
+    assert!(chflags("nouchg"), "chflags nouchg failed");
+
+    let err = res.expect_err(
+        "a repair that cannot fix the link must return Err, not a false Success (issue #391)",
+    );
+    assert!(
+        format!("{err:?}").contains("repair failed"),
+        "the error must name the repair failure and carry git's stderr: {err:?}"
     );
 }
 

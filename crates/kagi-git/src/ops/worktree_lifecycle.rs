@@ -242,15 +242,18 @@ pub fn plan_remove_worktree(
 /// content (defensive; the plan already blocks dirt) → containment-checked
 /// directory delete → prune admin entry → optionally delete the branch → verify.
 ///
-/// Returns the ODB backups (empty for the normal clean path) so the caller can
-/// record them in the oplog as a recovery handle — no work is ever lost even if
-/// a race made the worktree dirty after planning.
+/// Returns a [`DiscardOutcome`] carrying the ODB backups (empty for the normal
+/// clean path) so the caller records them in the oplog as a recovery handle. A
+/// failure *after* the directory delete began still returns `Ok` with
+/// [`DiscardOutcome::error`] set (issue #413, mirroring `execute_discard`) — the
+/// backup blob SHAs are the user's only handle on any raced-in uncommitted
+/// content, so they must never be dropped by a bare `Err`.
 pub fn execute_remove_worktree(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,
     delete_branch: bool,
-) -> Result<Vec<DiscardBackup>, GitError> {
+) -> Result<DiscardOutcome, GitError> {
     if !plan.blockers.is_empty() {
         return Err(GitError::Other(format!(
             "remove-worktree refused: plan has {} blocker(s)",
@@ -268,6 +271,27 @@ pub fn execute_remove_worktree(
         .find_worktree(name)
         .map_err(|e| GitError::Other(format!("worktree '{}' not found: {}", name, e.message())))?;
     let wt_path = wt.path().to_path_buf();
+
+    // issue #405: close the plan→execute TOCTOU. The plan's dirty/locked blockers
+    // are point-in-time and `preflight` only inspects the MAIN repo, so a worktree
+    // that turned dirty or got locked since planning would otherwise be deleted
+    // anyway. Re-detect on the LINKED worktree now and refuse — the same
+    // execute-time re-check `ops/branch.rs` already does ("the world may have
+    // changed since planning"). This runs BEFORE any pre_remove command or delete.
+    let (_branch_now, dirt_now) = worktree_branch_and_dirt(&wt);
+    if let Some(summary) = dirt_now {
+        return Err(GitError::Other(format!(
+            "worktree '{}' became dirty since planning — refusing to remove (no --force): {}",
+            wt_path.display(),
+            summary
+        )));
+    }
+    if matches!(wt.is_locked(), Ok(WorktreeLockStatus::Locked(_))) {
+        return Err(GitError::Other(format!(
+            "worktree '{}' was locked since planning — refusing to remove",
+            wt_path.display()
+        )));
+    }
 
     // issue #341: run the typed pre_remove steps as a precondition of deletion.
     // A failed, untrusted, or headless-blocked command returns Err here — BEFORE
@@ -292,6 +316,18 @@ pub fn execute_remove_worktree(
     // before the delete so nothing is ever lost (mirrors the discard order).
     let backups = odb_backup_worktree(repo, &wt_path)?;
 
+    // From here the working directory may be partly deleted. issue #413: every
+    // fallible step below returns the backups inside a PARTIAL `DiscardOutcome`
+    // instead of a bare `Err`, so the ODB backup blob SHAs always reach the oplog
+    // as a recovery handle (they were dropped on every error path before).
+    let partial = |err: String| -> Result<DiscardOutcome, GitError> {
+        Ok(DiscardOutcome {
+            backups: backups.clone(),
+            unverified: vec![wt_path.display().to_string()],
+            error: Some(err),
+        })
+    };
+
     // Detect the branch before deleting the directory (needs the linked repo).
     let branch: Option<String> = Repository::open(&wt_path).ok().and_then(|r| {
         r.head()
@@ -300,38 +336,41 @@ pub fn execute_remove_worktree(
     });
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
-    remove_worktree_dir_checked(&main_workdir, &wt_path)?;
+    if let Err(e) = remove_worktree_dir_checked(&main_workdir, &wt_path) {
+        return partial(e.to_string());
+    }
 
     // Prune the now-orphaned admin entry.
     let mut opts = WorktreePruneOptions::new();
     opts.valid(true).working_tree(true);
-    wt.prune(Some(&mut opts))
-        .map_err(|e| GitError::Other(format!("worktree prune failed: {}", e.message())))?;
+    if let Err(e) = wt.prune(Some(&mut opts)) {
+        return partial(format!("worktree prune failed: {}", e.message()));
+    }
 
     if delete_branch {
         if let Some(ref b) = branch {
             // Ref-only, force=false: an unmerged branch errors instead of losing
             // commits. The worktree is already gone, so surface it but succeed.
             if let Ok(mut branch_ref) = repo.find_branch(b, git2::BranchType::Local) {
-                branch_ref.delete().map_err(|e| {
-                    GitError::Other(format!(
+                if let Err(e) = branch_ref.delete() {
+                    return partial(format!(
                         "worktree removed, but branch '{}' delete failed: {}",
                         b,
                         e.message()
-                    ))
-                })?;
+                    ));
+                }
             }
         }
     }
 
     // Verify the admin entry is gone.
     if repo.find_worktree(name).is_ok() {
-        return Err(GitError::Other(format!(
+        return partial(format!(
             "worktree '{}' still registered after remove — unexpected state",
             name
-        )));
+        ));
     }
-    Ok(backups)
+    Ok(DiscardOutcome::complete(backups))
 }
 
 /// Write every uncommitted file in the worktree at `wt_path` into the MAIN
@@ -609,13 +648,108 @@ pub fn plan_repair_worktrees(repo: &Repository) -> Result<OperationPlan, GitErro
     )
 }
 
+/// Registered worktrees whose working directory still exists but whose admin
+/// link does not resolve — i.e. repair should have fixed them but did not. A
+/// worktree whose directory is *gone* is prunable, not repairable, so it is
+/// excluded (repair legitimately leaves those). Used as the repair verify step.
+fn unrepaired_worktrees(repo: &Repository) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(names) = repo.worktrees() else {
+        return out;
+    };
+    for name in names.iter().filter_map(|r| r.ok().flatten()) {
+        if let Ok(wt) = repo.find_worktree(name) {
+            if wt.path().exists() && wt.validate().is_err() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
 /// Repair worktree links via `git worktree repair` (libgit2 has no equivalent).
+///
+/// `git worktree repair` returns a non-zero exit when it cannot fix a link
+/// (read-only `.git` file, unresolved parent, permissions) — and `run_git`
+/// surfaces that in `out.status`, not as `Err` (issue #391, same class as #296).
+/// It can also exit 0 having repaired only *some* links, so the exit check is
+/// paired with a verify pass, exactly as `execute_prune_worktrees` verifies.
 pub fn execute_repair_worktrees(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
     preflight_check(repo, plan)?;
     let repo_dir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
         .to_path_buf();
-    run_git(&repo_dir, &["worktree", "repair"])?;
+    let out = run_git(&repo_dir, &["worktree", "repair"])?;
+    if out.status != 0 {
+        return Err(GitError::Other(format!(
+            "worktree repair failed (exit {}): {}",
+            out.status,
+            out.stderr.trim()
+        )));
+    }
+    // Verify: a repair that exited 0 may still have left links unrepaired.
+    let unrepaired = unrepaired_worktrees(repo);
+    if !unrepaired.is_empty() {
+        return Err(GitError::Other(format!(
+            "worktree repair left {} link(s) unrepaired: {}",
+            unrepaired.len(),
+            unrepaired.join(", ")
+        )));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", dir)
+            .env("GIT_AUTHOR_NAME", "T")
+            .env("GIT_AUTHOR_EMAIL", "t@e")
+            .env("GIT_COMMITTER_NAME", "T")
+            .env("GIT_COMMITTER_EMAIL", "t@e")
+            .status()
+            .expect("spawn git")
+            .success();
+        assert!(ok, "git {args:?} failed");
+    }
+
+    /// issue #413: the ODB backup blob SHA is a REAL, recoverable object in the
+    /// MAIN repo's ODB — i.e. the recovery handle the oplog records actually
+    /// resolves to the raced-in content, not a dangling name.
+    #[test]
+    fn odb_backup_worktree_returns_recoverable_blob() {
+        let base = tempfile::tempdir().unwrap();
+        let main = base.path().join("main");
+        std::fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main", "."]);
+        std::fs::write(main.join("README.md"), "x\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-qm", "init"]);
+        let wt = base.path().join("wt");
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
+        );
+        // Dirty the worktree with a known-content untracked file (the race #413
+        // guards: content present at execute that the plan did not see).
+        std::fs::write(wt.join("scratch.txt"), "raced work\n").unwrap();
+
+        let repo = Repository::open(&main).unwrap();
+        let backups = odb_backup_worktree(&repo, &wt).expect("backup");
+        assert_eq!(backups.len(), 1, "the untracked file must be backed up");
+        assert_eq!(backups[0].path, "scratch.txt");
+        let oid = git2::Oid::from_str(&backups[0].blob).unwrap();
+        let blob = repo
+            .find_blob(oid)
+            .expect("backup blob SHA must resolve in the main ODB (issue #413)");
+        assert_eq!(blob.content(), b"raced work\n");
+    }
 }

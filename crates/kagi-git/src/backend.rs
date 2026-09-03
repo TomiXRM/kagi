@@ -1378,7 +1378,7 @@ impl Backend {
         plan: &OperationPlan,
         name: &str,
         delete_branch: bool,
-    ) -> Result<Vec<ops::DiscardBackup>, GitError> {
+    ) -> Result<DiscardOutcome, GitError> {
         ops::execute_remove_worktree(&self.repo, plan, name, delete_branch)
     }
 

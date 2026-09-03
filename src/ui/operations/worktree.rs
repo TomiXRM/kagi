@@ -330,6 +330,13 @@ impl KagiApp {
 
     /// Confirm remove: preflight → ODB-backup → containment-checked delete →
     /// prune → optional branch delete → verify → oplog → reload.
+    ///
+    /// issue #404: the execute step can run a `pre_remove` command (e.g.
+    /// `docker compose down`) that takes minutes, so it runs on a background
+    /// thread — the window never blocks. issue #406/#413: the outcome is
+    /// persisted via `record_op_persist` (these ops do not go through
+    /// `Backend::run`), and the returned ODB backup blob SHAs are serialised into
+    /// the oplog `after.dirty` as the recovery handle.
     pub fn confirm_remove_worktree(&mut self, cx: &mut Context<Self>) {
         let modal = match self.remove_worktree_modal().cloned() {
             Some(m) => m,
@@ -341,7 +348,7 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: remove-worktree plan has blockers, not executing");
-            self.record_op(
+            self.record_op_persist(
                 "remove-worktree",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
@@ -354,19 +361,26 @@ impl KagiApp {
             cx.notify();
             return;
         }
+        // issue #404: refuse to start a second op while one is in flight, so the
+        // async remove cannot race another mutation.
+        if self.busy_op.is_some() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
         let Some(repo) = self.worktree_backend("remove-worktree") else {
             return;
         };
         // issue #341: confirming a plan whose pre_remove note is trust-required
         // records repository-level trust so the command steps may run; an
         // untrusted (or failing) pre_remove command aborts the removal below.
+        // This is a fast local-file write, so it stays on the main thread.
         if kagi_git::ops::plan_requires_worktree_trust(&modal.plan) {
             // issue #393: trust ONLY the exact config the plan showed.
             let sha = kagi_git::ops::plan_worktree_config_sha(&modal.plan).unwrap_or("");
             if let Err(e) = repo.trust_worktree_config_for_worktree(&modal.name, sha) {
                 klog!("refused: remove-worktree config changed after plan, not executing");
                 let err_msg = e.to_string();
-                self.record_op(
+                self.record_op_persist(
                     "remove-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
@@ -382,45 +396,83 @@ impl KagiApp {
             }
             klog!("worktree: trusted .kagi/worktree.toml (pre_remove)");
         }
-        match repo.execute_remove_worktree(&modal.plan, &modal.name, modal.delete_branch) {
-            Ok(backups) => {
-                klog!(
-                    "executed: remove-worktree {} (backups={})",
-                    modal.name,
-                    backups.len()
-                );
-                self.record_op(
-                    "remove-worktree",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: modal.plan.predicted.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.clear_remove_worktree_modal();
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "removed worktree '{}'",
-                    modal.name
-                )));
-                self.reload(cx);
+
+        // issue #404: run the (possibly slow) execute off the main thread. The
+        // modal closes now; the outcome surfaces via the footer/toast/oplog.
+        self.busy_op = Some("remove-worktree");
+        self.clear_remove_worktree_modal();
+        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRemoveWorktree.t()));
+        klog!("async: remove-worktree started");
+
+        let bg_path = repo_path.clone();
+        let plan = modal.plan.clone();
+        let name = modal.name.clone();
+        let delete_branch = modal.delete_branch;
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&bg_path)
+                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+            repo.execute_remove_worktree(&plan, &name, delete_branch)
+                .map_err(|e| i18n::op_failed(i18n::Op::RemoveWorktree, e))
+        });
+        let plan = modal.plan.clone();
+        let name = modal.name.clone();
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok(outcome) => {
+                // issue #413: serialise the path→blob backup list into the oplog
+                // after-state as the recovery handle (empty on the clean path).
+                let pairs: Vec<String> = outcome
+                    .backups
+                    .iter()
+                    .map(|b| format!("{}={}", b.path, b.blob))
+                    .collect();
+                let dirty = if pairs.is_empty() {
+                    plan.predicted.dirty.clone()
+                } else {
+                    format!("backup: {}", pairs.join(", "))
+                };
+                let after = StateSummary {
+                    head: plan.predicted.head.clone(),
+                    dirty,
+                };
+                if let Some(err) = outcome.error {
+                    // issue #413: a partial remove still carries the backups.
+                    klog!("async: remove-worktree partial — {}", err);
+                    app.record_op_persist(
+                        "remove-worktree",
+                        plan.current.clone(),
+                        OpOutcome::Partial { after, error: err },
+                        &repo_path,
+                        cx,
+                    );
+                } else {
+                    klog!(
+                        "executed: remove-worktree {} (backups={})",
+                        name,
+                        outcome.backups.len()
+                    );
+                    app.record_op_persist(
+                        "remove-worktree",
+                        plan.current.clone(),
+                        OpOutcome::Success { after },
+                        &repo_path,
+                        cx,
+                    );
+                }
+                app.reload(cx);
             }
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RemoveWorktree, e);
-                self.record_op(
+            Err(err_msg) => {
+                klog!("async: remove-worktree failed — {}", err_msg);
+                app.record_op_persist(
                     "remove-worktree",
-                    modal.plan.current.clone(),
+                    plan.current.clone(),
                     OpOutcome::Failed {
                         error: err_msg.clone(),
                     },
                     &repo_path,
                     cx,
                 );
-                if let Some(m) = self.remove_worktree_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
             }
-        }
+        });
     }
 
     pub fn open_lock_worktree_modal(&mut self, name: String) {
@@ -463,7 +515,7 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: lock-worktree plan has blockers, not executing");
-            self.record_op(
+            self.record_op_persist(
                 "lock-worktree",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
@@ -482,7 +534,7 @@ impl KagiApp {
         match repo.execute_lock_worktree(&modal.plan, &modal.name, Some(&modal.reason)) {
             Ok(()) => {
                 klog!("executed: lock-worktree {}", modal.name);
-                self.record_op(
+                self.record_op_persist(
                     "lock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -500,7 +552,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::LockWorktree, e);
-                self.record_op(
+                self.record_op_persist(
                     "lock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
@@ -551,7 +603,7 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: prune-worktrees plan has blockers, not executing");
-            self.record_op(
+            self.record_op_persist(
                 "prune-worktrees",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
@@ -570,7 +622,7 @@ impl KagiApp {
         match repo.execute_prune_worktrees(&modal.plan) {
             Ok(pruned) => {
                 klog!("executed: prune-worktrees ({} pruned)", pruned);
-                self.record_op(
+                self.record_op_persist(
                     "prune-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -588,7 +640,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::PruneWorktrees, e);
-                self.record_op(
+                self.record_op_persist(
                     "prune-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
@@ -643,7 +695,7 @@ impl KagiApp {
         match repo.execute_repair_worktrees(&modal.plan) {
             Ok(()) => {
                 klog!("executed: repair-worktrees");
-                self.record_op(
+                self.record_op_persist(
                     "repair-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -659,7 +711,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepairWorktrees, e);
-                self.record_op(
+                self.record_op_persist(
                     "repair-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
@@ -727,7 +779,7 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: unlock-worktree plan has blockers, not executing");
-            self.record_op(
+            self.record_op_persist(
                 "unlock-worktree",
                 modal.plan.current.clone(),
                 OpOutcome::Refused {
@@ -752,7 +804,7 @@ impl KagiApp {
         match repo.execute_unlock_worktree(&modal.plan, &modal.name) {
             Ok(()) => {
                 klog!("executed: unlock-worktree {}", modal.name);
-                self.record_op(
+                self.record_op_persist(
                     "unlock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -770,7 +822,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::UnlockWorktree, e);
-                self.record_op(
+                self.record_op_persist(
                     "unlock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {

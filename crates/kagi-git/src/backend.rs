@@ -17,6 +17,11 @@ use super::{
 pub struct Backend {
     repo: Repository,
     path: PathBuf,
+    /// Owner-trust state for the git2 path (ADR-0160). `Untrusted` when the
+    /// workdir is owned by a foreign uid and neither `safe.directory` nor our
+    /// trust store covers it. Reads ignore this; [`Backend::run`] refuses every
+    /// mutating op while `Untrusted`.
+    trust: crate::trust::RepoTrust,
     /// Who is driving writes through this backend (ADR-0149 / #329). Recorded
     /// on every oplog entry `run` writes. Defaults to [`Actor::Human`]; the
     /// future MCP/CLI front-ends set `Mcp`/`Cli` via [`Backend::set_actor`].
@@ -78,9 +83,11 @@ impl Backend {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| path.to_path_buf());
 
+        let trust = crate::trust::evaluate(&path);
         Ok(Self {
             repo,
             path,
+            trust,
             actor: crate::oplog::Actor::Human,
             auto_snapshot: true,
         })
@@ -106,9 +113,11 @@ impl Backend {
             .workdir()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| path.to_path_buf());
+        let trust = crate::trust::evaluate(&path);
         Ok(Self {
             repo,
             path,
+            trust,
             actor: crate::oplog::Actor::Human,
             auto_snapshot: true,
         })
@@ -116,6 +125,20 @@ impl Backend {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Owner-trust state (ADR-0160). The UI reads this to decide whether a
+    /// mutating action needs a trust-confirmation prompt first.
+    pub fn trust(&self) -> crate::trust::RepoTrust {
+        self.trust
+    }
+
+    /// Test-only seam: force the trust state without a real `chown` (which test
+    /// sandboxes forbid). Only ever downgrades in practice; the real grant path
+    /// is [`crate::trust::trust_repo`] + re-open. Not part of the app API.
+    #[doc(hidden)]
+    pub fn set_trust_for_test(&mut self, trust: crate::trust::RepoTrust) {
+        self.trust = trust;
     }
 
     /// Set the actor recorded on oplog entries written by [`Backend::run`]
@@ -773,6 +796,22 @@ impl Backend {
         op: &Operation,
         plan: &OperationPlan,
     ) -> Result<OperationOutcome, GitError> {
+        // ── Owner-trust gate (ADR-0160). libgit2 does not enforce
+        // safe.directory, so a foreign-owned repo opened via git2 reaches here
+        // untrusted. Reads already ran; every *mutating* op stops here until the
+        // user grants trust. Headless never grants trust, so it stays read-only.
+        if !self.trust.is_trusted() {
+            let e = GitError::Untrusted(self.path.display().to_string());
+            self.record_run_oplog(
+                op,
+                plan,
+                crate::oplog::OpOutcome::Failed {
+                    error: e.to_string(),
+                },
+            );
+            return Err(e);
+        }
+
         // ── Preflight: refuse if the repo changed between plan and execute. ──
         let preflight = match op {
             Operation::StashApply { .. } | Operation::StashPop { .. } => {

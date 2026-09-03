@@ -125,6 +125,17 @@ pub struct PushTagModal {
     pub remote: String,
 }
 
+/// State for the repository owner-trust confirmation (ADR-0160 / #310). Shown
+/// when a repo whose workdir is owned by another uid — and not covered by git's
+/// `safe.directory` or our trust store — is opened via the git2 path. Reads are
+/// allowed; confirming records the trust and re-opens the session so writes
+/// proceed.
+#[derive(Clone, Debug)]
+pub struct TrustRepoModal {
+    /// Workdir path of the untrusted repository.
+    pub repo_path: std::path::PathBuf,
+}
+
 /// State for a stash-drop confirmation.
 #[derive(Clone, Debug)]
 pub struct StashDropModal {
@@ -687,4 +698,5 @@ pub enum ActiveModal {
     EditorDirtyGuard(EditorDirtyGuardModal),
     EditorFsPrompt(EditorFsPromptModal),
     EditorDeleteConfirm(EditorDeleteConfirmModal),
+    TrustRepo(TrustRepoModal),
 }

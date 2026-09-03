@@ -212,6 +212,9 @@ impl KagiApp {
         self.save_session();
         self.log_tabs();
         self.arm_watcher(cx);
+        // ADR-0160: a foreign-owned repo opened via git2 is read-only until the
+        // user confirms trust — raise the prompt now that per-repo UI is reset.
+        self.prompt_trust_if_untrusted();
         cx.notify();
 
         // T-PERF-RENDER-001 (ADR-0116 Wave 2): tab-switch commit point for the
@@ -1160,5 +1163,6 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     app.repo_session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
     app.error = None;
     app.reload_prelaunch();
+    app.prompt_trust_if_untrusted(); // ADR-0160: prompt on restore too.
     klog!("session: restored {} tab(s)", app.tabs.len());
 }

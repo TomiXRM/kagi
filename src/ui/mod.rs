@@ -88,6 +88,7 @@ mod tab_view;
 pub mod tabs;
 pub mod tag_menu;
 pub mod terminal;
+pub mod trust_prompt;
 pub use kagi_ui_core::theme; // ADR-0121: was a shim file
 pub mod toast_stack;
 pub mod types;
@@ -3134,7 +3135,9 @@ impl KagiApp {
     /// choice overlays (update, menu/settings) are consumed but not actioned.
     /// (User request: Enter approves a modal, Esc cancels it.)
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.editor_fs_prompt_modal().is_some() {
+        if self.trust_repo_modal().is_some() {
+            self.confirm_trust_repo(cx);
+        } else if self.editor_fs_prompt_modal().is_some() {
             self.confirm_editor_fs_prompt(cx);
         } else if self.editor_delete_confirm_modal().is_some() {
             self.confirm_editor_delete(cx);
@@ -3220,7 +3223,9 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal (same priority
     /// order as `confirm_active_modal`). Returns `true` if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.editor_fs_prompt_modal().is_some() {
+        if self.trust_repo_modal().is_some() {
+            self.cancel_trust_repo_modal();
+        } else if self.editor_fs_prompt_modal().is_some() {
             self.cancel_editor_fs_prompt();
         } else if self.editor_delete_confirm_modal().is_some() {
             self.cancel_editor_delete_confirm();

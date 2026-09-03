@@ -414,6 +414,10 @@ impl KagiApp {
         .when_some(stash_drop_modal, |el, modal| {
             el.child(render_stash_drop_modal(modal, cx))
         })
+        // ── Repository owner-trust prompt (ADR-0160 / #310) ──
+        .when_some(self.trust_repo_modal().cloned(), |el, modal| {
+            el.child(super::trust_prompt::render_trust_repo_modal(modal, cx))
+        })
         // ── Unlock-worktree confirmation ─────────────────
         .when_some(unlock_worktree_modal, |el, modal| {
             el.child(render_unlock_worktree_modal(modal, cx))

@@ -128,12 +128,12 @@ fn render_cp_file_row(
             el.child(
                 div()
                     .ml_1()
-                    .px_1()
-                    .py_px()
+                    .px(px(3.))
                     .rounded_sm()
                     .flex_shrink_0()
                     .bg(rgb(theme().color_warning))
-                    .text_xs()
+                    .text_size(px(9.))
+                    .line_height(px(14.))
                     .text_color(rgb(theme().bg_base))
                     .child(SharedString::from(Msg::AgentConventionBadge.t())),
             )

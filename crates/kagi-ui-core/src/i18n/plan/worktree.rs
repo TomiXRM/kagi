@@ -142,6 +142,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         WorktreeNote::PostCreateSteps {
             steps,
             trust_required,
+            ..
         } => format!(
             ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}",
             steps.len(),
@@ -155,6 +156,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         WorktreeNote::PreRemoveSteps {
             steps,
             trust_required,
+            ..
         } => format!(
             ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}",
             steps.len(),

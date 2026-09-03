@@ -847,6 +847,26 @@ impl Backend {
             return Err(e);
         }
 
+        // ── issue #393: bind worktree-config execution to the exact content the
+        // plan displayed. For create/open-worktree, re-hash `.kagi/worktree.toml`
+        // and refuse if it changed since planning (display A / execute B TOCTOU).
+        if let (true, Some(expected), Some(root)) = (
+            matches!(
+                op,
+                Operation::CreateWorktree { .. } | Operation::OpenWorktreeForBranch { .. }
+            ),
+            ops::plan_worktree_config_sha(plan),
+            self.repo.workdir(),
+        ) {
+            if let Err(e) = ops::verify_worktree_config_sha(root, expected) {
+                let outcome = crate::oplog::OpOutcome::Failed {
+                    error: e.to_string(),
+                };
+                self.record_run_oplog(op, plan, outcome);
+                return Err(e);
+            }
+        }
+
         // ── Auto-snapshot (ADR-0154 / #335): before a destructive op mutates
         // the repo, take a savepoint under `refs/kagi/snapshots/` so the work
         // is recoverable in git's own terms. Gated by `auto_snapshot` (default
@@ -1319,11 +1339,17 @@ impl Backend {
     /// resolving its path internally (so the UI never handles worktree paths).
     /// The UI calls this when confirming a remove plan whose pre_remove note is
     /// `trust_required`.
-    pub fn trust_worktree_config_for_worktree(&self, name: &str) -> Result<(), GitError> {
+    /// `expected_sha` is the SHA the plan note displayed; trust is granted only
+    /// if the worktree's on-disk config still hashes to it (issue #393 TOCTOU).
+    pub fn trust_worktree_config_for_worktree(
+        &self,
+        name: &str,
+        expected_sha: &str,
+    ) -> Result<(), GitError> {
         let wt = self.repo.find_worktree(name).map_err(|e| {
             GitError::Other(format!("worktree '{name}' not found: {}", e.message()))
         })?;
-        ops::trust_worktree_config_at(wt.path())
+        ops::trust_worktree_config_at(wt.path(), expected_sha)
     }
 
     pub fn plan_unlock_worktree(&self, name: &str) -> Result<OperationPlan, GitError> {

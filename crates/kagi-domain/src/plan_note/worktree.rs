@@ -118,6 +118,11 @@ pub enum WorktreeNote {
     PostCreateSteps {
         steps: Vec<crate::worktree_steps::WorktreeStep>,
         trust_required: bool,
+        /// SHA-256 of the exact `.kagi/worktree.toml` bytes this plan was built
+        /// from. Trust is granted and the steps are executed only if the on-disk
+        /// config still hashes to this — binding consent to what was shown and
+        /// closing the display-A / execute-B TOCTOU (issue #393).
+        sha256: String,
     },
     /// warning (`plan_remove_worktree`) — the `pre_remove` steps from
     /// `.kagi/worktree.toml`, enumerated by type. A failed or untrusted
@@ -125,6 +130,9 @@ pub enum WorktreeNote {
     PreRemoveSteps {
         steps: Vec<crate::worktree_steps::WorktreeStep>,
         trust_required: bool,
+        /// SHA-256 of the exact config bytes shown — see `PostCreateSteps`
+        /// (issue #393).
+        sha256: String,
     },
 }
 
@@ -297,6 +305,7 @@ impl WorktreeNote {
             WorktreeNote::PostCreateSteps {
                 steps,
                 trust_required,
+                ..
             } => format!(
                 "Runs {} post-create step(s) from .kagi/worktree.toml:{}",
                 steps.len(),
@@ -310,6 +319,7 @@ impl WorktreeNote {
             WorktreeNote::PreRemoveSteps {
                 steps,
                 trust_required,
+                ..
             } => format!(
                 "Runs {} pre-remove step(s) from .kagi/worktree.toml (a failed or untrusted \
                  command aborts the removal):{}",

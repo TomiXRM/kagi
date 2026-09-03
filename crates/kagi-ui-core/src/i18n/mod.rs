@@ -329,11 +329,16 @@ pub enum Msg {
     ConflictKindSubmodule,
     ConflictKindSymlink,
     ConflictKindBinary,
+    ConflictKindDirFile,
     // Detail pane / choose buttons (role names appended at the call site).
     ConflictSelectFile,
     ConflictKeepCurrent,
     ConflictTakeIncoming,
     ConflictKeepBoth,
+    // #320: directory/file conflict — keep-directory vs keep-file.
+    ConflictKeepDirectory,
+    ConflictKeepFile,
+    ConflictDirFileHint,
     ConflictResultPreview,
     ConflictPreviewHint,
     ConflictBinaryNoPreview,
@@ -1129,6 +1134,8 @@ impl Msg {
             (Ja, ConflictKindSymlink) => "シンボリックリンク",
             (En, ConflictKindBinary) => "binary",
             (Ja, ConflictKindBinary) => "binary",
+            (En, ConflictKindDirFile) => "directory/file",
+            (Ja, ConflictKindDirFile) => "ディレクトリ/ファイル",
             (En, ConflictSelectFile) => "Select a conflicting file to resolve it",
             (Ja, ConflictSelectFile) => "解決する conflict ファイルを選択してください",
             (En, ConflictKeepCurrent) => "Keep current",
@@ -1137,6 +1144,14 @@ impl Msg {
             (Ja, ConflictTakeIncoming) => "取り込む側を採用",
             (En, ConflictKeepBoth) => "Keep both (current first)",
             (Ja, ConflictKeepBoth) => "両方採用(現在の側を先)",
+            (En, ConflictKeepDirectory) => "Keep directory",
+            (Ja, ConflictKeepDirectory) => "ディレクトリを採用",
+            (En, ConflictKeepFile) => "Keep file",
+            (Ja, ConflictKeepFile) => "ファイルを採用",
+            (En, ConflictDirFileHint) => {
+                "One side is a directory, the other a file — keep exactly one."
+            }
+            (Ja, ConflictDirFileHint) => "片方はディレクトリ、片方はファイルです。どちらか一方を採用します。",
             (En, ConflictResultPreview) => "Result preview",
             (Ja, ConflictResultPreview) => "解決結果プレビュー",
             (En, ConflictPreviewHint) => "Choose a side above to preview the resolved file.",

@@ -472,6 +472,7 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
         ConflictKind::Submodule => Msg::ConflictKindSubmodule.t(),
         ConflictKind::Symlink => Msg::ConflictKindSymlink.t(),
         ConflictKind::Binary => Msg::ConflictKindBinary.t(),
+        ConflictKind::DirFile => Msg::ConflictKindDirFile.t(),
     }
 }
 
@@ -1666,6 +1667,85 @@ where
 /// The center pane: the selected file's choose buttons + Result preview.  When
 /// the W32 Conflict Editor lands it renders here for `editing_file`; until then
 /// this MVP keeps the file-granularity choose + preview.
+/// Center pane for a directory/file conflict (#320): a hint plus the two keep
+/// buttons. Each defers to the parent `KagiApp::resolve_dir_file`, which runs the
+/// git-layer plan/execute (index stage + oplog) and re-detects — the reload
+/// pattern is why this must go through the parent, not the leased entity.
+fn render_dir_file_center(
+    path: &std::path::Path,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
+    use kagi_git::DirFileChoice;
+
+    let keep_dir = {
+        let path = path.to_path_buf();
+        cx.listener(
+            move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
+                let weak_app = view.app.clone();
+                let path = path.clone();
+                cx.spawn_in(window, async move |_view, acx| {
+                    let _ = weak_app.update_in(acx, |app, _window, cx| {
+                        app.resolve_dir_file(&path, DirFileChoice::KeepDirectory, cx)
+                    });
+                })
+                .detach();
+            },
+        )
+    };
+    let keep_file = {
+        let path = path.to_path_buf();
+        cx.listener(
+            move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
+                let weak_app = view.app.clone();
+                let path = path.clone();
+                cx.spawn_in(window, async move |_view, acx| {
+                    let _ = weak_app.update_in(acx, |app, _window, cx| {
+                        app.resolve_dir_file(&path, DirFileChoice::KeepFile, cx)
+                    });
+                })
+                .detach();
+            },
+        )
+    };
+
+    let choose_row = div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .gap_2()
+        .px(theme::scaled_px(12.))
+        .py(theme::scaled_px(8.))
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .child(choose_button(
+            Msg::ConflictKeepDirectory.t().to_string(),
+            theme().color_branch,
+            keep_dir,
+            cx,
+        ))
+        .child(choose_button(
+            Msg::ConflictKeepFile.t().to_string(),
+            theme().color_remote,
+            keep_file,
+            cx,
+        ));
+
+    div()
+        .flex()
+        .flex_col()
+        .flex_grow(1.)
+        .h_full()
+        .child(choose_row)
+        .child(
+            div()
+                .p(theme::scaled_px(12.))
+                .text_size(theme::scaled_px(13.))
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::ConflictDirFileHint.t())),
+        )
+        .into_any_element()
+}
+
 fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
         return div()
@@ -1690,6 +1770,13 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
     let labels = mode.labels();
     let kind = file.kind;
     let path = file.path.clone();
+
+    // #320 directory/file conflict: no text merge / buffer choice — it is a single
+    // keep-directory-vs-keep-file decision that stages straight into the index via
+    // the parent app (`resolve_dir_file`), then re-detects (like conflict-save).
+    if kind == ConflictKind::DirFile {
+        return render_dir_file_center(&path, cx);
+    }
 
     let keep_current_label = format!("{} ({})", Msg::ConflictKeepCurrent.t(), labels.current.name);
     let take_incoming_label = format!(

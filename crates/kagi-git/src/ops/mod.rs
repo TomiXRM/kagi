@@ -100,6 +100,7 @@ pub use kagi_domain::plan_note::{
 // Per-operation submodules (issue #13 Phase 3 physical split)
 // ────────────────────────────────────────────────────────────
 
+mod absorb;
 mod branch;
 mod branch_cleanup;
 mod checkout;
@@ -125,6 +126,7 @@ mod tag;
 mod worktree;
 mod worktree_lifecycle;
 
+pub use absorb::*;
 pub use branch::*;
 pub use branch_cleanup::*;
 pub use checkout::*;

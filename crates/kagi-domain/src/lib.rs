@@ -9,6 +9,7 @@
 //! `kagi::git` / `kagi::graph` paths continue to work through re-export bridges
 //! during the migration.
 
+pub mod absorb;
 pub mod activity;
 pub mod agent_artifacts;
 pub mod branch_cleanup;

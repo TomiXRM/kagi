@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use gpui::SharedString;
 
-use kagi::graph::{layout, EdgeKind, GraphEdge};
+use crate::graph::{layout, EdgeKind, GraphEdge};
 use kagi_git::{Commit, CommitId, Head, RepoSnapshot};
 use kagi_ui_core::settings::CopyTarget;
 

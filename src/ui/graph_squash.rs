@@ -21,8 +21,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::graph::{EdgeKind, GraphEdge};
 use gpui::{AppContext, Context};
-use kagi::graph::{EdgeKind, GraphEdge};
 use kagi_git::ops::SquashLink;
 use kagi_git::CommitId;
 

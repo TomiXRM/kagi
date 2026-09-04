@@ -11,13 +11,14 @@ extern crate kagi_ui_core;
 mod cli_main;
 mod headless;
 mod shell_env;
-mod single_instance;
-mod ui;
 
 use std::path::PathBuf;
 
 use kagi_git::{open_repository, snapshot, Head};
-use ui::{run_app, KagiApp};
+// ADR-0166: `ui` and `single_instance` moved into the lib crate; the bin is a
+// thin wrapper that re-imports them.
+use kagi::single_instance;
+use kagi::ui::{self, run_app, KagiApp};
 
 /// Append every panic's message + location to `~/.kagi/panic.log` before the
 /// default hook runs.
@@ -99,37 +100,37 @@ fn main() {
     // W9-THEME / ADR-0036: resolve the active colour theme before anything
     // renders.  Priority: KAGI_THEME env → ~/.kagi/settings.json → default
     // (Catppuccin Mocha).  Logs `[kagi] theme: <slug> dark=<bool>`.
-    crate::ui::theme::init_active();
+    ui::theme::init_active();
 
     // W27-UIPOLISH: resolve the persisted UI zoom factor (settings.json
     // "ui_zoom", stored as permille) before the first render applies it via
     // `window.set_rem_size`.  Defaults to 1.0x.
-    crate::ui::theme::init_zoom();
+    ui::theme::init_zoom();
 
     // T-SETTINGS-001: resolve the persisted compact-graph flag (settings.json
     // "graph_compact") so new tabs/windows open in the user's chosen density.
-    crate::ui::theme::init_compact_graph();
+    ui::theme::init_compact_graph();
 
     // Log the persisted lane-compaction flag (settings.json
     // "graph_lane_compact") so the gitk-stable vs swimlane-compaction layout
     // mode chosen at load time is visible/debuggable in the [kagi] log.
-    crate::ui::theme::init_graph_lane_compact();
+    ui::theme::init_graph_lane_compact();
 
     // ADR-0124: resolve the persisted diff display mode (settings.json
     // "diff_split") so diff panes open in the user's chosen layout.
-    crate::ui::theme::init_diff_split();
+    ui::theme::init_diff_split();
 
     // Resolve the persisted auto-fetch flag (settings.json "auto_fetch") so the
     // background fetch ticker starts in the user's chosen state.
-    crate::ui::theme::init_auto_fetch();
+    ui::theme::init_auto_fetch();
 
     // Resolve the persisted reduce-motion flag (settings.json "reduce_motion";
     // issue #354 / ADR-0173) so decorative animations start static when on.
-    crate::ui::theme::init_reduce_motion();
+    ui::theme::init_reduce_motion();
 
     // W22-I18N / ADR-0048: resolve the UI language before anything renders.
     // Priority: KAGI_LANG env → settings.json "lang" → LANG/LC_ALL → English.
-    crate::ui::i18n::init_lang();
+    ui::i18n::init_lang();
 
     // W4-TABS: KAGI_OPEN_REPO=<path> opens a repo as a tab even when no CLI
     // arg is given (headless picker substitute, ADR-0027/0028).
@@ -295,12 +296,15 @@ fn main() {
 mod panic_log_tests {
     use super::install_panic_log_hook;
 
+    // Guards this test binary's KAGI_LOG_DIR mutation. (Since ADR-0166 moved
+    // `ui` into the lib, ui's env tests run in a *separate* test binary, so the
+    // lib's `ENV_LOCK` — which is `#[cfg(test)]`, hence invisible to a dependent
+    // crate anyway — is no longer shareable here; a local lock is enough.)
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn panic_is_appended_to_panic_log() {
-        // Shares the process-global KAGI_LOG_DIR with the ui tests.
-        let _g = crate::ui::ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("kagi-panic-log-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         // SAFETY: single-threaded test process, no concurrent env readers.

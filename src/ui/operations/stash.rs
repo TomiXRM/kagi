@@ -497,7 +497,7 @@ impl KagiApp {
             klog!("async: remote stash-drop started");
             let (host, root) = (rv.host.clone(), rv.root.clone());
             let task = cx.background_spawn(async move {
-                kagi::remote::remote_stash_drop(&host, &root, stash_index)
+                crate::remote::remote_stash_drop(&host, &root, stash_index)
                     .map_err(|e| e.to_string())
             });
             self.finish_op_on_main(cx, task, move |app, result, cx| match result {

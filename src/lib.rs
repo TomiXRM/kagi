@@ -3,8 +3,21 @@
 //! The Git backend lives in the standalone `kagi-git` crate (ADR-0072 / Phase E);
 //! reach it via `kagi_git::` rather than `kagi::git::`.
 
+// klog! (the `[kagi]` contract macro) lives in kagi-ui-core; #[macro_use] keeps
+// it available unqualified across the lib (the `ui` module below relies on it),
+// mirroring `main.rs`.
+#[macro_use]
+extern crate kagi_ui_core;
+
 pub use kagi_domain::graph; // ADR-0121: was a shim file
 pub mod remote;
+// ADR-0166: `ui` (and its one crate-root dependency, `single_instance`) live in
+// the lib so a `harness = false` main-thread test runner (`tests/gui_e2e_runner`)
+// can mount the real `KagiApp` offscreen. The bin (`main.rs`) is a thin wrapper
+// that re-imports `kagi::ui` / `kagi::single_instance`. No `gpui/test-support`
+// reaches here — the runner owns that (see `ui::e2e`).
+pub mod single_instance;
+pub mod ui;
 pub mod update;
 
 /// Reverse-DNS application id — the single source of truth for how Kagi

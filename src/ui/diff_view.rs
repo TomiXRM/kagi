@@ -1,7 +1,7 @@
 //! Diff view-models + syntax highlighting for the diff panel.
 //!
 //! Presentation types (`DiffRow`, `FileDiffView`, `MainDiffView`, `CompareView`,
-//! `MainDiffSource`, `CompareTarget`) built from `kagi::git` diff data, plus the
+//! `MainDiffSource`, `CompareTarget`) built from `crate::git` diff data, plus the
 //! gpui-component tree-sitter highlighter glue (`lang_for_ext`,
 //! `highlight_diff_rows`). No `KagiApp` coupling — extracted from `ui/mod.rs` as
 //! part of the S6 view decomposition (architecture §2.4). Re-exported by
@@ -1407,7 +1407,7 @@ impl KagiApp {
         let path_str = path.to_string_lossy().into_owned();
 
         let task = cx.background_spawn(async move {
-            kagi::remote::remote_commit_file_diff(&host, &root, &sha, &path_str)
+            crate::remote::remote_commit_file_diff(&host, &root, &sha, &path_str)
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {

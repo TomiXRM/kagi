@@ -21,7 +21,7 @@ use std::process::Command;
 fn run_child(name: &str, settings: &str) {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::write(tmp.path().join("settings.json"), settings).expect("seed settings.json");
-    // `module_path!()` is crate-qualified (`kagi::ui::env_tests`); libtest
+    // `module_path!()` is crate-qualified (`crate::ui::env_tests`); libtest
     // names are not — drop the crate segment.
     let module = module_path!()
         .split_once("::")

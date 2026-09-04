@@ -37,12 +37,12 @@ impl KagiApp {
                 let index = sr.index;
                 let label = sr.label.clone();
                 let msg_for_menu = sr.label.to_string();
-                let mut edges: Vec<kagi::graph::GraphEdge> = passing_lanes
+                let mut edges: Vec<crate::graph::GraphEdge> = passing_lanes
                     .iter()
-                    .map(|&lane| kagi::graph::GraphEdge {
+                    .map(|&lane| crate::graph::GraphEdge {
                         from_lane: lane,
                         to_lane: lane,
-                        kind: kagi::graph::EdgeKind::Pass,
+                        kind: crate::graph::EdgeKind::Pass,
                         // Stash lanes are painted in the stash colour; the lane
                         // colour index is unused for them.
                         color: lane,
@@ -51,10 +51,10 @@ impl KagiApp {
                 if sr.connected {
                     // This stash's own line leaves its node downward; below this
                     // row it becomes a pass-through for subsequent rows.
-                    edges.push(kagi::graph::GraphEdge {
+                    edges.push(crate::graph::GraphEdge {
                         from_lane: sr.lane,
                         to_lane: sr.lane,
-                        kind: kagi::graph::EdgeKind::OutOfNode,
+                        kind: crate::graph::EdgeKind::OutOfNode,
                         color: sr.lane,
                     });
                     passing_lanes.push(sr.lane);

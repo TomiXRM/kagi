@@ -337,7 +337,7 @@ impl KagiApp {
         self.switch_generation = self.switch_generation.wrapping_add(1);
         let generation = self.switch_generation;
         let task = cx.background_spawn(async move {
-            kagi::remote::remote_snapshot(&host_load, &root_load, commit_limit)
+            crate::remote::remote_snapshot(&host_load, &root_load, commit_limit)
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {

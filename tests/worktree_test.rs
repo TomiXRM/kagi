@@ -727,31 +727,88 @@ fn lock_worktree_reason_appears_in_porcelain() {
     );
 }
 
-/// A hand-deleted worktree directory is detected as prunable and pruned (§6).
+/// issue #372 item 1: creating a worktree via kagi stamps the `.kagi-created`
+/// marker into its admin dir (`$GIT_DIR/worktrees/<name>/`).
 #[test]
-fn hand_deleted_worktree_is_prunable_and_pruned() {
-    let tmp = TempDir::new().unwrap();
-    let repo = build_repo(&tmp);
-    let wt = add_worktree(tmp.path(), "wt-orphan");
+fn create_worktree_writes_kagi_created_marker() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo(&repo_tmp);
+    let at = head_commit_id(&repo);
+    let path = worktrees_tmp.path().join("wt-marked");
 
-    std::fs::remove_dir_all(&wt).expect("hand-delete the worktree dir");
+    execute_create_worktree(&repo, "wt-marked", &path, &at).expect("execute_create_worktree");
+
+    let marker = repo_tmp
+        .path()
+        .join(".git/worktrees/wt-marked/.kagi-created");
+    assert!(
+        marker.exists(),
+        "kagi-created worktree must carry the marker at {}",
+        marker.display()
+    );
+}
+
+/// issue #372 item 1: bulk prune targets a kagi-created (marked) worktree but
+/// SKIPS a hand-added (unmarked) one — even though both are prunable (workdir
+/// gone). A bulk op must never touch a worktree the user set up outside kagi.
+#[test]
+fn bulk_prune_targets_marked_skips_unmarked() {
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo(&repo_tmp);
+    let at = head_commit_id(&repo);
+
+    // kagi-created (marked) worktree, outside the repo.
+    let marked = worktrees_tmp.path().join("wt-kagi");
+    execute_create_worktree(&repo, "wt-kagi", &marked, &at).expect("create kagi worktree");
+    // hand-added (unmarked) worktree, inside the repo dir (like add_worktree).
+    let unmarked = add_worktree(repo_tmp.path(), "wt-hand");
+
+    // Both directories vanish → both are prunable as far as git is concerned.
+    std::fs::remove_dir_all(&marked).expect("remove marked dir");
+    std::fs::remove_dir_all(&unmarked).expect("remove unmarked dir");
 
     let plan = plan_prune_worktrees(&repo).expect("plan");
     assert!(
         plan.warnings.iter().any(|w| matches!(
             w,
-            PlanNote::Worktree(WorktreeNote::PrunePreview { count, .. }) if *count >= 1
+            PlanNote::Worktree(WorktreeNote::PrunePreview { count, .. }) if *count == 1
         )),
-        "the hand-deleted worktree must show as prunable: {:?} / {:?}",
+        "exactly the marked worktree must preview as prunable: {:?} / {:?}",
         plan.warnings,
         plan.blockers
     );
 
     let pruned = execute_prune_worktrees(&repo, &plan).expect("execute");
-    assert_eq!(pruned, 1);
+    assert_eq!(pruned, 1, "only the kagi-created worktree is pruned");
     assert!(
-        repo.find_worktree("wt-orphan").is_err(),
-        "admin entry pruned"
+        repo.find_worktree("wt-kagi").is_err(),
+        "the kagi-created admin entry must be pruned"
+    );
+    assert!(
+        repo.find_worktree("wt-hand").is_ok(),
+        "the hand-added admin entry must be left untouched by bulk prune"
+    );
+}
+
+/// Control (issue #372 item 1): explicit single-worktree remove still works on
+/// an UNMARKED (hand-added) worktree — scoping bulk prune must not disable the
+/// user removing one specific worktree they chose.
+#[test]
+fn explicit_remove_works_on_unmarked_worktree() {
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    let wt = add_worktree(tmp.path(), "wt-manual"); // hand-added, no marker
+
+    let plan = plan_remove_worktree(&repo, "wt-manual", false).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    execute_remove_worktree(&repo, &plan, "wt-manual", false).expect("execute");
+
+    assert!(!wt.exists(), "the hand-added worktree dir must be removed");
+    assert!(
+        repo.find_worktree("wt-manual").is_err(),
+        "the hand-added admin entry must be gone after an explicit remove"
     );
 }
 

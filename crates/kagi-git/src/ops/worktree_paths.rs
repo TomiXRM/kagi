@@ -10,6 +10,40 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::GitError;
+use git2::Repository;
+
+/// Marker file kagi drops into a linked worktree's admin dir
+/// (`$GIT_DIR/worktrees/<name>/`) at creation time, so bulk operations (prune)
+/// can tell a kagi-created worktree from one added by hand (`git worktree add`).
+/// Writing into git's own admin namespace is deliberate and precedented — it is
+/// kagi's private metadata dir (issue #372 item 1, §5 open question resolved).
+const KAGI_CREATED_MARKER: &str = ".kagi-created";
+
+/// The admin directory git keeps for the linked worktree `name`
+/// (`$GIT_DIR/worktrees/<name>/`). `commondir()` always points at the main
+/// `.git`, so this is correct whether `repo` is the main repo or a linked one.
+fn worktree_admin_dir(repo: &Repository, name: &str) -> PathBuf {
+    repo.commondir().join("worktrees").join(name)
+}
+
+/// Drop the `.kagi-created` marker into `name`'s admin dir. Best-effort: the
+/// worktree already exists when this runs, so a write hiccup must never undo it
+/// (an unmarked worktree is simply treated as hand-added — the safe default).
+pub(crate) fn mark_kagi_created(repo: &Repository, name: &str) {
+    let _ = std::fs::write(
+        worktree_admin_dir(repo, name).join(KAGI_CREATED_MARKER),
+        b"",
+    );
+}
+
+/// Whether the linked worktree `name` carries kagi's creation marker. The
+/// admin dir survives even when the working directory is gone (the prunable
+/// case), so this is readable exactly when scoping bulk prune needs it.
+pub(crate) fn is_kagi_created(repo: &Repository, name: &str) -> bool {
+    worktree_admin_dir(repo, name)
+        .join(KAGI_CREATED_MARKER)
+        .exists()
+}
 
 /// Lexically normalize a path without requiring the final path to exist.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {

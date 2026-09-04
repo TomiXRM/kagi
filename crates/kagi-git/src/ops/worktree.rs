@@ -529,6 +529,11 @@ fn execute_create_worktree_impl(
     repo.worktree(&worktree_name, &target_path, Some(&opts))
         .map_err(|e| GitError::Other(format!("worktree creation failed: {}", e.message())))?;
 
+    // issue #372 item 1: stamp kagi's creation marker into the admin dir so
+    // bulk prune can scope to kagi-created worktrees only (a hand-added
+    // worktree stays unmarked and is never touched by a bulk op).
+    mark_kagi_created(repo, &worktree_name);
+
     // issue #339: copy .worktreeinclude files into the fresh worktree. Computed
     // fresh (not from the plan) since execute has no plan handle here; best-
     // effort so a copy hiccup never undoes a created worktree.

@@ -201,6 +201,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
             .collect(),
         preview_commits: Vec::new(),
         destructive: true,
+        equivalent_command: None,
     })
 }
 

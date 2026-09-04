@@ -62,6 +62,8 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
     let mut title_branch = branch_name.clone().unwrap_or_default();
     let mut title_remote = String::new();
     let mut recovery = None;
+    // #353: faithful equivalent, set only in the successful-lease arm below.
+    let mut equivalent_command: Option<String> = None;
 
     if let Some(branch) = branch_name.as_ref() {
         match resolve_upstream_info(repo, branch) {
@@ -98,6 +100,13 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
                                 branch, local, remote, lease, branch
                             )],
                         });
+                        // #353: the forward equivalent guards the remote tip
+                        // (`lease`) and pushes the local tip. Faithful to what
+                        // libgit2 does — same lease, same refspec.
+                        equivalent_command = Some(format!(
+                            "git push --force-with-lease={}:{} {} {}",
+                            branch, lease, remote, branch
+                        ));
                     }
                     _ => {
                         blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {
@@ -135,6 +144,7 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,
+        equivalent_command,
     })
 }
 

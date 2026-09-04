@@ -158,6 +158,7 @@ pub fn plan_merge_into_branch(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     };
 
     // ── 1. Both sides must be real, distinct local branches ──────────────
@@ -303,6 +304,7 @@ pub fn plan_merge_into_branch(
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         },
         kind,
     ))

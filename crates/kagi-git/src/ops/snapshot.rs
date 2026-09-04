@@ -271,6 +271,7 @@ pub fn plan_restore_snapshot(repo: &Repository, id: &str) -> Result<OperationPla
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,
+        equivalent_command: None,
     })
 }
 

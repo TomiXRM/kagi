@@ -602,6 +602,7 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
         preview_files,
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     };
 
     // GitHub ruleset pre-verification (#346, ADR-0150): fold in any local

@@ -110,6 +110,7 @@ pub fn plan_checkout_tracking_branch(
             remote_branch
         )],
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -317,6 +318,7 @@ pub fn plan_switch_to_latest(
         preview_files: Vec::new(),
         preview_commits,
         destructive: false,
+        equivalent_command: None,
     })
 }
 

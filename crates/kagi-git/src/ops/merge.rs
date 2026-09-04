@@ -156,6 +156,7 @@ pub fn plan_merge_branch(
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         };
 
     if !blockers.is_empty() {
@@ -306,6 +307,7 @@ pub fn plan_merge_branch(
             preview_files,
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         },
         kind,
     ))

@@ -129,6 +129,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 preview_files: Vec::new(),
                 preview_commits: Vec::new(),
                 destructive: false,
+                equivalent_command: None,
             });
         }
     };
@@ -277,6 +278,13 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
         preview_files: Vec::new(),
         preview_commits,
         destructive: false,
+        // #353: faithful equivalent — `git push [-u] <remote> <branch>`.
+        equivalent_command: Some(format!(
+            "git push{} {} {}",
+            if is_set_upstream_flow { " -u" } else { "" },
+            remote_name,
+            branch_name
+        )),
     })
 }
 
@@ -662,6 +670,7 @@ pub fn plan_push_branch(
         preview_files: Vec::new(),
         preview_commits,
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -772,6 +781,7 @@ pub fn plan_set_upstream(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

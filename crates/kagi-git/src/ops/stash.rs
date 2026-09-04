@@ -148,6 +148,7 @@ pub fn plan_stash_push(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -317,6 +318,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -517,6 +519,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         // issue #280: pop irreversibly deletes the stash entry — Destructive class,
         // so the confirm UI treats it like drop/reset rather than a plain apply.
         destructive: true,
+        equivalent_command: None,
     })
 }
 
@@ -648,6 +651,7 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,
+        equivalent_command: None,
     }
 }
 
@@ -724,6 +728,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,
+        equivalent_command: None,
     })
 }
 

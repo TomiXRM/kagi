@@ -98,6 +98,29 @@ fn test_plan_normal_no_blockers_and_warns_abandons() {
     );
 }
 
+// #353 golden: a ref-only reset maps faithfully to `git reset --soft <sha>`
+// (kagi never touches the index/working tree, so `--soft`, never `--hard`).
+#[test]
+fn test_equivalent_command_is_faithful_soft_reset() {
+    let tmp = TempDir::new().unwrap();
+    let (_dir, repo, commits) = build_three_commit_repo(&tmp);
+    let target = CommitId(commits[0].clone());
+
+    let plan = plan_reset_current_to_head(&repo, &target).expect("plan failed");
+
+    assert_eq!(
+        plan.equivalent_command,
+        Some(format!("git reset --soft {}", commits[0])),
+        "reset plan must carry the faithful soft-reset equivalent"
+    );
+    // Never the forbidden --hard form.
+    assert!(!plan
+        .equivalent_command
+        .as_deref()
+        .unwrap()
+        .contains("--hard"));
+}
+
 #[test]
 fn test_execute_moves_the_branch_ref_only() {
     let tmp = TempDir::new().unwrap();

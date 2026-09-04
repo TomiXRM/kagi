@@ -391,6 +391,7 @@ fn plan_create_worktree_impl(
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         }
     } else {
         plan_create_branch(repo, branch, start)?
@@ -674,6 +675,7 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

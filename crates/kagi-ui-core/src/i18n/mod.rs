@@ -662,6 +662,10 @@ pub enum Msg {
     CleanupGrownHint,
     /// Empty-table body message.
     // ── Plan-modal confirm labels (destructive ops get an armed variant) ──
+    /// Equivalent-git-command line in the plan modal, `{}` = the command
+    /// (#353). Deliberately "equivalent to", never "runs" — kagi executes via
+    /// libgit2, not the CLI.
+    PlanEquivalentTo,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -1655,6 +1659,8 @@ impl Msg {
             (Ja, CleanupBadgeStale) => "ストール",
             (En, CleanupGrownHint) => "new commits since merge:",
             (Ja, CleanupGrownHint) => "merge 後の新規 commit:",
+            (En, PlanEquivalentTo) => "This is equivalent to `{}`",
+            (Ja, PlanEquivalentTo) => "この操作は `{}` に相当します",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",
@@ -2388,6 +2394,26 @@ mod tests {
                 op
             );
         }
+        set_lang_no_persist(Lang::En);
+    }
+
+    // #353: the equivalent-command line must read "equivalent to" / "相当",
+    // NEVER "runs" / "実行" — kagi executes via libgit2, not the CLI, so
+    // claiming it "runs" the command would be a lie.
+    #[test]
+    fn equivalent_command_wording_says_equivalent_not_runs() {
+        let _g = LOCK.lock().unwrap();
+        set_lang_no_persist(Lang::En);
+        let en = Msg::PlanEquivalentTo.t();
+        assert!(en.contains("equivalent to"), "EN wording: {en}");
+        assert!(!en.contains("runs"), "EN must not say 'runs': {en}");
+        assert!(en.contains("{}"), "EN keeps the command placeholder: {en}");
+
+        set_lang_no_persist(Lang::Ja);
+        let ja = Msg::PlanEquivalentTo.t();
+        assert!(ja.contains("相当"), "JA wording: {ja}");
+        assert!(!ja.contains("実行"), "JA must not say '実行': {ja}");
+
         set_lang_no_persist(Lang::En);
     }
 

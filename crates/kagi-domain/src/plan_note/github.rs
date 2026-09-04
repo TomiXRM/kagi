@@ -25,6 +25,16 @@ pub enum GithubNote {
     /// warning — `--delete-branch` also deletes the local branch when it is
     /// checked out nowhere.
     DeletesBranch { branch: String },
+    /// blocker (#351) — the working-tree file the suggestion anchors to is
+    /// gone, or the anchored range is out of bounds.
+    SuggestionRangeGone { path: String },
+    /// blocker (#351, TOCTOU) — the anchored lines in the working tree no
+    /// longer match what the suggestion was reviewed against. Applying would
+    /// edit the wrong lines, so it is refused.
+    SuggestionStale { path: String },
+    /// warning (#351) — the suggestion is written to the working tree only;
+    /// review it with hunk staging before committing.
+    SuggestionWorkingTreeOnly,
 }
 
 impl GithubNote {
@@ -55,6 +65,17 @@ impl GithubNote {
                 "The head branch '{}' will be deleted on the remote (and locally if it is not checked out).",
                 branch
             ),
+            GithubNote::SuggestionRangeGone { path } => format!(
+                "The lines '{}' was reviewed at no longer exist. Re-open the review against the current file.",
+                path
+            ),
+            GithubNote::SuggestionStale { path } => format!(
+                "'{}' has changed since this suggestion was reviewed. Applying it now could edit the wrong lines, so it is refused. Re-open the review against the current file.",
+                path
+            ),
+            GithubNote::SuggestionWorkingTreeOnly => {
+                "This edits the working tree only — nothing is committed. Review it with hunk staging before you commit.".to_string()
+            }
         }
     }
 }
@@ -64,6 +85,8 @@ impl GithubNote {
 pub enum GithubTitle {
     /// `Merge pull request #<n> (<method>)`.
     MergePr { number: u64, method: String },
+    /// `Apply suggestion to '<path>'` (#351).
+    ApplySuggestion { path: String },
 }
 
 impl GithubTitle {
@@ -72,6 +95,9 @@ impl GithubTitle {
         match self {
             GithubTitle::MergePr { number, method } => {
                 format!("Merge pull request #{} ({})", number, method)
+            }
+            GithubTitle::ApplySuggestion { path } => {
+                format!("Apply suggestion to '{}'", path)
             }
         }
     }
@@ -82,6 +108,9 @@ impl GithubTitle {
 pub enum GithubRecovery {
     /// A merged PR can be reverted on GitHub, or locally with `git revert -m 1`.
     MergePr { number: u64 },
+    /// A suggestion edits only the working tree; the pre-apply file content is
+    /// backed up to the ODB and recoverable by blob SHA (#351).
+    ApplySuggestion,
 }
 
 impl GithubRecovery {
@@ -92,6 +121,8 @@ impl GithubRecovery {
                 "GitHub keeps a 'Revert' button on #{} after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted.",
                 number
             ),
+            GithubRecovery::ApplySuggestion =>
+                "This rewrites only the working-tree file (nothing is staged or committed). The file's pre-apply content is recorded as a blob in the oplog (op=\"apply-suggestion\") first; recover it with `git cat-file -p <blob-sha>`, or discard the change.".to_string(),
         }
     }
 }

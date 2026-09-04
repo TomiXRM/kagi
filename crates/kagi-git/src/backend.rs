@@ -803,6 +803,10 @@ impl Backend {
             Operation::RebaseCurrentOnto { onto } => self.plan_rebase_current_onto(onto),
             Operation::Discard { paths } => self.plan_discard(paths),
             Operation::RestoreSnapshot { id } => self.plan_restore_snapshot(id),
+            Operation::ApplySuggestion {
+                suggestion,
+                expected_original,
+            } => self.plan_apply_suggestion(suggestion, expected_original),
         }
     }
 
@@ -1046,6 +1050,12 @@ impl Backend {
             Operation::RestoreSnapshot { id } => self
                 .execute_restore_snapshot(id)
                 .map(|savepoint| OperationOutcome::RestoreSnapshot { savepoint }),
+            Operation::ApplySuggestion {
+                suggestion,
+                expected_original,
+            } => self
+                .execute_apply_suggestion(plan, suggestion, expected_original)
+                .map(OperationOutcome::Suggestion),
         };
 
         // ── Oplog (ADR-0149 / #329): record synchronously here so EVERY caller
@@ -1999,5 +2009,33 @@ impl Backend {
         paths: &[String],
     ) -> Result<DiscardOutcome, GitError> {
         ops::execute_discard(&self.repo, plan, paths)
+    }
+
+    /// Capture the anchored range's current working-tree content for a PR
+    /// review suggestion (#351). The UI threads this into
+    /// [`Operation::ApplySuggestion`] as the stale-guard baseline.
+    pub fn capture_suggestion_context(
+        &self,
+        s: &kagi_domain::suggestion::Suggestion,
+    ) -> Result<Vec<String>, GitError> {
+        ops::capture_suggestion_context(&self.repo, s)
+    }
+
+    pub fn plan_apply_suggestion(
+        &self,
+        s: &kagi_domain::suggestion::Suggestion,
+        expected: &[String],
+    ) -> Result<OperationPlan, GitError> {
+        ops::plan_apply_suggestion(&self.repo, s, expected)
+    }
+
+    pub fn execute_apply_suggestion(
+        &self,
+        plan: &OperationPlan,
+        s: &kagi_domain::suggestion::Suggestion,
+        expected: &[String],
+    ) -> Result<crate::ops::SuggestionOutcome, GitError> {
+        self.require_trust()?;
+        ops::execute_apply_suggestion(&self.repo, plan, s, expected)
     }
 }

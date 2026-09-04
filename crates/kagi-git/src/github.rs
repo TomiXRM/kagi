@@ -267,6 +267,13 @@ pub fn parse_review_comments(json: &str) -> Result<Vec<ReviewComment>, GitError>
                     .and_then(|x| x.as_u64())
                     .or_else(|| c.get("original_line").and_then(|x| x.as_u64()))
                     .unwrap_or(0) as u32,
+                // Multi-line anchor start (#351); falls back to the original
+                // start line when the anchor is outdated.
+                start_line: c
+                    .get("start_line")
+                    .and_then(|x| x.as_u64())
+                    .or_else(|| c.get("original_start_line").and_then(|x| x.as_u64()))
+                    .map(|n| n as u32),
                 body: g("body"),
                 diff_hunk: g("diff_hunk"),
                 created_at: g("created_at"),

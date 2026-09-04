@@ -7,8 +7,9 @@ use crate::{
     commit::CommitId,
     plan::{
         AmendMode, AmendOutcome, DiscardOutcome, PullOutcome, PushOutcome, RebaseOutcome,
-        StashPopOutcome, UndoOutcome,
+        StashPopOutcome, SuggestionOutcome, UndoOutcome,
     },
+    suggestion::Suggestion,
 };
 
 /// A write operation request handled by the git backend pipeline.
@@ -140,6 +141,15 @@ pub enum Operation {
     RestoreSnapshot {
         id: String,
     },
+    /// Apply a GitHub PR review "suggested change" to the working-tree file
+    /// (#351, ADR-0172). `expected_original` is the anchored range's content
+    /// captured at plan time; execute refuses if the working tree at that range
+    /// no longer matches it (TOCTOU stale-line guard). Writes only the working
+    /// tree — nothing is staged or committed.
+    ApplySuggestion {
+        suggestion: Suggestion,
+        expected_original: Vec<String>,
+    },
 }
 
 impl Operation {
@@ -183,6 +193,7 @@ impl Operation {
             Operation::RebaseCurrentOnto { .. } => "rebase",
             Operation::Discard { .. } => "discard",
             Operation::RestoreSnapshot { .. } => "restore-snapshot",
+            Operation::ApplySuggestion { .. } => "apply-suggestion",
         }
     }
 }
@@ -205,5 +216,7 @@ pub enum OperationOutcome {
     RestoreSnapshot {
         savepoint: String,
     },
+    /// A PR review suggestion applied to the working tree (#351).
+    Suggestion(SuggestionOutcome),
     Unit,
 }

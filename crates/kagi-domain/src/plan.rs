@@ -305,6 +305,31 @@ impl DiscardOutcome {
     }
 }
 
+/// Outcome of applying a PR review suggestion to the working tree (#351).
+///
+/// Carries the ODB blob SHA of the file's pre-apply content — the recovery
+/// handle recorded in the oplog — plus the anchored range that was replaced.
+#[derive(Debug, Clone)]
+pub struct SuggestionOutcome {
+    /// Repo-relative file that was edited.
+    pub path: String,
+    /// The 1-based inclusive range that was replaced.
+    pub start_line: u32,
+    pub end_line: u32,
+    /// ODB blob SHA of the file content *before* the apply (recovery handle).
+    pub backup_blob: String,
+}
+
+impl SuggestionOutcome {
+    /// One-line oplog summary; the backup SHA stays readable for recovery.
+    pub fn oplog_summary(&self) -> String {
+        format!(
+            "applied suggestion to {} lines {}-{}; backup: {}",
+            self.path, self.start_line, self.end_line, self.backup_blob
+        )
+    }
+}
+
 // ──────────────────────────────────────────────────────────────
 // OperationPlan (ADR-0129 Phase 1: moved here from kagi-git::ops;
 // kagi-git re-exports it per the naming convention)

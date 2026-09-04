@@ -24,34 +24,30 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
     match note {
         CherryRevertNote::MergeCommitNeedsMainline { sha, parents, op } => match op {
             PlanOp::CherryPick => format!(
-                "commit {} は merge commit です({} 個の親)。merge commit の cherry-pick には \
-                 mainline の明示的な指定が必要ですが、MVP では未対応です。",
-                sha, parents
+                "merge commit です（親 {} 個）。merge commit の cherry-pick は未対応です。\ncommit `{}`",
+                parents, sha
             ),
             PlanOp::Revert => format!(
-                "commit {} は merge commit です({} 個の親)。merge commit の revert には \
-                 mainline の明示的な指定が必要ですが、MVP では未対応です。",
-                sha, parents
+                "merge commit です（親 {} 個）。merge commit の revert は未対応です。\ncommit `{}`",
+                parents, sha
             ),
             _ => unreachable!(
                 "CherryRevertNote::MergeCommitNeedsMainline only uses CherryPick/Revert"
             ),
         },
         CherryRevertNote::NothingToCherryPickHead { sha } => format!(
-            "commit {} は現在の HEAD commit です。cherry-pick する対象がありません。",
+            "現在の HEAD commit です。cherry-pick する対象がありません。\ncommit `{}`",
             sha
         ),
         CherryRevertNote::WouldConflict { count, files, op } => {
             let joined = files.join(", ");
             match op {
                 PlanOp::CherryPick => format!(
-                    "cherry-pick すると {} 件のコンフリクトが発生します: {}。cherry-pick の前に \
-                     差分を解決してください。",
+                    "cherry-pick すると {} 件 conflict します。先に解決してください。\nfiles {}",
                     count, joined
                 ),
                 PlanOp::Revert => format!(
-                    "revert すると {} 件のコンフリクトが発生します: {}。revert の前に差分を \
-                     解決してください。",
+                    "revert すると {} 件 conflict します。先に解決してください。\nfiles {}",
                     count, joined
                 ),
                 _ => unreachable!("CherryRevertNote::WouldConflict only uses CherryPick/Revert"),
@@ -59,20 +55,18 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
         }
         CherryRevertNote::NoChanges { sha, op } => match op {
             PlanOp::CherryPick => format!(
-                "{} を cherry-pick しても変更は発生しません — すでに適用済みのようです。",
+                "cherry-pick しても変更はありません。すでに適用済みのようです。\ncommit `{}`",
                 sha
             ),
-            PlanOp::Revert => format!("{} を revert しても変更は発生しません。", sha),
+            PlanOp::Revert => format!("revert しても変更はありません。\ncommit `{}`", sha),
             _ => unreachable!("CherryRevertNote::NoChanges only uses CherryPick/Revert"),
         },
         CherryRevertNote::NotInCurrentBranch { sha } => format!(
-            "commit {} は現在の branch に含まれていません。revert は現在の branch 上の commit\
-             のみを対象とします。",
+            "現在の branch に含まれていません。revert は現在の branch 上の commit のみが対象です。\ncommit `{}`",
             sha
         ),
         CherryRevertNote::DirtyMayRefuse { parts } => format!(
-            "作業ツリーに{}があります。対象ファイルが revert と重複する場合、安全な checkout が\
-             拒否されることがあります。",
+            "作業ツリーに{}があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。",
             parts_ja(parts)
         ),
     }
@@ -85,17 +79,17 @@ pub fn title_ja(title: &CherryRevertTitle) -> String {
             sha,
             summary: Some(summary),
             branch,
-        } => format!("{} へ {} '{}' を cherry-pick", branch, sha, summary),
+        } => format!("cherry-pick: `{}` \"{}\" → branch `{}`", sha, summary, branch),
         CherryRevertTitle::CherryPick {
             sha,
             summary: None,
             branch,
-        } => format!("{} へ {} を cherry-pick", branch, sha),
+        } => format!("cherry-pick: `{}` → branch `{}`", sha, branch),
         CherryRevertTitle::Revert {
             sha,
             summary,
             branch,
-        } => format!("{} で {} '{}' を revert", branch, sha, summary),
+        } => format!("revert: `{}` \"{}\"（branch `{}`）", sha, summary, branch),
     }
 }
 
@@ -103,14 +97,11 @@ pub fn title_ja(title: &CherryRevertTitle) -> String {
 pub fn recovery_ja(recovery: &CherryRevertRecovery) -> String {
     match recovery {
         CherryRevertRecovery::AfterCherryPick => {
-            "実行後に cherry-pick を取り消したい場合は次を使用してください:\n  git revert \
-             <new-commit-sha>\n以前の HEAD の sha は reflog に記録されています:\n  git reflog"
+            "取り消す:\n  git revert <new-commit-sha>\n以前の HEAD は reflog に記録されています:\n  git reflog"
                 .to_string()
         }
         CherryRevertRecovery::AfterRevert => {
-            "実行後にこの revert を取り消したい場合は、新しく作成された revert commit をさらに \
-             revert してください:\n  git revert <new-revert-commit-sha>\n以前の HEAD の sha は \
-             reflog に記録されています:\n  git reflog"
+            "取り消すには、作成された revert commit をさらに revert:\n  git revert <new-revert-commit-sha>\n以前の HEAD は reflog に記録されています:\n  git reflog"
                 .to_string()
         }
     }

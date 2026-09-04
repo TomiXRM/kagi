@@ -27,21 +27,18 @@ fn parts_ja(parts: &DirtyParts) -> String {
 pub fn note_ja(note: &CheckoutNote) -> String {
     match note {
         CheckoutNote::AlreadyCurrent { branch } => {
-            format!("branch '{}' はすでに現在の HEAD branch です。", branch)
+            format!("すでに現在の branch です。\nbranch `{}`", branch)
         }
         CheckoutNote::CommitAlreadyHead => "この commit はすでに HEAD です。".to_string(),
         CheckoutNote::CheckoutOverlap { count, files } => format!(
-            "作業ツリーに、切り替え先も変更する {} 件のファイルへのローカルな変更があります: {}。\
-             安全な checkout は拒否されます(この競合が checkout を妨げます)。\
-             先に stash するか commit してください。",
+            "切り替え先も変更する {} 件のファイルにローカルな変更があります。先に stash か commit してください。\nfiles {}",
             count, files
         ),
         CheckoutNote::DirtyCarriedOver { parts, branch } => {
-            format!("{}は '{}' に引き継がれます。", parts_ja(parts), branch)
+            format!("{}は切り替え先に引き継がれます。\nbranch `{}`", parts_ja(parts), branch)
         }
         CheckoutNote::DirtyMayFail { display } => format!(
-            "作業ツリーが dirty です({})。安全な checkout が失敗する場合があります。\
-             先に stash するか commit してください。",
+            "作業ツリーが dirty です({})。checkout に失敗する場合があります。先に stash か commit してください。",
             display
         ),
         // §G-1 exception: current Japanese wording preserved byte-for-byte.
@@ -58,9 +55,9 @@ pub fn note_ja(note: &CheckoutNote) -> String {
 /// Japanese rendering of one checkout title.
 pub fn title_ja(title: &CheckoutTitle) -> String {
     match title {
-        CheckoutTitle::Checkout { branch } => format!("branch '{}' を checkout", branch),
+        CheckoutTitle::Checkout { branch } => format!("branch を checkout: `{}`", branch),
         CheckoutTitle::CheckoutCommit { sha, summary } => {
-            format!("commit {} '{}' を checkout(detached HEAD)", sha, summary)
+            format!("commit を checkout: `{}` \"{}\"（detached HEAD）", sha, summary)
         }
     }
 }
@@ -69,14 +66,11 @@ pub fn title_ja(title: &CheckoutTitle) -> String {
 pub fn recovery_ja(recovery: &CheckoutRecovery) -> String {
     match recovery {
         CheckoutRecovery::Checkout { previous } => format!(
-            "問題が発生した場合は次のコマンドで '{}' に戻れます:\n  git checkout {}\n\
-             HEAD の移動はすべて reflog に記録されます:\n  git reflog",
-            previous, previous
+            "元の branch に戻す:\n  git checkout {}\nHEAD の移動は reflog に記録されます:\n  git reflog",
+            previous
         ),
         CheckoutRecovery::CheckoutCommit { previous } => format!(
-            "誤って実行した場合は次のコマンドで戻れます:\n  git checkout {}\n\
-             detached 状態からの新しい作業を残したい場合は、branch を作成してください:\n  git switch -c <name>\n\
-             HEAD の移動はすべて reflog に記録されます:\n  git reflog",
+            "元に戻す:\n  git checkout {}\n新しい作業を残すには branch を作成:\n  git switch -c <name>\nHEAD の移動は reflog に記録されます:\n  git reflog",
             previous
         ),
     }

@@ -9,6 +9,7 @@ use gpui::SharedString;
 
 use kagi::graph::{layout, EdgeKind, GraphEdge};
 use kagi_git::{Commit, CommitId, Head, RepoSnapshot};
+use kagi_ui_core::settings::CopyTarget;
 
 // ──────────────────────────────────────────────────────────────
 // Helpers
@@ -63,6 +64,34 @@ impl RefBadge {
             remotes: Vec::new(),
         }
     }
+}
+
+/// The plain local-branch name a badge carries, or `None` if it is not a local
+/// branch (remotes and tags never satisfy the Cmd+C "copy branch" target).
+/// HEAD-branch badges strip the trailing `" ✓"`; linked-worktree branches strip
+/// the leading `"🌲 "` marker (mirrors `context_ref_name` in `mod.rs`).
+fn local_branch_name(badge: &RefBadge) -> Option<String> {
+    match badge.kind {
+        BadgeKind::HeadBranch => Some(badge.label.trim_end_matches(" ✓").trim_end().to_string()),
+        BadgeKind::Branch => Some(badge.label.trim_start_matches("🌲 ").to_string()),
+        BadgeKind::Remote | BadgeKind::Tag => None,
+    }
+}
+
+/// Resolve the string Cmd+C copies from a selected Graph row (ADR-0170).
+///
+/// - `CopyTarget::Hash` → the full 40-char SHA.
+/// - `CopyTarget::Branch` → the first *local* branch ref on the row (HEAD
+///   branch counts); with multiple refs a local branch is preferred over
+///   remotes/tags. If the row has no local branch, falls back to the full SHA
+///   — the copy never yields nothing.
+pub fn graph_copy_value(badges: &[RefBadge], full_sha: &str, target: CopyTarget) -> String {
+    if target == CopyTarget::Branch {
+        if let Some(name) = badges.iter().find_map(local_branch_name) {
+            return name;
+        }
+    }
+    full_sha.to_string()
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -751,5 +780,62 @@ mod remote_fold_tests {
         // A non-origin remote keeps its prefix so two remotes can't collide.
         let up = RefBadge::new(BadgeKind::Remote, "upstream/main");
         assert_eq!(badge_display(&up).0, "upstream/main");
+    }
+}
+
+#[cfg(test)]
+mod graph_copy_tests {
+    use super::*;
+
+    const SHA: &str = "abcdef0123456789abcdef0123456789abcdef01";
+
+    fn branch(name: &str) -> RefBadge {
+        RefBadge::new(BadgeKind::Branch, name)
+    }
+
+    #[test]
+    fn hash_target_copies_full_sha() {
+        let badges = vec![branch("feature")];
+        assert_eq!(graph_copy_value(&badges, SHA, CopyTarget::Hash), SHA);
+    }
+
+    #[test]
+    fn branch_target_copies_local_branch() {
+        let badges = vec![branch("feature")];
+        assert_eq!(
+            graph_copy_value(&badges, SHA, CopyTarget::Branch),
+            "feature"
+        );
+    }
+
+    #[test]
+    fn branch_target_with_no_branch_falls_back_to_hash() {
+        // Row carries only a remote + tag — no local branch → copy the SHA.
+        let badges = vec![
+            RefBadge::new(BadgeKind::Remote, "origin/feature"),
+            RefBadge::new(BadgeKind::Tag, "v1.0"),
+        ];
+        assert_eq!(graph_copy_value(&badges, SHA, CopyTarget::Branch), SHA);
+    }
+
+    #[test]
+    fn branch_target_prefers_local_branch_over_remote_and_tag() {
+        let badges = vec![
+            RefBadge::new(BadgeKind::Remote, "origin/feature"),
+            branch("feature"),
+            RefBadge::new(BadgeKind::Tag, "v1.0"),
+        ];
+        assert_eq!(
+            graph_copy_value(&badges, SHA, CopyTarget::Branch),
+            "feature"
+        );
+    }
+
+    #[test]
+    fn branch_target_strips_head_and_worktree_markers() {
+        let head = [RefBadge::new(BadgeKind::HeadBranch, "main ✓")];
+        assert_eq!(graph_copy_value(&head, SHA, CopyTarget::Branch), "main");
+        let wt = [RefBadge::new(BadgeKind::Branch, "🌲 feat")];
+        assert_eq!(graph_copy_value(&wt, SHA, CopyTarget::Branch), "feat");
     }
 }

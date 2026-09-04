@@ -3131,6 +3131,29 @@ impl KagiApp {
             .is_some_and(|fh| fh.is_focused(window))
     }
 
+    /// Cmd+C on the Graph: copy the selected row's branch name or full SHA per
+    /// the `graph_copy_target` setting (ADR-0170). A `Branch` target with no
+    /// local branch on the row falls back to the SHA — the copy never yields
+    /// nothing. Only reached when the root (Graph) holds focus and a row is
+    /// selected; the `!Terminal && !Input` keybinding + the diff-selection
+    /// guard keep it off text selections.
+    fn copy_graph_selection(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.active_view.rows.get(index) else {
+            return;
+        };
+        let target = settings::Settings::load().graph_copy_target();
+        let full_sha = row.id.0.clone();
+        let value = commit_list::graph_copy_value(&row.badges, &full_sha, target);
+        cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
+        if value == full_sha {
+            klog!("graph: copied hash {}", value);
+        } else {
+            klog!("graph: copied branch {}", value);
+        }
+        self.push_toast(ToastKind::Info, i18n::copied_fmt(&value), cx);
+        cx.notify();
+    }
+
     /// Enter while a modal is open: confirm/approve the active modal (highest
     /// priority first). Returns `true` if a modal was open — the caller consumes
     /// Enter and does NOT fall through to commit checkout. Each confirm method

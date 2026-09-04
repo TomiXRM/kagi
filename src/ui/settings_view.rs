@@ -389,6 +389,26 @@ fn appearance_section(
         .on_click(toggle_fetch)
         .into_any_element();
 
+    // ── Graph Cmd+C copy target (ADR-0170) ──
+    // Two-way segmented choice → hash (default) or the row's local branch.
+    const COPY_TARGETS: [(&str, &str); 2] = [("hash", "Hash"), ("branch", "Branch")];
+    let cur_target = settings::read_setting("graph_copy_target");
+    let cur_target = cur_target.as_deref().unwrap_or("hash");
+    let copy_selected = COPY_TARGETS.iter().position(|(k, _)| *k == cur_target);
+    let app_gc = app.clone();
+    let copy_target_ctl = RadioGroup::horizontal("settings-graph-copy")
+        .children(COPY_TARGETS.map(|(_, label)| SharedString::from(label)))
+        .selected_index(copy_selected)
+        .on_click(
+            move |index: &usize, _w: &mut gpui::Window, cx: &mut gpui::App| {
+                if let Some((key, _)) = COPY_TARGETS.get(*index) {
+                    settings::write_setting("graph_copy_target", Some(key));
+                    app_gc.update(cx, |_a, cx| cx.notify());
+                }
+            },
+        )
+        .into_any_element();
+
     div()
         .flex()
         .flex_col()
@@ -420,6 +440,11 @@ fn appearance_section(
             SharedString::from(Msg::SettingsAutoFetch.t()),
             SharedString::from(Msg::SettingsAutoFetchDesc.t()),
             auto_fetch_ctl,
+        ))
+        .child(setting_row(
+            SharedString::from(Msg::SettingsGraphCopy.t()),
+            SharedString::from(Msg::SettingsGraphCopyDesc.t()),
+            copy_target_ctl,
         ))
 }
 

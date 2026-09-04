@@ -599,6 +599,10 @@ pub enum Msg {
     SettingsAutoFetch,
     /// Appearance → Auto-fetch row description.
     SettingsAutoFetchDesc,
+    /// Appearance → Graph Cmd+C copy-target row title.
+    SettingsGraphCopy,
+    /// Appearance → Graph Cmd+C copy-target row description.
+    SettingsGraphCopyDesc,
     /// Language → Interface language row title.
     SettingsInterfaceLang,
     /// Language → Interface language row description.
@@ -1577,6 +1581,14 @@ impl Msg {
             }
             (Ja, SettingsAutoFetchDesc) => {
                 "バックグラウンドで定期的に remote を fetch し、graph や ahead/behind を最新に保ちます。"
+            }
+            (En, SettingsGraphCopy) => "Graph Cmd+C copies",
+            (Ja, SettingsGraphCopy) => "Graph の Cmd+C でコピー",
+            (En, SettingsGraphCopyDesc) => {
+                "What ⌘C copies from the selected commit row. Branch falls back to the hash when the row has no local branch."
+            }
+            (Ja, SettingsGraphCopyDesc) => {
+                "選択中の commit 行を ⌘C でコピーする対象。branch は local branch が無い行では hash を代わりにコピーします。"
             }
             (En, SettingsInterfaceLang) => "Interface language",
             (Ja, SettingsInterfaceLang) => "表示言語",

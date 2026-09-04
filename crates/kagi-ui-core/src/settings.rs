@@ -185,6 +185,29 @@ impl Settings {
             .map(|s| s.trim() != "false")
             .unwrap_or(true)
     }
+
+    /// Per-worktree port range (`"worktree.port_range"`, e.g. `"3000-3099"`;
+    /// issue #342 / ADR-0171). Returned as `(start, end)` inclusive. Defaults to
+    /// `(3000, 3099)` when unset or unparsable so worktree port allocation
+    /// always has a valid range to draw from.
+    pub fn worktree_port_range(&self) -> (u16, u16) {
+        self.get_str("worktree.port_range")
+            .as_deref()
+            .and_then(kagi_domain::worktree_ports::parse_port_range)
+            .map(|r| (r.start, r.end))
+            .unwrap_or((3000, 3099))
+    }
+
+    /// How many consecutive ports each worktree reserves
+    /// (`"worktree.ports_per_worktree"`; issue #342 / ADR-0171). Defaults to
+    /// `10` (the Conductor `CONDUCTOR_PORT` precedent). A `0` or unparsable
+    /// value falls back to the default so allocation never reserves nothing.
+    pub fn worktree_ports_per_worktree(&self) -> u16 {
+        self.get_str("worktree.ports_per_worktree")
+            .and_then(|s| s.trim().parse::<u16>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(10)
+    }
 }
 
 /// Default contents of the `analyze_ignore` file (gitignore syntax), seeded on
@@ -368,6 +391,30 @@ mod tests {
         assert_eq!(empty.graph_compact(), None);
         assert_eq!(empty.auto_fetch(), None);
         assert_eq!(empty.ui_zoom_permille(), None);
+    }
+
+    #[test]
+    fn worktree_port_accessors_default_and_parse() {
+        // Defaults when unset (issue #342 / ADR-0171).
+        let empty = Settings::default();
+        assert_eq!(empty.worktree_port_range(), (3000, 3099));
+        assert_eq!(empty.worktree_ports_per_worktree(), 10);
+
+        // Parsed from the flat string values.
+        let s: Settings = serde_json::from_str(
+            r#"{ "worktree.port_range": "4000-4099", "worktree.ports_per_worktree": "5" }"#,
+        )
+        .unwrap();
+        assert_eq!(s.worktree_port_range(), (4000, 4099));
+        assert_eq!(s.worktree_ports_per_worktree(), 5);
+
+        // Unparsable / zero fall back to the defaults.
+        let bad: Settings = serde_json::from_str(
+            r#"{ "worktree.port_range": "nope", "worktree.ports_per_worktree": "0" }"#,
+        )
+        .unwrap();
+        assert_eq!(bad.worktree_port_range(), (3000, 3099));
+        assert_eq!(bad.worktree_ports_per_worktree(), 10);
     }
 
     #[test]

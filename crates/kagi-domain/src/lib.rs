@@ -51,4 +51,5 @@ pub mod trailers;
 pub mod update;
 pub mod word_diff;
 pub mod worktree_include;
+pub mod worktree_ports;
 pub mod worktree_steps;

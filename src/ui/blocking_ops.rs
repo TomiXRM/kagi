@@ -918,6 +918,22 @@ pub(crate) fn create_worktree_blocking(
         Err(e) => klog!("verify: worktree open error: {}", e),
     }
 
+    // Assign + persist this worktree's port block now, so it is stable across
+    // kagi restarts and ready for the terminal-wiring PR to inject as KAGI_PORT
+    // (issue #342 / ADR-0171). Numbers-only (no socket bound); exhaustion of the
+    // range is surfaced via klog, never worked around.
+    let s = Settings::load();
+    let (start, end) = s.worktree_port_range();
+    let range = kagi_domain::worktree_ports::PortRange { start, end };
+    let per = s.worktree_ports_per_worktree();
+    match kagi_git::worktree_ports::assign_block(&verify_path, range, per) {
+        Some(p) => klog!("worktree-port: assigned {} → {}", verify_path.display(), p),
+        None => klog!(
+            "worktree-port: range {start}-{end} exhausted for {}",
+            verify_path.display()
+        ),
+    }
+
     Ok(plan.predicted.clone())
 }
 

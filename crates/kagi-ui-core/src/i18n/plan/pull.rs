@@ -54,11 +54,11 @@ pub fn note_ja(note: &PullNote) -> String {
             ahead,
             behind,
         } => format!(
-            "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はリモート上で merge commit を作成します。",
+            "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はremote上で merge commit を作成します。",
             branch, ahead, behind
         ),
         PullNote::RemoteDirty => {
-            "リモートの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。"
+            "remoteの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。"
                 .to_string()
         }
     }

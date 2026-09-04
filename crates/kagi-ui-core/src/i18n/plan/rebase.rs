@@ -38,7 +38,7 @@ pub fn title_ja(title: &RebaseTitle) -> String {
 pub fn recovery_ja(recovery: &RebaseRecovery) -> String {
     match recovery {
         RebaseRecovery::RebaseCurrentOnto { branch, from } => format!(
-            "rebase 中はコンフリクトバナーから abort すれば `{branch}` を {from} へ戻せます。完了済みなら rebase 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}"
+            "rebase 中はconflict バナーから abort すれば `{branch}` を {from} へ戻せます。完了済みなら rebase 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}"
         ),
     }
 }

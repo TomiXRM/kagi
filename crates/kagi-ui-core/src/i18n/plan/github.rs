@@ -26,7 +26,7 @@ pub fn note_ja(note: &GithubNote) -> String {
             "merge は GitHub 上で実行されます。次の fetch までローカルは変わりません。".to_string()
         }
         GithubNote::DeletesBranch { branch } => format!(
-            "head branch をリモートで削除します。どこにも checkout されていなければローカルも削除します。\nbranch `{}`",
+            "head branch をremote で削除します。どこにも checkout されていなければlocal も削除します。\nbranch `{}`",
             branch
         ),
         GithubNote::SuggestionRangeGone { path } => format!(

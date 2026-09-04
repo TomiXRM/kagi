@@ -147,7 +147,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             kagi_domain::plan_note::worktree::worktree_steps_lines(
                 steps,
                 *trust_required,
-                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（コミット済み設定は既定で未信頼）。"
+                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（commit 済み設定は既定で未信頼）。"
             )
         ),
         WorktreeNote::PreRemoveSteps {
@@ -160,7 +160,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             kagi_domain::plan_note::worktree::worktree_steps_lines(
                 steps,
                 *trust_required,
-                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（コミット済み設定は既定で未信頼）。"
+                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（commit 済み設定は既定で未信頼）。"
             )
         ),
     }

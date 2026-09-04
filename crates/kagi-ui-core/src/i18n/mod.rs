@@ -603,6 +603,10 @@ pub enum Msg {
     SettingsGraphCopy,
     /// Appearance → Graph Cmd+C copy-target row description.
     SettingsGraphCopyDesc,
+    /// Appearance → Reduce-motion row title (issue #354 / ADR-0173).
+    SettingsReduceMotion,
+    /// Appearance → Reduce-motion row description.
+    SettingsReduceMotionDesc,
     /// Language → Interface language row title.
     SettingsInterfaceLang,
     /// Language → Interface language row description.
@@ -1589,6 +1593,14 @@ impl Msg {
             }
             (Ja, SettingsGraphCopyDesc) => {
                 "選択中の commit 行を ⌘C でコピーする対象。branch は local branch が無い行では hash を代わりにコピーします。"
+            }
+            (En, SettingsReduceMotion) => "Reduce motion",
+            (Ja, SettingsReduceMotion) => "モーションを減らす",
+            (En, SettingsReduceMotionDesc) => {
+                "Render decorative animations static (e.g. the tab-loading dots stop bobbing)."
+            }
+            (Ja, SettingsReduceMotionDesc) => {
+                "装飾的なアニメーションを静止させます(タブ読み込み中のドットの揺れなど)。"
             }
             (En, SettingsInterfaceLang) => "Interface language",
             (Ja, SettingsInterfaceLang) => "表示言語",

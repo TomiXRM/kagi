@@ -123,6 +123,10 @@ fn main() {
     // background fetch ticker starts in the user's chosen state.
     crate::ui::theme::init_auto_fetch();
 
+    // Resolve the persisted reduce-motion flag (settings.json "reduce_motion";
+    // issue #354 / ADR-0173) so decorative animations start static when on.
+    crate::ui::theme::init_reduce_motion();
+
     // W22-I18N / ADR-0048: resolve the UI language before anything renders.
     // Priority: KAGI_LANG env → settings.json "lang" → LANG/LC_ALL → English.
     crate::ui::i18n::init_lang();

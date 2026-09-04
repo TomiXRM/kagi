@@ -166,6 +166,16 @@ impl Settings {
         self.get_str("auto_fetch").map(|s| s.trim() != "false")
     }
 
+    /// Reduce-motion flag (`"reduce_motion"`, `"true"`/`"false"`; issue #354 /
+    /// ADR-0173). When on, kagi renders its looping decorative animations
+    /// static (the loading dots stop bobbing). Default **off** — only an
+    /// explicit `"true"` enables it.
+    pub fn reduce_motion(&self) -> bool {
+        self.get_str("reduce_motion")
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false)
+    }
+
     /// User-extensible agent-provenance detection patterns (`"agent_patterns"`,
     /// issue #337 / ADR-0150). A comma-separated list of `label:needle` entries
     /// (bare `needle` uses itself as the label) layered on top of the built-in
@@ -415,6 +425,17 @@ mod tests {
         .unwrap();
         assert_eq!(bad.worktree_port_range(), (3000, 3099));
         assert_eq!(bad.worktree_ports_per_worktree(), 10);
+    }
+
+    #[test]
+    fn reduce_motion_default_off_and_parses_true() {
+        // Default off when unset (issue #354 / ADR-0173).
+        assert!(!Settings::default().reduce_motion());
+        // Explicit "true" enables it; anything else stays off.
+        let on: Settings = serde_json::from_str(r#"{ "reduce_motion": "true" }"#).unwrap();
+        assert!(on.reduce_motion());
+        let off: Settings = serde_json::from_str(r#"{ "reduce_motion": "false" }"#).unwrap();
+        assert!(!off.reduce_motion());
     }
 
     #[test]

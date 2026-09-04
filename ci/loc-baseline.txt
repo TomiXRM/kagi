@@ -12,8 +12,8 @@ crates/kagi-git/src/ops/stash.rs 958
 crates/kagi-git/src/ops/worktree_steps.rs 876
 crates/kagi-git/src/resolution.rs 1537
 crates/kagi-git/src/staging.rs 934
-crates/kagi-ui-core/src/i18n/mod.rs 2486
-crates/kagi-ui-core/src/theme.rs 2151
+crates/kagi-ui-core/src/i18n/mod.rs 2498
+crates/kagi-ui-core/src/theme.rs 2177
 crates/kagi-ui-editor/src/lib.rs 3346
 src/ui/blocking_ops.rs 995
 src/ui/branch_cleanup.rs 1064
@@ -35,7 +35,7 @@ src/ui/operations/worktree.rs 840
 src/ui/pr_mode.rs 2349
 src/ui/render_header.rs 807
 src/ui/render.rs 910
-src/ui/settings_view.rs 803
+src/ui/settings_view.rs 823
 src/ui/sidebar.rs 2007
 src/ui/tabs.rs 1168
 src/ui/workspace.rs 1054

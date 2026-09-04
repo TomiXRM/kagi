@@ -19,7 +19,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             branch,
             start,
         } => format!(
-            "リンク worktree を作成します（起点 {}）。\nworktree `{}` / branch `{}`",
+            "リンク worktree を作成します(起点 {})。\nworktree `{}` / branch `{}`",
             start, path, branch
         ),
         WorktreeNote::LockedWithReason { reason } => {
@@ -53,26 +53,26 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 names = format!("{} (他 {} 件)", names, more);
             }
             format!(
-                ".worktreeinclude に一致する {} 件（{}）を新しい worktree にコピーします: {}。",
+                ".worktreeinclude に一致する {} 件({})を新しい worktree にコピーします: {}。",
                 count,
                 kagi_domain::worktree_include::human_bytes(*total_bytes),
                 names
             )
         }
         WorktreeNote::IncludeSkippedSymlinks { count } => {
-            format!("一致した symlink {} 件はスキップします（symlink はコピーしません）。", count)
+            format!("一致した symlink {} 件はスキップします(symlink はコピーしません)。", count)
         }
         WorktreeNote::IncludeOverCap {
             total_bytes,
             cap_bytes,
         } => format!(
-            ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります（例: node_modules）。",
+            ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります(例: node_modules)。",
             kagi_domain::worktree_include::human_bytes(*total_bytes),
             kagi_domain::worktree_include::human_bytes(*cap_bytes)
         ),
         WorktreeNote::RemoveMainRefused => "main worktree は削除できません。".to_string(),
         WorktreeNote::RemoveDirty { path, summary } => format!(
-            "worktree に未 commit の変更があります（{}）。先に commit か stash してください（削除は force しません）。\nworktree `{}`",
+            "worktree に未 commit の変更があります({})。先に commit か stash してください(削除は force しません)。\nworktree `{}`",
             summary, path
         ),
         WorktreeNote::RemoveLocked { path, reason } => {
@@ -81,7 +81,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 None => "(理由の記録なし)".to_string(),
             };
             format!(
-                "worktree はロックされています（{}）。削除前にロックを解除してください（kagi は force しません）。\nworktree `{}`",
+                "worktree はロックされています({})。削除前にロックを解除してください(kagi は force しません)。\nworktree `{}`",
                 reason_display, path
             )
         }
@@ -115,7 +115,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 Some(r) => format!("「{}」", r),
                 None => "(理由の記録なし)".to_string(),
             };
-            format!("worktree は既にロックされています（{}）。\nworktree `{}`", reason_display, name)
+            format!("worktree は既にロックされています({})。\nworktree `{}`", reason_display, name)
         }
         WorktreeNote::PrunePreview {
             count,
@@ -133,7 +133,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         }
         WorktreeNote::PruneNothing => "prune 対象の worktree はありません。".to_string(),
         WorktreeNote::RepairsWorktrees => {
-            "worktree の管理リンクを修復します（main / linked の移動に対応）。\
+            "worktree の管理リンクを修復します(main / linked の移動に対応)。\
              ファイルには触れず、.git のリンクのみを修復します。"
                 .to_string()
         }
@@ -147,7 +147,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             kagi_domain::plan_note::worktree::worktree_steps_lines(
                 steps,
                 *trust_required,
-                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（commit 済み設定は既定で未信頼）。"
+                "  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。"
             )
         ),
         WorktreeNote::PreRemoveSteps {
@@ -155,12 +155,12 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             trust_required,
             ..
         } => format!(
-            ".kagi/worktree.toml の削除前ステップ {} 件を実行します（command が失敗または未信頼なら削除を中止）:{}",
+            ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}",
             steps.len(),
             kagi_domain::plan_note::worktree::worktree_steps_lines(
                 steps,
                 *trust_required,
-                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（commit 済み設定は既定で未信頼）。"
+                "  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。"
             )
         ),
     }

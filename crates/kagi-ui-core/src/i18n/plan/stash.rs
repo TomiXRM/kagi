@@ -25,7 +25,7 @@ pub fn note_ja(note: &StashNote) -> String {
             "作業ツリーはすでにクリーンです。stash する対象がありません。".to_string()
         }
         StashNote::UntrackedIncluded { count } => format!(
-            "未追跡ファイル {} 件も stash に含めます（git stash push -u 相当）。",
+            "未追跡ファイル {} 件も stash に含めます(git stash push -u 相当)。",
             count
         ),
         StashNote::UntrackedExcluded { count } => format!(
@@ -34,7 +34,7 @@ pub fn note_ja(note: &StashNote) -> String {
         ),
         // JA には単複の別がないため、count は複数形サフィックスを持たず自然に読める。
         StashNote::IndexOutOfRange { index, count } => {
-            format!("stash index {} は範囲外です（entry は {} 件）。", index, count)
+            format!("stash index {} は範囲外です(entry は {} 件)。", index, count)
         }
         StashNote::DirtyBlocksApply { parts, op } => {
             let op_word = match op {
@@ -59,7 +59,7 @@ pub fn note_ja(note: &StashNote) -> String {
             )
         }
         StashNote::PopPredictionUnavailable { reason } => format!(
-            "クリーンに適用できるか検証できませんでした（{}）。pop は entry を削除するためブロックしました。削除せず適用する Stash Apply を使ってください。",
+            "クリーンに適用できるか検証できませんでした({})。pop は entry を削除するためブロックしました。削除せず適用する Stash Apply を使ってください。",
             reason
         ),
         StashNote::RemoteDropIrreversible => {
@@ -72,7 +72,7 @@ pub fn note_ja(note: &StashNote) -> String {
 pub fn title_ja(title: &StashTitle) -> String {
     match title {
         StashTitle::Push { next_count } => {
-            format!("Stash push: ローカルの変更を保存（{}）", next_count)
+            format!("Stash push: ローカルの変更を保存({})", next_count)
         }
         StashTitle::Apply { index } => format!("Stash apply: stash@{{{}}} を復元", index),
         StashTitle::Pop { index } => format!("Stash pop: stash@{{{}}} を適用して削除", index),

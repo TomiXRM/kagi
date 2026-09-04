@@ -41,15 +41,15 @@ pub fn title_ja(title: &PushTitle) -> String {
             branch,
             remote,
             set_upstream: true,
-        } => format!("`{}` を `{}` へ push（upstream 設定）", branch, remote),
+        } => format!("`{}` を `{}` へ push(upstream 設定)", branch, remote),
         PushTitle::Push { branch, remote, .. } => format!("`{}` を `{}` へ push", branch, remote),
-        PushTitle::PushBlocked => "push（ブロック中）".to_string(),
+        PushTitle::PushBlocked => "push(ブロック中)".to_string(),
         PushTitle::PushBranch {
             branch,
             remote,
             set_upstream: true,
         } => format!(
-            "`{}` を `{}/{}` へ push（upstream 設定）",
+            "`{}` を `{}/{}` へ push(upstream 設定)",
             branch, remote, branch
         ),
         PushTitle::PushBranch { branch, remote, .. } => {
@@ -65,7 +65,7 @@ pub fn title_ja(title: &PushTitle) -> String {
 pub fn recovery_ja(recovery: &PushRecovery) -> String {
     match recovery {
         PushRecovery::Push => "push は remote へ commit を送るだけで、ローカルは変更しません。\n\
-             拒否された場合（non-fast-forward）は先に pull してから再度プラン:\n  \
+             拒否された場合(non-fast-forward)は先に pull してから再度プラン:\n  \
              git pull\n  git push\nHEAD の移動は reflog に記録されます:\n  git reflog"
             .to_string(),
         PushRecovery::PushBlocked => {

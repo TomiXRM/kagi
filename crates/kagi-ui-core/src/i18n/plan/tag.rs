@@ -32,7 +32,7 @@ pub fn note_ja(note: &TagNote) -> String {
             remote, name
         ),
         TagNote::PushRejectedIfMoved { name } => format!(
-            "remote 側で別の commit を指して既に存在する場合、push は拒否されます（移動しません）。kagi は tag を force push しません。\ntag `{}`",
+            "remote 側で別の commit を指して既に存在する場合、push は拒否されます(移動しません)。kagi は tag を force push しません。\ntag `{}`",
             name
         ),
     }

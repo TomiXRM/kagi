@@ -31,7 +31,7 @@ pub fn note_ja(note: &CheckoutNote) -> String {
         }
         CheckoutNote::CommitAlreadyHead => "この commit はすでに HEAD です。".to_string(),
         CheckoutNote::CheckoutOverlap { count, files } => format!(
-            "切り替え先も変更する {} 件のファイルにローカルな変更があります。先に stash か commit してください。\nfiles {}",
+            "ローカルに、切り替え先も変更する {} 件のファイルの変更があります。先に stash か commit してください。\nfiles {}",
             count, files
         ),
         CheckoutNote::DirtyCarriedOver { parts, branch } => {
@@ -58,7 +58,7 @@ pub fn title_ja(title: &CheckoutTitle) -> String {
         CheckoutTitle::Checkout { branch } => format!("branch を checkout: `{}`", branch),
         CheckoutTitle::CheckoutCommit { sha, summary } => {
             format!(
-                "commit を checkout: `{}` \"{}\"（detached HEAD）",
+                "commit を checkout: `{}` \"{}\"(detached HEAD)",
                 sha, summary
             )
         }

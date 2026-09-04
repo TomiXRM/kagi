@@ -41,7 +41,7 @@ pub fn note_ja(note: &RulesetNote) -> String {
             len, limit, path
         ),
         RulesetNote::SignatureRequired => "ruleset は署名付き commit を要求していますが、\
-             署名が未設定です（commit.gpgsign / user.signingkey）。"
+             署名が未設定です(commit.gpgsign / user.signingkey)。"
             .to_string(),
         RulesetNote::LinearHistoryRequired => "ruleset は linear history を要求しています。\
              merge commit は push 時に拒否されます。"

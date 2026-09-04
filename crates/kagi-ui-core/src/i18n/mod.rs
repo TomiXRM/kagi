@@ -1368,7 +1368,7 @@ impl Msg {
             (En, CommitTitle) => "Summary",
             (Ja, CommitTitle) => "概要",
             (En, CommitBody) => "Description (optional)",
-            (Ja, CommitBody) => "説明（任意）",
+            (Ja, CommitBody) => "説明(任意)",
             (En, GenerateMessage) => "Generate commit message",
             (Ja, GenerateMessage) => "commit メッセージを生成",
             (En, AddCoAuthor) => "Add co-author",
@@ -1514,7 +1514,7 @@ impl Msg {
             (En, PrStack) => "STACK",
             (Ja, PrStack) => "スタック",
             (En, PrFetchFailed) => "Couldn't reach GitHub — this is not an empty list.",
-            (Ja, PrFetchFailed) => "GitHub に接続できませんでした（PR が 0 件なのではありません）。",
+            (Ja, PrFetchFailed) => "GitHub に接続できませんでした(PR が 0 件なのではありません)。",
             (En, PrRefresh) => "Refresh",
             (Ja, PrRefresh) => "更新",
             (En, PrRefreshing) => "Refreshing pull requests…",
@@ -1576,7 +1576,7 @@ impl Msg {
                 "On: each commit's node is the author's avatar (ringed in its lane colour) with a faint branch-colour band behind the graph. Off: a plain coloured dot, the avatar back in the message row, and no band. Either way the graph keeps its lane colours (graph lines, nodes and branch/tag labels)."
             }
             (Ja, SettingsLaneCompactDesc) => {
-                "オン: 各 commit のノードが著者アバター（レーン色の輪付き）になり、グラフ背後に branch 色の帯が付きます。オフ: 通常の色ドットになり、アバターはメッセージ行に戻り、帯は出ません。どちらでもグラフのレーン色（線・ノード・branch/tag のラベル）は維持されます。"
+                "オン: 各 commit のノードが著者アバター(レーン色の輪付き)になり、グラフ背後に branch 色の帯が付きます。オフ: 通常の色ドットになり、アバターはメッセージ行に戻り、帯は出ません。どちらでもグラフのレーン色(線・ノード・branch/tag のラベル)は維持されます。"
             }
             (En, SettingsAutoFetch) => "Auto-fetch",
             (Ja, SettingsAutoFetch) => "自動 fetch",
@@ -1764,7 +1764,7 @@ impl Msg {
                 "Native view is text-only; open mermaid.live to render the diagram (the whole graph travels in the URL — nothing is uploaded)."
             }
             (Ja, EcoMermaidHint) => {
-                "アプリ内ではテキスト表示です。mermaid.live を開くと図として描画されます（グラフ全体は URL に載るだけで、アップロードはされません）。"
+                "アプリ内ではテキスト表示です。mermaid.live を開くと図として描画されます(グラフ全体は URL に載るだけで、アップロードはされません)。"
             }
             (En, EcoResetView) => "Reset",
             (Ja, EcoResetView) => "reset",
@@ -1995,23 +1995,23 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
         Lang::Ja => vec![
             (
                 "Analyze とは",
-                "Git 履歴を読み取り専用で分析します（変更は加えません）。右上で期間（Day … All）を選ぶと、各ビューがその期間で再集計されます。除外対象は settings.json の隣の \"analyze_ignore\" ファイル（gitignore 形式）で完全に設定可能で、初回に既定値（画像・PDF・CAD・KiCad・フォント・アーカイブ）が書き込まれます。自由に編集・全削除できます。",
+                "Git 履歴を読み取り専用で分析します(変更は加えません)。右上で期間(Day … All)を選ぶと、各ビューがその期間で再集計されます。除外対象は settings.json の隣の \"analyze_ignore\" ファイル(gitignore 形式)で完全に設定可能で、初回に既定値(画像・PDF・CAD・KiCad・フォント・アーカイブ)が書き込まれます。自由に編集・全削除できます。",
             ),
             (
-                "Hotspots（ホットスポット）",
-                "リスク = 変更頻度（commit 数）× 規模（行数 LOC）でファイルを順位付け。上位ほどバグが出やすい＝「よく触られて、かつ複雑」な場所です。List はリスクバー付きランキング、Map はツリーマップ（面積=LOC、色=リスク、緑→赤）。断定ではなく「注目の目安」です。",
+                "Hotspots(ホットスポット)",
+                "リスク = 変更頻度(commit 数)× 規模(行数 LOC)でファイルを順位付け。上位ほどバグが出やすい＝「よく触られて、かつ複雑」な場所です。List はリスクバー付きランキング、Map はツリーマップ(面積=LOC、色=リスク、緑→赤)。断定ではなく「注目の目安」です。",
             ),
             (
-                "Coupling（結合）",
-                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー（1:多）が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『reset』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
+                "Coupling(結合)",
+                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー(1:多)が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『reset』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
             ),
             (
-                "Ownership（所有）",
-                "各ファイルの担当：主著者・その commit 占有率・関わった著者数。『1 author』（強調表示）はバス係数リスク＝そのファイルを知るのが 1 人だけ、という危険信号です。",
+                "Ownership(所有)",
+                "各ファイルの担当：主著者・その commit 占有率・関わった著者数。『1 author』(強調表示)はバス係数リスク＝そのファイルを知るのが 1 人だけ、という危険信号です。",
             ),
             (
                 "診断をコピー",
-                "現在表示中のビュー（Hotspots ランキング / Coupling の組 / Ownership）をコピーします。AI チャットに貼って文脈として渡せます（「ここがリスク。リファクタを手伝って」）。モードを切り替えると、そのビューが書き出されます。ボタン横で形式を選べます：どのモードでも MD（Markdown 表）か JSON、Coupling では加えて Mermaid（1:多の共変化構造が見えるフローチャート）。",
+                "現在表示中のビュー(Hotspots ランキング / Coupling の組 / Ownership)をコピーします。AI チャットに貼って文脈として渡せます(「ここがリスク。リファクタを手伝って」)。モードを切り替えると、そのビューが書き出されます。ボタン横で形式を選べます：どのモードでも MD(Markdown 表)か JSON、Coupling では加えて Mermaid(1:多の共変化構造が見えるフローチャート)。",
             ),
         ],
     }

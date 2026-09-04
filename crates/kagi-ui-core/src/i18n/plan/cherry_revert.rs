@@ -79,7 +79,10 @@ pub fn title_ja(title: &CherryRevertTitle) -> String {
             sha,
             summary: Some(summary),
             branch,
-        } => format!("cherry-pick: `{}` \"{}\" → branch `{}`", sha, summary, branch),
+        } => format!(
+            "cherry-pick: `{}` \"{}\" → branch `{}`",
+            sha, summary, branch
+        ),
         CherryRevertTitle::CherryPick {
             sha,
             summary: None,

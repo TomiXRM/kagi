@@ -20,35 +20,33 @@ fn parts_ja(parts: &DirtyParts) -> String {
 pub fn note_ja(note: &PullNote) -> String {
     match note {
         PullNote::DirtyPullGuard { parts } => format!(
-            "作業ツリーに{}があります。取得した変更が同じパスに触れない場合のみ pull は続行されます。",
+            "作業ツリーに{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。",
             parts_ja(parts)
         ),
         PullNote::NoUpstreamWithHint { branch, err } => format!(
-            "branch '{}' に upstream が設定されていません: {}。\
-             `git branch --set-upstream-to=<remote>/<branch>` で設定してください。",
+            "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>",
             branch, err
         ),
         PullNote::MergePrediction => {
-            "プラン時点での merge 予測: 現在の upstream の先端は HEAD とコンフリクトします。\
-             実行はブロックされません(fetch で状況が変わる可能性があるため)が、\
-             upstream に変化がなければ実行は安全に失敗し、リポジトリは変更されません。"
+            "merge 予測: 現在の upstream の先端は HEAD と conflict します。\
+             fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。"
                 .to_string()
         }
         PullNote::ConflictedRefOnly { count } => format!(
-            "リポジトリに {} 件のコンフリクトファイルがあります。この ref-only pull は作業ツリーに影響しません。",
+            "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。",
             count
         ),
         PullNote::DirtyRefOnly => {
             "作業ツリーに変更があります。この ref-only pull は作業ツリーに影響しません。".to_string()
         }
         PullNote::NoUpstream { branch, err } => {
-            format!("branch '{}' に upstream が設定されていません: {}。", branch, err)
+            format!("branch `{}` に upstream が設定されていません: {}", branch, err)
         }
         PullNote::AlreadyUpToDate { branch } => {
-            format!("branch '{}' は upstream と同期済みです。", branch)
+            format!("branch `{}` は upstream と同期済みです。", branch)
         }
         PullNote::CannotFastForward { branch } => format!(
-            "branch '{}' は upstream に fast-forward できません。checkout した状態で pull すると merge されます。",
+            "branch `{}` は upstream に fast-forward できません。checkout 状態で pull すると merge されます。",
             branch
         ),
         PullNote::RemoteDiverged {
@@ -56,13 +54,13 @@ pub fn note_ja(note: &PullNote) -> String {
             ahead,
             behind,
         } => format!(
-            "{} は upstream から乖離しています(ahead {} 件、behind {} 件)。\
-             pull はリモート上で merge commit を作成します。",
+            "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はリモート上で merge commit を作成します。",
             branch, ahead, behind
         ),
-        PullNote::RemoteDirty => "リモートの作業ツリーに未 commit の変更があります。pull が失敗するか、\
-             ホスト側での解決が必要なコンフリクトが発生する可能性があります。"
-            .to_string(),
+        PullNote::RemoteDirty => {
+            "リモートの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。"
+                .to_string()
+        }
     }
 }
 
@@ -75,10 +73,10 @@ pub fn title_ja(title: &PullTitle) -> String {
             behind,
         } => {
             if *behind == 0 {
-                format!("{} を pull — 最新です(ローカル情報)", branch)
+                format!("{} を pull(最新、ローカル情報)", branch)
             } else {
                 format!(
-                    "{} を {} から pull — {} commit 遅れ",
+                    "`{}` を `{}` から pull({} commit 遅れ)",
                     branch, upstream, behind
                 )
             }
@@ -89,21 +87,21 @@ pub fn title_ja(title: &PullTitle) -> String {
             behind,
         } => {
             let behind_label = if *behind == 0 {
-                "最新です(ローカル情報、fetch でさらに判明する場合あり)".to_string()
+                "最新、ローカル情報、fetch でさらに判明する場合あり".to_string()
             } else {
                 format!(
-                    "{} commit 遅れ(ローカル情報、fetch でさらに判明する場合あり)",
+                    "{} commit 遅れ、ローカル情報、fetch でさらに判明する場合あり",
                     behind
                 )
             };
-            format!("'{}' を '{}' から pull({})", branch, remote, behind_label)
+            format!("`{}` を `{}` から pull({})", branch, remote, behind_label)
         }
         PullTitle::PullBranchFf {
             branch,
             remote,
             behind,
         } => format!(
-            "'{}' を '{}' から pull(ff-only, ref-only, {} 遅れ)",
+            "`{}` を `{}` から pull(ff-only, ref-only, {} 遅れ)",
             branch, remote, behind
         ),
     }
@@ -113,21 +111,19 @@ pub fn title_ja(title: &PullTitle) -> String {
 pub fn recovery_ja(recovery: &PullRecovery) -> String {
     match recovery {
         PullRecovery::Pull => {
-            "pull は非破壊的です: fast-forward とクリーンな merge では作業は失われません。\n\
-             作業ツリーの変更パスは、取得した更新と照合してから checkout されます。\n\
-             merge がコンフリクトするか変更パスを上書きする場合、実行はブロックされ、リポジトリは変更されません。\n\
+            "pull は非破壊的です。fast-forward とクリーンな merge では作業は失われません。\n\
+             merge が conflict するか変更パスを上書きする場合、実行はブロックされリポジトリは変更されません。\n\
              実行後に merge commit を取り消すには:\n  git reset --hard HEAD~1\n\
-             reflog にはすべての HEAD の移動が記録されます:\n  git reflog"
+             HEAD 移動は reflog に残ります:\n  git reflog"
                 .to_string()
         }
         PullRecovery::PullRemote => {
-            "ホスト上でホスト自身の認証情報を使って `git pull` を実行します。\
-             コンフリクトはホスト側での解決に委ねられます。"
+            "ホスト上でホストの認証情報を使い `git pull` を実行します。conflict はホスト側で解決します。"
                 .to_string()
         }
         PullRecovery::PullBranchFf { branch } => format!(
-            "fast-forward であることを確認した後、refs/heads/{} のみを更新します。作業ツリーは変更されません。\
-             必要であれば、以前の先端に戻すには git branch -f {} <old-sha> を使用してください。",
+            "fast-forward を確認後、refs/heads/{} のみを更新します。作業ツリーは変更されません。\n\
+             以前の先端に戻すには:\n  git branch -f {} <old-sha>",
             branch, branch
         ),
     }

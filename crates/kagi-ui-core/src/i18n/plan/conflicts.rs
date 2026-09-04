@@ -7,44 +7,41 @@ use kagi_domain::plan_note::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 pub fn note_ja(note: &ConflictsNote) -> String {
     match note {
         ConflictsNote::UnresolvedFiles { files } => format!(
-            "{} 件のファイルがまだ未解決です: {}。続行する前にすべてのファイルを解決してください。",
+            "{} 件が未解決です。続行前にすべて解決してください。\nfiles {}",
             files.len(),
             files.join(", ")
         ),
         ConflictsNote::MarkerResidue { files } => format!(
-            "コンフリクトマーカーが残っています: {}。続行する前に <<<<<<< ======= >>>>>>> マーカーをすべて削除してください。",
+            "conflict marker が残っています。続行前にすべて削除してください。\nfiles {}",
             files.join(", ")
         ),
         ConflictsNote::IndexUnmerged { files } => format!(
-            "インデックスにこのセッションが把握していない未 merge のエントリがあります: {}。リポジトリを再スキャンしてください。",
+            "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles {}",
             files.join(", ")
         ),
         ConflictsNote::BinaryUnresolved { files } => format!(
-            "バイナリのコンフリクトにまだどちらを採用するか選択されていません: {}。",
+            "バイナリ conflict の採用側が未選択です。\nfiles {}",
             files.join(", ")
         ),
         ConflictsNote::DeletionUndecided { files } => format!(
-            "保持するか削除するかの判断がまだ決まっていません: {}。",
+            "保持か削除かが未決定です。\nfiles {}",
             files.join(", ")
         ),
         ConflictsNote::EmptyMergeMessage => {
-            "merge commit のメッセージが空です。続行する前に commit メッセージを入力してください。".to_string()
+            "merge commit のメッセージが空です。入力してから続行してください。".to_string()
         }
         // Checklist prose stays untranslated (error/checklist keying is out of
         // scope for this migration — mirrors CommonNote::GitErrorPassthrough).
         ConflictsNote::ChecklistBlocker { message } => message.clone(),
         ConflictsNote::NoConflictingFilesDetected => {
-            "コンフリクトファイルは検出されませんでした。続行すると操作はそのまま完了します。"
-                .to_string()
+            "conflict ファイルはありません。続行すると操作はそのまま完了します。".to_string()
         }
         ConflictsNote::PartialResolutionsPreserved => {
-            "部分的な解決内容はオートセーブディレクトリに保存され、操作ログにも記録されます。\
-             破棄はされません。"
-                .to_string()
+            "部分的な解決内容は autosave と oplog に保存されます。破棄されません。".to_string()
         }
         ConflictsNote::SkipDiscardsStep => {
-            "Skip は現在のステップの変更を破棄します(コンフリクトを起こした commit は適用されません)。\
-             部分的な解決内容はオートセーブディレクトリに保存されます。"
+            "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。\
+             部分的な解決内容は autosave に保存されます。"
                 .to_string()
         }
     }
@@ -63,18 +60,16 @@ pub fn title_ja(title: &ConflictsTitle) -> String {
 pub fn recovery_ja(recovery: &ConflictsRecovery) -> String {
     match recovery {
         ConflictsRecovery::Continue { op } => format!(
-            "続行がうまくいかない場合は、操作前の状態に戻すことができます:\n  git {} --abort\n\
-             操作前の HEAD は ORIG_HEAD と reflog に記録されています。",
+            "うまくいかない場合は操作前の状態に戻せます:\n  git {} --abort\n\
+             操作前の HEAD は ORIG_HEAD と reflog に残ります。",
             op
         ),
         ConflictsRecovery::Abort { op } => format!(
-            "Abort は ORIG_HEAD から {} 実行前の状態を復元します。気が変わった場合も、\
-             reflog にはすべての HEAD 移動が記録されています。",
+            "Abort は ORIG_HEAD から {} 実行前の状態を復元します。HEAD 移動はすべて reflog に残ります。",
             op
         ),
         ConflictsRecovery::Skip { op } => format!(
-            "Skip は現在の {} ステップを破棄します。reflog にはすべての HEAD 移動が記録されており、\
-             完全に中止したい場合は操作前の HEAD が ORIG_HEAD に残っています。",
+            "Skip は現在の {} ステップを破棄します。HEAD 移動は reflog に残り、完全に中止する場合は操作前の HEAD が ORIG_HEAD に残ります。",
             op
         ),
     }

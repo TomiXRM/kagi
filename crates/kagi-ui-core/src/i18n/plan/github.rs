@@ -6,41 +6,39 @@ use kagi_domain::plan_note::{GithubNote, GithubRecovery, GithubTitle};
 pub fn note_ja(note: &GithubNote) -> String {
     match note {
         GithubNote::NotMergeable { number } => format!(
-            "GitHub 上で #{} は merge 可能になっていません。先にコンフリクトの解消(または branch 保護の条件充足)が必要です。",
+            "#{} は merge できません。conflict 解消か branch 保護条件の充足が必要です。",
             number
         ),
         GithubNote::IsDraft { number } => {
-            format!("#{} はドラフトです。merge 前に Ready for review にしてください。", number)
+            format!("#{} は draft です。merge 前に Ready for review にしてください。", number)
         }
         GithubNote::ChecksFailing { number, failed } => format!(
-            "#{} には失敗しているチェックが {} 件あります。このまま merge すると CI が拒否したコードが入ります。",
+            "#{} で {} 件のチェックが失敗しています。merge すると CI 不合格のコードが入ります。",
             number, failed
         ),
         GithubNote::ChecksPending { number } => {
             format!("#{} のチェックがまだ完了していません。", number)
         }
         GithubNote::ChangesRequested { number } => {
-            format!("#{} にはレビューからの修正依頼が出ています。", number)
+            format!("#{} にレビューの修正依頼があります。", number)
         }
         GithubNote::RemoteSideEffect => {
-            "merge は GitHub 上で行われます。次に fetch するまでローカルのクローンは変わりません。"
-                .to_string()
+            "merge は GitHub 上で実行されます。次の fetch までローカルは変わりません。".to_string()
         }
         GithubNote::DeletesBranch { branch } => format!(
-            "head branch '{}' はリモートで削除されます(どこにも checkout されていなければローカルでも削除されます)。",
+            "head branch をリモートで削除します。どこにも checkout されていなければローカルも削除します。\nbranch `{}`",
             branch
         ),
         GithubNote::SuggestionRangeGone { path } => format!(
-            "'{}' のレビュー対象だった行は現在のワーキングツリーに存在しません。現在のファイルに対してレビューを開き直してください。",
+            "レビュー対象だった行が作業ツリーにありません。現在のファイルでレビューを開き直してください。\nfile `{}`",
             path
         ),
         GithubNote::SuggestionStale { path } => format!(
-            "'{}' はこの suggestion がレビューされてから変更されています。今適用すると誤った行を書き換える恐れがあるため拒否します。現在のファイルに対してレビューを開き直してください。",
+            "suggestion のレビュー後にファイルが変更されています。誤った行を書き換える恐れがあるため拒否します。現在のファイルでレビューを開き直してください。\nfile `{}`",
             path
         ),
         GithubNote::SuggestionWorkingTreeOnly => {
-            "これはワーキングツリーだけを書き換えます(コミットはされません)。コミット前に hunk staging で確認してください。"
-                .to_string()
+            "作業ツリーだけを書き換えます(commit しません)。commit 前に hunk staging で確認してください。".to_string()
         }
     }
 }
@@ -52,7 +50,7 @@ pub fn title_ja(title: &GithubTitle) -> String {
             format!("pull request #{} を merge ({})", number, method)
         }
         GithubTitle::ApplySuggestion { path } => {
-            format!("'{}' に suggestion を適用", path)
+            format!("`{}` に suggestion を適用", path)
         }
     }
 }
@@ -61,11 +59,11 @@ pub fn title_ja(title: &GithubTitle) -> String {
 pub fn recovery_ja(recovery: &GithubRecovery) -> String {
     match recovery {
         GithubRecovery::MergePr { number } => format!(
-            "merge 後、#{} のページに 'Revert' ボタンが残ります。ローカルでは以下で merge commit を取り消せます:\n  git revert -m 1 <merge-sha>\nbranch を削除した場合も PR ページから復元できます。",
+            "merge 後も #{} のページに Revert ボタンが残ります。ローカルでは:\n  git revert -m 1 <merge-sha>\nbranch を削除しても PR ページから復元できます。",
             number
         ),
         GithubRecovery::ApplySuggestion =>
-            "これはワーキングツリーのファイルだけを書き換えます(stage も commit もしません)。適用前のファイル内容は oplog(op=\"apply-suggestion\")に blob として記録されるので、`git cat-file -p <blob-sha>` で復元するか、変更を discard できます。"
+            "作業ツリーのファイルだけを書き換えます(stage も commit もしません)。適用前の内容は oplog(op=\"apply-suggestion\")に blob として記録されます:\n  git cat-file -p <blob-sha>"
                 .to_string(),
     }
 }

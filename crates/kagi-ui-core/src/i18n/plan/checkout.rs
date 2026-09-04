@@ -57,7 +57,10 @@ pub fn title_ja(title: &CheckoutTitle) -> String {
     match title {
         CheckoutTitle::Checkout { branch } => format!("branch を checkout: `{}`", branch),
         CheckoutTitle::CheckoutCommit { sha, summary } => {
-            format!("commit を checkout: `{}` \"{}\"（detached HEAD）", sha, summary)
+            format!(
+                "commit を checkout: `{}` \"{}\"（detached HEAD）",
+                sha, summary
+            )
         }
     }
 }

@@ -6,14 +6,12 @@ use kagi_domain::plan_note::{CommitNote, CommitRecovery, CommitTitle};
 /// Japanese rendering of one commit note.
 pub fn note_ja(note: &CommitNote) -> String {
     match note {
-        CommitNote::EmptyMessage => "commit メッセージを空にすることはできません。".to_string(),
+        CommitNote::EmptyMessage => "commit メッセージを空にはできません。".to_string(),
         CommitNote::NothingStaged => {
-            "commit する変更がありません: stage されたファイルがありません。\
-             stage_file() で変更を stage してから commit してください。"
-                .to_string()
+            "stage されたファイルがありません。先に変更を stage してください。".to_string()
         }
         CommitNote::ConflictedFiles { count } => format!(
-            "リポジトリに {} 件のコンフリクトファイルがあります。すべてのコンフリクトを解決してから commit してください。",
+            "conflict ファイルが {} 件あります。すべて解決してから commit してください。",
             count
         ),
         CommitNote::LeftoverNotIncluded { count, parts } => {
@@ -25,7 +23,7 @@ pub fn note_ja(note: &CommitNote) -> String {
                 ja_parts.push(format!("未追跡 {} 件", parts.untracked));
             }
             format!(
-                "{} 件のファイル({})はこの commit に含まれません。",
+                "この commit に含まれないファイルが {} 件あります({})。",
                 count,
                 ja_parts.join(", ")
             )
@@ -45,7 +43,7 @@ pub fn title_ja(title: &CommitTitle) -> String {
 pub fn recovery_ja(recovery: &CommitRecovery) -> String {
     match recovery {
         CommitRecovery::AfterCommit { staged_files } => format!(
-            "直後に commit メッセージを修正するには:\n  git commit --amend\n\
+            "直後にメッセージを修正するには:\n  git commit --amend\n\
              変更を stage したまま commit を取り消すには:\n  git revert HEAD\n\
              (stage されたファイル: {})",
             staged_files.join(", ")

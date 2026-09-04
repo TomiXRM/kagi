@@ -96,7 +96,10 @@ pub fn recovery_ja(recovery: &BranchRecovery) -> String {
             name, tip, tip
         ),
         BranchRecovery::DeleteBranch { name, tip: None } => {
-            format!("branch が見つかりません。`git branch` で一覧を確認してください。\nbranch `{}`", name)
+            format!(
+                "branch が見つかりません。`git branch` で一覧を確認してください。\nbranch `{}`",
+                name
+            )
         }
     }
 }

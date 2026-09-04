@@ -141,11 +141,17 @@ fn untrusted_repo_refuses_direct_execute_paths() {
 
     // index (stage/unstage)
     assert!(
-        backend.stage_file(Path::new("work.txt")).unwrap_err().is_untrusted(),
+        backend
+            .stage_file(Path::new("work.txt"))
+            .unwrap_err()
+            .is_untrusted(),
         "stage_file must be refused"
     );
     assert!(
-        backend.unstage_file(Path::new("work.txt")).unwrap_err().is_untrusted(),
+        backend
+            .unstage_file(Path::new("work.txt"))
+            .unwrap_err()
+            .is_untrusted(),
         "unstage_file must be refused"
     );
     // snapshot
@@ -164,16 +170,25 @@ fn untrusted_repo_refuses_direct_execute_paths() {
     );
     // undo/redo (history rewrite)
     assert!(
-        backend.execute_undo(&undo_entry).unwrap_err().is_untrusted(),
+        backend
+            .execute_undo(&undo_entry)
+            .unwrap_err()
+            .is_untrusted(),
         "execute_undo must be refused"
     );
     assert!(
-        backend.execute_redo(&undo_entry).unwrap_err().is_untrusted(),
+        backend
+            .execute_redo(&undo_entry)
+            .unwrap_err()
+            .is_untrusted(),
         "execute_redo must be refused"
     );
     // worktree lifecycle
     assert!(
-        backend.execute_prune_worktrees(&prune_plan).unwrap_err().is_untrusted(),
+        backend
+            .execute_prune_worktrees(&prune_plan)
+            .unwrap_err()
+            .is_untrusted(),
         "execute_prune_worktrees must be refused"
     );
 
@@ -186,7 +201,9 @@ fn untrusted_repo_refuses_direct_execute_paths() {
         .output()
         .expect("git");
     assert!(
-        !String::from_utf8_lossy(&stash_list.stdout).trim().is_empty(),
+        !String::from_utf8_lossy(&stash_list.stdout)
+            .trim()
+            .is_empty(),
         "the stash must survive the refused drop"
     );
 }

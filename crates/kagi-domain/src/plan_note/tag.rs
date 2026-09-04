@@ -119,7 +119,7 @@ impl TagRecovery {
     pub fn message_en(&self) -> String {
         match self {
             TagRecovery::CreateTag { name } => format!(
-                "The new tag '{}' can be removed without side effects:\n  git tag -d {}\n(Tag creation does not move HEAD or alter the working tree.)",
+                "The new tag '{}' can be removed without side effects:\n  git tag -d {}",
                 name, name
             ),
             TagRecovery::PushTag { name, remote } => format!(
@@ -239,7 +239,7 @@ mod tests {
                 name: "v1.0.0".into()
             }
             .message_en(),
-            "The new tag 'v1.0.0' can be removed without side effects:\n  git tag -d v1.0.0\n(Tag creation does not move HEAD or alter the working tree.)"
+            "The new tag 'v1.0.0' can be removed without side effects:\n  git tag -d v1.0.0"
         );
     }
 }

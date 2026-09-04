@@ -50,7 +50,7 @@ pub fn title_ja(title: &TagTitle) -> String {
 pub fn recovery_ja(recovery: &TagRecovery) -> String {
     match recovery {
         TagRecovery::CreateTag { name } => format!(
-            "tag `{}` は副作用なく削除できます:\n  git tag -d {}\n作成は HEAD も作業ツリーも変更しません。",
+            "tag `{}` は副作用なく削除できます:\n  git tag -d {}",
             name, name
         ),
         TagRecovery::PushTag { name, remote } => format!(

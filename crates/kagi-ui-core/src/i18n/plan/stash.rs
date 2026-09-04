@@ -21,31 +21,28 @@ fn parts_ja(parts: &DirtyParts) -> String {
 /// Japanese rendering of one stash note.
 pub fn note_ja(note: &StashNote) -> String {
     match note {
-        StashNote::NothingToStash => "作業ツリーはすでにクリーンです\
-             (stage 済み・変更・未追跡ファイルのいずれもありません)。stash する対象がありません。"
-            .to_string(),
+        StashNote::NothingToStash => {
+            "作業ツリーはすでにクリーンです。stash する対象がありません。".to_string()
+        }
         StashNote::UntrackedIncluded { count } => format!(
-            "未追跡ファイル {} 件が stash に含まれます(`git stash push -u` と同等)。",
+            "未追跡ファイル {} 件も stash に含めます（git stash push -u 相当）。",
             count
         ),
         StashNote::UntrackedExcluded { count } => format!(
-            "未追跡ファイル {} 件は stash に含まれません(include_untracked=false)。\
-             作業ツリーにそのまま残ります。",
+            "未追跡ファイル {} 件は stash に含めません。作業ツリーに残ります。",
             count
         ),
         // JA には単複の別がないため、count は複数形サフィックスを持たず自然に読める。
-        StashNote::IndexOutOfRange { index, count } => format!(
-            "stash index {} は範囲外です(存在する stash entry は {} 件のみです)。",
-            index, count
-        ),
+        StashNote::IndexOutOfRange { index, count } => {
+            format!("stash index {} は範囲外です（entry は {} 件）。", index, count)
+        }
         StashNote::DirtyBlocksApply { parts, op } => {
             let op_word = match op {
                 StashDirtyOp::Apply => "apply",
                 StashDirtyOp::Pop => "pop",
             };
             format!(
-                "作業ツリーに{}があります — 意図しない merge コンフリクトを防ぐため、\
-                 stash {} はクリーンな作業ツリーでのみ実行できます。",
+                "作業ツリーに{}があります。意図しない conflict を防ぐため、stash {} はクリーンな作業ツリーでのみ実行できます。",
                 parts_ja(parts),
                 op_word
             )
@@ -57,20 +54,16 @@ pub fn note_ja(note: &StashNote) -> String {
                 files.join(", ")
             };
             format!(
-                "stash pop を実行すると {} 件のファイルがコンフリクトします: {}。\
-                 stash entry は保持されます — コンフリクトを解決してから手動で drop してください。",
+                "stash pop すると {} 件が conflict します。stash entry は保持されるので、解決後に手動で drop してください。\nfiles {}",
                 count, files_label
             )
         }
         StashNote::PopPredictionUnavailable { reason } => format!(
-            "stash がクリーンに適用できるか検証できませんでした({})。\
-             pop は stash entry を削除するためブロックされました。\
-             代わりに 'Stash Apply' を使用してください: stash を削除せずに適用できます。",
+            "クリーンに適用できるか検証できませんでした（{}）。pop は entry を削除するためブロックしました。削除せず適用する Stash Apply を使ってください。",
             reason
         ),
         StashNote::RemoteDropIrreversible => {
-            "リモートホスト上の stash entry を完全に削除します。Kagi から元に戻すことはできません。"
-                .to_string()
+            "remote 上の stash entry を完全に削除します。kagi からは元に戻せません。".to_string()
         }
     }
 }
@@ -79,11 +72,11 @@ pub fn note_ja(note: &StashNote) -> String {
 pub fn title_ja(title: &StashTitle) -> String {
     match title {
         StashTitle::Push { next_count } => {
-            format!("Stash push — ローカルの変更を保存({})", next_count)
+            format!("Stash push: ローカルの変更を保存（{}）", next_count)
         }
-        StashTitle::Apply { index } => format!("Stash apply — stash@{{{}}} を復元", index),
-        StashTitle::Pop { index } => format!("Stash pop — stash@{{{}}} を適用して削除", index),
-        StashTitle::Drop { index } => format!("Stash drop — stash@{{{}}} を削除", index),
+        StashTitle::Apply { index } => format!("Stash apply: stash@{{{}}} を復元", index),
+        StashTitle::Pop { index } => format!("Stash pop: stash@{{{}}} を適用して削除", index),
+        StashTitle::Drop { index } => format!("Stash drop: stash@{{{}}} を削除", index),
         StashTitle::DropRemote { label } => format!("{} を削除", label),
     }
 }
@@ -92,37 +85,26 @@ pub fn title_ja(title: &StashTitle) -> String {
 pub fn recovery_ja(recovery: &StashRecovery) -> String {
     match recovery {
         StashRecovery::Push { message } => format!(
-            "stash entry を確認するには:  git stash list\n\
-             stash entry を削除せずに復元するには:  git stash apply stash@{{0}}\n\
-             使用される stash message: \"{}\"",
+            "一覧を確認:\n  git stash list\n削除せず復元:\n  git stash apply stash@{{0}}\nstash message: \"{}\"",
             message
         ),
         StashRecovery::Apply { index, message } => format!(
-            "stash entry stash@{{{}}} は apply では削除されません — 一覧に残り続けます。\n\
-             apply でコンフリクトが発生した場合は手動で解決してください。stash は安全に保持されています。\n\
-             残っている stash entry を確認するには:  git stash list\n\
-             stash message: \"{}\"",
+            "apply では stash@{{{}}} は削除されず、一覧に残ります。conflict したら手動で解決してください。stash は保持されます。\n一覧を確認:\n  git stash list\nstash message: \"{}\"",
             index, message
         ),
         StashRecovery::Pop { index, message } => format!(
-            "警告: pop = apply + drop です。apply が成功すると、stash@{{{}}} は完全に削除されます。\n\
-             stash entry \"{}\" は消費されます。\n\
-             stash を削除せずに復元するには 'Stash Apply' を使用してください。\n\
-             残っている stash entry を確認するには:  git stash list",
+            "注意: pop = apply + drop。apply 成功で stash@{{{}}} は完全に削除されます。\nentry \"{}\" は消費されます。削除せず復元するには Stash Apply を使ってください。\n一覧を確認:\n  git stash list",
             index, message
         ),
         StashRecovery::Drop { message, oid } => match oid {
             Some(oid) => format!(
-                "drop は stash entry のみを削除します — 作業ツリーには触れません。\n\
-                 削除された stash commit {} は gc されるまで stash reflog から到達可能です。\
-                 復元するには:\n  git stash store -m \"{}\" {}\n\
-                 残っている stash entry を確認するには:  git stash list",
+                "drop は stash entry だけを削除し、作業ツリーには触れません。削除した stash commit {} は gc まで stash reflog から到達可能です。復元:\n  git stash store -m \"{}\" {}\n一覧を確認:\n  git stash list",
                 oid, message, oid
             ),
-            None => "drop は stash entry のみを削除します — 作業ツリーには触れません。".to_string(),
+            None => "drop は stash entry だけを削除し、作業ツリーには触れません。".to_string(),
         },
-        StashRecovery::DropRemote => "削除された stash commit は gc されるまでリモートの stash reflog \
-             から到達可能な場合がありますが、Kagi はリモートの復元を管理しません。"
+        StashRecovery::DropRemote => "削除した stash commit は gc まで remote の stash reflog \
+             から到達可能な場合がありますが、kagi は remote の復元を管理しません。"
             .to_string(),
     }
 }

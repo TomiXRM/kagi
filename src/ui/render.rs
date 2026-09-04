@@ -617,11 +617,19 @@ impl Render for KagiApp {
         // No-ops when the workspace is closed or the buffer is clean.
         // R1: ⌘C — copy the diff line selection (kept across the copy so the
         // user sees what was taken; Esc clears it).
-        let copy_diff_selection = cx.listener(|this, _: &CopyDiffSelection, _window, cx| {
-            // No diff-row selection: let the event reach gpui-component's
-            // Root, which copies the TextView window selection (PR
-            // description / review bodies / diff hunks).
+        let copy_diff_selection = cx.listener(|this, _: &CopyDiffSelection, window, cx| {
+            // No diff-row selection: the Graph gets first refusal (ADR-0170) —
+            // when the root (Graph) holds focus and a row is selected, Cmd+C
+            // copies that row's branch/hash. Otherwise let the event reach
+            // gpui-component's Root, which copies the TextView window selection
+            // (PR description / review bodies / diff hunks).
             if diff_selection::selected_text().is_none() {
+                if this.root_has_focus(window) {
+                    if let Some(i) = this.selected {
+                        this.copy_graph_selection(i, cx);
+                        return;
+                    }
+                }
                 cx.propagate();
                 return;
             }

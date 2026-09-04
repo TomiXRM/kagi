@@ -25,6 +25,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// What Cmd+C copies from the selected Graph row (`graph_copy_target`;
+/// ADR-0170). Default [`CopyTarget::Hash`] — every commit has a hash, but not
+/// every row carries a branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CopyTarget {
+    #[default]
+    Hash,
+    Branch,
+}
+
 /// Typed view of `settings.json`: a flat map of string-valued settings plus
 /// typed accessors that apply the same coercions the call sites used to do
 /// inline. Unknown keys are retained in `raw` so a save never drops them.
@@ -93,6 +103,15 @@ impl Settings {
     /// Active theme slug (`"theme"`), if persisted.
     pub fn theme(&self) -> Option<String> {
         self.get_str("theme")
+    }
+
+    /// Graph Cmd+C copy target (`graph_copy_target`, `"hash"`/`"branch"`;
+    /// ADR-0170). Defaults to [`CopyTarget::Hash`] when unset or unrecognized.
+    pub fn graph_copy_target(&self) -> CopyTarget {
+        match self.get_str("graph_copy_target").as_deref().map(str::trim) {
+            Some("branch") => CopyTarget::Branch,
+            _ => CopyTarget::Hash,
+        }
     }
 
     /// Last window size (`"window_size"`, `"1440x920"`). `None` when unset or

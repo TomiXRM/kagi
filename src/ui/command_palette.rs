@@ -70,9 +70,27 @@ pub fn fuzzy_match(query: &str, text: &str) -> Option<i64> {
 // Pure: row-model builder
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What running a palette row does. Static registry commands dispatch through
+/// [`KagiApp::handle_menu_command`]; the two dynamic submenus (theme, language)
+/// carry their target directly so **every** theme slug / language is invocable,
+/// not just the handful that happen to have a static `theme.*` / `lang.*`
+/// command (issue #373 — the static registry only listed 6 of the built-in
+/// themes).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PaletteAction {
+    /// Dispatch a static [`COMMANDS`] registry id via `handle_menu_command`.
+    Command(&'static str),
+    /// Switch to the theme with this slug (`set_theme`).
+    SetTheme(&'static str),
+    /// Switch the UI language (`set_lang`).
+    SetLang(Lang),
+}
+
 /// One rendered palette entry: a command paired with its localized label, its
 /// display keystroke, and its live enabled/disabled state. `disabled_reason` is
 /// `Some` exactly when the command is greyed out (mirrors [`CommandState`]).
+/// `action` is what Enter/click runs — a static command or a dynamic
+/// theme/language switch (issue #373).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaletteRow {
     pub id: &'static str,
@@ -80,6 +98,7 @@ pub struct PaletteRow {
     pub keystroke: Option<String>,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
+    pub action: PaletteAction,
 }
 
 /// Build the (filtered, ranked) palette rows over the whole [`COMMANDS`] table.
@@ -104,6 +123,12 @@ pub fn build_rows(
     let query = query.trim();
     let mut scored: Vec<(i64, usize, PaletteRow)> = Vec::new();
     for (idx, cmd) in COMMANDS.iter().enumerate() {
+        // The static `theme.*` / `lang.*` commands only cover a subset of the
+        // built-in themes; the palette lists them dynamically below (issue
+        // #373) so skip them here to avoid duplicate rows.
+        if is_dynamic_command(cmd.id) {
+            continue;
+        }
         let label = label_of(cmd.id);
         let score = match fuzzy_match(query, &label) {
             Some(s) => s,
@@ -122,8 +147,52 @@ pub fn build_rows(
                 keystroke: keystroke_of(cmd.id),
                 enabled,
                 disabled_reason,
+                action: PaletteAction::Command(cmd.id),
             },
         ));
+    }
+    // Dynamic rows (issue #373): one row per built-in theme and per language,
+    // sourced from the same lists the menus use (`theme::THEMES`, `Lang::ALL`).
+    // `idx` continues past `COMMANDS.len()` so the empty-query order is
+    // commands, then themes, then languages.
+    let mut idx = COMMANDS.len();
+    let theme_prefix = i18n::Msg::SettingsTheme.t();
+    for t in theme::THEMES {
+        let label = format!("{theme_prefix}: {}", t.name);
+        if let Some(score) = fuzzy_match(query, &label) {
+            scored.push((
+                score,
+                idx,
+                PaletteRow {
+                    id: t.slug,
+                    label,
+                    keystroke: None,
+                    enabled: true,
+                    disabled_reason: None,
+                    action: PaletteAction::SetTheme(t.slug),
+                },
+            ));
+        }
+        idx += 1;
+    }
+    let lang_prefix = i18n::Msg::SettingsLanguage.t();
+    for &l in Lang::ALL {
+        let label = format!("{lang_prefix}: {}", l.display_name());
+        if let Some(score) = fuzzy_match(query, &label) {
+            scored.push((
+                score,
+                idx,
+                PaletteRow {
+                    id: l.slug(),
+                    label,
+                    keystroke: None,
+                    enabled: true,
+                    disabled_reason: None,
+                    action: PaletteAction::SetLang(l),
+                },
+            ));
+        }
+        idx += 1;
     }
     // Empty query → registry order (idx asc). Non-empty → score desc, idx asc.
     if query.is_empty() {
@@ -132,6 +201,14 @@ pub fn build_rows(
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     }
     scored.into_iter().map(|(_, _, row)| row).collect()
+}
+
+/// Whether a static registry command is superseded by a dynamic palette row
+/// (issue #373): the `theme.*` / `lang.*` ids are enumerated from
+/// `theme::THEMES` / `Lang::ALL` instead, so they must not also appear as
+/// static command rows.
+fn is_dynamic_command(id: &str) -> bool {
+    id.starts_with("theme.") || id.starts_with("lang.")
 }
 
 /// The localized label for a command id: English `label` from the registry, or
@@ -214,10 +291,25 @@ impl KagiApp {
         if !row.enabled {
             return;
         }
-        let id = row.id;
+        let action = row.action.clone();
         self.menu_overlay = None;
-        self.handle_menu_command(id, window, cx);
+        self.run_palette_action(&action, window, cx);
         cx.notify();
+    }
+
+    /// Dispatch a [`PaletteAction`]: static registry command, or a dynamic
+    /// theme / language switch (issue #373).
+    fn run_palette_action(
+        &mut self,
+        action: &PaletteAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            PaletteAction::Command(id) => self.handle_menu_command(id, window, cx),
+            PaletteAction::SetTheme(slug) => self.set_theme(slug, cx),
+            PaletteAction::SetLang(l) => self.set_lang(*l, cx),
+        }
     }
 
     /// Move the palette highlight by `delta`, clamped to the current result set.
@@ -330,7 +422,7 @@ impl KagiApp {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let id = row.id;
+        let action = row.action.clone();
         let enabled = row.enabled;
         let click = cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
             // MouseDown (not click): the dismiss scrim would unmount the overlay
@@ -339,7 +431,7 @@ impl KagiApp {
             this.command_palette_selected = index;
             if enabled {
                 this.menu_overlay = None;
-                this.handle_menu_command(id, window, cx);
+                this.run_palette_action(&action, window, cx);
             }
             cx.stop_propagation();
             cx.notify();
@@ -483,11 +575,54 @@ mod tests {
     #[test]
     fn build_rows_empty_query_enumerates_all_commands() {
         let rows = build_rows("", |id| id.to_string(), all_enabled, no_keys);
-        assert_eq!(rows.len(), COMMANDS.len());
-        // Registry order is preserved.
-        for (row, cmd) in rows.iter().zip(COMMANDS.iter()) {
+        // Static `theme.*` / `lang.*` commands are replaced by dynamic rows
+        // (issue #373), so the count is the non-dynamic commands plus one row
+        // per theme and per language.
+        let static_cmds = COMMANDS
+            .iter()
+            .filter(|c| !is_dynamic_command(c.id))
+            .count();
+        assert_eq!(
+            rows.len(),
+            static_cmds + theme::THEMES.len() + Lang::ALL.len()
+        );
+        // Registry order is preserved for the static-command prefix.
+        for (row, cmd) in rows
+            .iter()
+            .zip(COMMANDS.iter().filter(|c| !is_dynamic_command(c.id)))
+        {
             assert_eq!(row.id, cmd.id);
         }
+    }
+
+    #[test]
+    fn build_rows_includes_every_theme_and_language() {
+        // Issue #373: the palette must offer EVERY built-in theme and EVERY UI
+        // language, not just the handful with a static `theme.*` / `lang.*`
+        // command. Fails before the dynamic-append fix (only 6 of the themes
+        // had a static command).
+        let rows = build_rows("", |id| id.to_string(), all_enabled, no_keys);
+        for t in theme::THEMES {
+            assert!(
+                rows.iter()
+                    .any(|r| r.action == PaletteAction::SetTheme(t.slug)),
+                "palette missing theme {}",
+                t.slug
+            );
+        }
+        for &l in Lang::ALL {
+            assert!(
+                rows.iter().any(|r| r.action == PaletteAction::SetLang(l)),
+                "palette missing language {}",
+                l.slug()
+            );
+        }
+        // Every theme slug is present exactly once (no duplicate static row).
+        let theme_rows = rows
+            .iter()
+            .filter(|r| matches!(r.action, PaletteAction::SetTheme(_)))
+            .count();
+        assert_eq!(theme_rows, theme::THEMES.len());
     }
 
     #[test]

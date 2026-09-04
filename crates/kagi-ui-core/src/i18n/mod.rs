@@ -48,6 +48,19 @@ pub enum Lang {
 }
 
 impl Lang {
+    /// Every selectable UI language, in menu order. Source of truth for the
+    /// Language submenu and the command palette (issue #373).
+    pub const ALL: &'static [Lang] = &[Lang::En, Lang::Ja];
+
+    /// The name shown in the Language submenu / picker (an endonym — not
+    /// translated per active language).
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Lang::En => "English",
+            Lang::Ja => "日本語",
+        }
+    }
+
     /// Stable lowercase slug used in `settings.json` and `KAGI_LANG`.
     pub fn slug(self) -> &'static str {
         match self {

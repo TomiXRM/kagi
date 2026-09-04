@@ -145,6 +145,7 @@ pub fn plan_create_branch(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     };
 
     // GitHub ruleset pre-verification (#346, ADR-0150): if a ruleset for the
@@ -353,6 +354,7 @@ pub fn plan_rename_branch(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -567,6 +569,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
                 preview_files: Vec::new(),
                 preview_commits: Vec::new(),
                 destructive: false,
+                equivalent_command: None,
             });
         }
     };
@@ -707,6 +710,9 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        // #353: kagi enforces the merged check (unmerged deletes are blocked
+        // above), so the faithful safe-delete equivalent is `git branch -d`.
+        equivalent_command: Some(format!("git branch -d {}", name)),
     })
 }
 

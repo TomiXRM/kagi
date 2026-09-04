@@ -168,6 +168,30 @@ pub fn check_operand(kind: &str, name: &str) -> Result<(), GitError> {
     Ok(())
 }
 
+/// A `git` subprocess command with kagi's standard hardened environment.
+///
+/// `GIT_ADVICE=0` suppresses git's own advice text on subprocess paths (#353):
+/// kagi already writes its own human-facing guidance in the UI, so git's advice
+/// would only double up. The other vars keep the child non-interactive.
+pub fn git_command(repo_dir: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(repo_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ADVICE", "0")
+        .env("LC_ALL", "C")
+        .env("GIT_EDITOR", "true")
+        .env("GIT_ASKPASS", "/bin/false");
+    cmd
+}
+
+/// A `gh` (GitHub CLI) subprocess command with `GIT_ADVICE=0` set (#353), so
+/// the git advice `gh` shells out to does not double up with kagi's own UI.
+pub fn gh_command() -> std::process::Command {
+    let mut cmd = std::process::Command::new("gh");
+    cmd.env("GIT_ADVICE", "0");
+    cmd
+}
+
 /// Run `git <args>` inside `repo_dir` and return the combined output.
 ///
 /// The [`HARDENING_ARGS`] and [`repo_local_overrides`] `-c` flags are prepended
@@ -194,20 +218,15 @@ pub fn check_operand(kind: &str, name: &str) -> Result<(), GitError> {
 /// - The operation times out after 60 seconds.
 pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError> {
     use std::io::Read;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let mut full: Vec<&str> = HARDENING_ARGS.to_vec();
     let local = repo_local_overrides(repo_dir);
     full.extend_from_slice(&local);
     full.extend_from_slice(args);
 
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command(repo_dir);
     cmd.args(&full)
-        .current_dir(repo_dir)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("LC_ALL", "C")
-        .env("GIT_EDITOR", "true")
-        .env("GIT_ASKPASS", "/bin/false")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -305,6 +324,28 @@ mod tests {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+
+    /// `Command::get_envs` yields `(key, Some(val))` for each `.env(...)`.
+    fn has_env(cmd: &Command, key: &str, val: &str) -> bool {
+        cmd.get_envs()
+            .any(|(k, v)| k == std::ffi::OsStr::new(key) && v == Some(std::ffi::OsStr::new(val)))
+    }
+
+    // #353: git and gh subprocesses must carry GIT_ADVICE=0 so git's own advice
+    // text does not double up with kagi's UI guidance.
+    #[test]
+    fn subprocess_builders_set_git_advice_zero() {
+        let git = git_command(std::path::Path::new("/tmp"));
+        assert!(
+            has_env(&git, "GIT_ADVICE", "0"),
+            "git subprocess must set GIT_ADVICE=0"
+        );
+        let gh = gh_command();
+        assert!(
+            has_env(&gh, "GIT_ADVICE", "0"),
+            "gh subprocess must set GIT_ADVICE=0"
+        );
     }
 
     #[test]

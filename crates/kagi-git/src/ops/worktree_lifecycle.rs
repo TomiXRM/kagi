@@ -120,6 +120,7 @@ fn admin_plan(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive,
+        equivalent_command: None,
     })
 }
 

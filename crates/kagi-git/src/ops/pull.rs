@@ -82,6 +82,7 @@ pub fn plan_pull_remote(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     }
 }
 
@@ -258,6 +259,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -719,6 +721,7 @@ pub fn plan_pull_branch_ff(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

@@ -196,6 +196,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         });
     }
 
@@ -272,6 +273,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         });
     }
 
@@ -370,6 +372,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         });
     }
 
@@ -421,6 +424,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
         preview_files,
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -716,6 +720,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         };
 
     if !blockers.is_empty() {
@@ -842,6 +847,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
         preview_files,
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

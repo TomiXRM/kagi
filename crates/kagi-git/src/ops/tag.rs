@@ -124,6 +124,7 @@ pub fn plan_create_tag(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -237,6 +238,7 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

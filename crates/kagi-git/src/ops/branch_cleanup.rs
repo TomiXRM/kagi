@@ -341,6 +341,7 @@ pub fn plan_delete_merged_branches(
         preview_files: Vec::new(),
         preview_commits,
         destructive: false,
+        equivalent_command: None,
     })
 }
 

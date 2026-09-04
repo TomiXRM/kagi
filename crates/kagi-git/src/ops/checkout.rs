@@ -172,6 +172,8 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        // #353: faithful equivalent — `git checkout <branch>`.
+        equivalent_command: Some(format!("git checkout {}", branch)),
     })
 }
 
@@ -378,6 +380,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

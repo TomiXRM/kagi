@@ -80,6 +80,26 @@ fn build_repo(tmp: &TempDir) -> std::path::PathBuf {
 // TC-DISCARD-1: discard a modification → WT restored from index
 // ────────────────────────────────────────────────────────────
 
+// #353 golden (the "uncertain" case): discard has NO equivalent command.
+// libgit2's `checkout_index` diverges from `git checkout --` on eol
+// normalization (§5), so emitting `git restore` / `git checkout --` would be
+// a dishonest equivalent. The field is deliberately left `None`.
+#[test]
+fn discard_has_no_equivalent_command() {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let repo = Repository::open(&d).unwrap();
+
+    write_file(&d, "tracked.txt", "DIRTY EDIT\n");
+    let paths = vec!["tracked.txt".to_string()];
+    let plan = plan_discard(&repo, &paths).expect("plan");
+
+    assert_eq!(
+        plan.equivalent_command, None,
+        "discard must not emit an equivalent command (eol divergence, §5)"
+    );
+}
+
 #[test]
 fn discard_modification_restores_from_index() {
     let tmp = TempDir::new().unwrap();

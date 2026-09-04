@@ -120,6 +120,7 @@ pub fn plan_delete_remote_branch(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: true,
+        equivalent_command: None,
     })
 }
 

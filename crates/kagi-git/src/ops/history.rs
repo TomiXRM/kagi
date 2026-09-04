@@ -244,6 +244,7 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -593,6 +594,7 @@ pub fn plan_amend(
         preview_files,
         preview_commits: Vec::new(),
         destructive: true,
+        equivalent_command: None,
     })
 }
 
@@ -938,6 +940,7 @@ fn plan_history_move(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

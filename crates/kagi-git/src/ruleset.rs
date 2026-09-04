@@ -23,7 +23,6 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
 use kagi_domain::plan::OperationPlan;
@@ -100,7 +99,7 @@ fn fetch_ruleset(workdir: &Path, branch: &str) -> RulesetStatus {
         return RulesetStatus::Disabled;
     }
     let path = format!("repos/{{owner}}/{{repo}}/rules/branches/{}", branch);
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args(["api", &path])
         .current_dir(workdir)
         .output();
@@ -483,6 +482,7 @@ mod tests {
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
             destructive: false,
+            equivalent_command: None,
         }
     }
 }

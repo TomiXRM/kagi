@@ -7,7 +7,6 @@
 //! `--json` keeps the output stable. Everything here is read-only.
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::OnceLock;
 
 use kagi_domain::github::{
@@ -24,7 +23,7 @@ use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle,
 pub fn gh_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        Command::new("gh")
+        crate::cli::gh_command()
             .arg("--version")
             .output()
             .map(|o| o.status.success())
@@ -38,7 +37,7 @@ statusCheckRollup,url,author,reviewRequests,body,mergeable";
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
 /// callers cache it (the sidebar's "Mine" grouping keys on it).
 pub fn current_login() -> Option<String> {
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args(["api", "user", "--jq", ".login"])
         .output()
         .ok()?;
@@ -55,7 +54,7 @@ pub fn current_login() -> Option<String> {
 /// for it — those are "nothing to show", not errors worth a toast. Only a
 /// spawn failure (gh missing mid-session) or unparseable output errors.
 pub fn list_open_prs(workdir: &Path) -> Result<Vec<PullRequest>, GitError> {
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args([
             "pr", "list", "--state", "open", "--limit", "100", "--json", FIELDS,
         ])
@@ -81,7 +80,7 @@ pub fn list_open_prs(workdir: &Path) -> Result<Vec<PullRequest>, GitError> {
 /// `FIELDS` set with its per-PR check rollup.
 pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>, GitError> {
     let limit = limit.to_string();
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args([
             "pr",
             "list",
@@ -208,7 +207,7 @@ pub fn pr_conversation(
     workdir: &Path,
     number: u64,
 ) -> Result<(Vec<Review>, Vec<Comment>), GitError> {
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args([
             "pr",
             "view",
@@ -229,7 +228,7 @@ pub fn pr_conversation(
 /// Codex code-suggestion surface. `gh pr view --json` does not expose these,
 /// so this goes through `gh api` (same auth, one call).
 pub fn pr_review_comments(workdir: &Path, number: u64) -> Result<Vec<ReviewComment>, GitError> {
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args([
             "api",
             &format!("repos/{{owner}}/{{repo}}/pulls/{}/comments", number),
@@ -426,6 +425,7 @@ pub fn plan_pr_merge(
         // Not destructive in kagi's sense: nothing local is rewritten or
         // dropped, and GitHub keeps a Revert button.
         destructive: false,
+        equivalent_command: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
     }
@@ -468,7 +468,7 @@ pub fn merge_pr(
     head_sha: &str,
 ) -> Result<String, GitError> {
     let args = merge_args(number, method, delete_branch, head_sha);
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args(&args)
         .current_dir(workdir)
         .output()

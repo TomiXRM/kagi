@@ -368,6 +368,18 @@ pub struct OperationPlan {
     /// history (e.g. amend), which the UI must gate behind a **two-stage
     /// confirmation**.  Defaults to `false` for every other plan.
     pub destructive: bool,
+    /// The faithful equivalent `git` CLI command for this operation, shown in
+    /// the plan modal as "this is *equivalent to* `<cmd>`" — never "runs"
+    /// (kagi executes via libgit2, not the CLI). `#353`.
+    ///
+    /// `Some` only for the starter subset of ops where the mapping is
+    /// genuinely faithful (push, force-with-lease push, branch delete,
+    /// checkout, ref-only reset). `None` everywhere else — including ops whose
+    /// libgit2 behaviour diverges from the CLI (e.g. discard's `checkout_index`
+    /// eol normalization vs `git checkout --`, §5), because a misleading
+    /// equivalent breaks the honesty the feature exists to provide. Built as a
+    /// pure string from plan data; kagi-domain never touches git2.
+    pub equivalent_command: Option<String>,
 }
 
 impl OperationPlan {

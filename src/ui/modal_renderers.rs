@@ -652,6 +652,21 @@ fn render_plan_modal_card_styled(
         );
     }
 
+    // ── Equivalent git command (#353) ─────────────────────
+    // "This is *equivalent to* `<cmd>`" — never "runs": kagi executes via
+    // libgit2, so the CLI command is shown only as the faithful equivalent.
+    if let Some(cmd) = plan.equivalent_command.as_deref() {
+        let line = Msg::PlanEquivalentTo.t().replace("{}", cmd);
+        card = card.child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(current_theme().text_muted))
+                .overflow_hidden()
+                .child(SharedString::from(line)),
+        );
+    }
+
     // ── Error message (preflight / execute failure) ───────
     if let Some(err) = &error {
         card = card.child(

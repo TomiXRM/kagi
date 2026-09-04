@@ -7,7 +7,6 @@
 //! the UI gates behind confirmation.
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::OnceLock;
 
 use crate::GitError;
@@ -46,7 +45,7 @@ pub fn parse_gh_version(out: &str) -> Option<(u32, u32, u32)> {
 pub fn gh_version() -> Option<(u32, u32, u32)> {
     static VERSION: OnceLock<Option<(u32, u32, u32)>> = OnceLock::new();
     *VERSION.get_or_init(|| {
-        let out = Command::new("gh").arg("--version").output().ok()?;
+        let out = crate::cli::gh_command().arg("--version").output().ok()?;
         parse_gh_version(&String::from_utf8_lossy(&out.stdout))
     })
 }
@@ -88,7 +87,7 @@ query($owner:String!,$name:String!,$number:Int!){\
 /// (same auth as everything else here). Read-only.
 pub fn pr_merge_status(workdir: &Path, number: u64) -> Result<PrMergeStatus, GitError> {
     let (owner, name) = repo_owner_name(workdir)?;
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args([
             "api",
             "graphql",
@@ -114,7 +113,7 @@ pub fn pr_merge_status(workdir: &Path, number: u64) -> Result<PrMergeStatus, Git
 
 /// `owner`/`name` for the repo at `workdir`, via `gh repo view`.
 fn repo_owner_name(workdir: &Path) -> Result<(String, String), GitError> {
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args([
             "repo",
             "view",
@@ -240,7 +239,7 @@ pub fn dequeue_pr(workdir: &Path, node_id: &str) -> Result<String, GitError> {
 }
 
 fn run_gh(workdir: &Path, args: &[String]) -> Result<String, GitError> {
-    let out = Command::new("gh")
+    let out = crate::cli::gh_command()
         .args(args)
         .current_dir(workdir)
         .output()

@@ -1094,6 +1094,7 @@ pub fn plan_conflict_continue(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -1764,6 +1765,7 @@ pub fn plan_conflict_abort(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 
@@ -2330,6 +2332,7 @@ pub fn plan_conflict_skip(
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
+        equivalent_command: None,
     })
 }
 

@@ -667,8 +667,8 @@ pub enum Msg {
     /// Empty-table body message.
     // ── Plan-modal confirm labels (destructive ops get an armed variant) ──
     /// Equivalent-git-command line in the plan modal, `{}` = the command
-    /// (#353). Deliberately "equivalent to", never "runs" — kagi executes via
-    /// libgit2, not the CLI.
+    /// (#353). Deliberately "equivalent to", never "runs" — kagi executes in-process via
+    /// the git library, not the CLI.
     PlanEquivalentTo,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
@@ -2410,7 +2410,7 @@ mod tests {
     }
 
     // #353: the equivalent-command line must read "equivalent to" / "相当",
-    // NEVER "runs" / "実行" — kagi executes via libgit2, not the CLI, so
+    // NEVER "runs" / "実行" — X, so
     // claiming it "runs" the command would be a lie.
     #[test]
     fn equivalent_command_wording_says_equivalent_not_runs() {

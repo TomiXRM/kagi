@@ -1,6 +1,6 @@
 # ADR-0166: AI-verifiable GPUI GUI E2E — Lane 1 in-process PoC
 
-- Status: Proposed (PoC findings) / Date: 2026-09-04
+- Status: Accepted (runner GREEN; see Update 2026-09-04) / Date: 2026-09-04
 - Context: issue #432（親 #359 2026Q3 AI-native）。Lane 1（macOS native in-process）のみ。
   Lane 2（kagi-web / Playwright）は対象外。
 - 前提 ADR: 0077（4層テスト戦略、`VisualTestContext` は「window が本当に要る箇所だけ」）、
@@ -118,3 +118,70 @@ mount するには意図的な seam が要る = これは issue の論点 #1 そ
 - `src/ui/mod.rs`（`#[cfg(all(test, target_os="macos"))] mod gui_e2e_poc;`）
 - `Cargo.toml`（`[dev-dependencies] gpui = { …, features=["test-support"] }`, `image`）
 - `ci/loc-baseline.txt`（mod.rs 4193）
+
+## Update 2026-09-04 — 実装完了（GREEN、main thread）
+
+採用提案 #2 の seam を最小で切り、`#[ignore]` に頼らない **GREEN な runner** を実装した。
+
+### 切った seam（論点 #1 の実回答）
+
+- **`ui`（と唯一の crate-root 依存 `single_instance`）を lib へ移設**。`src/lib.rs` が
+  `pub mod ui;` / `pub mod single_instance;` を持ち、bin（`main.rs`）は
+  `use kagi::ui / kagi::single_instance` の薄いラッパになった。二重コンパイルを避ける
+  正攻法（`mod ui` を bin に残す案は god-file を毎ビルド 2 回コンパイルするため却下）。
+  - 影響: `src/ui/**` 内の自己参照 `kagi::…` → `crate::…`、bin 側 `crate::ui::` →
+    `kagi::ui::`。ui の bin-root 結合は `crate::single_instance::take_receiver()` の
+    **1 箇所のみ**で、移設で自然に解消（`arm_single_instance_listener` は receiver
+    不在時 no-op、tabs.rs:734 — runtime の結合ではなくパス/可視性の問題だった）。
+- **`src/ui/e2e.rs`（新規、`pub`）**: runner が触れてよいのは `gpui`(dev-dep) と `kagi`
+  のみ（integration test は bin の通常依存 `gpui_component`/`gpui_platform`/`kagi_git` を
+  名指しできない）。この seam がそれらを内包する薄い関数群 —
+  `platform()` / `asset_source()` / `init_app()` / `app_state()` /
+  `build_kagi_entity()` / `mount_root()`。`build_kagi_entity` は `open_main_window` と
+  **共有**（entity 構築の重複を排除）。`test-support` は一切含まない（純 gpui + 通常依存）
+  ので production build に混入しない。`#[cfg(test)]` に置かない理由: cfg(test) 項目は
+  integration-test crate から不可視のため。
+- **`tests/gui_e2e_runner.rs`（`harness = false`）**: 自前 `fn main` = プロセス
+  main thread で走る。PoC の `gui_e2e_poc.rs` シナリオはここへ移設（重複せず）。
+  `src/ui/gui_e2e_poc.rs` と `#[cfg(all(test,target_os="macos"))] mod gui_e2e_poc;` は削除。
+
+### 結果（実測）
+
+- **ブロッカー解消**: `open_offscreen_window` が **SIGABRT せず** window を開き、first
+  render → `run_until_parked` → `cmd-j` keystroke で `bottom_panel_open` 反転 →
+  `ToggleBottomPanel` action で復帰 → repo 無変更（HEAD+porcelain 一致）まで通過し
+  **exit 0**。ADR 本文「何が動かなかったか」の唯一の障害（実行 host が main thread 
+  でない）が、`harness = false` で解消したことを実証。
+- **新ブロッカー（screenshot）**: locked gpui rev（`90b3aa0`）は **実 Mac window の
+  `render_to_image` を未実装**（`platform.rs` の default trait が `bail!`；`gpui_platform`
+  に override なし）。PoC は window open で毎回 abort していたため capture まで到達して
+  おらず、本文 §動いた API の「capture_screenshot 動作」は**未実行の記述**だった。
+  採用提案 #3 の通り screenshot は triage 信号で合否 oracle ではないため、capture は
+  **best-effort**（失敗を許容しログのみ）にし、決定論的 assertion を合否とした。PNG が
+  要る場合は upstream の `render_to_image`(mac) 実装 or ScreenCaptureKit 経路が必要。
+- **opt-in**: runner は `KAGI_GUI_E2E=1` の時のみシナリオを走らせ、未設定/`cargo test
+  --workspace` では SKIP して exit 0（§CI「required gate にしない / evidence lane」に一致）。
+  非 macOS は no-op 成功。
+
+### 実行
+
+```
+KAGI_GUI_E2E=1 CARGO_TARGET_DIR=…/target \
+  cargo test -p kagi --test gui_e2e_runner -- --nocapture
+```
+
+### 依存分離の検証（再掲・実測）
+
+- `cargo tree -e no-dev`（production）に `test-support` 無し / `-e all`（dev 含む）に有り。
+- `cargo build -p kagi` 緑、`cargo test --workspace` 緑（runner は SKIP で無影響）、
+  `cargo fmt --all --check` 緑、`bash ci/check-loc.sh` 緑（mod.rs 4216→4206 に更新）、
+  src/ui の git2-free grep 緑。
+
+### ファイル（更新差分）
+
+- 追加: `src/ui/e2e.rs`, `tests/gui_e2e_runner.rs`
+- 削除: `src/ui/gui_e2e_poc.rs`
+- 変更: `src/lib.rs`（ui/single_instance を lib 公開）、`src/main.rs`/`src/headless.rs`
+  （`kagi::ui` 参照へ）、`src/ui/mod.rs`（`pub mod e2e;`、entity 構築を共有化、
+  自己参照 `kagi::`→`crate::`）、`Cargo.toml`（`[[test]] harness=false` + tempfile dev-dep）、
+  `ci/loc-baseline.txt`。

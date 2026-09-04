@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use kagi_git::open_repository;
 
-use crate::ui::{self, run_app, KagiApp};
+use kagi::ui::{self, run_app, KagiApp};
 
 /// W4-TABS: open `path` as a repository tab on `app` and make it active,
 /// rebuilding the heavyweight per-repo state from a fresh snapshot.

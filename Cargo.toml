@@ -95,6 +95,19 @@ winresource = "0.1"
 [dev-dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", features = ["test-support"] }
 image = "0.25"
+# ADR-0166 GUI E2E runner: throwaway fixture repos. Already a normal dep (cargo
+# unifies it), listed here so the `tests/` crate can name it directly.
+tempfile = "3"
+
+# ADR-0166: the GUI E2E scenario runs on the process MAIN thread. libtest's
+# default harness runs `#[test]` fns on worker threads, where AppKit NSWindow
+# creation SIGABRTs; `harness = false` gives this target its own `fn main` (=
+# process entry, main thread) so the real Metal off-screen window opens. macOS
+# only in practice — the runner is a no-op success on other targets. Runs on
+# demand: `cargo test -p kagi --test gui_e2e_runner`.
+[[test]]
+name = "gui_e2e_runner"
+harness = false
 
 # Trade-off: longer link time in CI. Applies workspace-wide (this is the root).
 [profile.release]

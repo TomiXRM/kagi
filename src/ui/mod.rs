@@ -34,9 +34,9 @@ pub mod ecosystem;
 pub mod editor_fs_ops;
 #[cfg(test)]
 mod env_tests;
-// ADR-0166: macOS-only in-process GUI E2E PoC (VisualTestAppContext).
-#[cfg(all(test, target_os = "macos"))]
-mod gui_e2e_poc;
+// ADR-0166: GUI E2E seam — pub helpers the `harness = false` main-thread runner
+// (`tests/gui_e2e_runner.rs`) uses to mount the real KagiApp offscreen.
+pub mod e2e;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 mod diff_selection;
 pub mod editor_tree_menu;
@@ -2119,7 +2119,7 @@ impl KagiApp {
         }
         let skipped = settings::read_setting("update_skipped");
         let task =
-            cx.background_spawn(async move { kagi::update::check_for_update(skipped.as_deref()) });
+            cx.background_spawn(async move { crate::update::check_for_update(skipped.as_deref()) });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| match result {
@@ -2152,7 +2152,7 @@ impl KagiApp {
         self.update_status = Some(SharedString::from("Downloading & verifying…"));
         cx.notify();
         let task = cx.background_spawn(async move {
-            kagi::update::install(&plan, &release, &|m| klog!("update: {m}"))
+            crate::update::install(&plan, &release, &|m| klog!("update: {m}"))
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -2453,7 +2453,8 @@ impl KagiApp {
         self.diff_caches.remote_inflight.insert(index);
 
         let task = cx.background_spawn(async move {
-            kagi::remote::remote_commit_changed_files(&host, &root, &sha).map_err(|e| e.to_string())
+            crate::remote::remote_commit_changed_files(&host, &root, &sha)
+                .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -3546,7 +3547,7 @@ pub fn run_app(app_state: KagiApp) {
 /// Factored out of [`run_app`] so the Dock-reopen handler can recreate the
 /// window after the user closed it (the one-time init — gpui_component,
 /// keybindings, menus — stays in `run_app`).
-fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
+fn open_main_window(app_state: KagiApp, cx: &mut App) {
     use gpui::{size, Bounds, WindowBounds, WindowOptions};
 
     // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
@@ -3602,8 +3603,8 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             window_decorations: main_window_decorations(),
             // Linux: gpui sets the Wayland app_id / X11 WM_CLASS from this so
             // GNOME binds the window to com.tomixrm.kagi.desktop instead of a
-            // generic "unknown" entry. See `kagi::APP_ID`. No-op on macOS/Windows.
-            app_id: Some(kagi::APP_ID.to_string()),
+            // generic "unknown" entry. See `crate::APP_ID`. No-op on macOS/Windows.
+            app_id: Some(crate::APP_ID.to_string()),
             ..Default::default()
         },
         |window, cx| {
@@ -3611,23 +3612,12 @@ fn open_main_window(mut app_state: KagiApp, cx: &mut App) {
             // first layer to be a `gpui_component::Root`; rendering
             // KagiApp directly panics inside Root::read (user-reported
             // crash when opening the commit panel).
-            let kagi: Entity<KagiApp> = cx.new(|cx| {
-                // Root focus handle: without a focused element gpui never
-                // dispatches key events, so cmd-j (and future shortcuts)
-                // would silently do nothing.
-                app_state.root_focus = Some(cx.focus_handle());
-                // ADR-0110 Phase 5: the toast stack is a child entity so a
-                // push/expire re-renders only the overlay. Created here because
-                // the pure `KagiApp` constructors have no `cx`.
-                app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
-                // Likewise the op-log panel: seeded from the disk-loaded tail.
-                let seed = std::mem::take(&mut app_state.op_log_seed);
-                app_state.op_log = Some(cx.new(|_| oplog_panel::OpLogPanel::from_entries(seed)));
-                app_state
-            });
-            if let Some(fh) = kagi.read(cx).root_focus.clone() {
-                window.focus(&fh, cx);
-            }
+            //
+            // The entity construction (root focus handle so key events like
+            // cmd-j dispatch; toast stack + op-log child entities that need a
+            // `cx`) is shared with the offscreen GUI E2E mount so both build
+            // the entity identically — see `e2e::build_kagi_entity` (ADR-0166).
+            let kagi: Entity<KagiApp> = e2e::build_kagi_entity(app_state, window, cx);
 
             // Settings appearance theme picker: the gpui-component `Select` is an
             // Entity that needs a `Window`, so it's built here rather than in

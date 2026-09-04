@@ -29,7 +29,7 @@
 
 use gpui::{canvas, point, px, App, Bounds, Canvas, PathBuilder, Pixels, Window};
 
-use kagi::graph::{EdgeKind, GraphEdge};
+use crate::graph::{EdgeKind, GraphEdge};
 
 use crate::ui::graph_squash::GHOST_COLOR;
 use crate::ui::theme::{self, theme};

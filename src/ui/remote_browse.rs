@@ -9,7 +9,7 @@
 //!   (`Button`, `Input`) rather than hand-rolled `div`s, so the dialog matches
 //!   the rest of the component-based UI,
 //! - the [`KagiApp`] methods that open it and drive the (background) SSH calls,
-//! - the off-thread blocking helpers that call `kagi::remote`.
+//! - the off-thread blocking helpers that call `crate::remote`.
 //!
 //! Everything here is **read-only** (ADR-0089): connect, list, repo-detect, HEAD
 //! summary. Remote *writes* will go through the `OperationController` pipeline in
@@ -50,7 +50,7 @@ const REMOTE_SNAPSHOT_LIMIT: usize = 10_000;
 /// detects repositories and shows the current repo's HEAD summary (ADR-0089).
 ///
 /// All SSH work runs off the UI thread (`background_spawn`) through
-/// `kagi::remote`; this struct only holds the latest result to render. The
+/// `crate::remote`; this struct only holds the latest result to render. The
 /// `*_state` fields are the real `gpui-component` inputs; the paired plain
 /// `String`s are synced from them each frame (so the connect logic is decoupled
 /// from the entity lifecycle, matching the other input modals).
@@ -119,7 +119,7 @@ impl KagiApp {
     }
 
     /// Validate the connection form, then connect + list the home directory on a
-    /// background thread (`kagi::remote`). On success the modal flips to the
+    /// background thread (`crate::remote`). On success the modal flips to the
     /// directory browser; on failure it shows the ssh error.
     pub fn start_remote_connect(&mut self, cx: &mut Context<Self>) {
         let host = {
@@ -678,7 +678,7 @@ pub(crate) fn render_remote_browse_modal(
 }
 
 // ──────────────────────────────────────────────────────────────
-// Off-thread blocking helpers (call kagi::remote → system `ssh`)
+// Off-thread blocking helpers (call crate::remote → system `ssh`)
 // ──────────────────────────────────────────────────────────────
 
 /// One directory's worth of remote read results, gathered in a single
@@ -693,10 +693,10 @@ struct RemoteBrowseData {
 /// List `path`, detect whether it is a repository, and (if so) read its HEAD
 /// summary — all over SSH. Returns a `String` error the UI displays.
 fn remote_browse_blocking(host: &RemoteHost, path: &str) -> Result<RemoteBrowseData, String> {
-    let entries = kagi::remote::list_dir(host, path).map_err(|e| e.to_string())?;
-    let probe = kagi::remote::probe_repo(host, path).map_err(|e| e.to_string())?;
+    let entries = crate::remote::list_dir(host, path).map_err(|e| e.to_string())?;
+    let probe = crate::remote::probe_repo(host, path).map_err(|e| e.to_string())?;
     let summary = if probe.is_repo {
-        kagi::remote::repo_summary(host, path).map_err(|e| e.to_string())?
+        crate::remote::repo_summary(host, path).map_err(|e| e.to_string())?
     } else {
         None
     };
@@ -710,8 +710,8 @@ fn remote_browse_blocking(host: &RemoteHost, path: &str) -> Result<RemoteBrowseD
 
 /// Verify the connection, find the login (home) directory, and browse it.
 fn remote_connect_blocking(host: &RemoteHost) -> Result<RemoteBrowseData, String> {
-    kagi::remote::check_connection(host).map_err(|e| e.to_string())?;
-    let home = kagi::remote::home_dir(host).map_err(|e| e.to_string())?;
+    crate::remote::check_connection(host).map_err(|e| e.to_string())?;
+    let home = crate::remote::home_dir(host).map_err(|e| e.to_string())?;
     remote_browse_blocking(host, &home)
 }
 
@@ -721,7 +721,7 @@ fn remote_open_blocking(
     host: &RemoteHost,
     path: &str,
 ) -> Result<(String, kagi_git::RepoSnapshot), String> {
-    let snap = kagi::remote::remote_snapshot(host, path, REMOTE_SNAPSHOT_LIMIT)
+    let snap = crate::remote::remote_snapshot(host, path, REMOTE_SNAPSHOT_LIMIT)
         .map_err(|e| e.to_string())?;
     Ok((path.to_string(), snap))
 }

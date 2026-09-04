@@ -35,6 +35,7 @@ mod status;
 pub mod trust;
 use kagi_domain::trailers; // ADR-0121: was a shim file
 pub mod worker;
+pub mod worktree_ports;
 
 #[allow(unused_imports)]
 pub use authoring::{load_commit_template, recent_authors, AuthorCandidate};
@@ -144,6 +145,8 @@ pub use status::{working_tree_status, ChangeKind, FileStatus, WorkingTreeStatus}
 pub use trailers::{
     is_url, parse_coauthors, parse_trailers, sanitize_trailer_value, CoAuthor, Trailer,
 };
+#[allow(unused_imports)]
+pub use worktree_ports::{assign_block, worktree_env, WorktreePortEnv};
 
 use std::path::{Path, PathBuf};
 

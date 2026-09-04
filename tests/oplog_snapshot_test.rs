@@ -192,7 +192,7 @@ fn snapshot_not_a_push_target() {
 
     // Create a snapshot, then push everything the default refspec would send.
     let backend = Backend::open(&local).expect("open");
-    let snap = backend.create_snapshot("s").expect("create");
+    let _snap = backend.create_snapshot("s").expect("create");
 
     // A normal `git push` (and even `--all`) must not carry refs/kagi/.
     git(&local, &["push", "-q", "origin", "main"]);
@@ -202,9 +202,12 @@ fn snapshot_not_a_push_target() {
         .env("HOME", &local)
         .status();
 
-    let remote_refs = git_out(&remote, &["for-each-ref"]);
+    // Only the ref *name* is meaningful here — a substring match on `snap.id`
+    // (a short numeric id) can coincidentally hit an unrelated commit SHA in
+    // `for-each-ref` output (seen on git 2.55 CI), so match the ref path itself.
+    let remote_refs = git_out(&remote, &["for-each-ref", "--format=%(refname)"]);
     assert!(
-        !remote_refs.contains("refs/kagi/") && !remote_refs.contains(&snap.id),
+        !remote_refs.contains("refs/kagi/"),
         "snapshot ref must never reach the remote: {remote_refs:?}"
     );
 }

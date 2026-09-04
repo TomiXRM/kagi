@@ -527,12 +527,28 @@ impl KagiApp {
 /// Same `.with_animation` idiom as the ecosystem loader / sync spinner. The
 /// animated block must stay outside any `overflow_y_scroll` container
 /// (`with_animation` doesn't tick there — see `kagi-ui-ecosystem/render.rs`).
-/// No reduce-motion setting exists yet, so the motion is kept gentle by
-/// default: small amplitude, slow cycle, sine easing.
+/// Honors the reduce-motion setting (issue #354 / ADR-0173): when
+/// `theme::reduce_motion()` is on the dots render static (no bob, no per-frame
+/// animation ticks). Otherwise the motion is kept gentle: small amplitude,
+/// slow cycle, sine easing.
+const LOADING_BOB_MS: u64 = 1400;
+const LOADING_DOT_AMPLITUDE: f32 = 11.0;
+
+/// Pure vertical lift (in pre-scale px) of one bobbing loading dot. Returns
+/// `0.0` when `reduce_motion` is on so the dot stays at rest; otherwise the
+/// positive half of a staggered sine (hop up, rest, hop again). Kept pure and
+/// GUI-free so the reduce-motion behaviour is unit-testable (see tests below).
+pub(super) fn loading_dot_lift(reduce_motion: bool, phase: f32, delta: f32) -> f32 {
+    if reduce_motion {
+        return 0.0;
+    }
+    let t = ((delta + phase) % 1.0) * std::f32::consts::TAU;
+    t.sin().max(0.0) * LOADING_DOT_AMPLITUDE
+}
+
 fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
     use gpui::AnimationExt as _;
-    const BOB_MS: u64 = 1400;
-    const AMPLITUDE: f32 = 11.0;
+    let reduce_motion = theme::reduce_motion();
     // Commit-node colors: branch / accent / success — reads as a tiny graph.
     let colors = [theme().color_branch, theme().accent, theme().color_success];
     let mut dots = div()
@@ -543,23 +559,25 @@ fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
         .h(theme::scaled_px(22.0));
     for (i, color) in colors.into_iter().enumerate() {
         let phase = i as f32 * 0.15; // stagger: a little wave, left to right
-        dots = dots.child(
-            div()
-                .w(theme::scaled_px(9.0))
-                .h(theme::scaled_px(9.0))
-                .rounded_full()
-                .bg(rgb(color))
-                .with_animation(
-                    ("kagi-loading-dot", i),
-                    gpui::Animation::new(Duration::from_millis(BOB_MS)).repeat(),
-                    move |el, delta| {
-                        let t = ((delta + phase) % 1.0) * std::f32::consts::TAU;
-                        // Positive half of a sine: hop up, rest, hop again.
-                        let lift = t.sin().max(0.0) * AMPLITUDE;
-                        el.mb(theme::scaled_px(lift))
-                    },
-                ),
-        );
+        let dot = div()
+            .w(theme::scaled_px(9.0))
+            .h(theme::scaled_px(9.0))
+            .rounded_full()
+            .bg(rgb(color));
+        // Reduce motion: render the dot static — skip `.with_animation` entirely
+        // so no per-frame animation ticks are requested (the pinned GPUI build's
+        // animation element does not honor reduce-motion itself).
+        let dot = if reduce_motion {
+            dot.into_any_element()
+        } else {
+            dot.with_animation(
+                ("kagi-loading-dot", i),
+                gpui::Animation::new(Duration::from_millis(LOADING_BOB_MS)).repeat(),
+                move |el, delta| el.mb(theme::scaled_px(loading_dot_lift(false, phase, delta))),
+            )
+            .into_any_element()
+        };
+        dots = dots.child(dot);
     }
     div()
         .flex_1()
@@ -577,4 +595,30 @@ fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
                 .text_color(rgb(theme().text_sub))
                 .child(label),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::loading_dot_lift;
+
+    #[test]
+    fn loading_dot_lift_static_when_reduce_motion() {
+        // Reduce motion on: the dot never lifts, at any phase/time.
+        for &delta in &[0.0f32, 0.1, 0.25, 0.5, 0.75, 0.99] {
+            assert_eq!(loading_dot_lift(true, 0.0, delta), 0.0);
+            assert_eq!(loading_dot_lift(true, 0.3, delta), 0.0);
+        }
+    }
+
+    #[test]
+    fn loading_dot_lift_animates_when_enabled() {
+        // Reduce motion off: the half-sine peaks (>0) somewhere in the cycle
+        // and rests at 0 on the negative half — i.e. it actually moves.
+        let peak = (0..100)
+            .map(|i| loading_dot_lift(false, 0.0, i as f32 / 100.0))
+            .fold(0.0f32, f32::max);
+        assert!(peak > 1.0, "expected a visible hop, got peak {peak}");
+        // The trough of the positive-half sine is a rest at exactly 0.
+        assert_eq!(loading_dot_lift(false, 0.0, 0.5), 0.0);
+    }
 }

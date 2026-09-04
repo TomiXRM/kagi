@@ -389,6 +389,21 @@ fn appearance_section(
         .on_click(toggle_fetch)
         .into_any_element();
 
+    // ── Reduce-motion toggle (issue #354 / ADR-0173) ──
+    let reduce_motion = theme::reduce_motion();
+    let app_rm = app.clone();
+    let toggle_rm = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let on = *checked;
+        app_rm.update(cx, |_app, cx| {
+            theme::set_reduce_motion(on);
+            cx.notify();
+        });
+    };
+    let reduce_motion_ctl = Switch::new("reduce-motion-toggle")
+        .checked(reduce_motion)
+        .on_click(toggle_rm)
+        .into_any_element();
+
     // ── Graph Cmd+C copy target (ADR-0170) ──
     // Two-way segmented choice → hash (default) or the row's local branch.
     const COPY_TARGETS: [(&str, &str); 2] = [("hash", "Hash"), ("branch", "Branch")];
@@ -445,6 +460,11 @@ fn appearance_section(
             SharedString::from(Msg::SettingsGraphCopy.t()),
             SharedString::from(Msg::SettingsGraphCopyDesc.t()),
             copy_target_ctl,
+        ))
+        .child(setting_row(
+            SharedString::from(Msg::SettingsReduceMotion.t()),
+            SharedString::from(Msg::SettingsReduceMotionDesc.t()),
+            reduce_motion_ctl,
         ))
 }
 

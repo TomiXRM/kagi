@@ -473,6 +473,32 @@ pub fn init_auto_fetch() {
     klog!("auto_fetch: {}", auto_fetch());
 }
 
+/// Reduce-motion flag (issue #354 / ADR-0173). When on, kagi's looping
+/// decorative animations render static. Defaults to **off**. Read cheaply at
+/// render time (this crate's UI has no direct dependency on GPUI's own
+/// reduce-motion API — the pinned build's animation element does not honor it).
+static REDUCE_MOTION: AtomicBool = AtomicBool::new(false);
+
+/// The currently-active reduce-motion flag (read every render frame that draws
+/// a looping animation, e.g. the tab-loading dots).
+#[inline]
+pub fn reduce_motion() -> bool {
+    REDUCE_MOTION.load(Ordering::Relaxed)
+}
+
+/// Set + persist the reduce-motion flag to `settings.json` (key `reduce_motion`).
+pub fn set_reduce_motion(on: bool) {
+    REDUCE_MOTION.store(on, Ordering::Relaxed);
+    write_setting("reduce_motion", Some(if on { "true" } else { "false" }));
+}
+
+/// Initialise the reduce-motion flag at startup from `settings.json`
+/// (`"reduce_motion"`). Missing → off; only an explicit `"true"` enables it.
+pub fn init_reduce_motion() {
+    REDUCE_MOTION.store(Settings::load().reduce_motion(), Ordering::Relaxed);
+    klog!("reduce_motion: {}", reduce_motion());
+}
+
 /// Look up a theme index by slug.
 pub fn index_of(slug: &str) -> Option<usize> {
     THEMES

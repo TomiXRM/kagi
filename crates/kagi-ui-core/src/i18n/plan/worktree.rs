@@ -7,11 +7,11 @@ use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 pub fn note_ja(note: &WorktreeNote) -> String {
     match note {
         WorktreeNote::DirtyBlocksCheckoutAfterCreate { parts } => format!(
-            "作業ツリーに {} があります — branch 作成後の checkout で変更が失われる可能性があります。続行する前に変更を stash してください。",
+            "作業ツリーに {} があります。branch 作成後の checkout で変更が失われる可能性があります。先に stash してください。",
             parts.parts_en()
         ),
         WorktreeNote::BranchInOtherWorktree { branch, path } => format!(
-            "branch '{}' は別の worktree '{}' で既に checkout されています。",
+            "この branch は別の worktree で既に checkout 済みです。\nbranch `{}` / worktree `{}`",
             branch, path
         ),
         WorktreeNote::CreatesLinkedWorktree {
@@ -19,8 +19,8 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             branch,
             start,
         } => format!(
-            "'{}' に branch '{}' で(開始点 {})リンク worktree を作成します。",
-            path, branch, start
+            "リンク worktree を作成します（起点 {}）。\nworktree `{}` / branch `{}`",
+            start, path, branch
         ),
         WorktreeNote::LockedWithReason { reason } => {
             let reason_display = match reason {
@@ -28,19 +28,19 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 None => "(理由の記録なし)".to_string(),
             };
             format!(
-                "ロック理由: {} — ロックはこの worktree に誰かが意図的に設定した保護です。もう不要であることを確認してください。",
+                "ロック理由: {}。ロックは誰かが意図的に設定した保護です。不要か確認してください。",
                 reason_display
             )
         }
         WorktreeNote::AlreadyUnlocked { name } => {
-            format!("worktree '{}' は既にロック解除されています。", name)
+            format!("worktree は既にロック解除されています。\nworktree `{}`", name)
         }
         WorktreeNote::LockStateUnreadable { name, err } => format!(
-            "worktree '{}' のロック状態を読み取れませんでした: {}",
-            name, err
+            "ロック状態を読み取れませんでした: {}\nworktree `{}`",
+            err, name
         ),
         WorktreeNote::WorktreeMissing { name } => {
-            format!("worktree '{}' は存在しません。", name)
+            format!("worktree が存在しません。\nworktree `{}`", name)
         }
         WorktreeNote::IncludeCopy {
             count,
@@ -53,29 +53,27 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 names = format!("{} (他 {} 件)", names, more);
             }
             format!(
-                ".worktreeinclude に一致する {} 個のファイル ({}) を新しい worktree にコピーします: {}。",
+                ".worktreeinclude に一致する {} 件（{}）を新しい worktree にコピーします: {}。",
                 count,
                 kagi_domain::worktree_include::human_bytes(*total_bytes),
                 names
             )
         }
         WorktreeNote::IncludeSkippedSymlinks { count } => {
-            format!("一致した symlink {} 個はスキップします(symlink はコピーしません)。", count)
+            format!("一致した symlink {} 件はスキップします（symlink はコピーしません）。", count)
         }
         WorktreeNote::IncludeOverCap {
             total_bytes,
             cap_bytes,
         } => format!(
-            ".worktreeinclude の一致は {} で、コピー上限 {} を超えています — コピーは続行しますが大きくなる可能性があります(例: node_modules の一致)。",
+            ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります（例: node_modules）。",
             kagi_domain::worktree_include::human_bytes(*total_bytes),
             kagi_domain::worktree_include::human_bytes(*cap_bytes)
         ),
-        WorktreeNote::RemoveMainRefused => {
-            "これは main worktree です — 削除できません。".to_string()
-        }
+        WorktreeNote::RemoveMainRefused => "main worktree は削除できません。".to_string(),
         WorktreeNote::RemoveDirty { path, summary } => format!(
-            "worktree '{}' に未コミットの変更があります ({}) — 先に commit か stash してください(削除は force しません)。",
-            path, summary
+            "worktree に未 commit の変更があります（{}）。先に commit か stash してください（削除は force しません）。\nworktree `{}`",
+            summary, path
         ),
         WorktreeNote::RemoveLocked { path, reason } => {
             let reason_display = match reason {
@@ -83,8 +81,8 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 None => "(理由の記録なし)".to_string(),
             };
             format!(
-                "worktree '{}' はロックされています ({}) — 削除する前にロックを解除してください(kagi は force しません)。",
-                path, reason_display
+                "worktree はロックされています（{}）。削除前にロックを解除してください（kagi は force しません）。\nworktree `{}`",
+                reason_display, path
             )
         }
         WorktreeNote::RemovesWorktree {
@@ -95,12 +93,12 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             let branch_display = branch.as_deref().unwrap_or("(detached HEAD)");
             if *delete_branch {
                 format!(
-                    "'{}' のリンク worktree を削除し、branch '{}' も削除します。",
+                    "リンク worktree を削除し、branch も削除します。\nworktree `{}` / branch `{}`",
                     path, branch_display
                 )
             } else {
                 format!(
-                    "'{}' のリンク worktree を削除します — branch '{}' は残します。",
+                    "リンク worktree を削除します。branch は残します。\nworktree `{}` / branch `{}`",
                     path, branch_display
                 )
             }
@@ -110,14 +108,14 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 Some(r) => format!("「{}」", r),
                 None => "(理由なし)".to_string(),
             };
-            format!("'{}' の worktree をロックします。理由: {}。", path, reason_display)
+            format!("worktree をロックします。理由: {}。\nworktree `{}`", reason_display, path)
         }
         WorktreeNote::AlreadyLocked { name, reason } => {
             let reason_display = match reason {
                 Some(r) => format!("「{}」", r),
                 None => "(理由の記録なし)".to_string(),
             };
-            format!("worktree '{}' は既にロックされています ({})。", name, reason_display)
+            format!("worktree は既にロックされています（{}）。\nworktree `{}`", reason_display, name)
         }
         WorktreeNote::PrunePreview {
             count,
@@ -135,8 +133,8 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         }
         WorktreeNote::PruneNothing => "prune 対象の worktree はありません。".to_string(),
         WorktreeNote::RepairsWorktrees => {
-            "worktree の管理リンクを修復します: main の移動、linked の移動、またはその両方に対処します。\
-             ファイルには一切触れず、.git のリンクのみを修復します。"
+            "worktree の管理リンクを修復します（main / linked の移動に対応）。\
+             ファイルには触れず、.git のリンクのみを修復します。"
                 .to_string()
         }
         WorktreeNote::PostCreateSteps {
@@ -149,8 +147,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             kagi_domain::plan_note::worktree::worktree_steps_lines(
                 steps,
                 *trust_required,
-                "  ⚠ 確認すると、この設定を信頼して上記の command ステップを実行します\
-                 (コミットされた設定は既定で未信頼です)。"
+                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（commit 済み設定は既定で未信頼）。"
             )
         ),
         WorktreeNote::PreRemoveSteps {
@@ -158,13 +155,12 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             trust_required,
             ..
         } => format!(
-            ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}",
+            ".kagi/worktree.toml の削除前ステップ {} 件を実行します（command が失敗または未信頼なら削除を中止）:{}",
             steps.len(),
             kagi_domain::plan_note::worktree::worktree_steps_lines(
                 steps,
                 *trust_required,
-                "  ⚠ 確認すると、この設定を信頼して上記の command ステップを実行します\
-                 (コミットされた設定は既定で未信頼です)。"
+                "  ⚠ 確認すると設定を信頼し、上記 command を実行します（commit 済み設定は既定で未信頼）。"
             )
         ),
     }
@@ -174,14 +170,14 @@ pub fn note_ja(note: &WorktreeNote) -> String {
 pub fn title_ja(title: &WorktreeTitle) -> String {
     match title {
         WorktreeTitle::CreateBranchCheckout { name, at } => {
-            format!("branch '{}' を {} に作成して checkout", name, at)
+            format!("branch `{}` を {} に作成して checkout", name, at)
         }
         WorktreeTitle::CreateWorktree { branch, start } => {
-            format!("worktree '{}' を {} に作成", branch, start)
+            format!("worktree `{}` を {} に作成", branch, start)
         }
-        WorktreeTitle::UnlockWorktree { name } => format!("worktree '{}' のロック解除", name),
-        WorktreeTitle::RemoveWorktree { name } => format!("worktree '{}' の削除", name),
-        WorktreeTitle::LockWorktree { name } => format!("worktree '{}' のロック", name),
+        WorktreeTitle::UnlockWorktree { name } => format!("worktree `{}` のロック解除", name),
+        WorktreeTitle::RemoveWorktree { name } => format!("worktree `{}` の削除", name),
+        WorktreeTitle::LockWorktree { name } => format!("worktree `{}` のロック", name),
         WorktreeTitle::PruneWorktrees => "古い worktree の prune".to_string(),
         WorktreeTitle::RepairWorktrees => "worktree リンクの修復".to_string(),
     }
@@ -191,38 +187,38 @@ pub fn title_ja(title: &WorktreeTitle) -> String {
 pub fn recovery_ja(recovery: &WorktreeRecovery) -> String {
     match recovery {
         WorktreeRecovery::CreateBranchCheckout { name, prev } => format!(
-            "branch '{}' を作成してから checkout します。checkout が失敗しても branch は残っている可能性があり、次のコマンドで削除できます:\n  git branch -d {}\ncheckout 後に元に戻すには:\n  git checkout {}",
+            "branch `{}` を作成してから checkout します。失敗しても branch は残る場合があり、削除できます:\n  git branch -d {}\ncheckout 後に元へ戻す:\n  git checkout {}",
             name, name, prev
         ),
         WorktreeRecovery::CreateWorktree { path, branch } => format!(
-            "必要であればリンク worktree を削除してください:\n  git worktree remove {}\nその後 branch を削除できます:\n  git branch -d {}",
+            "不要ならリンク worktree を削除:\n  git worktree remove {}\nその後 branch を削除:\n  git branch -d {}",
             path, branch
         ),
         WorktreeRecovery::Unlock { name } => format!(
-            "必要であれば worktree を再度ロックしてください:\n  git worktree lock --reason \"<理由>\" <{} のパス>",
+            "必要なら再度ロック:\n  git worktree lock --reason \"<理由>\" <{} のパス>",
             name
         ),
         WorktreeRecovery::RemoveWorktree { path, branch } => match branch {
             Some(b) => format!(
-                "必要であれば worktree を再作成してください:\n  git worktree add {} {}",
+                "必要なら worktree を再作成:\n  git worktree add {} {}",
                 path, b
             ),
             None => format!(
-                "必要であれば worktree を再作成してください:\n  git worktree add {} <branch-or-commit>",
+                "必要なら worktree を再作成:\n  git worktree add {} <branch-or-commit>",
                 path
             ),
         },
         WorktreeRecovery::LockWorktree { name } => format!(
-            "必要であれば worktree のロックを解除してください:\n  git worktree unlock <{} のパス>",
+            "必要ならロック解除:\n  git worktree unlock <{} のパス>",
             name
         ),
         WorktreeRecovery::Prune => {
-            "prune は作業ディレクトリが既に消えた古い管理エントリのみを削除します。\
-             必要な worktree は次で再作成してください:\n  git worktree add <path> <branch>"
+            "prune は消えた作業ディレクトリの管理エントリだけを削除します。\
+             必要な worktree は再作成:\n  git worktree add <path> <branch>"
                 .to_string()
         }
         WorktreeRecovery::Repair => {
-            "repair は冪等で .git のリンクのみを修復します。まだリンクが誤っている場合は main worktree から再実行してください:\n  git worktree repair [<path>...]"
+            "repair は冪等で .git のリンクだけを修復します。まだ誤っていれば main worktree から再実行:\n  git worktree repair [<path>...]"
                 .to_string()
         }
     }

@@ -53,12 +53,12 @@ fn parts_ja(parts: &DirtyParts) -> String {
 pub fn note_ja(note: &CommonNote) -> String {
     match note {
         CommonNote::ConflictedFiles { count, before } => format!(
-            "リポジトリに {} 件のコンフリクトファイルがあります。{}の前にコンフリクトを解決してください。",
+            "conflict が {} 件あります。{}の前に解決してください。",
             count,
             phrase_ja(*before)
         ),
         CommonNote::DirtyBlocksOp { parts, before } => format!(
-            "作業ツリーに{}があります — {}の前に stash するか commit してください。",
+            "作業ツリーに{}があります。{}の前に stash か commit してください。",
             parts_ja(parts),
             phrase_ja(*before)
         ),
@@ -93,7 +93,7 @@ pub fn note_ja(note: &CommonNote) -> String {
             }
         },
         CommonNote::DirtyRollbackHint { parts, op } => format!(
-            "作業ツリーに{}があります。クリーンな復帰点を残したい場合は {} の前に stash か commit をしてください。",
+            "作業ツリーに{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。",
             parts_ja(parts),
             phrase_ja(*op)
         ),
@@ -114,7 +114,7 @@ pub fn note_ja(note: &CommonNote) -> String {
             format!("HEAD が unborn(commit が存在しません)です。{}", tail)
         }
         CommonNote::BranchMissing { name, .. } => {
-            format!("branch '{}' は存在しません。", name)
+            format!("branch `{}` は存在しません。", name)
         }
         // Error messages stay untranslated (error keying is out of scope).
         CommonNote::GitErrorPassthrough { message } => message.clone(),

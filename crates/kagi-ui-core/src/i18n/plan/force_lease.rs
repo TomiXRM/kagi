@@ -7,19 +7,19 @@ use kagi_domain::plan_note::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle
 pub fn note_ja(note: &ForceLeaseNote) -> String {
     match note {
         ForceLeaseNote::NoUpstream { branch } => format!(
-            "branch '{}' にはアップストリームが設定されていません。force-with-lease にはリース対象となるリモートの既知の先端が必要です。",
+            "upstream が設定されていません。force-with-lease には remote の既知の先端が必要です。\nbranch `{}`",
             branch
         ),
         ForceLeaseNote::NothingToPush { branch } => format!(
-            "branch '{}' は既にリモート追跡refと一致しています。force-push する内容がありません。",
+            "remote 追跡 ref と一致しています。push する内容がありません。\nbranch `{}`",
             branch
         ),
         ForceLeaseNote::RewritesRemoteHistory { branch } => format!(
-            "remote branch '{}' の履歴が上書きされます。既に古い履歴をpullした人は調整(古いtipへのrebase等)が必要になります。",
+            "remote branch の履歴を上書きします。古い履歴を pull した人は rebase 等の調整が必要です。\nbranch `{}`",
             branch
         ),
         ForceLeaseNote::LeaseValue { remote, sha } => format!(
-            "リースにより保護されています: 最後に fetch した時点から '{}' が {} より先に進んでいた場合(=他の誰かがその間にpushしていた場合)、このpushは拒否されます。",
+            "lease で保護されます。最後の fetch 以降に `{}` が {} より先へ進んでいれば(誰かが push していれば)push は拒否されます。",
             remote, sha
         ),
     }
@@ -29,7 +29,7 @@ pub fn note_ja(note: &ForceLeaseNote) -> String {
 pub fn title_ja(title: &ForceLeaseTitle) -> String {
     match title {
         ForceLeaseTitle::ForceLeasePush { branch, remote } => {
-            format!("'{}' を '{}' へ force-with-lease push", branch, remote)
+            format!("`{}` を `{}` へ force-with-lease push", branch, remote)
         }
     }
 }
@@ -43,7 +43,7 @@ pub fn recovery_ja(recovery: &ForceLeaseRecovery) -> String {
             previous_remote_sha,
             new_sha,
         } => format!(
-            "リモートの以前の先端は '{previous_remote_sha}' でした。復元するには(この push に対してもリースで保護されます):\n  git push --force-with-lease={branch}:{new_sha} {remote} {previous_remote_sha}:refs/heads/{branch}\n書き換えられた履歴をpull済みの人は、それぞれローカルで調整が必要です。"
+            "remote の以前の先端は `{previous_remote_sha}`。復元するには:\n  git push --force-with-lease={branch}:{new_sha} {remote} {previous_remote_sha}:refs/heads/{branch}\n書き換えた履歴を pull 済みの人は各自調整が必要です。"
         ),
     }
 }

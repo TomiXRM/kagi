@@ -6,24 +6,21 @@ use kagi_domain::plan_note::{DiscardNote, PlanTitle};
 pub fn note_ja(note: &DiscardNote) -> String {
     match note {
         DiscardNote::NothingSelected => {
-            "破棄する対象がありません: ファイルが選択されていません。".to_string()
+            "破棄する対象が選択されていません。".to_string()
         }
         DiscardNote::TargetConflicted { path } => format!(
-            "'{}' はコンフリクト中です。破棄せずコンフリクト解決フローで処理してください。",
+            "conflict 中です。破棄せず conflict 解決フローで処理してください。\nfile `{}`",
             path
         ),
         DiscardNote::NoUnstagedChanges { path } => {
-            format!("'{}' には破棄できる未 stage の変更がありません。", path)
+            format!("破棄できる未 stage の変更がありません。\nfile `{}`", path)
         }
         DiscardNote::TargetSubmodule { path } => format!(
-            "'{}' はサブモジュールです。破棄はサブモジュールを扱えません。\
-             サブモジュール内部で変更を管理してください。",
+            "submodule は破棄できません。submodule 内で変更を管理してください。\nfile `{}`",
             path
         ),
         DiscardNote::UntrackedWillBeDeleted { count } => format!(
-            "⚠️ 未追跡ファイル {} 件がディスクから完全に削除されます(空になったフォルダも削除されます)。\
-             削除前に各ファイルのバックアップ blob が oplog に保存されます — \
-             `git cat-file -p <blob-sha>` で復元できます。",
+            "⚠️ 未追跡ファイル {} 件をディスクから削除します(空フォルダも削除)。削除前に blob を oplog に保存します:\n  git cat-file -p <blob-sha>",
             count
         ),
     }
@@ -34,7 +31,7 @@ pub fn title_ja(title: &PlanTitle) -> String {
     match title {
         PlanTitle::Discard {
             single: Some(path), ..
-        } => format!("'{}' の変更を破棄", path),
+        } => format!("`{}` の変更を破棄", path),
         PlanTitle::Discard {
             single: None,
             count,
@@ -49,9 +46,7 @@ pub fn title_ja(title: &PlanTitle) -> String {
 
 /// Japanese rendering of the discard recovery block.
 pub fn recovery_ja() -> String {
-    "選択したファイルの未 stage 変更を破棄します: 追跡ファイルはインデックスから復元、\
-     未追跡ファイルはディスクから削除されます。いずれの場合も、実行前に各ファイルの現内容の\
-     バックアップ blob が oplog(op=\"discard\")に記録されます。\
-     `git cat-file -p <blob-sha>` で復元できます。"
+    "未 stage の変更を破棄します。追跡ファイルは index から復元、未追跡ファイルはディスクから削除。\
+     実行前に現内容の blob を oplog(op=\"discard\")に記録します:\n  git cat-file -p <blob-sha>"
         .to_string()
 }

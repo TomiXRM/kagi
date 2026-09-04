@@ -11,28 +11,24 @@ use kagi_domain::plan_note::{PushNote, PushRecovery, PushTitle};
 pub fn note_ja(note: &PushNote) -> String {
     match note {
         PushNote::NoForceUsed { .. } => {
-            "fast-forward できない push は失敗します(force は使用しません)。".to_string()
+            "fast-forward できない push は失敗します。force は使いません。".to_string()
         }
         PushNote::NoUpstreamNoRemotes { branch } => format!(
-            "branch '{}' に upstream が設定されておらず、remote も存在しません。\
-             `git remote add origin <url>` で remote を追加してください。",
+            "upstream が未設定で、remote もありません。remote を追加してください。\nbranch `{}`\n  git remote add origin <url>",
             branch
         ),
         PushNote::NoUpstreamWithErr { branch, err } => {
-            format!(
-                "branch '{}' に upstream が設定されていません: {}。",
-                branch, err
-            )
+            format!("upstream が未設定です: {}\nbranch `{}`", err, branch)
         }
         PushNote::AlreadyUpToDate { branch, .. } => format!(
-            "branch '{}' は upstream に対してすでに最新です — push する内容がありません。",
+            "upstream に対してすでに最新です。push する内容はありません。\nbranch `{}`",
             branch
         ),
         PushNote::UpstreamFormatInvalid => {
             "upstream は origin/main のような remote branch 名で指定してください。".to_string()
         }
         PushNote::UpstreamNotPresentLocally { upstream } => format!(
-            "remote-tracking branch '{}' はローカルに存在しませんが、設定自体は行えます。",
+            "この remote-tracking branch はローカルにありませんが、設定はできます。\nbranch `{}`",
             upstream
         ),
     }
@@ -45,22 +41,22 @@ pub fn title_ja(title: &PushTitle) -> String {
             branch,
             remote,
             set_upstream: true,
-        } => format!("'{}' を '{}' へ push(upstream 設定)", branch, remote),
-        PushTitle::Push { branch, remote, .. } => format!("'{}' を '{}' へ push", branch, remote),
-        PushTitle::PushBlocked => "Push(ブロック中)".to_string(),
+        } => format!("`{}` を `{}` へ push（upstream 設定）", branch, remote),
+        PushTitle::Push { branch, remote, .. } => format!("`{}` を `{}` へ push", branch, remote),
+        PushTitle::PushBlocked => "push（ブロック中）".to_string(),
         PushTitle::PushBranch {
             branch,
             remote,
             set_upstream: true,
         } => format!(
-            "'{}' を '{}/{}' へ push(upstream 設定)",
+            "`{}` を `{}/{}` へ push（upstream 設定）",
             branch, remote, branch
         ),
         PushTitle::PushBranch { branch, remote, .. } => {
-            format!("'{}' を '{}' へ push", branch, remote)
+            format!("`{}` を `{}` へ push", branch, remote)
         }
         PushTitle::SetUpstream { branch, upstream } => {
-            format!("'{}' の upstream を '{}' に設定", branch, upstream)
+            format!("`{}` の upstream を `{}` に設定", branch, upstream)
         }
     }
 }
@@ -68,25 +64,21 @@ pub fn title_ja(title: &PushTitle) -> String {
 /// Japanese rendering of one push recovery block.
 pub fn recovery_ja(recovery: &PushRecovery) -> String {
     match recovery {
-        PushRecovery::Push => {
-            "push はリモートへ commit を送るだけで、ローカルリポジトリは変更されません。\n\
-             push が拒否された場合(non-fast-forward)は、先に pull してから再度プランしてください:\n  \
-             git pull\n  git push\n\
-             reflog にはすべての HEAD 移動が記録されます:\n  git reflog"
-                .to_string()
-        }
+        PushRecovery::Push => "push は remote へ commit を送るだけで、ローカルは変更しません。\n\
+             拒否された場合（non-fast-forward）は先に pull してから再度プラン:\n  \
+             git pull\n  git push\nHEAD の移動は reflog に記録されます:\n  git reflog"
+            .to_string(),
         PushRecovery::PushBlocked => {
-            "push には branch が必要です。`git checkout <branch>` で HEAD を branch に紐付けてください。"
-                .to_string()
+            "push には branch が必要です。\n  git checkout <branch>".to_string()
         }
         PushRecovery::PushBranch => {
-            "push はリモートへ commit を送るだけで、作業ツリーは変更しません。\
-             push が拒否された場合は、先に fetch または pull してから再度プランしてください。"
+            "push は remote へ commit を送るだけで、作業ツリーは変更しません。\
+             拒否された場合は先に fetch か pull してから再度プランしてください。"
                 .to_string()
         }
         PushRecovery::SetUpstream { branch } => format!(
-            "これは git config の branch.{}.remote と branch.{}.merge のみを変更します。\
-             元に戻すには、以前の upstream を再度設定してください。",
+            "変更するのは git config の branch.{}.remote と branch.{}.merge だけです。\
+             元に戻すには以前の upstream を再設定してください。",
             branch, branch
         ),
     }

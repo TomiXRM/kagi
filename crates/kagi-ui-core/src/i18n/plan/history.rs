@@ -20,48 +20,48 @@ pub fn note_ja(note: &HistoryNote) -> String {
     match note {
         HistoryNote::MergeCommitUnsupported { sha, parents, op } => match op {
             HistoryOp::Undo => format!(
-                "commit {} は merge commit です(親 {} 個)。merge commit の undo は MVP では未対応です。",
-                sha, parents
+                "merge commit です(親 {} 個)。merge commit の undo は未対応です。\ncommit `{}`",
+                parents, sha
             ),
             HistoryOp::Amend => format!(
-                "commit {} は merge commit です(親 {} 個)。merge commit の amend は未対応です。",
-                sha, parents
+                "merge commit です(親 {} 個)。merge commit の amend は未対応です。\ncommit `{}`",
+                parents, sha
             ),
         },
         HistoryNote::RootCommit { sha, op } => match op {
             HistoryOp::Undo => format!(
-                "commit {} は root commit です(親なし)。これより前には戻れません。",
+                "root commit です(親なし)。これより前には戻れません。\ncommit `{}`",
                 sha
             ),
             HistoryOp::Amend => format!(
-                "commit {} は root commit です(親なし)。root commit の amend は MVP では未対応です。",
+                "root commit です(親なし)。root commit の amend は未対応です。\ncommit `{}`",
                 sha
             ),
         },
         HistoryNote::PushedHistoryRewrite { sha, op } => match op {
             HistoryOp::Undo => format!(
-                "commit {} は upstream の追跡 branch に push 済みです。push 済み commit の undo は公開済み履歴を書き換えることになるため許可されていません。代わりに `git revert` で打ち消し commit を作成してください。",
+                "push 済みの commit です。公開履歴を書き換えるため undo はできません。`git revert` で打ち消し commit を作成してください。\ncommit `{}`",
                 sha
             ),
             HistoryOp::Amend => format!(
-                "commit {} は push 済みで、この branch は他の人が土台にしているものです。履歴を書き換えると、既に fetch 済みの clone がすべて取り残されます。確認の有無にかかわらず amend は拒否されます。修正は新しい commit として行ってください。",
+                "push 済みで、他の人が土台にしている branch です。履歴を書き換えると fetch 済みの clone が取り残されます。amend は拒否されます。修正は新しい commit で行ってください。\ncommit `{}`",
                 sha
             ),
         },
         HistoryNote::AmendDivergesFromRemote { sha, branch } => format!(
-            "commit {} は既に remote にあります。amend は新しい commit で置き換えるため、'{}' は upstream から分岐し、通常の push は拒否されます。branch メニューの 'Force-with-lease push...' で反映してください(最後の fetch 以降に誰かが push していれば失敗します)。",
-            sha, branch
+            "remote にある commit です。amend は新しい commit で置き換えるため `{}` は upstream から分岐し、通常の push は拒否されます。branch メニューの Force-with-lease push を使ってください。\ncommit `{}`",
+            branch, sha
         ),
-        HistoryNote::EmptyMessage => "commit メッセージを空にすることはできません。".to_string(),
+        HistoryNote::EmptyMessage => "commit メッセージを空にはできません。".to_string(),
         HistoryNote::NothingStagedForAmend => {
-            "commit に取り込む stage 済みの変更がありません。先に変更を stage するか、メッセージのみの amend を使用してください。".to_string()
+            "stage 済みの変更がありません。先に stage するか、メッセージのみの amend を使ってください。".to_string()
         }
         HistoryNote::WrongBranch {
             branch,
             current,
             label,
         } => format!(
-            "この操作は branch '{}' 上で行われましたが、現在の branch は '{}' です。{} するには '{}' に切り替えてください。",
+            "この操作は branch `{}` 上のものです。現在の branch は `{}`。{} するには `{}` に切り替えてください。",
             branch, current, label.label_en_lower(), branch
         ),
         HistoryNote::HeadNotOnBranch { label } => format!(
@@ -73,19 +73,19 @@ pub fn note_ja(note: &HistoryNote) -> String {
             now,
             expected,
         } => format!(
-            "branch '{}' はこの操作以降に移動しています(現在 {}、想定 {})。この履歴エントリは古いためスキップされます。",
+            "branch `{}` は操作後に移動しています(現在 {}、想定 {})。古い履歴エントリのためスキップします。",
             branch, now, expected
         ),
         HistoryNote::BranchNoTarget { branch } => {
-            format!("branch '{}' に対象 commit がありません。", branch)
+            format!("branch `{}` に対象 commit がありません。", branch)
         }
-        HistoryNote::BranchGone { branch } => format!("branch '{}' はもう存在しません。", branch),
+        HistoryNote::BranchGone { branch } => format!("branch `{}` はもう存在しません。", branch),
         HistoryNote::EntryStaleUnreachable { sha } => format!(
-            "対象 commit {} はオブジェクトストアから到達できません。この履歴エントリは古いためスキップされます。",
+            "対象 commit に到達できません。古い履歴エントリのためスキップします。\ncommit `{}`",
             sha
         ),
         HistoryNote::SoftMovePreservesChanges => {
-            "commit されていない変更があります。これらはそのまま保持されます — 移動するのは branch の参照のみです(soft reset — インデックスと作業ツリーは変更されません)。".to_string()
+            "未 commit の変更はそのまま保持されます。動かすのは branch の参照のみです(soft reset、index と作業ツリーは変更なし)。".to_string()
         }
     }
 }
@@ -99,10 +99,10 @@ pub fn title_ja(title: &HistoryTitle) -> String {
             blocked,
         } => {
             if *blocked {
-                "commit の undo(実行不可 — blockers を確認してください)".to_string()
+                "commit の undo(実行不可、blockers を確認)".to_string()
             } else {
                 format!(
-                    "commit {} '{}' を undo — 変更は stage されます",
+                    "commit `{}` \"{}\" を undo(変更は stage されます)",
                     sha, summary
                 )
             }
@@ -114,7 +114,7 @@ pub fn title_ja(title: &HistoryTitle) -> String {
             blocked,
         } => {
             if *blocked {
-                "最新 commit の amend(実行不可 — blockers を確認してください)".to_string()
+                "最新 commit の amend(実行不可、blockers を確認)".to_string()
             } else {
                 let mode_label = match mode {
                     AmendMode::MessageOnly => "メッセージのみ",
@@ -122,7 +122,7 @@ pub fn title_ja(title: &HistoryTitle) -> String {
                     AmendMode::Both => "stage 済みを取り込み + メッセージ",
                 };
                 format!(
-                    "commit {} '{}' を amend({}) — SHA が変わります",
+                    "commit `{}` \"{}\" を amend({}、SHA が変わります)",
                     sha, summary, mode_label
                 )
             }
@@ -134,7 +134,7 @@ pub fn title_ja(title: &HistoryTitle) -> String {
             from,
             to,
         } => format!(
-            "'{}' の {} を{}({} → {})",
+            "`{}` の {} を{}({} → {})",
             branch,
             kind_slug,
             label_ja(*label),
@@ -151,20 +151,19 @@ pub fn recovery_ja(recovery: &HistoryRecovery) -> String {
             "この undo は実行できません(上記の blockers を確認してください)。".to_string()
         }
         HistoryRecovery::Undo { sha, blocked: false } => format!(
-            "取り消した commit は削除されません — オブジェクトストアと reflog に残り続けます。\n\
-             完全に復元する(同じ SHA で再 commit する)には:\n  git reset --soft {}\n\
-             取り消した commit の変更は undo 直後に stage されます。\n\
-             reflog にはすべての HEAD 移動が記録されます:\n  git reflog",
+            "取り消した commit は削除されず、オブジェクトストアと reflog に残ります。\n\
+             同じ SHA に復元するには:\n  git reset --soft {}\n\
+             変更は undo 直後に stage されます。\n\
+             HEAD 移動は reflog に残ります:\n  git reflog",
             sha
         ),
         HistoryRecovery::Amend { blocked: true, .. } => {
             "この amend は実行できません(上記の blockers を確認してください)。".to_string()
         }
         HistoryRecovery::Amend { sha, blocked: false } => format!(
-            "amend は履歴を書き換えます。新しい commit には新しい SHA が付き、元の commit {} \
-             は branch から到達できなくなります(ただし reflog には残ります)。\n\
-             元の commit に戻すには:\n  git reset --hard {}\n\
-             reflog にはすべての HEAD 移動が記録されます:\n  git reflog",
+            "amend は履歴を書き換えます。新しい SHA が付き、元の commit `{}` は branch から到達不能になります(reflog には残ります)。\n\
+             元に戻すには:\n  git reset --hard {}\n\
+             HEAD 移動は reflog に残ります:\n  git reflog",
             sha, sha
         ),
         HistoryRecovery::HistoryMove {
@@ -175,7 +174,7 @@ pub fn recovery_ja(recovery: &HistoryRecovery) -> String {
             kind_slug,
             from_full,
         } => format!(
-            "{} は branch '{}' を {} から {} へ、安全な参照移動で動かします(reset --hard も clean も使いません)。\
+            "{} は branch `{}` を {} から {} へ安全な参照移動で動かします。\
              {} commit は削除されず、オブジェクトストアと reflog に残ります:\n  git reflog\n\
              手動で復元するには:\n  git update-ref refs/heads/{} {}",
             label_ja(*label),

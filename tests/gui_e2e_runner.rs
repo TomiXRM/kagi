@@ -14,10 +14,13 @@
 //! hidden behind the `kagi::ui::e2e` seam, so this file touches only `gpui`
 //! (dev-dep), `image`/`tempfile` (dev-deps), and `kagi`.
 //!
-//! Scenario (read-only, plan-or-before): mount → keyboard `cmd-j` → registered
-//! `ToggleBottomPanel` action → deterministic settle → observable-state assert →
-//! before/after screenshot → repo-unchanged assert. Exits 0 on success, non-zero
-//! (panic → 101, or explicit) on failure.
+//! Each scenario mounts the real root, drives it (keystroke / registered action
+//! / entity update), settles deterministically, and asserts observable state —
+//! `KagiApp` fields, the clipboard, or repo refs (ADR-0166 §3: the assertions
+//! are the oracle, screenshots are triage only). Coverage: bottom-panel toggle
+//! (PoC), graph Cmd+C copy (ADR-0170), Create Snapshot (#335), command-palette
+//! theme switch (#373), agent provenance (#337). Exits 0 on success, non-zero
+//! (panic → 101) on failure.
 //!
 //! Run (opt-in — see the `KAGI_GUI_E2E` guard in `run`):
 //!   KAGI_GUI_E2E=1 CARGO_TARGET_DIR=…/target \
@@ -48,8 +51,14 @@ mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    use gpui::{px, size, Entity, VisualTestAppContext};
-    use kagi::ui::{e2e, KagiApp, ToggleBottomPanel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
+    use kagi::ui::{
+        commands::CreateSnapshot, commit_list, e2e, settings::CopyTarget, theme, CopyDiffSelection,
+        KagiApp, ToggleBottomPanel,
+    };
 
     /// `git` with a deterministic identity + no user-config bleed-through.
     fn git(dir: &Path, args: &[&str]) {
@@ -80,6 +89,69 @@ mod macos {
         dir
     }
 
+    /// A repo whose HEAD is an AI-agent commit (Claude Code, detected via the
+    /// `Co-Authored-By: Claude <noreply@anthropic.com>` trailer — provenance
+    /// Route 1) sitting on top of a plain human commit. Exercises issue #337's
+    /// `CommitRow.provenance` classification through the real snapshot pipeline.
+    fn build_agent_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        std::fs::write(p.join("f.txt"), "one\n").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "human commit"]);
+        std::fs::write(p.join("f.txt"), "two\n").unwrap();
+        git(p, &["add", "."]);
+        git(
+            p,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                "agent commit\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+            ],
+        );
+        dir
+    }
+
+    /// Overwrite `$KAGI_LOG_DIR/settings.json` (the isolated dir `run` sets) with
+    /// a single flat string key — the on-disk shape `Settings::load` parses.
+    fn write_setting(log_dir: &Path, key: &str, value: &str) {
+        let json = format!("{{\n  \"{key}\": \"{value}\"\n}}\n");
+        std::fs::write(log_dir.join("settings.json"), json).expect("write settings.json");
+    }
+
+    /// `git for-each-ref <pattern>` — the ref-existence probe for the snapshot
+    /// scenario. Returns the raw stdout (one line per matching ref).
+    fn for_each_ref(dir: &Path, pattern: &str) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(["for-each-ref", pattern])
+            .output()
+            .expect("for-each-ref");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    /// Mount the real `KagiApp` offscreen against `repo_path`, settle the first
+    /// frame, and hand back the captured entity + window handle. Mirrors the
+    /// PoC mount (ADR-0166) so every scenario builds the root identically.
+    fn mount(
+        cx: &mut VisualTestAppContext,
+        repo_path: &Path,
+    ) -> (Entity<KagiApp>, AnyWindowHandle) {
+        let app_state = e2e::app_state(repo_path).expect("build app_state");
+        let cell: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::new(RefCell::new(None));
+        let build_cell = cell.clone();
+        let window = cx
+            .open_offscreen_window(size(px(1440.0), px(900.0)), move |window, cx| {
+                e2e::mount_root(app_state, window, cx, &build_cell)
+            })
+            .expect("open_offscreen_window");
+        let kagi = cell.borrow().clone().expect("kagi entity captured");
+        cx.run_until_parked();
+        (kagi, window.into())
+    }
+
     /// `git rev-parse HEAD` + porcelain status, for the no-mutation assertion.
     fn repo_fingerprint(dir: &Path) -> (String, String) {
         let head = Command::new("git")
@@ -105,66 +177,53 @@ mod macos {
         dir
     }
 
-    /// The scenario. Returns a process exit code (0 = pass).
+    /// The scenario suite. Returns a process exit code (0 = pass). Each scenario
+    /// asserts observable `KagiApp` state / clipboard / repo refs (ADR-0166 §3:
+    /// deterministic assertions are the oracle, screenshots are triage only) and
+    /// prints a `[gui-e2e] PASS …` line. A failed assertion panics → exit 101.
     pub fn run() -> i32 {
         // Opt-in: real Metal + a main-thread window is an *evidence lane*, not a
         // required gate (ADR-0166 §CI). Unset → skip so `cargo test --workspace`
         // stays fast and non-flaky. Set `KAGI_GUI_E2E=1` to run it.
         if std::env::var_os("KAGI_GUI_E2E").is_none() {
-            eprintln!("[gui-e2e] SKIP: set KAGI_GUI_E2E=1 to run the visual scenario");
+            eprintln!("[gui-e2e] SKIP: set KAGI_GUI_E2E=1 to run the visual scenarios");
             return 0;
         }
 
-        // ── 1. fixture repo → real Kagi snapshot (built inside the seam via
-        //        kagi_git — no git2 token reaches this crate) ──
+        // Redirect settings.json to a throwaway dir so scenarios that touch
+        // settings (graph_copy_target, theme via set_active) never read or clobber
+        // the developer's real `~/.kagi/settings.json` (ADR-0091 flat-string file).
+        let log_dir = tempfile::tempdir().expect("settings tempdir");
+        std::env::set_var("KAGI_LOG_DIR", log_dir.path());
+
+        // Shared context: real Mac platform + bundled assets, one-time app init
+        // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
+        theme::init_active();
+        let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
+        cx.update(e2e::init_app);
+
+        scenario_bottom_panel(&mut cx);
+        scenario_graph_copy(&mut cx, log_dir.path());
+        scenario_create_snapshot(&mut cx);
+        scenario_theme_switch(&mut cx);
+        scenario_agent_provenance(&mut cx);
+
+        eprintln!("[gui-e2e] PASS all scenarios");
+        0
+    }
+
+    /// PoC scenario (ADR-0166): cmd-j keystroke + `ToggleBottomPanel` action flip
+    /// and restore `bottom_panel_open`; the repo is untouched (read-only proof).
+    fn scenario_bottom_panel(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
-        // ── 2. VisualTestAppContext with the real Mac platform + bundled assets ──
-        kagi::ui::theme::init_active(); // resolve theme tokens (Catppuccin Mocha default)
-        let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
-
-        // App-level one-time init, mirroring `run_app` (fonts, gpui_component,
-        // theme sync, the cmd-j → ToggleBottomPanel binding this exercises).
-        cx.update(e2e::init_app);
-
-        // Build the real KagiApp state from the fixture snapshot.
-        let app_state = e2e::app_state(&repo_path).expect("build app_state");
-
-        // Capture the inner KagiApp entity so observable state is readable.
-        let kagi_cell: std::rc::Rc<std::cell::RefCell<Option<Entity<KagiApp>>>> =
-            std::rc::Rc::new(std::cell::RefCell::new(None));
-
-        // ── 3. Off-screen window mounting the REAL root (same entity build as
-        //        open_main_window, shared via e2e::build_kagi_entity) ──
-        let build_cell = kagi_cell.clone();
-        let window = cx
-            .open_offscreen_window(size(px(1440.0), px(900.0)), move |window, cx| {
-                e2e::mount_root(app_state, window, cx, &build_cell)
-            })
-            .expect("open_offscreen_window");
-
-        eprintln!("[gui-e2e] checkpoint: window opened + first render done");
-        let kagi = kagi_cell.borrow().clone().expect("kagi entity captured");
-        let win = window.into();
-
-        // Settle the first frame deterministically (no real-time sleep).
-        cx.run_until_parked();
-        eprintln!("[gui-e2e] checkpoint: run_until_parked done");
-
-        // ── 5a. Observable state before any input ──
         let initial = cx.read(|app| kagi.read(app).bottom_panel_open);
+        capture_screenshot_best_effort(cx, win, "before");
 
-        // ── 6a. Before screenshot — BEST EFFORT (ADR-0166 §3: screenshot is a
-        //        triage signal, not the pass/fail oracle; the state asserts are).
-        //        The locked gpui rev does not implement `render_to_image` for the
-        //        real Mac window, so capture returns an error there; the scenario
-        //        still runs GREEN on its deterministic assertions. ──
-        capture_screenshot_best_effort(&mut cx, win, "before");
-
-        // ── 3+4. Keyboard input → registered Action, settled on TestDispatcher ──
-        cx.simulate_keystrokes(win, "cmd-j"); // keyboard: dispatches ToggleBottomPanel
+        cx.simulate_keystrokes(win, "cmd-j"); // keyboard → ToggleBottomPanel
         let after_key = cx.read(|app| kagi.read(app).bottom_panel_open);
         assert_eq!(
             after_key, !initial,
@@ -172,27 +231,163 @@ mod macos {
             !initial
         );
 
-        // The *action* path (not a direct method call): dispatch the registered
-        // ToggleBottomPanel action, which restores the original state.
-        cx.dispatch_action(win, ToggleBottomPanel);
+        cx.dispatch_action(win, ToggleBottomPanel); // registered action path
         let after_action = cx.read(|app| kagi.read(app).bottom_panel_open);
         assert_eq!(
             after_action, initial,
             "ToggleBottomPanel action should restore bottom_panel_open to {initial}"
         );
 
-        // ── 6b. After screenshot — best effort (see above). ──
-        capture_screenshot_best_effort(&mut cx, win, "after");
-
-        // ── 7. Read-only proof: nothing touched the repository ──
-        let after_fp = repo_fingerprint(&repo_path);
+        capture_screenshot_best_effort(cx, win, "after");
         assert_eq!(
-            before_fp, after_fp,
+            before_fp,
+            repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
         );
+        eprintln!("[gui-e2e] PASS bottom_panel initial={initial}");
+    }
 
-        eprintln!("[gui-e2e] PASS initial_bottom_panel_open={initial}");
-        0
+    /// ADR-0170 graph Cmd+C: with a graph row selected and root focus, the
+    /// `CopyDiffSelection` action (no diff selection → Graph gets first refusal)
+    /// writes the row's full SHA (`graph_copy_target=hash`) or its local branch
+    /// name (`…=branch`) to the clipboard. Asserts the clipboard text each way.
+    fn scenario_graph_copy(cx: &mut VisualTestAppContext, log_dir: &Path) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        let (kagi, win) = mount(cx, &repo_path);
+
+        // Select the HEAD row; capture its full SHA + the branch name the
+        // production copy path would yield (via the real `graph_copy_value`, so
+        // the badge-label decoration — `"main ✓"` etc. — is handled identically).
+        let (full_sha, branch) = kagi.update(cx, |app, cx| {
+            app.selected = Some(0);
+            cx.notify();
+            let row = &app.active_view.rows[0];
+            let full_sha = row.id.0.clone();
+            let branch = commit_list::graph_copy_value(&row.badges, &full_sha, CopyTarget::Branch);
+            (full_sha, branch)
+        });
+        assert_ne!(
+            branch, full_sha,
+            "HEAD row should resolve to a local branch (not fall back to the SHA)"
+        );
+        cx.run_until_parked();
+
+        // hash mode → clipboard == full SHA
+        write_setting(log_dir, "graph_copy_target", "hash");
+        cx.dispatch_action(win, CopyDiffSelection);
+        let copied = cx.read_from_clipboard().and_then(|i| i.text());
+        assert_eq!(
+            copied.as_deref(),
+            Some(full_sha.as_str()),
+            "graph Cmd+C (hash) should copy the full SHA"
+        );
+
+        // branch mode → clipboard == local branch name
+        write_setting(log_dir, "graph_copy_target", "branch");
+        cx.dispatch_action(win, CopyDiffSelection);
+        let copied = cx.read_from_clipboard().and_then(|i| i.text());
+        assert_eq!(
+            copied.as_deref(),
+            Some(branch.as_str()),
+            "graph Cmd+C (branch) should copy the local branch name"
+        );
+        eprintln!(
+            "[gui-e2e] PASS graph_copy hash={} branch={branch}",
+            &full_sha[..8]
+        );
+    }
+
+    /// Issue #335: the `CreateSnapshot` command captures the working tree as a
+    /// non-destructive savepoint under `refs/kagi/snapshots/`. Asserts no such
+    /// ref exists before, exactly one after, and that HEAD/porcelain are
+    /// unchanged (a snapshot only adds a ref — it never moves HEAD).
+    fn scenario_create_snapshot(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        let before_fp = repo_fingerprint(&repo_path);
+        let (_kagi, win) = mount(cx, &repo_path);
+
+        assert!(
+            for_each_ref(&repo_path, "refs/kagi/snapshots/")
+                .trim()
+                .is_empty(),
+            "no snapshot ref should exist before CreateSnapshot"
+        );
+
+        cx.dispatch_action(win, CreateSnapshot);
+
+        let refs = for_each_ref(&repo_path, "refs/kagi/snapshots/");
+        let count = refs.lines().filter(|l| !l.trim().is_empty()).count();
+        assert_eq!(
+            count, 1,
+            "CreateSnapshot should add exactly one refs/kagi/snapshots/ ref, got:\n{refs}"
+        );
+        assert_eq!(
+            before_fp,
+            repo_fingerprint(&repo_path),
+            "CreateSnapshot must not move HEAD or dirty the working tree"
+        );
+        eprintln!("[gui-e2e] PASS create_snapshot ref_count={count}");
+    }
+
+    /// Issue #373: the command palette's SetTheme action switches the active
+    /// theme (`KagiApp::set_theme`, the exact method the palette dispatches).
+    /// Asserts the process-wide active-theme slug flips to the requested theme.
+    fn scenario_theme_switch(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        let (kagi, _win) = mount(cx, &repo_path);
+
+        let before = theme::theme().slug;
+        let target = if before == "dracula" {
+            "tokyo-night"
+        } else {
+            "dracula"
+        };
+        kagi.update(cx, |app, cx| app.set_theme(target, cx));
+        cx.run_until_parked();
+
+        let after = theme::theme().slug;
+        assert_eq!(
+            after, target,
+            "SetTheme should make {target} the active theme"
+        );
+        assert_ne!(after, before, "active theme should have changed");
+        eprintln!("[gui-e2e] PASS theme_switch {before} -> {after}");
+    }
+
+    /// Issue #337: `CommitRow.provenance` is computed through the real snapshot
+    /// pipeline. Asserts the agent commit's row classifies as Claude Code and
+    /// the plain human commit's row carries no provenance.
+    fn scenario_agent_provenance(cx: &mut VisualTestAppContext) {
+        let fixture = build_agent_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        let (kagi, _win) = mount(cx, &repo_path);
+
+        let (head_agent, parent_agent) = cx.read(|app| {
+            let rows = &kagi.read(app).active_view.rows;
+            (
+                rows[0]
+                    .provenance
+                    .as_ref()
+                    .map(|p| p.agent.label().to_string()),
+                rows[1]
+                    .provenance
+                    .as_ref()
+                    .map(|p| p.agent.label().to_string()),
+            )
+        });
+        assert_eq!(
+            head_agent.as_deref(),
+            Some("Claude Code"),
+            "agent commit (HEAD) should classify as Claude Code"
+        );
+        assert_eq!(
+            parent_agent, None,
+            "plain human commit should carry no provenance"
+        );
+        eprintln!("[gui-e2e] PASS agent_provenance head=ClaudeCode human=None");
     }
 
     /// Try to capture a PNG; tolerate the locked gpui rev's unimplemented

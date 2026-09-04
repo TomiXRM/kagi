@@ -24,7 +24,9 @@ use std::sync::Arc;
 use gpui::{App, AppContext as _, AssetSource, Entity, KeyBinding, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
-use super::{fonts, oplog_panel, theme, toast_stack, KagiApp, ToggleBottomPanel};
+use super::{
+    fonts, oplog_panel, theme, toast_stack, CopyDiffSelection, KagiApp, ToggleBottomPanel,
+};
 
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.
 /// (`gpui_platform` is a normal dep, so the runner cannot call it directly.)
@@ -38,13 +40,20 @@ pub fn asset_source() -> Arc<dyn AssetSource> {
 }
 
 /// App-level one-time init a first render needs, mirroring `run_app`: bundled
-/// fonts, `gpui_component` init, theme sync, and the one keybinding the PoC
-/// scenario exercises (`cmd-j` → [`ToggleBottomPanel`]).
+/// fonts, `gpui_component` init, theme sync, and the keybindings the E2E
+/// scenarios exercise (`cmd-j` → [`ToggleBottomPanel`], `cmd-c` →
+/// [`CopyDiffSelection`], the latter scoped like `run_app` so a focused text
+/// field/terminal keeps its own copy — ADR-0170 graph Cmd+C).
 pub fn init_app(cx: &mut App) {
     fonts::load_bundled_fonts(cx);
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);
     cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-c",
+        CopyDiffSelection,
+        Some("!Terminal && !Input"),
+    )]);
 }
 
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via

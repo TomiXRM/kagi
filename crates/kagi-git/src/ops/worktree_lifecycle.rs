@@ -526,12 +526,21 @@ pub fn execute_lock_worktree(
 /// Collect the registered worktrees git considers prunable (working directory
 /// gone / admin entry stale). kagi selects the targets itself — it never shells
 /// out to a blind `git worktree prune`.
+///
+/// issue #372 item 1: bulk prune is scoped to **kagi-created** worktrees only.
+/// A worktree added by hand (`git worktree add`, no `.kagi-created` marker) is
+/// excluded — a bulk op must never touch a directory the user set up outside
+/// kagi. (Removing one specific hand-added worktree is still allowed via the
+/// explicit single-worktree remove path.)
 fn prunable_worktrees(repo: &Repository) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let Ok(names) = repo.worktrees() else {
         return out;
     };
     for name in names.iter().filter_map(|r| r.ok().flatten()) {
+        if !is_kagi_created(repo, name) {
+            continue; // hand-added — out of scope for bulk prune
+        }
         if let Ok(wt) = repo.find_worktree(name) {
             // Default options: only worktrees whose working directory is gone
             // (and that are not locked) count as prunable. Setting `valid(true)`

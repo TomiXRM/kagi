@@ -29,7 +29,7 @@ pub fn title_ja(title: &SnapshotTitle) -> String {
 pub fn recovery_ja(recovery: &SnapshotRecovery) -> String {
     match recovery {
         SnapshotRecovery::Restore => {
-            "元に戻すには、直前に取得した savepoint（実行後の最新スナップショット）を復元してください。`reset --hard` や `git clean` は使いません。".to_string()
+            "元に戻すには、直前に取得した savepoint(実行後の最新スナップショット)を復元してください。`reset --hard` や `git clean` は使いません。".to_string()
         }
     }
 }

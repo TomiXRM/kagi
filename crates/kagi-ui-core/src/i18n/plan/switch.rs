@@ -18,7 +18,7 @@ pub fn note_ja(note: &SwitchNote) -> String {
             remote, name
         ),
         SwitchNote::FfLocalKnowledge { behind } => format!(
-            "{} commit 分 fast-forward します（ローカル情報での判定、fetch 後に再確認）。",
+            "{} commit 分 fast-forward します(ローカル情報での判定、fetch 後に再確認)。",
             behind
         ),
         SwitchNote::AheadSwitchOnly {
@@ -35,7 +35,7 @@ pub fn note_ja(note: &SwitchNote) -> String {
             ahead,
             behind,
         } => format!(
-            "{} から分岐しています（{} commit 進み、{} commit 遅れ）。切り替えのみ行います。統合するには merge か rebase してください。\nbranch `{}`",
+            "{} から分岐しています({} commit 進み、{} commit 遅れ)。切り替えのみ行います。統合するには merge か rebase してください。\nbranch `{}`",
             remote, ahead, behind, name
         ),
     }
@@ -48,7 +48,7 @@ pub fn title_ja(title: &SwitchTitle) -> String {
             format!("`{}` を local branch `{}` として checkout", remote, local)
         }
         SwitchTitle::SwitchToLatest { branch, remote } => {
-            format!("`{}` の最新に切り替え（fetch: {}）", branch, remote)
+            format!("`{}` の最新に切り替え(fetch: {})", branch, remote)
         }
     }
 }

@@ -24,11 +24,11 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
     match note {
         CherryRevertNote::MergeCommitNeedsMainline { sha, parents, op } => match op {
             PlanOp::CherryPick => format!(
-                "merge commit です（親 {} 個）。merge commit の cherry-pick は未対応です。\ncommit `{}`",
+                "merge commit です(親 {} 個)。merge commit の cherry-pick は未対応です。\ncommit `{}`",
                 parents, sha
             ),
             PlanOp::Revert => format!(
-                "merge commit です（親 {} 個）。merge commit の revert は未対応です。\ncommit `{}`",
+                "merge commit です(親 {} 個)。merge commit の revert は未対応です。\ncommit `{}`",
                 parents, sha
             ),
             _ => unreachable!(
@@ -92,7 +92,7 @@ pub fn title_ja(title: &CherryRevertTitle) -> String {
             sha,
             summary,
             branch,
-        } => format!("revert: `{}` \"{}\"（branch `{}`）", sha, summary, branch),
+        } => format!("revert: `{}` \"{}\"(branch `{}`)", sha, summary, branch),
     }
 }
 

@@ -40,11 +40,11 @@ pub fn note_ja(note: &BranchNote) -> String {
             name, path
         ),
         BranchNote::DeleteDetachedAtTip { name } => format!(
-            "HEAD がこの branch の先端を指しています（detached）。削除できません。\nbranch `{}`",
+            "HEAD がこの branch の先端を指しています(detached)。削除できません。\nbranch `{}`",
             name
         ),
         BranchNote::DeleteUnmerged { name, tip } => format!(
-            "未 merge の commit があります。先に merge か破棄してください（強制削除は非対応）。\nbranch `{}` / 先端 `{}`",
+            "未 merge の commit があります。先に merge か破棄してください(強制削除は非対応)。\nbranch `{}` / 先端 `{}`",
             name, tip
         ),
         BranchNote::DeleteSquashMerged { name, squash } => format!(
@@ -63,9 +63,9 @@ pub fn title_ja(title: &BranchTitle) -> String {
     match title {
         BranchTitle::CreateBranch { name, at, checkout } => {
             if *checkout {
-                format!("branch を作成して checkout: `{}`（起点 `{}`）", name, at)
+                format!("branch を作成して checkout: `{}`(起点 `{}`)", name, at)
             } else {
-                format!("branch を作成: `{}`（起点 `{}`）", name, at)
+                format!("branch を作成: `{}`(起点 `{}`)", name, at)
             }
         }
         BranchTitle::RenameBranch { old, new } => {
@@ -74,7 +74,7 @@ pub fn title_ja(title: &BranchTitle) -> String {
         BranchTitle::DeleteBranch {
             name,
             tip: Some(tip),
-        } => format!("branch を削除: `{}`（先端 `{}`）", name, tip),
+        } => format!("branch を削除: `{}`(先端 `{}`)", name, tip),
         BranchTitle::DeleteBranch { name, tip: None } => format!("branch を削除: `{}`", name),
     }
 }

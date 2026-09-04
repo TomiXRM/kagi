@@ -160,7 +160,7 @@ impl BranchRecovery {
     pub fn message_en(&self) -> String {
         match self {
             BranchRecovery::CreateBranch { name } => format!(
-                "The new branch '{}' can be removed without side effects:\n  git branch -d {}\n(Branch creation does not move HEAD or alter the working tree.)",
+                "The new branch '{}' can be removed without side effects:\n  git branch -d {}",
                 name, name
             ),
             BranchRecovery::RenameBranch { old, new } => format!(
@@ -355,7 +355,7 @@ mod tests {
                 name: "feat/x".into()
             }
             .message_en(),
-            "The new branch 'feat/x' can be removed without side effects:\n  git branch -d feat/x\n(Branch creation does not move HEAD or alter the working tree.)"
+            "The new branch 'feat/x' can be removed without side effects:\n  git branch -d feat/x"
         );
     }
 

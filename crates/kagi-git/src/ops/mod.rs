@@ -85,8 +85,8 @@ pub(crate) use super::GitError;
 pub use kagi_domain::plan::{
     AmendMode, AmendOutcome, BranchNameError, BranchRenameValidation, DiscardBackup,
     DiscardOutcome, FetchOutcome, MergeKind, OperationPlan, PullOutcome, PushOutcome,
-    RebaseOutcome, StashPopOutcome, StateSummary, UndoOutcome, WorktreePathError,
-    WorktreeValidationError,
+    RebaseOutcome, StashPopOutcome, StateSummary, SuggestionOutcome, UndoOutcome,
+    WorktreePathError, WorktreeValidationError,
 };
 // ADR-0129: structured plan text. `OperationPlan` itself moved to kagi-domain
 // (shim re-export above); these are the note/title/recovery/disposition types
@@ -122,6 +122,7 @@ mod reset;
 mod snapshot;
 mod squash_merge;
 mod stash;
+mod suggestion;
 mod switch;
 mod tag;
 mod worktree;
@@ -150,6 +151,7 @@ pub use reset::*;
 pub use snapshot::*;
 pub use squash_merge::*;
 pub use stash::*;
+pub use suggestion::*;
 pub use switch::*;
 pub use tag::*;
 pub use worktree::*;

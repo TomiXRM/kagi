@@ -30,6 +30,18 @@ pub fn note_ja(note: &GithubNote) -> String {
             "head branch '{}' はリモートで削除されます(どこにも checkout されていなければローカルでも削除されます)。",
             branch
         ),
+        GithubNote::SuggestionRangeGone { path } => format!(
+            "'{}' のレビュー対象だった行は現在のワーキングツリーに存在しません。現在のファイルに対してレビューを開き直してください。",
+            path
+        ),
+        GithubNote::SuggestionStale { path } => format!(
+            "'{}' はこの suggestion がレビューされてから変更されています。今適用すると誤った行を書き換える恐れがあるため拒否します。現在のファイルに対してレビューを開き直してください。",
+            path
+        ),
+        GithubNote::SuggestionWorkingTreeOnly => {
+            "これはワーキングツリーだけを書き換えます(コミットはされません)。コミット前に hunk staging で確認してください。"
+                .to_string()
+        }
     }
 }
 
@@ -38,6 +50,9 @@ pub fn title_ja(title: &GithubTitle) -> String {
     match title {
         GithubTitle::MergePr { number, method } => {
             format!("pull request #{} を merge ({})", number, method)
+        }
+        GithubTitle::ApplySuggestion { path } => {
+            format!("'{}' に suggestion を適用", path)
         }
     }
 }
@@ -49,5 +64,8 @@ pub fn recovery_ja(recovery: &GithubRecovery) -> String {
             "merge 後、#{} のページに 'Revert' ボタンが残ります。ローカルでは以下で merge commit を取り消せます:\n  git revert -m 1 <merge-sha>\nbranch を削除した場合も PR ページから復元できます。",
             number
         ),
+        GithubRecovery::ApplySuggestion =>
+            "これはワーキングツリーのファイルだけを書き換えます(stage も commit もしません)。適用前のファイル内容は oplog(op=\"apply-suggestion\")に blob として記録されるので、`git cat-file -p <blob-sha>` で復元するか、変更を discard できます。"
+                .to_string(),
     }
 }

@@ -115,6 +115,13 @@ pub use ops::{
     PrConflictFile, PrConflictKind, PullOutcome, PushOutcome, StashPopOutcome, StateSummary,
     UndoOutcome,
 };
+// PR review "suggested change" local apply (#351, ADR-0172).
+pub use kagi_domain::plan::SuggestionOutcome;
+pub use kagi_domain::suggestion::{parse_suggestion, Suggestion};
+pub use ops::{
+    capture_suggestion_context, execute_apply_suggestion, plan_apply_suggestion,
+    preflight_apply_suggestion,
+};
 // Snapshots (working-tree savepoints under `refs/kagi/snapshots/`, ADR-0154).
 pub use ops::{
     create_snapshot, delete_snapshot, execute_restore_snapshot, list_snapshots,

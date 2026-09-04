@@ -367,6 +367,10 @@ pub struct ReviewComment {
     pub path: String,
     /// Anchor line in the new file (0 when the anchor is outdated).
     pub line: u32,
+    /// First line of a multi-line anchor (GitHub `start_line`); `None` for a
+    /// single-line comment. A multi-line ```suggestion replaces
+    /// `[start_line, line]`.
+    pub start_line: Option<u32>,
     /// Markdown body — may carry a ```suggestion fence.
     pub body: String,
     /// The diff hunk GitHub shows above the comment.
@@ -384,6 +388,8 @@ impl ReviewComment {
             .lines()
             .any(|l| l.trim_start().starts_with("```suggestion"))
     }
+    // `ReviewComment::suggestion()` (the applyable Suggestion) lives in
+    // `crate::suggestion` next to the parser (#351).
 }
 
 /// An issue-level comment on the PR.
@@ -773,6 +779,7 @@ mod comment_tag_tests {
             author: "copilot".into(),
             path: "src/lib.rs".into(),
             line: 10,
+            start_line: None,
             body: body.into(),
             diff_hunk: String::new(),
             created_at: String::new(),

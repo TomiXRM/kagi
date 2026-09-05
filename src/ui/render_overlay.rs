@@ -108,8 +108,17 @@ impl gpui::Render for toast_stack::ToastStack {
 
             // Slide + fade: in from the left on appear, out to the left on
             // dismiss. Keyed by toast id so the animation plays once and holds.
+            // Reduce motion: skip the horizontal slide (a vestibular trigger) and
+            // show the toast at its resting state — visible while present, hidden
+            // once leaving — so it appears/disappears without motion.
             use gpui::AnimationExt as _;
-            let animated = if leaving {
+            let animated = if theme::reduce_motion() {
+                if leaving {
+                    card.opacity(0.0).into_any_element()
+                } else {
+                    card.into_any_element()
+                }
+            } else if leaving {
                 card.with_animation(
                     ("kagi-toast-exit", id),
                     gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))

@@ -14,10 +14,10 @@ use super::modal_renderers::{
 use super::modal_shell::{
     modal_body, modal_card, modal_change_summary, modal_chip, modal_file_row, modal_list_max_h,
     modal_list_panel, modal_prose_box, modal_section, modal_section_chipped, section_open,
-    MODAL_W_MD,
+    MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::modals::*;
-use super::theme::theme as current_theme;
+use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
@@ -486,9 +486,15 @@ pub(crate) fn render_discard_modal(
                 skip_col = skip_col.child(
                     div()
                         .flex_shrink_0()
+                        .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                        .flex()
+                        .items_center()
                         .text_xs()
                         .text_color(rgb(current_theme().text_muted))
                         .overflow_hidden()
+                        // One line, tail kept: same reason as `modal_file_row`.
+                        .whitespace_nowrap()
+                        .text_ellipsis_start()
                         .child(SharedString::from(format!(
                             "\u{2014} {} (untracked/conflicted)",
                             p

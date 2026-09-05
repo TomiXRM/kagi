@@ -646,6 +646,10 @@ fn render_plan_modal_card_styled(
                     .flex()
                     .items_center()
                     .overflow_hidden()
+                    // One line per commit: a long summary used to wrap and
+                    // overrun this fixed-height row into the next one.
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .child(render_commit_row(&line, accent.clone())),
             );
         }

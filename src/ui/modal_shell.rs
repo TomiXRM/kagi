@@ -399,10 +399,18 @@ pub(crate) fn modal_file_row(path: impl Into<SharedString>, change: &ChangeKind)
                 .child(SharedString::from(letter.to_string())),
         )
         .child(
+            // One line, always: a wrapped path grew past this row's fixed
+            // height and painted over the next one (`uniform_list` does not
+            // clip its items), which is what "long paths collide with the line
+            // below" was (user report 2026-09-06). The ellipsis goes at the
+            // **start**: a deep path's tail — the file name — is the part worth
+            // keeping, the same reason these paths were never `take(80)`-ed.
             div()
                 .flex_1()
                 .min_w(gpui::px(0.))
                 .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis_start()
                 .text_xs()
                 .text_color(rgb(current_theme().text_sub))
                 .child(path.into()),
@@ -530,6 +538,8 @@ pub(crate) fn note_path_list_element(files: &[String]) -> gpui::AnyElement {
                 .text_xs()
                 .text_color(rgb(current_theme().text_sub))
                 .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis_start()
                 .child(SharedString::from(f.clone())),
         );
     }

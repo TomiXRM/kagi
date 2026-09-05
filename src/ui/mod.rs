@@ -72,6 +72,7 @@ mod modal_shell;
 pub mod modals;
 mod operations;
 pub mod oplog_panel;
+mod oplog_render;
 mod platform_menu;
 mod reload;
 pub mod remote_browse;

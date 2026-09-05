@@ -12,7 +12,7 @@ crates/kagi-git/src/ops/stash.rs 958
 crates/kagi-git/src/ops/worktree_steps.rs 876
 crates/kagi-git/src/resolution.rs 1537
 crates/kagi-git/src/staging.rs 934
-crates/kagi-ui-core/src/i18n/mod.rs 2508
+crates/kagi-ui-core/src/i18n/mod.rs 2512
 crates/kagi-ui-core/src/theme.rs 2177
 crates/kagi-ui-editor/src/lib.rs 3346
 src/ui/blocking_ops.rs 995
@@ -25,7 +25,7 @@ src/ui/conflict_editor.rs 1328
 src/ui/conflict_view.rs 2073
 src/ui/diff_view.rs 1587
 src/ui/inspector.rs 1244
-src/ui/mod.rs 4222
+src/ui/mod.rs 4223
 src/ui/operations/branch.rs 1744
 src/ui/operations/commit.rs 1233
 src/ui/operations/conflict.rs 992

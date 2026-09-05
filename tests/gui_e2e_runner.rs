@@ -56,8 +56,8 @@ mod macos {
 
     use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
     use kagi::ui::{
-        commands::CreateSnapshot, commit_list, e2e, settings::CopyTarget, theme, CopyDiffSelection,
-        KagiApp, ToggleBottomPanel,
+        commands::CreateSnapshot, commit_list, e2e, oplog_panel, settings::CopyTarget, theme,
+        BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
     };
 
     /// `git` with a deterministic identity + no user-config bleed-through.
@@ -204,6 +204,7 @@ mod macos {
 
         scenario_bottom_panel(&mut cx);
         scenario_graph_copy(&mut cx, log_dir.path());
+        scenario_oplog_expand_copy(&mut cx);
         scenario_create_snapshot(&mut cx);
         scenario_theme_switch(&mut cx);
         scenario_agent_provenance(&mut cx);
@@ -295,6 +296,123 @@ mod macos {
         eprintln!(
             "[gui-e2e] PASS graph_copy hash={} branch={branch}",
             &full_sha[..8]
+        );
+    }
+
+    /// Issue #468: the Operation Log row list is variable-height
+    /// (`gpui::list` + `ListState`), not `uniform_list`.
+    ///
+    /// Seeds two entries — row 0 carries a 200-char `error:` — opens the
+    /// Operation Log tab, and reads the rows' real laid-out bounds back out of
+    /// the panel's `ListState` (`bounds_for_item`, window coordinates).
+    /// Expanding row 0 must (a) grow row 0 past its collapsed summary height
+    /// and (b) push row 1's y-origin DOWN by that growth, leaving no overlap.
+    /// Under the old `uniform_list` neither held: every row was laid out at the
+    /// first row's height, so the detail block painted over the row below.
+    /// Then drives `OpLogPanel::copy_entry` (the row copy button's handler) and
+    /// asserts the clipboard carries the whole entry, 200-char error included —
+    /// the part the truncated summary row never shows.
+    fn scenario_oplog_expand_copy(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        let before_fp = repo_fingerprint(&repo_path);
+        let (kagi, _win) = mount(cx, &repo_path);
+
+        let long_error = "e".repeat(200);
+        kagi.update(cx, |app, cx| {
+            app.bottom_panel_open = true;
+            app.bottom_tab = BottomTab::OperationLog;
+            // Oldest first — `push` puts the newest at the front, so the
+            // long-error entry ends up as row 0.
+            e2e::push_failed_op(app, "fetch", "short".to_string(), cx);
+            e2e::push_failed_op(app, "checkout", long_error.clone(), cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let panel = cx
+            .read(|app| kagi.read(app).op_log.clone())
+            .expect("op_log entity");
+        let row_bounds = |cx: &VisualTestAppContext, ix: usize| {
+            cx.read(|app| panel.read(app).scroll_handle().bounds_for_item(ix))
+                .unwrap_or_else(|| {
+                    panic!("op-log row {ix} was not laid out — is the Operation Log tab open?")
+                })
+        };
+        let collapsed0 = row_bounds(cx, 0);
+        let collapsed1 = row_bounds(cx, 1);
+        assert!(
+            collapsed1.origin.y >= collapsed0.origin.y + collapsed0.size.height,
+            "collapsed rows already overlap: {collapsed0:?} / {collapsed1:?}"
+        );
+
+        // Expand row 0 (what a click on the row does).
+        panel.update(cx, |p, cx| {
+            p.toggle_expanded(0);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let expanded0 = row_bounds(cx, 0);
+        let expanded1 = row_bounds(cx, 1);
+        assert!(
+            expanded0.size.height > collapsed0.size.height,
+            "expanding row 0 must grow the row itself (was {:?}, now {:?}) — a \
+             fixed-height list would keep it at the summary height",
+            collapsed0.size.height,
+            expanded0.size.height
+        );
+        assert!(
+            expanded1.origin.y > collapsed1.origin.y,
+            "expanding row 0 must push row 1 down (row 1 y {:?} -> {:?})",
+            collapsed1.origin.y,
+            expanded1.origin.y
+        );
+        assert!(
+            expanded1.origin.y >= expanded0.origin.y + expanded0.size.height,
+            "expanded row 0 overlaps row 1: {expanded0:?} / {expanded1:?}"
+        );
+
+        // The row copy button's handler: the whole entry, not the truncated line.
+        let expected = cx.read(|app| {
+            let p = panel.read(app);
+            oplog_panel::entry_clipboard_text(&p.entries()[0])
+        });
+        panel.update(cx, |p, cx| p.copy_entry(0, cx));
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|i| i.text())
+            .expect("clipboard text");
+        assert_eq!(
+            copied, expected,
+            "copy_entry should write the formatted entry"
+        );
+        // Independent of the formatter itself: the clipboard must carry the
+        // header AND every detail line, 200-char error included — the tail the
+        // truncated summary row never shows.
+        assert!(copied.contains("checkout"), "no op name: {copied:?}");
+        assert!(
+            copied.contains(&format!("  error:   {long_error}")),
+            "the copied entry must carry the full 200-char error detail line"
+        );
+        assert!(
+            copied.lines().count() >= 4,
+            "expected header + before/dirty/error lines, got {}: {copied:?}",
+            copied.lines().count()
+        );
+
+        assert_eq!(
+            before_fp,
+            repo_fingerprint(&repo_path),
+            "repo mutated during a read-only scenario"
+        );
+        eprintln!(
+            "[gui-e2e] PASS oplog_expand_copy grew {:?} -> {:?}, row1 {:?} -> {:?}, copied {} chars",
+            collapsed0.size.height,
+            expanded0.size.height,
+            collapsed1.origin.y,
+            expanded1.origin.y,
+            copied.chars().count()
         );
     }
 

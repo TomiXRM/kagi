@@ -11,7 +11,10 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box, ModalIcon,
 };
-use super::modal_shell::{modal_card, modal_scroll_body, modal_section, section_open};
+use super::modal_shell::{
+    modal_card, modal_scroll_body, modal_section, section_open, MODAL_LIST_MAX_ROWS,
+    MODAL_LIST_ROW_H,
+};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
@@ -29,13 +32,6 @@ const DESTRUCTIVE_ICON: ModalIcon = ModalIcon::Path("icons/trash-2.svg");
 /// #454 section id. Only *supporting* detail may hide behind disclosure: the
 /// list of files an operation acts on stays visible (see `render_amend_modal`).
 const SECTION_SKIPPED: &'static str = "discard-skipped";
-
-/// #454 modal list geometry. Row height must match the `uniform_list` item
-/// height exactly (virtualization assumes uniform rows), and the row ceiling
-/// caps how tall a list can grow before it scrolls — a fixed 160px box showed
-/// only 9 of 172 files on screen, which is why the height follows the content.
-const MODAL_LIST_ROW_H: f32 = 18.;
-const MODAL_LIST_MAX_ROWS: usize = 20;
 
 /// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
 ///

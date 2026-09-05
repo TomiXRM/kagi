@@ -444,7 +444,7 @@ fn predict_checkout_conflict(
 
     Some(PlanNote::Checkout(CheckoutNote::CheckoutOverlap {
         count: overlap.len(),
-        files: overlap.join(", "),
+        files: overlap,
     }))
 }
 

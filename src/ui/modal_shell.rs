@@ -15,6 +15,14 @@ use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 
+/// Modal list geometry, shared by every capped list in a card (#454). The row
+/// height must match the `uniform_list` item height exactly (virtualization
+/// assumes uniform rows); the ceiling caps how tall a list grows before it
+/// scrolls — a fixed 160px box showed only 9 of 172 files on screen, which is
+/// why list heights follow their content up to this many rows.
+pub(crate) const MODAL_LIST_ROW_H: f32 = 18.;
+pub(crate) const MODAL_LIST_MAX_ROWS: usize = 20;
+
 /// The shared modal card shell: a height-capped column that does **not**
 /// scroll itself.
 ///
@@ -128,6 +136,59 @@ pub(crate) fn modal_section(
         }
     }
     section.into_any_element()
+}
+
+/// #454: does this note carry a path **list** the card should render as a
+/// list instead of a comma wall inside the sentence?
+///
+/// Returns the summary line (no paths) plus the paths. Only the checkout
+/// overlap blocker qualifies today — it is the one note whose producer builds
+/// a `Vec<String>` of paths (`predict_checkout_conflict`), and with 40
+/// overlapping files the joined form filled the whole confirmation card.
+pub(crate) fn note_path_list(
+    note: &kagi_domain::plan_note::PlanNote,
+) -> Option<(String, Vec<String>)> {
+    use kagi_domain::plan_note::{checkout::CheckoutNote, PlanNote};
+    match note {
+        PlanNote::Checkout(CheckoutNote::CheckoutOverlap { count, files }) => Some((
+            super::i18n::Msg::PlanOverlapSummary
+                .t()
+                .replace("{}", &count.to_string()),
+            files.clone(),
+        )),
+        _ => None,
+    }
+}
+
+/// #454: the path list under a note summary — same geometry as the modal file
+/// lists (row height / row ceiling), capped and scrollable so a long list
+/// cannot push the rest of the card away.
+pub(crate) fn note_path_list_element(files: &[String]) -> gpui::AnyElement {
+    let mut col = div()
+        .id("note-path-list")
+        .flex()
+        .flex_col()
+        .gap_px()
+        .pl_4()
+        .max_h(theme::scaled_px(
+            (files.len().clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
+        ))
+        .overflow_y_scroll();
+    for f in files {
+        col = col.child(
+            div()
+                .flex_shrink_0()
+                .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                .w_full()
+                .flex()
+                .items_center()
+                .text_xs()
+                .text_color(rgb(current_theme().text_sub))
+                .overflow_hidden()
+                .child(SharedString::from(f.clone())),
+        );
+    }
+    col.into_any_element()
 }
 
 #[cfg(test)]

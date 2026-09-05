@@ -147,6 +147,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # The LOC ratchet at the end of this job runs through the `ci/` uv
+      # project, and ubuntu runners do not ship uv.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
       - name: cargo fmt --check
         run: cargo fmt --check
       - name: Install gpui system dependencies

@@ -12,6 +12,7 @@ use kagi_git::{CommitId, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamI
 
 use super::commit_list::{self, CommitRow};
 use super::detail_panel::{build_commit_details, CommitDetail};
+use super::graph_wip::WipTarget;
 use super::{BranchSolo, KagiApp, StatusBarSummary, ToolbarState};
 
 /// W6-TABSPEED: snapshot-derived **pure data** for one repository tab.
@@ -41,10 +42,12 @@ pub struct TabViewState {
     pub tags: Vec<Tag>,
     pub branch_upstream_info: HashMap<String, UpstreamInfo>,
     pub worktrees: Vec<Worktree>,
-    /// #472: the lane each WIP row's dashed HEAD connector took, positionally
-    /// aligned with the WIP rows `render_body` builds (`graph_wip::wip_targets`
-    /// derives the same list from the snapshot). `None` = no connector drawn.
-    pub wip_lanes: Vec<Option<usize>>,
+    /// #472: the lane each WIP row's dashed HEAD connector took, **keyed by
+    /// [`WipTarget`]** — `render_body` looks up its own row's key rather than
+    /// its position (#476 slice 2: a worktree that just committed drops out of
+    /// the row list, and by position every row below it would shift lane and
+    /// colour). `None` = no connector drawn.
+    pub wip_lanes: Vec<(WipTarget, Option<usize>)>,
     pub branch_solo: Option<BranchSolo>,
     /// Commit-activity aggregation for the bottom-panel "Activity" chart.
     pub activity: kagi_domain::activity::ActivityData,

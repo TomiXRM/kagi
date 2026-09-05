@@ -815,12 +815,13 @@ impl CommitPanelView {
         let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
         let staged_scroll_handle = self.staged_scroll_handle.clone();
 
-        // #476: a panel showing a LINKED WORKTREE stages into that worktree, so
-        // Stage all / Unstage all / the per-row buttons are live here. Commit,
-        // amend and Discard all still resolve their repository from the open
-        // tab, so those stay hidden and the footer says so.
-        // (`KagiApp::refuse_foreign_panel_write` is the real guard; this is the
-        // UI half.) Slices 2–3 convert the rest.
+        // #476: a panel showing a LINKED WORKTREE stages AND commits into that
+        // worktree (slices 1–2), so Stage all / Unstage all / the per-row
+        // buttons and the whole commit footer are live here. Amend and Discard
+        // all (and the file context menu, which is Discard) still resolve their
+        // repository from the open tab, so those stay hidden and the note above
+        // the footer says so. (`KagiApp::refuse_foreign_panel_write` is the real
+        // guard; this is the UI half.) Slice 3 converts the rest.
         let foreign = self.foreign.clone();
         let writable = foreign.is_none();
         let tree_view = panel.tree_view;
@@ -1174,7 +1175,9 @@ impl CommitPanelView {
                 .gap_1()
                 .child(suggest_btn)
                 .child(coauthor_btn)
-                .child(amend_btn);
+                // #476: amend still resolves the open tab's repository, so it
+                // is hidden on a worktree panel (slice 3 converts it).
+                .when(writable, |r| r.child(amend_btn));
 
             div()
                 .relative()
@@ -1416,9 +1419,9 @@ impl CommitPanelView {
                             }),
                     ),
             )
-            // #476: a worktree panel replaces the whole commit footer with one
-            // line — staging is live (see "Stage all"), but commit still
-            // resolves the open tab's repository, so it needs the worktree open.
+            // #476: a worktree panel keeps the commit footer below (staging and
+            // commit both write into the worktree) — this line only names what
+            // is still missing there: amend and discard need the worktree open.
             .when(!writable, |el| {
                 el.child(
                     div()
@@ -1432,42 +1435,41 @@ impl CommitPanelView {
                 )
             })
             // Commit footer: subject + body, icon actions, commit button.
-            .when(writable, |el| {
-                el.child(
-                    div()
-                        .flex_shrink_0()
-                        .flex()
-                        .flex_col()
-                        .px_3()
-                        .py_2()
-                        .gap_2()
-                        .bg(rgb(theme().surface))
-                        // Subject + body (the icon actions live inside the body box)
-                        .child(msg_inputs)
-                        // Transient smart-commit status. Its own full-width line:
-                        // inside the right-aligned icon group it pushed the icons
-                        // sideways as the text appeared (user report).
-                        .when_some(smart.status.clone(), |el, status| {
-                            el.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_muted))
-                                    .child(SharedString::from(status)),
-                            )
-                        })
-                        // Unstaged warning
-                        .when(has_unstaged_warning, |el| {
-                            el.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme().color_warning))
-                                    .child(SharedString::from(i18n::unstaged_not_included(
-                                        unstaged_count,
-                                    ))),
-                            )
-                        })
-                        .child(commit_btn),
-                )
-            })
+            // #476 slice 2: shown on a worktree panel too — it commits there.
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .px_3()
+                    .py_2()
+                    .gap_2()
+                    .bg(rgb(theme().surface))
+                    // Subject + body (the icon actions live inside the body box)
+                    .child(msg_inputs)
+                    // Transient smart-commit status. Its own full-width line:
+                    // inside the right-aligned icon group it pushed the icons
+                    // sideways as the text appeared (user report).
+                    .when_some(smart.status.clone(), |el, status| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .child(SharedString::from(status)),
+                        )
+                    })
+                    // Unstaged warning
+                    .when(has_unstaged_warning, |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().color_warning))
+                                .child(SharedString::from(i18n::unstaged_not_included(
+                                    unstaged_count,
+                                ))),
+                        )
+                    })
+                    .child(commit_btn),
+            )
     }
 }

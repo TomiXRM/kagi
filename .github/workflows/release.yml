@@ -32,39 +32,62 @@ jobs:
         shell: bash
         run: |
           # The blocking jobs from ci.yml (advisory continue-on-error legs
-          # excluded). Keep this list in sync with ci.yml job display names.
-          required=(
-            "invariant — UI is git2-free"
-            "invariant — kagi-mcp is gpui-free"
-            "invariant — [kagi] lines go through klog!"
-            "invariant — kagi-ui-core is git-free; no lateral ui-crate imports"
-            "invariant — PlanNote/PlanTitle/RecoveryKind have no Verbatim escape hatch"
-            "test (macOS)"
-          )
-          # A tag is often pushed right after the merge, while ci is still
-          # running on the same commit — poll instead of failing instantly.
+          # excluded).
+          #
+          # #467 turned the per-invariant jobs into one matrix job, renaming
+          # every check ("invariant — UI is git2-free" became
+          # "invariant — ui-git2"). This job's hardcoded list still named the
+          # old jobs, which no longer exist, so every lookup read as "pending"
+          # and v0.33.0 sat here for 30 minutes and failed. So: no list. Every
+          # check run whose name starts with "invariant — " must be green, plus
+          # the macOS test leg — which keeps working when a gate is added or
+          # renamed.
+          required_exact=("test (macOS)")
           for attempt in $(seq 1 30); do
-            pending=0 red=0
-            for name in "${required[@]}"; do
-              # filter=latest (the API default) dedupes re-runs; a missing
-              # check run reads as "pending" and is retried, then fails.
-              conclusion=$(gh api --method GET \
-                "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
-                -f check_name="$name" \
-                --jq '.check_runs[0].conclusion // "pending"')
+            runs=$(gh api --method GET --paginate \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+              --jq '.check_runs[] | [.name, (.conclusion // "pending")] | @tsv')
+
+            pending=0 red=0 invariants=0
+            while IFS=$'\t' read -r name conclusion; do
+              [ -n "$name" ] || continue
+              case "$name" in
+                "invariant — "*) invariants=$((invariants + 1)) ;;
+                "test (macOS)") ;;
+                *) continue ;;
+              esac
               echo "$name: $conclusion"
               case "$conclusion" in
                 success) ;;
-                pending) pending=1 ;;
+                pending|"") pending=1 ;;
                 *) red=1 ;;
               esac
+            done <<< "$runs"
+
+            # A missing leg must not read as green: require the macOS test job
+            # to exist, and at least one invariant check.
+            for name in "${required_exact[@]}"; do
+              # Pure-bash substring test: `check-shell-hygiene` bans grep in a
+              # workflow, and it is right to — this needs no regex dialect.
+              case "$runs" in
+                *"$name"*) ;;
+                *)
+                  echo "$name: absent"
+                  pending=1
+                  ;;
+              esac
             done
+            if [ "$invariants" -eq 0 ]; then
+              echo "no invariant checks reported yet"
+              pending=1
+            fi
+
             if [ "$red" -eq 1 ]; then
               echo "::error::blocking CI is red on ${GITHUB_SHA} — a red commit must not produce a release (#395). Fix main, retag."
               exit 1
             fi
             if [ "$pending" -eq 0 ]; then
-              echo "OK: all blocking CI checks are green on ${GITHUB_SHA}."
+              echo "OK: ${invariants} invariant checks + the macOS test leg are green on ${GITHUB_SHA}."
               exit 0
             fi
             echo "CI not finished on ${GITHUB_SHA} — waiting 60s (attempt ${attempt}/30)…"

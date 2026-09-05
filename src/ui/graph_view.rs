@@ -32,6 +32,7 @@ use gpui::{canvas, point, px, App, Bounds, Canvas, PathBuilder, Pixels, Window};
 use crate::graph::{EdgeKind, GraphEdge};
 
 use crate::ui::graph_squash::GHOST_COLOR;
+use crate::ui::graph_wip;
 use crate::ui::theme::{self, theme};
 
 // ──────────────────────────────────────────────────────────────
@@ -324,11 +325,18 @@ pub fn graph_canvas(
                     // A ghost connector is marked on the edge, not the lane: it
                     // deliberately reuses a real column (the tip's dead one), so
                     // the stash-style per-lane test cannot express it.
-                    let ghost = edge.color == GHOST_COLOR;
+                    //
+                    // #472: a WIP→HEAD connector is the same dashed shape, but
+                    // carries its worktree's lane colour in the sentinel so two
+                    // of them can be told apart.
+                    let wip_idx = graph_wip::wip_color_index(edge.color);
+                    let ghost = edge.color == GHOST_COLOR || wip_idx.is_some();
                     // Colour comes from the edge's carried (branch-stable) colour
                     // index — not the column index — so a branch keeps its colour
                     // even when compaction shifts its lane.
-                    let color = if ghost {
+                    let color = if let Some(idx) = wip_idx {
+                        lane_color(idx)
+                    } else if ghost {
                         ghost_color
                     } else if is_stash_lane(edge.from_lane) || is_stash_lane(edge.to_lane) {
                         stash_color

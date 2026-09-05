@@ -597,16 +597,13 @@ mod worktree_badge_tests {
             upstream: None,
         };
         let wt = |branch: &str, is_main: bool, is_current: bool| Worktree {
-            name: if is_main {
-                "main".into()
-            } else {
-                branch.into()
-            },
+            name: if is_main { "main" } else { branch }.into(),
             path: std::path::PathBuf::from(format!("/r/{}", branch)),
             branch: Some(branch.into()),
             is_current,
             is_main,
             wip: None,
+            head: None,
             locked: false,
             lock_reason: None,
         };

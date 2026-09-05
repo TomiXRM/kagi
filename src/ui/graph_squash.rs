@@ -39,14 +39,17 @@ use super::KagiApp;
 pub const GHOST_COLOR: usize = usize::MAX;
 
 /// Whether `lane`'s **top half** is already carrying a line at this row.
-fn top_busy(row: &CommitRow, lane: usize) -> bool {
+///
+/// Shared with `graph_wip` (#472), which injects the same shape of connector
+/// from the WIP rows down to each worktree's HEAD.
+pub(super) fn top_busy(row: &CommitRow, lane: usize) -> bool {
     row.edges
         .iter()
         .any(|e| matches!(e.kind, EdgeKind::Pass | EdgeKind::IntoNode) && e.from_lane == lane)
 }
 
 /// Whether `lane`'s **bottom half** is already carrying a line at this row.
-fn bottom_busy(row: &CommitRow, lane: usize) -> bool {
+pub(super) fn bottom_busy(row: &CommitRow, lane: usize) -> bool {
     row.edges
         .iter()
         .any(|e| matches!(e.kind, EdgeKind::Pass | EdgeKind::OutOfNode) && e.to_lane == lane)

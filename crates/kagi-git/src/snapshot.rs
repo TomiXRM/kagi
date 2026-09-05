@@ -369,6 +369,7 @@ fn collect_worktrees(
         branch: None,
         is_main: true,
         wip: None,
+        head: None,
         locked: false,
         lock_reason: None,
     });
@@ -398,6 +399,7 @@ fn collect_worktrees(
             branch: None,
             is_main: false,
             wip: None,
+            head: None,
             locked,
             lock_reason,
         });
@@ -412,7 +414,8 @@ fn collect_worktrees(
     // worktrees: 660ms serial, 243ms across threads. They share nothing but a
     // `&Path` (git2's `Repository` is not `Sync`, and each thread opens its
     // own), so `thread::scope` needs no dependency and no locking.
-    let scans: Vec<(Option<String>, Option<WorktreeWip>)> = std::thread::scope(|scope| {
+    type WorktreeScan = (Option<String>, Option<CommitId>, Option<WorktreeWip>);
+    let scans: Vec<WorktreeScan> = std::thread::scope(|scope| {
         let handles: Vec<_> = worktrees
             .iter()
             .map(|w| {
@@ -421,22 +424,23 @@ fn collect_worktrees(
                 // it here would pay for the same `git status` twice.
                 let own = w.is_current.then_some(current_status);
                 scope.spawn(move || {
-                    let branch = worktree_branch_name(&path);
+                    let (branch, head) = worktree_branch_and_head(&path);
                     let wip = match own {
                         Some(st) => wip_from_status(st),
                         None => worktree_wip(&path),
                     };
-                    (branch, wip)
+                    (branch, head, wip)
                 })
             })
             .collect();
         handles
             .into_iter()
-            .map(|h| h.join().unwrap_or((None, None)))
+            .map(|h| h.join().unwrap_or((None, None, None)))
             .collect()
     });
-    for (w, (branch, wip)) in worktrees.iter_mut().zip(scans) {
+    for (w, (branch, head, wip)) in worktrees.iter_mut().zip(scans) {
         w.branch = branch;
+        w.head = head;
         w.wip = wip;
     }
 
@@ -455,10 +459,22 @@ fn canon(p: &std::path::Path) -> std::path::PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-fn worktree_branch_name(path: &std::path::Path) -> Option<String> {
-    let repo = Repository::open(path).ok()?;
-    let head = repo.head().ok()?;
-    head.shorthand().ok().map(str::to_string)
+/// The worktree's HEAD as (short branch/ref name, commit id).
+///
+/// #472: the commit id is read straight off `HEAD` rather than resolved from
+/// the branch name, so a detached worktree still reports a target for its WIP
+/// row's connector. One `Repository::open` serves both — this runs once per
+/// worktree on the snapshot path.
+fn worktree_branch_and_head(path: &std::path::Path) -> (Option<String>, Option<CommitId>) {
+    let Ok(repo) = Repository::open(path) else {
+        return (None, None);
+    };
+    let Ok(head) = repo.head() else {
+        return (None, None);
+    };
+    let branch = head.shorthand().ok().map(str::to_string);
+    let target = head.target().map(|oid| CommitId(oid.to_string()));
+    (branch, target)
 }
 
 /// Read pending-change counts for the worktree rooted at `path`.

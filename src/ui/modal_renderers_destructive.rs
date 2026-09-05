@@ -8,6 +8,7 @@
 
 use super::button_style::KagiButton;
 use super::i18n::Msg;
+use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box, ModalIcon,
 };
@@ -111,6 +112,20 @@ pub(crate) fn render_amend_modal(
             current_theme().color_blocker,
         ));
     }
+    // The whole dialog as text — popup content was not copyable at all.
+    title_row = title_row.child(modal_copy_button(
+        "amend-card-copy",
+        Msg::ModalCopyAll.t(),
+        plan_clipboard_text(
+            &plan,
+            &plan
+                .preview_files
+                .iter()
+                .map(|f| f.path.display().to_string())
+                .collect::<Vec<_>>(),
+        ),
+        cx,
+    ));
     let card = modal_card(MODAL_W_MD).child(title_row);
     let mut body = modal_body().child(render_current_predicted(
         &plan,
@@ -157,9 +172,15 @@ pub(crate) fn render_amend_modal(
         // card (mock: `対象ファイル` + count chip), but NOT collapsible — see
         // the SAFETY note above. `section_open(.., true)`-style disclosure is
         // deliberately not wired here.
+        let paths: Vec<String> = plan
+            .preview_files
+            .iter()
+            .map(|f| f.path.display().to_string())
+            .collect();
         body = body.child(modal_list_panel(
             Msg::AmendFoldedFiles.t(),
             total,
+            Some(("amend-files-copy", paths.join("\n"))),
             // Per-kind tally above the list (#454 Phase 2 item 6).
             div()
                 .min_h(gpui::px(0.))
@@ -169,6 +190,7 @@ pub(crate) fn render_amend_modal(
                 .children(modal_change_summary(&plan.preview_files))
                 .child(list)
                 .into_any_element(),
+            cx,
         ));
     }
 
@@ -434,6 +456,12 @@ pub(crate) fn render_discard_modal(
             current_theme().color_blocker,
         ));
     }
+    title_row = title_row.child(modal_copy_button(
+        "discard-card-copy",
+        Msg::ModalCopyAll.t(),
+        plan_clipboard_text(&plan, &modal.paths),
+        cx,
+    ));
     let card = modal_card(MODAL_W_MD).child(title_row);
     // Target files: a section panel with a count chip (mock `対象ファイル`),
     // never collapsible — a destructive confirm always shows what it acts on.
@@ -445,6 +473,7 @@ pub(crate) fn render_discard_modal(
         body = body.child(modal_list_panel(
             Msg::ModalTargetFiles.t(),
             target_count,
+            Some(("discard-files-copy", modal.paths.join("\n"))),
             // Per-kind tally above the list (#454 Phase 2 item 6): `M 115  D 5`
             // says what kind of change is at stake without scrolling.
             div()
@@ -455,6 +484,7 @@ pub(crate) fn render_discard_modal(
                 .children(modal_change_summary(&plan.preview_files))
                 .child(file_list)
                 .into_any_element(),
+            cx,
         ));
     }
 

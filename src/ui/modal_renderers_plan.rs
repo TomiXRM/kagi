@@ -7,9 +7,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
-use super::modal_renderers::{
-    render_input_plan_modal, render_plan_modal_wrapper_styled, ModalIcon,
-};
+use super::modal_renderers::{render_plan_modal_wrapper_styled, ModalIcon};
+use super::modal_renderers_input::render_input_plan_modal;
 use super::modals::*;
 use super::theme::{self as theme_mod, theme};
 use super::{KagiApp, MONO_FONT};

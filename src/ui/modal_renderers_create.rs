@@ -10,7 +10,7 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
-use super::modal_shell::{modal_card, modal_scroll_body};
+use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::*;
 use super::theme::theme as current_theme;
 use super::KagiApp;
@@ -88,7 +88,7 @@ pub(crate) fn render_create_branch_modal(
     // The plan block below (blockers + recovery prose) is unbounded and the
     // card holds no inner scroller, so the body is this card's single scroll
     // region; title and buttons stay pinned outside it.
-    let card = modal_card(480.).child(
+    let card = modal_card(MODAL_W_MD).child(
         div()
             .flex_shrink_0()
             // ── Title (icon-badge header, matching Pull/Push's richer card —
@@ -263,7 +263,7 @@ pub(crate) fn render_create_worktree_modal(
 
     // Warnings, blockers and recovery prose below are unbounded and there is
     // no inner scroller, so the body carries this card's single scroll region.
-    let card = modal_card(540.).child(div().flex_shrink_0().child(render_modal_title_row(
+    let card = modal_card(MODAL_W_LG).child(div().flex_shrink_0().child(render_modal_title_row(
         SharedString::from(format!(
             "Create worktree @ {}  {}",
             modal.at.short(),
@@ -446,7 +446,7 @@ pub(crate) fn render_create_tag_modal(
 
     // Blockers and recovery prose are unbounded and the card holds no inner
     // scroller, so the body is this card's single scroll region.
-    let card = modal_card(480.).child(
+    let card = modal_card(MODAL_W_MD).child(
         div()
             .flex_shrink_0()
             // Icon-badge header + boxed CURRENT→PREDICTED + monospace recovery,

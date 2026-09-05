@@ -85,7 +85,10 @@ pub(crate) fn render_trust_repo_modal(
 
     let card = div()
         .w(theme::scaled_px(460.))
-        .bg(rgb(current_theme().modal))
+        // Same popup surface as `modal_shell::modal_card` and the Settings
+        // panel (`theme.panel`); `modal` is lighter and read as a different
+        // surface class next to them (#454 follow-up).
+        .bg(rgb(current_theme().panel))
         .rounded_lg()
         .p_4()
         .flex()

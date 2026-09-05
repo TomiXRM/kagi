@@ -219,6 +219,7 @@ impl KagiApp {
         .when_some(amend_modal, |el, modal| {
             el.child(render_amend_modal(
                 modal,
+                &self.modal_section_overrides,
                 self.modal_list_scroll.clone(),
                 cx,
             ))

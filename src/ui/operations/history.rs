@@ -374,6 +374,7 @@ impl KagiApp {
                     plan.warnings.len(),
                     plan.destructive
                 );
+                self.reset_modal_sections();
                 self.set_amend_modal(AmendPlanModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,

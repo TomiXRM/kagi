@@ -10,7 +10,7 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
-use super::modal_shell::{modal_card, modal_scroll_body};
+use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::{file_tree, KagiApp};
@@ -138,7 +138,7 @@ pub(crate) fn render_cherry_pick_modal(
     // so a long preview tree can no longer push Cancel/Cherry-pick out of
     // view. The preview file tree is a plain list and the card carries
     // recovery prose, so the body is this card's single scroll region.
-    let card = modal_card(520.).child(
+    let card = modal_card(MODAL_W_LG).child(
         div()
             .flex_shrink_0()
             // ── Title (icon-badge treatment, same as every other
@@ -379,7 +379,7 @@ pub(crate) fn render_commit_plan_modal(
     // so a long staging tree can no longer push Cancel/Commit out of view.
     // The staging file tree is a plain list, so the body is this card's
     // single scroll region and the tree renders at full height inside it.
-    let card = modal_card(480.).child(
+    let card = modal_card(MODAL_W_MD).child(
         div()
             .flex_shrink_0()
             // Icon-badge header, same as every other plan-confirmation modal

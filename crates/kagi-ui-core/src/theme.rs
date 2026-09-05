@@ -223,6 +223,29 @@ pub fn badge_style(color: u32) -> (u32, u32, u32) {
     ((color << 8) | 0x33, (color << 8) | 0x66, text)
 }
 
+/// Fill + border for an inset panel inside a modal card (#454 section panels).
+///
+/// Derived from the theme's own text colour at low alpha rather than from the
+/// `surface` token, because `surface == modal` in several themes — Apple Dark
+/// (`0x2c2c2e` for both), IBM PC, Monokai, One Light — where a `surface` panel
+/// on a `modal` card is invisible and the card reads as the flat text column
+/// the panels were meant to replace (user report 2026-09-06 on Apple Dark,
+/// after the same panels looked right on Catppuccin Mocha).
+///
+/// Text is light on dark themes and dark on light ones, so one alpha lifts the
+/// panel *away* from the card in both directions: slightly lighter on a dark
+/// card, slightly darker on a light one.
+///
+/// Returns `(bg_rgba, border_rgba)` for `gpui::rgba`.
+#[inline]
+pub fn panel_style() -> (u32, u32) {
+    let t = theme();
+    // 0x0f ≈ 6% fill, 0x2b ≈ 17% border: enough to read as a box at a glance
+    // without turning the card into a stack of filled blocks.
+    let tint = if t.dark { 0xffffff } else { t.text_main };
+    ((tint << 8) | 0x0f, (tint << 8) | 0x2b)
+}
+
 /// The active theme's lane colour `i` packed as a `0xRRGGBB` u32, for feeding
 /// the lane hue into [`badge_style`] (lane-driven ref pills in swimlane mode).
 #[inline]

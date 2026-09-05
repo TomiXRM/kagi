@@ -14,14 +14,17 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
-use super::modal_shell::{modal_card, modal_scroll_body, note_path_list, note_path_list_element};
+use super::modal_copy::{modal_copy_button, plan_clipboard_text};
+use super::modal_shell::{
+    modal_body, modal_card, modal_list_max_h, modal_list_panel, modal_prose_box, note_path_list,
+    note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
+};
 use super::theme::{self, theme as current_theme};
-use super::KagiApp;
-use gpui::{div, prelude::*, rgb, Context, Entity, SharedString, Window};
+use super::{KagiApp, MONO_FONT};
+use gpui::{div, prelude::*, rgb, Context, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, IconName, Sizable as _};
-use kagi_git::{BranchRenameValidation, CommitId, OperationPlan};
+use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 /// Richer plan-card header (ADR pending: "richer popup cards", started with
@@ -67,131 +70,6 @@ pub(crate) use super::modal_renderers_editor_fs::*;
 pub(crate) use super::modal_renderers_misc::*;
 pub(crate) use super::modal_renderers_plan::*;
 pub(crate) use super::modal_renderers_stash::*;
-
-pub(crate) fn render_input_plan_modal(
-    title: String,
-    label: &'static str,
-    input_state: Option<Entity<InputState>>,
-    plan: Option<std::sync::Arc<OperationPlan>>,
-    validation: Option<BranchRenameValidation>,
-    error: Option<SharedString>,
-    confirm_label: &'static str,
-    accent: Option<PlanCardAccent>,
-    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-) -> gpui::AnyElement {
-    let has_blockers = plan
-        .as_ref()
-        .map(|p| !p.blockers.is_empty())
-        .unwrap_or(true);
-    // #454 layer 4: adopt the shared shell — fixed title, scrolling middle,
-    // fixed button row. Plan notes are unbounded (a rename can carry many
-    // warnings/blockers), so the body is this card's single scroll region.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from(title),
-        accent.clone(),
-    )));
-    let mut body = modal_scroll_body().child(
-        div()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from(label)),
-            )
-            .children(input_state.as_ref().map(|st| Input::new(st).small())),
-    );
-
-    if let Some(BranchRenameValidation::Invalid(reason)) = validation {
-        // W29-I18N-WAVE2: localize the keyed branch-name reason.
-        body = body.child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().color_blocker))
-                .overflow_hidden()
-                .child(SharedString::from(crate::ui::i18n::branch_name_error(
-                    &reason,
-                ))),
-        );
-    }
-
-    if let Some(plan) = plan {
-        body = body.child(
-            div()
-                .flex_shrink_0()
-                .child(render_current_predicted(&plan, accent.clone())),
-        );
-
-        if !plan.warnings.is_empty() {
-            let mut warn_col = div().flex().flex_col().gap_1();
-            for warning in &plan.warnings {
-                warn_col = warn_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_warning))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!(
-                            "\u{26a0} {}",
-                            plan_note_text(warning)
-                        ))),
-                );
-            }
-            body = body.child(warn_col.flex_shrink_0());
-        }
-        if !plan.blockers.is_empty() {
-            let mut block_col = div().flex().flex_col().gap_1();
-            for blocker in &plan.blockers {
-                block_col = block_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_blocker))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!(
-                            "\u{2717} {}",
-                            plan_note_text(blocker)
-                        ))),
-                );
-            }
-            body = body.child(block_col.flex_shrink_0());
-        }
-    }
-
-    if let Some(err) = error {
-        body = body.child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().color_blocker))
-                .overflow_hidden()
-                .child(err),
-        );
-    }
-
-    let mut buttons = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("branch-input-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-    if !has_blockers {
-        buttons = buttons.child(
-            Button::new("branch-input-confirm")
-                .label(SharedString::from(confirm_label))
-                .primary()
-                .small()
-                .on_click(confirm_handler),
-        );
-    }
-    let card = card.child(body).child(div().flex_shrink_0().child(buttons));
-
-    modal_overlay(card).into_any_element()
-}
 
 /// Shared full-screen modal overlay chrome (T-SPLIT-HELPERS-001 / ADR-0116
 /// Wave 3). Every modal renderer wrapped its card in the same two-layer
@@ -264,15 +142,29 @@ pub(crate) fn render_current_predicted(
         div()
             .flex()
             .flex_row()
+            .items_start()
+            .flex_wrap()
             .gap_2()
             .text_sm()
             .child(
+                // #454: the row wraps (`flex_wrap`) and the head may shrink to
+                // the line width (`flex_shrink` + `min_w(0)`), so a long head
+                // wraps inside the card instead of running out of it.
+                // `flex_1` here is wrong: basis 0 wants zero width and the
+                // text ends up one character per line — measured, not guessed.
                 div()
+                    .flex_shrink(1.)
+                    .min_w(gpui::px(0.))
                     .text_color(rgb(current_theme().text_main))
                     .child(SharedString::from(head.to_string())),
             )
             .child(
+                // Shrinkable too: on a predicted state this "[...]" carries the
+                // whole transition ("[旧 <sha> → 新 <new> (…)]"), so pinning it
+                // with `flex_shrink_0` is what pushed it out of the card.
                 div()
+                    .flex_shrink(1.)
+                    .min_w(gpui::px(0.))
                     .text_color(rgb(current_theme().text_sub))
                     .child(SharedString::from(format!("[{}]", dirty))),
             )
@@ -299,7 +191,10 @@ pub(crate) fn render_current_predicted(
             .into_any_element(),
         Some((_, color)) => div()
             .rounded_md()
-            .bg(rgb(current_theme().surface))
+            // Same theme-independent tint as the section panels: `surface`
+            // equals `modal` in several themes (Apple Dark et al), which left
+            // this block invisible on the card.
+            .bg(gpui::rgba(theme::panel_style().0))
             .px_3()
             .py_2()
             .flex()
@@ -382,6 +277,7 @@ fn render_note_row(glyph: &'static str, color: u32, text: &str, chip: bool) -> g
 fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyElement {
     let Some((_, color)) = accent else {
         return div()
+            .font_family(MONO_FONT)
             .text_xs()
             .text_color(rgb(current_theme().text_sub))
             .overflow_hidden()
@@ -404,6 +300,9 @@ fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyEle
         .items_center()
         .gap_2()
         .child(
+            // The sha is monospace: a column of hashes only reads as a column
+            // when the glyphs are fixed width (user request 2026-09-06). The
+            // summary next to it stays proportional — it is prose.
             div()
                 .flex_shrink_0()
                 .px_1()
@@ -412,6 +311,7 @@ fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyEle
                 .border_1()
                 .border_color(gpui::rgba(border))
                 .text_color(rgb(color))
+                .font_family(MONO_FONT)
                 .text_xs()
                 .child(SharedString::from(sha.to_string())),
         )
@@ -562,15 +462,33 @@ fn render_plan_modal_card_styled(
     // caps the height and the body takes the overflow, so the buttons stay on
     // screen no matter how long the plan is.
     //
-    // The body is this card's single scroll region (`modal_shell`'s rule): its
-    // lists are plain and bounded, so they render at full height inside it
-    // rather than each becoming a scroller of its own.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(title_row));
+    // The body does not scroll: each list/prose panel inside carries its own
+    // capped scroll region instead (`modal_shell`'s rule — one scroller per
+    // panel, never one inside another). A user asked for the commit list to be
+    // "boxed and scrollable in the box" like the discard target list
+    // (2026-09-06), which is the same shape the destructive cards use.
+    // The whole dialog as text (title, current→predicted, notes, commits,
+    // recovery): popup content had no way to be copied at all.
+    let card = modal_card(MODAL_W_MD).child(
+        div()
+            .flex_shrink_0()
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap_2()
+            .child(div().flex_1().min_w(gpui::px(0.)).child(title_row))
+            .child(modal_copy_button(
+                "plan-card-copy",
+                Msg::ModalCopyAll.t(),
+                plan_clipboard_text(&plan, &plan.preview_commits),
+                cx,
+            )),
+    );
 
-    // Sections stay flex_shrink_0-wrapped: the body scrolls its overflow, and
-    // without the guard flex would compress the rows instead of scrolling
+    // Fixed blocks stay flex_shrink_0-wrapped: only the panels give up height,
+    // and without the guard flex would compress rows instead of scrolling
     // (same T027 bug class as the discard list).
-    let mut body = modal_scroll_body().child(
+    let mut body = modal_body().child(
         div()
             .flex_shrink_0()
             .child(render_current_predicted(&plan, accent.clone())),
@@ -595,35 +513,49 @@ fn render_plan_modal_card_styled(
     //
     // #454: was `take(total.min(10))` + an "… and N more" line — the count was
     // honest but the remaining commits were unreachable. Every row is rendered
-    // now, at full height inside the scrolling body: one scroll gesture walks
-    // the whole card, and the row count no longer fights the recovery text for
-    // space (a capped list here collapsed to 0 rows on a 700px window).
+    // now, inside the shared list panel with its own capped scroll box, so the
+    // list reads as a box and scrolls in place (user request 2026-09-06)
+    // instead of stretching the card.
     //
     // Plain rows, not a `uniform_list`: the producer caps the preview at 100
     // (`build_push_preview_for_oid`, `MAX_PREVIEW`), so the row count is
-    // bounded — and a virtualized list would have to be its own scroller,
-    // i.e. a scroller inside the body.
+    // bounded and virtualization would buy nothing here.
     if !plan.preview_commits.is_empty() {
         let total = plan.preview_commits.len();
-        let label = format!("Commits to push ({})", total);
-        let mut commit_col = div().flex().flex_col().gap_1().child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(label)),
-        );
+        // No row gap: the row pitch must equal MODAL_LIST_ROW_H exactly or the
+        // height ceiling (rows x ROW_H) would cut a row short.
+        let mut list = div()
+            .id("plan-commit-list")
+            .flex()
+            .flex_col()
+            .min_h(gpui::px(0.))
+            .max_h(modal_list_max_h(total))
+            .overflow_y_scroll();
         for entry in &plan.preview_commits {
             let line: String = entry.chars().take(72).collect();
-            commit_col = commit_col.child(
-                // flex_shrink_0: inside a scrolling flex column, without it
-                // flex compresses the rows instead of scrolling (T027).
+            list = list.child(
+                // flex_shrink_0: a capped flex_col compresses its rows instead
+                // of scrolling them without it (T027 bug class).
                 div()
                     .flex_shrink_0()
+                    .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    // One line per commit: a long summary used to wrap and
+                    // overrun this fixed-height row into the next one.
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .child(render_commit_row(&line, accent.clone())),
             );
         }
-        body = body.child(commit_col.flex_shrink_0());
+        body = body.child(modal_list_panel(
+            SharedString::from("Commits to push"),
+            total,
+            Some(("plan-commits-copy", plan.preview_commits.join("\n"))),
+            list.into_any_element(),
+            cx,
+        ));
     }
 
     // ── Blockers ──────────────────────────────────────────
@@ -658,19 +590,22 @@ fn render_plan_modal_card_styled(
     }
 
     // ── Recovery ──────────────────────────────────────────
+    // Capped and scrollable in place: the body no longer scrolls, so a long
+    // recovery text would otherwise be clipped by the card (the recovery
+    // instructions are the reason a destructive operation is allowed at all).
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        body = body.child(
-            div().flex_shrink_0().child(match accent {
+        body = body.child(modal_prose_box(
+            "plan-recovery-scroll",
+            match accent {
                 Some((_, color)) => render_recovery_box(&recovery_text, color),
                 None => div()
                     .text_xs()
                     .text_color(rgb(current_theme().text_muted))
-                    .overflow_hidden()
                     .child(SharedString::from(recovery_text))
                     .into_any_element(),
-            }),
-        );
+            },
+        ));
     }
 
     // ── Equivalent git command (#353) ─────────────────────

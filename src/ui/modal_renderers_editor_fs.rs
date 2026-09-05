@@ -8,7 +8,7 @@
 
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
-use super::modal_shell::{modal_card, modal_scroll_body};
+use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_SM};
 use super::modals::*;
 use super::theme::theme as current_theme;
 use super::KagiApp;
@@ -66,7 +66,7 @@ pub(crate) fn render_editor_fs_prompt_modal(
         cx.notify();
     });
 
-    let mut card = modal_card(420.)
+    let mut card = modal_card(MODAL_W_SM)
         .child(div().flex_shrink_0().child(render_modal_title_row(
             SharedString::from(title),
             Some(accent),
@@ -189,7 +189,7 @@ pub(crate) fn render_editor_delete_confirm_modal(
         }
     });
 
-    let card = modal_card(420.).child(div().flex_shrink_0().child(render_modal_title_row(
+    let card = modal_card(MODAL_W_SM).child(div().flex_shrink_0().child(render_modal_title_row(
         SharedString::from(title),
         Some((
             ModalIcon::Path("icons/trash-2.svg"),

@@ -679,6 +679,23 @@ pub enum Msg {
     /// #454: header of the always-visible list of files an amend folds into the
     /// commit. `{}` is appended by the caller as `" (N)"`.
     AmendFoldedFiles,
+    /// #454: tooltip on a popup's copy button (copies the whole dialog).
+    ModalCopyAll,
+    /// #454: tooltip on a list panel's copy button (copies every row).
+    ModalCopyList,
+    /// #454: toast after a popup copy.
+    ModalCopied,
+    /// #454: header chip on a card whose plan is `destructive` — the one
+    /// piece of the mock that states the stakes before the button does.
+    ModalCannotUndo,
+    /// #454: section header for the files an operation acts on.
+    ModalTargetFiles,
+    /// #454: section header for a plan's warnings (what will NOT be touched).
+    ModalWarningsSection,
+    /// #454: section header for the recovery instructions.
+    ModalRecoverySection,
+    /// #454: chip on the recovery section — the backup lives in the oplog.
+    ModalRecoveryChip,
     /// #454: collapsible-section header for the paths discard skips
     /// (untracked / conflicted). The count is rendered by `modal_section`.
     DiscardSkippedSection,
@@ -1701,6 +1718,22 @@ impl Msg {
             (Ja, PlanEquivalentTo) => "この操作は `{}` に相当します",
             (En, AmendFoldedFiles) => "Staged changes folded in",
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
+            (En, ModalCopyAll) => "Copy this dialog as text",
+            (Ja, ModalCopyAll) => "この内容をテキストでコピー",
+            (En, ModalCopyList) => "Copy every row",
+            (Ja, ModalCopyList) => "一覧をすべてコピー",
+            (En, ModalCopied) => "Copied to clipboard",
+            (Ja, ModalCopied) => "クリップボードにコピーしました",
+            (En, ModalCannotUndo) => "Cannot be undone",
+            (Ja, ModalCannotUndo) => "取り消せません",
+            (En, ModalTargetFiles) => "Target files",
+            (Ja, ModalTargetFiles) => "対象ファイル",
+            (En, ModalWarningsSection) => "Warnings",
+            (Ja, ModalWarningsSection) => "警告",
+            (En, ModalRecoverySection) => "How to recover",
+            (Ja, ModalRecoverySection) => "復元方法",
+            (En, ModalRecoveryChip) => "oplog",
+            (Ja, ModalRecoveryChip) => "oplog",
             (En, DiscardSkippedSection) => "Skipped (untracked / conflicted)",
             (Ja, DiscardSkippedSection) => "対象外(untracked / conflict)",
             (En, PlanOverlapSummary) => {

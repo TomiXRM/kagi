@@ -24,6 +24,11 @@ fn main() {
     });
     let which = args.next().unwrap_or_else(|| "amend".to_string());
 
+    // Honour the settings theme like `main.rs` does: the panel tints are
+    // theme-derived, so a capture must render the theme under test (#454 —
+    // `surface == modal` on Apple Dark made the panels invisible).
+    kagi::ui::theme::init_active();
+
     let mut app_state = kagi::ui::e2e::app_state(&repo).expect("open fixture repo");
 
     match which.as_str() {
@@ -64,7 +69,22 @@ fn main() {
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect();
+            // Badge kinds come from the same status the card reads (#454
+            // review): unstaged rows carry their real kind, everything else
+            // renders without a letter.
+            let kinds: std::collections::HashMap<String, kagi_git::ChangeKind> = snap
+                .status
+                .unstaged
+                .iter()
+                .map(|f| {
+                    (
+                        f.path.to_string_lossy().replace('\\', "/"),
+                        f.change.clone(),
+                    )
+                })
+                .collect();
             app_state.set_discard_modal(kagi::ui::modals::DiscardModal {
+                kinds,
                 plan: std::sync::Arc::new(plan),
                 paths,
                 skipped,

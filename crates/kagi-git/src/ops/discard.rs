@@ -98,11 +98,23 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Build the lookup sets from the current status (all repo-relative paths).
-    let unstaged_set: std::collections::HashSet<String> = status
+    //
+    // #454 review: the unstaged lookup carries the `ChangeKind` too, because
+    // the discard card renders a per-row A/M/D badge from `preview_files`.
+    // A `HashMap` rather than a per-row `find`: the card exists for the
+    // hundreds-of-files case, and the old scan allocated a `String` per
+    // comparison (O(targets x unstaged)).
+    let unstaged_kinds: std::collections::HashMap<String, kagi_domain::status::ChangeKind> = status
         .unstaged
         .iter()
-        .map(|f| f.path.to_string_lossy().replace('\\', "/"))
+        .map(|f| {
+            (
+                f.path.to_string_lossy().replace('\\', "/"),
+                f.change.clone(),
+            )
+        })
         .collect();
+    let unstaged_set: std::collections::HashSet<String> = unstaged_kinds.keys().cloned().collect();
     let untracked_set: std::collections::HashSet<String> = status
         .untracked
         .iter()
@@ -192,11 +204,22 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         worktree_digest: Some(status.digest()),
         // The targets this plan is FOR, so execute can refuse a path the plan
         // never covered (a plan for A must not be replayed to discard B).
+        //
+        // The change kind here is NOT a display value: this vector is the
+        // authorization set (execute refuses a path the plan never covered),
+        // and #454's review showed why encoding badge kinds here was wrong —
+        // a target absent from `unstaged` (conflicted, staged-only, clean)
+        // would be labelled with a kind the status never reported. The card
+        // takes its A/M/D badges from the working-tree status it already holds
+        // (`DiscardModal::kinds`) and shows none where the kind is unknown.
         preview_files: rels
             .iter()
             .map(|r| kagi_domain::status::FileStatus {
                 path: std::path::PathBuf::from(r),
-                change: kagi_domain::status::ChangeKind::Modified,
+                change: unstaged_kinds
+                    .get(r)
+                    .cloned()
+                    .unwrap_or(kagi_domain::status::ChangeKind::Modified),
             })
             .collect(),
         preview_commits: Vec::new(),

@@ -319,7 +319,10 @@ pub(crate) fn render_remote_browse_modal(
 
     let mut card = div()
         .w(theme::scaled_px(560.))
-        .bg(rgb(current_theme().modal))
+        // Same popup surface as `modal_shell::modal_card` and the Settings
+        // panel (`theme.panel`); `modal` is lighter and read as a different
+        // surface class next to them (#454 follow-up).
+        .bg(rgb(current_theme().panel))
         .rounded_lg()
         .p_4()
         .flex()

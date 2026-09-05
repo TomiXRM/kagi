@@ -55,6 +55,33 @@ impl KagiApp {
         partition_discard_rows(rows)
     }
 
+    /// Per-path change kinds for the discard card's A/M/D badges, from the
+    /// same working-tree status the commit panel shows.
+    ///
+    /// #454 review: this is deliberately NOT read off the plan's
+    /// `preview_files` — that vector is the authorization set and also covers
+    /// conflicted / staged-only targets, whose kind the status never reported.
+    /// A path missing from this map renders no badge instead of a fabricated
+    /// one. Untracked targets are discarded by deletion (ADR-0083) and the
+    /// status classifies them as additions to the worktree, so they carry
+    /// `Added`.
+    fn discard_kinds(
+        &self,
+        cx: &Context<Self>,
+    ) -> std::collections::HashMap<String, kagi_git::ChangeKind> {
+        let mut out = std::collections::HashMap::new();
+        if let Some(entity) = self.commit_panel.as_ref() {
+            let panel = &entity.read(cx).state;
+            for f in &panel.unstaged {
+                out.insert(
+                    f.path.to_string_lossy().replace('\\', "/"),
+                    f.change.clone(),
+                );
+            }
+        }
+        out
+    }
+
     /// Open the discard modal for a single repo-relative `path`. Used both by the
     /// unstaged-file context menu (issue #286: keyed by path, not row index, so an
     /// external `git add` that renumbers `unstaged` can't shift the target) and by
@@ -83,7 +110,10 @@ impl KagiApp {
         match repo.plan_discard(&paths) {
             Ok(plan) => {
                 klog!("plan: discard 1 target blockers={}", plan.blockers.len());
+                self.reset_modal_sections();
+                let kinds = self.discard_kinds(cx);
                 self.set_discard_modal(DiscardModal {
+                    kinds: kinds.clone(),
                     plan: std::sync::Arc::new(plan),
                     paths,
                     skipped: Vec::new(),
@@ -126,7 +156,10 @@ impl KagiApp {
                     plan.blockers.len(),
                     skipped.len()
                 );
+                self.reset_modal_sections();
+                let kinds = self.discard_kinds(cx);
                 self.set_discard_modal(DiscardModal {
+                    kinds: kinds.clone(),
                     plan: std::sync::Arc::new(plan),
                     paths: eligible,
                     skipped,
@@ -168,7 +201,10 @@ impl KagiApp {
 
         // ── Two-stage confirm: first click only arms ──────────────────
         if !modal.confirm_armed {
+            self.reset_modal_sections();
+            let kinds = self.discard_kinds(cx);
             self.set_discard_modal(DiscardModal {
+                kinds: kinds.clone(),
                 confirm_armed: true,
                 ..modal
             });
@@ -219,7 +255,10 @@ impl KagiApp {
                         &repo_path,
                         cx,
                     );
+                    self.reset_modal_sections();
+                    let kinds = self.discard_kinds(cx);
                     self.set_discard_modal(DiscardModal {
+                        kinds: kinds.clone(),
                         plan: modal.plan.clone(),
                         paths: modal.paths.clone(),
                         skipped: modal.skipped.clone(),
@@ -303,6 +342,8 @@ impl KagiApp {
                     cx,
                 );
                 app.set_discard_modal(DiscardModal {
+                    // Same status classification the modal already carried.
+                    kinds: modal.kinds.clone(),
                     plan: plan.clone(),
                     paths: paths.clone(),
                     skipped: modal.skipped.clone(),

@@ -7,9 +7,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
-use super::modal_renderers::{
-    render_input_plan_modal, render_plan_modal_wrapper_styled, ModalIcon,
-};
+use super::modal_renderers::{render_plan_modal_wrapper_styled, ModalIcon};
+use super::modal_renderers_input::render_input_plan_modal;
 use super::modals::*;
 use super::theme::{self as theme_mod, theme};
 use super::{KagiApp, MONO_FONT};
@@ -639,6 +638,7 @@ pub(crate) fn render_recovery_box(text: &str, color: u32) -> gpui::AnyElement {
     }
 
     let mut col = div()
+        .w_full()
         .flex()
         .flex_col()
         .pt(theme_mod::scaled_px(6.))
@@ -660,10 +660,18 @@ pub(crate) fn render_recovery_box(text: &str, color: u32) -> gpui::AnyElement {
 /// from `text_sub` (same colour as the commands below) plus the surrounding
 /// spacing, never from a hard-to-read grey (user follow-up 2026-07-22).
 fn render_recovery_prose(lines: &[&str]) -> gpui::AnyElement {
-    let mut block = div().flex().flex_col().gap(theme_mod::scaled_px(3.));
+    // `w_full` on every line: a text node only wraps when its parent has a
+    // definite width, and without it a long sentence ran straight out of the
+    // card (user report 2026-09-06 — "文字が箱の枠から飛び出している").
+    let mut block = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(theme_mod::scaled_px(3.));
     for line in lines {
         block = block.child(
             div()
+                .w_full()
                 .text_xs()
                 .text_color(rgb(theme().text_sub))
                 .child(SharedString::from(line.to_string())),
@@ -676,10 +684,17 @@ fn render_recovery_prose(lines: &[&str]) -> gpui::AnyElement {
 /// prose by a single hairline accent rule — no fill, no border-all-round, so
 /// it can't be mistaken for a button.
 fn render_recovery_commands(lines: &[&str], rule_color: u32) -> gpui::AnyElement {
-    let mut block = div().flex().flex_col().gap(theme_mod::scaled_px(2.));
+    let mut block = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(theme_mod::scaled_px(2.));
     for line in lines {
         block = block.child(
+            // Same `w_full` rule as the prose: a long `git ...` line wraps
+            // inside the accent rule instead of escaping the card.
             div()
+                .w_full()
                 .font_family(MONO_FONT)
                 .text_xs()
                 .text_color(rgb(theme().text_sub))
@@ -687,6 +702,7 @@ fn render_recovery_commands(lines: &[&str], rule_color: u32) -> gpui::AnyElement
         );
     }
     div()
+        .w_full()
         .pl(theme_mod::scaled_px(8.))
         .border_l_1()
         .border_color(gpui::rgba(rule_color))

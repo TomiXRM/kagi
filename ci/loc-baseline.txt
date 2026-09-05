@@ -29,7 +29,7 @@ src/ui/mod.rs 4225
 src/ui/operations/branch.rs 1744
 src/ui/operations/commit.rs 1233
 src/ui/operations/conflict.rs 992
-src/ui/operations/modal_state.rs 1078
+src/ui/operations/modal_state.rs 1090
 src/ui/operations/stash.rs 807
 src/ui/operations/worktree.rs 840
 src/ui/pr_mode.rs 2349

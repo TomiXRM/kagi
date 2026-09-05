@@ -480,11 +480,15 @@ pub(crate) fn render_discard_modal(
                 .flex()
                 .flex_col()
                 .gap_2()
+                // #454 round-2 review: count exactly what the rows show. The
+                // plan's `preview_files` carries a neutral kind for targets
+                // the status never classified, so tallying it printed `M 10`
+                // over ten rows badged `A`.
                 .children(modal_change_summary(
-                    &plan
-                        .preview_files
+                    &modal
+                        .paths
                         .iter()
-                        .map(|f| f.change.clone())
+                        .filter_map(|p| modal.kinds.get(p).cloned())
                         .collect::<Vec<_>>(),
                 ))
                 .child(file_list)

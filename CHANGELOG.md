@@ -3,6 +3,56 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [0.33.0] — 2026-09-06
+
+### Added
+- **Popup content is copyable.** Every plan card carries a hover-quiet copy
+  button: one on the title row for the whole dialog (title, current →
+  predicted, warnings, blockers, the row list, the recovery text and the
+  structured recovery commands) and one per list panel for its rows. The list
+  button copies the **full** paths, not the left-truncated form the rows show.
+- **The confirmation cards say what is at stake.** A plan marked destructive
+  carries a `Cannot be undone` chip next to its title, file rows carry the
+  change-kind badge (`A`/`M`/`D`/`R`/`T`) in the same colours the file tree
+  uses, and a list of ten or more rows is preceded by a per-kind tally
+  (`M 115  A 2  D 5`).
+
+### Fixed
+- **Large file and commit lists are reachable again.** The amend card cut its
+  staged-file list at ten rows with no "+N more" and no scroll; discard cut its
+  skipped list at twenty; the push preview cut commits at ten. Every row is
+  rendered now — the big lists virtualized, the bounded ones plain — and each
+  list is a bordered panel that scrolls in place.
+- **Cards no longer outgrow the window or overlap their own text.** List and
+  prose panels are bounded relative to the window height with floors, so on a
+  short window the list yields before the safety text and neither can paint
+  over the pinned buttons. A long path or commit summary stays on one line
+  (ellipsis at the start for paths, so the file name survives).
+- **Popup surfaces match.** Plan cards, the remote browser and the trust prompt
+  now paint the same surface as the Settings popup, and the inset panels are
+  tinted from the theme's text colour — `surface` equals `modal` in Apple Dark,
+  IBM PC, Monokai and One Light, where the panels used to be invisible.
+- **Section disclosure works and does not stick.** The caret on a card's
+  sections actually collapses them, and a collapse no longer carries into the
+  next confirmation — collapsing "untracked files will be deleted" once used to
+  hide it by default forever.
+- **Checkout's overlap blocker lists its paths** instead of joining forty of
+  them into one sentence.
+
+### Changed (internal)
+- Every modal is built from one shell (`modal_card` / `modal_body` /
+  `modal_scroll_body` / `modal_list_panel` / `modal_section`), with one rule:
+  a card has exactly one scroll region per panel and never a scroller inside a
+  scroller. Section disclosure state is a `SectionOpen` type that only
+  `section_open` can construct, so a literal cannot be passed by mistake.
+- **The CI invariant gates are a uv project** (`ci/`, `kagi-checks`): one
+  `check-<name>` command per gate, ruff + mypy clean, and
+  `check-all --selftest` proving every rule still matches its own positive
+  sample. They used to be inline `grep -rnE` plus `find | awk` shell scripts,
+  where BSD grep's 255-repetition cap could silently make a gate check nothing.
+  New gates: `check-shell-hygiene` (no grep/find/awk/`sed -i`, no bare
+  interpreter in a workflow) and `check-klog-raw`.
+
 ## [0.13.7] — 2026-07-23
 
 ### Fixed

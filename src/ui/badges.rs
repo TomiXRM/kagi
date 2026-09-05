@@ -27,9 +27,16 @@ pub(crate) fn badge_priority(kind: &BadgeKind) -> u8 {
 pub(crate) enum WipRowClick {
     /// Open the commit panel for the currently-open repo (stage/unstage).
     CommitPanel,
-    /// Switch the open repo to this linked worktree so its changes can be acted
-    /// on there (the open repo's WIP row, in turn, opens the commit panel).
-    OpenWorktree(std::path::PathBuf),
+    /// A linked worktree's row (#473): clicking shows THAT worktree's changes
+    /// in the commit panel, in place (read-only — no new tab, no snapshot);
+    /// right-clicking opens the worktree menu, where "Open in new tab" still
+    /// does what the click used to.
+    Worktree {
+        path: std::path::PathBuf,
+        /// Worktree registry name — what the worktree menu acts on.
+        name: String,
+        locked: bool,
+    },
 }
 
 pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {

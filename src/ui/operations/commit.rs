@@ -69,6 +69,22 @@ impl KagiApp {
                 return;
             }
         };
+        self.open_commit_panel_at(repo_path, None, window, cx);
+    }
+
+    /// [`Self::open_commit_panel`] against an explicit repository (#473).
+    ///
+    /// `foreign` is `Some((worktree label, lane colour index))` when the panel
+    /// belongs to a **linked worktree** rather than the open tab — it drives the
+    /// header chip and puts the panel in read-only mode (see `worktree_wip`).
+    /// `None` is the ordinary open-repo panel and behaves exactly as before.
+    pub(crate) fn open_commit_panel_at(
+        &mut self,
+        repo_path: PathBuf,
+        foreign: Option<(SharedString, usize)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Reopening (the entity survives a commit-row click — `select` clears
         // `commit_panel_open` but NOT the entity, ADR-0118 Q4): REUSE the existing
         // entity so the user's in-memory commit message / template inputs / mode
@@ -77,11 +93,23 @@ impl KagiApp {
         // `state` is refreshed from the repo; `commit_input`/template/mode/draft
         // live on the entity and are preserved. `tree_view` is part of `state`, so
         // carry it across the refresh.
-        let (entity, is_new) = if let Some(existing) = self.commit_panel.clone() {
+        //
+        // #473: only an entity already pointed at THIS repository is reusable —
+        // the message inputs / draft / template belong to a specific repo, so a
+        // panel that switches between the open repo and a linked worktree is
+        // rebuilt rather than carried across.
+        let reusable = self
+            .commit_panel
+            .clone()
+            .filter(|e| e.read(cx).repo_path == repo_path);
+        let (entity, is_new) = if let Some(existing) = reusable {
             let prev_tree_view = existing.read(cx).state.tree_view;
             let mut panel = CommitPanelState::from_repo(&repo_path);
             panel.tree_view = prev_tree_view;
-            existing.update(cx, |v, _| v.state = panel);
+            existing.update(cx, |v, _| {
+                v.state = panel;
+                v.foreign = foreign.clone();
+            });
             (existing, false)
         } else {
             // First open: build the entity. `cx.weak_entity()` runs on the parent
@@ -90,8 +118,13 @@ impl KagiApp {
             // re-lease a leased panel (correction #6).
             let panel = CommitPanelState::from_repo(&repo_path);
             let weak_app = cx.weak_entity();
+            let foreign = foreign.clone();
             (
-                cx.new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone())),
+                cx.new(|_| {
+                    let mut v = CommitPanelView::new(panel, weak_app, repo_path.clone());
+                    v.foreign = foreign;
+                    v
+                }),
                 true,
             )
         };
@@ -102,7 +135,15 @@ impl KagiApp {
 
         // T026: lazy-create the InputStates (requires &mut Window) inside the
         // entity so they stay STABLE across status reloads (IME/focus).
+        //
+        // #473: a foreign (linked-worktree) panel is read-only, so it gets NO
+        // message inputs at all — and therefore no draft, no template seed, no
+        // focus steal and no smart-commit probe for the wrong repository.
+        let want_inputs = foreign.is_none();
         entity.update(cx, |v, cx| {
+            if !want_inputs {
+                return;
+            }
             if v.title_input.is_none() {
                 v.title_input = Some(
                     cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t())),
@@ -138,7 +179,7 @@ impl KagiApp {
         // `commit_template.is_some()`, so a session that restored a draft
         // instead would otherwise show no toggle at all (user report).
         // Cached after the first read — this touches the filesystem.
-        if entity.read(cx).commit_template.is_none() {
+        if want_inputs && entity.read(cx).commit_template.is_none() {
             if let Some(tpl) = kagi_git::Backend::open(&repo_path)
                 .ok()
                 .and_then(|b| b.commit_template())
@@ -148,7 +189,7 @@ impl KagiApp {
             }
         }
 
-        if is_new {
+        if is_new && want_inputs {
             if let (Some(title_input), Some(body_input)) = (&title_entity, &body_entity) {
                 let empty = title_input.read(cx).value().trim().is_empty()
                     && body_input.read(cx).value().trim().is_empty();
@@ -191,7 +232,9 @@ impl KagiApp {
 
         // T-COMMIT-016: probe for a local Ollama server (reachability only;
         // no diff is sent). Runs at most once per repo, off the UI thread.
-        self.ensure_smart_commit_detection(cx);
+        if want_inputs {
+            self.ensure_smart_commit_detection(cx);
+        }
     }
 
     /// Probe for a reachable local Ollama server in the background.
@@ -545,6 +588,10 @@ impl KagiApp {
     /// Calls `stage_file` from T024 and then refreshes the staging status.
     /// Stage every non-conflicted unstaged file (T-UI-002: Stage all).
     pub fn do_stage_all(&mut self, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("stage-all", cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -587,6 +634,10 @@ impl KagiApp {
 
     /// Unstage every staged file (T-UI-002: Unstage all).
     pub fn do_unstage_all(&mut self, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("unstage-all", cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -627,6 +678,10 @@ impl KagiApp {
     }
 
     pub fn do_stage_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("stage", cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -668,6 +723,10 @@ impl KagiApp {
     ///
     /// Calls `unstage_file` from T024 and then refreshes the staging status.
     pub fn do_unstage_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("unstage", cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -790,6 +849,10 @@ impl KagiApp {
     /// T026: reads message from InputState if available, else falls back to commit_panel.commit_msg
     /// (used by the headless KAGI_COMMIT_MSG path).
     pub fn open_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("commit", cx) {
+            return;
+        }
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -861,6 +924,10 @@ impl KagiApp {
     /// cleared in the finish step (also main thread). The headless KAGI_* path
     /// executes `execute_commit` directly.
     pub fn start_commit(&mut self, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("commit", cx) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -1091,6 +1158,10 @@ impl KagiApp {
     /// staged/message state to pick the [`AmendMode`], then opens the amend modal
     /// (which reads `commit_panel` again — safe here on the parent).
     pub fn commit_panel_amend(&mut self, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("amend", cx) {
+            return;
+        }
         let staged = self
             .commit_panel
             .as_ref()

@@ -130,8 +130,9 @@ impl KagiApp {
                 ));
             }
 
-            // Linked-worktree rows: from the snapshot's per-worktree wip. Clicking
-            // switches the open repo to that worktree so its changes can be acted on.
+            // Linked-worktree rows: from the snapshot's per-worktree wip. #473:
+            // clicking shows that worktree's changes in the commit panel in
+            // place; right-clicking offers "Open in new tab" (the old click).
             for (idx, wt) in worktrees.iter().enumerate() {
                 if wt.is_current {
                     continue;
@@ -147,7 +148,11 @@ impl KagiApp {
                     label,
                     wip.total(),
                     None,
-                    WipRowClick::OpenWorktree(wt.path.clone()),
+                    WipRowClick::Worktree {
+                        path: wt.path.clone(),
+                        name: wt.name.clone(),
+                        locked: wt.locked,
+                    },
                     true, // linked-worktree rows are always worktrees → 🌲
                 ));
             }

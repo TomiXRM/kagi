@@ -131,6 +131,33 @@ jobs:
           done
           [ "$fail" -eq 0 ] && echo "OK: no lateral kagi-ui-* imports."
 
+  # ── BLOCKING: modal lists must stay reachable (#454) ─────────────────────────
+  invariant-modal-lists-not-truncated:
+    name: invariant — modal file lists are not silently truncated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no .take(N) on discard/amend preview lists
+        shell: bash
+        run: |
+          # #454: the amend and discard cards printed a total ("487") and then
+          # rendered only the first 10-20 rows, so the rest was unreachable.
+          # Those two lists now render every row (`uniform_list` + scroll); a
+          # fixed `.take(N)` on them is the exact regression that hides rows
+          # again. Row-level truncation (`p.chars().take(80)`) is fine — it
+          # shortens one line, not the list.
+          #
+          # NOT yet covered: `preview_commits` in the shared plan card
+          # (`src/ui/modal_renderers.rs`, "Commits to push") still caps at 10
+          # with an "… and N more" line. Reaching every row there needs an
+          # app-owned scroll handle threaded through the shared card, which is
+          # the next #454 slice — the pattern below is widened then.
+          if grep -rnE '(preview_files|\.skipped)[^;]*\.iter\(\)[^;]*\.take\(' src/ui/; then
+            echo "::error::discard/amend preview lists must render every row (uniform_list + scroll), not .take(N) — see #454."
+            exit 1
+          fi
+          echo "OK: no truncated discard/amend preview lists."
+
   # ── BLOCKING: the ADR-0129 plan-text migration stays complete (Phase 3) ───────
   invariant-plan-note-no-verbatim:
     name: invariant — PlanNote/PlanTitle/RecoveryKind have no Verbatim escape hatch

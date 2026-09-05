@@ -674,6 +674,12 @@ pub enum Msg {
     /// (#353). Deliberately "equivalent to", never "runs" — kagi executes in-process via
     /// the git library, not the CLI.
     PlanEquivalentTo,
+    /// #454: header of the always-visible list of files an amend folds into the
+    /// commit. `{}` is appended by the caller as `" (N)"`.
+    AmendFoldedFiles,
+    /// #454: collapsible-section header for the paths discard skips
+    /// (untracked / conflicted). The count is rendered by `modal_section`.
+    DiscardSkippedSection,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -1685,6 +1691,10 @@ impl Msg {
             (Ja, CleanupGrownHint) => "merge 後の新規 commit:",
             (En, PlanEquivalentTo) => "This is equivalent to `{}`",
             (Ja, PlanEquivalentTo) => "この操作は `{}` に相当します",
+            (En, AmendFoldedFiles) => "Staged changes folded in",
+            (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
+            (En, DiscardSkippedSection) => "Skipped (untracked / conflicted)",
+            (Ja, DiscardSkippedSection) => "対象外(untracked / conflict)",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",

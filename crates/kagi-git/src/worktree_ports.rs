@@ -93,10 +93,34 @@ pub fn assign_block(worktree_path: &Path, range: PortRange, per: u16) -> Option<
     if let Some(&existing) = store.get(&key) {
         return Some(existing);
     }
-    let first = allocate_block(range, per, &store, &key)?;
+    // Reclaim-on-exhaustion (#444). The store only ever grew: a
+    // create→remove→create cycle kept the removed worktree's block reserved
+    // forever, so the default 100-port / per-10 range exhausted after ~10
+    // cycles even with one live worktree. Only reclaim when we would otherwise
+    // fail — a plain allocate keeps the common path untouched and preserves the
+    // "assign before the worktree is created" contract (`canon_key` falls back
+    // to the lexical path for a not-yet-created target, which must not be
+    // pruned as "missing").
+    let first = match allocate_block(range, per, &store, &key) {
+        Some(f) => f,
+        None => {
+            // Drop entries whose worktree path no longer exists on disk (keys
+            // are canonical paths), then retry once. Still `None` → genuinely
+            // full even after reclaim; surface that to the caller.
+            prune_missing(&mut store, &key);
+            allocate_block(range, per, &store, &key)?
+        }
+    };
     store.insert(key, first);
     write_store(&store);
     Some(first)
+}
+
+/// Drop entries whose worktree path no longer exists on disk, except `keep`
+/// (the current target). Best-effort: a path we cannot stat is left in place
+/// (treated as possibly-live) rather than risking a false reclaim.
+fn prune_missing(store: &mut BTreeMap<String, u16>, keep: &str) {
+    store.retain(|path, _| path == keep || Path::new(path).exists());
 }
 
 /// The port + `KAGI_*` env map handed to a worktree's terminal (issue #342).

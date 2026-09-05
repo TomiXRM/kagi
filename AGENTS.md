@@ -129,3 +129,24 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 - The GUI cannot be exercised by subagents — UI-affecting changes need a human (or the
   primary session) to launch the app and eyeball it. Build + tests passing is necessary
   but not sufficient for UI behavior.
+- **Repository invariants run through uv, never shell text tools.** The gates live
+  in `ci/` as a uv project (`kagi-checks`); run them from the repo root:
+
+  ```
+  uv run --project ci check-all              # every gate + the rule selftest
+  uv run --project ci check-modal-sections   # one gate
+  uv run --project ci check-loc --write-baseline   # accept a ratchet change
+  uv run --project ci ruff check ci && uv run --project ci mypy --config-file ci/pyproject.toml
+  ```
+
+  Adding an invariant = one `Rule` in `ci/src/kagi_checks/rules.py` (pattern, globs,
+  message, plus a `sample` it must flag and a `sample_ok` it must not) and one
+  `check-<name>` entry in `ci/pyproject.toml` + the workflow matrix. `check-all
+  --selftest` proves every rule still matches its own sample, so a rule that
+  silently stops matching fails loudly instead of passing green.
+- **Never write a gate as `grep`/`find`/`awk`/`sed -i`, and never invoke `python3`
+  directly in a workflow** — `check-shell-hygiene` fails the build if you do. Those
+  tools differ between GNU (CI) and BSD (macOS dev machines): BSD grep caps bounded
+  repetition at 255, so a valid GNU pattern matches *nothing* and the gate goes green
+  having checked zero files. That shipped once (#454) and a human, not CI, caught it.
+  Interactive searching is a different matter — use `rg`/`fd` freely there.

@@ -1,0 +1,52 @@
+[project]
+# The repo's invariant gates, as a uv project rather than loose scripts.
+#
+# Why: the gates used to be a mix of inline `grep -rnE` in the workflow,
+# `find | awk` in `check-loc.sh` and `tr | grep -E` in `check-modal-lists.sh`.
+# Three dialects, each platform-sensitive — BSD grep (what developers run on
+# macOS) caps bounded repetition at 255, so a valid GNU pattern silently
+# matches *nothing* and the gate passes green. That shipped once (#454) and a
+# human, not CI, caught it.
+#
+# Everything runs through uv now: `uv run --project ci check-<name>`. One
+# interpreter (pinned below), one regex dialect, a lockfile, and `check-all
+# --selftest` proving every rule still matches its own positive sample.
+name = "kagi-checks"
+version = "0.1.0"
+description = "Repository invariant gates for kagi (CI + local, one dialect)"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+# One command per gate, named after the check (`ci/check-loc.sh` before).
+check-all = "kagi_checks.cli:check_all"
+check-ui-git2 = "kagi_checks.cli:check_ui_git2"
+check-mcp-gpui = "kagi_checks.cli:check_mcp_gpui"
+check-klog = "kagi_checks.cli:check_klog"
+check-ui-core-layering = "kagi_checks.cli:check_ui_core_layering"
+check-ui-lateral = "kagi_checks.cli:check_ui_lateral"
+check-plan-verbatim = "kagi_checks.cli:check_plan_verbatim"
+check-modal-lists = "kagi_checks.cli:check_modal_lists"
+check-modal-sections = "kagi_checks.cli:check_modal_sections"
+check-shell-hygiene = "kagi_checks.cli:check_shell_hygiene"
+check-loc = "kagi_checks.cli:check_loc"
+
+[dependency-groups]
+dev = ["mypy>=1.14", "ruff>=0.9"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["ci/src"]
+mypy_path = ["ci/src"]
+explicit_package_bases = true

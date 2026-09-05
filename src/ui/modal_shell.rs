@@ -100,9 +100,16 @@ pub(crate) fn modal_card(width: f32) -> gpui::Div {
 /// Passing such a width through `modal_card` would apply `scaled_px` on top of
 /// it and multiply the UI zoom in twice.
 pub(crate) fn modal_card_sized() -> gpui::Div {
+    // Hairline border: on light themes `panel` sits ~10/255 from `bg_base`
+    // (One Light, Catppuccin Latte), so the card edge relied entirely on the
+    // scrim (#454 review). The border is derived like the panel tints, so it
+    // holds on every theme.
+    let (_, border) = theme::panel_style();
     div()
         .max_h(gpui::relative(0.8))
         .overflow_hidden()
+        .border_1()
+        .border_color(gpui::rgba(border))
         // `panel`, not `modal`: the Settings popup already used `panel`, so a
         // discard/push card next to it read as a different kind of surface —
         // and `modal` is the lighter of the two in every dark theme (Apple
@@ -208,8 +215,25 @@ pub(crate) fn section_open(
     overrides: &std::collections::HashSet<&'static str>,
     id: &'static str,
     default_open: bool,
-) -> bool {
-    default_open != overrides.contains(id)
+) -> SectionOpen {
+    SectionOpen(default_open != overrides.contains(id))
+}
+
+/// Whether a section is expanded — constructible only by [`section_open`].
+///
+/// #454 review: `modal_section` used to take a bare `bool`, and passing a
+/// literal `true` made the renderer ignore `modal_section_overrides` — the
+/// caret was drawn, the click was wired, and nothing happened. That shipped
+/// once. A CI rule can only pattern-match the mistake (and a review found both
+/// false positives and false negatives in the pattern); a type makes it
+/// unrepresentable, so the rule can go away.
+#[derive(Clone, Copy)]
+pub(crate) struct SectionOpen(bool);
+
+impl SectionOpen {
+    pub(crate) fn is_open(self) -> bool {
+        self.0
+    }
 }
 
 /// A count/label chip: the small rounded pill the #454 mock puts at the right
@@ -249,7 +273,7 @@ pub(crate) fn modal_section(
     id: &'static str,
     title: impl Into<SharedString>,
     count: usize,
-    open: bool,
+    open: SectionOpen,
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -261,10 +285,11 @@ pub(crate) fn modal_section_chipped(
     id: &'static str,
     title: impl Into<SharedString>,
     chip: Option<SharedString>,
-    open: bool,
+    open: SectionOpen,
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let open = open.is_open();
     let (panel_bg, panel_border) = theme::panel_style();
     let caret = if open { "\u{25be}" } else { "\u{25b8}" };
     let mut header = div()
@@ -304,11 +329,19 @@ pub(crate) fn modal_section_chipped(
 
     // The panel: a rounded surface with a hairline border, so sections read as
     // separate cards instead of one text column (#454 mock, right half).
+    //
+    // #454 review: `min_h(0)` alone let this be the block that yields on a
+    // short window — and because its rows are `flex_shrink_0`, it yielded by
+    // *overpainting* the blockers and recovery text underneath instead of
+    // scrolling. It now clips, and floors at two rows so a squeezed section
+    // still shows that it has content (the caret and count stay legible
+    // either way).
     let mut section = div()
         .flex()
         .flex_col()
         .gap_2()
-        .min_h(gpui::px(0.))
+        .min_h(theme::scaled_px(2. * MODAL_LIST_ROW_H))
+        .overflow_hidden()
         .p_2()
         .rounded_md()
         .bg(gpui::rgba(panel_bg))
@@ -407,8 +440,18 @@ pub(crate) fn modal_list_panel(
 /// Fixed row height so the list-height math in [`modal_list_max_h`] stays
 /// exact, and one line always: a wrapped path grew past the row and painted
 /// over the next one, because `uniform_list` does not clip its items.
-pub(crate) fn modal_file_row(path: impl Into<SharedString>, change: &ChangeKind) -> gpui::Div {
-    let (letter, color) = change_badge(change);
+pub(crate) fn modal_file_row(
+    path: impl Into<SharedString>,
+    // `None` when the status does not classify the path: the row then shows
+    // the letter column empty rather than a kind the status never reported
+    // (#454 review — the discard authorization set covers conflicted and
+    // staged-only targets too).
+    change: Option<&ChangeKind>,
+) -> gpui::Div {
+    let (letter, color) = match change {
+        Some(kind) => change_badge(kind),
+        None => (' ', current_theme().text_muted),
+    };
     div()
         .flex_shrink_0()
         .h(theme::scaled_px(MODAL_LIST_ROW_H))
@@ -499,15 +542,15 @@ fn change_badge(change: &ChangeKind) -> (char, u32) {
 ///
 /// `None` below `SUMMARY_MIN_ROWS`: with a handful of rows the list itself is
 /// already the summary, and a second count line would just be noise.
-pub(crate) fn modal_change_summary(files: &[kagi_domain::status::FileStatus]) -> Option<gpui::Div> {
+pub(crate) fn modal_change_summary(kinds: &[ChangeKind]) -> Option<gpui::Div> {
     /// Row count from which the tally earns its line.
     const SUMMARY_MIN_ROWS: usize = 10;
-    if files.len() < SUMMARY_MIN_ROWS {
+    if kinds.len() < SUMMARY_MIN_ROWS {
         return None;
     }
     // Counted in the order the badges are defined, so the row reads the same
     // way every time regardless of which kinds happen to be present.
-    let kinds = [
+    const ORDER: [ChangeKind; 4] = [
         ChangeKind::Modified,
         ChangeKind::Added,
         ChangeKind::Deleted,
@@ -520,8 +563,8 @@ pub(crate) fn modal_change_summary(files: &[kagi_domain::status::FileStatus]) ->
         .items_center()
         .gap_3();
     let mut any = false;
-    for kind in kinds {
-        let n = files.iter().filter(|f| f.change == kind).count();
+    for kind in ORDER {
+        let n = kinds.iter().filter(|k| **k == kind).count();
         if n == 0 {
             continue;
         }
@@ -537,9 +580,9 @@ pub(crate) fn modal_change_summary(files: &[kagi_domain::status::FileStatus]) ->
         );
     }
     // Renames carry a `from` path, so they cannot be counted by equality.
-    let renamed = files
+    let renamed = kinds
         .iter()
-        .filter(|f| matches!(f.change, ChangeKind::Renamed { .. }))
+        .filter(|k| matches!(k, ChangeKind::Renamed { .. }))
         .count();
     if renamed > 0 {
         any = true;
@@ -644,15 +687,15 @@ mod tests {
     #[test]
     fn overrides_flip_the_renderer_default() {
         let mut o: HashSet<&'static str> = HashSet::new();
-        assert!(section_open(&o, "files", true));
-        assert!(!section_open(&o, "skipped", false));
+        assert!(section_open(&o, "files", true).is_open());
+        assert!(!section_open(&o, "skipped", false).is_open());
 
         o.insert("skipped");
-        assert!(section_open(&o, "skipped", false));
+        assert!(section_open(&o, "skipped", false).is_open());
         // Flipping one section must not touch another.
-        assert!(section_open(&o, "files", true));
+        assert!(section_open(&o, "files", true).is_open());
 
         o.remove("skipped");
-        assert!(!section_open(&o, "skipped", false));
+        assert!(!section_open(&o, "skipped", false).is_open());
     }
 }

@@ -97,6 +97,20 @@ pub(crate) fn plan_clipboard_text(plan: &OperationPlan, rows: &[String]) -> Stri
             out.push('\n');
         }
     }
+    // #454 review: the prose above is localized explanation with the commands
+    // interleaved, so pasting the whole payload into a shell would try to run
+    // sentences. `PlanRecovery::commands` is the structured, paste-able set —
+    // repeat it as its own block so a user can grab just those lines.
+    if let Some(rec) = plan.recovery.as_ref() {
+        if !rec.commands.is_empty() {
+            out.push_str("\ncommands:\n");
+            for c in &rec.commands {
+                out.push_str("  ");
+                out.push_str(c);
+                out.push('\n');
+            }
+        }
+    }
     out
 }
 
@@ -155,8 +169,17 @@ mod tests {
         assert!(text.contains("a.txt"));
         assert!(text.contains("current:"), "state summary missing:\n{text}");
         assert!(
-            text.contains("cat-file") || text.contains("oplog") || text.contains("blob"),
-            "recovery text missing:\n{text}"
+            text.contains("git cat-file -p <blob-sha>"),
+            "the structured recovery command must appear verbatim:\n{text}"
         );
+        // #454 review: assert the rows themselves, not just the absence of the
+        // display ellipsis — a future `chars().take(n)` would truncate without
+        // ever emitting that glyph.
+        for row in [deep.as_str(), "a.txt"] {
+            assert!(
+                text.lines().any(|l| l == row),
+                "row {row} must appear verbatim:\n{text}"
+            );
+        }
     }
 }

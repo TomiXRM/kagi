@@ -5,7 +5,6 @@
 //! nothing with the plan card except the shell helpers.
 
 use super::i18n::Msg;
-use super::modal_copy::plan_clipboard_text;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, PlanCardAccent,
 };

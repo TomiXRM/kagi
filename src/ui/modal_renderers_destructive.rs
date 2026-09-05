@@ -157,9 +157,9 @@ pub(crate) fn render_amend_modal(
                 move |range: std::ops::Range<usize>, _window, _cx| {
                     range
                         .filter_map(|i| {
-                            files
-                                .get(i)
-                                .map(|f| modal_file_row(f.path.display().to_string(), &f.change))
+                            files.get(i).map(|f| {
+                                modal_file_row(f.path.display().to_string(), Some(&f.change))
+                            })
                         })
                         .collect::<Vec<_>>()
                 },
@@ -187,7 +187,13 @@ pub(crate) fn render_amend_modal(
                 .flex()
                 .flex_col()
                 .gap_2()
-                .children(modal_change_summary(&plan.preview_files))
+                .children(modal_change_summary(
+                    &plan
+                        .preview_files
+                        .iter()
+                        .map(|f| f.change.clone())
+                        .collect::<Vec<_>>(),
+                ))
                 .child(list)
                 .into_any_element(),
             cx,
@@ -219,7 +225,7 @@ pub(crate) fn render_amend_modal(
             Msg::ModalWarningsSection.t(),
             plan.warnings.len(),
             open,
-            open.then(|| warn_col.into_any_element()),
+            open.is_open().then(|| warn_col.into_any_element()),
             cx,
         ));
     }
@@ -252,7 +258,7 @@ pub(crate) fn render_amend_modal(
             Some(SharedString::from(Msg::ModalRecoveryChip.t())),
             open,
             // Built only while open, so a folded section costs nothing.
-            open.then(|| {
+            open.is_open().then(|| {
                 modal_prose_box(
                     "modal-recovery-scroll",
                     render_recovery_box(&recovery_text, current_theme().color_blocker),
@@ -390,14 +396,11 @@ pub(crate) fn render_discard_modal(
     let target_count_rows = modal.paths.len();
     let target_h = modal_list_max_h(target_count_rows);
     let target_paths = modal.paths.clone();
-    // Change kinds come from the plan (`plan_discard` fills `preview_files`
-    // from the working-tree status), matched by path so the badge cannot drift
-    // if the two vectors are ordered differently.
-    let target_kinds: std::collections::HashMap<String, kagi_domain::status::ChangeKind> = plan
-        .preview_files
-        .iter()
-        .map(|f| (f.path.display().to_string(), f.change.clone()))
-        .collect();
+    // Change kinds come from the working-tree status the UI holds
+    // (`DiscardModal::kinds`), not from the plan's authorization set: that set
+    // also covers conflicted and staged-only targets, whose kind the status
+    // never reported (#454 review). An absent path renders no badge.
+    let target_kinds = modal.kinds.clone();
     let file_list = super::render_helpers::with_vertical_scrollbar(
         "discard-file-scroll",
         &list_scroll,
@@ -407,13 +410,9 @@ pub(crate) fn render_discard_modal(
             move |range: std::ops::Range<usize>, _window, _cx| {
                 range
                     .filter_map(|i| {
-                        target_paths.get(i).map(|p| {
-                            let change = target_kinds
-                                .get(p)
-                                .cloned()
-                                .unwrap_or(kagi_domain::status::ChangeKind::Modified);
-                            modal_file_row(p.clone(), &change)
-                        })
+                        target_paths
+                            .get(i)
+                            .map(|p| modal_file_row(p.clone(), target_kinds.get(p)))
                     })
                     .collect::<Vec<_>>()
             },
@@ -481,7 +480,13 @@ pub(crate) fn render_discard_modal(
                 .flex()
                 .flex_col()
                 .gap_2()
-                .children(modal_change_summary(&plan.preview_files))
+                .children(modal_change_summary(
+                    &plan
+                        .preview_files
+                        .iter()
+                        .map(|f| f.change.clone())
+                        .collect::<Vec<_>>(),
+                ))
                 .child(file_list)
                 .into_any_element(),
             cx,
@@ -496,7 +501,7 @@ pub(crate) fn render_discard_modal(
     // hidden — only the paths are, and the section lists all of them.
     if !modal.skipped.is_empty() {
         let open = section_open(overrides, SECTION_SKIPPED, false);
-        let section_body = open.then(|| {
+        let section_body = open.is_open().then(|| {
             // Cap the opened section too: the body does not scroll, so without
             // its own box hundreds of skipped paths would push the blockers
             // and the recovery note out of the card — the two things a user
@@ -570,7 +575,7 @@ pub(crate) fn render_discard_modal(
             Msg::ModalWarningsSection.t(),
             plan.warnings.len(),
             open,
-            open.then(|| warn_col.into_any_element()),
+            open.is_open().then(|| warn_col.into_any_element()),
             cx,
         ));
     }
@@ -603,7 +608,7 @@ pub(crate) fn render_discard_modal(
             Some(SharedString::from(Msg::ModalRecoveryChip.t())),
             open,
             // Built only while open, so a folded section costs nothing.
-            open.then(|| {
+            open.is_open().then(|| {
                 modal_prose_box(
                     "modal-recovery-scroll",
                     render_recovery_box(&recovery_text, current_theme().color_blocker),

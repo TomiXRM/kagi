@@ -16,16 +16,15 @@
 use super::i18n::Msg;
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_shell::{
-    modal_body, modal_card, modal_list_max_h, modal_list_panel, modal_prose_box, modal_scroll_body,
-    note_path_list, note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
+    modal_body, modal_card, modal_list_max_h, modal_list_panel, modal_prose_box, note_path_list,
+    note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
-use gpui::{div, prelude::*, rgb, Context, Entity, SharedString, Window};
+use gpui::{div, prelude::*, rgb, Context, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, IconName, Sizable as _};
-use kagi_git::{BranchRenameValidation, CommitId, OperationPlan};
+use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 /// Richer plan-card header (ADR pending: "richer popup cards", started with

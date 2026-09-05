@@ -38,6 +38,18 @@ impl KagiApp {
         }
     }
 
+    /// Forget every section flip. Called when a modal opens.
+    ///
+    /// #454 review: the overrides are per-*confirm*, not a preference. Without
+    /// this, collapsing the discard card's warnings once hid
+    /// "untracked files will be deleted" by default on every later discard —
+    /// a one-click permanent opt-out of the safety text, which is exactly what
+    /// the "a sticky override must never carry a collapsed state into the next
+    /// confirm" rule in `modal_shell` exists to prevent.
+    pub fn reset_modal_sections(&mut self) {
+        self.modal_section_overrides.clear();
+    }
+
     #[inline]
     pub fn plan_modal(&self) -> Option<&CheckoutPlanModal> {
         match &self.active_modal {

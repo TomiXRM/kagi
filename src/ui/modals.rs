@@ -528,6 +528,11 @@ pub struct DiscardModal {
     pub plan: std::sync::Arc<OperationPlan>,
     /// Repo-relative paths that will be discarded (one operation).
     pub paths: Vec<String>,
+    /// #454 review: per-path change kind for the card's A/M/D badge, taken
+    /// from the working-tree status the UI already holds. A path is absent
+    /// when the status does not classify it (conflicted, staged-only, clean),
+    /// and the row then shows no badge rather than a fabricated one.
+    pub kinds: std::collections::HashMap<String, kagi_domain::status::ChangeKind>,
     /// Repo-relative paths shown as "skipped" (untracked / conflicted).
     pub skipped: Vec<String>,
     /// Whether this was launched from the "Discard all" header button.

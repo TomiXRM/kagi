@@ -2,9 +2,9 @@ name: ci
 
 # ADR-0077 (v1.0 re-architecture): the project had NO test CI before this — only
 # release.yml. This workflow gates `main` (and the `develop` integration branch):
-# `cargo test --workspace` must stay green, and the ADR-0072/0078 invariant (the
-# UI never calls git2) is enforced by a grep gate. fmt/clippy and the Linux test
-# leg are ADVISORY for now
+# `cargo test --workspace` must stay green, and the repository invariants (the
+# UI never calls git2, and the rest) are enforced by the `kagi-checks` uv
+# project in `ci/`. fmt/clippy and the Linux test leg are ADVISORY for now
 # (the v0.2.0 tree carries pre-existing fmt/clippy debt; making them blocking would
 # red the board on day one — they are tracked for cleanup in S7).
 
@@ -19,151 +19,74 @@ permissions:
   contents: read
 
 jobs:
-  # ── BLOCKING: the UI must never call git2 directly (ADR-0072 / ADR-0078) ──────
-  invariant-ui-no-git2:
-    name: invariant — UI is git2-free
+  # ── BLOCKING: repository invariants (one uv project, one dialect) ────────────
+  #
+  # Every gate lives in `ci/` as a uv project (`kagi-checks`) and runs as
+  # `uv run --frozen --project ci check-<name>`. It used to be inline
+  # `grep -rnE` here plus `find | awk` shell scripts: three dialects, each
+  # platform-sensitive. BSD grep (what developers run on macOS) caps bounded
+  # repetition at 255, so a valid GNU pattern silently matched *nothing* and
+  # the gate went green having checked zero files — that shipped once (#454)
+  # and a human, not CI, caught it. `check-all --selftest` now proves every
+  # rule still flags its own positive sample, and `check-shell-hygiene` fails
+  # the build if a gate reaches for grep/find/awk/sed -i or a bare interpreter
+  # again.
+  #
+  # Jobs stay one-per-invariant so a red status check names the rule it broke.
+  invariants:
+    name: invariant — ${{ matrix.check }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          # UI is git2-free (ADR-0072 / ADR-0078)
+          - ui-git2
+          # kagi-mcp is gpui-free (ADR-0163 / #331)
+          - mcp-gpui
+          # [kagi] contract lines go through klog!. Two gates on purpose:
+          # `klog-raw` rejects every same-line `eprintln!("[kagi]…")` outright,
+          # `klog` is the ratchet that tolerates the pre-existing *wrapped*
+          # violations at their baseline count. The ratchet alone would let a
+          # file swap a wrapped violation for a fresh same-line one at an
+          # unchanged count (review finding, ADR-0096 / #396).
+          - klog-raw
+          - klog
+          # kagi-ui-* crates never touch git2 / kagi-git (ADR-0121)
+          - ui-core-layering
+          # …nor import a sibling feature crate (ADR-0121)
+          - ui-lateral
+          # the ADR-0129 Verbatim escape hatch stays deleted
+          - plan-verbatim
+          # modal file lists are not silently truncated (#454)
+          - modal-lists
+          # gates stay in one dialect (this file included)
+          - shell-hygiene
     steps:
       - uses: actions/checkout@v4
-      - name: Assert no git2 usage in src/ui
-        shell: bash
-        run: |
-          if grep -rnE 'git2::|Repository::open' src/ui/; then
-            echo "::error::src/ui must not use git2 directly — route through kagi_git::Backend (ADR-0072 / ADR-0078)."
-            exit 1
-          fi
-          echo "OK: src/ui has zero git2 usage."
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: check-${{ matrix.check }}
+        run: uv run --frozen --project ci check-${{ matrix.check }}
 
-  # ── BLOCKING: the MCP server must never depend on gpui (ADR-0163 / #331) ──────
-  invariant-mcp-no-gpui:
-    name: invariant — kagi-mcp is gpui-free
+  # ── BLOCKING: the gates themselves stay lint-clean and type-checked ─────────
+  gates-lint:
+    name: gates — ruff + mypy + selftest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Assert no gpui usage in crates/kagi-mcp
-        shell: bash
-        run: |
-          # kagi-mcp → kagi-git → kagi-domain. The MCP server exposes git to
-          # agents and MUST NOT pull in the GUI layer, so it runs headless / in
-          # CI (ADR-0163 / #331). Same shape as the src/ui git2 gate: match
-          # actual dependency usage (manifest dep line / import / path), not the
-          # word "gpui" in prose.
-          if grep -rnE 'gpui *=|use +gpui|gpui::' crates/kagi-mcp/; then
-            echo "::error::crates/kagi-mcp must not depend on gpui (ADR-0163 / #331)."
-            exit 1
-          fi
-          echo "OK: crates/kagi-mcp has zero gpui usage."
-
-  # ── BLOCKING: the `[kagi]` contract is a single channel (klog! only) (ADR-0096) ──
-  invariant-klog-single-channel:
-    name: invariant — [kagi] lines go through klog!
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Assert no hand-written [kagi] contract lines outside klog.rs
-        shell: bash
-        run: |
-          # The `[kagi] …` stderr lines are the headless test contract; ADR-0096
-          # requires them to be emitted only through the klog! macro. Forbid raw
-          # `eprintln!("[kagi]` / `println!("[kagi]` anywhere but the macro itself.
-          if grep -rnE '(eprintln|println)!\("\[kagi\]' --include='*.rs' . \
-               | grep -v 'crates/kagi-ui-core/src/klog.rs'; then
-            echo "::error::[kagi] contract lines must go through klog! (ADR-0096), not raw eprintln!/println!."
-            exit 1
-          fi
-          echo "OK: every [kagi] line routes through klog!."
-      - name: Assert no new wrapped [kagi] lines (ratchet, #396)
-        shell: bash
-        run: |
-          # The grep above is line-based, so it misses rustfmt-wrapped calls
-          # where `eprintln!(` and `"[kagi]` sit on different lines. This
-          # whole-file scan catches those too, ratcheted per file against
-          # ci/klog-baseline.txt so pre-existing violations don't red the
-          # board while new ones are blocked (#396).
-          ci/check-klog.sh
-
-  # ── BLOCKING: kagi-ui-core layering (ADR-0121 Phase C, same shape as ADR-0078) ──
-  invariant-ui-core-layering:
-    name: invariant — kagi-ui-core is git-free; no lateral ui-crate imports
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Assert kagi-ui-* crates never touch git2 / kagi-git
-        shell: bash
-        run: |
-          # Dependency direction (ADR-0121): kagi(bin) → kagi-ui-* → kagi-ui-core
-          # → kagi-domain. No kagi-ui-* crate may reach git2 or kagi-git.
-          #
-          # Match *actual usage*, not the bare substring (#394): a `use`/`::`
-          # path or `extern crate` in Rust, or a dependency line in Cargo.toml.
-          # The old naive `grep git2|kagi_git|kagi-git` also fired on the word
-          # in a doc comment ("libgit2", "git2 token"), forcing prose rewrites
-          # (#443). `\bgit2` does not match inside "libgit2" (no word boundary),
-          # and a real import cannot avoid `use`/`::`/`extern crate`, so this is
-          # both tighter and complete.
-          hits=$(
-            grep -rnE '\b(git2|kagi_git)::|^\s*use\s+(git2|kagi_git)\b|extern\s+crate\s+(git2|kagi_git)\b' \
-              --include='*.rs' crates/kagi-ui-*/ || true
-            grep -rnE '^(git2|kagi-git|kagi_git)\s*[=.]' \
-              --include='Cargo.toml' crates/kagi-ui-*/ || true
-          )
-          if [ -n "$hits" ]; then
-            echo "$hits"
-            echo "::error::kagi-ui-* crates must not depend on git2 or kagi-git (ADR-0121)."
-            exit 1
-          fi
-          echo "OK: kagi-ui-* crates have zero git2/kagi-git usage."
-      - name: Assert no lateral imports between kagi-ui-* feature crates
-        shell: bash
-        run: |
-          # Feature crates may depend on kagi-ui-core and kagi-domain only —
-          # never on a sibling kagi-ui-<feature> crate (ADR-0121). kagi-ui-core
-          # is the shared base, so it is the one allowed kagi_ui_* import.
-          fail=0
-          for d in crates/kagi-ui-*/; do
-            hyphen=$(basename "$d")
-            name=$(echo "$hyphen" | tr '-' '_')
-            if grep -rnE 'kagi_ui_[a-z_]+|kagi-ui-[a-z-]+' "$d" \
-                 | grep -vE "kagi_ui_core|kagi-ui-core|${name}|${hyphen}"; then
-              echo "::error::${d} imports a sibling kagi-ui-* crate — feature crates may only depend on kagi-ui-core (ADR-0121)."
-              fail=1
-            fi
-          done
-          [ "$fail" -eq 0 ] && echo "OK: no lateral kagi-ui-* imports."
-
-  # ── BLOCKING: modal lists must stay reachable (#454) ─────────────────────────
-  invariant-modal-lists-not-truncated:
-    name: invariant — modal file lists are not silently truncated
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Assert no .take(N) on discard/amend preview lists
-        shell: bash
-        # Whole-file scan (not a line-based grep) so a rustfmt-wrapped
-        # `preview_files\n.iter()\n.take(10)` chain is caught too — the same
-        # blind spot #396 found in the klog gate. Row-level truncation
-        # (`p.chars().take(80)`) stays allowed; see the script header for the
-        # `preview_commits` exclusion and when to widen it.
-        run: ci/check-modal-lists.sh
-
-  # ── BLOCKING: the ADR-0129 plan-text migration stays complete (Phase 3) ───────
-  invariant-plan-note-no-verbatim:
-    name: invariant — PlanNote/PlanTitle/RecoveryKind have no Verbatim escape hatch
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Assert the Verbatim migration scaffolding is gone
-        shell: bash
-        run: |
-          # ADR-0129 §4 Phase 3: the migration is proven complete by the
-          # workspace compiling with these variants deleted, not by this grep
-          # — this is a belt-and-suspenders check against regression.
-          if grep -rnE 'PlanNote::Verbatim|PlanTitle::Verbatim|RecoveryKind::Verbatim' \
-               crates/ src/; then
-            echo "::error::PlanNote::Verbatim / PlanTitle::Verbatim / RecoveryKind::Verbatim must not exist (ADR-0129 Phase 3 removed the migration escape hatch)."
-            exit 1
-          fi
-          echo "OK: no Verbatim plan-text escape hatch remains."
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: ruff check
+        run: uv run --frozen --project ci ruff check ci
+      - name: ruff format --check
+        run: uv run --frozen --project ci ruff format --check ci
+      - name: mypy
+        run: uv run --frozen --project ci mypy --config-file ci/pyproject.toml
+      - name: rule selftest
+        run: uv run --frozen --project ci check-all --selftest
 
   # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
   test-macos:
@@ -226,6 +149,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # The LOC ratchet at the end of this job runs through the `ci/` uv
+      # project, and ubuntu runners do not ship uv.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
       - name: cargo fmt --check
         run: cargo fmt --check
       - name: Install gpui system dependencies
@@ -238,4 +166,4 @@ jobs:
       - name: cargo clippy --workspace
         run: cargo clippy --workspace
       - name: LOC ratchet (T-LOC-GATE-001)
-        run: bash ci/check-loc.sh
+        run: uv run --frozen --project ci check-loc

@@ -10,6 +10,7 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
+use super::modal_shell::{modal_card, modal_scroll_body};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::{file_tree, KagiApp};
@@ -76,6 +77,7 @@ pub(crate) fn render_cherry_pick_modal(
                         .items_center()
                         .pl(theme::scaled_px(indent))
                         .mb_px()
+                        .flex_shrink_0()
                         .child(
                             div()
                                 .text_sm()
@@ -108,6 +110,7 @@ pub(crate) fn render_cherry_pick_modal(
                         .gap_1()
                         .pl(theme::scaled_px(indent))
                         .mb_px()
+                        .flex_shrink_0()
                         .child(
                             div()
                                 .w(theme::scaled_px(14.))
@@ -131,30 +134,34 @@ pub(crate) fn render_cherry_pick_modal(
         .collect();
 
     // ── Build modal card ────────────────────────────────────
-    let mut card = div()
-        .w(theme::scaled_px(520.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // ── Title + Current → Predicted (icon-badge treatment, same as
-        // every other plan-confirmation modal — user request 2026-07-23;
-        // `Copy` reads as "duplicate this commit elsewhere") ───────────
-        .child(render_modal_title_row(
-            SharedString::from(plan_title_text(&plan.title)),
-            Some((IconName::Copy.into(), current_theme().color_branch)),
-        ))
-        .child(render_current_predicted(
+    // #454: fixed title + scrolling body + pinned button row (`modal_card`),
+    // so a long preview tree can no longer push Cancel/Cherry-pick out of
+    // view. The preview file tree is a plain list and the card carries
+    // recovery prose, so the body is this card's single scroll region.
+    let card = modal_card(520.).child(
+        div()
+            .flex_shrink_0()
+            // ── Title (icon-badge treatment, same as every other
+            // plan-confirmation modal — user request 2026-07-23; `Copy`
+            // reads as "duplicate this commit elsewhere") ───────────
+            .child(render_modal_title_row(
+                SharedString::from(plan_title_text(&plan.title)),
+                Some((IconName::Copy.into(), current_theme().color_branch)),
+            )),
+    );
+
+    // ── Current → Predicted ───────────────────────────────
+    let mut body =
+        modal_scroll_body().child(div().flex_shrink_0().child(render_current_predicted(
             &plan,
             Some((IconName::Copy.into(), current_theme().color_branch)),
-        ));
+        )));
 
     // ── Preview files section ─────────────────────────────
     if !plan.preview_files.is_empty() {
         let mut preview_col = div().flex().flex_col().gap_px().child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().text_label))
                 .mb_1()
@@ -171,7 +178,7 @@ pub(crate) fn render_cherry_pick_modal(
         for row in tree_element_rows {
             preview_col = preview_col.child(row);
         }
-        card = card.child(preview_col);
+        body = body.child(preview_col.flex_shrink_0());
     }
 
     // ── Warnings ──────────────────────────────────────────
@@ -189,7 +196,7 @@ pub(crate) fn render_cherry_pick_modal(
                     ))),
             );
         }
-        card = card.child(warn_col);
+        body = body.child(warn_col.flex_shrink_0());
     }
 
     // ── Blockers ──────────────────────────────────────────
@@ -207,22 +214,23 @@ pub(crate) fn render_cherry_pick_modal(
                     ))),
             );
         }
-        card = card.child(block_col);
+        body = body.child(block_col.flex_shrink_0());
     }
 
     // ── Recovery ──────────────────────────────────────────
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        card = card.child(render_recovery_box(
+        body = body.child(div().flex_shrink_0().child(render_recovery_box(
             &recovery_text,
             current_theme().color_branch,
-        ));
+        )));
     }
 
     // ── Error message (preflight / execute failure) ───────
     if let Some(ref err) = modal.error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -249,7 +257,9 @@ pub(crate) fn render_cherry_pick_modal(
         );
     }
 
-    card = card.child(button_row);
+    let card = card
+        .child(body)
+        .child(div().flex_shrink_0().child(button_row));
 
     // ── Full-screen overlay wrapper ─────────────────────────
     modal_overlay(card)
@@ -297,6 +307,7 @@ pub(crate) fn render_commit_plan_modal(
     let tree_rows = file_tree::build_file_tree(&plan.preview_files);
     let mut preview_col = div().flex().flex_col().gap_px().child(
         div()
+            .flex_shrink_0()
             .text_sm()
             .text_color(rgb(current_theme().text_label))
             .mb_1()
@@ -318,6 +329,7 @@ pub(crate) fn render_commit_plan_modal(
                 preview_col = preview_col.child(
                     div()
                         .id(SharedString::from(format!("cpk-dir-{}", name.as_ref())))
+                        .flex_shrink_0()
                         .pl(theme::scaled_px(indent))
                         .text_xs()
                         .text_color(rgb(current_theme().change_dir))
@@ -341,6 +353,7 @@ pub(crate) fn render_commit_plan_modal(
                         .items_center()
                         .gap_1()
                         .pl(theme::scaled_px(indent))
+                        .flex_shrink_0()
                         .child(
                             div()
                                 .w(theme::scaled_px(14.))
@@ -362,27 +375,29 @@ pub(crate) fn render_commit_plan_modal(
         }
     }
 
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // Icon-badge header + boxed CURRENT→PREDICTED, same as every other
-        // plan-confirmation modal (user request 2026-07-23). `Plus` matches
-        // the "creates something new" family (a commit is a new object).
-        .child(render_modal_title_row(
-            SharedString::from(plan_title_text(&plan.title)),
-            Some((IconName::Plus.into(), current_theme().color_success)),
-        ))
-        .child(render_current_predicted(
+    // #454: fixed title + scrolling body + pinned button row (`modal_card`),
+    // so a long staging tree can no longer push Cancel/Commit out of view.
+    // The staging file tree is a plain list, so the body is this card's
+    // single scroll region and the tree renders at full height inside it.
+    let card = modal_card(480.).child(
+        div()
+            .flex_shrink_0()
+            // Icon-badge header, same as every other plan-confirmation modal
+            // (user request 2026-07-23). `Plus` matches the "creates
+            // something new" family (a commit is a new object).
+            .child(render_modal_title_row(
+                SharedString::from(plan_title_text(&plan.title)),
+                Some((IconName::Plus.into(), current_theme().color_success)),
+            )),
+    );
+
+    // Boxed CURRENT→PREDICTED, then the preview files
+    let mut body = modal_scroll_body()
+        .child(div().flex_shrink_0().child(render_current_predicted(
             &plan,
             Some((IconName::Plus.into(), current_theme().color_success)),
-        ))
-        // Preview files
-        .child(preview_col);
+        )))
+        .child(preview_col.flex_shrink_0());
 
     // Warnings
     if !plan.warnings.is_empty() {
@@ -399,7 +414,7 @@ pub(crate) fn render_commit_plan_modal(
                     ))),
             );
         }
-        card = card.child(warn_col);
+        body = body.child(warn_col.flex_shrink_0());
     }
 
     // Blockers
@@ -417,13 +432,14 @@ pub(crate) fn render_commit_plan_modal(
                     ))),
             );
         }
-        card = card.child(block_col);
+        body = body.child(block_col.flex_shrink_0());
     }
 
     // Error
     if let Some(ref err) = modal.error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -449,7 +465,9 @@ pub(crate) fn render_commit_plan_modal(
         );
     }
 
-    card = card.child(button_row);
+    let card = card
+        .child(body)
+        .child(div().flex_shrink_0().child(button_row));
 
     modal_overlay(card)
 }

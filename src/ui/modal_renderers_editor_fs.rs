@@ -8,8 +8,9 @@
 
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
+use super::modal_shell::{modal_card, modal_scroll_body};
 use super::modals::*;
-use super::theme::{self, theme as current_theme};
+use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
@@ -65,20 +66,14 @@ pub(crate) fn render_editor_fs_prompt_modal(
         cx.notify();
     });
 
-    let mut card = div()
-        .w(theme::scaled_px(420.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
+    let mut card = modal_card(420.)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
             SharedString::from(title),
             Some(accent),
-        ))
+        )))
         .child(
             div()
+                .flex_shrink_0()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -91,9 +86,10 @@ pub(crate) fn render_editor_fs_prompt_modal(
                 .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
         );
 
-    if let Some(ref err) = modal.error {
+    if let Some(err) = &modal.error {
         card = card.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -101,13 +97,19 @@ pub(crate) fn render_editor_fs_prompt_modal(
         );
     }
 
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("editor-fs-prompt-cancel")
-            .label(Msg::EditorWorkspaceCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
+    let mut button_row = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            Button::new("editor-fs-prompt-cancel")
+                .label(Msg::EditorWorkspaceCancel.t())
+                .ghost()
+                .small()
+                .on_click(cancel_handler),
+        );
     if name_is_valid {
         button_row = button_row.child(
             Button::new("editor-fs-prompt-confirm")
@@ -187,32 +189,27 @@ pub(crate) fn render_editor_delete_confirm_modal(
         }
     });
 
-    let mut card = div()
-        .w(theme::scaled_px(420.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
-            SharedString::from(title),
-            Some((
-                ModalIcon::Path("icons/trash-2.svg"),
-                current_theme().color_blocker,
-            )),
-        ))
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(current_theme().text_main))
-                .overflow_hidden()
-                .child(SharedString::from(name)),
-        );
+    let card = modal_card(420.).child(div().flex_shrink_0().child(render_modal_title_row(
+        SharedString::from(title),
+        Some((
+            ModalIcon::Path("icons/trash-2.svg"),
+            current_theme().color_blocker,
+        )),
+    )));
+
+    let mut body = modal_scroll_body().child(
+        div()
+            .flex_shrink_0()
+            .text_sm()
+            .text_color(rgb(current_theme().text_main))
+            .overflow_hidden()
+            .child(SharedString::from(name)),
+    );
 
     if let Some(count) = modal.file_count {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_xs()
                 .text_color(rgb(current_theme().text_muted))
                 .child(SharedString::from(
@@ -222,8 +219,9 @@ pub(crate) fn render_editor_delete_confirm_modal(
     }
 
     if modal.has_dirty_buffers {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_xs()
                 .text_color(rgb(current_theme().color_blocker))
                 .child(SharedString::from(
@@ -232,16 +230,18 @@ pub(crate) fn render_editor_delete_confirm_modal(
         );
     }
 
-    card = card.child(
+    body = body.child(
         div()
+            .flex_shrink_0()
             .text_xs()
             .text_color(rgb(current_theme().text_muted))
             .child(SharedString::from(Msg::EditorDeleteConfirmTrashNote.t())),
     );
 
-    if let Some(ref err) = modal.error {
-        card = card.child(
+    if let Some(err) = &modal.error {
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -250,6 +250,7 @@ pub(crate) fn render_editor_delete_confirm_modal(
     }
 
     let button_row = div()
+        .flex_shrink_0()
         .flex()
         .flex_row()
         .gap_2()
@@ -271,7 +272,7 @@ pub(crate) fn render_editor_delete_confirm_modal(
             .small()
             .on_click(confirm_handler),
         );
-    card = card.child(button_row);
+    let card = card.child(body).child(button_row);
 
     modal_overlay(card.occlude())
         .on_key_down(esc_cancel)

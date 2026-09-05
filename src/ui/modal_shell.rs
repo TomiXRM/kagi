@@ -69,8 +69,15 @@ pub(crate) fn modal_list_max_h(rows: usize) -> gpui::Pixels {
 /// the Cancel/Confirm row out of view, and a destructive confirm must always
 /// show its own buttons. The lists inside [`modal_body`] are the scrollers.
 pub(crate) fn modal_card(width: f32) -> gpui::Div {
+    modal_card_sized().w(theme::scaled_px(width))
+}
+
+/// [`modal_card`] without the width, for the one card whose width is already
+/// computed in real pixels (the update modal sizes itself off the viewport).
+/// Passing such a width through `modal_card` would apply `scaled_px` on top of
+/// it and multiply the UI zoom in twice.
+pub(crate) fn modal_card_sized() -> gpui::Div {
     div()
-        .w(theme::scaled_px(width))
         .max_h(gpui::relative(0.8))
         .overflow_hidden()
         .bg(rgb(current_theme().modal))

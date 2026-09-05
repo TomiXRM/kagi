@@ -9,8 +9,9 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
+use super::modal_shell::{modal_card, modal_scroll_body};
 use super::modals::*;
-use super::theme::{self, theme as current_theme};
+use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
@@ -62,21 +63,18 @@ pub(crate) fn render_stash_push_modal(
         cx.notify();
     });
 
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
-            SharedString::from("Stash push — save local modifications"),
-            Some((IconName::Inbox.into(), current_theme().color_warning)),
-        ))
+    // #454: the plan's notes/warnings and the recovery prose grow with the
+    // plan and there is no inner scroller here, so the body is this card's
+    // single scroll region.
+    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
+        SharedString::from("Stash push — save local modifications"),
+        Some((IconName::Inbox.into(), current_theme().color_warning)),
+    )));
+    let mut body = modal_scroll_body()
         // ── Message input ──────────────────────────────────
         .child(
             div()
+                .flex_shrink_0()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -91,10 +89,10 @@ pub(crate) fn render_stash_push_modal(
 
     // ── Plan state (current → predicted) ─────────────────
     if let Some(ref p) = plan {
-        card = card.child(render_current_predicted(
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(
             p,
             Some((IconName::Inbox.into(), current_theme().color_warning)),
-        ));
+        )));
 
         // ── Warnings ──────────────────────────────────────
         if !p.warnings.is_empty() {
@@ -111,7 +109,7 @@ pub(crate) fn render_stash_push_modal(
                         ))),
                 );
             }
-            card = card.child(warn_col);
+            body = body.child(warn_col.flex_shrink_0());
         }
 
         // ── Blockers ──────────────────────────────────────
@@ -129,23 +127,24 @@ pub(crate) fn render_stash_push_modal(
                         ))),
                 );
             }
-            card = card.child(block_col);
+            body = body.child(block_col.flex_shrink_0());
         }
 
         // ── Recovery ──────────────────────────────────────
         let recovery_text = plan_recovery_text(p.recovery.as_ref());
         if !recovery_text.is_empty() {
-            card = card.child(render_recovery_box(
+            body = body.child(div().flex_shrink_0().child(render_recovery_box(
                 &recovery_text,
                 current_theme().color_warning,
-            ));
+            )));
         }
     }
 
     // ── Error message ──────────────────────────────────
     if let Some(ref err) = modal.error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -175,7 +174,9 @@ pub(crate) fn render_stash_push_modal(
         );
     }
 
-    card = card.child(button_row);
+    let card = card
+        .child(body)
+        .child(div().flex_shrink_0().child(button_row));
 
     let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
         if e.keystroke.key == "escape" {
@@ -239,23 +240,18 @@ pub(crate) fn render_stash_apply_modal(
         cx.notify();
     });
 
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
-            SharedString::from(plan_title_text(&plan.title)),
-            Some((IconName::Inbox.into(), current_theme().color_success)),
-        ))
+    // #454: blockers and the recovery prose grow with the plan and this card
+    // has no inner scroller, so the body is its single scroll region.
+    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
+        SharedString::from(plan_title_text(&plan.title)),
+        Some((IconName::Inbox.into(), current_theme().color_success)),
+    )));
+    let mut body = modal_scroll_body()
         // ── Current → Predicted ─────────────────────────────
-        .child(render_current_predicted(
+        .child(div().flex_shrink_0().child(render_current_predicted(
             &plan,
             Some((IconName::Inbox.into(), current_theme().color_success)),
-        ));
+        )));
 
     // ── Blockers ──────────────────────────────────────────
     if !plan.blockers.is_empty() {
@@ -272,22 +268,23 @@ pub(crate) fn render_stash_apply_modal(
                     ))),
             );
         }
-        card = card.child(block_col);
+        body = body.child(block_col.flex_shrink_0());
     }
 
     // ── Recovery ──────────────────────────────────────────
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        card = card.child(render_recovery_box(
+        body = body.child(div().flex_shrink_0().child(render_recovery_box(
             &recovery_text,
             current_theme().color_success,
-        ));
+        )));
     }
 
     // ── Error message ────────────────────────────────────
     if let Some(ref err) = modal.error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -317,7 +314,9 @@ pub(crate) fn render_stash_apply_modal(
         );
     }
 
-    card = card.child(button_row);
+    let card = card
+        .child(body)
+        .child(div().flex_shrink_0().child(button_row));
 
     // ── Full-screen overlay wrapper ─────────────────────────
     modal_overlay(card)

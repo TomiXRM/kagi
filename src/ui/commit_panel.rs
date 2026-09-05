@@ -461,9 +461,10 @@ pub struct CommitPanelView {
     pub repo_path: PathBuf,
     /// issue #473: `Some((worktree label, lane colour index))` when this panel
     /// shows a **linked worktree** rather than the open tab's repository. It
-    /// names the worktree in the header, in the WIP row's own colour, and puts
-    /// the panel in read-only mode — the write ops resolve the repository from
-    /// the tab, so they are hidden here (and refused by
+    /// names the worktree in the header, in the WIP row's own colour. #476
+    /// slice 1: stage/unstage write into that worktree, so their controls are
+    /// live; commit / amend / Discard all still resolve the tab's repository,
+    /// so those are hidden here (and refused by
     /// `KagiApp::refuse_foreign_panel_write`). Set by `open_commit_panel_at`.
     pub foreign: Option<(SharedString, usize)>,
 }

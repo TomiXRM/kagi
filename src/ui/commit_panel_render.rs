@@ -56,9 +56,10 @@ fn render_cp_file_row(
     indent: f32,
     stat: Option<&kagi_git::FileDiffStat>,
     convention: bool,
-    // #473: false on a linked-worktree panel — its per-row Stage/Unstage
-    // button and the Discard context menu are hidden (read-only in v1).
-    writable: bool,
+    // #476: false on a linked-worktree panel — Stage/Unstage now write into
+    // the panel's own repository, but Discard still resolves the tab's, so
+    // only the file context menu (which is Discard) stays hidden there.
+    can_discard: bool,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::Stateful<gpui::Div> {
     let (row_id, btn_id, conflict_id) = match (staged, tree) {
@@ -163,7 +164,7 @@ fn render_cp_file_row(
                 .child(SharedString::from("Conflict")),
         );
     }
-    if !staged && writable {
+    if !staged && can_discard {
         // W17-DISCARD / ADR-0083: right-click opens the file context menu
         // (Discard lives there). Tracked rows are restored from the index;
         // untracked rows are deleted (after an ODB backup).
@@ -172,9 +173,6 @@ fn render_cp_file_row(
             view.defer_open_file_menu(fi, e.position, window, cx);
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-    }
-    if !writable {
-        return file_row;
     }
     let (label, accent) = if staged {
         ("Unstage", theme().color_warning)
@@ -817,12 +815,12 @@ impl CommitPanelView {
         let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
         let staged_scroll_handle = self.staged_scroll_handle.clone();
 
-        // #473: a panel showing a LINKED WORKTREE is read-only — every write op
-        // resolves its repository from the open tab, so staging or committing
-        // from here would touch the wrong repository. Hide the controls and say
-        // why. (`KagiApp::refuse_foreign_panel_write` is the real guard; this is
-        // the UI half.) Threading the panel's path through the write path is the
-        // follow-up.
+        // #476: a panel showing a LINKED WORKTREE stages into that worktree, so
+        // Stage all / Unstage all / the per-row buttons are live here. Commit,
+        // amend and Discard all still resolve their repository from the open
+        // tab, so those stay hidden and the footer says so.
+        // (`KagiApp::refuse_foreign_panel_write` is the real guard; this is the
+        // UI half.) Slices 2–3 convert the rest.
         let foreign = self.foreign.clone();
         let writable = foreign.is_none();
         let tree_view = panel.tree_view;
@@ -913,7 +911,8 @@ impl CommitPanelView {
                     .text_color(rgb(theme().text_label))
                     .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
             )
-            .when(writable && unstaged_count > 0, |el| {
+            // #476: live on a worktree panel too — it stages into the worktree.
+            .when(unstaged_count > 0, |el| {
                 let stage_all_click = cx.listener(
                     |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
                         view.defer_stage_all(window, cx);
@@ -990,7 +989,8 @@ impl CommitPanelView {
                     .text_color(rgb(theme().text_label))
                     .child(SharedString::from(format!("Staged ({})", staged_count))),
             )
-            .when(writable && staged_count > 0, |el| {
+            // #476: live on a worktree panel too — see "Stage all" above.
+            .when(staged_count > 0, |el| {
                 let unstage_all_click = cx.listener(
                     |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
                         view.defer_unstage_all(window, cx);
@@ -1416,9 +1416,9 @@ impl CommitPanelView {
                             }),
                     ),
             )
-            // #473: a worktree panel replaces the whole commit footer with one
-            // line — no message box, no commit button, nothing that could write
-            // into the open tab's repository by mistake.
+            // #476: a worktree panel replaces the whole commit footer with one
+            // line — staging is live (see "Stage all"), but commit still
+            // resolves the open tab's repository, so it needs the worktree open.
             .when(!writable, |el| {
                 el.child(
                     div()

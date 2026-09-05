@@ -41,6 +41,10 @@ pub struct TabViewState {
     pub tags: Vec<Tag>,
     pub branch_upstream_info: HashMap<String, UpstreamInfo>,
     pub worktrees: Vec<Worktree>,
+    /// #472: the lane each WIP row's dashed HEAD connector took, positionally
+    /// aligned with the WIP rows `render_body` builds (`graph_wip::wip_targets`
+    /// derives the same list from the snapshot). `None` = no connector drawn.
+    pub wip_lanes: Vec<Option<usize>>,
     pub branch_solo: Option<BranchSolo>,
     /// Commit-activity aggregation for the bottom-panel "Activity" chart.
     pub activity: kagi_domain::activity::ActivityData,
@@ -89,7 +93,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         snap.commits.len()
     ));
 
-    let (rows, stash_graph_rows, stash_graph_lanes) =
+    let (mut rows, stash_graph_rows, stash_graph_lanes) =
         commit_list::build_commit_rows_with_stashes(snap);
     let details = build_commit_details(snap);
 
@@ -148,6 +152,15 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         .map(|(i, c)| (c.id.clone(), i))
         .collect();
 
+    // #472: post-pass over the built rows — one dashed connector per WIP row,
+    // down to that worktree's HEAD. Same stage as the squash ghost connectors,
+    // just synchronous: everything it needs is already in the snapshot.
+    let wip_lanes = super::graph_wip::inject_wip_edges(
+        &mut rows,
+        &super::graph_wip::wip_targets(snap),
+        &commit_row_index,
+    );
+
     // W2-SIDEBAR: collect remote branches and tags.
     let remote_branches = snap.remote_branches.clone();
     let tags = snap.tags.clone();
@@ -201,6 +214,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         tags,
         branch_upstream_info,
         worktrees: snap.worktrees.clone(),
+        wip_lanes,
         branch_solo: None,
         activity: kagi_domain::activity::aggregate(&snap.commits, now_unix_secs()),
         cleanup_rows: snap.cleanup_rows.clone(),

@@ -335,6 +335,7 @@ pub fn remote_snapshot(
         is_current: true,
         is_main: true,
         wip: None,
+        head: None,
         locked: false,
         lock_reason: None,
     }];

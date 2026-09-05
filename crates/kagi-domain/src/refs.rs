@@ -146,6 +146,9 @@ pub struct Worktree {
     pub is_main: bool,
     /// Pending changes in this worktree, if any. `None` when clean or unread.
     pub wip: Option<WorktreeWip>,
+    /// Commit this worktree's HEAD points at (detached HEADs included), when it
+    /// could be read. #472: the target the WIP row's dashed connector aims at.
+    pub head: Option<CommitId>,
     /// True when the worktree is locked (`git worktree lock`).
     pub locked: bool,
     /// Reason recorded with the lock, if any.

@@ -55,6 +55,7 @@ pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_squash;
 pub mod graph_view;
+pub mod graph_wip;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod inspector;
 pub mod main_diff_pane;

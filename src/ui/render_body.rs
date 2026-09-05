@@ -90,8 +90,12 @@ impl KagiApp {
                 .unwrap_or(false);
             let worktrees = &self.active_view.worktrees;
             let cur_idx = worktrees.iter().position(|w| w.is_current);
+            // NOTE (#472): this list must stay row-for-row identical to
+            // `graph_wip::wip_targets`, which derives the same WIP rows from
+            // the snapshot — `active_view.wip_lanes` is matched to it by
+            // position.
             let mut params: Vec<(
-                gpui::Hsla,
+                usize, // lane colour index
                 SharedString,
                 usize,
                 Option<WipDiffStat>,
@@ -105,7 +109,7 @@ impl KagiApp {
             // even when path canonicalization can't match the open repo. Clicking
             // opens the commit panel (stage/unstage).
             if is_dirty {
-                let color = theme().lane_color(cur_idx.unwrap_or(0));
+                let color_idx = cur_idx.unwrap_or(0);
                 let label = cur_idx
                     .and_then(|i| worktrees[i].branch.clone())
                     .or_else(|| {
@@ -117,7 +121,7 @@ impl KagiApp {
                     })
                     .unwrap_or_else(|| "WIP".to_string());
                 params.push((
-                    color,
+                    color_idx,
                     SharedString::from(label),
                     live_total,
                     wip_diffstat,
@@ -139,7 +143,7 @@ impl KagiApp {
                 let label =
                     SharedString::from(wt.branch.clone().unwrap_or_else(|| wt.name.clone()));
                 params.push((
-                    theme().lane_color(idx),
+                    idx,
                     label,
                     wip.total(),
                     None,
@@ -148,23 +152,37 @@ impl KagiApp {
                 ));
             }
 
-            params
-                .into_iter()
-                .map(|(color, label, count, ds, click, is_worktree)| {
-                    self.render_wip_row(
-                        color,
-                        label,
-                        count,
-                        ds,
-                        click,
-                        is_worktree,
-                        commit_panel_open,
-                        badge_col_w,
-                        graph_col_w,
-                        cx,
-                    )
-                })
-                .collect()
+            // #472: each row gets its own connector lane plus the lanes of the
+            // rows above it, whose connectors pass straight through — the same
+            // accumulation the stash rows do with `passing_lanes`.
+            let wip_lanes = self.active_view.wip_lanes.clone();
+            let graph_scroll_x = self.graph_scroll_x;
+            let mut passing: Vec<(usize, usize)> = Vec::new();
+            let mut rows: Vec<gpui::AnyElement> = Vec::with_capacity(params.len());
+            for (i, (color_idx, label, count, ds, click, is_worktree)) in
+                params.into_iter().enumerate()
+            {
+                let lane = wip_lanes.get(i).copied().flatten();
+                rows.push(self.render_wip_row(
+                    color_idx,
+                    label,
+                    count,
+                    ds,
+                    click,
+                    is_worktree,
+                    commit_panel_open,
+                    lane,
+                    &passing,
+                    badge_col_w,
+                    graph_col_w,
+                    graph_scroll_x,
+                    cx,
+                ));
+                if let Some(l) = lane {
+                    passing.push((l, color_idx));
+                }
+            }
+            rows
         };
 
         // T030: column header row (fixed, above WIP and commit list).

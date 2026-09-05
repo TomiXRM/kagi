@@ -198,20 +198,29 @@ impl KagiApp {
     /// The currently-open worktree's row opens the commit panel (stage/unstage)
     /// and carries a live `+/-` diffstat; a linked worktree's row switches the
     /// open repo to that worktree so its changes can be acted on there.
+    ///
+    /// #472: `lane` is the column this row's dashed connector runs down to its
+    /// worktree's HEAD (`None` when HEAD is not in the loaded window), and
+    /// `pass_lanes` are the `(lane, colour index)` of the connectors belonging
+    /// to the WIP rows *above* this one, which have to keep running through it.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_wip_row(
         &self,
-        color: gpui::Hsla,
+        color_idx: usize,
         label: SharedString,
         change_count: usize,
         diffstat: Option<WipDiffStat>,
         click: WipRowClick,
         is_worktree: bool,
         commit_panel_open: bool,
+        lane: Option<usize>,
+        pass_lanes: &[(usize, usize)],
         badge_col_w: f32,
         graph_col_w: f32,
+        graph_scroll_x: f32,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        let color = theme().lane_color(color_idx);
         let is_commit_panel = matches!(click, WipRowClick::CommitPanel);
         let dark = theme().dark;
         // Tinted chip built from the worktree's lane colour (badge_style only
@@ -314,24 +323,51 @@ impl KagiApp {
                     .justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
             )
-            // Graph column: hollow "not yet committed" node tinted in the
-            // worktree colour — visually continues the graph upward.
-            .child(
+            // Graph column: the WIP dot plus its dashed connector down to HEAD
+            // (#472), drawn through the ordinary graph painter so the lane
+            // geometry, zoom scaling and horizontal scroll match the rows below
+            // exactly. `OutOfNode` on the row's own lane paints the dot's stub
+            // to the bottom edge; each pass-through is a full-height dash.
+            .child({
+                let mut edges: Vec<crate::graph::GraphEdge> = pass_lanes
+                    .iter()
+                    .map(|&(l, ci)| crate::graph::GraphEdge {
+                        from_lane: l,
+                        to_lane: l,
+                        kind: crate::graph::EdgeKind::Pass,
+                        color: graph_wip::wip_color(ci),
+                    })
+                    .collect();
+                if let Some(l) = lane {
+                    edges.push(crate::graph::GraphEdge {
+                        from_lane: l,
+                        to_lane: l,
+                        kind: crate::graph::EdgeKind::OutOfNode,
+                        color: graph_wip::wip_color(color_idx),
+                    });
+                }
                 div()
                     .w(theme::scaled_px(graph_col_w))
+                    .h_full()
                     .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .ml(theme::scaled_px(graph_view::LANE_W / 2.0 - 4.5))
-                            .w(theme::scaled_px(9.))
-                            .h(theme::scaled_px(9.))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(color),
-                    ),
-            )
+                    .overflow_hidden()
+                    .when(graph_view::lanes_for_width(graph_col_w) > 0, |el| {
+                        el.child(
+                            graph_view::graph_canvas(
+                                lane.unwrap_or(0),
+                                color_idx,
+                                edges,
+                                false,
+                                false,
+                                false,
+                                graph_scroll_x,
+                                graph_lane_pad_l(),
+                                Vec::new(),
+                            )
+                            .size_full(),
+                        )
+                    })
+            })
             // Inner divider spacer (graph|message handle width)
             .child(
                 div()

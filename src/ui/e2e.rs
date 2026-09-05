@@ -97,6 +97,29 @@ pub fn build_kagi_entity(
     kagi
 }
 
+/// Issue #468: push a synthetic `Failed` op-log entry onto the panel, through
+/// the same `OpLogPanel::push` the real `record_op` path uses. Part of the seam
+/// because `kagi_git::oplog::OpLogEntry` is a normal dep the runner cannot name.
+pub fn push_failed_op(app: &KagiApp, op: &str, error: String, cx: &mut App) {
+    let Some(panel) = app.op_log.clone() else {
+        return;
+    };
+    let state = |head: &str| kagi_git::ops::StateSummary {
+        head: head.to_string(),
+        dirty: "clean".to_string(),
+    };
+    let entry = kagi_git::oplog::OpLogEntry::new(
+        op,
+        "e2e",
+        state("HEAD \u{2192} main"),
+        kagi_git::oplog::OpOutcome::Failed { error },
+    );
+    panel.update(cx, |panel, cx| {
+        panel.push(entry);
+        cx.notify();
+    });
+}
+
 /// Mount the real root offscreen: build the [`KagiApp`] entity (captured into
 /// `out` so the runner can read observable state) and wrap it in
 /// `gpui_component::Root` exactly like `open_main_window`. Returned as the

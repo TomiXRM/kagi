@@ -305,6 +305,8 @@ pub enum Msg {
     // ── Empty states ────────────────────────────────────────────────
     NoLocalBranches,
     NoOperationsYet,
+    /// Operation Log row: tooltip on the per-row copy button (issue #468).
+    OpLogCopyEntry,
 
     // ── Command palette (issue #352) ─────────────────────────────────
     /// Placeholder text in the palette's search box.
@@ -1154,6 +1156,8 @@ impl Msg {
             (Ja, CommandPaletteNoResults) => "一致するコマンドがありません",
             (En, NoOperationsYet) => "No operations yet",
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
+            (En, OpLogCopyEntry) => "Copy entry",
+            (Ja, OpLogCopyEntry) => "エントリをコピー",
 
             // ── Misc footers ────────────────────────────────────────
             (En, Refreshed) => "Refreshed",

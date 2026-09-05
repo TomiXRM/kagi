@@ -15,8 +15,7 @@
 
 use std::collections::VecDeque;
 
-use gpui::UniformListScrollHandle;
-use kagi_git::oplog::OpLogEntry;
+use kagi_git::oplog::{OpLogEntry, OpOutcome};
 
 /// Maximum entries kept in the in-memory ring buffer.
 const OP_ENTRIES_MAX: usize = 200;
@@ -26,8 +25,21 @@ pub struct OpLogPanel {
     entries: VecDeque<OpLogEntry>,
     /// Which row index (0 = newest) is currently expanded; `None` = none.
     expanded: Option<usize>,
-    /// Scroll handle for the `uniform_list` virtual scroll.
-    scroll_handle: UniformListScrollHandle,
+    /// Scroll handle for the virtualized row list. Issue #468: a
+    /// [`gpui::ListState`] (variable row height) rather than a
+    /// `UniformListScrollHandle` — an expanded row is taller than a collapsed
+    /// one, and `uniform_list` lays every row out at the FIRST row's height,
+    /// so the overflow painted over the rows below. Same swap T-DIFF-WRAP-001
+    /// made for the diff panes (`render_helpers::new_diff_list_state`).
+    scroll_handle: gpui::ListState,
+}
+
+/// Issue #468: a fresh op-log [`gpui::ListState`] (item count 0 — the render
+/// syncs it to the real entry count each frame, the lifecycle documented on
+/// `render_helpers::render_diff_list`). `px(1000.)` overdraw matches the diff
+/// list, the other variable-height list in the app.
+fn new_oplog_list_state() -> gpui::ListState {
+    gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(1000.))
 }
 
 impl OpLogPanel {
@@ -35,7 +47,7 @@ impl OpLogPanel {
         Self {
             entries: VecDeque::new(),
             expanded: None,
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle: new_oplog_list_state(),
         }
     }
 
@@ -44,7 +56,7 @@ impl OpLogPanel {
         Self {
             entries,
             expanded: None,
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle: new_oplog_list_state(),
         }
     }
 
@@ -85,10 +97,82 @@ impl OpLogPanel {
         self.expanded = None;
     }
 
-    /// A clone of the scroll handle for the `uniform_list` + scrollbar.
-    pub fn scroll_handle(&self) -> UniformListScrollHandle {
+    /// A clone of the scroll handle for `gpui::list` + the scrollbar overlay.
+    pub fn scroll_handle(&self) -> gpui::ListState {
         self.scroll_handle.clone()
     }
+
+    /// Issue #468: copy row `i`'s whole entry (the truncated summary AND the
+    /// detail block) to the clipboard. Same path as `branch_menu::copy_*` /
+    /// `context_menu::copy_full_sha`. Called by the row's copy button; also the
+    /// seam the GUI E2E scenario drives.
+    pub fn copy_entry(&self, i: usize, cx: &mut gpui::App) {
+        let Some(entry) = self.entries.get(i) else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(entry_clipboard_text(entry)));
+    }
+}
+
+/// One-line outcome summary shown on the (truncated) summary row. Pure so the
+/// clipboard text and the rendered row cannot drift apart.
+pub fn outcome_summary(outcome: &OpOutcome) -> String {
+    match outcome {
+        OpOutcome::Success { after } => format!("Success \u{2192} {}", after.head),
+        OpOutcome::Partial { after, error } => {
+            format!("Partial \u{2192} {}: {}", after.head, error)
+        }
+        OpOutcome::Failed { error } => format!("Failed: {}", error),
+        OpOutcome::Refused { blockers } => format!(
+            "Refused ({} blocker{})",
+            blockers.len(),
+            if blockers.len() == 1 { "" } else { "s" }
+        ),
+    }
+}
+
+/// The expanded-row detail lines (before/after state + error/blockers). Pure.
+pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
+    let mut lines = vec![
+        format!("  before:  {}", entry.before.head),
+        format!("  dirty:   {}", entry.before.dirty),
+    ];
+    match &entry.outcome {
+        OpOutcome::Success { after } => {
+            lines.push(format!("  after:   {}", after.head));
+            lines.push(format!("  dirty:   {}", after.dirty));
+        }
+        OpOutcome::Partial { after, error } => {
+            lines.push(format!("  after:   {}", after.head));
+            lines.push(format!("  dirty:   {}", after.dirty));
+            lines.push(format!("  error:   {}", error));
+        }
+        OpOutcome::Failed { error } => lines.push(format!("  error:   {}", error)),
+        OpOutcome::Refused { blockers } => {
+            for b in blockers {
+                lines.push(format!("  blocker: {}", b));
+            }
+        }
+    }
+    lines
+}
+
+/// Issue #468: the whole entry as one readable multi-line string — the summary
+/// header (time / op / outcome) plus every detail line, i.e. exactly what the
+/// expanded row shows, including the tail the summary row truncates away.
+/// Pure (no gpui, no `cx`) so it is unit-testable.
+pub fn entry_clipboard_text(entry: &OpLogEntry) -> String {
+    let mut out = format!(
+        "{}  {}  {}\n",
+        super::format_hms(entry.timestamp),
+        entry.op,
+        outcome_summary(&entry.outcome)
+    );
+    for line in detail_lines(entry) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
 }
 
 impl Default for OpLogPanel {
@@ -136,6 +220,51 @@ mod tests {
         panel.push(dummy_entry("first"));
         panel.push(dummy_entry("second"));
         assert_eq!(panel.entries().front().unwrap().op, "second");
+    }
+
+    /// Issue #468: the clipboard text carries the whole entry — the header the
+    /// summary row truncates AND every detail line, long `error:` included.
+    #[test]
+    fn clipboard_text_carries_the_whole_entry() {
+        let long_error = "x".repeat(200);
+        let entry = OpLogEntry::new(
+            "checkout",
+            "repo",
+            kagi_git::ops::StateSummary {
+                head: "HEAD → main".to_string(),
+                dirty: "clean".to_string(),
+            },
+            OpOutcome::Failed {
+                error: long_error.clone(),
+            },
+        );
+        let text = entry_clipboard_text(&entry);
+        let lines: Vec<&str> = text.lines().collect();
+        // header + before + dirty + error
+        assert_eq!(lines.len(), 4, "unexpected shape: {text:?}");
+        assert!(lines[0].ends_with(&format!("  checkout  Failed: {long_error}")));
+        assert_eq!(lines[1], "  before:  HEAD → main");
+        assert_eq!(lines[2], "  dirty:   clean");
+        assert_eq!(lines[3], format!("  error:   {long_error}"));
+    }
+
+    #[test]
+    fn clipboard_text_lists_every_blocker() {
+        let entry = OpLogEntry::new(
+            "merge",
+            "repo",
+            kagi_git::ops::StateSummary {
+                head: "main".to_string(),
+                dirty: "dirty".to_string(),
+            },
+            OpOutcome::Refused {
+                blockers: vec!["uncommitted changes".into(), "detached HEAD".into()],
+            },
+        );
+        let text = entry_clipboard_text(&entry);
+        assert!(text.contains("Refused (2 blockers)"), "{text}");
+        assert!(text.contains("  blocker: uncommitted changes"), "{text}");
+        assert!(text.contains("  blocker: detached HEAD"), "{text}");
     }
 
     #[test]

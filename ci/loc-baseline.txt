@@ -19,13 +19,13 @@ src/ui/blocking_ops.rs 995
 src/ui/branch_cleanup.rs 1064
 src/ui/branch_menu.rs 915
 src/ui/commands.rs 2115
-src/ui/commit_list.rs 841
+src/ui/commit_list.rs 838
 src/ui/commit_panel_render.rs 1416
 src/ui/conflict_editor.rs 1328
 src/ui/conflict_view.rs 2073
 src/ui/diff_view.rs 1587
 src/ui/inspector.rs 1244
-src/ui/mod.rs 4225
+src/ui/mod.rs 4226
 src/ui/operations/branch.rs 1744
 src/ui/operations/commit.rs 1233
 src/ui/operations/conflict.rs 992
@@ -33,8 +33,8 @@ src/ui/operations/modal_state.rs 1090
 src/ui/operations/stash.rs 807
 src/ui/operations/worktree.rs 840
 src/ui/pr_mode.rs 2349
-src/ui/render_header.rs 807
 src/ui/render.rs 914
+src/ui/render_header.rs 807
 src/ui/settings_view.rs 823
 src/ui/sidebar.rs 2007
 src/ui/tabs.rs 1168

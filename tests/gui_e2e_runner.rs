@@ -19,8 +19,8 @@
 //! `KagiApp` fields, the clipboard, or repo refs (ADR-0166 §3: the assertions
 //! are the oracle, screenshots are triage only). Coverage: bottom-panel toggle
 //! (PoC), graph Cmd+C copy (ADR-0170), Create Snapshot (#335), command-palette
-//! theme switch (#373), agent provenance (#337). Exits 0 on success, non-zero
-//! (panic → 101) on failure.
+//! theme switch (#373), agent provenance (#337), WIP→HEAD connectors (#472).
+//! Exits 0 on success, non-zero (panic → 101) on failure.
 //!
 //! Run (opt-in — see the `KAGI_GUI_E2E` guard in `run`):
 //!   KAGI_GUI_E2E=1 CARGO_TARGET_DIR=…/target \
@@ -55,9 +55,10 @@ mod macos {
     use std::rc::Rc;
 
     use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
+    use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
-        commands::CreateSnapshot, commit_list, e2e, oplog_panel, settings::CopyTarget, theme,
-        BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
+        commands::CreateSnapshot, commit_list, e2e, graph_wip, oplog_panel, settings::CopyTarget,
+        theme, BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
     };
 
     /// `git` with a deterministic identity + no user-config bleed-through.
@@ -112,6 +113,42 @@ mod macos {
             ],
         );
         dir
+    }
+
+    /// Issue #472: a repo whose HEAD is buried — three commits stacked on a
+    /// sibling branch put `main`'s HEAD at row 3 — with BOTH the main working
+    /// tree and a linked worktree dirty, so the graph draws two WIP rows, each
+    /// needing its own dashed connector down to its own HEAD.
+    ///
+    /// The worktree lives beside the repo, not inside it, so it does not show
+    /// up as an untracked directory in the repo's own status.
+    fn build_wip_connector_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo = root.path().join("repo");
+        let wt = root.path().join("wt");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("f.txt"), "base\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        // Three commits on top of HEAD, on another branch: the revwalk emits
+        // children before parents, so `main`'s HEAD lands at row 3.
+        git(&repo, &["checkout", "-q", "-b", "ahead"]);
+        for i in 0..3 {
+            std::fs::write(repo.join("f.txt"), format!("ahead {i}\n")).unwrap();
+            git(&repo, &["commit", "-q", "-am", &format!("ahead {i}")]);
+        }
+        git(&repo, &["checkout", "-q", "main"]);
+        git(
+            &repo,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "ahead"],
+        );
+        // Both working trees dirty → two WIP rows.
+        std::fs::write(repo.join("dirty.txt"), "main\n").unwrap();
+        std::fs::write(wt.join("dirty.txt"), "wt\n").unwrap();
+        let repo = repo.canonicalize().unwrap();
+        let wt = wt.canonicalize().unwrap();
+        (root, repo, wt)
     }
 
     /// Overwrite `$KAGI_LOG_DIR/settings.json` (the isolated dir `run` sets) with
@@ -208,6 +245,7 @@ mod macos {
         scenario_create_snapshot(&mut cx);
         scenario_theme_switch(&mut cx);
         scenario_agent_provenance(&mut cx);
+        scenario_wip_head_connector(&mut cx);
 
         eprintln!("[gui-e2e] PASS all scenarios");
         0
@@ -506,6 +544,118 @@ mod macos {
             "plain human commit should carry no provenance"
         );
         eprintln!("[gui-e2e] PASS agent_provenance head=ClaudeCode human=None");
+    }
+
+    /// Issue #472: each WIP row draws a dashed connector down to its own
+    /// worktree's HEAD, in that worktree's lane colour.
+    ///
+    /// Asserts, through the real snapshot → `build_tab_view` pipeline: two WIP
+    /// rows each get a lane, the lanes differ, every row above the open repo's
+    /// HEAD carries exactly one WIP-ghost `Pass` on that lane, the HEAD row
+    /// carries the `IntoNode` landing on HEAD's own node, and each connector's
+    /// colour index equals its worktree's index (main = 0, the linked worktree
+    /// = 1) — which is what makes the two lines tellable apart on screen.
+    fn scenario_wip_head_connector(cx: &mut VisualTestAppContext) {
+        let (_fixture, repo_path, _wt_path) = build_wip_connector_fixture();
+        let before_fp = repo_fingerprint(&repo_path);
+        let (kagi, _win) = mount(cx, &repo_path);
+
+        // One WIP-ghost edge of `row`, by kind and colour index.
+        fn ghost(
+            row: &commit_list::CommitRow,
+            kind: EdgeKind,
+            color_idx: usize,
+        ) -> Vec<&GraphEdge> {
+            row.edges
+                .iter()
+                .filter(|e| {
+                    e.kind == kind && graph_wip::wip_color_index(e.color) == Some(color_idx)
+                })
+                .collect()
+        }
+
+        cx.read(|app| {
+            let view = &kagi.read(app).active_view;
+
+            // Two dirty working trees → two WIP rows, each with a lane.
+            assert_eq!(
+                view.wip_lanes.len(),
+                2,
+                "expected 2 WIP rows (open repo + linked worktree), got {:?}",
+                view.wip_lanes
+            );
+            let open_lane = view.wip_lanes[0].expect("open repo's WIP row got no connector lane");
+            let wt_lane = view.wip_lanes[1].expect("linked worktree's WIP row got no lane");
+            assert_ne!(open_lane, wt_lane, "two connectors must not share a column");
+
+            // The open repo's HEAD is buried under the `ahead` branch.
+            let head = view
+                .rows
+                .iter()
+                .position(|r| r.is_head)
+                .expect("no HEAD row");
+            assert!(
+                head >= 3,
+                "fixture should bury HEAD at row >= 3, got row {head}"
+            );
+
+            // Every row above HEAD carries the connector; HEAD carries the curve.
+            for (i, row) in view.rows[..head].iter().enumerate() {
+                let passes = ghost(row, EdgeKind::Pass, 0);
+                assert_eq!(
+                    passes.len(),
+                    1,
+                    "row {i} above HEAD must carry exactly one WIP-ghost Pass"
+                );
+                assert_eq!(passes[0].from_lane, open_lane);
+                assert_eq!(passes[0].to_lane, open_lane);
+            }
+            let into = ghost(&view.rows[head], EdgeKind::IntoNode, 0);
+            assert_eq!(
+                into.len(),
+                1,
+                "HEAD's row must carry the connector's IntoNode curve"
+            );
+            assert_eq!(into[0].from_lane, open_lane);
+            assert_eq!(
+                into[0].to_lane, view.rows[head].lane,
+                "the curve must land on HEAD's own node"
+            );
+
+            // The linked worktree's connector reaches ITS head, in colour 1 —
+            // the worktree's index in `worktrees`, i.e. its lane colour.
+            let wt = &view.worktrees[1];
+            assert!(!wt.is_current, "worktrees[1] should be the linked worktree");
+            let wt_head_id = wt.head.clone().expect("linked worktree HEAD not read");
+            let wt_head = view.commit_row_index[&wt_head_id];
+            assert_ne!(
+                wt_head, head,
+                "the two worktrees should sit on different commits"
+            );
+            let wt_into = ghost(&view.rows[wt_head], EdgeKind::IntoNode, 1);
+            assert_eq!(
+                wt_into.len(),
+                1,
+                "the linked worktree's HEAD row must carry its own IntoNode, in colour index 1"
+            );
+            assert_eq!(wt_into[0].from_lane, wt_lane);
+            assert_eq!(
+                ghost(&view.rows[head], EdgeKind::IntoNode, 1).len(),
+                0,
+                "the worktree's connector must not land on the other worktree's HEAD"
+            );
+
+            eprintln!(
+                "[gui-e2e] PASS wip_head_connector head_row={head} lanes={open_lane}/{wt_lane} \
+                 wt_head_row={wt_head}"
+            );
+        });
+
+        assert_eq!(
+            before_fp,
+            repo_fingerprint(&repo_path),
+            "repo mutated during a read-only scenario"
+        );
     }
 
     /// Try to capture a PNG; tolerate the locked gpui rev's unimplemented

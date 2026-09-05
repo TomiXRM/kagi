@@ -37,21 +37,36 @@ impl KagiApp {
     /// submodule) plus the skipped set, from the current commit-panel status.
     /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
     fn discard_partition(&self, cx: &Context<Self>) -> (Vec<String>, Vec<String>) {
-        let backend = self.repo_session.as_ref().map(|s| s.backend());
-        let rows = self.commit_panel.as_ref().into_iter().flat_map(|entity| {
-            let panel = &entity.read(cx).state;
-            panel
-                .unstaged
-                .iter()
-                .map(|f| {
-                    let rel = f.path.to_string_lossy().replace('\\', "/");
-                    let conflicted = panel.is_conflicted(&f.path);
-                    // gitlink check lives in the backend — no git2 in the UI (#326).
-                    let submodule = backend.map(|b| b.is_submodule(&rel)).unwrap_or(false);
-                    (rel, conflicted, submodule)
-                })
-                .collect::<Vec<_>>()
-        });
+        let rows: Vec<(String, bool)> = self
+            .commit_panel
+            .as_ref()
+            .into_iter()
+            .flat_map(|entity| {
+                let panel = &entity.read(cx).state;
+                panel
+                    .unstaged
+                    .iter()
+                    .map(|f| {
+                        let rel = f.path.to_string_lossy().replace('\\', "/");
+                        (rel, panel.is_conflicted(&f.path))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        // #476 slice 3: the gitlink check must ask the PANEL's repository — a
+        // linked worktree's submodules are its own. (The check lives in the
+        // backend: no git2 in the UI, #326.)
+        let rows = self
+            .with_commit_panel_repo(cx, |repo| {
+                rows.iter()
+                    .map(|(rel, conflicted)| (rel.clone(), *conflicted, repo.is_submodule(rel)))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| {
+                rows.iter()
+                    .map(|(rel, conflicted)| (rel.clone(), *conflicted, false))
+                    .collect()
+            });
         partition_discard_rows(rows)
     }
 
@@ -90,24 +105,28 @@ impl KagiApp {
     /// not offered a Discard menu; untracked rows are (deleted after an ODB backup,
     /// ADR-0083). The callers already gate this action to eligible files, so no
     /// conflicted/untracked filtering is needed here.
+    ///
+    /// #476 slice 3: plans against `commit_panel_repo_path` — the panel's own
+    /// repository when it shows a linked worktree.
+    /// ponytail: the Editor Workspace tree shares this entry point, so with a
+    /// worktree panel open its "Discard Changes…" resolves that worktree too.
+    /// Giving the editor its own owner is a bigger change than #476; the
+    /// confirm modal names the worktree, which is what makes it visible.
     pub fn open_discard_modal_for_path(
         &mut self,
         path: std::path::PathBuf,
         cx: &mut Context<Self>,
     ) {
-        if self.repo_path.is_none() {
-            return;
-        }
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let paths = vec![path.to_string_lossy().replace('\\', "/")];
+        let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&paths)) {
+            Some(p) => p,
             None => {
                 self.status_footer =
                     FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
                 return;
             }
         };
-        let paths = vec![path.to_string_lossy().replace('\\', "/")];
-        match repo.plan_discard(&paths) {
+        match planned {
             Ok(plan) => {
                 klog!("plan: discard 1 target blockers={}", plan.blockers.len());
                 self.reset_modal_sections();
@@ -133,26 +152,21 @@ impl KagiApp {
 
     /// Open the "Discard all" modal: every eligible unstaged file in one
     /// operation; untracked / conflicted files are listed as skipped.
+    ///
+    /// #476 slice 3: plans against the PANEL's repository (`ADR-0107`'s per-tab
+    /// `RepoSession` for the tab's own panel, a short-lived `Backend` for a
+    /// linked worktree's) — see `with_commit_panel_repo`.
     pub fn open_discard_all_modal(&mut self, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("discard-all", cx) {
-            return;
-        }
-        let _repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
         let (eligible, skipped) = self.discard_partition(cx);
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&eligible)) {
+            Some(p) => p,
             None => {
                 self.status_footer =
                     FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
                 return;
             }
         };
-        match repo.plan_discard(&eligible) {
+        match planned {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: discard-all {} target(s) blockers={} skipped={}",
@@ -217,7 +231,11 @@ impl KagiApp {
             return;
         }
 
-        let repo_path = match self.repo_path.clone() {
+        // #476 slice 3: discard into the PANEL's repository. Bound once, like
+        // `start_commit`: the preflight `Backend`, the background
+        // `discard_blocking` (whose `Backend::run` writes the persisted oplog
+        // against this path), `record_op`, and the WIP-row refresh all follow.
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
@@ -285,6 +303,10 @@ impl KagiApp {
             }
         }
 
+        // #476 slice 3: nothing to skip on the tab's undo stack — a discard moves
+        // no ref, so it never enters `operation_history` in ANY repository. Its
+        // recovery handle is the oplog entry's backup blob list (ADR-0083), and
+        // `Backend::run` writes that entry against `repo_path` above.
         self.busy_op = Some("discard");
         self.clear_discard_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
@@ -319,6 +341,7 @@ impl KagiApp {
                     Msg::DiscardPartial.t(),
                     err_msg
                 )));
+                app.refresh_worktree_wip_row(&repo_path);
                 app.reload(cx);
             }
             Ok((summary, after, None)) => {
@@ -332,6 +355,7 @@ impl KagiApp {
                 );
                 app.status_footer =
                     FooterStatus::Success(SharedString::from(format!("discard: {}", summary)));
+                app.refresh_worktree_wip_row(&repo_path);
                 app.reload(cx);
             }
             Err(err_msg) => {
@@ -359,6 +383,7 @@ impl KagiApp {
                 });
                 // #281: never leave the UI showing a state that may no longer
                 // exist on disk — re-read even on the pure-failure path.
+                app.refresh_worktree_wip_row(&repo_path);
                 app.reload(cx);
             }
         });

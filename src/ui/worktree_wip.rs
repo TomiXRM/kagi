@@ -13,13 +13,29 @@
 //! Every write op used to resolve its repository from the **tab's**
 //! `repo_path`, so a panel pointed elsewhere would have staged and committed
 //! into the wrong repository; v1 (#473) made such a panel read-only outright.
-//! #476 threads the panel's own path through instead, one slice at a time:
-//! [`KagiApp::commit_panel_repo_path`] is the single resolver, and
-//! [`KagiApp::refuse_foreign_panel_write`] stays as the guard on the ops that
-//! have **not** been converted yet — the remaining call sites are the
-//! migration checklist. Slice 1 converted stage / unstage, slice 2 commit
-//! (including the message inputs that feed it — see [`draft_branch`]); amend
-//! and discard-all are still tab-resolved and therefore still refused.
+//! #476 threaded the panel's own path through instead, one slice at a time:
+//! [`KagiApp::commit_panel_repo_path`] is the single resolver. Slice 1
+//! converted stage / unstage, slice 2 commit (including the message inputs
+//! that feed it — see [`draft_branch`]), slice 3 amend and discard. With the
+//! last op converted the `refuse_foreign_panel_write` guard is **gone**: no
+//! commit-panel write resolves the tab any more, so there is nothing left to
+//! refuse. [`is_foreign_panel`] survives — it still drives the header chip and
+//! [`KagiApp::refresh_worktree_wip_row`].
+//!
+//! ## Undo stays inside one repository (#476 slice 3)
+//!
+//! `operation_history` (Cmd+Z) is **per tab**: an entry is `(branch, before,
+//! after)` and undoing it moves that branch in the tab's repository. An op
+//! that ran in a linked worktree therefore records **no** entry —
+//! [`KagiApp::undo_skipped_for_foreign`] is the single place that decision is
+//! made, and it says so on stderr. The oplog entry, which carries the
+//! worktree's own path, stays the recovery handle for those ops.
+//!
+//! Cross-repository undo is deliberately out of scope: making it work needs a
+//! per-repository history stack (today there is one, keyed to nothing) plus a
+//! rule for what the tab's Cmd+Z means when the last op was elsewhere. Both
+//! are design decisions, not plumbing, and getting them wrong moves a branch
+//! in a repository the user is not looking at.
 
 use std::path::{Path, PathBuf};
 
@@ -62,9 +78,24 @@ pub fn draft_branch(foreign_label: Option<&str>, tab_branch: &str) -> String {
     foreign_label.unwrap_or(tab_branch).to_string()
 }
 
+/// A destructive modal's title, naming the linked worktree it will act on
+/// (#476 slice 3).
+///
+/// Amend rewrites history and discard destroys working-tree content; a title
+/// that says only *what* is about to happen leaves *where* to the header chip
+/// behind the modal's own backdrop. `worktree` is the panel's chip label (the
+/// worktree's branch, or its name when detached) — `None` for the tab's own
+/// repository, which needs no disambiguation.
+pub fn worktree_modal_title(base: &str, worktree: Option<&str>) -> String {
+    match worktree {
+        None => base.to_string(),
+        Some(label) => format!("{base} — {} {label}", super::i18n::Msg::InWorktree.t()),
+    }
+}
+
 /// Is the open commit panel pointed at a different repository than the open
-/// tab? Such a panel writes into that repository (#476) and hides the ops that
-/// are still tab-resolved (see the module docs).
+/// tab? Such a panel writes into that repository (#476); the header chip and
+/// the WIP-row refresh follow from it (see the module docs).
 ///
 /// Pure so it can be tested without a `KagiApp`; both sides are canonicalized
 /// before they get here — `open_repository` and [`canon`] in
@@ -162,21 +193,34 @@ impl KagiApp {
         }
     }
 
-    /// Guard for every commit-panel write entry point: refuses `op` (and says
-    /// so) while the panel belongs to another worktree AND the op still
-    /// resolves its repository from the tab (#476: commit, amend, discard-all —
-    /// the remaining call sites are the migration checklist). One guard in each
-    /// `KagiApp` method rather than in the panel's render, so a write is blocked
-    /// however it was reached — a keybinding, the command palette, or a future
-    /// caller that never saw the hidden buttons.
-    pub(crate) fn refuse_foreign_panel_write(&mut self, op: &str, cx: &gpui::App) -> bool {
-        if !self.commit_panel_is_foreign(cx) {
+    /// The open commit panel's worktree chip label, when it shows a linked
+    /// worktree (#476 slice 3). `None` for the tab's own panel, or no panel.
+    /// Feeds [`worktree_modal_title`] so a destructive confirm names the
+    /// repository it is about to rewrite.
+    pub(crate) fn panel_worktree_label(&self, cx: &gpui::App) -> Option<SharedString> {
+        self.commit_panel
+            .as_ref()
+            .and_then(|e| e.read(cx).foreign.as_ref().map(|(l, _)| l.clone()))
+    }
+
+    /// Must the tab's undo stack ignore an op that just ran in `repo_path`?
+    ///
+    /// #476 slice 3: `operation_history` is per **tab**, and an entry is
+    /// `(branch, before, after)` applied to the tab's repository. An op that
+    /// ran in a linked worktree must therefore record nothing — otherwise the
+    /// tab's Cmd+Z would move the tab's branch to a SHA that belongs to
+    /// another working tree. The oplog entry, which carries the worktree's own
+    /// path, stays the recovery handle. See the module docs for why
+    /// cross-repository undo is out of scope.
+    pub(crate) fn undo_skipped_for_foreign(&self, op: &str, repo_path: &Path) -> bool {
+        if self.repo_path.as_deref() == Some(repo_path) {
             return false;
         }
-        klog!("refused: {} — worktree panel is read-only", op);
-        self.status_footer = super::FooterStatus::Idle(SharedString::from(
-            super::i18n::Msg::WorktreePanelReadOnly.t(),
-        ));
+        klog!(
+            "undo: skipped — {} ran in another worktree {}",
+            op,
+            repo_path.display()
+        );
         true
     }
 
@@ -266,40 +310,39 @@ mod tests {
         assert_eq!(draft_branch(Some("ahead"), "main"), "ahead");
     }
 
-    /// #476 is a migration checklist: an op that still resolves its repository
-    /// from the tab MUST keep the guard, and one that has been converted MUST
-    /// have dropped it. Reading the op sources is the only way to assert "which
-    /// ops call it" without a live `KagiApp`.
+    /// #476 slice 3 retires the guard: with amend and discard converted, every
+    /// commit-panel write resolves [`KagiApp::commit_panel_repo_path`], so
+    /// there is nothing left for a read-only refusal to protect. This is the
+    /// migration checklist's terminal state — the count must stay **zero**, and
+    /// a re-introduced guard means an op went back to resolving the tab.
     #[test]
-    fn only_the_unconverted_ops_refuse_a_foreign_panel() {
-        const NEEDLE: &str = "refuse_foreign_panel_write(\"";
+    fn no_write_op_refuses_a_foreign_panel_any_more() {
+        const NEEDLE: &str = "refuse_foreign_panel_write";
+        // The op sources only — this module's own prose still names the retired
+        // guard, and a scan that reads itself can never go to zero.
         let sources = [
             include_str!("operations/commit.rs"),
             include_str!("operations/discard.rs"),
+            include_str!("operations/history.rs"),
         ];
-        let mut guarded: Vec<&str> = sources
-            .iter()
-            .flat_map(|src| {
-                src.match_indices(NEEDLE).map(move |(i, _)| {
-                    let rest = &src[i + NEEDLE.len()..];
-                    &rest[..rest.find('"').expect("unterminated op name")]
-                })
-            })
-            .collect();
-        guarded.sort_unstable();
-        guarded.dedup();
+        let guarded: usize = sources.iter().map(|src| src.matches(NEEDLE).count()).sum();
         assert_eq!(
-            guarded,
-            ["amend", "discard-all"],
-            "the set of tab-resolved (still refused) ops changed"
+            guarded, 0,
+            "#476 slice 3 deleted `refuse_foreign_panel_write`; a call site means \
+             a write op resolves the TAB's repository again"
         );
-        for converted in ["commit", "stage", "stage-all", "unstage", "unstage-all"] {
-            assert!(
-                !guarded.contains(&converted),
-                "#476 slice 1–2: `{converted}` writes to the panel's repository \
-                 and must not be guarded"
-            );
-        }
+    }
+
+    /// #476 slice 3: a destructive confirm names the worktree it rewrites. The
+    /// tab's own panel has no label and keeps the plain title.
+    #[test]
+    fn a_worktree_modal_title_names_the_worktree() {
+        assert_eq!(worktree_modal_title("Amend", None), "Amend");
+        let named = worktree_modal_title("Amend", Some("wt-a"));
+        assert!(
+            named.starts_with("Amend") && named.contains("wt-a"),
+            "the title must keep the op and name the worktree, got {named:?}"
+        );
     }
 
     #[test]

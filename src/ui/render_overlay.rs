@@ -22,23 +22,27 @@ use crate::ui::modal_renderers::*;
 pub(crate) fn big_sync_icon(accent: u32, key: impl Into<gpui::ElementId>) -> gpui::AnyElement {
     use gpui::AnimationExt as _;
     const SPIN_MS: u64 = 700;
-    gpui::svg()
+    let icon = gpui::svg()
         .path("icons/refresh-cw.svg")
         // ~2× the header spinner (user request) so the snackbar reads
         // clearly as "working".
         .w(theme::scaled_px(32.0))
         .h(theme::scaled_px(32.0))
-        .text_color(rgb(accent))
-        .with_animation(
-            key,
-            gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
-            |svg, delta| {
-                svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                    delta * std::f32::consts::TAU,
-                )))
-            },
-        )
-        .into_any_element()
+        .text_color(rgb(accent));
+    // Reduce motion: static icon, no per-frame rotation tick.
+    if theme::reduce_motion() {
+        return icon.into_any_element();
+    }
+    icon.with_animation(
+        key,
+        gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
+        |svg, delta| {
+            svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                delta * std::f32::consts::TAU,
+            )))
+        },
+    )
+    .into_any_element()
 }
 
 impl gpui::Render for toast_stack::ToastStack {
@@ -104,8 +108,17 @@ impl gpui::Render for toast_stack::ToastStack {
 
             // Slide + fade: in from the left on appear, out to the left on
             // dismiss. Keyed by toast id so the animation plays once and holds.
+            // Reduce motion: skip the horizontal slide (a vestibular trigger) and
+            // show the toast at its resting state — visible while present, hidden
+            // once leaving — so it appears/disappears without motion.
             use gpui::AnimationExt as _;
-            let animated = if leaving {
+            let animated = if theme::reduce_motion() {
+                if leaving {
+                    card.opacity(0.0).into_any_element()
+                } else {
+                    card.into_any_element()
+                }
+            } else if leaving {
                 card.with_animation(
                     ("kagi-toast-exit", id),
                     gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))

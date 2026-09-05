@@ -1069,28 +1069,34 @@ impl CommitPanelView {
                 // Spin the same icon rather than swapping in a text spinner, so
                 // the row does not change width mid-generation.
                 use gpui::AnimationExt as _;
+                let spinner_base = gpui::svg()
+                    .path("icons/loader-circle.svg")
+                    .w(theme::scaled_px(16.0))
+                    .h(theme::scaled_px(16.0))
+                    .text_color(rgb(suggest_color));
+                // Reduce motion: static loader glyph, no per-frame rotation tick.
+                let spinner: gpui::AnyElement = if theme::reduce_motion() {
+                    spinner_base.into_any_element()
+                } else {
+                    spinner_base
+                        .with_animation(
+                            "cp-smart-spinner",
+                            gpui::Animation::new(Duration::from_millis(900)).repeat(),
+                            |svg, delta| {
+                                svg.with_transformation(gpui::Transformation::rotate(
+                                    gpui::radians(delta * std::f32::consts::TAU),
+                                ))
+                            },
+                        )
+                        .into_any_element()
+                };
                 div()
                     .id("cp-smart-suggest")
                     .p_1()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(
-                        gpui::svg()
-                            .path("icons/loader-circle.svg")
-                            .w(theme::scaled_px(16.0))
-                            .h(theme::scaled_px(16.0))
-                            .text_color(rgb(suggest_color))
-                            .with_animation(
-                                "cp-smart-spinner",
-                                gpui::Animation::new(Duration::from_millis(900)).repeat(),
-                                |svg, delta| {
-                                    svg.with_transformation(gpui::Transformation::rotate(
-                                        gpui::radians(delta * std::f32::consts::TAU),
-                                    ))
-                                },
-                            ),
-                    )
+                    .child(spinner)
                     .into_any_element()
             } else {
                 let mut b = icon_btn(

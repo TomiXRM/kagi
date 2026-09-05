@@ -506,7 +506,7 @@ impl KagiApp {
                             .w(theme::scaled_px(16.0))
                             .h(theme::scaled_px(16.0))
                             .text_color(rgb(theme().text_main));
-                        let icon: gpui::AnyElement = if spinning {
+                        let icon: gpui::AnyElement = if spinning && !theme::reduce_motion() {
                             use gpui::AnimationExt as _;
                             icon.with_animation(
                                 "tb-refresh-spin",

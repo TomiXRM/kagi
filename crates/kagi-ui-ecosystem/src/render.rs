@@ -453,39 +453,51 @@ fn loading_view() -> AnyElement {
 /// shown above the explainer while the repo is being mined.
 fn loading_progress() -> gpui::Div {
     use gpui::AnimationExt as _;
-    let spinner = gpui::svg()
+    // Reduce motion: render spinner + bar static — skip `.with_animation`
+    // entirely so no per-frame tick is requested (the pinned GPUI build does
+    // not honor reduce-motion itself). Mirrors `render_body::render_loading_placeholder`.
+    let reduce_motion = theme::reduce_motion();
+    let spinner_base = gpui::svg()
         .path("icons/loader-circle.svg")
         .w(theme::scaled_px(30.0))
         .h(theme::scaled_px(30.0))
-        .text_color(rgb(theme().accent))
-        .with_animation(
-            "eco-spinner",
-            gpui::Animation::new(std::time::Duration::from_millis(900)).repeat(),
-            |svg, delta| {
-                svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                    delta * std::f32::consts::TAU,
-                )))
-            },
-        );
+        .text_color(rgb(theme().accent));
+    let spinner: gpui::AnyElement = if reduce_motion {
+        spinner_base.into_any_element()
+    } else {
+        spinner_base
+            .with_animation(
+                "eco-spinner",
+                gpui::Animation::new(std::time::Duration::from_millis(900)).repeat(),
+                |svg, delta| {
+                    svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                        delta * std::f32::consts::TAU,
+                    )))
+                },
+            )
+            .into_any_element()
+    };
 
     // Indeterminate bar: a 30%-wide segment sweeping across the track.
+    let bar_seg = div().h_full().w(relative(0.3)).bg(rgb(theme().accent));
+    let bar_seg: gpui::AnyElement = if reduce_motion {
+        bar_seg.into_any_element()
+    } else {
+        bar_seg
+            .with_animation(
+                "eco-bar",
+                gpui::Animation::new(std::time::Duration::from_millis(1300)).repeat(),
+                |el, delta| el.ml(relative(0.7 * delta)),
+            )
+            .into_any_element()
+    };
     let bar = div()
         .w(theme::scaled_px(220.0))
         .h(theme::scaled_px(4.0))
         .rounded(theme::scaled_px(2.0))
         .bg(rgb(theme().surface))
         .overflow_hidden()
-        .child(
-            div()
-                .h_full()
-                .w(relative(0.3))
-                .bg(rgb(theme().accent))
-                .with_animation(
-                    "eco-bar",
-                    gpui::Animation::new(std::time::Duration::from_millis(1300)).repeat(),
-                    |el, delta| el.ml(relative(0.7 * delta)),
-                ),
-        );
+        .child(bar_seg);
 
     div()
         .flex()

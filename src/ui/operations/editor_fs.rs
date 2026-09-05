@@ -318,11 +318,20 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let full = repo_path.join(path);
+        if self.reveal_path_in_file_manager(&repo_path.join(path)) {
+            klog!("editor-ws: reveal {}", path.display());
+        }
+    }
+
+    /// The platform half of [`Self::reveal_editor_path_in_finder`], on an
+    /// ABSOLUTE path. Split out (#473) so the worktree menu can reveal a
+    /// worktree directory, which is not relative to the open repo. Returns
+    /// whether the file manager was launched.
+    pub(crate) fn reveal_path_in_file_manager(&mut self, full: &std::path::Path) -> bool {
         #[cfg(target_os = "macos")]
         let spawn = std::process::Command::new("open")
             .arg("-R")
-            .arg(&full)
+            .arg(full)
             .spawn();
         #[cfg(target_os = "windows")]
         let spawn = std::process::Command::new("explorer")
@@ -331,18 +340,19 @@ impl KagiApp {
         #[cfg(target_os = "linux")]
         let spawn = {
             // No universal select support; open the containing directory.
-            let dir = full.parent().unwrap_or(&full);
+            let dir = full.parent().unwrap_or(full);
             std::process::Command::new("xdg-open").arg(dir).spawn()
         };
         match spawn {
             Ok(_) => {
-                klog!("editor-ws: reveal {}", path.display());
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::OpenedInFinder.t()));
+                true
             }
             Err(e) => {
                 self.status_footer =
                     FooterStatus::Failed(SharedString::from(i18n::op_failed(i18n::Op::Reveal, e)));
+                false
             }
         }
     }

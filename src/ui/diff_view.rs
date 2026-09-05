@@ -1188,6 +1188,14 @@ impl KagiApp {
             Some(e) => e.clone(),
             None => return,
         };
+        // #473: the file comes from the PANEL's file list, so the diff must be
+        // read from the panel's repository. For the ordinary panel that is the
+        // tab's own repo and the shared session is used as before; for a linked
+        // worktree's panel the session would diff the wrong repository, so a
+        // short-lived read-only Backend is opened on the panel's path instead.
+        let foreign_path = self
+            .commit_panel_is_foreign(cx)
+            .then(|| entity.read(cx).repo_path.clone());
 
         let (is_staged, path) = {
             let panel = &entity.read(cx).state;
@@ -1210,10 +1218,21 @@ impl KagiApp {
         };
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let Some(session) = self.repo_session.as_ref() else {
-            return;
+        let foreign_backend = match &foreign_path {
+            Some(p) => match kagi_git::Backend::open(p) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    klog!("commit-panel diff: repo open error: {}", e);
+                    return;
+                }
+            },
+            None => None,
         };
-        let repo = session.backend();
+        let repo = match (&foreign_backend, self.repo_session.as_ref()) {
+            (Some(b), _) => b,
+            (None, Some(session)) => session.backend(),
+            (None, None) => return,
+        };
 
         let file_diff_result = if is_staged {
             repo.staged_file_diff(&path)

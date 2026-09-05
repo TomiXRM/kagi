@@ -1692,6 +1692,18 @@ impl KagiApp {
                     self.open_create_worktree_modal_prefilled(state.target, state.name, true, cx);
                 }
             }
+            // #473: open the worktree this branch is already checked out in.
+            BranchAction::OpenWorktreeDir => {
+                let path = self
+                    .active_view
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()) && !wt.is_current)
+                    .map(|wt| wt.path.clone());
+                if let Some(path) = path {
+                    self.open_repository(path, cx);
+                }
+            }
             BranchAction::MergeIntoCurrent => {
                 self.open_merge_modal(state.name, cx);
             }

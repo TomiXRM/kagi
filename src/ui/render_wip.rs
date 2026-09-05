@@ -266,8 +266,9 @@ impl KagiApp {
         } else {
             row.bg(row_wash)
         };
-        // Both row kinds are clickable: the open repo's row opens the commit
-        // panel; a linked worktree's row switches the open repo to it. The two
+        // Both row kinds are clickable and open the commit panel: the open
+        // repo's row against the tab's repository, a linked worktree's row
+        // against that worktree (#473 — read-only, no tab, no snapshot). The
         // closures are distinct types, so wire `on_click` inside each match arm.
         row = match click {
             WipRowClick::CommitPanel => {
@@ -276,12 +277,36 @@ impl KagiApp {
                     cx.notify();
                 }))
             }
-            WipRowClick::OpenWorktree(path) => row.on_click(cx.listener(
-                move |this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.open_repository(path.clone(), cx);
+            WipRowClick::Worktree { path, name, locked } => {
+                let menu_path = path.clone();
+                let chip = label.clone();
+                row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                    this.open_commit_panel_for_worktree(
+                        path.clone(),
+                        chip.clone(),
+                        color_idx,
+                        window,
+                        cx,
+                    );
                     cx.notify();
-                },
-            )),
+                }))
+                // #473: the WIP row had no context menu at all (the one on the
+                // stash rows above is `open_stash_menu`). Right-click gets the
+                // sidebar's worktree menu plus the three path items.
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
+                        this.open_worktree_menu(
+                            name.clone(),
+                            locked,
+                            Some(menu_path.clone()),
+                            e.position,
+                        );
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+            }
         };
         row = row.hover(|s| s.bg(rgb(theme().selected))).cursor_pointer();
 

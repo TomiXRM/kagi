@@ -455,7 +455,17 @@ pub struct CommitPanelView {
     /// closures — NEVER read in a `Render` path.
     pub(crate) app: WeakEntity<KagiApp>,
     /// Repo root for this panel session; constant for the entity's life.
-    pub(crate) repo_path: PathBuf,
+    /// `pub` so the GUI E2E runner can assert WHICH repository the panel shows
+    /// (#473) — a worktree panel that silently reverted to the tab's repo is
+    /// exactly the regression the scenario guards.
+    pub repo_path: PathBuf,
+    /// issue #473: `Some((worktree label, lane colour index))` when this panel
+    /// shows a **linked worktree** rather than the open tab's repository. It
+    /// names the worktree in the header, in the WIP row's own colour, and puts
+    /// the panel in read-only mode — the write ops resolve the repository from
+    /// the tab, so they are hidden here (and refused by
+    /// `KagiApp::refuse_foreign_panel_write`). Set by `open_commit_panel_at`.
+    pub foreign: Option<(SharedString, usize)>,
 }
 
 impl CommitPanelView {
@@ -481,6 +491,7 @@ impl CommitPanelView {
             smart_snapshot: SmartCommitState::default(),
             app,
             repo_path,
+            foreign: None,
         }
     }
 

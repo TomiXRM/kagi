@@ -4,6 +4,8 @@
 //! action today is **Unlock worktree…** (enabled only while the worktree is
 //! locked); the main worktree never opens the menu.
 
+use std::path::{Path, PathBuf};
+
 use gpui::{Context, Pixels, Point, SharedString, Window};
 
 use super::{
@@ -21,6 +23,10 @@ pub struct WorktreeMenuState {
     pub name: String,
     /// Whether the worktree is currently locked.
     pub locked: bool,
+    /// #473: the worktree's working-tree path, when the menu was opened from a
+    /// place that knows it (the graph's WIP row). `None` from the sidebar, which
+    /// only carries the registry name — the path-based items are then omitted.
+    pub path: Option<PathBuf>,
     pub position: Point<Pixels>,
 }
 
@@ -37,12 +43,23 @@ pub enum WorktreeAction {
     Prune,
     /// Repo-wide: repair broken worktree `.git` links.
     Repair,
+    /// #473: open this worktree as its own tab — the old WIP-row click, demoted
+    /// to a menu item now that the click shows the worktree's changes in place.
+    OpenInNewTab,
+    /// #473: reveal the worktree directory in the platform file manager.
+    Reveal,
+    /// #473: copy the worktree's absolute path to the clipboard.
+    CopyPath,
 }
 
 /// Build the worktree menu groups. Unlock is enabled only while locked, Lock
 /// only while unlocked; the two remove variants and the repo-wide prune/repair
 /// route through their plan → confirm modals.
-pub fn build_worktree_menu(locked: bool) -> Vec<MenuGroup<WorktreeAction>> {
+///
+/// #473: when `path` is known (the graph's WIP row), a leading group offers
+/// "Open in new tab" / "Reveal" / "Copy path". The sidebar passes `None` and
+/// gets exactly the menu it had before.
+pub fn build_worktree_menu(locked: bool, path: Option<&Path>) -> Vec<MenuGroup<WorktreeAction>> {
     let unlock_state = if locked {
         ItemState::Enabled
     } else {
@@ -53,7 +70,37 @@ pub fn build_worktree_menu(locked: bool) -> Vec<MenuGroup<WorktreeAction>> {
     } else {
         ItemState::Enabled
     };
-    vec![
+    let mut groups = Vec::new();
+    if path.is_some() {
+        groups.push(MenuGroup {
+            title: None,
+            items: vec![
+                MenuItem {
+                    action: WorktreeAction::OpenInNewTab,
+                    label: SharedString::from(Msg::MenuOpenWorktreeInNewTab.t()),
+                    state: ItemState::Enabled,
+                    dangerous: false,
+                },
+                MenuItem {
+                    action: WorktreeAction::Reveal,
+                    label: SharedString::from(if cfg!(target_os = "macos") {
+                        Msg::EditorTreeRevealFinder.t()
+                    } else {
+                        Msg::EditorTreeRevealFile.t()
+                    }),
+                    state: ItemState::Enabled,
+                    dangerous: false,
+                },
+                MenuItem {
+                    action: WorktreeAction::CopyPath,
+                    label: SharedString::from(Msg::EditorTreeCopyPath.t()),
+                    state: ItemState::Enabled,
+                    dangerous: false,
+                },
+            ],
+        });
+    }
+    groups.extend([
         MenuGroup {
             title: None,
             items: vec![
@@ -109,7 +156,8 @@ pub fn build_worktree_menu(locked: bool) -> Vec<MenuGroup<WorktreeAction>> {
                 },
             ],
         },
-    ]
+    ]);
+    groups
 }
 
 pub fn render_worktree_menu_overlay(

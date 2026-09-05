@@ -234,6 +234,14 @@ pub enum Msg {
     MenuPruneWorktrees,
     /// Worktree context menu: repair worktree links (issue #340).
     MenuRepairWorktrees,
+    /// WIP-row worktree menu: open that worktree in a new tab (issue #473 —
+    /// the click itself now shows the worktree's changes in place).
+    MenuOpenWorktreeInNewTab,
+    /// Branch menu: open the worktree this branch is checked out in (#473).
+    MenuOpenWorktreeDir,
+    /// Commit panel header note: a panel pointed at another worktree is
+    /// read-only in v1, because the write ops use the open tab's repo (#473).
+    WorktreePanelReadOnly,
     /// Default lock reason kagi records for a manual lock (issue #340).
     WorktreeLockDefaultReason,
     BusyMerge,
@@ -1062,6 +1070,12 @@ impl Msg {
             (Ja, MenuPruneWorktrees) => "古い worktree を prune…",
             (En, MenuRepairWorktrees) => "Repair worktree links…",
             (Ja, MenuRepairWorktrees) => "worktree リンクを修復…",
+            (En, MenuOpenWorktreeInNewTab) => "Open in new tab",
+            (Ja, MenuOpenWorktreeInNewTab) => "新しいタブで開く",
+            (En, MenuOpenWorktreeDir) => "Open worktree",
+            (Ja, MenuOpenWorktreeDir) => "worktree を開く",
+            (En, WorktreePanelReadOnly) => "Open the worktree to commit",
+            (Ja, WorktreePanelReadOnly) => "commit するには worktree を開く",
             (En, WorktreeLockDefaultReason) => "locked in kagi",
             (Ja, WorktreeLockDefaultReason) => "locked in kagi",
             (En, BusyMerge) => "merge in progress…",

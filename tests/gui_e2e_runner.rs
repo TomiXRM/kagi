@@ -246,6 +246,7 @@ mod macos {
         scenario_theme_switch(&mut cx);
         scenario_agent_provenance(&mut cx);
         scenario_wip_head_connector(&mut cx);
+        scenario_worktree_wip_inline(&mut cx);
 
         eprintln!("[gui-e2e] PASS all scenarios");
         0
@@ -655,6 +656,120 @@ mod macos {
             before_fp,
             repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
+        );
+    }
+
+    /// Issue #473: clicking a LINKED WORKTREE's WIP row shows that worktree's
+    /// changes in the commit panel **in place** — no new tab, no snapshot — and
+    /// that panel is read-only in v1 (the write ops resolve their repository
+    /// from the tab, so they would touch the wrong one).
+    ///
+    /// Drives the row's own click handler (`open_commit_panel_for_worktree`)
+    /// and asserts: `tabs.len()` unchanged, the panel points at the WORKTREE and
+    /// lists ITS dirty file, every write op dispatched against that panel leaves
+    /// BOTH working trees' `git status --porcelain` fingerprints untouched, and
+    /// the watcher's in-place refresh (`refresh_working_tree_external`) does not
+    /// swap the panel back to the open repository.
+    fn scenario_worktree_wip_inline(cx: &mut VisualTestAppContext) {
+        let (_fixture, repo_path, wt_path) = build_wip_connector_fixture();
+        let repo_fp = repo_fingerprint(&repo_path);
+        let wt_fp = repo_fingerprint(&wt_path);
+        let (kagi, win) = mount(cx, &repo_path);
+
+        let tabs_before = cx.read(|app| kagi.read(app).tabs.len());
+
+        // What the linked worktree's WIP row click does (`render_wip.rs`).
+        let wt = wt_path.clone();
+        cx.update_window(win, |_v, window, cx| {
+            kagi.update(cx, |app, cx| {
+                app.open_commit_panel_for_worktree(wt, "ahead".into(), 1, window, cx);
+            });
+        })
+        .expect("update_window");
+        cx.run_until_parked();
+
+        cx.read(|app| {
+            let app = kagi.read(app);
+            assert_eq!(
+                app.tabs.len(),
+                tabs_before,
+                "clicking a linked worktree's WIP row must NOT open a tab"
+            );
+            assert!(app.commit_panel_open, "the commit panel should be open");
+        });
+        let (panel_repo, files, foreign) = cx.read(|app| {
+            let p = kagi.read(app).commit_panel.clone().expect("panel");
+            let p = p.read(app);
+            (
+                p.repo_path.clone(),
+                p.state
+                    .unstaged
+                    .iter()
+                    .map(|f| f.path.display().to_string())
+                    .collect::<Vec<_>>(),
+                p.foreign.clone(),
+            )
+        });
+        assert_eq!(
+            panel_repo, wt_path,
+            "the panel must point at the worktree, not the open repo"
+        );
+        assert!(
+            files.iter().any(|f| f == "dirty.txt"),
+            "the panel should list the WORKTREE's dirty file, got {files:?}"
+        );
+        assert!(
+            foreign.is_some(),
+            "a worktree panel must be marked foreign (read-only + header chip)"
+        );
+        assert!(
+            cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
+            "commit_panel_is_foreign must hold for a worktree panel"
+        );
+
+        // Every write entry point, dispatched against the worktree panel.
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(cx);
+            app.do_stage_file(0, cx);
+            app.do_unstage_all(cx);
+            app.do_unstage_file(0, cx);
+            app.open_commit_plan_modal(cx);
+            app.start_commit(cx);
+            app.commit_panel_amend(cx);
+            app.open_discard_all_modal(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "the OPEN repo was mutated by a write dispatched at a worktree panel"
+        );
+        assert_eq!(
+            wt_fp,
+            repo_fingerprint(&wt_path),
+            "the WORKTREE was mutated by a write dispatched at a worktree panel"
+        );
+
+        // The watcher's in-place refresh must not swap the panel back.
+        kagi.update(cx, |app, cx| app.refresh_working_tree_external(cx));
+        cx.run_until_parked();
+        let after_reload = cx.read(|app| {
+            let p = kagi.read(app).commit_panel.clone().expect("panel survived");
+            p.read(app).repo_path.clone()
+        });
+        assert_eq!(
+            after_reload, wt_path,
+            "a watcher refresh replaced the worktree panel with the open repo's"
+        );
+        assert_eq!(
+            cx.read(|app| kagi.read(app).tabs.len()),
+            tabs_before,
+            "no tab may appear at any point in this scenario"
+        );
+
+        eprintln!(
+            "[gui-e2e] PASS worktree_wip_inline tabs={tabs_before} panel={} files={files:?}",
+            panel_repo.display()
         );
     }
 

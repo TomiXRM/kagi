@@ -134,6 +134,10 @@ impl KagiApp {
     /// Open the "Discard all" modal: every eligible unstaged file in one
     /// operation; untracked / conflicted files are listed as skipped.
     pub fn open_discard_all_modal(&mut self, cx: &mut Context<Self>) {
+        // #473: read-only while the panel shows another worktree.
+        if self.refuse_foreign_panel_write("discard-all", cx) {
+            return;
+        }
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,

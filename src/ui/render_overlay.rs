@@ -534,6 +534,7 @@ impl KagiApp {
             el.child(render_discard_modal(
                 modal,
                 &self.modal_section_overrides,
+                self.modal_list_scroll.clone(),
                 cx,
             ))
         })

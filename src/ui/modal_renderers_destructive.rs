@@ -110,11 +110,13 @@ pub(crate) fn render_amend_modal(
                             files.get(i).map(|f| {
                                 div()
                                     .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                                    .w_full()
                                     .flex()
                                     .flex_row()
                                     .items_center()
                                     .text_xs()
                                     .text_color(rgb(current_theme().text_sub))
+                                    .overflow_hidden()
                                     .child(SharedString::from(f.path.display().to_string()))
                             })
                         })
@@ -262,6 +264,9 @@ pub(crate) fn render_discard_modal(
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
     // renderer owns the defaults). Only the skipped list is collapsible here.
     overrides: &std::collections::HashSet<&'static str>,
+    // #454: scroll handle for the target-file `uniform_list` ("Discard all" is
+    // the biggest list in the app, so it is virtualized like amend's).
+    list_scroll: gpui::UniformListScrollHandle,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let plan = modal.plan.clone();
@@ -302,34 +307,47 @@ pub(crate) fn render_discard_modal(
         plan_title_text(&plan.title)
     };
 
-    // ── Target file list (scrollable) ───────────────────────
-    // #454: `max_h` follows the row count up to the shared ceiling, so a
-    // 2-file discard is a 2-row box and a 200-file discard shows 20 rows and
-    // scrolls — instead of a fixed box that was mostly empty or mostly hidden.
+    // ── Target file list (virtualized + scrollable) ─────────
+    // #454: "Discard all changes (487)" is the biggest list in the app, so this
+    // is a `uniform_list` — a plain div loop rebuilt every row every frame.
+    // Height follows the row count up to the shared ceiling, so a 2-file
+    // discard is a 2-row box and a 200-file discard shows 20 rows and scrolls.
+    // Paths are NOT pre-truncated: cutting the head keeps the least
+    // identifying part, and `overflow_hidden` already clips what does not fit.
+    let target_count_rows = modal.paths.len();
     let target_h = theme::scaled_px(
-        (modal.paths.len().clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
+        (target_count_rows.clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
     );
-    let mut file_list = div()
-        .id("discard-file-list")
-        .flex()
-        .flex_col()
-        .gap_px()
-        .max_h(target_h)
-        .overflow_y_scroll();
-    for p in &modal.paths {
-        let line: String = p.chars().take(80).collect();
-        file_list = file_list.child(
-            div()
-                // flex_shrink_0: without it the capped flex_col COMPRESSES the
-                // rows to fit max_h instead of scrolling them (T027 bug class —
-                // user report: file names squashed together).
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(current_theme().text_main))
-                .overflow_hidden()
-                .child(SharedString::from(line)),
-        );
-    }
+    let target_paths = modal.paths.clone();
+    let file_list = super::render_helpers::with_vertical_scrollbar(
+        "discard-file-scroll",
+        &list_scroll,
+        gpui::uniform_list(
+            "discard-file-list",
+            target_count_rows,
+            move |range: std::ops::Range<usize>, _window, _cx| {
+                range
+                    .filter_map(|i| {
+                        target_paths.get(i).map(|p| {
+                            div()
+                                .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .text_xs()
+                                .text_color(rgb(current_theme().text_main))
+                                .overflow_hidden()
+                                .child(SharedString::from(p.clone()))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .track_scroll(&list_scroll)
+        .h(target_h),
+        true,
+    );
 
     // ── Card ─────────────────────────────────────────────────
     // Icon badge (trash-2 / color_blocker) now carries the danger signal that
@@ -379,8 +397,10 @@ pub(crate) fn render_discard_modal(
                     (modal.skipped.len().clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
                 ))
                 .overflow_y_scroll();
+            // No `chars().take(80)`: cutting the head keeps the least
+            // identifying part of a deep path, and `overflow_hidden` below
+            // already clips whatever does not fit the card (#454 review).
             for p in &modal.skipped {
-                let line: String = p.chars().take(80).collect();
                 skip_col = skip_col.child(
                     div()
                         .flex_shrink_0()
@@ -389,7 +409,7 @@ pub(crate) fn render_discard_modal(
                         .overflow_hidden()
                         .child(SharedString::from(format!(
                             "\u{2014} {} (untracked/conflicted)",
-                            line
+                            p
                         ))),
                 );
             }

@@ -153,6 +153,27 @@ pub(crate) fn modal_prose_max_h() -> gpui::Pixels {
     }
 }
 
+/// A prose panel body (recovery text, notes): capped by [`modal_prose_max_h`],
+/// scrollable in place, and floored at two lines.
+///
+/// Both bounds are load-bearing. Without the cap the text pushed past the card
+/// and painted over the button row; without the floor the list panel's own
+/// floor squeezed the prose to zero height and the recovery instructions
+/// vanished entirely — measured on a 700px window, both directions.
+pub(crate) fn modal_prose_box(
+    id: &'static str,
+    body: gpui::AnyElement,
+) -> gpui::Stateful<gpui::Div> {
+    /// Two lines of `text_xs` plus its line gap.
+    const PROSE_FLOOR_H: f32 = 34.;
+    div()
+        .id(id)
+        .min_h(theme::scaled_px(PROSE_FLOOR_H))
+        .max_h(modal_prose_max_h())
+        .overflow_y_scroll()
+        .child(body)
+}
+
 /// The middle of a [`modal_card`] that scrolls, for cards whose lists are
 /// plain and bounded (the shared plan card: preview commits are capped at 100
 /// by the producer, note paths by the plan). Everything inside renders at full
@@ -292,6 +313,63 @@ pub(crate) fn modal_section_chipped(
     section.into_any_element()
 }
 
+/// A non-collapsible list panel: the mock's `対象ファイル` box — same surface,
+/// border and header (title + count chip) as [`modal_section`], but with no
+/// caret, because the list of things an operation *acts on* must never be
+/// hideable behind disclosure.
+///
+/// `body` supplies the scroll region (a capped `overflow_y_scroll` column or a
+/// `uniform_list`); the panel itself only clips and yields height, so the card
+/// keeps exactly one scroller per panel and never nests them.
+pub(crate) fn modal_list_panel(
+    title: impl Into<SharedString>,
+    count: usize,
+    body: gpui::AnyElement,
+) -> gpui::Div {
+    // Floor, so the panel is not the block that gives everything up: on a
+    // 700px window the prose below it (recovery text, notes) kept its three
+    // lines while the list collapsed to five rows — the wrong priority, since
+    // the list is the operation's data and the prose is advice. The prose
+    // panels stay `min_h(0)` and yield first; this floor is the header/padding
+    // chrome plus up to `PANEL_FLOOR_ROWS` rows.
+    const PANEL_FLOOR_ROWS: f32 = 8.;
+    const PANEL_CHROME_H: f32 = 44.;
+    let floor_rows = (count as f32).min(PANEL_FLOOR_ROWS);
+    div()
+        .min_h(theme::scaled_px(
+            floor_rows * MODAL_LIST_ROW_H + PANEL_CHROME_H,
+        ))
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_2()
+        .rounded_md()
+        .bg(rgb(current_theme().surface))
+        .border_1()
+        .border_color(rgb(current_theme().bg_row_alt))
+        .child(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_label))
+                        .child(title.into()),
+                )
+                .child(
+                    div()
+                        .ml_auto()
+                        .child(modal_chip(count.to_string(), current_theme().text_sub)),
+                ),
+        )
+        .child(body)
+}
+
 /// One row of a modal file list: the change-kind letter badge the mock shows
 /// (`M` / `A` / `D` / `R` / `T`) plus the path.
 ///
@@ -424,12 +502,19 @@ pub(crate) fn note_path_list(
     }
 }
 
-/// #454: the path list under a note summary. It lives in the shared plan card,
-/// whose body is the scroll region ([`modal_scroll_body`]), so the list renders
-/// at full height — every path is reachable by scrolling the card once, with no
-/// scroller inside a scroller.
+/// #454: the path list under a note summary. The plan card's body does not
+/// scroll any more, so this list carries its own capped scroll region — one
+/// scroller per panel, never one inside another (see [`modal_body`]).
 pub(crate) fn note_path_list_element(files: &[String]) -> gpui::AnyElement {
-    let mut col = div().flex().flex_col().gap_px().pl_4();
+    let mut col = div()
+        .id("note-path-list")
+        .flex()
+        .flex_col()
+        .gap_px()
+        .pl_4()
+        .min_h(gpui::px(0.))
+        .max_h(modal_list_max_h(files.len()))
+        .overflow_y_scroll();
     for f in files {
         col = col.child(
             div()

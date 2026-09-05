@@ -13,7 +13,8 @@ use super::modal_renderers::{
 };
 use super::modal_shell::{
     modal_body, modal_card, modal_change_summary, modal_chip, modal_file_row, modal_list_max_h,
-    modal_prose_max_h, modal_section, modal_section_chipped, section_open, MODAL_W_MD,
+    modal_list_panel, modal_prose_box, modal_section, modal_section_chipped, section_open,
+    MODAL_W_MD,
 };
 use super::modals::*;
 use super::theme::theme as current_theme;
@@ -152,45 +153,19 @@ pub(crate) fn render_amend_modal(
         // card (mock: `対象ファイル` + count chip), but NOT collapsible — see
         // the SAFETY note above. `section_open(.., true)`-style disclosure is
         // deliberately not wired here.
-        body = body.child(
+        body = body.child(modal_list_panel(
+            Msg::AmendFoldedFiles.t(),
+            total,
+            // Per-kind tally above the list (#454 Phase 2 item 6).
             div()
-                // The list is the one part of the card that gives up height
-                // when the window is short (`min_h(0)`); everything else is
-                // `flex_shrink_0`. The list carries the ceiling itself, so the
-                // wrapper only needs to clip while it yields.
                 .min_h(gpui::px(0.))
-                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .p_2()
-                .rounded_md()
-                .bg(rgb(current_theme().surface))
-                .border_1()
-                .border_color(rgb(current_theme().bg_row_alt))
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(current_theme().text_label))
-                                .child(Msg::AmendFoldedFiles.t()),
-                        )
-                        .child(
-                            div()
-                                .ml_auto()
-                                .child(modal_chip(total.to_string(), current_theme().text_sub)),
-                        ),
-                )
-                // Per-kind tally above the list (#454 Phase 2 item 6).
                 .children(modal_change_summary(&plan.preview_files))
-                .child(list),
-        );
+                .child(list)
+                .into_any_element(),
+        ));
     }
 
     // Warnings get the mock's section treatment (title + count chip) but stay
@@ -249,16 +224,11 @@ pub(crate) fn render_amend_modal(
             Some(SharedString::from(Msg::ModalRecoveryChip.t())),
             true,
             Some(
-                div()
-                    .id("modal-recovery-scroll")
-                    .min_h(gpui::px(0.))
-                    .max_h(modal_prose_max_h())
-                    .overflow_y_scroll()
-                    .child(render_recovery_box(
-                        &recovery_text,
-                        current_theme().color_blocker,
-                    ))
-                    .into_any_element(),
+                modal_prose_box(
+                    "modal-recovery-scroll",
+                    render_recovery_box(&recovery_text, current_theme().color_blocker),
+                )
+                .into_any_element(),
             ),
             cx,
         ));
@@ -460,41 +430,26 @@ pub(crate) fn render_discard_modal(
     let card = modal_card(MODAL_W_MD).child(title_row);
     // Target files: a section panel with a count chip (mock `対象ファイル`),
     // never collapsible — a destructive confirm always shows what it acts on.
-    let mut body = modal_body().child(
-        div()
-            .min_h(gpui::px(0.))
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_2()
-            .rounded_md()
-            .bg(rgb(current_theme().surface))
-            .border_1()
-            .border_color(rgb(current_theme().bg_row_alt))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_label))
-                            .child(Msg::ModalTargetFiles.t()),
-                    )
-                    .child(div().ml_auto().child(modal_chip(
-                        target_count.to_string(),
-                        current_theme().text_sub,
-                    ))),
-            )
+    // No targets (a blocked "Discard all" with nothing unstaged) renders no
+    // panel: an empty box with a `0` chip is chrome for nothing, and the
+    // blocker below already says why.
+    let mut body = modal_body();
+    if target_count > 0 {
+        body = body.child(modal_list_panel(
+            Msg::ModalTargetFiles.t(),
+            target_count,
             // Per-kind tally above the list (#454 Phase 2 item 6): `M 115  D 5`
             // says what kind of change is at stake without scrolling.
-            .children(modal_change_summary(&plan.preview_files))
-            .child(file_list),
-    );
+            div()
+                .min_h(gpui::px(0.))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .children(modal_change_summary(&plan.preview_files))
+                .child(file_list)
+                .into_any_element(),
+        ));
+    }
 
     // ── Skipped (untracked / conflicted) ────────────────────
     // #454: was `take(20)` — the rest of the skipped paths were unreachable.
@@ -601,16 +556,11 @@ pub(crate) fn render_discard_modal(
             Some(SharedString::from(Msg::ModalRecoveryChip.t())),
             true,
             Some(
-                div()
-                    .id("modal-recovery-scroll")
-                    .min_h(gpui::px(0.))
-                    .max_h(modal_prose_max_h())
-                    .overflow_y_scroll()
-                    .child(render_recovery_box(
-                        &recovery_text,
-                        current_theme().color_blocker,
-                    ))
-                    .into_any_element(),
+                modal_prose_box(
+                    "modal-recovery-scroll",
+                    render_recovery_box(&recovery_text, current_theme().color_blocker),
+                )
+                .into_any_element(),
             ),
             cx,
         ));

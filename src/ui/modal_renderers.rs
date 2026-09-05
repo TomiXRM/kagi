@@ -15,7 +15,8 @@
 
 use super::i18n::Msg;
 use super::modal_shell::{
-    modal_card, modal_scroll_body, note_path_list, note_path_list_element, MODAL_W_MD,
+    modal_body, modal_card, modal_list_max_h, modal_list_panel, modal_prose_box, modal_scroll_body,
+    note_path_list, note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
@@ -271,20 +272,24 @@ pub(crate) fn render_current_predicted(
             .gap_2()
             .text_sm()
             .child(
-                // #454: the row wraps (`flex_wrap`) and the head keeps its
-                // natural basis, so a long head line breaks at the card edge
-                // instead of being clipped mid-word ("… 新 <new> (staged c|").
-                // `flex_1 + min_w(0)` here would let the text shrink to zero
-                // width and wrap one character per line — measured, not
-                // guessed.
+                // #454: the row wraps (`flex_wrap`) and the head may shrink to
+                // the line width (`flex_shrink` + `min_w(0)`), so a long head
+                // wraps inside the card instead of running out of it.
+                // `flex_1` here is wrong: basis 0 wants zero width and the
+                // text ends up one character per line — measured, not guessed.
                 div()
-                    .max_w(gpui::relative(1.))
+                    .flex_shrink(1.)
+                    .min_w(gpui::px(0.))
                     .text_color(rgb(current_theme().text_main))
                     .child(SharedString::from(head.to_string())),
             )
             .child(
+                // Shrinkable too: on a predicted state this "[...]" carries the
+                // whole transition ("[旧 <sha> → 新 <new> (…)]"), so pinning it
+                // with `flex_shrink_0` is what pushed it out of the card.
                 div()
-                    .flex_shrink_0()
+                    .flex_shrink(1.)
+                    .min_w(gpui::px(0.))
                     .text_color(rgb(current_theme().text_sub))
                     .child(SharedString::from(format!("[{}]", dirty))),
             )
@@ -574,15 +579,17 @@ fn render_plan_modal_card_styled(
     // caps the height and the body takes the overflow, so the buttons stay on
     // screen no matter how long the plan is.
     //
-    // The body is this card's single scroll region (`modal_shell`'s rule): its
-    // lists are plain and bounded, so they render at full height inside it
-    // rather than each becoming a scroller of its own.
+    // The body does not scroll: each list/prose panel inside carries its own
+    // capped scroll region instead (`modal_shell`'s rule — one scroller per
+    // panel, never one inside another). A user asked for the commit list to be
+    // "boxed and scrollable in the box" like the discard target list
+    // (2026-09-06), which is the same shape the destructive cards use.
     let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(title_row));
 
-    // Sections stay flex_shrink_0-wrapped: the body scrolls its overflow, and
-    // without the guard flex would compress the rows instead of scrolling
+    // Fixed blocks stay flex_shrink_0-wrapped: only the panels give up height,
+    // and without the guard flex would compress rows instead of scrolling
     // (same T027 bug class as the discard list).
-    let mut body = modal_scroll_body().child(
+    let mut body = modal_body().child(
         div()
             .flex_shrink_0()
             .child(render_current_predicted(&plan, accent.clone())),
@@ -607,35 +614,43 @@ fn render_plan_modal_card_styled(
     //
     // #454: was `take(total.min(10))` + an "… and N more" line — the count was
     // honest but the remaining commits were unreachable. Every row is rendered
-    // now, at full height inside the scrolling body: one scroll gesture walks
-    // the whole card, and the row count no longer fights the recovery text for
-    // space (a capped list here collapsed to 0 rows on a 700px window).
+    // now, inside the shared list panel with its own capped scroll box, so the
+    // list reads as a box and scrolls in place (user request 2026-09-06)
+    // instead of stretching the card.
     //
     // Plain rows, not a `uniform_list`: the producer caps the preview at 100
     // (`build_push_preview_for_oid`, `MAX_PREVIEW`), so the row count is
-    // bounded — and a virtualized list would have to be its own scroller,
-    // i.e. a scroller inside the body.
+    // bounded and virtualization would buy nothing here.
     if !plan.preview_commits.is_empty() {
         let total = plan.preview_commits.len();
-        let label = format!("Commits to push ({})", total);
-        let mut commit_col = div().flex().flex_col().gap_1().child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(label)),
-        );
+        // No row gap: the row pitch must equal MODAL_LIST_ROW_H exactly or the
+        // height ceiling (rows x ROW_H) would cut a row short.
+        let mut list = div()
+            .id("plan-commit-list")
+            .flex()
+            .flex_col()
+            .min_h(gpui::px(0.))
+            .max_h(modal_list_max_h(total))
+            .overflow_y_scroll();
         for entry in &plan.preview_commits {
             let line: String = entry.chars().take(72).collect();
-            commit_col = commit_col.child(
-                // flex_shrink_0: inside a scrolling flex column, without it
-                // flex compresses the rows instead of scrolling (T027).
+            list = list.child(
+                // flex_shrink_0: a capped flex_col compresses its rows instead
+                // of scrolling them without it (T027 bug class).
                 div()
                     .flex_shrink_0()
+                    .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
                     .child(render_commit_row(&line, accent.clone())),
             );
         }
-        body = body.child(commit_col.flex_shrink_0());
+        body = body.child(modal_list_panel(
+            SharedString::from("Commits to push"),
+            total,
+            list.into_any_element(),
+        ));
     }
 
     // ── Blockers ──────────────────────────────────────────
@@ -670,19 +685,22 @@ fn render_plan_modal_card_styled(
     }
 
     // ── Recovery ──────────────────────────────────────────
+    // Capped and scrollable in place: the body no longer scrolls, so a long
+    // recovery text would otherwise be clipped by the card (the recovery
+    // instructions are the reason a destructive operation is allowed at all).
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        body = body.child(
-            div().flex_shrink_0().child(match accent {
+        body = body.child(modal_prose_box(
+            "plan-recovery-scroll",
+            match accent {
                 Some((_, color)) => render_recovery_box(&recovery_text, color),
                 None => div()
                     .text_xs()
                     .text_color(rgb(current_theme().text_muted))
-                    .overflow_hidden()
                     .child(SharedString::from(recovery_text))
                     .into_any_element(),
-            }),
-        );
+            },
+        ));
     }
 
     // ── Equivalent git command (#353) ─────────────────────

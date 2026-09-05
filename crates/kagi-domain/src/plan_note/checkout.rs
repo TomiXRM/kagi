@@ -32,7 +32,13 @@ pub enum CheckoutNote {
     /// blocker (helper `predict_checkout_conflict`, shared by `plan_checkout`
     /// and `plan_checkout_commit`) — locally modified tracked paths overlap
     /// the target tree; a safe-mode checkout would be refused.
-    CheckoutOverlap { count: usize, files: String },
+    ///
+    /// `files` is the **list**, not a pre-joined string (#454): the UI renders
+    /// it as a scrollable list instead of a comma wall inside the sentence —
+    /// 40 overlapping paths used to fill the whole confirmation card. The text
+    /// renderers below join it, so `message_en`/`message_ja` (oplog, CLI, MCP)
+    /// are byte-identical to before.
+    CheckoutOverlap { count: usize, files: Vec<String> },
     /// warning (`plan_checkout`) — non-overlapping staged/modified changes
     /// carry over to the target branch.
     DirtyCarriedOver { parts: DirtyParts, branch: String },
@@ -62,7 +68,8 @@ impl CheckoutNote {
                 "Working tree has local changes to {} file(s) that the target also \
                  modifies: {}. Safe checkout would be refused (the conflict prevents checkout). \
                  Stash or commit these changes first.",
-                count, files
+                count,
+                files.join(", ")
             ),
             CheckoutNote::DirtyCarriedOver { parts, branch } => {
                 format!("{} will be carried over to '{}'.", parts.parts_en(), branch)
@@ -162,7 +169,7 @@ mod tests {
         assert_eq!(
             CheckoutNote::CheckoutOverlap {
                 count: 1,
-                files: "README.md".into()
+                files: vec!["README.md".into()]
             }
             .message_en(),
             "Working tree has local changes to 1 file(s) that the target also modifies: \
@@ -172,7 +179,7 @@ mod tests {
         assert_eq!(
             CheckoutNote::CheckoutOverlap {
                 count: 2,
-                files: "a b.rs, src/c.rs".into()
+                files: vec!["a b.rs".into(), "src/c.rs".into()]
             }
             .message_en(),
             "Working tree has local changes to 2 file(s) that the target also modifies: \
@@ -184,7 +191,7 @@ mod tests {
         assert_eq!(
             CheckoutNote::CheckoutOverlap {
                 count: 12,
-                files: "a.rs, b.rs, c.rs, ...".into()
+                files: vec!["a.rs".into(), "b.rs".into(), "c.rs".into(), "...".into()]
             }
             .message_en(),
             "Working tree has local changes to 12 file(s) that the target also modifies: \

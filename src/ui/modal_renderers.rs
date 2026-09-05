@@ -14,7 +14,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
-use super::modal_shell::{modal_card, modal_scroll_body};
+use super::modal_shell::{modal_card, modal_scroll_body, note_path_list, note_path_list_element};
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, Entity, SharedString, Window};
@@ -615,15 +615,32 @@ fn render_plan_modal_card_styled(
     }
 
     // ── Blockers ──────────────────────────────────────────
+    // #454: a blocker that carries a *list* (checkout overlap: "40 file(s)
+    // that the target also modifies") renders as sentence + list, not as a
+    // comma wall inside the sentence. 40 paths joined into prose filled the
+    // whole card, which is the wall the audit set out to remove.
     if !plan.blockers.is_empty() {
         let mut block_col = div().flex().flex_col().gap_1();
         for b in &plan.blockers {
-            block_col = block_col.child(render_note_row(
-                "\u{2717}",
-                current_theme().color_blocker,
-                &plan_note_text(b),
-                accent.is_some(),
-            ));
+            match note_path_list(b) {
+                Some((summary, files)) => {
+                    block_col = block_col.child(render_note_row(
+                        "\u{2717}",
+                        current_theme().color_blocker,
+                        &summary,
+                        accent.is_some(),
+                    ));
+                    block_col = block_col.child(note_path_list_element(&files));
+                }
+                None => {
+                    block_col = block_col.child(render_note_row(
+                        "\u{2717}",
+                        current_theme().color_blocker,
+                        &plan_note_text(b),
+                        accent.is_some(),
+                    ));
+                }
+            }
         }
         body = body.child(block_col.flex_shrink_0());
     }

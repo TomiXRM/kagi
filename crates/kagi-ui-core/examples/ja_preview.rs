@@ -136,7 +136,7 @@ fn cases() -> Vec<Case> {
             }),
             notes: vec![PlanNote::Checkout(CheckoutNote::CheckoutOverlap {
                 count: 3,
-                files: s("a.rs, b.rs, c.rs"),
+                files: vec![s("a.rs"), s("b.rs"), s("c.rs")],
             })],
             recovery: None,
         },

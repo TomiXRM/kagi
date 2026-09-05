@@ -682,6 +682,10 @@ pub enum Msg {
     /// #454: collapsible-section header for the paths discard skips
     /// (untracked / conflicted). The count is rendered by `modal_section`.
     DiscardSkippedSection,
+    /// #454: checkout-overlap blocker summary, `{}` = overlap count. The
+    /// paths themselves are rendered as a list under this line, not joined
+    /// into the sentence (40 paths used to fill the whole card).
+    PlanOverlapSummary,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -1699,6 +1703,10 @@ impl Msg {
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, DiscardSkippedSection) => "Skipped (untracked / conflicted)",
             (Ja, DiscardSkippedSection) => "対象外(untracked / conflict)",
+            (En, PlanOverlapSummary) => {
+                "{} file(s) also modified by the target. Stash or commit them first."
+            }
+            (Ja, PlanOverlapSummary) => "切り替え先も変更する {} 件のファイルに変更があります。先に stash か commit してください。",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",

@@ -49,6 +49,10 @@ const SECTION_DISCARD_RECOVERY: &str = "discard-recovery";
 /// confirmation is required (ADR-0023).
 pub(crate) fn render_amend_modal(
     modal: AmendPlanModal,
+    // #454: user's section open/closed overrides (`KagiApp` owns them; the
+    // renderer owns the defaults). The folded-file list is NOT collapsible;
+    // the warnings and recovery panels are.
+    overrides: &std::collections::HashSet<&'static str>,
     // #454: scroll handle for the folded-file `uniform_list` (owned by
     // `KagiApp` so the position survives re-renders while the modal is open).
     list_scroll: gpui::UniformListScrollHandle,
@@ -187,12 +191,13 @@ pub(crate) fn render_amend_modal(
                     ))),
             );
         }
+        let open = section_open(overrides, SECTION_AMEND_WARNINGS, true);
         body = body.child(modal_section(
             SECTION_AMEND_WARNINGS,
             Msg::ModalWarningsSection.t(),
             plan.warnings.len(),
-            true,
-            Some(warn_col.into_any_element()),
+            open,
+            open.then(|| warn_col.into_any_element()),
             cx,
         ));
     }
@@ -218,18 +223,20 @@ pub(crate) fn render_amend_modal(
     // Recovery: the mock's `復元方法` panel with an `oplog` chip.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
+        let open = section_open(overrides, SECTION_AMEND_RECOVERY, true);
         body = body.child(modal_section_chipped(
             SECTION_AMEND_RECOVERY,
             Msg::ModalRecoverySection.t(),
             Some(SharedString::from(Msg::ModalRecoveryChip.t())),
-            true,
-            Some(
+            open,
+            // Built only while open, so a folded section costs nothing.
+            open.then(|| {
                 modal_prose_box(
                     "modal-recovery-scroll",
                     render_recovery_box(&recovery_text, current_theme().color_blocker),
                 )
-                .into_any_element(),
-            ),
+                .into_any_element()
+            }),
             cx,
         ));
     }
@@ -519,12 +526,13 @@ pub(crate) fn render_discard_modal(
                     ))),
             );
         }
+        let open = section_open(overrides, SECTION_DISCARD_WARNINGS, true);
         body = body.child(modal_section(
             SECTION_DISCARD_WARNINGS,
             Msg::ModalWarningsSection.t(),
             plan.warnings.len(),
-            true,
-            Some(warn_col.into_any_element()),
+            open,
+            open.then(|| warn_col.into_any_element()),
             cx,
         ));
     }
@@ -550,18 +558,20 @@ pub(crate) fn render_discard_modal(
     // backup blob reference is the reason discard is allowed to exist.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
+        let open = section_open(overrides, SECTION_DISCARD_RECOVERY, true);
         body = body.child(modal_section_chipped(
             SECTION_DISCARD_RECOVERY,
             Msg::ModalRecoverySection.t(),
             Some(SharedString::from(Msg::ModalRecoveryChip.t())),
-            true,
-            Some(
+            open,
+            // Built only while open, so a folded section costs nothing.
+            open.then(|| {
                 modal_prose_box(
                     "modal-recovery-scroll",
                     render_recovery_box(&recovery_text, current_theme().color_blocker),
                 )
-                .into_any_element(),
-            ),
+                .into_any_element()
+            }),
             cx,
         ));
     }

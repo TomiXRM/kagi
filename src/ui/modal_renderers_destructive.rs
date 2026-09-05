@@ -18,7 +18,7 @@ use super::modal_shell::{
 };
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
-use super::KagiApp;
+use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
@@ -495,6 +495,7 @@ pub(crate) fn render_discard_modal(
                         // One line, tail kept: same reason as `modal_file_row`.
                         .whitespace_nowrap()
                         .text_ellipsis_start()
+                        .font_family(MONO_FONT)
                         .child(SharedString::from(format!(
                             "\u{2014} {} (untracked/conflicted)",
                             p

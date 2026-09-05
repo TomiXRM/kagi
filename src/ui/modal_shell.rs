@@ -12,7 +12,7 @@
 //! override can never carry a collapsed state into the next confirm).
 
 use super::theme::{self, theme as current_theme};
-use super::KagiApp;
+use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use kagi_domain::status::ChangeKind;
 
@@ -394,6 +394,7 @@ pub(crate) fn modal_file_row(path: impl Into<SharedString>, change: &ChangeKind)
             div()
                 .flex_shrink_0()
                 .w(theme::scaled_px(10.))
+                .font_family(MONO_FONT)
                 .text_xs()
                 .text_color(rgb(color))
                 .child(SharedString::from(letter.to_string())),
@@ -411,6 +412,12 @@ pub(crate) fn modal_file_row(path: impl Into<SharedString>, change: &ChangeKind)
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis_start()
+                .font_family(MONO_FONT)
+                // Monospace for paths: aligned separators make a column of
+                // deep paths scannable, and the leading ellipsis lands in the
+                // same place on every row (user request 2026-09-06). Same
+                // font the recovery commands and the diff view already use.
+                .font_family(MONO_FONT)
                 .text_xs()
                 .text_color(rgb(current_theme().text_sub))
                 .child(path.into()),
@@ -469,6 +476,7 @@ pub(crate) fn modal_change_summary(files: &[kagi_domain::status::FileStatus]) ->
         row = row.child(
             div()
                 .flex_shrink_0()
+                .font_family(MONO_FONT)
                 .text_xs()
                 .text_color(rgb(color))
                 .child(SharedString::from(format!("{} {}", letter, n))),
@@ -484,6 +492,7 @@ pub(crate) fn modal_change_summary(files: &[kagi_domain::status::FileStatus]) ->
         row = row.child(
             div()
                 .flex_shrink_0()
+                .font_family(MONO_FONT)
                 .text_xs()
                 .text_color(rgb(current_theme().change_renamed))
                 .child(SharedString::from(format!("R {}", renamed))),
@@ -540,6 +549,7 @@ pub(crate) fn note_path_list_element(files: &[String]) -> gpui::AnyElement {
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis_start()
+                .font_family(MONO_FONT)
                 .child(SharedString::from(f.clone())),
         );
     }

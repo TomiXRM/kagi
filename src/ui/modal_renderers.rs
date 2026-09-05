@@ -19,7 +19,7 @@ use super::modal_shell::{
     note_path_list, note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::theme::{self, theme as current_theme};
-use super::KagiApp;
+use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, Entity, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
@@ -402,6 +402,7 @@ fn render_note_row(glyph: &'static str, color: u32, text: &str, chip: bool) -> g
 fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyElement {
     let Some((_, color)) = accent else {
         return div()
+            .font_family(MONO_FONT)
             .text_xs()
             .text_color(rgb(current_theme().text_sub))
             .overflow_hidden()
@@ -424,6 +425,9 @@ fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyEle
         .items_center()
         .gap_2()
         .child(
+            // The sha is monospace: a column of hashes only reads as a column
+            // when the glyphs are fixed width (user request 2026-09-06). The
+            // summary next to it stays proportional — it is prose.
             div()
                 .flex_shrink_0()
                 .px_1()
@@ -432,6 +436,7 @@ fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyEle
                 .border_1()
                 .border_color(gpui::rgba(border))
                 .text_color(rgb(color))
+                .font_family(MONO_FONT)
                 .text_xs()
                 .child(SharedString::from(sha.to_string())),
         )

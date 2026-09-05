@@ -106,6 +106,7 @@ pub mod watcher;
 pub mod workspace;
 pub mod workspace_mode;
 pub mod worktree_menu;
+pub mod worktree_wip;
 
 pub use compare_pane::ComparePane;
 pub use diff_view::*;
@@ -3100,15 +3101,20 @@ impl KagiApp {
             .branches
             .iter()
             .find_map(|(name, current)| current.then(|| name.clone()));
-        let checked_out_worktree_path = if matches!(state.kind, BranchKind::Local) {
+        // #473: `worktree_path` is the OTHER worktree's path (the current one is
+        // where we already are, so "Open worktree" would be a no-op there).
+        let other_worktree = if matches!(state.kind, BranchKind::Local) {
             self.active_view
                 .worktrees
                 .iter()
                 .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
-                .map(|wt| wt.path.display().to_string())
         } else {
             None
         };
+        let checked_out_worktree_path = other_worktree.map(|wt| wt.path.display().to_string());
+        let worktree_path = other_worktree
+            .filter(|wt| !wt.is_current)
+            .map(|wt| wt.path.clone());
         BranchMenuContext {
             name: state.name.clone(),
             head_sha: state.target.0.clone(),
@@ -3127,6 +3133,7 @@ impl KagiApp {
             protected: branch_menu::is_protected_branch(&state.name),
             checked_out_in_other_worktree: checked_out_worktree_path.is_some(),
             checked_out_worktree_path,
+            worktree_path,
             merged_into_current: false,
             is_pushed: upstream.is_some(),
             detached_head: self.active_view.status_summary.is_detached,

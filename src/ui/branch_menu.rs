@@ -37,6 +37,9 @@ pub enum BranchAction {
     Checkout,
     SwitchToLatest,
     OpenWorktreeFromBranch,
+    /// #473: open the worktree this branch is already checked out in, as its
+    /// own tab. Only offered when `worktree_path` is set.
+    OpenWorktreeDir,
     RevealHead,
     ToggleSolo,
     Pull,
@@ -77,6 +80,10 @@ pub struct BranchMenuContext {
     pub protected: bool,
     pub checked_out_in_other_worktree: bool,
     pub checked_out_worktree_path: Option<String>,
+    /// #473: the working-tree path of the OTHER worktree this branch is checked
+    /// out in (`None` for the current worktree, or when it is not checked out
+    /// anywhere else). Drives the "Open worktree" item.
+    pub worktree_path: Option<std::path::PathBuf>,
     pub merged_into_current: bool,
     pub is_pushed: bool,
     pub detached_head: bool,
@@ -105,7 +112,7 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
         None => format!("Rebase current branch onto {}", ctx.name),
     };
 
-    vec![
+    let mut groups = vec![
         MenuGroup {
             title: Some("Checkout / Open"),
             items: vec![
@@ -286,7 +293,22 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                 ),
             ],
         },
-    ]
+    ];
+    // #473: a branch checked out in ANOTHER worktree can be reached directly —
+    // Checkout is disabled for it (git refuses two checkouts of one branch), so
+    // without this the menu offered no way to get to that working tree at all.
+    if let Some(path) = &ctx.worktree_path {
+        groups[0].items.insert(
+            1,
+            item(
+                BranchAction::OpenWorktreeDir,
+                format!("{}: {}", Msg::MenuOpenWorktreeDir.t(), path.display()),
+                ItemState::Enabled,
+                false,
+            ),
+        );
+    }
+    groups
 }
 
 pub fn header(ctx: &BranchMenuContext) -> SharedString {
@@ -693,6 +715,7 @@ mod tests {
             protected: false,
             checked_out_in_other_worktree: false,
             checked_out_worktree_path: None,
+            worktree_path: None,
             merged_into_current: true,
             is_pushed: true,
             detached_head: false,
@@ -739,6 +762,33 @@ mod tests {
             ),
             other => panic!("expected disabled, got {:?}", other),
         }
+    }
+
+    /// #473: a branch checked out in ANOTHER worktree gets an "Open worktree"
+    /// item naming that directory — Checkout is disabled for it, so without
+    /// this the menu offered no route to that working tree.
+    #[test]
+    fn open_worktree_dir_only_when_checked_out_elsewhere() {
+        let plain = branch_context_menu_items(&ctx());
+        assert!(
+            plain
+                .iter()
+                .flat_map(|g| g.items.iter())
+                .all(|i| i.action != BranchAction::OpenWorktreeDir),
+            "no worktree → no Open worktree item"
+        );
+
+        let mut c = ctx();
+        c.worktree_path = Some(std::path::PathBuf::from("/tmp/wt-ahead"));
+        let groups = branch_context_menu_items(&c);
+        assert_enabled(&groups, BranchAction::OpenWorktreeDir);
+        assert!(
+            item_for(&groups, BranchAction::OpenWorktreeDir)
+                .label
+                .as_ref()
+                .contains("/tmp/wt-ahead"),
+            "the item must name the worktree directory"
+        );
     }
 
     #[test]

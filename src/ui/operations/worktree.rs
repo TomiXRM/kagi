@@ -245,10 +245,14 @@ impl KagiApp {
 
     /// Open the worktree right-click context menu. The main worktree never
     /// gets here (the sidebar row installs no handler for it).
+    ///
+    /// #473: `path` is `Some` when the opener knows the worktree's working-tree
+    /// path (the graph's WIP row); it unlocks the path-based menu items.
     pub fn open_worktree_menu(
         &mut self,
         name: String,
         locked: bool,
+        path: Option<std::path::PathBuf>,
         position: gpui::Point<gpui::Pixels>,
     ) {
         self.commit_menu = None;
@@ -257,6 +261,7 @@ impl KagiApp {
         self.worktree_menu = Some(worktree_menu::WorktreeMenuState {
             name: name.clone(),
             locked,
+            path,
             position,
         });
         klog!("worktree-menu: open '{}'", name);
@@ -268,7 +273,7 @@ impl KagiApp {
         action: worktree_menu::WorktreeAction,
         state: worktree_menu::WorktreeMenuState,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         use worktree_menu::WorktreeAction::*;
         match action {
@@ -277,6 +282,26 @@ impl KagiApp {
             Lock => self.open_lock_worktree_modal(state.name),
             Prune => self.open_prune_worktrees_modal(),
             Repair => self.open_repair_worktrees_modal(),
+            // #473: the three path-based items. `path` is always `Some` here —
+            // `build_worktree_menu` only offers them when it is.
+            OpenInNewTab => {
+                if let Some(p) = state.path {
+                    self.open_repository(p, cx);
+                }
+            }
+            Reveal => {
+                if let Some(p) = state.path {
+                    self.reveal_path_in_file_manager(&p);
+                }
+            }
+            CopyPath => {
+                if let Some(p) = state.path {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                        p.to_string_lossy().into_owned(),
+                    ));
+                    self.status_footer = FooterStatus::Idle(SharedString::from("Path copied"));
+                }
+            }
         }
     }
 

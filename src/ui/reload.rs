@@ -236,12 +236,18 @@ impl KagiApp {
                 // `panel` was read in the background when the merge was pending at
                 // spawn; fall back to a (rare) sync read if it wasn't.
                 let mut panel = panel.unwrap_or_else(|| CommitPanelState::from_repo(&repo_path));
-                if let Some(entity) = self.commit_panel.clone() {
+                // #473: never overwrite a panel that belongs to another
+                // worktree with THIS repo's staging lists — leave it alone.
+                if let Some(entity) = self
+                    .commit_panel
+                    .clone()
+                    .filter(|e| e.read(cx).repo_path == repo_path)
+                {
                     entity.update(cx, |v, _| {
                         panel.tree_view = v.state.tree_view;
                         v.state = panel;
                     });
-                } else {
+                } else if self.commit_panel.is_none() {
                     let weak_app = cx.weak_entity();
                     let entity =
                         cx.new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone()));
@@ -526,9 +532,17 @@ impl KagiApp {
                 // Refresh the open commit panel's lists in place (keeps it open).
                 // ADR-0118 (correction #6c): update the entity, never rebuild via
                 // a parent render read.
-                if let (Some(entity), Some(rp)) = (app.commit_panel.clone(), app.repo_path.clone())
-                {
-                    entity.update(cx, |v, _| v.state.reload_status(&rp));
+                // #473: reload from the PANEL's own repo, not the tab's — a
+                // panel showing a linked worktree would otherwise be silently
+                // refilled with the open repository's files on the next tick.
+                // (The watcher only watches the open working tree, so a worktree
+                // panel simply does not auto-refresh; re-clicking its WIP row
+                // reloads it.)
+                if let Some(entity) = app.commit_panel.clone() {
+                    entity.update(cx, |v, _| {
+                        let rp = v.repo_path.clone();
+                        v.state.reload_status(&rp);
+                    });
                 }
                 cx.notify();
             });

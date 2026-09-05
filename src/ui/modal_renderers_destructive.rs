@@ -391,6 +391,12 @@ pub(crate) fn render_discard_modal(
         }
     });
 
+    // #476 slice 3: only a commit-panel discard follows the panel — an Editor
+    // Workspace discard runs in the tab, so naming a worktree would be a lie.
+    let worktree = match modal.origin {
+        worktree_wip::WriteOrigin::CommitPanel => worktree,
+        worktree_wip::WriteOrigin::EditorTree => None,
+    };
     let title = worktree_wip::worktree_modal_title(
         &if modal.is_all {
             format!("Discard all changes ({})", target_count)

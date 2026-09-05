@@ -14,7 +14,9 @@
 //! `repo_path`, so a panel pointed elsewhere would have staged and committed
 //! into the wrong repository; v1 (#473) made such a panel read-only outright.
 //! #476 threaded the panel's own path through instead, one slice at a time:
-//! [`KagiApp::commit_panel_repo_path`] is the single resolver. Slice 1
+//! [`KagiApp::write_repo_path`] is the single resolver, and every write says
+//! which view it came from ([`WriteOrigin`]) — the commit panel follows the
+//! panel, the Editor Workspace tree always follows the tab. Slice 1
 //! converted stage / unstage, slice 2 commit (including the message inputs
 //! that feed it — see [`draft_branch`]), slice 3 amend and discard. With the
 //! last op converted the `refuse_foreign_panel_write` guard is **gone**: no
@@ -55,14 +57,34 @@ pub fn canon(path: PathBuf) -> PathBuf {
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 
-/// The repository a commit-panel write must target: the panel's own repository
-/// when one is open, else the tab's. Pure half of
-/// [`KagiApp::commit_panel_repo_path`] (#476).
-pub fn panel_repo<'a>(
+/// Which view a write was dispatched from — and therefore which repository it
+/// must target (#476 slice 3 review).
+///
+/// The commit panel can point at a linked worktree, so its writes follow the
+/// panel. Every other view lists the **tab's** files and must keep resolving
+/// the tab, whatever the panel happens to be showing: the Editor Workspace
+/// tree's "Discard Changes…" shares `open_discard_modal_for_path` with the
+/// panel's file menu, and without this it would discard a linked worktree's
+/// copy of the same relative path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteOrigin {
+    /// The commit panel (its header buttons, file rows, footer, file menu).
+    CommitPanel,
+    /// The Editor Workspace file tree — always the open tab's repository.
+    EditorTree,
+}
+
+/// The repository a write from `origin` must target. Pure half of
+/// [`KagiApp::write_repo_path`] (#476).
+pub fn write_repo_for<'a>(
+    origin: WriteOrigin,
     tab_repo: Option<&'a Path>,
     panel_repo: Option<&'a Path>,
 ) -> Option<&'a Path> {
-    panel_repo.or(tab_repo)
+    match origin {
+        WriteOrigin::CommitPanel => panel_repo.or(tab_repo),
+        WriteOrigin::EditorTree => tab_repo,
+    }
 }
 
 /// The branch a commit panel's message draft is keyed by (#476 slice 2).
@@ -121,16 +143,22 @@ impl KagiApp {
         )
     }
 
-    /// The repository a commit-panel write op must target (#476): the panel's
-    /// own — a linked worktree's, when the panel shows one — and the tab's when
-    /// no panel is open. Both sides are canonical, so this resolves to exactly
-    /// the repository the panel is listing files from.
-    pub(crate) fn commit_panel_repo_path(&self, cx: &gpui::App) -> Option<PathBuf> {
+    /// The repository a write dispatched from `origin` must target (#476) —
+    /// see [`write_repo_for`]. Both sides are canonical, so a commit-panel
+    /// write resolves to exactly the repository the panel is listing files
+    /// from, and an editor-tree write to the tab's.
+    pub(crate) fn write_repo_path(&self, origin: WriteOrigin, cx: &gpui::App) -> Option<PathBuf> {
         let panel = self
             .commit_panel
             .as_ref()
             .map(|e| e.read(cx).repo_path.clone());
-        panel_repo(self.repo_path.as_deref(), panel.as_deref()).map(PathBuf::from)
+        write_repo_for(origin, self.repo_path.as_deref(), panel.as_deref()).map(PathBuf::from)
+    }
+
+    /// [`Self::write_repo_path`] for the commit panel — the origin all but one
+    /// write entry point has.
+    pub(crate) fn commit_panel_repo_path(&self, cx: &gpui::App) -> Option<PathBuf> {
+        self.write_repo_path(WriteOrigin::CommitPanel, cx)
     }
 
     /// The draft key's branch for the open commit panel — see [`draft_branch`].
@@ -140,18 +168,19 @@ impl KagiApp {
         draft_branch(label.as_deref(), &self.active_view.status_summary.branch)
     }
 
-    /// Run `f` against a `Backend` for [`Self::commit_panel_repo_path`].
+    /// Run `f` against a `Backend` for [`Self::write_repo_path`].
     ///
-    /// The tab's own panel keeps borrowing the per-tab `RepoSession`
+    /// The tab's own repository keeps borrowing the per-tab `RepoSession`
     /// (ADR-0107); a linked worktree's panel gets a short-lived `Backend` on
     /// its own path — the same split `diff_view`'s panel diff read uses.
     /// `None` when there is no repository to write to, or it would not open.
-    pub(crate) fn with_commit_panel_repo<R>(
+    pub(crate) fn with_write_repo<R>(
         &self,
+        origin: WriteOrigin,
         cx: &gpui::App,
         f: impl FnOnce(&kagi_git::Backend) -> R,
     ) -> Option<R> {
-        let path = self.commit_panel_repo_path(cx)?;
+        let path = self.write_repo_path(origin, cx)?;
         if self.repo_path.as_deref() == Some(path.as_path()) {
             return Some(f(self.repo_session.as_ref()?.backend()));
         }
@@ -162,6 +191,15 @@ impl KagiApp {
                 None
             }
         }
+    }
+
+    /// [`Self::with_write_repo`] for the commit panel.
+    pub(crate) fn with_commit_panel_repo<R>(
+        &self,
+        cx: &gpui::App,
+        f: impl FnOnce(&kagi_git::Backend) -> R,
+    ) -> Option<R> {
+        self.with_write_repo(WriteOrigin::CommitPanel, cx, f)
     }
 
     /// Keep a linked worktree's WIP row honest after a write into it (#476).
@@ -290,16 +328,34 @@ mod tests {
         let _ = std::fs::remove_dir(&raw);
     }
 
-    /// #476: the panel's repository wins; the tab's is the fallback when no
-    /// panel is open. This is what points the four staging ops at the worktree.
+    /// #476: a commit-panel write follows the panel (the tab is the fallback
+    /// when no panel is open) — that is what points stage/commit/amend/discard
+    /// at the worktree. An **editor-tree** write follows the tab, always: that
+    /// tree lists the tab's files, and resolving the panel would discard a
+    /// linked worktree's copy of the same relative path (slice 3 review).
     #[test]
-    fn panel_repo_prefers_the_panel_then_the_tab() {
+    fn write_repo_follows_the_origin() {
+        use WriteOrigin::*;
         let tab = Path::new("/repo");
         let wt = Path::new("/wt");
-        assert_eq!(panel_repo(Some(tab), Some(wt)), Some(wt));
-        assert_eq!(panel_repo(Some(tab), None), Some(tab));
-        assert_eq!(panel_repo(None, Some(wt)), Some(wt));
-        assert_eq!(panel_repo(None, None), None);
+        // (origin, tab, panel) → expected
+        let cases = [
+            (CommitPanel, Some(tab), Some(wt), Some(wt)),
+            (CommitPanel, Some(tab), None, Some(tab)),
+            (CommitPanel, None, Some(wt), Some(wt)),
+            (CommitPanel, None, None, None),
+            (EditorTree, Some(tab), Some(wt), Some(tab)),
+            (EditorTree, Some(tab), None, Some(tab)),
+            (EditorTree, None, Some(wt), None),
+            (EditorTree, None, None, None),
+        ];
+        for (origin, tab_repo, panel, want) in cases {
+            assert_eq!(
+                write_repo_for(origin, tab_repo, panel),
+                want,
+                "{origin:?} with tab={tab_repo:?} panel={panel:?}"
+            );
+        }
     }
 
     /// #476: the panel's repository is where its draft lives; a foreign panel's

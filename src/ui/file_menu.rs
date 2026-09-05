@@ -28,7 +28,13 @@ pub(crate) fn render_file_menu_overlay(
     let discard_path = path.clone();
     let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
         this.file_menu = None;
-        this.open_discard_modal_for_path(discard_path.clone(), cx);
+        // #476 slice 3: this menu hangs off a commit-panel row, so it discards
+        // in the panel's repository (a linked worktree's, when it shows one).
+        this.open_discard_modal_for_path(
+            discard_path.clone(),
+            crate::ui::worktree_wip::WriteOrigin::CommitPanel,
+            cx,
+        );
         cx.notify();
     });
     // ADR-0089: open File History for this unstaged file.

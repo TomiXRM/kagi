@@ -106,19 +106,20 @@ impl KagiApp {
     /// ADR-0083). The callers already gate this action to eligible files, so no
     /// conflicted/untracked filtering is needed here.
     ///
-    /// #476 slice 3: plans against `commit_panel_repo_path` — the panel's own
-    /// repository when it shows a linked worktree.
-    /// ponytail: the Editor Workspace tree shares this entry point, so with a
-    /// worktree panel open its "Discard Changes…" resolves that worktree too.
-    /// Giving the editor its own owner is a bigger change than #476; the
-    /// confirm modal names the worktree, which is what makes it visible.
+    /// #476 slice 3: `origin` decides the repository, because the two callers
+    /// mean different ones. The panel's file menu lists the PANEL's files (a
+    /// linked worktree's, when it shows one); the Editor Workspace tree lists
+    /// the TAB's, and must discard there whatever the panel is pointed at — the
+    /// same relative path is usually dirty in both. The origin is stored on the
+    /// modal so `start_discard` executes against the repository this planned.
     pub fn open_discard_modal_for_path(
         &mut self,
         path: std::path::PathBuf,
+        origin: worktree_wip::WriteOrigin,
         cx: &mut Context<Self>,
     ) {
         let paths = vec![path.to_string_lossy().replace('\\', "/")];
-        let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&paths)) {
+        let planned = match self.with_write_repo(origin, cx, |repo| repo.plan_discard(&paths)) {
             Some(p) => p,
             None => {
                 self.status_footer =
@@ -137,6 +138,7 @@ impl KagiApp {
                     paths,
                     skipped: Vec::new(),
                     is_all: false,
+                    origin,
                     error: None,
                     confirm_armed: false,
                 });
@@ -182,6 +184,7 @@ impl KagiApp {
                     paths: eligible,
                     skipped,
                     is_all: true,
+                    origin: worktree_wip::WriteOrigin::CommitPanel,
                     error: None,
                     confirm_armed: false,
                 });
@@ -231,11 +234,15 @@ impl KagiApp {
             return;
         }
 
-        // #476 slice 3: discard into the PANEL's repository. Bound once, like
-        // `start_commit`: the preflight `Backend`, the background
-        // `discard_blocking` (whose `Backend::run` writes the persisted oplog
-        // against this path), `record_op`, and the WIP-row refresh all follow.
-        let repo_path = match self.commit_panel_repo_path(cx) {
+        // #476 slice 3: discard into the repository this modal was PLANNED
+        // against — the panel's (a linked worktree's, when it shows one) or, for
+        // the Editor Workspace tree, the tab's. Re-deriving it here would let a
+        // panel that moved between plan and confirm redirect the execute.
+        // Bound once, like `start_commit`: the preflight `Backend`, the
+        // background `discard_blocking` (whose `Backend::run` writes the
+        // persisted oplog against this path), `record_op`, and the WIP-row
+        // refresh all follow.
+        let repo_path = match self.write_repo_path(modal.origin, cx) {
             Some(p) => p,
             None => return,
         };
@@ -285,6 +292,7 @@ impl KagiApp {
                         paths: modal.paths.clone(),
                         skipped: modal.skipped.clone(),
                         is_all: modal.is_all,
+                        origin: modal.origin,
                         error: Some(SharedString::from(err_msg)),
                         confirm_armed: false,
                     });
@@ -376,6 +384,7 @@ impl KagiApp {
                     paths: paths.clone(),
                     skipped: modal.skipped.clone(),
                     is_all: modal.is_all,
+                    origin: modal.origin,
                     error: Some(SharedString::from(err_msg)),
                     // Force re-arm after a failure: the user is
                     // re-confirming, so require the two-stage flow again.

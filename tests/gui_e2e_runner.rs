@@ -58,8 +58,9 @@ mod macos {
     use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
     use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
-        commands::CreateSnapshot, commit_list, e2e, graph_wip, oplog_panel, settings::CopyTarget,
-        theme, BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
+        commands::CreateSnapshot, commit_list, e2e, editor_tree_menu::EditorTreeAction, graph_wip,
+        oplog_panel, settings::CopyTarget, theme, BottomTab, CopyDiffSelection, KagiApp,
+        ToggleBottomPanel,
     };
 
     /// `git` with a deterministic identity + no user-config bleed-through.
@@ -1210,7 +1211,7 @@ mod macos {
         let head_before = repo_fingerprint(&wt_a).0;
         let parent_before = rev_parse(&wt_a, "HEAD^");
         let commits_before = commit_count(&wt_a);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let idx_a = cx.read(|app| {
             kagi.read(app)
@@ -1418,6 +1419,72 @@ mod macos {
             (repo_fingerprint(&repo_path), repo_fingerprint(&wt_a)),
             before_undo,
             "the tab's Undo must not act on either repository after worktree ops"
+        );
+
+        // ── (d) the Editor Workspace tree discards in the TAB ───────────────
+        // Slice 3 review: `open_discard_modal_for_path` is shared by the commit
+        // panel's file menu and the editor tree, which mean DIFFERENT
+        // repositories. With the same relative path dirty in both, resolving
+        // the panel would destroy the worktree's copy on an editor-tree click.
+        // `WriteOrigin` is what keeps them apart, and it rides on the modal so
+        // preflight + execute land where the plan was built.
+        std::fs::write(repo_path.join("f.txt"), "open repo edit\n").unwrap();
+        std::fs::write(wt_a.join("f.txt"), "worktree edit\n").unwrap();
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
+            "the worktree panel must be up — that is the trap the origin avoids"
+        );
+
+        // The real handler behind the tree's "Discard Changes…" menu item.
+        let discard_f = EditorTreeAction::Discard(PathBuf::from("f.txt"));
+        win.update(cx, |_, window, app_cx| {
+            kagi.update(app_cx, |app, cx| {
+                app.dispatch_editor_tree_action(discard_f, window, cx)
+            })
+        })
+        .expect("dispatch editor-tree discard");
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
+        cx.run_until_parked();
+
+        assert_eq!(
+            repo_fingerprint(&repo_path),
+            repo_fp,
+            "an editor-tree discard must restore the OPEN repo's f.txt (back to the \
+             fixture state: only the untracked dirty.txt left)"
+        );
+        assert_eq!(
+            repo_fingerprint(&wt_a).1,
+            " M f.txt\n",
+            "an editor-tree discard must NOT touch the worktree's copy of the same path"
+        );
+
+        // …and the panel's own discard still goes to the worktree.
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fingerprint(&wt_a),
+            (head_after_amend.clone(), String::new()),
+            "the panel's own discard must clean the WORKTREE"
+        );
+        assert_eq!(
+            repo_fingerprint(&repo_path),
+            repo_fp,
+            "the panel's discard must not touch the open repo"
         );
 
         eprintln!(

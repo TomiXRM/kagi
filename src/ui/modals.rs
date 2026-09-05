@@ -537,6 +537,11 @@ pub struct DiscardModal {
     pub skipped: Vec<String>,
     /// Whether this was launched from the "Discard all" header button.
     pub is_all: bool,
+    /// Which view dispatched this discard (#476 slice 3 review). Carried on the
+    /// modal, not re-derived at confirm time: the plan was built against one
+    /// repository and `start_discard` must preflight and execute against the
+    /// *same* one, however the commit panel has moved in between.
+    pub origin: crate::ui::worktree_wip::WriteOrigin,
     /// Error message to show if preflight or execute failed.
     pub error: Option<SharedString>,
     /// Two-stage confirm gate: `false` = first click pending, `true` = armed.

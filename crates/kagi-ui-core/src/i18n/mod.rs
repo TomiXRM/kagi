@@ -2099,19 +2099,17 @@ pub fn wip_row_note(n: usize) -> String {
     }
 }
 
-/// WIP row note for a *linked* worktree (not the one kagi has open). Clicking
-/// the row switches the open repo to that worktree, so the note says so.
+/// WIP row note for a *linked* worktree (not the one kagi has open). #473:
+/// clicking the row shows that worktree's changes in the commit panel, in
+/// place — it no longer opens the worktree as a tab, so the hint says so.
 pub fn wip_row_other(n: usize) -> String {
     let plural = if n == 1 { "" } else { "s" };
     match lang() {
         Lang::En => format!(
-            "// WIP — {} change{} (click to open this worktree)",
+            "// WIP — {} change{} (click to show its changes)",
             n, plural
         ),
-        Lang::Ja => format!(
-            "// WIP — {} change{}(クリックで worktree を開く)",
-            n, plural
-        ),
+        Lang::Ja => format!("// WIP — {} change{}(クリックで変更を表示)", n, plural),
     }
 }
 

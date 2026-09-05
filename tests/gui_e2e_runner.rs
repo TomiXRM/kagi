@@ -767,9 +767,52 @@ mod macos {
             "no tab may appear at any point in this scenario"
         );
 
+        // POSITIVE CONTROL: the guard must not misfire on the tab's OWN panel.
+        // Everything above proves writes are refused; this proves they are
+        // refused *because the panel is foreign*, not because staging is broken
+        // in the harness — and pins `is_foreign_panel`'s path-equality down.
+        //
+        // The panel is re-pointed at the tab's repo rather than opened through
+        // `open_commit_panel`: that path builds the two `InputState`s, and
+        // gpui_component's `InputState` retains handles that gpui's end-of-run
+        // leak detector then reports (nothing in this suite drops them). What
+        // is under test here is the guard + the staging path, and both run
+        // identically either way.
+        let panel = cx.read(|app| kagi.read(app).commit_panel.clone().expect("panel"));
+        let own = repo_path.clone();
+        panel.update(cx, |v, _| {
+            v.repo_path = own.clone();
+            v.foreign = None;
+            v.state.reload_status(&own);
+        });
+        cx.run_until_parked();
+        assert!(
+            !cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
+            "the open repo's own panel must NOT be treated as foreign"
+        );
+        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        cx.run_until_parked();
+        let staged_fp = repo_fingerprint(&repo_path);
+        assert_ne!(
+            repo_fp, staged_fp,
+            "staging from the OPEN repo's own panel must actually stage"
+        );
+        assert_eq!(
+            staged_fp.1, "A  dirty.txt\n",
+            "expected dirty.txt staged in the open repo, got {:?}",
+            staged_fp.1
+        );
+        assert_eq!(
+            wt_fp,
+            repo_fingerprint(&wt_path),
+            "staging in the open repo must not touch the worktree"
+        );
+
         eprintln!(
-            "[gui-e2e] PASS worktree_wip_inline tabs={tabs_before} panel={} files={files:?}",
-            panel_repo.display()
+            "[gui-e2e] PASS worktree_wip_inline tabs={tabs_before} panel={} files={files:?} \
+             own-panel-staged={:?}",
+            panel_repo.display(),
+            staged_fp.1.trim()
         );
     }
 

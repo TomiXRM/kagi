@@ -85,6 +85,45 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (entity, is_new) = self.attach_commit_panel_at(repo_path, foreign, cx);
+        let repo_path = entity.read(cx).repo_path.clone();
+
+        // T026: lazy-create the InputStates (requires &mut Window) inside the
+        // entity so they stay STABLE across status reloads (IME/focus).
+        //
+        // #473 gave a foreign (linked-worktree) panel NO message inputs,
+        // because everything they feed — template, draft, smart-commit — read
+        // the TAB's repository. #476 slice 2 commits into the panel's own
+        // repository, so the inputs come back and every read below is keyed by
+        // `repo_path` (the panel's) instead.
+        entity.update(cx, |v, cx| {
+            if v.title_input.is_none() {
+                v.title_input = Some(
+                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t())),
+                );
+            }
+            if v.body_input.is_none() {
+                v.body_input = Some(cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .multi_line(true)
+                        .auto_grow(3, 12)
+                        .placeholder(Msg::CommitBody.t())
+                }));
+            }
+        });
+        self.finish_commit_panel_open(entity, repo_path, is_new, window, cx);
+    }
+
+    /// Attach (or refresh) the commit-panel entity for `repo_path` — everything
+    /// [`Self::open_commit_panel_at`] does that does **not** need a `Window`.
+    /// Returns the entity and whether it was freshly built. Split out so the GUI
+    /// E2E runner can put a panel up without an `InputState` (`src/ui/e2e.rs`).
+    pub(crate) fn attach_commit_panel_at(
+        &mut self,
+        repo_path: PathBuf,
+        foreign: Option<(SharedString, usize)>,
+        cx: &mut Context<Self>,
+    ) -> (Entity<CommitPanelView>, bool) {
         // #476: fold the path to its canonical form ONCE, here, so it compares
         // equal to `self.repo_path` (which `open_repository` canonicalized).
         // Otherwise `/tmp/x` vs `/private/tmp/x` marks the open repository's
@@ -137,33 +176,20 @@ impl KagiApp {
         self.commit_panel_open = true;
         self.selected = None;
         self.main_diff = None;
+        (entity, is_new)
+    }
 
-        // T026: lazy-create the InputStates (requires &mut Window) inside the
-        // entity so they stay STABLE across status reloads (IME/focus).
-        //
-        // #473: a foreign (linked-worktree) panel is read-only, so it gets NO
-        // message inputs at all — and therefore no draft, no template seed, no
-        // focus steal and no smart-commit probe for the wrong repository.
-        let want_inputs = foreign.is_none();
-        entity.update(cx, |v, cx| {
-            if !want_inputs {
-                return;
-            }
-            if v.title_input.is_none() {
-                v.title_input = Some(
-                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t())),
-                );
-            }
-            if v.body_input.is_none() {
-                v.body_input = Some(cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .multi_line(true)
-                        .auto_grow(3, 12)
-                        .placeholder(Msg::CommitBody.t())
-                }));
-            }
-        });
-
+    /// The `Window`-bound tail of [`Self::open_commit_panel_at`]: template read,
+    /// draft restore, focus, and the smart-commit probe — all keyed by the
+    /// PANEL's `repo_path` (#476), never the tab's.
+    fn finish_commit_panel_open(
+        &mut self,
+        entity: Entity<CommitPanelView>,
+        repo_path: PathBuf,
+        is_new: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // T-COMMIT-007: restore the per-branch draft into empty inputs, else seed
         // the body from the user's `commit.template` (ADR-0134).
         //
@@ -184,7 +210,7 @@ impl KagiApp {
         // `commit_template.is_some()`, so a session that restored a draft
         // instead would otherwise show no toggle at all (user report).
         // Cached after the first read — this touches the filesystem.
-        if want_inputs && entity.read(cx).commit_template.is_none() {
+        if entity.read(cx).commit_template.is_none() {
             if let Some(tpl) = kagi_git::Backend::open(&repo_path)
                 .ok()
                 .and_then(|b| b.commit_template())
@@ -194,12 +220,12 @@ impl KagiApp {
             }
         }
 
-        if is_new && want_inputs {
+        if is_new {
             if let (Some(title_input), Some(body_input)) = (&title_entity, &body_entity) {
                 let empty = title_input.read(cx).value().trim().is_empty()
                     && body_input.read(cx).value().trim().is_empty();
                 if empty {
-                    let branch = self.active_view.status_summary.branch.clone();
+                    let branch = self.panel_draft_branch(cx);
                     if let Some(d) = kagi_git::load_draft(&repo_path, &branch) {
                         klog!("draft: loaded {} (mode={})", branch, d.mode);
                         let (title, body) = kagi_git::split_title_body(&d.message);
@@ -237,9 +263,7 @@ impl KagiApp {
 
         // T-COMMIT-016: probe for a local Ollama server (reachability only;
         // no diff is sent). Runs at most once per repo, off the UI thread.
-        if want_inputs {
-            self.ensure_smart_commit_detection(cx);
-        }
+        self.ensure_smart_commit_detection(cx);
     }
 
     /// Probe for a reachable local Ollama server in the background.
@@ -252,7 +276,9 @@ impl KagiApp {
     /// `pub(crate)` so other open paths (e.g. the Settings overlay) can ensure a
     /// probe has run before they try to render the model picker.
     pub(crate) fn ensure_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else {
+        // #476: the run-once key is the repository the panel authors messages
+        // for — the panel's own when it shows a linked worktree.
+        let Some(repo_path) = self.commit_panel_repo_path(cx) else {
             return;
         };
         if self.smart_commit_detected_for.as_deref() == Some(repo_path.as_path()) {
@@ -358,15 +384,13 @@ impl KagiApp {
     /// is an explicit request — silently keeping the old text and reporting
     /// "message not empty" read as the button being broken (user report).
     pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(_repo_path) = self.repo_path.clone() else {
+        // #476: the draft describes what is staged in the PANEL's repository.
+        // (ADR-0107: the tab's own panel still borrows the per-tab RepoSession
+        // rather than re-opening — that is what `with_commit_panel_repo` does.)
+        let Some(files) = self.with_commit_panel_repo(cx, |repo| repo.collect_staged_files())
+        else {
             return;
         };
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => return,
-        };
-        let files = repo.collect_staged_files();
         // ADR-0134: the template mode that used to select Conventional Commits
         // is gone, so generated subjects are plain prose. The panel now always
         // has a body input, so a body is always wanted.
@@ -468,7 +492,8 @@ impl KagiApp {
     /// the backend).  On any `Err` the result falls back to the rule-based draft
     /// so the UI never blocks or shows a blocking error.
     fn run_smart_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else {
+        // #476: generate from the PANEL's staged diff, not the tab's.
+        let Some(repo_path) = self.commit_panel_repo_path(cx) else {
             return;
         };
         let lang = self.smart_commit.lang;
@@ -845,14 +870,11 @@ impl KagiApp {
     /// T026: reads message from InputState if available, else falls back to commit_panel.commit_msg
     /// (used by the headless KAGI_COMMIT_MSG path).
     pub fn open_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("commit", cx) {
+        // #476: plan against the PANEL's repository — a linked worktree's, when
+        // the panel shows one — never the tab's.
+        if self.commit_panel_repo_path(cx).is_none() {
             return;
         }
-        let _repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
         // T026: prefer the effective message (subject + body from the two
         // Inputs); fall back to commit_msg (headless path).
         let msg: String = if self.cp_has_commit_input(cx) {
@@ -866,14 +888,14 @@ impl KagiApp {
         if msg.trim().is_empty() {
             return;
         }
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_commit(&msg)) {
+            Some(p) => p,
             None => {
                 klog!("plan_commit: repo open error: {}", "session unavailable");
                 return;
             }
         };
-        match repo.plan_commit(&msg) {
+        match planned {
             Ok(plan) => {
                 let has_blockers = !plan.blockers.is_empty();
                 eprintln!(
@@ -920,14 +942,17 @@ impl KagiApp {
     /// cleared in the finish step (also main thread). The headless KAGI_* path
     /// executes `execute_commit` directly.
     pub fn start_commit(&mut self, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("commit", cx) {
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
+        // #476: commit into the PANEL's repository — a linked worktree's, when
+        // the panel shows one — never the tab's. Every use of `repo_path` below
+        // (the background `commit_blocking`, the draft clear, the oplog's
+        // `repo`, the post-commit refresh) follows from this one binding.
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
+        if self.commit_panel_is_foreign(cx) {
+            klog!("commit-panel: commit into {}", repo_path.display());
+        }
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
@@ -984,7 +1009,8 @@ impl KagiApp {
             Ok((_new_short, after)) => {
                 klog!("async: commit finished");
                 // A successful commit clears the branch draft (T-COMMIT-007).
-                let branch = app.active_view.status_summary.branch.clone();
+                // #476: the panel's own draft key — repo path AND branch.
+                let branch = app.panel_draft_branch(cx);
                 let _ = kagi_git::clear_draft(&repo_path, &branch);
                 klog!("draft: cleared {}", branch);
                 if let Some(entity) = app.commit_panel.clone() {
@@ -1011,6 +1037,16 @@ impl KagiApp {
                         summary,
                     );
                 }
+                // #476: the worktree's WIP row goes clean now (slice 1's
+                // in-place refresh), and `reload` — the watcher's own
+                // background re-snapshot path, always on `self.repo_path` —
+                // gives the OPEN tab the commit, which it shares through the
+                // ODB and refs. It drops `commit_panel`; right here, since the
+                // worktree is clean and that panel would list nothing.
+                // ponytail: `history_before` stays on the tab, so a foreign
+                // commit records no undo entry (`record_history` no-ops on
+                // before == after). Cross-repository undo is slice 3's.
+                app.refresh_worktree_wip_row(&repo_path);
                 app.reload(cx);
             }
             Err(err_msg) => {

@@ -682,13 +682,20 @@ impl CommitPanelView {
                     acx.background_executor()
                         .timer(std::time::Duration::from_millis(250))
                         .await;
-                    let branch = weak_app
+                    let tab_branch = weak_app
                         .read_with(acx, |app, _| app.active_view.status_summary.branch.clone())
                         .unwrap_or_default();
                     let _ = this.update(acx, |view, _cx| {
                         if view.draft_save_gen != gen {
                             return;
                         }
+                        // #476: key the draft by the PANEL's repo path (already
+                        // captured above) AND its branch — a worktree panel is
+                        // on the worktree's branch, not the tab's.
+                        let branch = crate::ui::worktree_wip::draft_branch(
+                            view.foreign.as_ref().map(|(l, _)| l.as_ref()),
+                            &tab_branch,
+                        );
                         let msg = view.last_draft_value.clone();
                         if msg.trim().is_empty() {
                             let _ = kagi_git::clear_draft(&repo_path, &branch);

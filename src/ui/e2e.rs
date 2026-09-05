@@ -124,6 +124,50 @@ pub fn push_failed_op(app: &KagiApp, op: &str, error: String, cx: &mut App) {
     });
 }
 
+/// Issue #473/#476: put a **linked worktree's** commit panel up, exactly as
+/// clicking its WIP row does — minus the two `gpui_component::InputState`s.
+///
+/// The runner cannot afford those: `InputState::new` registers an App-level
+/// observer that holds a strong handle to itself, so the entity outlives the
+/// window and gpui's end-of-run leak detector fails the whole run. Everything
+/// slice 1–2 is about (the panel's `repo_path` + `foreign` marking, and the
+/// write ops resolving through them) is set up by `attach_commit_panel_at`;
+/// with no inputs, the commit message is read from `state.commit_msg` — the
+/// same fallback the headless `KAGI_COMMIT_MSG` path uses.
+pub fn open_worktree_panel_no_inputs(
+    app: &mut KagiApp,
+    path: std::path::PathBuf,
+    label: &str,
+    color_idx: usize,
+    cx: &mut gpui::Context<KagiApp>,
+) {
+    app.attach_commit_panel_at(path, Some((label.to_string().into(), color_idx)), cx);
+}
+
+/// Set the commit panel's message without touching an `InputState` (see
+/// [`open_worktree_panel_no_inputs`]) — the `state.commit_msg` fallback.
+pub fn set_commit_message(app: &KagiApp, msg: &str, cx: &mut App) {
+    if let Some(panel) = app.commit_panel.clone() {
+        panel.update(cx, |v, _| v.state.commit_msg = msg.to_string());
+    }
+}
+
+/// `(op, repo)` of an op-log entry — the runner cannot name `OpLogEntry`, but
+/// it can pass one out of `OpLogPanel::entries()` (as `entry_clipboard_text`
+/// already does). #476: the oplog's `repo` must be the repository the write
+/// actually went into.
+pub fn entry_op_and_repo(entry: &kagi_git::oplog::OpLogEntry) -> (String, String) {
+    (entry.op.clone(), entry.repo.clone())
+}
+
+/// `(op, repo)` of the newest **persisted** oplog entry (`$KAGI_LOG_DIR`), the
+/// one `Backend::run` writes. `None` when the log is empty.
+pub fn latest_persisted_op() -> Option<(String, String)> {
+    kagi_git::oplog::read_oplog_tail(1)
+        .first()
+        .map(entry_op_and_repo)
+}
+
 /// Mount the real root offscreen: build the [`KagiApp`] entity (captured into
 /// `out` so the runner can read observable state) and wrap it in
 /// `gpui_component::Root` exactly like `open_main_window`. Returned as the

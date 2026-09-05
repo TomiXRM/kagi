@@ -240,7 +240,8 @@ pub enum Msg {
     /// Branch menu: open the worktree this branch is checked out in (#473).
     MenuOpenWorktreeDir,
     /// Commit-panel footer note on a panel pointed at another worktree: #476
-    /// slice 1 stages there, but commit still resolves the open tab's repo.
+    /// slices 1–2 stage and commit there, but amend / discard still resolve the
+    /// open tab's repository, so those need the worktree opened as a tab.
     WorktreePanelReadOnly,
     /// Default lock reason kagi records for a manual lock (issue #340).
     WorktreeLockDefaultReason,
@@ -1074,8 +1075,8 @@ impl Msg {
             (Ja, MenuOpenWorktreeInNewTab) => "新しいタブで開く",
             (En, MenuOpenWorktreeDir) => "Open worktree",
             (Ja, MenuOpenWorktreeDir) => "worktree を開く",
-            (En, WorktreePanelReadOnly) => "Commit from the worktree (open it)",
-            (Ja, WorktreePanelReadOnly) => "commit は worktree を開いて",
+            (En, WorktreePanelReadOnly) => "Amend / discard from the worktree (open it)",
+            (Ja, WorktreePanelReadOnly) => "amend / discard は worktree を開いて",
             (En, WorktreeLockDefaultReason) => "locked in kagi",
             (Ja, WorktreeLockDefaultReason) => "locked in kagi",
             (En, BusyMerge) => "merge in progress…",

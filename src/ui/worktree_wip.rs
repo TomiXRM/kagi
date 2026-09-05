@@ -17,8 +17,9 @@
 //! [`KagiApp::commit_panel_repo_path`] is the single resolver, and
 //! [`KagiApp::refuse_foreign_panel_write`] stays as the guard on the ops that
 //! have **not** been converted yet — the remaining call sites are the
-//! migration checklist. Slice 1 converted stage / unstage; commit, amend and
-//! discard-all are still tab-resolved and therefore still refused.
+//! migration checklist. Slice 1 converted stage / unstage, slice 2 commit
+//! (including the message inputs that feed it — see [`draft_branch`]); amend
+//! and discard-all are still tab-resolved and therefore still refused.
 
 use std::path::{Path, PathBuf};
 
@@ -46,6 +47,19 @@ pub fn panel_repo<'a>(
     panel_repo: Option<&'a Path>,
 ) -> Option<&'a Path> {
     panel_repo.or(tab_repo)
+}
+
+/// The branch a commit panel's message draft is keyed by (#476 slice 2).
+///
+/// Drafts are stored under `sha1(repo_path \0 branch)` (`kagi_git::drafts`), so
+/// the panel's own path already keeps two repositories' drafts apart. The
+/// branch has to follow as well: a panel showing a linked worktree is on that
+/// worktree's branch, not the tab's, and keying its draft by the tab's branch
+/// would strand the draft the moment the tab checked out something else.
+/// `foreign_label` is the worktree chip's text (its branch, or its name when
+/// detached) — the same string the WIP row is drawn with.
+pub fn draft_branch(foreign_label: Option<&str>, tab_branch: &str) -> String {
+    foreign_label.unwrap_or(tab_branch).to_string()
 }
 
 /// Is the open commit panel pointed at a different repository than the open
@@ -86,6 +100,13 @@ impl KagiApp {
             .as_ref()
             .map(|e| e.read(cx).repo_path.clone());
         panel_repo(self.repo_path.as_deref(), panel.as_deref()).map(PathBuf::from)
+    }
+
+    /// The draft key's branch for the open commit panel — see [`draft_branch`].
+    pub(crate) fn panel_draft_branch(&self, cx: &gpui::App) -> String {
+        let panel = self.commit_panel.as_ref().map(|e| e.read(cx));
+        let label = panel.and_then(|v| v.foreign.as_ref().map(|(l, _)| l.to_string()));
+        draft_branch(label.as_deref(), &self.active_view.status_summary.branch)
     }
 
     /// Run `f` against a `Backend` for [`Self::commit_panel_repo_path`].
@@ -237,10 +258,18 @@ mod tests {
         assert_eq!(panel_repo(None, None), None);
     }
 
-    /// #476 slice 1 is a migration checklist: an op that still resolves its
-    /// repository from the tab MUST keep the guard, and one that has been
-    /// converted MUST have dropped it. Reading the op sources is the only way
-    /// to assert "which ops call it" without a live `KagiApp`.
+    /// #476: the panel's repository is where its draft lives; a foreign panel's
+    /// branch is the worktree's, not the tab's.
+    #[test]
+    fn draft_branch_follows_the_panel() {
+        assert_eq!(draft_branch(None, "main"), "main");
+        assert_eq!(draft_branch(Some("ahead"), "main"), "ahead");
+    }
+
+    /// #476 is a migration checklist: an op that still resolves its repository
+    /// from the tab MUST keep the guard, and one that has been converted MUST
+    /// have dropped it. Reading the op sources is the only way to assert "which
+    /// ops call it" without a live `KagiApp`.
     #[test]
     fn only_the_unconverted_ops_refuse_a_foreign_panel() {
         const NEEDLE: &str = "refuse_foreign_panel_write(\"";
@@ -261,13 +290,13 @@ mod tests {
         guarded.dedup();
         assert_eq!(
             guarded,
-            ["amend", "commit", "discard-all"],
+            ["amend", "discard-all"],
             "the set of tab-resolved (still refused) ops changed"
         );
-        for converted in ["stage", "stage-all", "unstage", "unstage-all"] {
+        for converted in ["commit", "stage", "stage-all", "unstage", "unstage-all"] {
             assert!(
                 !guarded.contains(&converted),
-                "#476 slice 1: `{converted}` writes to the panel's repository \
+                "#476 slice 1–2: `{converted}` writes to the panel's repository \
                  and must not be guarded"
             );
         }

@@ -19,7 +19,8 @@
 //! `KagiApp` fields, the clipboard, or repo refs (ADR-0166 §3: the assertions
 //! are the oracle, screenshots are triage only). Coverage: bottom-panel toggle
 //! (PoC), graph Cmd+C copy (ADR-0170), Create Snapshot (#335), command-palette
-//! theme switch (#373), agent provenance (#337), WIP→HEAD connectors (#472).
+//! theme switch (#373), agent provenance (#337), WIP→HEAD connectors (#472),
+//! and the linked-worktree commit panel's writes (#473 / #476 slices 1–2).
 //! Exits 0 on success, non-zero (panic → 101) on failure.
 //!
 //! Run (opt-in — see the `KAGI_GUI_E2E` guard in `run`):
@@ -151,6 +152,62 @@ mod macos {
         (root, repo, wt)
     }
 
+    /// Issue #476 slice 2: `main` (dirty) plus **two** linked worktrees, both
+    /// dirty and each on its own branch at its own commit — three WIP rows.
+    ///
+    /// Two worktrees, not one: committing from the first one's panel makes it
+    /// clean, so its row leaves the list. With a second worktree BELOW it, a
+    /// lane map keyed by row position hands that row its vanished neighbour's
+    /// lane; keyed by target it keeps its own.
+    fn build_two_worktree_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo = root.path().join("repo");
+        let wt_a = root.path().join("wt-a");
+        let wt_b = root.path().join("wt-b");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("f.txt"), "base\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        // A distinct commit per branch, so each WIP row's connector has its own
+        // HEAD row to land on (a shared HEAD would still work, but distinct
+        // rows make a shifted lane unambiguous).
+        for b in ["wt-a", "wt-b"] {
+            git(&repo, &["checkout", "-q", "-b", b]);
+            std::fs::write(repo.join("f.txt"), format!("{b}\n")).unwrap();
+            git(&repo, &["commit", "-q", "-am", &format!("{b} commit")]);
+            git(&repo, &["checkout", "-q", "main"]);
+        }
+        git(
+            &repo,
+            &["worktree", "add", "-q", wt_a.to_str().unwrap(), "wt-a"],
+        );
+        git(
+            &repo,
+            &["worktree", "add", "-q", wt_b.to_str().unwrap(), "wt-b"],
+        );
+        // All three working trees dirty → three WIP rows.
+        std::fs::write(repo.join("dirty.txt"), "main\n").unwrap();
+        std::fs::write(wt_a.join("dirty.txt"), "a\n").unwrap();
+        std::fs::write(wt_b.join("dirty.txt"), "b\n").unwrap();
+        (
+            root,
+            repo.canonicalize().unwrap(),
+            wt_a.canonicalize().unwrap(),
+            wt_b.canonicalize().unwrap(),
+        )
+    }
+
+    /// `git rev-list --count HEAD` for a working tree.
+    fn commit_count(dir: &Path) -> usize {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(["rev-list", "--count", "HEAD"])
+            .output()
+            .expect("rev-list");
+        String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
+    }
+
     /// Overwrite `$KAGI_LOG_DIR/settings.json` (the isolated dir `run` sets) with
     /// a single flat string key — the on-disk shape `Settings::load` parses.
     fn write_setting(log_dir: &Path, key: &str, value: &str) {
@@ -247,6 +304,7 @@ mod macos {
         scenario_agent_provenance(&mut cx);
         scenario_wip_head_connector(&mut cx);
         scenario_worktree_wip_inline(&mut cx);
+        scenario_worktree_panel_commit(&mut cx);
 
         eprintln!("[gui-e2e] PASS all scenarios");
         0
@@ -585,8 +643,11 @@ mod macos {
                 "expected 2 WIP rows (open repo + linked worktree), got {:?}",
                 view.wip_lanes
             );
-            let open_lane = view.wip_lanes[0].expect("open repo's WIP row got no connector lane");
-            let wt_lane = view.wip_lanes[1].expect("linked worktree's WIP row got no lane");
+            // #476 slice 2: the map is keyed by target, not by row position.
+            let open_lane = graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Current)
+                .expect("open repo's WIP row got no connector lane");
+            let wt_lane = graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Worktree(1))
+                .expect("linked worktree's WIP row got no lane");
             assert_ne!(open_lane, wt_lane, "two connectors must not share a column");
 
             // The open repo's HEAD is buried under the `ahead` branch.
@@ -678,18 +739,20 @@ mod macos {
         let (_fixture, repo_path, wt_path) = build_wip_connector_fixture();
         let repo_fp = repo_fingerprint(&repo_path);
         let wt_fp = repo_fingerprint(&wt_path);
-        let (kagi, win) = mount(cx, &repo_path);
+        let (kagi, _win) = mount(cx, &repo_path);
 
         let tabs_before = cx.read(|app| kagi.read(app).tabs.len());
 
-        // What the linked worktree's WIP row click does (`render_wip.rs`).
+        // What the linked worktree's WIP row click does (`render_wip.rs`),
+        // minus the message `InputState`s — see `open_worktree_panel_no_inputs`
+        // (#476 slice 2 gives a worktree panel real inputs, and the runner
+        // cannot construct one without failing the run's leak detector). Both
+        // paths go through the same `attach_commit_panel_at`, which is where
+        // the panel's `repo_path` canonicalization and `foreign` marking live.
         let wt = wt_path.clone();
-        cx.update_window(win, |_v, window, cx| {
-            kagi.update(cx, |app, cx| {
-                app.open_commit_panel_for_worktree(wt, "ahead".into(), 1, window, cx);
-            });
-        })
-        .expect("update_window");
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, wt, "ahead", 1, cx)
+        });
         cx.run_until_parked();
 
         cx.read(|app| {
@@ -811,10 +874,9 @@ mod macos {
             "the OPEN repo was mutated by a per-file stage/unstage at a worktree panel"
         );
 
-        // ── Still guarded (slices 2–3): commit plan, commit, amend, discard ──
+        // ── Still guarded (slice 3): amend, discard-all ──────────────────────
+        // (Commit was converted in slice 2 — `scenario_worktree_panel_commit`.)
         kagi.update(cx, |app, cx| {
-            app.open_commit_plan_modal(cx);
-            app.start_commit(cx);
             app.commit_panel_amend(cx);
             app.open_discard_all_modal(cx);
         });
@@ -893,6 +955,220 @@ mod macos {
              own-panel-staged={:?}",
             panel_repo.display(),
             staged_fp.1.trim()
+        );
+    }
+
+    /// Issue #476 slice 2: a commit dispatched from a LINKED WORKTREE's panel
+    /// lands in **that worktree**.
+    ///
+    /// Drives the real write path — `do_stage_all`, then
+    /// `open_commit_plan_modal`, which plans and (no blockers) runs
+    /// `start_commit` itself, the "smooth commit" the Commit button takes — and
+    /// asserts: the worktree's HEAD advanced by exactly one commit and its
+    /// working tree is clean; the OPEN repository's HEAD/porcelain and the
+    /// second worktree are untouched; the newest oplog entry (in-memory panel
+    /// AND the persisted log `Backend::run` writes) is `commit` against the
+    /// WORKTREE's path; the open tab's graph gained the new commit (shared refs
+    /// + the post-commit re-snapshot); the committed worktree's WIP row is gone
+    /// while the surviving rows keep their own lanes (the `WipTarget` keying);
+    /// and amend / discard-all are still refused with both trees unchanged.
+    fn scenario_worktree_panel_commit(cx: &mut VisualTestAppContext) {
+        let (_fixture, repo_path, wt_a, wt_b) = build_two_worktree_fixture();
+        let repo_fp = repo_fingerprint(&repo_path);
+        let wt_b_fp = repo_fingerprint(&wt_b);
+        let wt_a_head_before = repo_fingerprint(&wt_a).0;
+        let wt_a_commits_before = commit_count(&wt_a);
+        let (kagi, _win) = mount(cx, &repo_path);
+
+        // Where each worktree sits in the snapshot's list — its `WipTarget` key
+        // and its lane colour index are both that position.
+        let wt_index = |cx: &mut VisualTestAppContext, path: &Path| -> usize {
+            cx.read(|app| {
+                kagi.read(app)
+                    .active_view
+                    .worktrees
+                    .iter()
+                    .position(|w| w.path == path)
+                    .unwrap_or_else(|| panic!("no worktree row for {}", path.display()))
+            })
+        };
+        let idx_a = wt_index(cx, &wt_a);
+        let idx_b = wt_index(cx, &wt_b);
+        let (lanes_before, lane_open, lane_a, lane_b) = cx.read(|app| {
+            let lanes = kagi.read(app).active_view.wip_lanes.clone();
+            let get = |t| graph_wip::wip_lane(&lanes, t);
+            (
+                lanes.clone(),
+                get(graph_wip::WipTarget::Current),
+                get(graph_wip::WipTarget::Worktree(idx_a)),
+                get(graph_wip::WipTarget::Worktree(idx_b)),
+            )
+        });
+        assert_eq!(
+            lanes_before.len(),
+            3,
+            "fixture: three dirty working trees → three WIP rows, got {lanes_before:?}"
+        );
+        assert!(
+            lane_open.is_some() && lane_a.is_some() && lane_b.is_some(),
+            "every WIP row should have drawn a connector: {lanes_before:?}"
+        );
+        assert_ne!(lane_a, lane_b, "two connectors must not share a column");
+
+        // Open worktree A's panel, stage its file, give it a message.
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
+            "the panel must be marked foreign for the write ops to resolve it"
+        );
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(cx);
+            e2e::set_commit_message(app, "wt-a: from the worktree panel", cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fingerprint(&wt_a).1,
+            "A  dirty.txt\n",
+            "stage-all should have staged in the WORKTREE"
+        );
+
+        // The Commit button's path: plan, then (no blockers) commit.
+        kagi.update(cx, |app, cx| app.open_commit_plan_modal(cx));
+        cx.run_until_parked();
+
+        // ── The worktree moved; nothing else did ────────────────────────────
+        let (wt_a_head_after, wt_a_status) = repo_fingerprint(&wt_a);
+        assert_ne!(
+            wt_a_head_after, wt_a_head_before,
+            "the WORKTREE's HEAD must have advanced"
+        );
+        assert_eq!(
+            commit_count(&wt_a),
+            wt_a_commits_before + 1,
+            "exactly one new commit in the worktree"
+        );
+        assert_eq!(
+            wt_a_status, "",
+            "the worktree should be clean after committing its only change"
+        );
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "the OPEN repo was mutated by a commit dispatched at a worktree panel"
+        );
+        assert_eq!(
+            wt_b_fp,
+            repo_fingerprint(&wt_b),
+            "the OTHER worktree was mutated by a commit at worktree A's panel"
+        );
+
+        // ── The oplog is attributed to the worktree ─────────────────────────
+        let (op, repo) = cx.read(|app| {
+            let panel = kagi.read(app).op_log.clone().expect("op_log entity");
+            let panel = panel.read(app);
+            e2e::entry_op_and_repo(panel.entries().front().expect("an op-log entry"))
+        });
+        assert_eq!(op, "commit", "newest op-log entry should be the commit");
+        assert_eq!(
+            PathBuf::from(&repo),
+            wt_a,
+            "the op-log entry's repo must be the WORKTREE's path, not the tab's"
+        );
+        let (pop, prepo) = e2e::latest_persisted_op().expect("a persisted oplog entry");
+        assert_eq!(pop, "commit");
+        assert_eq!(
+            PathBuf::from(&prepo),
+            wt_a,
+            "the persisted oplog entry's repo must be the WORKTREE's path"
+        );
+
+        // ── The open tab's graph gained the commit (shared refs) ────────────
+        let new_sha = wt_a_head_after.clone();
+        assert!(
+            cx.read(|app| kagi
+                .read(app)
+                .active_view
+                .rows
+                .iter()
+                .any(|r| r.id.0 == new_sha)),
+            "the open tab must re-snapshot and show the worktree's new commit"
+        );
+
+        // ── The WIP rows: A's is gone, the others keep their own lanes ──────
+        let wip_a = cx.read(|app| {
+            kagi.read(app)
+                .active_view
+                .worktrees
+                .iter()
+                .find(|w| w.path == wt_a)
+                .and_then(|w| w.wip)
+        });
+        assert!(
+            wip_a.is_none_or(|w| !w.is_dirty()),
+            "worktree A is clean after the commit — its WIP row must be gone, got {wip_a:?}"
+        );
+        // The frame between the commit and the re-snapshot renders the NEW row
+        // list against the OLD lane map — `refresh_worktree_wip_row` drops A's
+        // row in place. Keyed by target, the survivors keep their own lanes;
+        // by position, the open repo's row would hand its lane to A's former
+        // neighbour and worktree B would inherit A's.
+        let rows_now = [
+            graph_wip::WipTarget::Current,
+            graph_wip::WipTarget::Worktree(idx_b),
+        ];
+        assert_eq!(
+            graph_wip::lanes_for_rows(&lanes_before, &rows_now),
+            vec![lane_open, lane_b],
+            "a committed worktree's row leaving the list must not shift the \
+             lanes of the rows that remain (lanes were {lanes_before:?})"
+        );
+        // …and the freshly-built map agrees, with A's entry simply absent.
+        cx.read(|app| {
+            let lanes = &kagi.read(app).active_view.wip_lanes;
+            assert_eq!(
+                graph_wip::wip_lane(lanes, graph_wip::WipTarget::Worktree(idx_a)),
+                None,
+                "the clean worktree must have no connector: {lanes:?}"
+            );
+            assert_eq!(
+                graph_wip::wip_lane(lanes, graph_wip::WipTarget::Current),
+                lane_open,
+                "the open repo's WIP row must keep its lane: {lanes:?}"
+            );
+        });
+
+        // ── Still guarded (slice 3): amend, discard-all ─────────────────────
+        let after_commit_fp = repo_fingerprint(&wt_a);
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| {
+            app.commit_panel_amend(cx);
+            app.open_discard_all_modal(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            after_commit_fp,
+            repo_fingerprint(&wt_a),
+            "amend / discard-all must still be refused at a worktree panel"
+        );
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "amend / discard-all at a worktree panel must not touch the open repo"
+        );
+
+        eprintln!(
+            "[gui-e2e] PASS worktree_panel_commit wt-a {}..{} lanes open={lane_open:?} \
+             b={lane_b:?} oplog={op}@{repo}",
+            &wt_a_head_before[..8],
+            &wt_a_head_after[..8],
         );
     }
 

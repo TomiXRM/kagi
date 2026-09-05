@@ -71,13 +71,56 @@ fn lane_free_to(rows: &[CommitRow], bottom: usize, lane: usize) -> bool {
             .all(|r| r.lane != lane && !top_busy(r, lane) && !bottom_busy(r, lane))
 }
 
-/// The WIP rows `render_body` draws, in order, as `(lane colour index, HEAD)`.
+/// Which WIP row a connector belongs to (#476 slice 2).
 ///
-/// Kept next to the injector because the two must agree row-for-row: the lanes
-/// this module returns are handed back to the WIP rows by position. The order
-/// mirrors `render_body`: the open repo's own row first (when its working tree
-/// is dirty), then every *other* dirty worktree in `snap.worktrees` order.
-pub fn wip_targets(snap: &RepoSnapshot) -> Vec<(usize, Option<CommitId>)> {
+/// The lanes used to be handed back to `render_body` **by position**, which
+/// only held while both lists were derived from the same snapshot. Committing
+/// from a linked worktree's panel makes that worktree clean, so its row leaves
+/// `render_body`'s list while the snapshot-built `wip_lanes` still carries its
+/// entry — and every row below it silently inherits the wrong lane and colour.
+/// Keying by target instead makes the mismatch a `None` for the row that is
+/// gone, and leaves every other row's lane alone.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WipTarget {
+    /// The open repository's own working tree.
+    Current,
+    /// The linked worktree at that index in `snap.worktrees`.
+    Worktree(usize),
+}
+
+/// The lane recorded for `target`, or `None` when this view has no connector
+/// for it (its row was not drawn, or the snapshot predates its row).
+pub fn wip_lane(lanes: &[(WipTarget, Option<usize>)], target: WipTarget) -> Option<usize> {
+    lanes
+        .iter()
+        .find(|(t, _)| *t == target)
+        .and_then(|(_, lane)| *lane)
+}
+
+/// The connector lane for each WIP row about to be drawn, in row order.
+///
+/// This is the whole row ↔ lane join, in one place so `render_body` and its
+/// tests agree: each row is looked up **by its own target**, so a `lanes` map
+/// that is a frame out of date (built before the row list changed — the commit
+/// panel's write ops refresh a worktree's WIP row in place, the re-snapshot
+/// lands a frame later) costs only the rows that are actually missing from it.
+/// By position, one vanished row shifted every row below it onto a stranger's
+/// lane and colour.
+pub fn lanes_for_rows(
+    lanes: &[(WipTarget, Option<usize>)],
+    rows: &[WipTarget],
+) -> Vec<Option<usize>> {
+    rows.iter().map(|t| wip_lane(lanes, *t)).collect()
+}
+
+/// The WIP rows `render_body` draws, in order, as
+/// `(target, lane colour index, HEAD)`.
+///
+/// Kept next to the injector because the two must agree: the lanes this module
+/// returns are looked up by `target`. The order mirrors `render_body`: the open
+/// repo's own row first (when its working tree is dirty), then every *other*
+/// dirty worktree in `snap.worktrees` order.
+pub fn wip_targets(snap: &RepoSnapshot) -> Vec<(WipTarget, usize, Option<CommitId>)> {
     let mut out = Vec::new();
     if snap.status.is_dirty() {
         // The open repo's row is driven by the live status, not by a worktree
@@ -90,21 +133,21 @@ pub fn wip_targets(snap: &RepoSnapshot) -> Vec<(usize, Option<CommitId>)> {
             Head::Unborn { .. } => None,
         };
         let cur = snap.worktrees.iter().position(|w| w.is_current);
-        out.push((cur.unwrap_or(0), head));
+        out.push((WipTarget::Current, cur.unwrap_or(0), head));
     }
     for (idx, wt) in snap.worktrees.iter().enumerate() {
         if wt.is_current || !wt.wip.is_some_and(|w| w.is_dirty()) {
             continue;
         }
-        out.push((idx, wt.head.clone()));
+        out.push((WipTarget::Worktree(idx), idx, wt.head.clone()));
     }
     out
 }
 
 /// Inject one dashed connector per WIP row. Returns the lane each connector
-/// took, positionally aligned with `targets` — `None` where no line was drawn
-/// (unborn HEAD, or a HEAD outside the loaded window, the same "half a line is
-/// worse than none" rule stashes use for `connected == false`).
+/// took, **keyed by its target** — `None` where no line was drawn (unborn HEAD,
+/// or a HEAD outside the loaded window, the same "half a line is worse than
+/// none" rule stashes use for `connected == false`).
 ///
 /// Lane choice follows the squash precedent: reuse HEAD's own column when it is
 /// free all the way up, otherwise take a fresh one. When `origin` is ahead that
@@ -114,17 +157,18 @@ pub fn wip_targets(snap: &RepoSnapshot) -> Vec<(usize, Option<CommitId>)> {
 /// make its lane busy for the next.
 pub fn inject_wip_edges(
     rows: &mut [CommitRow],
-    targets: &[(usize, Option<CommitId>)],
+    targets: &[(WipTarget, usize, Option<CommitId>)],
     index: &HashMap<CommitId, usize>,
-) -> Vec<Option<usize>> {
-    let mut lanes: Vec<Option<usize>> = vec![None; targets.len()];
+) -> Vec<(WipTarget, Option<usize>)> {
+    let mut lanes: Vec<(WipTarget, Option<usize>)> =
+        targets.iter().map(|(t, _, _)| (*t, None)).collect();
     if rows.is_empty() {
         return lanes;
     }
     let mut next_lane = rows[0].lane_count;
     let start_lane_count = next_lane;
 
-    for (slot, (color_idx, head)) in lanes.iter_mut().zip(targets) {
+    for ((_, slot), (_, color_idx, head)) in lanes.iter_mut().zip(targets) {
         // `rows` and `index` are reconciled across an async boundary elsewhere,
         // so bound-check rather than trusting they agree.
         let Some(&bottom) = head.as_ref().and_then(|h| index.get(h)) else {
@@ -214,8 +258,12 @@ mod tests {
         }
         let ix = index(&rows);
 
-        let lanes = inject_wip_edges(&mut rows, &[(0, Some(id(3)))], &ix);
-        assert_eq!(lanes, vec![Some(2)], "lane 0 is busy → a fresh lane (2)");
+        let lanes = inject_wip_edges(&mut rows, &[(WipTarget::Current, 0, Some(id(3)))], &ix);
+        assert_eq!(
+            lanes,
+            vec![(WipTarget::Current, Some(2))],
+            "lane 0 is busy → a fresh lane (2)"
+        );
 
         // One Pass per row above HEAD, and the curve into HEAD's own node.
         assert_eq!(ghosts(&rows[0]).len(), 1);
@@ -244,8 +292,8 @@ mod tests {
     fn reuses_heads_lane_when_free() {
         let mut rows = vec![row(0, 0), row(1, 0), row(2, 1)];
         let ix = index(&rows);
-        let lanes = inject_wip_edges(&mut rows, &[(3, Some(id(2)))], &ix);
-        assert_eq!(lanes, vec![Some(1)]);
+        let lanes = inject_wip_edges(&mut rows, &[(WipTarget::Worktree(3), 3, Some(id(2)))], &ix);
+        assert_eq!(lanes, vec![(WipTarget::Worktree(3), Some(1))]);
         assert!(
             rows.iter().all(|r| r.lane_count == 2),
             "reusing a column must not widen the graph"
@@ -258,8 +306,18 @@ mod tests {
     fn draws_nothing_when_head_is_not_loaded() {
         let mut rows = vec![row(0, 0), row(1, 0)];
         let ix = index(&rows);
-        let lanes = inject_wip_edges(&mut rows, &[(0, Some(id(99))), (1, None)], &ix);
-        assert_eq!(lanes, vec![None, None]);
+        let lanes = inject_wip_edges(
+            &mut rows,
+            &[
+                (WipTarget::Current, 0, Some(id(99))),
+                (WipTarget::Worktree(1), 1, None),
+            ],
+            &ix,
+        );
+        assert_eq!(
+            lanes,
+            vec![(WipTarget::Current, None), (WipTarget::Worktree(1), None)]
+        );
         assert!(rows.iter().all(|r| r.edges.is_empty()));
     }
 
@@ -270,9 +328,17 @@ mod tests {
     fn two_wip_rows_never_share_a_lane() {
         let mut rows = vec![row(0, 0), row(1, 0), row(2, 1)];
         let ix = index(&rows);
-        let lanes = inject_wip_edges(&mut rows, &[(0, Some(id(2))), (1, Some(id(2)))], &ix);
+        let lanes = inject_wip_edges(
+            &mut rows,
+            &[
+                (WipTarget::Current, 0, Some(id(2))),
+                (WipTarget::Worktree(1), 1, Some(id(2))),
+            ],
+            &ix,
+        );
         assert_eq!(lanes.len(), 2);
-        let (a, b) = (lanes[0].unwrap(), lanes[1].unwrap());
+        let a = wip_lane(&lanes, WipTarget::Current).expect("open repo's lane");
+        let b = wip_lane(&lanes, WipTarget::Worktree(1)).expect("worktree's lane");
         assert_ne!(a, b, "two connectors must not share a column");
         // Colour indices stay tied to their worktree, not to the lane.
         let colors: Vec<Option<usize>> = ghosts(&rows[2])
@@ -280,6 +346,38 @@ mod tests {
             .map(|e| wip_color_index(e.color))
             .collect();
         assert_eq!(colors, vec![Some(0), Some(1)]);
+    }
+
+    /// #476 slice 2: committing from a linked worktree's panel makes that
+    /// worktree clean, so its WIP row leaves `render_body`'s list while a
+    /// snapshot-built lane map still carries its entry. Keyed by target, the
+    /// row that is gone yields `None` and **every other row keeps its lane** —
+    /// positionally, each row below would have inherited its neighbour's.
+    #[test]
+    fn a_missing_target_does_not_shift_the_other_lanes() {
+        let lanes = vec![
+            (WipTarget::Current, Some(4)),
+            (WipTarget::Worktree(1), Some(5)),
+            (WipTarget::Worktree(2), Some(6)),
+        ];
+        assert_eq!(wip_lane(&lanes, WipTarget::Current), Some(4));
+        assert_eq!(wip_lane(&lanes, WipTarget::Worktree(2)), Some(6));
+        // Worktree 1 just committed: it is no longer a row, and nothing else
+        // moved — worktree 2 still reads lane 6, not 5.
+        let lanes: Vec<_> = lanes
+            .into_iter()
+            .filter(|(t, _)| *t != WipTarget::Worktree(1))
+            .collect();
+        assert_eq!(wip_lane(&lanes, WipTarget::Worktree(1)), None);
+        assert_eq!(wip_lane(&lanes, WipTarget::Current), Some(4));
+        assert_eq!(wip_lane(&lanes, WipTarget::Worktree(2)), Some(6));
+        // A target the map never had is `None`, not a panic or a neighbour.
+        assert_eq!(wip_lane(&lanes, WipTarget::Worktree(9)), None);
+        // A drawn-but-laneless row stays `None` too.
+        assert_eq!(
+            wip_lane(&[(WipTarget::Current, None)], WipTarget::Current),
+            None
+        );
     }
 
     /// The sentinel range must not be mistaken for a real colour index, and

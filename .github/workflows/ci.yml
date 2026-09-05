@@ -93,7 +93,22 @@ jobs:
         run: |
           # Dependency direction (ADR-0121): kagi(bin) → kagi-ui-* → kagi-ui-core
           # → kagi-domain. No kagi-ui-* crate may reach git2 or kagi-git.
-          if grep -rnE 'git2|kagi_git|kagi-git' crates/kagi-ui-*/; then
+          #
+          # Match *actual usage*, not the bare substring (#394): a `use`/`::`
+          # path or `extern crate` in Rust, or a dependency line in Cargo.toml.
+          # The old naive `grep git2|kagi_git|kagi-git` also fired on the word
+          # in a doc comment ("libgit2", "git2 token"), forcing prose rewrites
+          # (#443). `\bgit2` does not match inside "libgit2" (no word boundary),
+          # and a real import cannot avoid `use`/`::`/`extern crate`, so this is
+          # both tighter and complete.
+          hits=$(
+            grep -rnE '\b(git2|kagi_git)::|^\s*use\s+(git2|kagi_git)\b|extern\s+crate\s+(git2|kagi_git)\b' \
+              --include='*.rs' crates/kagi-ui-*/ || true
+            grep -rnE '^(git2|kagi-git|kagi_git)\s*[=.]' \
+              --include='Cargo.toml' crates/kagi-ui-*/ || true
+          )
+          if [ -n "$hits" ]; then
+            echo "$hits"
             echo "::error::kagi-ui-* crates must not depend on git2 or kagi-git (ADR-0121)."
             exit 1
           fi

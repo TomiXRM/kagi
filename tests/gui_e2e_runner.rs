@@ -20,7 +20,7 @@
 //! are the oracle, screenshots are triage only). Coverage: bottom-panel toggle
 //! (PoC), graph Cmd+C copy (ADR-0170), Create Snapshot (#335), command-palette
 //! theme switch (#373), agent provenance (#337), WIP→HEAD connectors (#472),
-//! and the linked-worktree commit panel's writes (#473 / #476 slices 1–2).
+//! and the linked-worktree commit panel's writes (#473 / #476 slices 1–3).
 //! Exits 0 on success, non-zero (panic → 101) on failure.
 //!
 //! Run (opt-in — see the `KAGI_GUI_E2E` guard in `run`):
@@ -58,8 +58,9 @@ mod macos {
     use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
     use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
-        commands::CreateSnapshot, commit_list, e2e, graph_wip, oplog_panel, settings::CopyTarget,
-        theme, BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
+        commands::CreateSnapshot, commit_list, e2e, editor_tree_menu::EditorTreeAction, graph_wip,
+        oplog_panel, settings::CopyTarget, theme, BottomTab, CopyDiffSelection, KagiApp,
+        ToggleBottomPanel,
     };
 
     /// `git` with a deterministic identity + no user-config bleed-through.
@@ -198,6 +199,28 @@ mod macos {
         )
     }
 
+    /// `git rev-parse <rev>` for a working tree (#476 slice 3: `HEAD^`, to prove
+    /// an amend replaced the tip instead of stacking on it).
+    fn rev_parse(dir: &Path, rev: &str) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(["rev-parse", rev])
+            .output()
+            .expect("rev-parse");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// Did `git <args>` exit 0 in `dir`? (`cat-file -e <sha>` is an existence
+    /// probe, so the exit code IS the answer.)
+    fn git_ok(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .expect("spawn git")
+            .success()
+    }
+
     /// `git rev-list --count HEAD` for a working tree.
     fn commit_count(dir: &Path) -> usize {
         let out = Command::new("git")
@@ -305,6 +328,7 @@ mod macos {
         scenario_wip_head_connector(&mut cx);
         scenario_worktree_wip_inline(&mut cx);
         scenario_worktree_panel_commit(&mut cx);
+        scenario_worktree_panel_amend_discard(&mut cx);
 
         eprintln!("[gui-e2e] PASS all scenarios");
         0
@@ -874,8 +898,11 @@ mod macos {
             "the OPEN repo was mutated by a per-file stage/unstage at a worktree panel"
         );
 
-        // ── Still guarded (slice 3): amend, discard-all ──────────────────────
-        // (Commit was converted in slice 2 — `scenario_worktree_panel_commit`.)
+        // ── Planning amend / discard-all writes nothing ──────────────────────
+        // #476 slice 3 converted both (execution lives in
+        // `scenario_worktree_panel_amend_discard`). Opening their confirms is
+        // still a pure read — `plan → confirm → …` means nothing has happened
+        // until the second click, in either repository.
         kagi.update(cx, |app, cx| {
             app.commit_panel_amend(cx);
             app.open_discard_all_modal(cx);
@@ -884,12 +911,12 @@ mod macos {
         assert_eq!(
             repo_fp,
             repo_fingerprint(&repo_path),
-            "the OPEN repo was mutated by a still-guarded write at a worktree panel"
+            "the OPEN repo was mutated by merely PLANNING a write at a worktree panel"
         );
         assert_eq!(
             wt_fp,
             repo_fingerprint(&wt_path),
-            "the WORKTREE was mutated by a still-guarded write at a worktree panel"
+            "the WORKTREE was mutated by merely PLANNING a write at a worktree panel"
         );
 
         // The watcher's in-place refresh must not swap the panel back.
@@ -1141,27 +1168,18 @@ mod macos {
             );
         });
 
-        // ── Still guarded (slice 3): amend, discard-all ─────────────────────
-        let after_commit_fp = repo_fingerprint(&wt_a);
-        let path_a = wt_a.clone();
-        kagi.update(cx, |app, cx| {
-            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
-        });
-        cx.run_until_parked();
-        kagi.update(cx, |app, cx| {
-            app.commit_panel_amend(cx);
-            app.open_discard_all_modal(cx);
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            after_commit_fp,
-            repo_fingerprint(&wt_a),
-            "amend / discard-all must still be refused at a worktree panel"
-        );
-        assert_eq!(
-            repo_fp,
-            repo_fingerprint(&repo_path),
-            "amend / discard-all at a worktree panel must not touch the open repo"
+        // ── The commit recorded NO undo entry for the tab ───────────────────
+        // #476 slice 3: `operation_history` is per tab, and `head_branch_and_sha`
+        // reads the TAB's HEAD — so a recorded worktree commit would sit here as
+        // the tab's branch pointed at the worktree's commit, and Cmd+Z would
+        // move `main` onto it. (The stack is not compared wholesale: `reload`
+        // legitimately seeds it from the tab's own reflog, ADR-0084.)
+        let undo_head = cx.read(|app| e2e::undo_head(kagi.read(app)));
+        assert!(
+            undo_head
+                .as_ref()
+                .is_none_or(|(_, after, _)| after != &wt_a_head_after),
+            "the tab's Undo must not point at the WORKTREE's commit: {undo_head:?}"
         );
 
         eprintln!(
@@ -1169,6 +1187,311 @@ mod macos {
              b={lane_b:?} oplog={op}@{repo}",
             &wt_a_head_before[..8],
             &wt_a_head_after[..8],
+        );
+    }
+
+    /// Issue #476 slice 3: **amend** and **discard** dispatched from a LINKED
+    /// WORKTREE's panel act on that worktree.
+    ///
+    /// Both are the destructive pair the earlier slices kept refused, and both
+    /// run their real two-stage confirm here: `commit_panel_amend` →
+    /// `start_amend` (arm) → `start_amend` (fire), and `open_discard_all_modal`
+    /// → `start_discard` (arm) → `start_discard` (fire).
+    ///
+    /// Asserts, in order: the amend rewrote worktree A's HEAD **in place** (new
+    /// SHA, same parent, same commit count, clean tree) while the open
+    /// repository and worktree B are untouched and the persisted oplog names A;
+    /// the open tab re-snapshotted onto the rewritten commit; the discard
+    /// emptied A's working tree with a backup blob that resolves in the shared
+    /// ODB; and neither op pushed anything onto the TAB's undo stack.
+    fn scenario_worktree_panel_amend_discard(cx: &mut VisualTestAppContext) {
+        let (_fixture, repo_path, wt_a, wt_b) = build_two_worktree_fixture();
+        let repo_fp = repo_fingerprint(&repo_path);
+        let wt_b_fp = repo_fingerprint(&wt_b);
+        let head_before = repo_fingerprint(&wt_a).0;
+        let parent_before = rev_parse(&wt_a, "HEAD^");
+        let commits_before = commit_count(&wt_a);
+        let (kagi, win) = mount(cx, &repo_path);
+
+        let idx_a = cx.read(|app| {
+            kagi.read(app)
+                .active_view
+                .worktrees
+                .iter()
+                .position(|w| w.path == wt_a)
+                .unwrap_or_else(|| panic!("no worktree row for {}", wt_a.display()))
+        });
+        // ── (a) amend ───────────────────────────────────────────────────────
+        // Stage A's file, then amend: staged content, no new message
+        // (`AmendMode::Staged`), so A's HEAD is replaced rather than extended.
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
+            "the panel must be marked foreign for the write ops to resolve it"
+        );
+        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        cx.run_until_parked();
+
+        kagi.update(cx, |app, cx| app.commit_panel_amend(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            head_before,
+            repo_fingerprint(&wt_a).0,
+            "planning the amend must not have rewritten anything yet"
+        );
+        // Two-stage confirm: the first click only arms.
+        kagi.update(cx, |app, cx| app.start_amend(cx));
+        assert_eq!(
+            head_before,
+            repo_fingerprint(&wt_a).0,
+            "the FIRST amend confirm must only arm — a history rewrite needs two"
+        );
+        kagi.update(cx, |app, cx| app.start_amend(cx));
+        cx.run_until_parked();
+
+        let (head_after_amend, status_after_amend) = repo_fingerprint(&wt_a);
+        assert_ne!(
+            head_after_amend, head_before,
+            "the WORKTREE's HEAD must have been rewritten"
+        );
+        assert_eq!(
+            rev_parse(&wt_a, "HEAD^"),
+            parent_before,
+            "an amend replaces the tip in place — the parent must not move"
+        );
+        assert_eq!(
+            commit_count(&wt_a),
+            commits_before,
+            "an amend must not add a commit"
+        );
+        assert_eq!(
+            status_after_amend, "",
+            "the staged change went INTO the amended commit, so A is clean"
+        );
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "the OPEN repo was mutated by an amend dispatched at a worktree panel"
+        );
+        assert_eq!(
+            wt_b_fp,
+            repo_fingerprint(&wt_b),
+            "the OTHER worktree was mutated by an amend at worktree A's panel"
+        );
+        let (pop, prepo) = e2e::latest_persisted_op().expect("a persisted oplog entry");
+        assert_eq!(
+            pop, "amend",
+            "newest persisted oplog entry should be the amend"
+        );
+        assert_eq!(
+            PathBuf::from(&prepo),
+            wt_a,
+            "the persisted oplog entry's repo must be the WORKTREE's path, not the tab's"
+        );
+        // Shared refs + the post-amend re-snapshot: the open tab shows the new tip.
+        assert!(
+            cx.read(|app| kagi
+                .read(app)
+                .active_view
+                .rows
+                .iter()
+                .any(|r| r.id.0 == head_after_amend)),
+            "the open tab must re-snapshot and show the worktree's amended commit"
+        );
+
+        // ── (b) discard ─────────────────────────────────────────────────────
+        // `reload` dropped the (now clean) panel, so dirty A again and re-open it.
+        std::fs::write(wt_a.join("f.txt"), "dirtied for discard\n").unwrap();
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fingerprint(&wt_a).1,
+            " M f.txt\n",
+            "fixture: worktree A must have exactly one unstaged modification to discard"
+        );
+
+        kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.start_discard(cx));
+        assert_eq!(
+            repo_fingerprint(&wt_a).1,
+            " M f.txt\n",
+            "the FIRST discard confirm must only arm — the destructive op needs two"
+        );
+        kagi.update(cx, |app, cx| app.start_discard(cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            repo_fingerprint(&wt_a),
+            (head_after_amend.clone(), String::new()),
+            "discard-all from a worktree panel must clean the WORKTREE without moving its HEAD"
+        );
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "the OPEN repo was mutated by a discard dispatched at a worktree panel"
+        );
+        assert_eq!(
+            wt_b_fp,
+            repo_fingerprint(&wt_b),
+            "the OTHER worktree was mutated by a discard at worktree A's panel"
+        );
+        let (pop, prepo) = e2e::latest_persisted_op().expect("a persisted oplog entry");
+        assert_eq!(
+            pop, "discard",
+            "newest persisted oplog entry should be the discard"
+        );
+        assert_eq!(
+            PathBuf::from(&prepo),
+            wt_a,
+            "the persisted oplog entry's repo must be the WORKTREE's path, not the tab's"
+        );
+        // The recovery handle (ADR-0083): the pre-discard content lives in the
+        // ODB as a blob, and the oplog entry carries its SHA. The worktree
+        // shares the open repository's ODB, so the blob resolves from BOTH.
+        //
+        // Read from the IN-MEMORY entry deliberately: the persisted entry's
+        // after-state is `plan.predicted` ("N file(s) discarded"), because
+        // ADR-0149 moved the persisted write into `Backend::run`, which only
+        // sees the plan. The blob list reaches `record_op` (this entry) and the
+        // `[kagi] executed: discarded …; backup: <path>=<sha>` line. Unchanged
+        // by #476 — the slice only redirects which repository is named.
+        let (op, repo, dirty) = cx.read(|app| {
+            let panel = kagi.read(app).op_log.clone().expect("op_log entity");
+            let panel = panel.read(app);
+            let entry = panel.entries().front().expect("an op-log entry");
+            let (op, repo) = e2e::entry_op_and_repo(entry);
+            (op, repo, e2e::entry_after_dirty(entry))
+        });
+        assert_eq!(op, "discard", "newest op-log entry should be the discard");
+        assert_eq!(
+            PathBuf::from(&repo),
+            wt_a,
+            "the op-log entry's repo must be the WORKTREE's path"
+        );
+        let dirty = dirty.expect("a successful discard records an after-state");
+        let blob = dirty
+            .rsplit_once('=')
+            .map(|(_, sha)| sha.trim().to_string())
+            .unwrap_or_else(|| panic!("no `path=blob` backup in the oplog entry: {dirty:?}"));
+        assert_eq!(blob.len(), 40, "expected a 40-hex blob SHA, got {blob:?}");
+        for odb in [&wt_a, &repo_path] {
+            assert!(
+                git_ok(odb, &["cat-file", "-e", &blob]),
+                "the discard's backup blob {blob} must resolve in {}",
+                odb.display()
+            );
+        }
+
+        // ── (c) neither op touched the TAB's undo stack ─────────────────────
+        // Both ran in another repository, so `undo_skipped_for_foreign` kept
+        // them off `operation_history` (and said so on stderr:
+        // `[kagi] undo: skipped — amend ran in another worktree …`).
+        //
+        // The oracle is the SHA, not stack equality: `reload` legitimately
+        // seeds the stack from the TAB's own branch reflog whenever it is empty
+        // (ADR-0084), and `head_branch_and_sha` reads the tab's HEAD — so a
+        // leaked entry would appear as the tab's branch pointed at worktree A's
+        // rewritten commit, and Cmd+Z would move `main` onto it.
+        let undo_head = cx.read(|app| e2e::undo_head(kagi.read(app)));
+        assert!(
+            undo_head
+                .as_ref()
+                .is_none_or(|(_, after, _)| after != &head_after_amend),
+            "the tab's Undo must not point at the WORKTREE's amended commit: {undo_head:?}"
+        );
+        // …and running it changes neither repository: the entry it holds (if
+        // any) is the tab's own, and its plan is evaluated against the tab.
+        let before_undo = (repo_fingerprint(&repo_path), repo_fingerprint(&wt_a));
+        kagi.update(cx, |app, cx| {
+            app.open_history_undo_modal();
+            app.confirm_history(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            (repo_fingerprint(&repo_path), repo_fingerprint(&wt_a)),
+            before_undo,
+            "the tab's Undo must not act on either repository after worktree ops"
+        );
+
+        // ── (d) the Editor Workspace tree discards in the TAB ───────────────
+        // Slice 3 review: `open_discard_modal_for_path` is shared by the commit
+        // panel's file menu and the editor tree, which mean DIFFERENT
+        // repositories. With the same relative path dirty in both, resolving
+        // the panel would destroy the worktree's copy on an editor-tree click.
+        // `WriteOrigin` is what keeps them apart, and it rides on the modal so
+        // preflight + execute land where the plan was built.
+        std::fs::write(repo_path.join("f.txt"), "open repo edit\n").unwrap();
+        std::fs::write(wt_a.join("f.txt"), "worktree edit\n").unwrap();
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
+            "the worktree panel must be up — that is the trap the origin avoids"
+        );
+
+        // The real handler behind the tree's "Discard Changes…" menu item.
+        let discard_f = EditorTreeAction::Discard(PathBuf::from("f.txt"));
+        win.update(cx, |_, window, app_cx| {
+            kagi.update(app_cx, |app, cx| {
+                app.dispatch_editor_tree_action(discard_f, window, cx)
+            })
+        })
+        .expect("dispatch editor-tree discard");
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
+        cx.run_until_parked();
+
+        assert_eq!(
+            repo_fingerprint(&repo_path),
+            repo_fp,
+            "an editor-tree discard must restore the OPEN repo's f.txt (back to the \
+             fixture state: only the untracked dirty.txt left)"
+        );
+        assert_eq!(
+            repo_fingerprint(&wt_a).1,
+            " M f.txt\n",
+            "an editor-tree discard must NOT touch the worktree's copy of the same path"
+        );
+
+        // …and the panel's own discard still goes to the worktree.
+        let path_a = wt_a.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
+        });
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
+        kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fingerprint(&wt_a),
+            (head_after_amend.clone(), String::new()),
+            "the panel's own discard must clean the WORKTREE"
+        );
+        assert_eq!(
+            repo_fingerprint(&repo_path),
+            repo_fp,
+            "the panel's discard must not touch the open repo"
+        );
+
+        eprintln!(
+            "[gui-e2e] PASS worktree_panel_amend_discard wt-a {}..{} backup={} undo={undo_head:?}",
+            &head_before[..8],
+            &head_after_amend[..8],
+            &blob[..8],
         );
     }
 

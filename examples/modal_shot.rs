@@ -89,6 +89,7 @@ fn main() {
                 paths,
                 skipped,
                 is_all: true,
+                origin: kagi::ui::worktree_wip::WriteOrigin::CommitPanel,
                 error: None,
                 confirm_armed: false,
             });

@@ -997,6 +997,10 @@ impl KagiApp {
         let bg_msg = commit_message.clone();
         // T-UNDOREDO-001: capture branch + tip BEFORE the commit (main thread).
         let history_before = self.head_branch_and_sha();
+        // #476 slice 3: …and only when the commit lands in the TAB's repository.
+        // `head_branch_and_sha` reads the tab's HEAD, so an entry recorded for a
+        // worktree commit would point the tab's Undo at the wrong branch.
+        let skip_undo = self.undo_skipped_for_foreign("commit", &repo_path);
         let history_summary_line: String = commit_message
             .lines()
             .next()
@@ -1024,8 +1028,8 @@ impl KagiApp {
                     &repo_path,
                     cx,
                 );
-                if let (Some((hbranch, before)), Some((_, after_sha))) =
-                    (history_before.clone(), app.head_branch_and_sha())
+                if let (false, Some((hbranch, before)), Some((_, after_sha))) =
+                    (skip_undo, history_before.clone(), app.head_branch_and_sha())
                 {
                     let summary =
                         format!("commit {} '{}'", after_sha.short(), history_summary_line);
@@ -1043,9 +1047,6 @@ impl KagiApp {
                 // gives the OPEN tab the commit, which it shares through the
                 // ODB and refs. It drops `commit_panel`; right here, since the
                 // worktree is clean and that panel would list nothing.
-                // ponytail: `history_before` stays on the tab, so a foreign
-                // commit records no undo entry (`record_history` no-ops on
-                // before == after). Cross-repository undo is slice 3's.
                 app.refresh_worktree_wip_row(&repo_path);
                 app.reload(cx);
             }
@@ -1189,11 +1190,9 @@ impl KagiApp {
     /// deferred from the (leased) `CommitPanelView` listener. Reads the entity's
     /// staged/message state to pick the [`AmendMode`], then opens the amend modal
     /// (which reads `commit_panel` again — safe here on the parent).
+    /// #476 slice 3: reads the PANEL's staged set, so a linked worktree's panel
+    /// picks its mode from that worktree's index and plans against it.
     pub fn commit_panel_amend(&mut self, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("amend", cx) {
-            return;
-        }
         let staged = self
             .commit_panel
             .as_ref()

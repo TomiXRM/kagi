@@ -221,6 +221,8 @@ impl KagiApp {
                 modal,
                 &self.modal_section_overrides,
                 self.modal_list_scroll.clone(),
+                // #476 slice 3: read live, from the same panel the op resolves.
+                self.panel_worktree_label(cx),
                 cx,
             ))
         })
@@ -336,6 +338,8 @@ impl KagiApp {
                 modal,
                 &self.modal_section_overrides,
                 self.modal_list_scroll.clone(),
+                // #476 slice 3: read live, from the same panel the op resolves.
+                self.panel_worktree_label(cx),
                 cx,
             ))
         })

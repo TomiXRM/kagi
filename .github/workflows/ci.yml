@@ -44,9 +44,13 @@ jobs:
           - ui-git2
           # kagi-mcp is gpui-free (ADR-0163 / #331)
           - mcp-gpui
-          # [kagi] contract lines go through klog! — ratchet, so the
-          # pre-existing wrapped violations are tolerated at their baseline
-          # count while new ones fail (ADR-0096 / #396)
+          # [kagi] contract lines go through klog!. Two gates on purpose:
+          # `klog-raw` rejects every same-line `eprintln!("[kagi]…")` outright,
+          # `klog` is the ratchet that tolerates the pre-existing *wrapped*
+          # violations at their baseline count. The ratchet alone would let a
+          # file swap a wrapped violation for a fresh same-line one at an
+          # unchanged count (review finding, ADR-0096 / #396).
+          - klog-raw
           - klog
           # kagi-ui-* crates never touch git2 / kagi-git (ADR-0121)
           - ui-core-layering
@@ -56,8 +60,6 @@ jobs:
           - plan-verbatim
           # modal file lists are not silently truncated (#454)
           - modal-lists
-          # modal sections actually collapse (#454)
-          - modal-sections
           # gates stay in one dialect (this file included)
           - shell-hygiene
     steps:

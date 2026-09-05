@@ -145,6 +145,29 @@ RULES: tuple[Rule, ...] = (
         samples_ok=("// headless by construction: no gpui in this crate\n",),
     ),
     Rule(
+        name="klog-raw",
+        summary="no same-line raw [kagi] emission (ADR-0096)",
+        # Same-line only: `[ \t]*`, never `\s*`, because `\s` spans newlines and
+        # the rustfmt-wrapped form is the pre-existing debt the `klog` ratchet
+        # tolerates by count. Zero tolerance here is what the ratchet alone
+        # cannot give: a file at its baseline could convert one wrapped call to
+        # `klog!` and add a fresh same-line one at an unchanged count (round-2
+        # review finding).
+        pattern=r'(?:eprintln|println)!\([ \t]*"\[kagi\]',
+        globs=RUST_SOURCES,
+        excludes=("crates/kagi-ui-core/src/klog.rs",),
+        message=(
+            "a [kagi] contract line is emitted directly — route it through klog! "
+            "(ADR-0096); the ratchet only tolerates the pre-existing wrapped calls."
+        ),
+        samples=('eprintln!("[kagi] refreshed");',),
+        samples_ok=(
+            'klog!("refreshed");',
+            'eprintln!(\n    "[kagi] refreshed"\n);',
+        ),
+        flags=re.MULTILINE,
+    ),
+    Rule(
         name="ui-core-layering",
         summary="kagi-ui-* sources never touch git2 / kagi-git (ADR-0121)",
         # Actual usage only: a path, a `use`, or an `extern crate`. The bare
@@ -289,17 +312,52 @@ def crate_name(name: str) -> str:
     return name.replace("_", "-")
 
 
-def manifest_dep_names(text: str) -> list[tuple[str, str]]:
+def workspace_dep_aliases() -> dict[str, str]:
+    """`[workspace.dependencies]` alias -> effective crate name, from the root manifest.
+
+    Round-2 review: a `{ workspace = true }` dependency carries no `package`
+    of its own, so a rename declared once in the root
+    (`backend = { package = "kagi-git" }`) made every inheriting crate look
+    like it depended on `backend` — a clean bypass of both layering gates.
+    """
+    root_manifest = ROOT / "Cargo.toml"
+    if not root_manifest.is_file():
+        return {}
+    try:
+        data = tomllib.loads(root_manifest.read_text(encoding="utf-8", errors="replace"))
+    except tomllib.TOMLDecodeError:
+        return {}
+    workspace = data.get("workspace")
+    if not isinstance(workspace, dict):
+        return {}
+    deps = workspace.get("dependencies")
+    if not isinstance(deps, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, spec in deps.items():
+        name = key
+        if isinstance(spec, dict):
+            package = spec.get("package")
+            if isinstance(package, str):
+                name = package
+        out[key] = name
+    return out
+
+
+def manifest_dep_names(text: str, aliases: dict[str, str] | None = None) -> list[tuple[str, str]]:
     """(declared key, effective crate name) for every dependency in a manifest.
 
     The effective name is the dependency's `package` rename when it has one,
     which is the whole point: `backend = { package = "kagi-git", path = … }` is
-    a kagi-git dependency, and only the parsed manifest says so.
+    a kagi-git dependency, and only the parsed manifest says so. A
+    `{ workspace = true }` dependency inherits its rename from the root
+    `[workspace.dependencies]` table, so that map is consulted too.
     """
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         return []
+    inherited = workspace_dep_aliases() if aliases is None else aliases
     out: list[tuple[str, str]] = []
     for table in _dep_tables(data):
         for key, spec in table.items():
@@ -308,14 +366,22 @@ def manifest_dep_names(text: str) -> list[tuple[str, str]]:
                 package = spec.get("package")
                 if isinstance(package, str):
                     name = package
+                elif spec.get("workspace") is True:
+                    name = inherited.get(key, key)
             out.append((key, name))
     return out
 
 
-def manifest_dep_hits(text: str, banned: tuple[str, ...]) -> list[tuple[str, str]]:
+def manifest_dep_hits(
+    text: str,
+    banned: tuple[str, ...],
+    aliases: dict[str, str] | None = None,
+) -> list[tuple[str, str]]:
     """(declared key, crate name) for each dependency resolving to a banned crate."""
     wanted = {crate_name(name) for name in banned}
-    return [(key, name) for key, name in manifest_dep_names(text) if crate_name(name) in wanted]
+    return [
+        (key, name) for key, name in manifest_dep_names(text, aliases) if crate_name(name) in wanted
+    ]
 
 
 @dataclass(frozen=True)

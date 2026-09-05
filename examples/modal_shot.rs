@@ -19,7 +19,7 @@ use std::path::PathBuf;
 fn main() {
     let mut args = std::env::args().skip(1);
     let repo = args.next().map(PathBuf::from).unwrap_or_else(|| {
-        eprintln!("usage: modal_shot <repo-path> [amend|discard|checkout|push]");
+        eprintln!("usage: modal_shot <repo-path> [amend|discard|checkout|push|stash|cherry-pick]");
         std::process::exit(2);
     });
     let which = args.next().unwrap_or_else(|| "amend".to_string());
@@ -96,8 +96,33 @@ fn main() {
                 error: None,
             });
         }
+        // #454 layer 4: cards that adopted the shared shell in this slice.
+        "stash" => {
+            let mut backend = kagi_git::Backend::open(&repo).expect("open backend");
+            let plan = backend
+                .plan_stash_push(None, false)
+                .expect("plan_stash_push");
+            app_state.set_stash_push_modal(kagi::ui::modals::StashPushModal {
+                input: String::new(),
+                input_state: None,
+                plan: Some(std::sync::Arc::new(plan)),
+                error: None,
+            });
+        }
+        "cherry-pick" => {
+            let backend = kagi_git::Backend::open(&repo).expect("open backend");
+            let head = backend.head_commit_id().expect("head commit");
+            let plan = backend.plan_cherry_pick(&head).expect("plan_cherry_pick");
+            app_state.set_cherry_pick_modal(kagi::ui::modals::CherryPickModal {
+                commit_id: head,
+                plan: std::sync::Arc::new(plan),
+                error: None,
+            });
+        }
         other => {
-            eprintln!("second arg must be amend|discard|checkout|push, got {other:?}");
+            eprintln!(
+                "second arg must be amend|discard|checkout|push|stash|cherry-pick, got {other:?}"
+            );
             std::process::exit(2);
         }
     }

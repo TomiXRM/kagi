@@ -10,8 +10,9 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
+use super::modal_shell::{modal_card, modal_scroll_body};
 use super::modals::*;
-use super::theme::{self, theme as current_theme};
+use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, App, Context, FocusHandle, KeyDownEvent, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
@@ -84,29 +85,30 @@ pub(crate) fn render_create_branch_modal(
     };
 
     // ── Build modal card ────────────────────────────────────
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // ── Title (icon-badge header, matching Pull/Push's richer card —
-        // user request 2026-07-23; `Plus` mirrors the toolbar "Branch"
-        // button's own icon, `color_success` matches this modal's own
-        // Create button accent below) ──────────────────────────
-        .child(render_modal_title_row(
-            SharedString::from(format!(
-                "Create branch @ {}  {}",
-                modal.at.short(),
-                modal.start_title
+    // The plan block below (blockers + recovery prose) is unbounded and the
+    // card holds no inner scroller, so the body is this card's single scroll
+    // region; title and buttons stay pinned outside it.
+    let card = modal_card(480.).child(
+        div()
+            .flex_shrink_0()
+            // ── Title (icon-badge header, matching Pull/Push's richer card —
+            // user request 2026-07-23; `Plus` mirrors the toolbar "Branch"
+            // button's own icon, `color_success` matches this modal's own
+            // Create button accent below) ──────────────────────────
+            .child(render_modal_title_row(
+                SharedString::from(format!(
+                    "Create branch @ {}  {}",
+                    modal.at.short(),
+                    modal.start_title
+                )),
+                Some((IconName::Plus.into(), current_theme().color_success)),
             )),
-            Some((IconName::Plus.into(), current_theme().color_success)),
-        ))
+    );
+    let mut body = modal_scroll_body()
         // ── Name input ────────────────────────────────────
         .child(
             div()
+                .flex_shrink_0()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -119,7 +121,7 @@ pub(crate) fn render_create_branch_modal(
                 .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
         )
         .child(
-            div().px_2().py_1().child(
+            div().flex_shrink_0().px_2().py_1().child(
                 Checkbox::new("create-branch-checkout-after")
                     .label("Checkout after create")
                     .checked(modal.checkout_after)
@@ -133,10 +135,10 @@ pub(crate) fn render_create_branch_modal(
         // moves HEAD or touches the working tree, so current and predicted
         // are identical here; showing them side by side is the same
         // reassurance the recovery text gives, just at a glance.
-        card = card.child(render_current_predicted(
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(
             p,
             Some((IconName::Plus.into(), current_theme().color_success)),
-        ));
+        )));
 
         // ── Blockers (localized) ──────────────────────────
         if !p.blockers.is_empty() {
@@ -155,24 +157,25 @@ pub(crate) fn render_create_branch_modal(
                         .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
             }
-            card = card.child(block_col);
+            body = body.child(block_col.flex_shrink_0());
         }
 
         // ── Recovery (same grouped/monospace treatment as Pull/Push —
         // user request 2026-07-23) ─────────────────────────
         let recovery_text = plan_recovery_text(p.recovery.as_ref());
         if !recovery_text.is_empty() {
-            card = card.child(render_recovery_box(
+            body = body.child(div().flex_shrink_0().child(render_recovery_box(
                 &recovery_text,
                 current_theme().color_success,
-            ));
+            )));
         }
     }
 
     // ── Error message (preflight / execute failure) ───────
     if let Some(ref err) = modal.error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -203,7 +206,9 @@ pub(crate) fn render_create_branch_modal(
         );
     }
 
-    card = card.child(button_row);
+    let card = card
+        .child(body)
+        .child(div().flex_shrink_0().child(button_row));
 
     // Real text inputs handle their own focus/keys now. Escape bubbles up
     // from the focused input to this wrapper and cancels (user request).
@@ -256,24 +261,20 @@ pub(crate) fn render_create_worktree_modal(
         cx.notify();
     });
 
-    let mut card = div()
-        .w(theme::scaled_px(540.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
-            SharedString::from(format!(
-                "Create worktree @ {}  {}",
-                modal.at.short(),
-                modal.start_title
-            )),
-            Some((IconName::Plus.into(), current_theme().color_success)),
-        ))
+    // Warnings, blockers and recovery prose below are unbounded and there is
+    // no inner scroller, so the body carries this card's single scroll region.
+    let card = modal_card(540.).child(div().flex_shrink_0().child(render_modal_title_row(
+        SharedString::from(format!(
+            "Create worktree @ {}  {}",
+            modal.at.short(),
+            modal.start_title
+        )),
+        Some((IconName::Plus.into(), current_theme().color_success)),
+    )));
+    let mut body = modal_scroll_body()
         .child(
             div()
+                .flex_shrink_0()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -287,6 +288,7 @@ pub(crate) fn render_create_worktree_modal(
         )
         .child(
             div()
+                .flex_shrink_0()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -303,10 +305,10 @@ pub(crate) fn render_create_worktree_modal(
         // Same boxed current/predicted treatment as Pull/Push/Create-Branch
         // (user request 2026-07-23: reuse this display everywhere instead of
         // a one-off layout per modal).
-        card = card.child(render_current_predicted(
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(
             p,
             Some((IconName::Plus.into(), current_theme().color_success)),
-        ));
+        )));
 
         if !p.warnings.is_empty() {
             let mut warn_col = div().flex().flex_col().gap_1();
@@ -319,7 +321,7 @@ pub(crate) fn render_create_worktree_modal(
                         .child(SharedString::from(format!("! {}", plan_note_text(w)))),
                 );
             }
-            card = card.child(warn_col);
+            body = body.child(warn_col.flex_shrink_0());
         }
 
         // ── Blockers (localized) ──────────────────────────
@@ -339,21 +341,22 @@ pub(crate) fn render_create_worktree_modal(
                         .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
             }
-            card = card.child(block_col);
+            body = body.child(block_col.flex_shrink_0());
         }
 
         let recovery_text = plan_recovery_text(p.recovery.as_ref());
         if !recovery_text.is_empty() {
-            card = card.child(render_recovery_box(
+            body = body.child(div().flex_shrink_0().child(render_recovery_box(
                 &recovery_text,
                 current_theme().color_success,
-            ));
+            )));
         }
     }
 
     if let Some(ref err) = modal.error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -380,7 +383,9 @@ pub(crate) fn render_create_worktree_modal(
             .on_click(confirm_handler),
         );
     }
-    card = card.child(button_row);
+    let card = card
+        .child(body)
+        .child(div().flex_shrink_0().child(button_row));
 
     let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
         if e.keystroke.key == "escape" {
@@ -439,45 +444,44 @@ pub(crate) fn render_create_tag_modal(
         cx.notify();
     });
 
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // Icon-badge header + boxed CURRENT→PREDICTED + monospace recovery,
-        // same richer treatment as every other plan-confirmation modal (user
-        // request 2026-07-23). `color_tag` matches the tag ref-badge colour
-        // used elsewhere in the app.
-        .child(render_modal_title_row(
-            SharedString::from(format!(
-                "Create tag @ {}  {}",
-                modal.at.short(),
-                modal.start_title
+    // Blockers and recovery prose are unbounded and the card holds no inner
+    // scroller, so the body is this card's single scroll region.
+    let card = modal_card(480.).child(
+        div()
+            .flex_shrink_0()
+            // Icon-badge header + boxed CURRENT→PREDICTED + monospace recovery,
+            // same richer treatment as every other plan-confirmation modal (user
+            // request 2026-07-23). `color_tag` matches the tag ref-badge colour
+            // used elsewhere in the app.
+            .child(render_modal_title_row(
+                SharedString::from(format!(
+                    "Create tag @ {}  {}",
+                    modal.at.short(),
+                    modal.start_title
+                )),
+                Some((IconName::Plus.into(), current_theme().color_tag)),
             )),
-            Some((IconName::Plus.into(), current_theme().color_tag)),
-        ))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Tag name")),
-                )
-                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
-        );
+    );
+    let mut body = modal_scroll_body().child(
+        div()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(current_theme().text_label))
+                    .child(SharedString::from("Tag name")),
+            )
+            .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
+    );
 
     if let Some(ref p) = plan {
-        card = card.child(render_current_predicted(
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(
             p,
             Some((IconName::Plus.into(), current_theme().color_tag)),
-        ));
+        )));
 
         if !p.blockers.is_empty() {
             let lines: Vec<SharedString> = p
@@ -495,21 +499,22 @@ pub(crate) fn render_create_tag_modal(
                         .child(SharedString::from(format!("\u{2717} {}", b))),
                 );
             }
-            card = card.child(block_col);
+            body = body.child(block_col.flex_shrink_0());
         }
 
         let recovery_text = plan_recovery_text(p.recovery.as_ref());
         if !recovery_text.is_empty() {
-            card = card.child(render_recovery_box(
+            body = body.child(div().flex_shrink_0().child(render_recovery_box(
                 &recovery_text,
                 current_theme().color_tag,
-            ));
+            )));
         }
     }
 
     if let Some(ref err) = modal.error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -538,7 +543,9 @@ pub(crate) fn render_create_tag_modal(
         );
     }
 
-    card = card.child(button_row);
+    let card = card
+        .child(body)
+        .child(div().flex_shrink_0().child(button_row));
 
     let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
         if e.keystroke.key == "escape" {

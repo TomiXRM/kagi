@@ -84,36 +84,33 @@ pub(crate) fn render_input_plan_modal(
         .as_ref()
         .map(|p| !p.blockers.is_empty())
         .unwrap_or(true);
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
-            SharedString::from(title),
-            accent.clone(),
-        ))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from(label)),
-                )
-                .children(input_state.as_ref().map(|st| Input::new(st).small())),
-        );
+    // #454 layer 4: adopt the shared shell — fixed title, scrolling middle,
+    // fixed button row. Plan notes are unbounded (a rename can carry many
+    // warnings/blockers), so the body is this card's single scroll region.
+    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
+        SharedString::from(title),
+        accent.clone(),
+    )));
+    let mut body = modal_scroll_body().child(
+        div()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(current_theme().text_label))
+                    .child(SharedString::from(label)),
+            )
+            .children(input_state.as_ref().map(|st| Input::new(st).small())),
+    );
 
     if let Some(BranchRenameValidation::Invalid(reason)) = validation {
         // W29-I18N-WAVE2: localize the keyed branch-name reason.
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -124,7 +121,11 @@ pub(crate) fn render_input_plan_modal(
     }
 
     if let Some(plan) = plan {
-        card = card.child(render_current_predicted(&plan, accent.clone()));
+        body = body.child(
+            div()
+                .flex_shrink_0()
+                .child(render_current_predicted(&plan, accent.clone())),
+        );
 
         if !plan.warnings.is_empty() {
             let mut warn_col = div().flex().flex_col().gap_1();
@@ -140,7 +141,7 @@ pub(crate) fn render_input_plan_modal(
                         ))),
                 );
             }
-            card = card.child(warn_col.flex_shrink_0());
+            body = body.child(warn_col.flex_shrink_0());
         }
         if !plan.blockers.is_empty() {
             let mut block_col = div().flex().flex_col().gap_1();
@@ -156,13 +157,14 @@ pub(crate) fn render_input_plan_modal(
                         ))),
                 );
             }
-            card = card.child(block_col.flex_shrink_0());
+            body = body.child(block_col.flex_shrink_0());
         }
     }
 
     if let Some(err) = error {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -186,7 +188,7 @@ pub(crate) fn render_input_plan_modal(
                 .on_click(confirm_handler),
         );
     }
-    card = card.child(buttons);
+    let card = card.child(body).child(div().flex_shrink_0().child(buttons));
 
     modal_overlay(card).into_any_element()
 }

@@ -7,6 +7,7 @@
 use super::button_style::KagiButton;
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
+use super::modal_shell::{modal_body, modal_card, modal_card_sized, modal_scroll_body};
 use super::modals::EditorDirtyGuardModal;
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
@@ -56,18 +57,13 @@ pub(crate) fn render_smart_commit_modal(
                         ),
                 );
             }
-            div()
-                .w(theme::scaled_px(460.))
-                .bg(rgb(current_theme().modal))
-                .rounded_lg()
-                .p_4()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(render_modal_title_row(
+            // Two short paragraphs and the four fixed `CONSENT_LINES`: the
+            // content is bounded, so this card needs no scrolling body (#454).
+            modal_card(460.)
+                .child(div().flex_shrink_0().child(render_modal_title_row(
                     SharedString::from("Enable Local LLM generation?"),
                     Some((IconName::Settings.into(), current_theme().color_success)),
-                ))
+                )))
                 .child(
                     div()
                         .text_sm()
@@ -79,28 +75,30 @@ pub(crate) fn render_smart_commit_modal(
                 )
                 .child(lines_col)
                 .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .justify_end()
-                        .child(
-                            Button::new("smart-consent-cancel")
-                                .label(Msg::PlanCancel.t())
-                                .ghost()
-                                .small()
-                                .on_click(cancel),
-                        )
-                        .child(
-                            KagiButton::accent(
-                                "smart-consent-confirm",
-                                "Enable & continue",
-                                current_theme().color_success,
-                                cx,
+                    div().flex_shrink_0().child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .justify_end()
+                            .child(
+                                Button::new("smart-consent-cancel")
+                                    .label(Msg::PlanCancel.t())
+                                    .ghost()
+                                    .small()
+                                    .on_click(cancel),
                             )
-                            .small()
-                            .on_click(confirm),
-                        ),
+                            .child(
+                                KagiButton::accent(
+                                    "smart-consent-confirm",
+                                    "Enable & continue",
+                                    current_theme().color_success,
+                                    cx,
+                                )
+                                .small()
+                                .on_click(confirm),
+                            ),
+                    ),
                 )
         }
         smart_commit::SmartCommitModal::ModelPicker { models } => {
@@ -127,35 +125,38 @@ pub(crate) fn render_smart_commit_modal(
                         .child(SharedString::from(m.clone())),
                 );
             }
-            div()
-                .w(theme::scaled_px(420.))
-                .bg(rgb(current_theme().modal))
-                .rounded_lg()
-                .p_4()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(render_modal_title_row(
+            // The installed-model list is unbounded and nothing inside it
+            // scrolls, so the body is this card's single scroll region (#454).
+            // Its rows stay `flex_shrink_0` or flex compresses them instead of
+            // handing the overflow to the scroller (T027).
+            modal_card(420.)
+                .child(div().flex_shrink_0().child(render_modal_title_row(
                     SharedString::from("Select a local model"),
                     Some((IconName::Settings.into(), current_theme().color_branch)),
-                ))
+                )))
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_sub))
-                        .child(SharedString::from(
-                            "Choose which installed Ollama model to use. \
-                             Your choice is remembered.",
-                        )),
+                    modal_scroll_body()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(rgb(current_theme().text_sub))
+                                .child(SharedString::from(
+                                    "Choose which installed Ollama model to use. \
+                                     Your choice is remembered.",
+                                )),
+                        )
+                        .child(list.flex_shrink_0()),
                 )
-                .child(list)
                 .child(
-                    div().flex().flex_row().justify_end().child(
-                        Button::new("smart-model-cancel")
-                            .label(Msg::PlanCancel.t())
-                            .ghost()
-                            .small()
-                            .on_click(cancel),
+                    div().flex_shrink_0().child(
+                        div().flex().flex_row().justify_end().child(
+                            Button::new("smart-model-cancel")
+                                .label(Msg::PlanCancel.t())
+                                .ghost()
+                                .small()
+                                .on_click(cancel),
+                        ),
                     ),
                 )
         }
@@ -199,24 +200,30 @@ pub(crate) fn render_update_modal(
     let notes_h = px((f32::from(viewport.height) * 0.5).max(160.0));
     let notes_font = px((theme::rem_size_px() * 0.7).max(9.0));
 
-    let mut card =
-        div()
-            .w(card_w)
-            .bg(rgb(current_theme().modal))
-            .rounded_lg()
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(render_modal_title_row(
-                SharedString::from("Update available"),
-                Some((
-                    ModalIcon::Path("icons/refresh-cw.svg"),
-                    current_theme().color_branch,
-                )),
-            ))
+    // The width is viewport-derived (0.8x the window), not a fixed layout
+    // constant, so it uses the width-free shell: `modal_card`'s `scaled_px`
+    // would apply the UI zoom on top of a width the viewport already
+    // reflects. Everything else the shell sets (height cap, clipping,
+    // padding, colours) applies.
+    let card = modal_card_sized()
+        .w(card_w)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            SharedString::from("Update available"),
+            Some((
+                ModalIcon::Path("icons/refresh-cw.svg"),
+                current_theme().color_branch,
+            )),
+        )));
+
+    // The release-notes pane below carries its own scroller, so the body must
+    // not scroll as well — one scroll region per card (#454). The short rows
+    // are `flex_shrink_0`; the notes pane is the one element allowed to give
+    // up height when the card hits its cap, and it scrolls what it clips.
+    let mut body =
+        modal_body()
             .child(
                 div()
+                    .flex_shrink_0()
                     .flex()
                     .flex_row()
                     .gap_2()
@@ -241,6 +248,7 @@ pub(crate) fn render_update_modal(
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(rgb(current_theme().text_sub))
                     .child(SharedString::from(format!(
@@ -268,7 +276,7 @@ pub(crate) fn render_update_modal(
             ..Default::default()
         };
 
-        card = card.child(
+        body = body.child(
             div()
                 .id("update-notes")
                 .h(notes_h)
@@ -293,8 +301,9 @@ pub(crate) fn render_update_modal(
     }
 
     if let Some(s) = status {
-        card = card.child(
+        body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_warning))
                 .child(s),
@@ -353,7 +362,7 @@ pub(crate) fn render_update_modal(
                 .on_click(update_now),
         );
     }
-    card = card.child(actions);
+    let card = card.child(body).child(div().flex_shrink_0().child(actions));
 
     modal_overlay(card).into_any_element()
 }
@@ -382,44 +391,39 @@ pub(crate) fn render_editor_dirty_guard_modal(
         cx.notify();
     });
 
-    let card = div()
-        .w(theme::scaled_px(420.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
+    let card = modal_card(420.)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
             SharedString::from(Msg::EditorWorkspaceUnsavedTitle.t()),
             Some((
                 ModalIcon::Path("icons/trash-2.svg"),
                 current_theme().color_blocker,
             )),
-        ))
+        )))
         .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .justify_end()
-                .child(
-                    Button::new("editor-dirty-guard-cancel")
-                        .label(Msg::EditorWorkspaceCancel.t())
-                        .ghost()
-                        .small()
-                        .on_click(cancel),
-                )
-                .child(
-                    KagiButton::accent(
-                        "editor-dirty-guard-discard",
-                        Msg::EditorWorkspaceDiscard.t(),
-                        current_theme().color_blocker,
-                        cx,
+            div().flex_shrink_0().child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .justify_end()
+                    .child(
+                        Button::new("editor-dirty-guard-cancel")
+                            .label(Msg::EditorWorkspaceCancel.t())
+                            .ghost()
+                            .small()
+                            .on_click(cancel),
                     )
-                    .small()
-                    .on_click(discard),
-                ),
+                    .child(
+                        KagiButton::accent(
+                            "editor-dirty-guard-discard",
+                            Msg::EditorWorkspaceDiscard.t(),
+                            current_theme().color_blocker,
+                            cx,
+                        )
+                        .small()
+                        .on_click(discard),
+                    ),
+            ),
         );
 
     modal_overlay(card).into_any_element()

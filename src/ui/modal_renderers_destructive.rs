@@ -69,10 +69,10 @@ pub(crate) fn render_amend_modal(
     // #454: fixed title + non-scrolling body + fixed button row. The buttons
     // must never scroll out of view on a destructive confirm, and the only
     // scroll region is the file list itself.
-    let card = modal_card(480.).child(render_modal_title_row(
+    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
         SharedString::from(plan_title_text(&plan.title)),
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-    ));
+    )));
     let mut body = modal_body().child(render_current_predicted(
         &plan,
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
@@ -361,10 +361,10 @@ pub(crate) fn render_discard_modal(
     // Cancel/Discard out of view. The target-file list is the scroll region
     // and is NOT collapsible — a destructive confirm always shows what it
     // acts on.
-    let card = modal_card(480.).child(render_modal_title_row(
+    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
         SharedString::from(title),
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-    ));
+    )));
     let mut body = modal_body()
         .child(
             div()

@@ -24,6 +24,11 @@ fn main() {
     });
     let which = args.next().unwrap_or_else(|| "amend".to_string());
 
+    // Honour the settings theme like `main.rs` does: the panel tints are
+    // theme-derived, so a capture must render the theme under test (#454 —
+    // `surface == modal` on Apple Dark made the panels invisible).
+    kagi::ui::theme::init_active();
+
     let mut app_state = kagi::ui::e2e::app_state(&repo).expect("open fixture repo");
 
     match which.as_str() {

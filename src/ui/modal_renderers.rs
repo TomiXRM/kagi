@@ -316,7 +316,10 @@ pub(crate) fn render_current_predicted(
             .into_any_element(),
         Some((_, color)) => div()
             .rounded_md()
-            .bg(rgb(current_theme().surface))
+            // Same theme-independent tint as the section panels: `surface`
+            // equals `modal` in several themes (Apple Dark et al), which left
+            // this block invisible on the card.
+            .bg(gpui::rgba(theme::panel_style().0))
             .px_3()
             .py_2()
             .flex()

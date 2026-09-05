@@ -256,6 +256,7 @@ pub(crate) fn modal_section_chipped(
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let (panel_bg, panel_border) = theme::panel_style();
     let caret = if open { "\u{25be}" } else { "\u{25b8}" };
     let mut header = div()
         .id(id)
@@ -301,9 +302,9 @@ pub(crate) fn modal_section_chipped(
         .min_h(gpui::px(0.))
         .p_2()
         .rounded_md()
-        .bg(rgb(current_theme().surface))
+        .bg(gpui::rgba(panel_bg))
         .border_1()
-        .border_color(rgb(current_theme().bg_row_alt))
+        .border_color(gpui::rgba(panel_border))
         .child(header);
     if open {
         if let Some(body) = body {
@@ -326,6 +327,9 @@ pub(crate) fn modal_list_panel(
     count: usize,
     body: gpui::AnyElement,
 ) -> gpui::Div {
+    // Theme-independent panel tint: `surface == modal` in several themes, so a
+    // `surface` fill would be invisible on the card (see `theme::panel_style`).
+    let (panel_bg, panel_border) = theme::panel_style();
     // Floor, so the panel is not the block that gives everything up: on a
     // 700px window the prose below it (recovery text, notes) kept its three
     // lines while the list collapsed to five rows — the wrong priority, since
@@ -345,9 +349,9 @@ pub(crate) fn modal_list_panel(
         .gap_2()
         .p_2()
         .rounded_md()
-        .bg(rgb(current_theme().surface))
+        .bg(gpui::rgba(panel_bg))
         .border_1()
-        .border_color(rgb(current_theme().bg_row_alt))
+        .border_color(gpui::rgba(panel_border))
         .child(
             div()
                 .flex_shrink_0()

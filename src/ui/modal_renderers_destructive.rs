@@ -12,8 +12,7 @@ use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box, ModalIcon,
 };
 use super::modal_shell::{
-    modal_card, modal_scroll_body, modal_section, section_open, MODAL_LIST_MAX_ROWS,
-    MODAL_LIST_ROW_H,
+    modal_body, modal_card, modal_list_max_h, modal_section, section_open, MODAL_LIST_ROW_H,
 };
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
@@ -31,7 +30,7 @@ const DESTRUCTIVE_ICON: ModalIcon = ModalIcon::Path("icons/trash-2.svg");
 
 /// #454 section id. Only *supporting* detail may hide behind disclosure: the
 /// list of files an operation acts on stays visible (see `render_amend_modal`).
-const SECTION_SKIPPED: &'static str = "discard-skipped";
+const SECTION_SKIPPED: &str = "discard-skipped";
 
 /// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
 ///
@@ -67,13 +66,14 @@ pub(crate) fn render_amend_modal(
         cx.notify();
     });
 
-    // #454: fixed title + scrolling body + fixed button row. The buttons must
-    // never scroll out of view on a destructive confirm, so only `body` scrolls.
+    // #454: fixed title + non-scrolling body + fixed button row. The buttons
+    // must never scroll out of view on a destructive confirm, and the only
+    // scroll region is the file list itself.
     let card = modal_card(480.).child(render_modal_title_row(
         SharedString::from(plan_title_text(&plan.title)),
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
     ));
-    let mut body = modal_scroll_body().child(render_current_predicted(
+    let mut body = modal_body().child(render_current_predicted(
         &plan,
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
     ));
@@ -89,11 +89,11 @@ pub(crate) fn render_amend_modal(
     if !plan.preview_files.is_empty() {
         let total = plan.preview_files.len();
         let files = plan.preview_files.clone();
-        // Height follows the content up to a ceiling: a 3-file amend gets a
-        // 3-row box, a 172-file amend gets the full 20 rows instead of the 9
-        // that a fixed 160px showed (measured on screen, #454). Past the
-        // ceiling the `uniform_list` scrolls.
-        let list_h = theme::scaled_px((total.min(MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H);
+        // Height follows the content up to a window-relative ceiling: a 3-file
+        // amend gets a 3-row box, a 172-file amend fills 40% of the window
+        // instead of the 9 rows a fixed 160px box showed (measured on screen,
+        // #454). Past the ceiling the `uniform_list` scrolls.
+        let list_h = modal_list_max_h(total);
         let list = super::render_helpers::with_vertical_scrollbar(
             "amend-files-scroll",
             &list_scroll,
@@ -125,11 +125,18 @@ pub(crate) fn render_amend_modal(
         );
         body = body.child(
             div()
+                // The list is the one part of the card that gives up height
+                // when the window is short (`min_h(0)`); everything else is
+                // `flex_shrink_0`. The list carries the ceiling itself, so the
+                // wrapper only needs to clip while it yields.
+                .min_h(gpui::px(0.))
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .gap_1()
                 .child(
                     div()
+                        .flex_shrink_0()
                         .text_sm()
                         .text_color(rgb(current_theme().text_label))
                         .child(SharedString::from(format!(
@@ -306,14 +313,13 @@ pub(crate) fn render_discard_modal(
     // ── Target file list (virtualized + scrollable) ─────────
     // #454: "Discard all changes (487)" is the biggest list in the app, so this
     // is a `uniform_list` — a plain div loop rebuilt every row every frame.
-    // Height follows the row count up to the shared ceiling, so a 2-file
-    // discard is a 2-row box and a 200-file discard shows 20 rows and scrolls.
+    // Height follows the row count up to the shared window-relative ceiling,
+    // so a 2-file discard is a 2-row box and a 200-file discard fills 40% of
+    // the window and scrolls.
     // Paths are NOT pre-truncated: cutting the head keeps the least
     // identifying part, and `overflow_hidden` already clips what does not fit.
     let target_count_rows = modal.paths.len();
-    let target_h = theme::scaled_px(
-        (target_count_rows.clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
-    );
+    let target_h = modal_list_max_h(target_count_rows);
     let target_paths = modal.paths.clone();
     let file_list = super::render_helpers::with_vertical_scrollbar(
         "discard-file-scroll",
@@ -350,17 +356,19 @@ pub(crate) fn render_discard_modal(
     // the full-card red border used to — matches every other destructive
     // plan-confirmation modal (user request 2026-07-23), one less box.
     //
-    // #454: fixed title + scrolling body + fixed button row (`modal_card`),
-    // so a long skipped/blocker list can no longer push Cancel/Discard out of
-    // view. The target-file list keeps its own inner scroll and is NOT
-    // collapsible — a destructive confirm always shows what it acts on.
+    // #454: fixed title + non-scrolling body + fixed button row
+    // (`modal_card`), so a long skipped/blocker list can no longer push
+    // Cancel/Discard out of view. The target-file list is the scroll region
+    // and is NOT collapsible — a destructive confirm always shows what it
+    // acts on.
     let card = modal_card(480.).child(render_modal_title_row(
         SharedString::from(title),
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
     ));
-    let mut body = modal_scroll_body()
+    let mut body = modal_body()
         .child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().text_label))
                 .child(SharedString::from(format!(
@@ -368,7 +376,15 @@ pub(crate) fn render_discard_modal(
                     target_count
                 ))),
         )
-        .child(file_list);
+        .child(
+            // Only the list yields height when the window is short.
+            div()
+                .min_h(gpui::px(0.))
+                .overflow_hidden()
+                .flex()
+                .flex_col()
+                .child(file_list),
+        );
 
     // ── Skipped (untracked / conflicted) ────────────────────
     // #454: was `take(20)` — the rest of the skipped paths were unreachable.
@@ -379,19 +395,17 @@ pub(crate) fn render_discard_modal(
     if !modal.skipped.is_empty() {
         let open = section_open(overrides, SECTION_SKIPPED, false);
         let section_body = open.then(|| {
-            // Cap the opened section too: `modal_scroll_body` only caps the
-            // middle as a whole, so hundreds of skipped paths would push the
-            // blockers and the recovery note far down the scroll — the two
-            // things a user needs next to the Discard button. Own scroll box,
-            // same shape as the target list above.
+            // Cap the opened section too: the body does not scroll, so without
+            // its own box hundreds of skipped paths would push the blockers
+            // and the recovery note out of the card — the two things a user
+            // needs next to the Discard button. Same shape as the target list.
             let mut skip_col = div()
                 .id("discard-skipped-list")
                 .flex()
                 .flex_col()
                 .gap_px()
-                .max_h(theme::scaled_px(
-                    (modal.skipped.len().clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
-                ))
+                .min_h(gpui::px(0.))
+                .max_h(modal_list_max_h(modal.skipped.len()))
                 .overflow_y_scroll();
             // No `chars().take(80)`: cutting the head keeps the least
             // identifying part of a deep path, and `overflow_hidden` below

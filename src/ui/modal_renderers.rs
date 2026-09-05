@@ -557,8 +557,12 @@ fn render_plan_modal_card_styled(
     // NOT scroll: a push plan with many preview commits used to grow past the
     // viewport, and capping the *card* with `overflow_y_scroll` only made the
     // confirm/cancel row reachable by scrolling to the bottom. `modal_card`
-    // caps the height and `modal_scroll_body` takes the overflow, so the
-    // buttons stay on screen no matter how long the plan is.
+    // caps the height and the body takes the overflow, so the buttons stay on
+    // screen no matter how long the plan is.
+    //
+    // The body is this card's single scroll region (`modal_shell`'s rule): its
+    // lists are plain and bounded, so they render at full height inside it
+    // rather than each becoming a scroller of its own.
     let card = modal_card(480.).child(div().flex_shrink_0().child(title_row));
 
     // Sections stay flex_shrink_0-wrapped: the body scrolls its overflow, and
@@ -586,29 +590,35 @@ fn render_plan_modal_card_styled(
 
     // ── Commits to push (T-HT-004) ────────────────────────
     // Shown only when preview_commits is non-empty (push plans).
+    //
+    // #454: was `take(total.min(10))` + an "… and N more" line — the count was
+    // honest but the remaining commits were unreachable. Every row is rendered
+    // now, at full height inside the scrolling body: one scroll gesture walks
+    // the whole card, and the row count no longer fights the recovery text for
+    // space (a capped list here collapsed to 0 rows on a 700px window).
+    //
+    // Plain rows, not a `uniform_list`: the producer caps the preview at 100
+    // (`build_push_preview_for_oid`, `MAX_PREVIEW`), so the row count is
+    // bounded — and a virtualized list would have to be its own scroller,
+    // i.e. a scroller inside the body.
     if !plan.preview_commits.is_empty() {
         let total = plan.preview_commits.len();
-        let show_count = total.min(10);
         let label = format!("Commits to push ({})", total);
         let mut commit_col = div().flex().flex_col().gap_1().child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().text_label))
                 .child(SharedString::from(label)),
         );
-        for entry in plan.preview_commits.iter().take(show_count) {
+        for entry in &plan.preview_commits {
             let line: String = entry.chars().take(72).collect();
-            commit_col = commit_col.child(render_commit_row(&line, accent.clone()));
-        }
-        if total > 10 {
             commit_col = commit_col.child(
+                // flex_shrink_0: inside a scrolling flex column, without it
+                // flex compresses the rows instead of scrolling (T027).
                 div()
-                    .text_xs()
-                    .text_color(rgb(current_theme().text_muted))
-                    .child(SharedString::from(format!(
-                        "\u{2026} and {} more",
-                        total - 10
-                    ))),
+                    .flex_shrink_0()
+                    .child(render_commit_row(&line, accent.clone())),
             );
         }
         body = body.child(commit_col.flex_shrink_0());

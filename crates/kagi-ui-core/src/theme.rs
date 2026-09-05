@@ -315,6 +315,37 @@ pub fn scaled(n: f32) -> f32 {
     n * zoom()
 }
 
+/// Last known window (viewport) height in logical pixels; `0` = not yet seen.
+///
+/// #454: modal list boxes cap their height so a long file/commit list cannot
+/// bury the confirm button, and that cap has to follow the **window**, not a
+/// hard-coded row count — a 2200px-tall window should show far more rows than
+/// a 700px one.  The value is read by leaf renderers deep inside the modal
+/// tree (`modal_shell`, the plan card, the amend/discard lists) which have no
+/// `&Window`: the shared plan card alone has 20 call sites that would each
+/// have to grow a `window` parameter to pass it down.  So it lives here next
+/// to `zoom()` — the same frame-global-UI-scalar idiom as `UI_ZOOM_PERMILLE`
+/// and `REDUCE_MOTION` — and is refreshed once per frame from the one place
+/// that owns the authoritative value, `KagiApp::render`.
+static VIEWPORT_H: AtomicUsize = AtomicUsize::new(0);
+
+/// Publish this frame's viewport height. Called once per frame from `render`.
+#[inline]
+pub fn set_viewport_h(h: f32) {
+    VIEWPORT_H.store(h.max(0.0).round() as usize, Ordering::Relaxed);
+}
+
+/// This frame's viewport height, or `None` before the first frame (headless
+/// snapshot tests, `--headless` startup) so callers can fall back to a
+/// deterministic size instead of laying out against a bogus `0`.
+#[inline]
+pub fn viewport_h() -> Option<f32> {
+    match VIEWPORT_H.load(Ordering::Relaxed) {
+        0 => None,
+        h => Some(h as f32),
+    }
+}
+
 /// Set the active zoom factor (clamped) and persist it to `settings.json`.
 /// Returns the clamped value that is now active.
 pub fn set_zoom(z: f32) -> f32 {

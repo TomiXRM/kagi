@@ -19,7 +19,7 @@ use std::path::PathBuf;
 fn main() {
     let mut args = std::env::args().skip(1);
     let repo = args.next().map(PathBuf::from).unwrap_or_else(|| {
-        eprintln!("usage: modal_shot <repo-path> [amend|discard|checkout]");
+        eprintln!("usage: modal_shot <repo-path> [amend|discard|checkout|push]");
         std::process::exit(2);
     });
     let which = args.next().unwrap_or_else(|| "amend".to_string());
@@ -73,6 +73,16 @@ fn main() {
                 confirm_armed: false,
             });
         }
+        // #454 layer 3: `push` is the plan that fills `preview_commits`, i.e.
+        // the "Commits to push (N)" list that used to stop after 10 rows.
+        "push" => {
+            let backend = kagi_git::Backend::open(&repo).expect("open backend");
+            let plan = backend.plan_push().expect("plan_push");
+            app_state.set_push_modal(kagi::ui::modals::PushPlanModal {
+                plan: std::sync::Arc::new(plan),
+                error: None,
+            });
+        }
         // #454 layer 1: `checkout` goes through the SHARED plan card
         // (`render_plan_modal_card_styled`, ~14 modals), so this is the mode
         // that shows whether the shared card's footer stays fixed.
@@ -87,7 +97,7 @@ fn main() {
             });
         }
         other => {
-            eprintln!("second arg must be amend|discard|checkout, got {other:?}");
+            eprintln!("second arg must be amend|discard|checkout|push, got {other:?}");
             std::process::exit(2);
         }
     }

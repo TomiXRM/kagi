@@ -14,9 +14,10 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
+use super::modal_shell::{modal_card, modal_scroll_body};
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
-use gpui::{div, prelude::*, relative, rgb, Context, Entity, SharedString, Window};
+use gpui::{div, prelude::*, rgb, Context, Entity, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, IconName, Sizable as _};
@@ -551,32 +552,23 @@ fn render_plan_modal_card_styled(
         accent.clone(),
     );
 
-    // ── Build modal card ────────────────────────────────────
-    // Capped + scrollable (user report 2026-07-23): a push plan with many
-    // preview commits could grow the card taller than the window, pushing
-    // the confirm/cancel buttons off-screen. Bounding height to a fraction
-    // of the viewport and scrolling the overflow keeps buttons reachable.
-    let mut card = div()
-        .id("plan-modal-card")
-        .w(theme::scaled_px(480.))
-        .max_h(relative(0.85))
-        .overflow_y_scroll()
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        // Sections are flex_shrink_0-wrapped: the card scrolls its overflow
-        // (max_h above), and without the guard flex would compress the rows
-        // instead of scrolling (same T027 bug class as the discard list).
-        .child(div().flex_shrink_0().child(title_row))
-        // ── Current → Predicted ───────────────────────────
-        .child(
-            div()
-                .flex_shrink_0()
-                .child(render_current_predicted(&plan, accent.clone())),
-        );
+    // ── Build modal card (#454) ─────────────────────────────
+    // Fixed title + scrolling body + fixed button row. The card itself must
+    // NOT scroll: a push plan with many preview commits used to grow past the
+    // viewport, and capping the *card* with `overflow_y_scroll` only made the
+    // confirm/cancel row reachable by scrolling to the bottom. `modal_card`
+    // caps the height and `modal_scroll_body` takes the overflow, so the
+    // buttons stay on screen no matter how long the plan is.
+    let card = modal_card(480.).child(div().flex_shrink_0().child(title_row));
+
+    // Sections stay flex_shrink_0-wrapped: the body scrolls its overflow, and
+    // without the guard flex would compress the rows instead of scrolling
+    // (same T027 bug class as the discard list).
+    let mut body = modal_scroll_body().child(
+        div()
+            .flex_shrink_0()
+            .child(render_current_predicted(&plan, accent.clone())),
+    );
 
     // ── Warnings ─────────────────────────────────────────
     if !plan.warnings.is_empty() {
@@ -589,7 +581,7 @@ fn render_plan_modal_card_styled(
                 accent.is_some(),
             ));
         }
-        card = card.child(warn_col.flex_shrink_0());
+        body = body.child(warn_col.flex_shrink_0());
     }
 
     // ── Commits to push (T-HT-004) ────────────────────────
@@ -619,7 +611,7 @@ fn render_plan_modal_card_styled(
                     ))),
             );
         }
-        card = card.child(commit_col.flex_shrink_0());
+        body = body.child(commit_col.flex_shrink_0());
     }
 
     // ── Blockers ──────────────────────────────────────────
@@ -633,13 +625,13 @@ fn render_plan_modal_card_styled(
                 accent.is_some(),
             ));
         }
-        card = card.child(block_col.flex_shrink_0());
+        body = body.child(block_col.flex_shrink_0());
     }
 
     // ── Recovery ──────────────────────────────────────────
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        card = card.child(
+        body = body.child(
             div().flex_shrink_0().child(match accent {
                 Some((_, color)) => render_recovery_box(&recovery_text, color),
                 None => div()
@@ -657,7 +649,7 @@ fn render_plan_modal_card_styled(
     // libgit2, so the CLI command is shown only as the faithful equivalent.
     if let Some(cmd) = plan.equivalent_command.as_deref() {
         let line = Msg::PlanEquivalentTo.t().replace("{}", cmd);
-        card = card.child(
+        body = body.child(
             div()
                 .flex_shrink_0()
                 .text_xs()
@@ -669,7 +661,7 @@ fn render_plan_modal_card_styled(
 
     // ── Error message (preflight / execute failure) ───────
     if let Some(err) = &error {
-        card = card.child(
+        body = body.child(
             div()
                 .flex_shrink_0()
                 .text_sm()
@@ -722,7 +714,7 @@ fn render_plan_modal_card_styled(
         );
     }
 
-    card = card.child(button_row.flex_shrink_0());
+    let card = card.child(body).child(button_row.flex_shrink_0());
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(card)

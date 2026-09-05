@@ -28,6 +28,16 @@ use gpui_component::input::InputState;
 // unused `*_mut` shims were removed in the 2026-06-20 rearch sweep; call sites
 // that need to consume match on `active_modal` directly.
 impl KagiApp {
+    /// #454 Phase 1: flip modal section `id` between its default and the
+    /// opposite. Read side is `modal_renderers::section_open` (renderers hold
+    /// the defaults); this only records the user's override.
+    #[inline]
+    pub fn toggle_modal_section(&mut self, id: &'static str) {
+        if !self.modal_section_overrides.remove(id) {
+            self.modal_section_overrides.insert(id);
+        }
+    }
+
     #[inline]
     pub fn plan_modal(&self) -> Option<&CheckoutPlanModal> {
         match &self.active_modal {

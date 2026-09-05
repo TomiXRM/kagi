@@ -417,7 +417,11 @@ impl KagiApp {
             el.child(render_conflict_continue_modal(modal, cx))
         })
         .when_some(amend_modal, |el, modal| {
-            el.child(render_amend_modal(modal, cx))
+            el.child(render_amend_modal(
+                modal,
+                self.modal_list_scroll.clone(),
+                cx,
+            ))
         })
         .when_some(pop_modal, |el, modal| el.child(render_pop_modal(modal, cx)))
         // ── Stash drop modal overlay (ADR-0087) ─────────
@@ -527,7 +531,12 @@ impl KagiApp {
         })
         // ── Discard danger modal overlay (W17-DISCARD) ───
         .when_some(discard_modal, |el, modal| {
-            el.child(render_discard_modal(modal, cx))
+            el.child(render_discard_modal(
+                modal,
+                &self.modal_section_overrides,
+                self.modal_list_scroll.clone(),
+                cx,
+            ))
         })
         // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
         .when_some(editor_dirty_guard_modal, |el, modal| {

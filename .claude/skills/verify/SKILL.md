@@ -20,8 +20,11 @@ KAGI_NO_RESTORE=1 ./target/debug/kagi /tmp/kagi-vfx-a/repo 2> /tmp/kagi-live.log
 ```
 
 - `KAGI_NO_RESTORE=1` — settings.json のセッション保存/復元を無効化(必須。付けないと fixture タブがユーザーのセッションに保存される)。
-- `KAGI_NO_SINGLE_INSTANCE=1` を**付けない**こと(下のソケット制御が使えなくなる)。
-  ただしユーザーの kagi が既に起動中なら逆にそこへ forward されてしまう — `pgrep -l kagi` を先に確認。
+- `KAGI_LOG_DIR=$(mktemp -d)` — **これも必須**。`~/.kagi`(oplog / trust / worktree_ports / settings)への書き込みを隔離する。
+  `KAGI_NO_RESTORE=1` だけでは不十分で、**`window_size` はユーザーの `~/.kagi/settings.json` に書かれる**(2026-09-05 実測)。
+  recent_repos / session_repos は `KAGI_NO_RESTORE=1` で汚れないことも実測済み。
+- `KAGI_NO_SINGLE_INSTANCE=1` — ユーザーの kagi が起動中なら**必須**(付けないとそちらへ forward される)。
+  ただし付けると下のソケット制御は使えない。`pgrep -l kagi` を先に確認して選ぶ。
 - 検証は stderr の `[kagi] …` klog 契約行を tail して行う。
 
 ## 実操作(クリックの代替): single-instance ソケット
@@ -56,6 +59,21 @@ KAGI_COMPARE_WT / KAGI_BOTTOM_PANEL / KAGI_TERMINAL / KAGI_MENU_DUMP / KAGI_PULL
 
 - **スクショ/録画は SSH 直で OK**(`/usr/libexec/sshd-keygen-wrapper` に画面収録を付与済み)。
   `screencapture -x shot.png` / 動画は `screencapture -v -C -V <sec> out.mov`(-C でカーソル込み)。
+- **ウィンドウ単体で撮る(他アプリ・デスクトップを写さない)**: `screencapture -o -l<CGWindowID>`。
+  ID は swift で取る(`/usr/bin/swift` あり、pyobjc は無い):
+  ```bash
+  # scripts/winid.swift: owner 名で layer 0 のウィンドウ ID を print
+  WID=$(swift scripts/winid.swift modal_shot); screencapture -x -o -l"$WID" out.png
+  ```
+  `CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)` を
+  owner 名で絞り、`kCGWindowLayer == 0` かつ 200×200 以上を選ぶ。`-o` は影を省く。
+- **`screencapture -R<x,y,w,h>`(矩形指定)は使えない** — `could not create image from rect`。
+  `-R0,0,400,300` でも失敗するので座標の問題ではない。全画面 + `sips -c H W --cropOffset Y X` で切る。
+- **モーダルを開いた状態を撮る**: `cargo run --example modal_shot -- <repo> amend|discard`(#454)。
+  plan を組んで `set_*_modal` してから `run_app` するだけの read-only な例。
+  runner(`VisualTestAppContext`)側では**撮れない** — ウィンドウがオフスクリーンに開かれるため
+  `screencapture` から見えず、`activate(true)` を足しても前面のアプリが撮れる。
+  runner 内の `capture_screenshot` は pinned gpui に `render_to_image` の Mac 実装が無いので skip される。
 - **クリックは Terminal.app プロキシ経由**(Terminal に Accessibility 付与済み、SSH 直は不可)。
   常駐プロキシ: `.command` ファイルに `tail -f /tmp/kagi-proxy-queue | while read s; do zsh $s > $s.out 2>&1; touch $s.done; done`
   を書いて `open -a Terminal` で起動 → SSH 側からスクリプトパスをキューに echo して結果ファイルを待つ。

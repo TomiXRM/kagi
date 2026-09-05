@@ -11,6 +11,7 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box, ModalIcon,
 };
+use super::modal_shell::{modal_card, modal_scroll_body, modal_section, section_open};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
@@ -25,6 +26,17 @@ use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 /// destructive plan-confirmation modal (user request 2026-07-23).
 const DESTRUCTIVE_ICON: ModalIcon = ModalIcon::Path("icons/trash-2.svg");
 
+/// #454 section id. Only *supporting* detail may hide behind disclosure: the
+/// list of files an operation acts on stays visible (see `render_amend_modal`).
+const SECTION_SKIPPED: &'static str = "discard-skipped";
+
+/// #454 modal list geometry. Row height must match the `uniform_list` item
+/// height exactly (virtualization assumes uniform rows), and the row ceiling
+/// caps how tall a list can grow before it scrolls — a fixed 160px box showed
+/// only 9 of 172 files on screen, which is why the height follows the content.
+const MODAL_LIST_ROW_H: f32 = 18.;
+const MODAL_LIST_MAX_ROWS: usize = 20;
+
 /// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
 ///
 /// History-rewriting → **two-stage confirm**.  The first Confirm click arms the
@@ -33,6 +45,9 @@ const DESTRUCTIVE_ICON: ModalIcon = ModalIcon::Path("icons/trash-2.svg");
 /// confirmation is required (ADR-0023).
 pub(crate) fn render_amend_modal(
     modal: AmendPlanModal,
+    // #454: scroll handle for the folded-file `uniform_list` (owned by
+    // `KagiApp` so the position survives re-renders while the modal is open).
+    list_scroll: gpui::UniformListScrollHandle,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let armed = modal.confirm_armed;
@@ -56,26 +71,83 @@ pub(crate) fn render_amend_modal(
         cx.notify();
     });
 
-    // Build the standard plan card body (title / current→predicted / warnings /
-    // blockers / recovery / error) and append a two-stage confirm row.
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
-            SharedString::from(plan_title_text(&plan.title)),
-            Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-        ))
-        .child(render_current_predicted(
-            &plan,
-            Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-        ));
+    // #454: fixed title + scrolling body + fixed button row. The buttons must
+    // never scroll out of view on a destructive confirm, so only `body` scrolls.
+    let card = modal_card(480.).child(render_modal_title_row(
+        SharedString::from(plan_title_text(&plan.title)),
+        Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+    ));
+    let mut body = modal_scroll_body().child(render_current_predicted(
+        &plan,
+        Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+    ));
 
-    // Warnings.
+    // #454 Phase 2: the staged files this amend folds in were cut to the first
+    // 10 rows with no "+N more" and no scroll — with 487 staged files the other
+    // 477 were unreachable. Now every row is reachable through a `uniform_list`.
+    //
+    // SAFETY: this list is what the operation *acts on*, so it is NOT
+    // collapsible. Disclosure (`modal_section`) is only for supporting detail —
+    // a destructive confirm must never be able to hide its own targets, and a
+    // sticky user override must not carry that state into the next confirm.
+    if !plan.preview_files.is_empty() {
+        let total = plan.preview_files.len();
+        let files = plan.preview_files.clone();
+        // Height follows the content up to a ceiling: a 3-file amend gets a
+        // 3-row box, a 172-file amend gets the full 20 rows instead of the 9
+        // that a fixed 160px showed (measured on screen, #454). Past the
+        // ceiling the `uniform_list` scrolls.
+        let list_h = theme::scaled_px((total.min(MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H);
+        let list = super::render_helpers::with_vertical_scrollbar(
+            "amend-files-scroll",
+            &list_scroll,
+            gpui::uniform_list(
+                "amend-files-list",
+                total,
+                move |range: std::ops::Range<usize>, _window, _cx| {
+                    range
+                        .filter_map(|i| {
+                            files.get(i).map(|f| {
+                                div()
+                                    .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                                    .w_full()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .text_xs()
+                                    .text_color(rgb(current_theme().text_sub))
+                                    .overflow_hidden()
+                                    .child(SharedString::from(f.path.display().to_string()))
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                },
+            )
+            .track_scroll(&list_scroll)
+            .h(list_h),
+            true,
+        );
+        body = body.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_label))
+                        .child(SharedString::from(format!(
+                            "{} ({})",
+                            Msg::AmendFoldedFiles.t(),
+                            total
+                        ))),
+                )
+                .child(list),
+        );
+    }
+
+    // Warnings stay inline: in a destructive card they explain what will NOT be
+    // touched, which is safety-relevant (issue #454 advisory).
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
         for w in &plan.warnings {
@@ -83,38 +155,13 @@ pub(crate) fn render_amend_modal(
                 div()
                     .text_sm()
                     .text_color(rgb(current_theme().color_warning))
-                    .overflow_hidden()
                     .child(SharedString::from(format!(
                         "\u{26a0} {}",
                         plan_note_text(w)
                     ))),
             );
         }
-        card = card.child(warn_col);
-    }
-
-    // Staged files folded in (preview_files), if any.
-    if !plan.preview_files.is_empty() {
-        let total = plan.preview_files.len();
-        let mut col = div().flex().flex_col().gap_1().child(
-            div()
-                .text_sm()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(format!(
-                    "Staged changes folded in ({})",
-                    total
-                ))),
-        );
-        for f in plan.preview_files.iter().take(10) {
-            col = col.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(current_theme().text_sub))
-                    .overflow_hidden()
-                    .child(SharedString::from(f.path.display().to_string())),
-            );
-        }
-        card = card.child(col);
+        body = body.child(warn_col);
     }
 
     // Blockers.
@@ -132,13 +179,13 @@ pub(crate) fn render_amend_modal(
                     ))),
             );
         }
-        card = card.child(block_col);
+        body = body.child(block_col);
     }
 
     // Recovery.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        card = card.child(render_recovery_box(
+        body = body.child(render_recovery_box(
             &recovery_text,
             current_theme().color_blocker,
         ));
@@ -146,7 +193,7 @@ pub(crate) fn render_amend_modal(
 
     // When armed: explicit "what is lost" second-stage notice (ADR-0023).
     if armed && !has_blockers {
-        card = card.child(
+        body = body.child(
             div()
                 .flex()
                 .flex_col()
@@ -166,7 +213,7 @@ pub(crate) fn render_amend_modal(
 
     // Error.
     if let Some(err) = &error {
-        card = card.child(
+        body = body.child(
             div()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
@@ -199,7 +246,7 @@ pub(crate) fn render_amend_modal(
         button_row = button_row.child(confirm.small().on_click(confirm_handler));
     }
 
-    card = card.child(button_row);
+    let card = card.child(body).child(button_row);
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(card).into_any_element()
@@ -214,6 +261,12 @@ pub(crate) fn render_amend_modal(
 /// or zero targets.
 pub(crate) fn render_discard_modal(
     modal: DiscardModal,
+    // #454: user's section open/closed overrides (`KagiApp` owns them; the
+    // renderer owns the defaults). Only the skipped list is collapsible here.
+    overrides: &std::collections::HashSet<&'static str>,
+    // #454: scroll handle for the target-file `uniform_list` ("Discard all" is
+    // the biggest list in the app, so it is virtualized like amend's).
+    list_scroll: gpui::UniformListScrollHandle,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let plan = modal.plan.clone();
@@ -254,45 +307,62 @@ pub(crate) fn render_discard_modal(
         plan_title_text(&plan.title)
     };
 
-    // ── Target file list (scrollable) ───────────────────────
-    let mut file_list = div()
-        .id("discard-file-list")
-        .flex()
-        .flex_col()
-        .gap_px()
-        .max_h(theme::scaled_px(180.))
-        .overflow_y_scroll();
-    for p in &modal.paths {
-        let line: String = p.chars().take(80).collect();
-        file_list = file_list.child(
-            div()
-                // flex_shrink_0: without it the capped flex_col COMPRESSES the
-                // rows to fit max_h instead of scrolling them (T027 bug class —
-                // user report: file names squashed together).
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(current_theme().text_main))
-                .overflow_hidden()
-                .child(SharedString::from(line)),
-        );
-    }
+    // ── Target file list (virtualized + scrollable) ─────────
+    // #454: "Discard all changes (487)" is the biggest list in the app, so this
+    // is a `uniform_list` — a plain div loop rebuilt every row every frame.
+    // Height follows the row count up to the shared ceiling, so a 2-file
+    // discard is a 2-row box and a 200-file discard shows 20 rows and scrolls.
+    // Paths are NOT pre-truncated: cutting the head keeps the least
+    // identifying part, and `overflow_hidden` already clips what does not fit.
+    let target_count_rows = modal.paths.len();
+    let target_h = theme::scaled_px(
+        (target_count_rows.clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
+    );
+    let target_paths = modal.paths.clone();
+    let file_list = super::render_helpers::with_vertical_scrollbar(
+        "discard-file-scroll",
+        &list_scroll,
+        gpui::uniform_list(
+            "discard-file-list",
+            target_count_rows,
+            move |range: std::ops::Range<usize>, _window, _cx| {
+                range
+                    .filter_map(|i| {
+                        target_paths.get(i).map(|p| {
+                            div()
+                                .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .text_xs()
+                                .text_color(rgb(current_theme().text_main))
+                                .overflow_hidden()
+                                .child(SharedString::from(p.clone()))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .track_scroll(&list_scroll)
+        .h(target_h),
+        true,
+    );
 
     // ── Card ─────────────────────────────────────────────────
     // Icon badge (trash-2 / color_blocker) now carries the danger signal that
     // the full-card red border used to — matches every other destructive
     // plan-confirmation modal (user request 2026-07-23), one less box.
-    let mut card = div()
-        .w(theme::scaled_px(480.))
-        .bg(rgb(current_theme().modal))
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(render_modal_title_row(
-            SharedString::from(title),
-            Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-        ))
+    //
+    // #454: fixed title + scrolling body + fixed button row (`modal_card`),
+    // so a long skipped/blocker list can no longer push Cancel/Discard out of
+    // view. The target-file list keeps its own inner scroll and is NOT
+    // collapsible — a destructive confirm always shows what it acts on.
+    let card = modal_card(480.).child(render_modal_title_row(
+        SharedString::from(title),
+        Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+    ));
+    let mut body = modal_scroll_body()
         .child(
             div()
                 .text_sm()
@@ -305,31 +375,54 @@ pub(crate) fn render_discard_modal(
         .child(file_list);
 
     // ── Skipped (untracked / conflicted) ────────────────────
+    // #454: was `take(20)` — the rest of the skipped paths were unreachable.
+    // These are the files discard does NOT touch, i.e. supporting detail, so
+    // this is the one part of the card behind disclosure. The count stays in
+    // the header even while collapsed, so "how many were skipped" is never
+    // hidden — only the paths are, and the section lists all of them.
     if !modal.skipped.is_empty() {
-        let mut skip_col = div().flex().flex_col().gap_px().child(
-            div()
-                .text_sm()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(format!(
-                    "Skipped ({}):",
-                    modal.skipped.len()
-                ))),
-        );
-        for p in modal.skipped.iter().take(20) {
-            let line: String = p.chars().take(80).collect();
-            skip_col = skip_col.child(
-                div()
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(rgb(current_theme().text_muted))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!(
-                        "\u{2014} {} (untracked/conflicted)",
-                        line
-                    ))),
-            );
-        }
-        card = card.child(skip_col);
+        let open = section_open(overrides, SECTION_SKIPPED, false);
+        let section_body = open.then(|| {
+            // Cap the opened section too: `modal_scroll_body` only caps the
+            // middle as a whole, so hundreds of skipped paths would push the
+            // blockers and the recovery note far down the scroll — the two
+            // things a user needs next to the Discard button. Own scroll box,
+            // same shape as the target list above.
+            let mut skip_col = div()
+                .id("discard-skipped-list")
+                .flex()
+                .flex_col()
+                .gap_px()
+                .max_h(theme::scaled_px(
+                    (modal.skipped.len().clamp(1, MODAL_LIST_MAX_ROWS) as f32) * MODAL_LIST_ROW_H,
+                ))
+                .overflow_y_scroll();
+            // No `chars().take(80)`: cutting the head keeps the least
+            // identifying part of a deep path, and `overflow_hidden` below
+            // already clips whatever does not fit the card (#454 review).
+            for p in &modal.skipped {
+                skip_col = skip_col.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(current_theme().text_muted))
+                        .overflow_hidden()
+                        .child(SharedString::from(format!(
+                            "\u{2014} {} (untracked/conflicted)",
+                            p
+                        ))),
+                );
+            }
+            skip_col.into_any_element()
+        });
+        body = body.child(modal_section(
+            SECTION_SKIPPED,
+            Msg::DiscardSkippedSection.t(),
+            modal.skipped.len(),
+            open,
+            section_body,
+            cx,
+        ));
     }
 
     // ── Warnings / Blockers ─────────────────────────────────
@@ -347,7 +440,7 @@ pub(crate) fn render_discard_modal(
                     ))),
             );
         }
-        card = card.child(warn_col);
+        body = body.child(warn_col);
     }
     if has_blockers {
         let mut block_col = div().flex().flex_col().gap_px();
@@ -363,13 +456,13 @@ pub(crate) fn render_discard_modal(
                     ))),
             );
         }
-        card = card.child(block_col);
+        body = body.child(block_col);
     }
 
     // ── Recovery note ───────────────────────────────────────
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        card = card.child(render_recovery_box(
+        body = body.child(render_recovery_box(
             &recovery_text,
             current_theme().color_blocker,
         ));
@@ -377,7 +470,7 @@ pub(crate) fn render_discard_modal(
 
     // ── Error (preflight / execute failure) ─────────────────
     if let Some(err) = &modal.error {
-        card = card.child(
+        body = body.child(
             div()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
@@ -390,7 +483,7 @@ pub(crate) fn render_discard_modal(
     // Mirrors amend's armed notice (ADR-0023). Only shown after the first
     // click armed the action, so the user sees an explicit final warning.
     if armed && can_discard {
-        card = card.child(
+        body = body.child(
             div()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
@@ -424,7 +517,7 @@ pub(crate) fn render_discard_modal(
                 .on_click(confirm_handler),
         );
     }
-    card = card.child(button_row);
+    let card = card.child(body).child(button_row);
 
     // ── Full-screen overlay (shared chrome, T-SPLIT-HELPERS-001) ──
     // ESC cancels via the root key handler; the card itself also occludes

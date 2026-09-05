@@ -67,6 +67,8 @@ mod modal_renderers_editor_fs;
 mod modal_renderers_misc;
 mod modal_renderers_plan;
 mod modal_renderers_stash;
+/// #454: shared modal chrome (card shell + collapsible sections).
+mod modal_shell;
 pub mod modals;
 mod operations;
 pub mod oplog_panel;
@@ -1368,6 +1370,18 @@ pub struct KagiApp {
     pub cleanup_cols: branch_cleanup::CleanupCols,
     /// ADR-0128: scroll position of the Branch Cleanup uniform list.
     pub cleanup_scroll: UniformListScrollHandle,
+    /// #454 Phase 1: modal sections whose open/closed state the user has
+    /// *flipped away from its default*, keyed by the static section id passed
+    /// to `modal_renderers::modal_section`. Storing overrides (not absolute
+    /// state) means a section's safety-relevant default — e.g. the discard
+    /// target list opens, the rest stay closed — is owned by the renderer, and
+    /// no `clear_*` path has to reset this (an entry only ever means "the user
+    /// chose otherwise for this section"). Read via `modal_section_open`.
+    pub modal_section_overrides: std::collections::HashSet<&'static str>,
+    /// #454 Phase 2: scroll position of the modal file list. The list is a
+    /// `uniform_list` so a plan touching thousands of files stays scrollable
+    /// (and cheap) instead of being silently cut to the first 10 rows.
+    pub modal_list_scroll: UniformListScrollHandle,
     /// ADR-0128 follow-up: monotonic token identifying the *current* branch
     /// cleanup scan. A completing background scan only applies its result
     /// (`active_view.cleanup_rows`) if this still equals the value it
@@ -1588,6 +1602,8 @@ impl KagiApp {
             branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             cleanup_scroll: UniformListScrollHandle::new(),
+            modal_section_overrides: std::collections::HashSet::new(),
+            modal_list_scroll: UniformListScrollHandle::new(),
             cleanup_gen: 0,
             cleanup_scanning: false,
             cleanup_prs: Vec::new(),

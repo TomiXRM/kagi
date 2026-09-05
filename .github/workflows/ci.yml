@@ -131,6 +131,21 @@ jobs:
           done
           [ "$fail" -eq 0 ] && echo "OK: no lateral kagi-ui-* imports."
 
+  # ── BLOCKING: modal lists must stay reachable (#454) ─────────────────────────
+  invariant-modal-lists-not-truncated:
+    name: invariant — modal file lists are not silently truncated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no .take(N) on discard/amend preview lists
+        shell: bash
+        # Whole-file scan (not a line-based grep) so a rustfmt-wrapped
+        # `preview_files\n.iter()\n.take(10)` chain is caught too — the same
+        # blind spot #396 found in the klog gate. Row-level truncation
+        # (`p.chars().take(80)`) stays allowed; see the script header for the
+        # `preview_commits` exclusion and when to widen it.
+        run: ci/check-modal-lists.sh
+
   # ── BLOCKING: the ADR-0129 plan-text migration stays complete (Phase 3) ───────
   invariant-plan-note-no-verbatim:
     name: invariant — PlanNote/PlanTitle/RecoveryKind have no Verbatim escape hatch

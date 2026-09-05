@@ -18,14 +18,13 @@
 # (`p.chars().take(80)` shortens one line, not the list) — the pattern below
 # only fires on `.iter()`/direct `.take(` applied to a preview list.
 #
-# NOT yet covered: `preview_commits` in the shared plan card
-# (`src/ui/modal_renderers.rs`, "Commits to push") still caps at 10 with an
-# "… and N more" line. Reaching every row there needs an app-owned scroll
-# handle threaded through the shared card — the next #454 slice. Add
-# `preview_commits` to LISTS below when that lands.
+# `preview_commits` (shared plan card, "Commits to push") is covered as of
+# the #454 layer-3 slice: the producer caps the preview at 100
+# (`build_push_preview_for_oid`), so the card renders every row in a capped
+# scroll box instead of the old `take(min(10))` + "… and N more".
 set -uo pipefail
 
-LISTS='preview_files|skipped'
+LISTS='preview_files|preview_commits|skipped'
 fail=0
 
 while IFS= read -r -d '' file; do

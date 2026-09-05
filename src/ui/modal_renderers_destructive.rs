@@ -13,12 +13,12 @@ use super::modal_renderers::{
 };
 use super::modal_shell::{
     modal_body, modal_card, modal_change_summary, modal_chip, modal_file_row, modal_list_max_h,
-    modal_list_panel, modal_prose_box, modal_section, modal_section_chipped, section_open,
-    MODAL_LIST_ROW_H, MODAL_W_MD,
+    modal_list_panel, modal_path_text, modal_prose_box, modal_section, modal_section_chipped,
+    section_open, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
-use super::{KagiApp, MONO_FONT};
+use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
@@ -487,19 +487,20 @@ pub(crate) fn render_discard_modal(
                     div()
                         .flex_shrink_0()
                         .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                        .w_full()
                         .flex()
                         .items_center()
-                        .text_xs()
-                        .text_color(rgb(current_theme().text_muted))
-                        .overflow_hidden()
-                        // One line, tail kept: same reason as `modal_file_row`.
-                        .whitespace_nowrap()
-                        .text_ellipsis_start()
-                        .font_family(MONO_FONT)
-                        .child(SharedString::from(format!(
-                            "\u{2014} {} (untracked/conflicted)",
-                            p
-                        ))),
+                        .gap_2()
+                        // Same dir/name split as the target list, then the
+                        // reason the path is skipped.
+                        .child(modal_path_text(SharedString::from(p.clone())))
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(rgb(current_theme().text_muted))
+                                .child(SharedString::from("(untracked/conflicted)")),
+                        ),
                 );
             }
             skip_col.into_any_element()

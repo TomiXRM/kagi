@@ -375,11 +375,18 @@ pub(crate) fn modal_list_panel(
 }
 
 /// One row of a modal file list: the change-kind letter badge the mock shows
-/// (`M` / `A` / `D` / `R` / `T`) plus the path.
+/// (`M` / `A` / `D` / `R` / `T`), the directory part, then the file name.
+///
+/// The two path halves are styled differently on purpose. A column of deep
+/// paths is a wall of characters where every row starts the same way
+/// (`crates/kagi-git/src/ops/…`) and the one distinguishing part — the file
+/// name — is buried at the end (user report 2026-09-06). So the directory
+/// recedes (`text_muted`) and gives up width first, while the file name keeps
+/// its colour and its full length.
 ///
 /// Fixed row height so the list-height math in [`modal_list_max_h`] stays
-/// exact, and `overflow_hidden` clips a path that does not fit rather than
-/// truncating its head (cutting the head keeps the least identifying part).
+/// exact, and one line always: a wrapped path grew past the row and painted
+/// over the next one, because `uniform_list` does not clip its items.
 pub(crate) fn modal_file_row(path: impl Into<SharedString>, change: &ChangeKind) -> gpui::Div {
     let (letter, color) = change_badge(change);
     div()
@@ -399,29 +406,56 @@ pub(crate) fn modal_file_row(path: impl Into<SharedString>, change: &ChangeKind)
                 .text_color(rgb(color))
                 .child(SharedString::from(letter.to_string())),
         )
-        .child(
-            // One line, always: a wrapped path grew past this row's fixed
-            // height and painted over the next one (`uniform_list` does not
-            // clip its items), which is what "long paths collide with the line
-            // below" was (user report 2026-09-06). The ellipsis goes at the
-            // **start**: a deep path's tail — the file name — is the part worth
-            // keeping, the same reason these paths were never `take(80)`-ed.
+        .child(modal_path_text(path.into()))
+}
+
+/// `dir/` + `name` as one line, the directory muted and truncated from the
+/// start, the file name at full length in the main text colour.
+///
+/// Monospace for both halves: aligned separators make a column of paths
+/// scannable and put the leading ellipsis at the same x on every row. Same
+/// font the recovery commands and the diff view already use.
+pub(crate) fn modal_path_text(path: SharedString) -> gpui::Div {
+    let text = path.to_string();
+    // Split on the last separator; `\` too, since Windows paths reach the UI
+    // through the same plans.
+    let cut = text.rfind(['/', '\\']).map(|i| i + 1);
+    let (dir, name) = match cut {
+        Some(i) => (text[..i].to_string(), text[i..].to_string()),
+        None => (String::new(), text.clone()),
+    };
+    let mut row = div()
+        .flex_1()
+        .min_w(gpui::px(0.))
+        .overflow_hidden()
+        .flex()
+        .flex_row()
+        .items_center()
+        .whitespace_nowrap()
+        .font_family(MONO_FONT)
+        .text_xs();
+    if !dir.is_empty() {
+        row = row.child(
+            // Shrinks first and loses its head: `…/src/ops/` still tells you
+            // where you are, and the rows stay aligned on the name.
             div()
-                .flex_1()
                 .min_w(gpui::px(0.))
                 .overflow_hidden()
-                .whitespace_nowrap()
                 .text_ellipsis_start()
-                .font_family(MONO_FONT)
-                // Monospace for paths: aligned separators make a column of
-                // deep paths scannable, and the leading ellipsis lands in the
-                // same place on every row (user request 2026-09-06). Same
-                // font the recovery commands and the diff view already use.
-                .font_family(MONO_FONT)
-                .text_xs()
-                .text_color(rgb(current_theme().text_sub))
-                .child(path.into()),
-        )
+                .text_color(rgb(current_theme().text_muted))
+                .child(SharedString::from(dir)),
+        );
+    }
+    row.child(
+        // `flex_shrink_0`: the name yields width only after the directory has
+        // given up all of its own.
+        div()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .text_ellipsis()
+            .text_color(rgb(current_theme().text_main))
+            .child(SharedString::from(name)),
+    )
 }
 
 /// Letter + theme colour for a change kind. The letters match
@@ -544,13 +578,9 @@ pub(crate) fn note_path_list_element(files: &[String]) -> gpui::AnyElement {
                 .w_full()
                 .flex()
                 .items_center()
-                .text_xs()
-                .text_color(rgb(current_theme().text_sub))
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis_start()
-                .font_family(MONO_FONT)
-                .child(SharedString::from(f.clone())),
+                // Same dir/name split as the file lists: muted directory,
+                // file name in the main colour (see `modal_path_text`).
+                .child(modal_path_text(SharedString::from(f.clone()))),
         );
     }
     col.into_any_element()

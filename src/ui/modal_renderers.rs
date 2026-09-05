@@ -14,7 +14,9 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
-use super::modal_shell::{modal_card, modal_scroll_body, note_path_list, note_path_list_element};
+use super::modal_shell::{
+    modal_card, modal_scroll_body, note_path_list, note_path_list_element, MODAL_W_MD,
+};
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, Entity, SharedString, Window};
@@ -87,7 +89,7 @@ pub(crate) fn render_input_plan_modal(
     // #454 layer 4: adopt the shared shell — fixed title, scrolling middle,
     // fixed button row. Plan notes are unbounded (a rename can carry many
     // warnings/blockers), so the body is this card's single scroll region.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
+    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_modal_title_row(
         SharedString::from(title),
         accent.clone(),
     )));
@@ -264,15 +266,25 @@ pub(crate) fn render_current_predicted(
         div()
             .flex()
             .flex_row()
+            .items_start()
+            .flex_wrap()
             .gap_2()
             .text_sm()
             .child(
+                // #454: the row wraps (`flex_wrap`) and the head keeps its
+                // natural basis, so a long head line breaks at the card edge
+                // instead of being clipped mid-word ("… 新 <new> (staged c|").
+                // `flex_1 + min_w(0)` here would let the text shrink to zero
+                // width and wrap one character per line — measured, not
+                // guessed.
                 div()
+                    .max_w(gpui::relative(1.))
                     .text_color(rgb(current_theme().text_main))
                     .child(SharedString::from(head.to_string())),
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_color(rgb(current_theme().text_sub))
                     .child(SharedString::from(format!("[{}]", dirty))),
             )
@@ -565,7 +577,7 @@ fn render_plan_modal_card_styled(
     // The body is this card's single scroll region (`modal_shell`'s rule): its
     // lists are plain and bounded, so they render at full height inside it
     // rather than each becoming a scroller of its own.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(title_row));
+    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(title_row));
 
     // Sections stay flex_shrink_0-wrapped: the body scrolls its overflow, and
     // without the guard flex would compress the rows instead of scrolling

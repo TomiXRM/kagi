@@ -192,11 +192,24 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         worktree_digest: Some(status.digest()),
         // The targets this plan is FOR, so execute can refuse a path the plan
         // never covered (a plan for A must not be replayed to discard B).
+        //
+        // #454: the change kind used to be hard-coded `Modified`, which was
+        // harmless while the UI only printed paths — the card now renders a
+        // per-row A/M/D badge, and a badge that always says "M" would lie
+        // about an added or deleted target. Take the real kind from the
+        // working-tree status (untracked targets are not in `unstaged`; they
+        // are deletions from the worktree's point of view, and `Added` is what
+        // the status calls them, so fall back to that).
         preview_files: rels
             .iter()
             .map(|r| kagi_domain::status::FileStatus {
                 path: std::path::PathBuf::from(r),
-                change: kagi_domain::status::ChangeKind::Modified,
+                change: status
+                    .unstaged
+                    .iter()
+                    .find(|f| f.path.to_string_lossy().replace('\\', "/") == *r)
+                    .map(|f| f.change.clone())
+                    .unwrap_or(kagi_domain::status::ChangeKind::Added),
             })
             .collect(),
         preview_commits: Vec::new(),

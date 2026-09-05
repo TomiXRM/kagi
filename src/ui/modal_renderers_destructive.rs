@@ -12,10 +12,11 @@ use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box, ModalIcon,
 };
 use super::modal_shell::{
-    modal_body, modal_card, modal_list_max_h, modal_section, section_open, MODAL_LIST_ROW_H,
+    modal_body, modal_card, modal_change_summary, modal_chip, modal_file_row, modal_list_max_h,
+    modal_prose_max_h, modal_section, modal_section_chipped, section_open, MODAL_W_MD,
 };
 use super::modals::*;
-use super::theme::{self, theme as current_theme};
+use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
@@ -31,6 +32,13 @@ const DESTRUCTIVE_ICON: ModalIcon = ModalIcon::Path("icons/trash-2.svg");
 /// #454 section id. Only *supporting* detail may hide behind disclosure: the
 /// list of files an operation acts on stays visible (see `render_amend_modal`).
 const SECTION_SKIPPED: &str = "discard-skipped";
+/// #454: section ids for the panels a card can collapse. Warnings and recovery
+/// default to **open** on destructive cards (safety), but the user may fold
+/// them — `modal_section_overrides` records only the flip.
+const SECTION_AMEND_WARNINGS: &str = "amend-warnings";
+const SECTION_AMEND_RECOVERY: &str = "amend-recovery";
+const SECTION_DISCARD_WARNINGS: &str = "discard-warnings";
+const SECTION_DISCARD_RECOVERY: &str = "discard-recovery";
 
 /// Amend confirmation overlay (T-COMMIT-011, ADR-0040 / 0023).
 ///
@@ -69,10 +77,36 @@ pub(crate) fn render_amend_modal(
     // #454: fixed title + non-scrolling body + fixed button row. The buttons
     // must never scroll out of view on a destructive confirm, and the only
     // scroll region is the file list itself.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from(plan_title_text(&plan.title)),
-        Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-    )));
+    //
+    // The header carries the stakes as a chip (mock: `Cannot be undone` next to
+    // the title) — driven by `plan.destructive`, not by the renderer guessing.
+    let mut title_row = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_row()
+        // items_start, not items_center: a wrapped title would otherwise push
+        // the chip to its vertical middle, where it reads as floating.
+        .items_start()
+        .gap_2()
+        // flex_1 + min_w(0): without it a long title claims the whole row and
+        // squeezes the chip to zero width (observed on the amend card, whose
+        // title carries the commit subject).
+        .child(
+            div()
+                .flex_1()
+                .min_w(gpui::px(0.))
+                .child(render_modal_title_row(
+                    SharedString::from(plan_title_text(&plan.title)),
+                    Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+                )),
+        );
+    if plan.destructive {
+        title_row = title_row.child(modal_chip(
+            Msg::ModalCannotUndo.t(),
+            current_theme().color_blocker,
+        ));
+    }
+    let card = modal_card(MODAL_W_MD).child(title_row);
     let mut body = modal_body().child(render_current_predicted(
         &plan,
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
@@ -103,18 +137,9 @@ pub(crate) fn render_amend_modal(
                 move |range: std::ops::Range<usize>, _window, _cx| {
                     range
                         .filter_map(|i| {
-                            files.get(i).map(|f| {
-                                div()
-                                    .h(theme::scaled_px(MODAL_LIST_ROW_H))
-                                    .w_full()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .text_xs()
-                                    .text_color(rgb(current_theme().text_sub))
-                                    .overflow_hidden()
-                                    .child(SharedString::from(f.path.display().to_string()))
-                            })
+                            files
+                                .get(i)
+                                .map(|f| modal_file_row(f.path.display().to_string(), &f.change))
                         })
                         .collect::<Vec<_>>()
                 },
@@ -123,6 +148,10 @@ pub(crate) fn render_amend_modal(
             .h(list_h),
             true,
         );
+        // The target list is a section panel like every other block in the
+        // card (mock: `対象ファイル` + count chip), but NOT collapsible — see
+        // the SAFETY note above. `section_open(.., true)`-style disclosure is
+        // deliberately not wired here.
         body = body.child(
             div()
                 // The list is the one part of the card that gives up height
@@ -133,29 +162,48 @@ pub(crate) fn render_amend_modal(
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap_2()
+                .p_2()
+                .rounded_md()
+                .bg(rgb(current_theme().surface))
+                .border_1()
+                .border_color(rgb(current_theme().bg_row_alt))
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from(format!(
-                            "{} ({})",
-                            Msg::AmendFoldedFiles.t(),
-                            total
-                        ))),
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(current_theme().text_label))
+                                .child(Msg::AmendFoldedFiles.t()),
+                        )
+                        .child(
+                            div()
+                                .ml_auto()
+                                .child(modal_chip(total.to_string(), current_theme().text_sub)),
+                        ),
                 )
+                // Per-kind tally above the list (#454 Phase 2 item 6).
+                .children(modal_change_summary(&plan.preview_files))
                 .child(list),
         );
     }
 
-    // Warnings stay inline: in a destructive card they explain what will NOT be
-    // touched, which is safety-relevant (issue #454 advisory).
+    // Warnings get the mock's section treatment (title + count chip) but stay
+    // **open**: in a destructive card they explain what will NOT be touched,
+    // which is safety-relevant (issue #454 advisory). The mock collapses them;
+    // hiding "these files will not be discarded" behind a caret on a confirm
+    // dialog is the one place that trade goes the other way.
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
         for w in &plan.warnings {
             warn_col = warn_col.child(
                 div()
+                    .flex_shrink_0()
                     .text_sm()
                     .text_color(rgb(current_theme().color_warning))
                     .child(SharedString::from(format!(
@@ -164,7 +212,14 @@ pub(crate) fn render_amend_modal(
                     ))),
             );
         }
-        body = body.child(warn_col);
+        body = body.child(modal_section(
+            SECTION_AMEND_WARNINGS,
+            Msg::ModalWarningsSection.t(),
+            plan.warnings.len(),
+            true,
+            Some(warn_col.into_any_element()),
+            cx,
+        ));
     }
 
     // Blockers.
@@ -185,12 +240,27 @@ pub(crate) fn render_amend_modal(
         body = body.child(block_col);
     }
 
-    // Recovery.
+    // Recovery: the mock's `復元方法` panel with an `oplog` chip.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        body = body.child(render_recovery_box(
-            &recovery_text,
-            current_theme().color_blocker,
+        body = body.child(modal_section_chipped(
+            SECTION_AMEND_RECOVERY,
+            Msg::ModalRecoverySection.t(),
+            Some(SharedString::from(Msg::ModalRecoveryChip.t())),
+            true,
+            Some(
+                div()
+                    .id("modal-recovery-scroll")
+                    .min_h(gpui::px(0.))
+                    .max_h(modal_prose_max_h())
+                    .overflow_y_scroll()
+                    .child(render_recovery_box(
+                        &recovery_text,
+                        current_theme().color_blocker,
+                    ))
+                    .into_any_element(),
+            ),
+            cx,
         ));
     }
 
@@ -321,6 +391,14 @@ pub(crate) fn render_discard_modal(
     let target_count_rows = modal.paths.len();
     let target_h = modal_list_max_h(target_count_rows);
     let target_paths = modal.paths.clone();
+    // Change kinds come from the plan (`plan_discard` fills `preview_files`
+    // from the working-tree status), matched by path so the badge cannot drift
+    // if the two vectors are ordered differently.
+    let target_kinds: std::collections::HashMap<String, kagi_domain::status::ChangeKind> = plan
+        .preview_files
+        .iter()
+        .map(|f| (f.path.display().to_string(), f.change.clone()))
+        .collect();
     let file_list = super::render_helpers::with_vertical_scrollbar(
         "discard-file-scroll",
         &list_scroll,
@@ -331,16 +409,11 @@ pub(crate) fn render_discard_modal(
                 range
                     .filter_map(|i| {
                         target_paths.get(i).map(|p| {
-                            div()
-                                .h(theme::scaled_px(MODAL_LIST_ROW_H))
-                                .w_full()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .text_xs()
-                                .text_color(rgb(current_theme().text_main))
-                                .overflow_hidden()
-                                .child(SharedString::from(p.clone()))
+                            let change = target_kinds
+                                .get(p)
+                                .cloned()
+                                .unwrap_or(kagi_domain::status::ChangeKind::Modified);
+                            modal_file_row(p.clone(), &change)
                         })
                     })
                     .collect::<Vec<_>>()
@@ -361,30 +434,67 @@ pub(crate) fn render_discard_modal(
     // Cancel/Discard out of view. The target-file list is the scroll region
     // and is NOT collapsible — a destructive confirm always shows what it
     // acts on.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from(title),
-        Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-    )));
-    let mut body = modal_body()
+    let mut title_row = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_row()
+        // items_start, not items_center: a wrapped title would otherwise push
+        // the chip to its vertical middle, where it reads as floating.
+        .items_start()
+        .gap_2()
         .child(
             div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(format!(
-                    "{} file(s) to discard:",
-                    target_count
-                ))),
-        )
-        .child(
-            // Only the list yields height when the window is short.
-            div()
-                .min_h(gpui::px(0.))
-                .overflow_hidden()
-                .flex()
-                .flex_col()
-                .child(file_list),
+                .flex_1()
+                .min_w(gpui::px(0.))
+                .child(render_modal_title_row(
+                    SharedString::from(title),
+                    Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
+                )),
         );
+    if plan.destructive {
+        title_row = title_row.child(modal_chip(
+            Msg::ModalCannotUndo.t(),
+            current_theme().color_blocker,
+        ));
+    }
+    let card = modal_card(MODAL_W_MD).child(title_row);
+    // Target files: a section panel with a count chip (mock `対象ファイル`),
+    // never collapsible — a destructive confirm always shows what it acts on.
+    let mut body = modal_body().child(
+        div()
+            .min_h(gpui::px(0.))
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_2()
+            .rounded_md()
+            .bg(rgb(current_theme().surface))
+            .border_1()
+            .border_color(rgb(current_theme().bg_row_alt))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(current_theme().text_label))
+                            .child(Msg::ModalTargetFiles.t()),
+                    )
+                    .child(div().ml_auto().child(modal_chip(
+                        target_count.to_string(),
+                        current_theme().text_sub,
+                    ))),
+            )
+            // Per-kind tally above the list (#454 Phase 2 item 6): `M 115  D 5`
+            // says what kind of change is at stake without scrolling.
+            .children(modal_change_summary(&plan.preview_files))
+            .child(file_list),
+    );
 
     // ── Skipped (untracked / conflicted) ────────────────────
     // #454: was `take(20)` — the rest of the skipped paths were unreachable.
@@ -436,11 +546,15 @@ pub(crate) fn render_discard_modal(
     }
 
     // ── Warnings / Blockers ─────────────────────────────────
+    // Warnings become the mock's titled panel with a count chip, but stay
+    // **open**: here they say which files will NOT be discarded, and hiding
+    // that behind a caret on a destructive confirm is the wrong trade.
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_px();
         for w in &plan.warnings {
             warn_col = warn_col.child(
                 div()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(rgb(current_theme().color_warning))
                     .overflow_hidden()
@@ -450,7 +564,14 @@ pub(crate) fn render_discard_modal(
                     ))),
             );
         }
-        body = body.child(warn_col);
+        body = body.child(modal_section(
+            SECTION_DISCARD_WARNINGS,
+            Msg::ModalWarningsSection.t(),
+            plan.warnings.len(),
+            true,
+            Some(warn_col.into_any_element()),
+            cx,
+        ));
     }
     if has_blockers {
         let mut block_col = div().flex().flex_col().gap_px();
@@ -470,11 +591,28 @@ pub(crate) fn render_discard_modal(
     }
 
     // ── Recovery note ───────────────────────────────────────
+    // Mock's `復元方法` panel: titled, `oplog` chip, open by default — the
+    // backup blob reference is the reason discard is allowed to exist.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        body = body.child(render_recovery_box(
-            &recovery_text,
-            current_theme().color_blocker,
+        body = body.child(modal_section_chipped(
+            SECTION_DISCARD_RECOVERY,
+            Msg::ModalRecoverySection.t(),
+            Some(SharedString::from(Msg::ModalRecoveryChip.t())),
+            true,
+            Some(
+                div()
+                    .id("modal-recovery-scroll")
+                    .min_h(gpui::px(0.))
+                    .max_h(modal_prose_max_h())
+                    .overflow_y_scroll()
+                    .child(render_recovery_box(
+                        &recovery_text,
+                        current_theme().color_blocker,
+                    ))
+                    .into_any_element(),
+            ),
+            cx,
         ));
     }
 

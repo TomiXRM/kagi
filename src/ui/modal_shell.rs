@@ -14,6 +14,7 @@
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
+use kagi_domain::status::ChangeKind;
 
 /// Modal list geometry, shared by every scrollable list in a card (#454). The
 /// row height must match the `uniform_list` item height exactly
@@ -27,6 +28,9 @@ pub(crate) const MODAL_LIST_ROW_H: f32 = 18.;
 /// title and the current→predicted block, below it blockers, recovery text
 /// and the pinned action row. 40% leaves those visible.
 const MODAL_LIST_VIEWPORT_FRAC: f32 = 0.4;
+
+/// Fraction of the window height a prose panel (recovery text) may occupy.
+const MODAL_PROSE_VIEWPORT_FRAC: f32 = 0.25;
 
 /// Row ceiling used only before the first frame publishes a window height
 /// (headless snapshot tests), to keep list heights deterministic there.
@@ -68,8 +72,25 @@ pub(crate) fn modal_list_max_h(rows: usize) -> gpui::Pixels {
 /// anything. Nothing here scrolls: with a scrolling card, a long body pushes
 /// the Cancel/Confirm row out of view, and a destructive confirm must always
 /// show its own buttons. The lists inside [`modal_body`] are the scrollers.
+/// Standard card widths (#454). One of these, never a bare literal, so the
+/// cards stay in step and a width change is one edit.
+///
+/// They are the pre-#454 widths **+20%**: at 420/480/540 a plan title wrapped
+/// to four lines and a deep path clipped mid-segment, which read as a layout
+/// bug rather than a long string (user report 2026-09-06). Growing the card is
+/// the cheap half of that fix; the structural half is the sections and caps
+/// above.
+pub(crate) const MODAL_W_SM: f32 = 504.;
+pub(crate) const MODAL_W_MD: f32 = 576.;
+pub(crate) const MODAL_W_LG: f32 = 648.;
+
 pub(crate) fn modal_card(width: f32) -> gpui::Div {
-    modal_card_sized().w(theme::scaled_px(width))
+    modal_card_sized()
+        .w(theme::scaled_px(width))
+        // A card must never be wider than the window it sits in: at zoom 1.5
+        // the LG card is 972px, past a 900px-wide window. `max_w` wins over
+        // `w` in taffy, so the card shrinks instead of running off-screen.
+        .max_w(gpui::relative(0.9))
 }
 
 /// [`modal_card`] without the width, for the one card whose width is already
@@ -104,7 +125,32 @@ pub(crate) fn modal_card_sized() -> gpui::Div {
 /// `flex_1 + min_h(0)` lets the body shrink inside the capped card instead of
 /// pushing the buttons off the bottom (the T027 flex-compression bug class).
 pub(crate) fn modal_body() -> gpui::Div {
-    div().flex_1().min_h(gpui::px(0.)).flex().flex_col().gap_3()
+    div()
+        .flex_1()
+        .min_h(gpui::px(0.))
+        // Clip, so a block that outgrows its share can never paint over the
+        // pinned button row (#454: with the sections' padding and the tally
+        // row added, the recovery prose did exactly that on a 700px window).
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .gap_3()
+}
+
+/// Height cap for a **prose** panel (recovery text, notes) in a card whose
+/// body does not scroll: a quarter of the window, then it scrolls inside its
+/// own panel.
+///
+/// This is a sibling scroll region, not a nested one — the rule
+/// ([`modal_body`]) is that no scroller sits *inside* another, and a card may
+/// have one per panel. Without a cap the recovery text pushes past the card
+/// and gets clipped, which is worse: the recovery instructions are the reason
+/// a destructive operation is allowed at all.
+pub(crate) fn modal_prose_max_h() -> gpui::Pixels {
+    match theme::viewport_h() {
+        Some(h) => gpui::px(h * MODAL_PROSE_VIEWPORT_FRAC),
+        None => theme::scaled_px(MODAL_LIST_FALLBACK_ROWS * MODAL_LIST_ROW_H),
+    }
 }
 
 /// The middle of a [`modal_card`] that scrolls, for cards whose lists are
@@ -136,13 +182,39 @@ pub(crate) fn section_open(
     default_open != overrides.contains(id)
 }
 
-/// One collapsible section inside a [`modal_card`].
+/// A count/label chip: the small rounded pill the #454 mock puts at the right
+/// of a section header (`487`) and next to a card title (`Cannot be undone`).
 ///
-/// Header row = caret + title + count chip; clicking it flips the section via
-/// `KagiApp::toggle_modal_section`. `body` is built by the caller and only
-/// attached while open, so a closed section costs nothing to render. The count
-/// chip stays visible when closed — the audit's finding was modals that printed
-/// a total and then cut the rows, so the size of what is hidden is never lost.
+/// `color` tints text and background off the same token, via the shared
+/// `badge_style` used by the graph/commit badges, so a chip in a modal matches
+/// a chip everywhere else.
+pub(crate) fn modal_chip(text: impl Into<SharedString>, color: u32) -> gpui::Div {
+    let (bg, border, _) = theme::badge_style(color);
+    div()
+        .flex_shrink_0()
+        .px_2()
+        .rounded_full()
+        .bg(gpui::rgba(bg))
+        .border_1()
+        .border_color(gpui::rgba(border))
+        .text_xs()
+        .text_color(rgb(color))
+        .child(text.into())
+}
+
+/// One section inside a [`modal_card`], rendered as the mock's inset panel:
+/// a rounded surface with a header row (caret + title + right-aligned count
+/// chip) and, while open, its body.
+///
+/// Clicking the header flips the section via `KagiApp::toggle_modal_section`.
+/// `body` is built by the caller and only attached while open, so a closed
+/// section costs nothing to render. The count chip stays visible when closed —
+/// the audit's finding was modals that printed a total and then cut the rows,
+/// so the size of what is hidden is never lost.
+///
+/// `count == 0` renders no chip (the recovery section has instructions, not a
+/// count); pass a chip label through `chip` instead when the section wants a
+/// word (`oplog`) rather than a number.
 pub(crate) fn modal_section(
     id: &'static str,
     title: impl Into<SharedString>,
@@ -151,9 +223,22 @@ pub(crate) fn modal_section(
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    modal_section_chipped(id, title, Some(count.to_string().into()), open, body, cx)
+}
+
+/// [`modal_section`] with an explicit chip label instead of a count.
+pub(crate) fn modal_section_chipped(
+    id: &'static str,
+    title: impl Into<SharedString>,
+    chip: Option<SharedString>,
+    open: bool,
+    body: Option<gpui::AnyElement>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let caret = if open { "\u{25be}" } else { "\u{25b8}" };
-    let header = div()
+    let mut header = div()
         .id(id)
+        .flex_shrink_0()
         .flex()
         .flex_row()
         .items_center()
@@ -177,25 +262,144 @@ pub(crate) fn modal_section(
                 .text_sm()
                 .text_color(rgb(current_theme().text_label))
                 .child(title.into()),
-        )
-        .child(
+        );
+    if let Some(chip) = chip {
+        header = header.child(
             div()
                 .ml_auto()
-                .px_2()
-                .rounded_full()
-                .bg(rgb(current_theme().bg_row_alt))
-                .text_xs()
-                .text_color(rgb(current_theme().text_sub))
-                .child(SharedString::from(count.to_string())),
+                .child(modal_chip(chip, current_theme().text_sub)),
         );
+    }
 
-    let mut section = div().flex().flex_col().gap_1().child(header);
+    // The panel: a rounded surface with a hairline border, so sections read as
+    // separate cards instead of one text column (#454 mock, right half).
+    let mut section = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .min_h(gpui::px(0.))
+        .p_2()
+        .rounded_md()
+        .bg(rgb(current_theme().surface))
+        .border_1()
+        .border_color(rgb(current_theme().bg_row_alt))
+        .child(header);
     if open {
         if let Some(body) = body {
             section = section.child(body);
         }
     }
     section.into_any_element()
+}
+
+/// One row of a modal file list: the change-kind letter badge the mock shows
+/// (`M` / `A` / `D` / `R` / `T`) plus the path.
+///
+/// Fixed row height so the list-height math in [`modal_list_max_h`] stays
+/// exact, and `overflow_hidden` clips a path that does not fit rather than
+/// truncating its head (cutting the head keeps the least identifying part).
+pub(crate) fn modal_file_row(path: impl Into<SharedString>, change: &ChangeKind) -> gpui::Div {
+    let (letter, color) = change_badge(change);
+    div()
+        .flex_shrink_0()
+        .h(theme::scaled_px(MODAL_LIST_ROW_H))
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(theme::scaled_px(10.))
+                .text_xs()
+                .text_color(rgb(color))
+                .child(SharedString::from(letter.to_string())),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(gpui::px(0.))
+                .overflow_hidden()
+                .text_xs()
+                .text_color(rgb(current_theme().text_sub))
+                .child(path.into()),
+        )
+}
+
+/// Letter + theme colour for a change kind. The letters match
+/// `kagi_domain::message_gen`'s `change_letter` (A/M/D/R/T) and the colours the
+/// `change_*` theme tokens the file tree already uses, so a discarded `D` row
+/// is the same red as everywhere else.
+fn change_badge(change: &ChangeKind) -> (char, u32) {
+    let t = current_theme();
+    match change {
+        ChangeKind::Added => ('A', t.change_added),
+        ChangeKind::Modified => ('M', t.change_modified),
+        ChangeKind::Deleted => ('D', t.change_deleted),
+        ChangeKind::Renamed { .. } => ('R', t.change_renamed),
+        ChangeKind::TypeChange => ('T', t.change_typechange),
+    }
+}
+
+/// #454 Phase 2 item 6: the per-kind tally the mock puts above a long list
+/// (`M 115  D 5`), so a card that acts on hundreds of files says *what kind*
+/// of change is at stake without the user scrolling the list.
+///
+/// `None` below `SUMMARY_MIN_ROWS`: with a handful of rows the list itself is
+/// already the summary, and a second count line would just be noise.
+pub(crate) fn modal_change_summary(files: &[kagi_domain::status::FileStatus]) -> Option<gpui::Div> {
+    /// Row count from which the tally earns its line.
+    const SUMMARY_MIN_ROWS: usize = 10;
+    if files.len() < SUMMARY_MIN_ROWS {
+        return None;
+    }
+    // Counted in the order the badges are defined, so the row reads the same
+    // way every time regardless of which kinds happen to be present.
+    let kinds = [
+        ChangeKind::Modified,
+        ChangeKind::Added,
+        ChangeKind::Deleted,
+        ChangeKind::TypeChange,
+    ];
+    let mut row = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3();
+    let mut any = false;
+    for kind in kinds {
+        let n = files.iter().filter(|f| f.change == kind).count();
+        if n == 0 {
+            continue;
+        }
+        any = true;
+        let (letter, color) = change_badge(&kind);
+        row = row.child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(color))
+                .child(SharedString::from(format!("{} {}", letter, n))),
+        );
+    }
+    // Renames carry a `from` path, so they cannot be counted by equality.
+    let renamed = files
+        .iter()
+        .filter(|f| matches!(f.change, ChangeKind::Renamed { .. }))
+        .count();
+    if renamed > 0 {
+        any = true;
+        row = row.child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(current_theme().change_renamed))
+                .child(SharedString::from(format!("R {}", renamed))),
+        );
+    }
+    any.then_some(row)
 }
 
 /// #454: does this note carry a path **list** the card should render as a

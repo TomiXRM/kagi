@@ -9,7 +9,7 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
-use super::modal_shell::{modal_card, modal_scroll_body};
+use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::modals::*;
 use super::theme::theme as current_theme;
 use super::KagiApp;
@@ -66,7 +66,7 @@ pub(crate) fn render_stash_push_modal(
     // #454: the plan's notes/warnings and the recovery prose grow with the
     // plan and there is no inner scroller here, so the body is this card's
     // single scroll region.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
+    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_modal_title_row(
         SharedString::from("Stash push — save local modifications"),
         Some((IconName::Inbox.into(), current_theme().color_warning)),
     )));
@@ -242,7 +242,7 @@ pub(crate) fn render_stash_apply_modal(
 
     // #454: blockers and the recovery prose grow with the plan and this card
     // has no inner scroller, so the body is its single scroll region.
-    let card = modal_card(480.).child(div().flex_shrink_0().child(render_modal_title_row(
+    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_modal_title_row(
         SharedString::from(plan_title_text(&plan.title)),
         Some((IconName::Inbox.into(), current_theme().color_success)),
     )));

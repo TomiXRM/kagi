@@ -7,7 +7,9 @@
 use super::button_style::KagiButton;
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
-use super::modal_shell::{modal_body, modal_card, modal_card_sized, modal_scroll_body};
+use super::modal_shell::{
+    modal_body, modal_card, modal_card_sized, modal_scroll_body, MODAL_W_MD, MODAL_W_SM,
+};
 use super::modals::EditorDirtyGuardModal;
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
@@ -59,7 +61,7 @@ pub(crate) fn render_smart_commit_modal(
             }
             // Two short paragraphs and the four fixed `CONSENT_LINES`: the
             // content is bounded, so this card needs no scrolling body (#454).
-            modal_card(460.)
+            modal_card(MODAL_W_MD)
                 .child(div().flex_shrink_0().child(render_modal_title_row(
                     SharedString::from("Enable Local LLM generation?"),
                     Some((IconName::Settings.into(), current_theme().color_success)),
@@ -129,7 +131,7 @@ pub(crate) fn render_smart_commit_modal(
             // scrolls, so the body is this card's single scroll region (#454).
             // Its rows stay `flex_shrink_0` or flex compresses them instead of
             // handing the overflow to the scroller (T027).
-            modal_card(420.)
+            modal_card(MODAL_W_SM)
                 .child(div().flex_shrink_0().child(render_modal_title_row(
                     SharedString::from("Select a local model"),
                     Some((IconName::Settings.into(), current_theme().color_branch)),
@@ -391,7 +393,7 @@ pub(crate) fn render_editor_dirty_guard_modal(
         cx.notify();
     });
 
-    let card = modal_card(420.)
+    let card = modal_card(MODAL_W_SM)
         .child(div().flex_shrink_0().child(render_modal_title_row(
             SharedString::from(Msg::EditorWorkspaceUnsavedTitle.t()),
             Some((

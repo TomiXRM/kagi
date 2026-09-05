@@ -659,17 +659,21 @@ mod macos {
         );
     }
 
-    /// Issue #473: clicking a LINKED WORKTREE's WIP row shows that worktree's
-    /// changes in the commit panel **in place** — no new tab, no snapshot — and
-    /// that panel is read-only in v1 (the write ops resolve their repository
-    /// from the tab, so they would touch the wrong one).
+    /// Issue #473 + #476 slice 1: clicking a LINKED WORKTREE's WIP row shows
+    /// that worktree's changes in the commit panel **in place** — no new tab,
+    /// no snapshot — and the four staging ops dispatched there write into
+    /// **that worktree**, not the open tab's repository.
     ///
     /// Drives the row's own click handler (`open_commit_panel_for_worktree`)
-    /// and asserts: `tabs.len()` unchanged, the panel points at the WORKTREE and
-    /// lists ITS dirty file, every write op dispatched against that panel leaves
-    /// BOTH working trees' `git status --porcelain` fingerprints untouched, and
-    /// the watcher's in-place refresh (`refresh_working_tree_external`) does not
-    /// swap the panel back to the open repository.
+    /// and asserts: `tabs.len()` unchanged; the panel points at the WORKTREE
+    /// and lists ITS dirty file; `do_stage_all` / `do_unstage_all` /
+    /// `do_stage_file` / `do_unstage_file` each move the WORKTREE's
+    /// `git status --porcelain` while the OPEN repo's fingerprint is unchanged;
+    /// the worktree's WIP row counts (`active_view.worktrees[i].wip`) follow;
+    /// the still-tab-resolved ops (commit plan, commit, amend, discard-all) are
+    /// still refused and leave both trees untouched; and the watcher's in-place
+    /// refresh (`refresh_working_tree_external`) does not swap the panel back to
+    /// the open repository.
     fn scenario_worktree_wip_inline(cx: &mut VisualTestAppContext) {
         let (_fixture, repo_path, wt_path) = build_wip_connector_fixture();
         let repo_fp = repo_fingerprint(&repo_path);
@@ -727,12 +731,88 @@ mod macos {
             "commit_panel_is_foreign must hold for a worktree panel"
         );
 
-        // Every write entry point, dispatched against the worktree panel.
+        // ── #476 slice 1: the staging ops write into the WORKTREE ──────────
+        // The worktree's WIP row counts, straight off `active_view` — they come
+        // from the snapshot, so this is what proves the row followed the write.
+        let wip_of = |cx: &mut VisualTestAppContext| {
+            cx.read(|app| {
+                kagi.read(app)
+                    .active_view
+                    .worktrees
+                    .iter()
+                    .find(|w| w.path == wt_path)
+                    .unwrap_or_else(|| panic!("no worktree row for {}", wt_path.display()))
+                    .wip
+                    .expect("the dirty worktree must carry a WIP row")
+            })
+        };
+        let wip_before = wip_of(cx);
+        assert_eq!(
+            (wip_before.staged, wip_before.untracked),
+            (0, 1),
+            "fixture: the worktree starts with one untracked file"
+        );
+
+        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "the OPEN repo was mutated by a stage dispatched at a worktree panel"
+        );
+        assert_eq!(
+            repo_fingerprint(&wt_path).1,
+            "A  dirty.txt\n",
+            "stage-all from a worktree panel must stage in the WORKTREE"
+        );
+        let wip_staged = wip_of(cx);
+        assert_eq!(
+            (wip_staged.staged, wip_staged.unstaged, wip_staged.untracked),
+            (1, 0, 0),
+            "the worktree's WIP row counts must follow the stage"
+        );
+
+        kagi.update(cx, |app, cx| app.do_unstage_all(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fingerprint(&wt_path),
+            wt_fp,
+            "unstage-all from a worktree panel must unstage in the WORKTREE"
+        );
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "the OPEN repo was mutated by an unstage dispatched at a worktree panel"
+        );
+        assert_eq!(
+            wip_of(cx).untracked,
+            1,
+            "the WIP row must follow back to untracked"
+        );
+
+        // Per-file, by the same panel index the row's button carries.
+        kagi.update(cx, |app, cx| app.do_stage_file(0, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fingerprint(&wt_path).1,
+            "A  dirty.txt\n",
+            "stage(0) from a worktree panel must stage in the WORKTREE"
+        );
+        kagi.update(cx, |app, cx| app.do_unstage_file(0, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            repo_fingerprint(&wt_path),
+            wt_fp,
+            "unstage(0) from a worktree panel must unstage in the WORKTREE"
+        );
+        assert_eq!(
+            repo_fp,
+            repo_fingerprint(&repo_path),
+            "the OPEN repo was mutated by a per-file stage/unstage at a worktree panel"
+        );
+
+        // ── Still guarded (slices 2–3): commit plan, commit, amend, discard ──
         kagi.update(cx, |app, cx| {
-            app.do_stage_all(cx);
-            app.do_stage_file(0, cx);
-            app.do_unstage_all(cx);
-            app.do_unstage_file(0, cx);
             app.open_commit_plan_modal(cx);
             app.start_commit(cx);
             app.commit_panel_amend(cx);
@@ -742,12 +822,12 @@ mod macos {
         assert_eq!(
             repo_fp,
             repo_fingerprint(&repo_path),
-            "the OPEN repo was mutated by a write dispatched at a worktree panel"
+            "the OPEN repo was mutated by a still-guarded write at a worktree panel"
         );
         assert_eq!(
             wt_fp,
             repo_fingerprint(&wt_path),
-            "the WORKTREE was mutated by a write dispatched at a worktree panel"
+            "the WORKTREE was mutated by a still-guarded write at a worktree panel"
         );
 
         // The watcher's in-place refresh must not swap the panel back.

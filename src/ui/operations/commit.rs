@@ -85,6 +85,11 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // #476: fold the path to its canonical form ONCE, here, so it compares
+        // equal to `self.repo_path` (which `open_repository` canonicalized).
+        // Otherwise `/tmp/x` vs `/private/tmp/x` marks the open repository's
+        // own panel as foreign and sends its writes down the worktree path.
+        let repo_path = crate::ui::worktree_wip::canon(repo_path);
         // Reopening (the entity survives a commit-row click — `select` clears
         // `commit_panel_open` but NOT the entity, ADR-0118 Q4): REUSE the existing
         // entity so the user's in-memory commit message / template inputs / mode
@@ -588,11 +593,9 @@ impl KagiApp {
     /// Calls `stage_file` from T024 and then refreshes the staging status.
     /// Stage every non-conflicted unstaged file (T-UI-002: Stage all).
     pub fn do_stage_all(&mut self, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("stage-all", cx) {
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
+        // #476: stage into the PANEL's repository — a linked worktree's, when
+        // the panel shows one — never the tab's.
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
@@ -610,18 +613,18 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let result = match self.with_commit_panel_repo(cx, |repo| repo.stage_files(&paths)) {
+            Some(r) => r,
             None => return,
         };
-        match repo.stage_files(&paths) {
+        match result {
             Ok(n) => {
                 klog!("staged-all: {} file(s)", n);
                 if let Some(entity) = self.commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.reload_status(&repo_path));
                 }
                 self.refresh_wip_diffstat();
+                self.refresh_worktree_wip_row(&repo_path);
             }
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_failed(
@@ -634,11 +637,8 @@ impl KagiApp {
 
     /// Unstage every staged file (T-UI-002: Unstage all).
     pub fn do_unstage_all(&mut self, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("unstage-all", cx) {
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
+        // #476: unstage in the PANEL's repository, never the tab's.
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
@@ -655,18 +655,18 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let result = match self.with_commit_panel_repo(cx, |repo| repo.unstage_files(&paths)) {
+            Some(r) => r,
             None => return,
         };
-        match repo.unstage_files(&paths) {
+        match result {
             Ok(n) => {
                 klog!("unstaged-all: {} file(s)", n);
                 if let Some(entity) = self.commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.reload_status(&repo_path));
                 }
                 self.refresh_wip_diffstat();
+                self.refresh_worktree_wip_row(&repo_path);
             }
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_failed(
@@ -678,11 +678,8 @@ impl KagiApp {
     }
 
     pub fn do_stage_file(&mut self, index: usize, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("stage", cx) {
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
+        // #476: stage into the PANEL's repository, never the tab's.
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
@@ -694,14 +691,14 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let result = match self.with_commit_panel_repo(cx, |repo| repo.stage_file(&path)) {
+            Some(r) => r,
             None => {
                 klog!("stage_file: repo open error: {}", "session unavailable");
                 return;
             }
         };
-        if let Err(e) = repo.stage_file(&path) {
+        if let Err(e) = result {
             klog!("stage_file error: {}", e);
         } else {
             klog!("staged: {}", path.display());
@@ -717,17 +714,15 @@ impl KagiApp {
             });
         }
         self.refresh_wip_diffstat();
+        self.refresh_worktree_wip_row(&repo_path);
     }
 
     /// Unstage a single file in the commit panel.
     ///
     /// Calls `unstage_file` from T024 and then refreshes the staging status.
     pub fn do_unstage_file(&mut self, index: usize, cx: &mut Context<Self>) {
-        // #473: read-only while the panel shows another worktree.
-        if self.refuse_foreign_panel_write("unstage", cx) {
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
+        // #476: unstage in the PANEL's repository, never the tab's.
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
@@ -739,14 +734,14 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let result = match self.with_commit_panel_repo(cx, |repo| repo.unstage_file(&path)) {
+            Some(r) => r,
             None => {
                 klog!("unstage_file: repo open error: {}", "session unavailable");
                 return;
             }
         };
-        if let Err(e) = repo.unstage_file(&path) {
+        if let Err(e) = result {
             klog!("unstage_file error: {}", e);
         } else {
             klog!("unstaged: {}", path.display());
@@ -762,6 +757,7 @@ impl KagiApp {
             });
         }
         self.refresh_wip_diffstat();
+        self.refresh_worktree_wip_row(&repo_path);
     }
 
     /// Stage `path` directly (T-WS-EDITOR-007: Editor Workspace tree

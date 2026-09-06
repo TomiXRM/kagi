@@ -458,7 +458,36 @@ pub fn remote_stash_drop(
 /// auth failure, or a merge conflict that leaves the host mid-merge) is surfaced
 /// as a [`RemoteError`] for the UI to show; the user resolves conflicts on the
 /// host (a remote conflict editor is out of scope for this slice).
-pub fn remote_pull(host: &RemoteHost, repo: &str) -> Result<String, RemoteError> {
+///
+/// #501: like [`remote_stash_drop`], the attempt is recorded **here**, at the
+/// transport boundary, before returning across the UI's tab-owned completion
+/// guard. Previously the only recorder was the UI's presentation-only
+/// `record_op`, so a remote pull was never persisted at all.
+pub fn remote_pull(
+    host: &RemoteHost,
+    repo: &str,
+    before: &kagi_git::StateSummary,
+) -> Result<String, RemoteError> {
+    let result = remote_pull_transport(host, repo);
+    let outcome = match &result {
+        Ok(summary) => kagi_git::oplog::OpOutcome::Success {
+            after: kagi_git::StateSummary {
+                head: before.head.clone(),
+                dirty: summary.clone(),
+            },
+        },
+        Err(error) => kagi_git::oplog::OpOutcome::Failed {
+            error: error.to_string(),
+        },
+    };
+    let scope = format!("{}:{repo}", host.label());
+    let entry = kagi_git::oplog::OpLogEntry::new("pull", scope.clone(), before.clone(), outcome)
+        .with_worktree(Some(scope));
+    let _ = kagi_git::oplog::append_oplog(&entry);
+    result
+}
+
+fn remote_pull_transport(host: &RemoteHost, repo: &str) -> Result<String, RemoteError> {
     // Combine stdout+stderr in the message: git prints progress to stderr but
     // the "Fast-forward" / "Already up to date." summary to stdout.
     let out = run_ssh(host, &["git", "-C", repo, "pull"])?;

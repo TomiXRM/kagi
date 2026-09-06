@@ -465,10 +465,57 @@ pub fn merge_args(
     args
 }
 
+/// A merge attempt plus the oplog receipt written for it (#501). `result` is
+/// the transport outcome; `recording` is the entry this call appended (or the
+/// entry it tried to append). A `Success` result with `Recording::Failed` means
+/// "merged on GitHub, not recorded" — never a reason to merge again.
+pub struct PrMergeReport {
+    pub result: Result<String, GitError>,
+    pub recording: crate::backend::recording::Recording,
+}
+
 /// Merge a PR through `gh pr merge` (execute step — the plan/confirm live in
 /// the UI layer, per the write-op invariant). `delete_branch` maps to
 /// `--delete-branch`; nothing here touches the local working tree.
+///
+/// #501: the attempt is recorded **here**, before returning across the UI's
+/// tab-owned completion guard, so a stale completion (`OpDisposition::DropStale`)
+/// cannot lose the record of a merge that really happened on GitHub. The UI's
+/// callback is presentation-only.
 pub fn merge_pr(
+    workdir: &Path,
+    number: u64,
+    method: MergeMethod,
+    delete_branch: bool,
+    head_sha: &str,
+    plan: &OperationPlan,
+) -> PrMergeReport {
+    let result = merge_pr_transport(workdir, number, method, delete_branch, head_sha);
+    let outcome = match &result {
+        Ok(_) => crate::oplog::OpOutcome::Success {
+            after: StateSummary {
+                head: plan.predicted.head.clone(),
+                // Recovery material: the exact head the merge was bound to
+                // (`--match-head-commit`), so the merged state is identifiable
+                // after the PR leaves the open list.
+                dirty: format!("{} (head {head_sha})", plan.predicted.dirty),
+            },
+        },
+        Err(error) => crate::oplog::OpOutcome::Failed {
+            error: error.to_string(),
+        },
+    };
+    let repo = workdir.display().to_string();
+    let entry =
+        crate::oplog::OpLogEntry::new("pr-merge", repo.clone(), plan.current.clone(), outcome)
+            .with_worktree(Some(repo));
+    PrMergeReport {
+        result,
+        recording: crate::backend::recording::finalize(entry),
+    }
+}
+
+fn merge_pr_transport(
     workdir: &Path,
     number: u64,
     method: MergeMethod,

@@ -274,7 +274,9 @@ impl KagiApp {
         // hidden too, but the Enter-to-confirm path shares this method).
         if !plan.blockers.is_empty() {
             klog!("refused: pr-merge plan has blockers, not executing");
-            self.record_op_persist(
+            // A blocked plan never reaches the transport, so the UI stays the
+            // recorder for Refused — `record_op` persists that outcome (#501).
+            self.record_op(
                 "pr-merge",
                 plan.current.clone(),
                 OpOutcome::Refused {
@@ -288,8 +290,6 @@ impl KagiApp {
         }
         let (number, method, delete_branch) = (modal.number, modal.method, modal.delete_branch);
         let head_sha = modal.head_sha.clone();
-        let before = plan.current.clone();
-        let predicted = plan.predicted.clone();
         self.clear_pr_merge_modal();
         self.busy_op = Some("pr-merge");
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
@@ -301,27 +301,23 @@ impl KagiApp {
 
         let rp = repo_path.clone();
         let task = cx.background_spawn(async move {
-            kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha)
+            kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha, &plan)
         });
-        self.finish_op_on_main(cx, task, move |app, result, cx| {
-            match result {
+        // #501: the transport already appended the receipt. Everything below is
+        // presentation only — dropping it on a tab switch loses a toast, not the
+        // record of a merge that happened on GitHub.
+        self.finish_op_on_main(cx, task, move |app, report, cx| {
+            let entry = report.recording.entry().clone();
+            match &report.result {
                 Ok(out) => {
                     klog!("executed: pr-merge #{}", number);
-                    app.record_op_persist(
-                        "pr-merge",
-                        before.clone(),
-                        OpOutcome::Success {
-                            after: predicted.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
+                    app.record_op("pr-merge", entry.before, entry.outcome, &repo_path, cx);
                     app.push_toast(
                         ToastKind::Info,
                         SharedString::from(if out.is_empty() {
                             format!("{} #{}", Msg::PrModeMergeDone.t(), number)
                         } else {
-                            out
+                            out.clone()
                         }),
                         cx,
                     );
@@ -334,17 +330,17 @@ impl KagiApp {
                 Err(e) => {
                     let error = e.to_string();
                     klog!("pr-merge failed: {}", error);
-                    app.record_op_persist(
-                        "pr-merge",
-                        before.clone(),
-                        OpOutcome::Failed {
-                            error: error.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
+                    app.record_op("pr-merge", entry.before, entry.outcome, &repo_path, cx);
                     app.push_toast(ToastKind::Error, SharedString::from(error), cx);
                 }
+            }
+            if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording
+            {
+                // Merged (or failed) but not recorded — say so instead of
+                // letting a silent write error look like a clean run. Never a
+                // reason to re-run the merge.
+                app.app_notices
+                    .push_back(format!("pr-merge: recording failed: {error}").into());
             }
         });
     }

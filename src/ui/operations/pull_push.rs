@@ -197,8 +197,12 @@ impl KagiApp {
             self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
             klog!("async: remote pull started");
             let (host, root) = (rv.host.clone(), rv.root.clone());
+            // #501: the transport records the attempt; this callback is
+            // presentation only and may be dropped on a tab switch.
+            let recorded_before = before.clone();
             let task = cx.background_spawn(async move {
-                crate::remote::remote_pull(&host, &root).map_err(|e| e.to_string())
+                crate::remote::remote_pull(&host, &root, &recorded_before)
+                    .map_err(|e| e.to_string())
             });
             self.finish_op_on_main(cx, task, move |app, result, cx| match result {
                 Ok(summary) => {

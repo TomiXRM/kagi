@@ -56,6 +56,21 @@ impl Fixture {
             panic!("not discard")
         };
         assert!(!outcome.is_partial());
+        assert_eq!(
+            outcome.oplog_summary(),
+            format!(
+                "discarded 1 file(s); backup: tracked={}",
+                outcome.backups[0].blob
+            ),
+            "the existing path/blob contract must remain byte-identical"
+        );
+        let OpOutcome::Success { after } = &report.recording.entry().outcome else {
+            panic!("discard receipt must be successful")
+        };
+        assert_eq!(
+            after, &plan.predicted,
+            "persisted after keeps its legacy shape"
+        );
         let entry = report.recording.entry().clone();
         assert_eq!(
             entry.backup_refs,
@@ -235,7 +250,7 @@ fn shared_ref_survives_until_its_last_entry_is_retired() {
     let content = std::fs::read_to_string(&log_path).unwrap();
     std::fs::write(
         &log_path,
-        content.replace("\"backup_refs\":[", "\"backup_refs\": ["),
+        content.replace("\"backup_refs\":[", "\"backup_refs\" \t: ["),
     )
     .unwrap();
     let other = read_oplog_tail(1).remove(0);
@@ -317,8 +332,10 @@ fn malformed_log_and_foreign_reference_fail_closed() {
     let first = f.discard(b"keep recovery\n");
     let mut forged = first.clone();
     forged.backup_refs = vec!["refs/heads/main".into()];
-    append_oplog(&forged).unwrap();
-    let forged = read_oplog_tail(1).remove(0);
+    assert!(
+        append_oplog(&forged).is_err(),
+        "foreign roots cannot acquire ownership"
+    );
     assert!(f.backend().plan_forget_oplog_entry(&forged).is_err());
     use std::io::Write;
     std::fs::OpenOptions::new()
@@ -441,4 +458,125 @@ fn concurrent_appends_preserve_every_receipt_with_distinct_ids() {
         f.backend().read_backup(&entry.backup_refs[0]).unwrap(),
         b"shared across concurrent receipts\n"
     );
+}
+
+#[test]
+fn append_cannot_reacquire_a_retired_root() {
+    let f = Fixture::new();
+    let entry = f.discard(b"retired bytes\n");
+    let backend = f.backend();
+    let plan = backend.plan_forget_oplog_entry(&entry).unwrap();
+    backend.execute_forget_oplog_entry(&plan).result.unwrap();
+    let before = std::fs::read(f.log.join("operations.jsonl")).unwrap();
+    let mut shared = entry.clone();
+    shared.op = "late-shared-owner".into();
+    assert!(append_oplog(&shared).is_err());
+    assert_eq!(
+        std::fs::read(f.log.join("operations.jsonl")).unwrap(),
+        before
+    );
+    assert!(backend.read_backup(&entry.backup_refs[0]).is_err());
+}
+
+#[test]
+fn legacy_retirement_preserves_surviving_ids_and_sequence_floor() {
+    let f = Fixture::new();
+    let entry = f.discard(b"legacy naked backup\n");
+    let log = f.log.join("operations.jsonl");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&log).unwrap()).unwrap();
+    let object = value.as_object_mut().unwrap();
+    for key in ["id", "parent", "backup_refs"] {
+        object.remove(key);
+    }
+    let lines: Vec<_> = (0..3)
+        .map(|index| {
+            value["op"] = serde_json::json!(format!("legacy-{index}"));
+            value["future_field"] = serde_json::json!({"keep": true});
+            serde_json::to_string(&value).unwrap()
+        })
+        .collect();
+    std::fs::write(&log, format!("{}\n", lines.join("\n"))).unwrap();
+    let entries = read_oplog_tail(100);
+    let second = entries.iter().find(|entry| entry.id == 1).unwrap();
+    let last = entries.iter().find(|entry| entry.id == 2).unwrap().clone();
+    let backend = f.backend();
+    let plan = backend.plan_forget_oplog_entry(second).unwrap();
+    assert_eq!(plan.backup_refs().count(), 0);
+    let report = backend.execute_forget_oplog_entry(&plan);
+    report.result.unwrap();
+    assert!(report.recording.entry().id > last.id);
+    let legacy_line = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|value| value["op"] == "legacy-2")
+        .unwrap();
+    assert_eq!(legacy_line["future_field"]["keep"], true);
+    let remaining = read_oplog_tail(100);
+    assert!(remaining
+        .iter()
+        .any(|e| e.id == last.id && e.op == last.op && e.parent == last.parent));
+    let plan = backend.plan_forget_oplog_entry(&last).unwrap();
+    backend.execute_forget_oplog_entry(&plan).result.unwrap();
+    // Legacy receipts did not own refs, so retirement cannot delete a root.
+    assert!(backend.read_backup(&entry.backup_refs[0]).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn remove_stops_before_delete_when_pre_remove_creates_unreadable_content() {
+    use kagi_domain::remove::RemoveStage;
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    std::fs::create_dir(f.repo.join(".kagi")).unwrap();
+    std::fs::write(f.repo.join(".kagi/worktree.toml"),
+        "[[pre_remove]]\ntype='copy'\nfrom='secret'\nto='unreadable'\n[[pre_remove]]\ntype='command'\nrun='chmod 000 unreadable'\n").unwrap();
+    std::fs::write(f.repo.join("secret"), b"unrecoverable without backup").unwrap();
+    git(&f.repo, &["add", ".kagi"]);
+    git(&f.repo, &["commit", "-qm", "unreadable pre-remove fixture"]);
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(
+        linked.exists(),
+        "backup failure must precede directory deletion"
+    );
+    let path = linked.join("unreadable");
+    assert!(
+        path.exists(),
+        "pre-remove must create fixture content: {:?}",
+        report.recording.entry()
+    );
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        std::fs::read(path).unwrap(),
+        b"unrecoverable without backup"
+    );
+    assert!(matches!(
+        report.progress.stage,
+        RemoveStage::PreRemove { .. }
+    ));
+    let OpOutcome::Partial { error, .. } = &report.recording.entry().outcome else {
+        panic!(
+            "pre-remove changed content, but backup refused: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(error.contains("backup: read"), "{error}");
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_reference("refs/heads/linked")
+        .is_ok());
 }

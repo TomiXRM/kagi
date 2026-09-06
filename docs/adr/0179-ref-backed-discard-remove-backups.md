@@ -23,18 +23,24 @@ Ordinals keep filenames out of Git ref syntax. Linked worktree removal creates
 these refs in the management/common repository, which survives path deletion.
 
 Backup remains mandatory independently of auto_snapshot. Snapshot cap pruning
-never visits this namespace. No GUI state, app-layer I/O, new service, or
+never visits this namespace. No new GUI state owner, app-layer I/O, service, or
 optional trust/preflight/verify flag is introduced. Existing removed-branch full
 OIDs and their reflog recovery remain a separate mechanism; this change pins
 file-content backups, not arbitrary branch histories or hook external effects.
 
 `DiscardBackup` retains its full blob OID and adds the exact ref name. Structured
 `OpLogEntry.backup_refs` is additive (old records read as an empty list). Existing
-path/OID summary prefixes remain, with a recovery-ref mapping appended. Discard
-records actual backup evidence, not its predicted summary. Remove uses the
+path/OID summaries and after/dirty fields remain byte-identical, including the
+predicted persisted discard after-state. Ref names appear only in the structured
+receipt field and a separate `backup refs:` klog line; the existing executed and
+verified contract lines retain their wording and relative order. Remove uses the
 unwind-external progress from ADR-0175 for Success, Partial and Unknown alike.
 A failed append returns an attempted receipt containing the refs; no Drop or
-error cleanup removes recovery roots. Failure part-way through backup before
+error cleanup removes recovery roots. GUI discard carries `RunReport` through
+main-thread settlement: append failure always delivers an owner-named notice,
+even across a tab switch. The current owner sees "changed but not recorded" and
+the attempted receipt with its refs; it never gets a success toast or a mutation
+retry. Existing successful discard text is unchanged. Failure part-way through backup before
 any deletion may leave extra pinned objects; preserving bytes takes priority.
 
 ## Recovery
@@ -61,7 +67,10 @@ its exclusively owned recovery refs. Explicit confirmation authorizes
 identity, unchanged log bytes, and locked direct-ref OID checks are mandatory.
 Another retained entry referencing the same ref keeps that root alive. Invalid
 log lines, wrong namespaces, missing/ambiguous entries and drift fail closed.
-Retained lines are preserved verbatim, including unknown fields. The original
+Ownership is read from validated top-level `serde_json::Value`, shared with the
+tail reader, so legal whitespace cannot hide refs. Modern retained lines are
+preserved verbatim. Legacy id-less lines receive the reader's normalized id/parent
+before removal can shift their positions; their unknown JSON fields are kept. The original
 repository must still be resolvable for this operation; deleted/moved unrelated
 worktree receipts fail closed rather than guessing a repository from a name.
 
@@ -76,7 +85,9 @@ another receipt's roots. The cleanup itself has one Backend finalization attempt
 Append and retirement share a stable sidecar file lock. Append waits at most one
 second for a short competing write, then returns a recording error if still busy;
 retirement preflight refuses immediately. Neither overwrites another writer's
-log. This bounded I/O does not introduce an indefinite lock wait.
+log. While holding that lock, append validates every named root in the receipt's
+repository as an existing direct blob ref. A queued append cannot acquire
+ownership after retirement removed the root. This bounded I/O does not introduce an indefinite lock wait.
 The sidecar also reserves the next sequence id before writes so retirement of
 the newest/only entry cannot reuse its id. Failed writes may leave sequence gaps.
 This is local oplog coordination, not a cross-resource crash-recovery journal:
@@ -97,4 +108,10 @@ failure with unchanged worktree, deletion of only an expired entry's roots,
 shared-root lifetime, post-plan log/ref drift, trust refusal, malformed records,
 namespace confinement, JSON whitespace, bounded lock refusal, concurrent
 receipt appends and monotonic ids after retiring the last entry.
-GUI runner execution is prohibited; this PR claims Git fixture evidence only.
+Additional G covers queued append versus actual locked retirement, id-less
+legacy cleanup and surviving identities, and pre-remove-created unreadable
+content refusing before directory deletion. Backup repository/status/metadata/
+read/read_link errors stop removal; only a path confirmed absent is skipped.
+The scoped Tier A filter `worktree_panel,remove_public_boundary` checks the
+legacy blob log plus receipt ref, and real append-lock timeout delivery for both
+current and stale owners. No full GUI suite is run.

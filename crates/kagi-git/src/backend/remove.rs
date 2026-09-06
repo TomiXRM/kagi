@@ -314,20 +314,14 @@ fn recovery_after(progress: &RemoveProgress) -> ops::StateSummary {
             .map(|id| id.0.clone())
             .unwrap_or_else(|| "unobserved".into()),
         dirty: format!(
-            "stage={:?}; backup: {}; branch_tip={}; recovery refs: {}",
+            "stage={:?}; backup: {}; branch_tip={}",
             progress.stage,
             pairs.join(", "),
             progress
                 .branch_tip
                 .as_ref()
                 .map(|id| id.0.as_str())
-                .unwrap_or("unavailable"),
-            progress
-                .backups
-                .iter()
-                .map(|b| format!("{}={}", b.path, b.reference))
-                .collect::<Vec<_>>()
-                .join(", ")
+                .unwrap_or("unavailable")
         ),
     }
 }

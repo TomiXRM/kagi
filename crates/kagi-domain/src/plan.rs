@@ -281,6 +281,15 @@ impl DiscardOutcome {
         self.error.is_some()
     }
 
+    /// Render recovery refs separately from the legacy path/blob summary.
+    pub fn backup_refs_summary(&self) -> String {
+        self.backups
+            .iter()
+            .map(|backup| format!("{}={}", backup.path, backup.reference))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// Render the path/blob backup list as a single oplog-friendly summary line.
     /// On a partial discard the per-path status and the failure reason are
     /// appended — the backup SHAs stay first so recovery is always readable.
@@ -291,14 +300,9 @@ impl DiscardOutcome {
             .map(|b| format!("{}={}", b.path, b.blob))
             .collect();
         let base = format!(
-            "discarded {} file(s); backup: {}; recovery refs: {}",
+            "discarded {} file(s); backup: {}",
             self.backups.len(),
-            pairs.join(", "),
-            self.backups
-                .iter()
-                .map(|b| format!("{}={}", b.path, b.reference))
-                .collect::<Vec<_>>()
-                .join(", ")
+            pairs.join(", ")
         );
         match &self.error {
             None => base,

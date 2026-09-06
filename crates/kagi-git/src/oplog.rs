@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{ops::StateSummary, GitError};
 
+mod reading;
 pub mod retention;
 
 // ────────────────────────────────────────────────────────────
@@ -670,20 +671,10 @@ fn read_all_oplog_entries() -> Vec<OpLogEntry> {
         Err(_) => return Vec::new(),
     };
 
-    let mut entries: Vec<OpLogEntry> = Vec::new();
-    let mut prev_id: Option<u64> = None;
-    let mut idx: u64 = 0;
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Some(mut entry) = parse_oplog_line(line) {
-            if !line.contains("\"id\":") {
-                entry.id = idx;
-                entry.parent = prev_id;
-            }
-            prev_id = Some(entry.id);
-            idx += 1;
+    let mut entries = Vec::new();
+    let mut reader = reading::Reader::default();
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        if let Ok((entry, _)) = reader.parse(line) {
             entries.push(entry);
         }
     }
@@ -722,6 +713,7 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
     }
 
     let mut lock = retention::append_lock(&path)?;
+    retention::validate_append_roots(entry)?;
 
     // ADR-0149: assign the sequence id/parent from the current tail so ids are
     // monotonic and each entry chains to the previous one. Placeholder id/parent

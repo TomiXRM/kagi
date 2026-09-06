@@ -354,3 +354,80 @@ fn oplog_filter_scopes_to_bound_repo() {
         None => std::env::remove_var("KAGI_LOG_DIR"),
     }
 }
+
+#[test]
+fn append_waiting_for_retirement_cannot_publish_a_deleted_root() {
+    // Worker/absorb unit tests also append while ENV_LOCK is held. Isolate the
+    // process-wide log environment so only this deliberate writer race exists.
+    if std::env::var_os("KAGI_RETENTION_RACE_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "oplog::tests::append_waiting_for_retirement_cannot_publish_a_deleted_root",
+                "--nocapture",
+            ])
+            .env("KAGI_RETENTION_RACE_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let repo_path = root.path().join("repo");
+    let repo = git2::Repository::init_bare(&repo_path).unwrap();
+    let log_dir = root.path().join("log");
+    let previous = std::env::var_os("KAGI_LOG_DIR");
+    std::env::set_var("KAGI_LOG_DIR", &log_dir);
+    let oid = repo.blob(b"shared recovery").unwrap();
+    let name = "refs/kagi/backups/race/0";
+    repo.reference(name, oid, false, "fixture backup").unwrap();
+    let state = StateSummary {
+        head: "fixture".into(),
+        dirty: "clean".into(),
+    };
+    let mut entry = OpLogEntry::new(
+        "discard",
+        repo_path.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    );
+    entry.backup_refs.push(name.into());
+    let (_, entry) = append_oplog_receipt(&entry).unwrap();
+    let plan = retention::plan(&repo, &entry).unwrap();
+    let mut lock = retention::lock(&log_file_path().unwrap()).unwrap();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (finished, completion) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            started.send(()).unwrap();
+            finished.send(append_oplog_receipt(&entry)).unwrap();
+        });
+        ready.recv().unwrap();
+        // The root exists while append is queued, then retirement removes it
+        // before append acquires the lock. Validation before locking is unsafe.
+        assert!(completion
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        let mut retired = false;
+        retention::execute_locked(&repo, &plan, &mut retired, &mut lock).unwrap();
+        assert!(retired);
+        drop(lock);
+        let result = completion.recv().unwrap();
+        assert!(
+            result.is_err(),
+            "queued append must not advertise a retired root"
+        );
+    });
+    assert!(read_oplog_tail(10).is_empty());
+    assert!(repo.find_reference(name).is_err());
+    match previous {
+        Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
+        None => std::env::remove_var("KAGI_LOG_DIR"),
+    }
+}

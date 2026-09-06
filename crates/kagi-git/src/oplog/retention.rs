@@ -1,5 +1,5 @@
 //! Explicit entry retirement. No age/cap sweep: backups live as long as receipts.
-use super::{entry_to_json, log_file_path, parse_oplog_line, OpLogEntry};
+use super::{entry_to_json, log_file_path, reading::Reader, OpLogEntry};
 use crate::{ops::backup, GitError};
 use git2::{Oid, Repository};
 use std::fs::{File, OpenOptions};
@@ -16,6 +16,7 @@ pub struct ForgetOplogPlan {
     retained: String,
     entry: OpLogEntry,
     refs: Vec<(String, Oid)>,
+    next_id: u64,
 }
 impl ForgetOplogPlan {
     pub fn entry(&self) -> &OpLogEntry {
@@ -76,6 +77,13 @@ pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogP
         return Err(io("entry belongs to another repository"));
     }
     let (retained, remaining) = without_entry(&before, entry)?;
+    let next_id = remaining
+        .iter()
+        .chain(std::iter::once(entry))
+        .map(|entry| entry.id)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
     let mut refs = Vec::new();
     for name in &entry.backup_refs {
         backup::validate_reference(name)?;
@@ -98,6 +106,7 @@ pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogP
         common_dir,
         before,
         retained,
+        next_id,
         entry: entry.clone(),
         refs,
     })
@@ -107,25 +116,27 @@ fn without_entry(content: &str, entry: &OpLogEntry) -> Result<(String, Vec<OpLog
     let mut retained = String::new();
     let mut remaining = Vec::new();
     let mut found = 0;
+    let mut reader = Reader::default();
     for line in content.split_inclusive('\n') {
         if line.trim().is_empty() {
             retained.push_str(line);
             continue;
         }
-        // Never treat an unreadable line as proof that a ref is unreferenced.
-        let value: serde_json::Value = serde_json::from_str(line).map_err(io)?;
-        if value.get("backup_refs").is_some_and(|v| {
-            v.as_array()
-                .is_none_or(|a| a.iter().any(|r| !r.is_string()))
-        }) {
-            return Err(io("invalid backup_refs in log; preserving all roots"));
-        }
-        let parsed = parse_oplog_line(line)
-            .ok_or_else(|| io("unreadable log entry; preserving all roots"))?;
+        // Ownership comes from the same validated top-level JSON as the reader.
+        let (parsed, legacy) = reader.parse(line)?;
         if entry_to_json(&parsed) == entry_to_json(entry) {
             found += 1;
         } else {
-            retained.push_str(line);
+            if legacy {
+                // Freeze surviving identities before deleting an earlier legacy line.
+                let mut value: serde_json::Value = serde_json::from_str(line).map_err(io)?;
+                value["id"] = serde_json::json!(parsed.id);
+                value["parent"] = serde_json::json!(parsed.parent);
+                retained.push_str(&serde_json::to_string(&value).map_err(io)?);
+                retained.push('\n');
+            } else {
+                retained.push_str(line);
+            }
             remaining.push(parsed);
         }
     }
@@ -148,6 +159,16 @@ pub(crate) fn execute(
         return Err(io("repository/log identity changed; re-plan"));
     }
     let mut lock = lock(&plan.path)?;
+    execute_locked(repo, plan, retired, &mut lock)
+}
+
+// The caller owns the stable log lock for this entire log/ref transaction.
+pub(super) fn execute_locked(
+    repo: &Repository,
+    plan: &ForgetOplogPlan,
+    retired: &mut bool,
+    lock: &mut File,
+) -> Result<(), GitError> {
     if std::fs::read_to_string(&plan.path).map_err(io)? != plan.before {
         return Err(io("oplog changed after confirmation; re-plan"));
     }
@@ -160,15 +181,7 @@ pub(crate) fn execute(
         transaction.remove(name).map_err(io)?;
     }
     // Preserve sequence monotonicity even when retiring the newest/only entry.
-    let floor = plan
-        .before
-        .lines()
-        .filter_map(parse_oplog_line)
-        .map(|entry| entry.id)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
-    reserve_id(&mut lock, floor)?;
+    reserve_id(lock, plan.next_id)?;
     let parent = plan.path.parent().ok_or_else(|| io("log has no parent"))?;
     let mut replacement = tempfile::NamedTempFile::new_in(parent).map_err(io)?;
     replacement
@@ -188,6 +201,24 @@ pub(crate) fn execute(
             Err(error) if error.code() == git2::ErrorCode::NotFound => (),
             _ => return Err(io("backup ref cleanup could not be verified")),
         }
+    }
+    Ok(())
+}
+
+/// Called while holding the same log lock as retirement: a waiting append
+/// cannot resurrect ownership of a ref already retired by the preceding writer.
+pub(super) fn validate_append_roots(entry: &OpLogEntry) -> Result<(), GitError> {
+    if entry.backup_refs.is_empty() {
+        return Ok(());
+    }
+    let repo = Repository::discover(&entry.repo).map_err(io)?;
+    for name in &entry.backup_refs {
+        backup::validate_reference(name)?;
+        let reference = repo.find_reference(name).map_err(io)?;
+        let oid = reference
+            .target()
+            .ok_or_else(|| io("backup ref is symbolic"))?;
+        repo.find_blob(oid).map_err(io)?;
     }
     Ok(())
 }

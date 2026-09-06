@@ -63,19 +63,10 @@ pub fn oplog_outcome_from(
         },
         (Ok(OperationOutcome::Discard(d)), _) if d.is_partial() => {
             crate::oplog::OpOutcome::Partial {
-                after: ops::StateSummary {
-                    head: predicted.head.clone(),
-                    dirty: d.oplog_summary(),
-                },
+                after: predicted.clone(),
                 error: d.error.clone().unwrap_or_default(),
             }
         }
-        (Ok(OperationOutcome::Discard(d)), _) => crate::oplog::OpOutcome::Success {
-            after: ops::StateSummary {
-                head: predicted.head.clone(),
-                dirty: d.oplog_summary(),
-            },
-        },
         // #418: persist the restore's recovery handle (savepoint id) in `after`.
         (Ok(OperationOutcome::RestoreSnapshot { savepoint }), _) => {
             crate::oplog::OpOutcome::Success {

@@ -593,6 +593,10 @@ mod macos {
                 Box::new(scenario_worktree_panel_commit),
             ),
             (
+                "worktree_panel_discard_recording_failure",
+                Box::new(scenario_worktree_panel_discard_recording_failure),
+            ),
+            (
                 "worktree_panel_amend_discard",
                 Box::new(scenario_worktree_panel_amend_discard),
             ),
@@ -1689,13 +1693,31 @@ mod macos {
         );
         let dirty = dirty.expect("a successful discard records an after-state");
         let blob = dirty
-            .rsplit_once('=')
-            .map(|(_, sha)| sha.trim().to_string())
-            .unwrap_or_else(|| panic!("no `path=blob` backup in the oplog entry: {dirty:?}"));
+            .split_once("backup: ")
+            .and_then(|(_, backups)| backups.split(';').next())
+            .and_then(|backups| {
+                backups
+                    .split(", ")
+                    .find_map(|pair| pair.strip_prefix("f.txt="))
+            })
+            .unwrap_or_else(|| panic!("no `f.txt=blob` backup in the oplog entry: {dirty:?}"));
+        let receipt = kagi_git::oplog::read_oplog_tail_for_repo(&wt_a, 1)
+            .pop()
+            .expect("persisted discard receipt");
+        assert_eq!(receipt.op, "discard");
+        assert_eq!(receipt.backup_refs.len(), 1);
+        let reference = &receipt.backup_refs[0];
+        assert!(reference.starts_with("refs/kagi/backups/"));
         assert_eq!(blob.len(), 40, "expected a 40-hex blob SHA, got {blob:?}");
         for odb in [&wt_a, &repo_path] {
+            assert_eq!(
+                rev_parse(odb, reference),
+                blob,
+                "receipt ref must resolve to the logged backup blob in {}",
+                odb.display()
+            );
             assert!(
-                git_ok(odb, &["cat-file", "-e", &blob]),
+                git_ok(odb, &["cat-file", "-e", blob]),
                 "the discard's backup blob {blob} must resolve in {}",
                 odb.display()
             );
@@ -1805,6 +1827,100 @@ mod macos {
             &head_after_amend[..8],
             &blob[..8],
         );
+    }
+
+    /// Real lock timeout after mutation: preserve recovery and deliver the notice
+    /// even if the owner generation changes before the background result arrives.
+    fn scenario_worktree_panel_discard_recording_failure(cx: &mut VisualTestAppContext) {
+        for stale in [false, true] {
+            let (_fixture, repo_path, wt_a, _wt_b) = build_two_worktree_fixture();
+            let original = std::fs::read(wt_a.join("dirty.txt")).unwrap();
+            let (kagi, win) = mount(cx, &repo_path);
+            let index = cx.read(|app| {
+                kagi.read(app)
+                    .active_view
+                    .worktrees
+                    .iter()
+                    .position(|wt| wt.path == wt_a)
+                    .unwrap()
+            });
+            kagi.update(cx, |app, cx| {
+                e2e::open_worktree_panel_no_inputs(app, wt_a.clone(), "wt-a", index, cx)
+            });
+            cx.run_until_parked();
+            kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+            cx.run_until_parked();
+            let log_dir = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+            let log_path = log_dir.join("operations.jsonl");
+            let before_log = std::fs::read(&log_path).unwrap_or_default();
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(log_dir.join("operations.jsonl.lock"))
+                .unwrap();
+            lock.lock().unwrap();
+            kagi.update(cx, |app, cx| app.start_discard(cx));
+            kagi.update(cx, |app, cx| {
+                app.start_discard(cx);
+                if stale {
+                    app.switch_generation += 1;
+                }
+            });
+            cx.run_until_parked();
+            drop(lock);
+            assert_eq!(
+                repo_fingerprint(&wt_a).1,
+                "",
+                "mutation must already have completed"
+            );
+            assert_eq!(
+                std::fs::read(&log_path).unwrap_or_default(),
+                before_log,
+                "no fake durable success or retry"
+            );
+            cx.read(|app| {
+                let state = kagi.read(app);
+                let notice =
+                    e2e::app_notice_message(state).expect("owner-named recording failure notice");
+                assert!(
+                    notice.contains("recording failed") && notice.contains(wt_a.to_str().unwrap()),
+                    "{notice}"
+                );
+                assert!(!matches!(
+                    state.status_footer,
+                    kagi::ui::types::FooterStatus::Success(_)
+                ));
+                assert!(
+                    state.discard_modal().is_none(),
+                    "must not offer to repeat a completed mutation"
+                );
+                if !stale {
+                    let kagi::ui::types::FooterStatus::Failed(message) = &state.status_footer
+                    else {
+                        panic!("expected failure footer")
+                    };
+                    assert!(message.contains("changed but not recorded"));
+                    let panel = state.op_log.as_ref().unwrap().read(app);
+                    let entry = panel.entries().front().unwrap();
+                    assert!(matches!(
+                        entry.outcome,
+                        kagi_git::oplog::OpOutcome::Partial { .. }
+                    ));
+                    assert_eq!(entry.backup_refs.len(), 1);
+                    let output = Command::new("git")
+                        .current_dir(&wt_a)
+                        .args(["cat-file", "blob", &entry.backup_refs[0]])
+                        .output()
+                        .unwrap();
+                    assert!(output.status.success());
+                    assert_eq!(output.stdout, original);
+                }
+            });
+            unmount(cx, kagi, win);
+        }
+        eprintln!("[gui-e2e] PASS worktree_panel_discard_recording_failure current + stale owner");
     }
 
     /// Try to capture a PNG; tolerate the locked gpui rev's unimplemented

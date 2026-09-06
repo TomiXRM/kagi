@@ -68,6 +68,10 @@ mod app_writer_admission;
 mod recovery_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "perf/oplog_detail.rs"]
+mod perf_oplog_detail;
+
+#[cfg(target_os = "macos")]
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -380,6 +384,23 @@ mod macos {
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();
         cx.update(e2e::init_app);
+
+        // Issue #548's draw-time measurement, run ALONE: every scenario opens a
+        // real window macOS clamps onto the display, and the timing wants an
+        // otherwise idle process anyway.
+        //   KAGI_GUI_E2E=1 KAGI_OPLOG_PERF=1 cargo test -p kagi \
+        //     --features gui-e2e --test gui_e2e_runner -- --nocapture
+        if std::env::var_os("KAGI_OPLOG_PERF").is_some() {
+            crate::perf_oplog_detail::scenario_expanded_detail_draw(&mut cx);
+            cx.run_until_parked();
+            drain_native_events();
+            drop(native_pool);
+            cx.update(|_| {});
+            cx.run_until_parked();
+            eprintln!("[gui-e2e] PASS oplog perf scenario only (KAGI_OPLOG_PERF)");
+            return 0;
+        }
+
         crate::recovery_operations::scenario_stash_drop_persists(&mut cx);
         crate::recovery_operations::scenario_history_persists(&mut cx);
         crate::recovery_operations::scenario_cleanup_stale_tab(&mut cx);
@@ -409,6 +430,7 @@ mod macos {
         scenario_worktree_wip_inline(&mut cx);
         scenario_worktree_panel_commit(&mut cx);
         scenario_worktree_panel_amend_discard(&mut cx);
+        crate::perf_oplog_detail::scenario_expanded_detail_draw(&mut cx);
         cx.run_until_parked();
         drain_native_events();
         drop(native_pool);

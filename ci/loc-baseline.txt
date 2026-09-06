@@ -27,7 +27,7 @@ src/ui/inspector.rs 1244
 src/ui/mod.rs 4252
 src/ui/operations/branch.rs 1756
 src/ui/operations/commit.rs 1376
-src/ui/operations/conflict.rs 992
+src/ui/operations/conflict.rs 996
 src/ui/operations/modal_state.rs 1107
 src/ui/operations/stash.rs 807
 src/ui/pr_mode.rs 2343

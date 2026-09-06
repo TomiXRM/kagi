@@ -196,158 +196,7 @@ pub fn commit_file_diff(
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(&mut diff_opts))
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
-    // 3. Enable rename detection (keeps parity with commit_changed_files).
-    let mut find_opts = DiffFindOptions::new();
-    find_opts.renames(true);
-    diff.find_similar(Some(&mut find_opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-    // 4. Find the delta index whose new_file path (or old_file path for
-    //    deletions) matches `path`.  Fall back to index 0 if none matches.
-    // Count deltas by collecting from the iterator (git2 exposes no num_deltas()).
-    let num_deltas = diff.deltas().count();
-    if num_deltas == 0 {
-        // No delta found — return an empty diff rather than an error.
-        return Ok(FileDiff {
-            old_path: None,
-            new_path: Some(path.to_path_buf()),
-            change: ChangeKind::Modified,
-            hunks: vec![],
-            is_binary: false,
-        });
-    }
-
-    // #292: no matching delta → empty diff for THIS path, never delta 0
-    // (a different file's content).
-    let Some(delta_idx) = (0..num_deltas).find(|&i| {
-        let delta = diff.get_delta(i).unwrap();
-        let np = delta.new_file().path();
-        let op = delta.old_file().path();
-        np == Some(path) || op == Some(path)
-    }) else {
-        return Ok(FileDiff {
-            old_path: None,
-            new_path: Some(path.to_path_buf()),
-            change: ChangeKind::Modified,
-            hunks: vec![],
-            is_binary: false,
-        });
-    };
-
-    let delta = diff.get_delta(delta_idx).unwrap();
-
-    // 5. Extract metadata from the delta.
-    let old_path = delta.old_file().path().map(PathBuf::from);
-    let new_path = delta.new_file().path().map(PathBuf::from);
-
-    use git2::Delta;
-    let change = match delta.status() {
-        Delta::Added => ChangeKind::Added,
-        Delta::Deleted => ChangeKind::Deleted,
-        Delta::Modified => ChangeKind::Modified,
-        Delta::Renamed => {
-            let from = old_path.clone().unwrap_or_default();
-            ChangeKind::Renamed { from }
-        }
-        Delta::Typechange => ChangeKind::TypeChange,
-        _ => ChangeKind::Modified,
-    };
-
-    // 6. Get the Patch for this delta.
-    //    `Patch::from_diff` returns `Ok(None)` for unchanged or binary deltas.
-    //    We use this as the primary binary-detection mechanism because the
-    //    `GIT_DIFF_FLAG_BINARY` flag on `DiffFile` is only populated after
-    //    content inspection, which `diff_tree_to_tree` does not always do.
-    let patch_opt = git2::Patch::from_diff(&diff, delta_idx)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-    // Treat a None patch as binary when the delta is not Unmodified.
-    // (Unmodified deltas are never returned by diff_tree_to_tree unless
-    //  include_unmodified is set, so in practice None always means binary here.)
-    let is_binary_from_flag = delta.new_file().is_binary() || delta.old_file().is_binary();
-
-    let patch = match patch_opt {
-        None => {
-            // Binary or empty-patch: no text diff available.
-            return Ok(FileDiff {
-                old_path,
-                new_path,
-                change,
-                hunks: vec![],
-                is_binary: true,
-            });
-        }
-        Some(p) => {
-            // Patch exists — still check the delta-level binary flag as a
-            // belt-and-suspenders guard (e.g. mixed binary/text situations).
-            if is_binary_from_flag {
-                return Ok(FileDiff {
-                    old_path,
-                    new_path,
-                    change,
-                    hunks: vec![],
-                    is_binary: true,
-                });
-            }
-            p
-        }
-    };
-
-    // 7. Extract hunks and lines.
-    let num_hunks = patch.num_hunks();
-    let mut hunks = Vec::with_capacity(num_hunks);
-
-    for h_idx in 0..num_hunks {
-        let (diff_hunk, line_count) = patch
-            .hunk(h_idx)
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-        let old_range = (diff_hunk.old_start(), diff_hunk.old_lines());
-        let new_range = (diff_hunk.new_start(), diff_hunk.new_lines());
-
-        let mut lines = Vec::with_capacity(line_count);
-
-        for l_idx in 0..line_count {
-            let diff_line = patch
-                .line_in_hunk(h_idx, l_idx)
-                .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-            // Map origin character to DiffLineKind.
-            // origin() can return: ' ' context, '+' added, '-' removed,
-            // '=' context-EOF, '>' add-EOF, '<' remove-EOF, 'F'/'H'/'B'.
-            // EOF-marker lines are folded into their logical kind.
-            let kind = match diff_line.origin() {
-                '+' | '>' => DiffLineKind::Added,
-                '-' | '<' => DiffLineKind::Removed,
-                // ' ', '=', and all other values → Context
-                _ => DiffLineKind::Context,
-            };
-
-            // Decode content as lossy UTF-8 (never panics on arbitrary bytes).
-            let content = String::from_utf8_lossy(diff_line.content()).into_owned();
-
-            lines.push(DiffLine {
-                kind,
-                content,
-                old_lineno: diff_line.old_lineno(),
-                new_lineno: diff_line.new_lineno(),
-            });
-        }
-
-        hunks.push(Hunk {
-            old_range,
-            new_range,
-            lines,
-        });
-    }
-
-    Ok(FileDiff {
-        old_path,
-        new_path,
-        change,
-        hunks,
-        is_binary: false,
-    })
+    diff_to_file_diff(&mut diff, path)
 }
 
 /// Return files changed between two commits (`a` → `b`) without touching the
@@ -496,23 +345,16 @@ fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitEr
     diff.find_similar(Some(&mut find_opts))
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
-    let num_deltas = diff.deltas().count();
-    if num_deltas == 0 {
-        return Ok(FileDiff {
-            old_path: None,
-            new_path: Some(path.to_path_buf()),
-            change: ChangeKind::Modified,
-            hunks: vec![],
-            is_binary: false,
-        });
-    }
+    patch_to_file_diff(diff, path)
+}
 
-    // #292: no matching delta → empty diff for THIS path, never delta 0.
-    let Some(delta_idx) = (0..num_deltas).find(|&i| {
-        let delta = diff.get_delta(i).unwrap();
-        let np = delta.new_file().path();
-        let op = delta.old_file().path();
-        np == Some(path) || op == Some(path)
+/// Convert the selected delta without changing the caller's rename/pathspec policy.
+/// Commit, compare and staging diffs share this conversion; conflicted worktree
+/// diffs use the same hunk decoder with their explicit ours-to-worktree patch.
+pub(crate) fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, GitError> {
+    // Never fall back to delta 0: a missing exact match must not show another file.
+    let Some(delta_idx) = diff.deltas().position(|delta| {
+        delta.new_file().path() == Some(path) || delta.old_file().path() == Some(path)
     }) else {
         return Ok(FileDiff {
             old_path: None,
@@ -523,46 +365,48 @@ fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitEr
         });
     };
 
-    let delta = diff.get_delta(delta_idx).unwrap();
+    let patch = git2::Patch::from_diff(diff, delta_idx)
+        .map_err(|e| GitError::Other(format!("Patch::from_diff failed: {}", e.message())))?;
+    // libgit2 inspects content lazily. Re-read the delta after materializing the
+    // patch rather than using flags copied before inspection or guessing from
+    // zero hunks (which also occur for empty files, renames and mode-only changes).
+    let delta = diff
+        .get_delta(delta_idx)
+        .ok_or_else(|| GitError::Other("diff delta disappeared".to_string()))?;
     let old_path = delta.old_file().path().map(PathBuf::from);
     let new_path = delta.new_file().path().map(PathBuf::from);
-    let change = file_status_from_delta(&delta).change;
-
-    let patch_opt = git2::Patch::from_diff(diff, delta_idx)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let is_binary_from_flag = delta.new_file().is_binary() || delta.old_file().is_binary();
-
-    let patch = match patch_opt {
-        None => {
-            return Ok(FileDiff {
-                old_path,
-                new_path,
-                change,
-                hunks: vec![],
-                is_binary: true,
-            });
-        }
-        Some(p) => {
-            if is_binary_from_flag {
-                return Ok(FileDiff {
-                    old_path,
-                    new_path,
-                    change,
-                    hunks: vec![],
-                    is_binary: true,
-                });
-            }
-            p
-        }
+    let change = match delta.status() {
+        git2::Delta::Added | git2::Delta::Untracked => ChangeKind::Added,
+        git2::Delta::Deleted => ChangeKind::Deleted,
+        git2::Delta::Renamed => ChangeKind::Renamed {
+            from: old_path.clone().unwrap_or_default(),
+        },
+        git2::Delta::Typechange => ChangeKind::TypeChange,
+        _ => ChangeKind::Modified,
     };
+    let is_binary = delta.old_file().is_binary() || delta.new_file().is_binary();
+    let hunks = match patch {
+        Some(patch) if !is_binary => patch_hunks(&patch)?,
+        _ => Vec::new(),
+    };
+    Ok(FileDiff {
+        old_path,
+        new_path,
+        change,
+        hunks,
+        is_binary,
+    })
+}
 
+/// The hunk/line extraction shared by every `git2::Patch` → [`FileDiff`] path.
+pub(crate) fn patch_hunks(patch: &git2::Patch<'_>) -> Result<Vec<Hunk>, GitError> {
     let num_hunks = patch.num_hunks();
     let mut hunks = Vec::with_capacity(num_hunks);
 
     for h_idx in 0..num_hunks {
-        let (diff_hunk, line_count) = patch
-            .hunk(h_idx)
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let (diff_hunk, line_count) = patch.hunk(h_idx).map_err(|e| {
+            GitError::Other(format!("patch.hunk({}) failed: {}", h_idx, e.message()))
+        })?;
 
         let old_range = (diff_hunk.old_start(), diff_hunk.old_lines());
         let new_range = (diff_hunk.new_start(), diff_hunk.new_lines());
@@ -570,15 +414,21 @@ fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitEr
         let mut lines = Vec::with_capacity(line_count);
 
         for l_idx in 0..line_count {
-            let diff_line = patch
-                .line_in_hunk(h_idx, l_idx)
-                .map_err(|e| GitError::Other(e.message().to_string()))?;
+            let diff_line = patch.line_in_hunk(h_idx, l_idx).map_err(|e| {
+                GitError::Other(format!(
+                    "patch.line_in_hunk({},{}) failed: {}",
+                    h_idx,
+                    l_idx,
+                    e.message()
+                ))
+            })?;
 
             let kind = match diff_line.origin() {
                 '+' | '>' => DiffLineKind::Added,
                 '-' | '<' => DiffLineKind::Removed,
                 _ => DiffLineKind::Context,
             };
+
             let content = String::from_utf8_lossy(diff_line.content()).into_owned();
 
             lines.push(DiffLine {
@@ -596,21 +446,5 @@ fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitEr
         });
     }
 
-    // Workdir/index deltas don't have their BINARY flag populated until the
-    // content callbacks run (libgit2 lazily inspects the file), so an image
-    // reaches this point as "0 hunks, not binary" and renders as an EMPTY
-    // diff pane (user report: clicking an unstaged png did nothing visible).
-    // A real content change that produced no text hunks IS a binary change —
-    // reclassify it. Mode-only/no-op deltas are excluded by the id/size check.
-    let is_binary = hunks.is_empty()
-        && (delta.old_file().size() > 0 || delta.new_file().size() > 0)
-        && delta.old_file().id() != delta.new_file().id();
-
-    Ok(FileDiff {
-        old_path,
-        new_path,
-        change,
-        hunks,
-        is_binary,
-    })
+    Ok(hunks)
 }

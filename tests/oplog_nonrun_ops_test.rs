@@ -361,11 +361,19 @@ fn history_undo_refuses_moved_head_and_records_failure() {
 }
 
 #[test]
-fn local_cleanup_records_full_tip_and_allows_branch_recovery() {
+fn cleanup_records_full_tips_and_allows_local_and_remote_recovery() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
-    let target = fixture.merged_target();
+    let mut target = fixture.merged_target();
+    let remote = TempDir::new().unwrap();
+    git(remote.path(), &["init", "--bare", "."]);
+    git(
+        dir,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(dir, &["push", "origin", "merged"]);
+    target.remote_tip = target.local_tip.clone();
     let expected = &target.local_tip.as_ref().unwrap().0;
     let before = repo_state(dir);
     let mut backend = Backend::open(dir).unwrap();
@@ -379,6 +387,9 @@ fn local_cleanup_records_full_tip_and_allows_branch_recovery() {
         .unwrap();
     assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
     assert_eq!(outcome.deleted.len(), 1);
+    assert_eq!(outcome.deleted[0].local_tip, target.local_tip);
+    assert_eq!(outcome.deleted[0].remote_tip, target.remote_tip);
+    assert!(git(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
     assert!(git(dir, &["for-each-ref", "refs/heads/merged"]).is_empty());
     assert_eq!(repo_state(dir), before);
 
@@ -389,6 +400,14 @@ fn local_cleanup_records_full_tip_and_allows_branch_recovery() {
     let recovered = logged_oid(summary, expected);
     git(dir, &["branch", &target.name, recovered]);
     assert_eq!(git(dir, &["rev-parse", &target.name]).trim(), expected);
+    git(
+        dir,
+        &["push", "origin", &format!("{recovered}:refs/heads/merged")],
+    );
+    assert_eq!(
+        git(remote.path(), &["rev-parse", "merged"]).trim(),
+        expected
+    );
     assert_eq!(repo_state(dir), before);
 }
 
@@ -418,4 +437,128 @@ fn untrusted_cleanup_preserves_branch_and_records_failure() {
     let records = fixture.records(1, Actor::Cli);
     assert_eq!(records[0].op, "branch-cleanup");
     assert!(matches!(records[0].outcome, OpOutcome::Failed { .. }));
+}
+
+#[cfg(unix)]
+#[test]
+fn cleanup_remote_success_local_failure_preserves_recovery_and_records_partial() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let dir = &fixture.path;
+    let mut target = fixture.merged_target();
+    let remote = TempDir::new().unwrap();
+    git(remote.path(), &["init", "--bare", "."]);
+    git(
+        dir,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(dir, &["push", "origin", "merged"]);
+    target.remote_tip = target.local_tip.clone();
+    let expected = &target.remote_tip.as_ref().unwrap().0;
+    let moved = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_ne!(&moved, expected);
+    let before = repo_state(dir);
+    let mut backend = Backend::open(dir).unwrap();
+    backend.set_actor(Actor::Cli);
+    let plan = backend
+        .plan_delete_merged_branches(NOW, std::slice::from_ref(&target))
+        .unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+
+    // post-receive runs after the remote ref transaction commits, but before
+    // push returns to cleanup's local verification. Move only the local ref:
+    // HEAD/index/worktree stay unchanged and there is no timing-dependent race.
+    let hook = remote.path().join("hooks/post-receive");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    git(
+        remote.path(),
+        &[
+            "config",
+            "core.hooksPath",
+            hook.parent().unwrap().to_str().unwrap(),
+        ],
+    );
+    let local_git_dir = dir
+        .join(".git")
+        .display()
+        .to_string()
+        .replace('\'', "'\\''");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nexec git --git-dir='{local_git_dir}' update-ref refs/heads/merged {moved}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let outcome = backend
+        .execute_delete_merged_branches(&plan, std::slice::from_ref(&target))
+        .unwrap();
+    assert!(git(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
+    assert!(git(dir, &["for-each-ref", "refs/remotes/origin/merged"]).is_empty());
+    assert_eq!(git(dir, &["rev-parse", "merged"]).trim(), moved);
+    assert_eq!(repo_state(dir), before);
+    assert_eq!(outcome.deleted.len(), 1);
+    assert_eq!(outcome.deleted[0].name, target.name);
+    assert_eq!(outcome.deleted[0].remote_tip, target.remote_tip);
+    assert!(outcome.deleted[0].local_tip.is_none());
+    assert_eq!(outcome.failed.len(), 1);
+    assert_eq!(outcome.failed[0].0, target.name);
+
+    let records = fixture.records(1, Actor::Cli);
+    assert_eq!(records[0].op, "branch-cleanup");
+    let (after, error) = match &records[0].outcome {
+        OpOutcome::Partial { after, error } => (after, error),
+        other => panic!("expected durable Partial after remote deletion, got {other:?}"),
+    };
+    assert!(error.contains(&target.name));
+    let recovered = logged_oid(&after.dirty, expected);
+    std::fs::remove_file(hook).unwrap();
+    git(
+        dir,
+        &["push", "origin", &format!("{recovered}:refs/heads/merged")],
+    );
+    assert_eq!(
+        git(remote.path(), &["rev-parse", "merged"]).trim(),
+        expected
+    );
+    assert_eq!(git(dir, &["rev-parse", "merged"]).trim(), moved);
+    assert_eq!(repo_state(dir), before);
+}
+
+#[test]
+fn cleanup_moved_local_tip_without_deletions_records_failed() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let dir = &fixture.path;
+    let target = fixture.merged_target();
+    let mut backend = Backend::open(dir).unwrap();
+    backend.set_actor(Actor::Cli);
+    let plan = backend
+        .plan_delete_merged_branches(NOW, std::slice::from_ref(&target))
+        .unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    git(dir, &["update-ref", "refs/heads/merged", "HEAD"]);
+    let moved = git(dir, &["rev-parse", "merged"]);
+    let before = repo_state(dir);
+
+    let outcome = backend
+        .execute_delete_merged_branches(&plan, &[target])
+        .unwrap();
+    assert!(outcome.deleted.is_empty());
+    assert_eq!(outcome.failed.len(), 1);
+    assert_eq!(outcome.failed[0].0, "merged");
+    assert!(outcome.failed[0]
+        .1
+        .contains("local branch moved since plan"));
+    assert_eq!(git(dir, &["rev-parse", "merged"]), moved);
+    assert_eq!(repo_state(dir), before);
+    let records = fixture.records(1, Actor::Cli);
+    match &records[0].outcome {
+        OpOutcome::Failed { error } => assert!(error.contains(&outcome.failed[0].1)),
+        other => panic!("expected Failed with no deleted refs, got {other:?}"),
+    }
 }

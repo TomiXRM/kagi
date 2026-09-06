@@ -373,6 +373,7 @@ mod macos {
         crate::recovery_operations::scenario_cleanup_stale_tab(&mut cx);
         crate::recovery_operations::scenario_preflight_presentation(&mut cx);
         crate::recovery_operations::scenario_cleanup_open_failure(&mut cx);
+        crate::recovery_operations::scenario_cleanup_partial_presentation(&mut cx);
         crate::recovery_layout::scenario_commit_row_layout(&mut cx);
         let history_fixture = build_fixture();
         let history_before = repo_fingerprint(history_fixture.path());

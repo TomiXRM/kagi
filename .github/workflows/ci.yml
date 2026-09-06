@@ -87,6 +87,8 @@ jobs:
         run: uv run --frozen --project ci mypy --config-file ci/pyproject.toml
       - name: rule selftest
         run: uv run --frozen --project ci check-all --selftest
+      - name: release gate fixtures
+        run: uv run --frozen --project ci python -m unittest kagi_checks.test_release_ci -v
 
   # ── BLOCKING: full test suite on macOS (the validated dev platform) ──────────
   test-macos:
@@ -98,6 +100,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo test --workspace
         run: cargo test --workspace
+
+  # This dependency list is the sole authority for release-blocking CI.
+  # `always()` is essential: a failed/skipped dependency must produce a red
+  # aggregate, not skip the verification step. Matrix success covers every leg.
+  blocking-ci:
+    needs: [invariants, gates-lint, test-macos]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Require every blocking dependency to succeed
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: uv run --frozen --project ci check-blocking-ci
 
   # ── ADVISORY: Linux test leg (gpui system deps; not yet validated headless) ──
   test-linux:

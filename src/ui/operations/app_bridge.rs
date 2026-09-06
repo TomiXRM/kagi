@@ -19,6 +19,7 @@ impl KagiApp {
         self.busy_op = Some("remove-worktree");
         self.clear_remove_worktree_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRemoveWorktree.t()));
+        klog!("async: remove-worktree started");
         let task = cx.background_spawn(async move {
             job.run_with_events(|event| {
                 use kagi_git::backend::remove::RemoveEvent;
@@ -26,7 +27,7 @@ impl KagiApp {
                     RemoveEvent::ConfigTrusted => {
                         klog!("worktree: trusted .kagi/worktree.toml (pre_remove)")
                     }
-                    RemoveEvent::ExecutionStarting => klog!("async: remove-worktree started"),
+                    RemoveEvent::ExecutionStarting => {}
                     RemoveEvent::ConfigRefused => {
                         klog!("refused: remove-worktree config changed after plan, not executing")
                     }
@@ -68,7 +69,6 @@ impl KagiApp {
             } => {
                 let entry = report.recording.entry().clone();
                 let summary = oplog_panel::outcome_summary(&entry.outcome);
-                let text = format!("{}: {}", entry.repo, summary);
                 let success = matches!(entry.outcome, OpOutcome::Success { .. });
                 let footer = match &entry.outcome {
                     OpOutcome::Success { after } => {
@@ -78,14 +78,17 @@ impl KagiApp {
                         format!("remove-worktree: partially applied — {}", error)
                     }
                     OpOutcome::Failed { error } => format!("remove-worktree: failed — {}", error),
-                    OpOutcome::Refused { blockers } => format!(
-                        "remove-worktree: refused ({} blocker{})",
-                        blockers.len(),
-                        if blockers.len() == 1 { "" } else { "s" }
-                    ),
+                    OpOutcome::Refused { blockers } => {
+                        format!("remove-worktree: refused — {}", blockers.join("; "))
+                    }
                     OpOutcome::Unknown { evidence, .. } => {
                         format!("remove-worktree: result unknown — {}", evidence)
                     }
+                };
+                let text = if matches!(entry.outcome, OpOutcome::Refused { .. }) {
+                    footer.clone()
+                } else {
+                    format!("{}: {}", entry.repo, summary)
                 };
                 match &entry.outcome {
                     OpOutcome::Success { .. } => klog!(
@@ -96,8 +99,8 @@ impl KagiApp {
                     OpOutcome::Partial { error, .. } => {
                         klog!("async: remove-worktree partial — {}", error)
                     }
-                    OpOutcome::Refused { .. } => {
-                        klog!("refused: remove-worktree plan has blockers, not executing")
+                    OpOutcome::Refused { blockers } => {
+                        klog!("async: remove-worktree failed — {}", blockers.join("; "))
                     }
                     _ => klog!("async: remove-worktree failed — {}", summary),
                 }

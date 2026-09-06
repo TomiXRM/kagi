@@ -350,7 +350,14 @@ impl KagiApp {
             let completion = task.await;
             let _ = this.update(cx, |app, cx| {
                 if app::apply_plan(&mut app.app_sessions, completion) {
-                    app.show_remove_plan();
+                    // A different modal opened while planning owns the UI now.
+                    // Check only accepted completions: stale jobs must not
+                    // invalidate a newer remove request's revision.
+                    if app.has_active_modal() && app.remove_worktree_modal().is_none() {
+                        app.app_sessions.invalidate_plan();
+                    } else {
+                        app.show_remove_plan();
+                    }
                 }
                 cx.notify();
             });

@@ -195,7 +195,14 @@ fn preflight_drift_dirty_lock_config_head() {
                 ],
             ),
         }
-        assert!(matches!(outcome(&job.run()), OpOutcome::Refused { .. }));
+        let completion = job.run();
+        let OpOutcome::Refused { blockers } = outcome(&completion) else {
+            panic!("runtime drift must be recorded as Refused");
+        };
+        assert!(!blockers.is_empty());
+        if change == "dirty" {
+            assert!(blockers.join("; ").contains("target changed after plan"));
+        }
         assert!(f.linked.exists());
     }
 }

@@ -1929,6 +1929,22 @@ pub fn execute_conflict_abort(
     repo.cleanup_state()
         .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
 
+    // libgit2 clears the rebase directory but leaves Git's replay pseudoref.
+    if matches!(session.op, ConflictOp::Rebase { .. }) {
+        match repo.find_reference("REBASE_HEAD") {
+            Ok(mut head) => head.delete().map_err(|e| {
+                GitError::Other(format!("remove REBASE_HEAD failed: {}", e.message()))
+            })?,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => {}
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "read REBASE_HEAD failed: {}",
+                    e.message()
+                )))
+            }
+        }
+    }
+
     Ok(AbortOutcome {
         restored_to: orig_sha,
         buffer_preserved_at,
@@ -2127,8 +2143,8 @@ fn commit_tree<'r>(repo: &'r Repository, oid: git2::Oid) -> Result<git2::Tree<'r
 /// from a user's mid-conflict edit to a non-conflicted file. Extended in #369
 /// to the sequencer ops (rebase / cherry-pick / revert), not just merge.
 ///
-/// Each op maps to the same 3-way `merge_trees(base, ours=HEAD, theirs)` git
-/// itself performs:
+/// Rebase replays onto current HEAD (onto + applied commits), not ORIG_HEAD,
+/// which is only the abort restoration target. Other ops retain their pre-op tree.
 /// - **merge**: base = merge-base(HEAD, MERGE_HEAD), theirs = MERGE_HEAD tree.
 /// - **cherry-pick / rebase** (replay commit `C`): base = `C^` tree, theirs = `C` tree.
 /// - **revert** (undo commit `C`): base = `C` tree, theirs = `C^` tree.
@@ -2177,10 +2193,21 @@ fn reconstruct_op_result<'r>(
         // StashConflict has no commit-producing output to reconstruct.
         ConflictOp::StashConflict => return Ok(None),
     };
+    let rebase_ours = if matches!(session.op, ConflictOp::Rebase { .. }) {
+        Some(
+            repo.head()
+                .and_then(|head| head.peel_to_tree())
+                .map_err(|e| {
+                    GitError::Other(format!("rebase HEAD tree lookup failed: {}", e.message()))
+                })?,
+        )
+    } else {
+        None
+    };
     let index = repo
         .merge_trees(
             base_tree.as_ref().unwrap_or(orig_tree),
-            orig_tree,
+            rebase_ours.as_ref().unwrap_or(orig_tree),
             &theirs_tree,
             None,
         )

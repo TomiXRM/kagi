@@ -6,7 +6,7 @@
 PM Round 1 の (1)〜(5)/A〜E、
 omp-plan 第 2 レビュー R1〜R4 と PM Round 2 の全件採用裁定を反映。
 追加 D と C の完了範囲は §7 の調整案を PM 採用済み。
-r4 の読解基準は `origin/dev@89327ce7`。2026-09-07。
+r4 の読解基準は `origin/dev@8990dff7`。2026-09-07。
 コード変更・cargo・G/E/M 実行は本 docs PR に含めない。
 [DESIGN](DESIGN.md) §5.2/§7/§8 の次 family を具体化するノートであり、
 DESIGN 冒頭の古い実装状況（1b 未実装）を現在の状況として引用しない。

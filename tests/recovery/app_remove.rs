@@ -48,7 +48,14 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         if button {
             let bounds = kagi::ui::e2e::confirm_bounds(window.window_id())
                 .expect("real confirm button laid out");
+            // GPUI's button hit testing needs the hover position established
+            // before mouse-down; simulate_click only sends down/up events.
+            cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
             cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+            assert!(
+                cx.read(|cx| app.read(cx).remove_worktree_modal().is_none()),
+                "confirm click must consume this window's remove modal"
+            );
         } else {
             cx.simulate_keystrokes(window, "enter");
         }

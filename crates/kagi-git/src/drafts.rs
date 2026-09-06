@@ -176,9 +176,18 @@ fn dirs_home() -> Option<PathBuf> {
 /// separator keeps the (repo, branch) key unambiguous even if a path or branch
 /// name contained the literal text of the other.
 fn draft_file_path(repo_path: &Path, branch: &str) -> Option<PathBuf> {
+    let dir = drafts_dir()?;
+    Some(draft_file_path_in_dir(repo_path, branch, &dir))
+}
+
+/// Full draft-file path under an already-resolved drafts directory.
+///
+/// Keeping the environment lookup in [`draft_file_path`] makes the key
+/// construction independently testable without reading process-global state.
+fn draft_file_path_in_dir(repo_path: &Path, branch: &str, dir: &Path) -> PathBuf {
     let key = format!("{}\0{}", repo_path.to_string_lossy(), branch);
     let name = format!("{}.json", sha1_hex(key.as_bytes()));
-    drafts_dir().map(|dir| dir.join(name))
+    dir.join(name)
 }
 
 /// Current wall-clock time in Unix epoch seconds (0 on a clock error).
@@ -427,14 +436,18 @@ mod tests {
     /// which is what keeps a worktree panel's message out of the open tab's.
     #[test]
     fn draft_key_includes_the_repo_path() {
-        let a = draft_file_path(Path::new("/repo"), "main").expect("path a");
-        let b = draft_file_path(Path::new("/repo/../wt"), "main").expect("path b");
+        let temp = tempfile::tempdir().expect("temp drafts dir");
+        let a = draft_file_path_in_dir(Path::new("/repo"), "main", temp.path());
+        let b = draft_file_path_in_dir(Path::new("/repo/../wt"), "main", temp.path());
         assert_ne!(a, b, "same branch, different repos must not share a draft");
         // …and the branch still separates two drafts within one repository.
-        let c = draft_file_path(Path::new("/repo"), "feat").expect("path c");
+        let c = draft_file_path_in_dir(Path::new("/repo"), "feat", temp.path());
         assert_ne!(a, c);
         // Same inputs → same file (the load side must find what save wrote).
-        assert_eq!(a, draft_file_path(Path::new("/repo"), "main").unwrap());
+        assert_eq!(
+            a,
+            draft_file_path_in_dir(Path::new("/repo"), "main", temp.path())
+        );
     }
 
     // ── JSON round-trip / escaping ─────────────────────────────

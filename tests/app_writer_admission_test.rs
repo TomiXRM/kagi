@@ -151,6 +151,9 @@ fn write(f: &Fixture, writer: Writer, guard: WriteGuard) {
 
 #[test]
 fn remove_first_refuses_every_writer_before_bytes_or_index_change() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     for writer in WRITERS {
         let f = Fixture::new();
@@ -180,6 +183,9 @@ fn remove_first_refuses_every_writer_before_bytes_or_index_change() {
 
 #[test]
 fn every_writer_first_blocks_remove_then_releases_on_completion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     for writer in WRITERS {
         let f = Fixture::new();
@@ -219,6 +225,9 @@ fn every_writer_first_blocks_remove_then_releases_on_completion() {
 
 #[test]
 fn stopped_unknown_blocks_all_writers_until_read_and_ack() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     for _writer in WRITERS {
         let f = Fixture::new();
@@ -249,6 +258,9 @@ fn stopped_unknown_blocks_all_writers_until_read_and_ack() {
 
 #[test]
 fn dropped_or_panicking_writer_does_not_release_an_unconfirmed_lease() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     for panic in [false, true] {
         let f = Fixture::new();
@@ -270,6 +282,9 @@ fn dropped_or_panicking_writer_does_not_release_an_unconfirmed_lease() {
 
 #[test]
 fn fetch_unknown_retains_but_known_failure_releases() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     for unknown in [false, true] {
         let f = Fixture::new();
@@ -287,6 +302,9 @@ fn fetch_unknown_retains_but_known_failure_releases() {
 
 #[test]
 fn canonical_identity_and_conservative_global_exclusion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     let f = Fixture::new();
     let other = Fixture::new();
@@ -318,6 +336,9 @@ fn canonical_identity_and_conservative_global_exclusion() {
 
 #[test]
 fn untrusted_identity_allows_plain_editor_save_but_git_writers_stay_gated() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     let f = Fixture::new();
     let mut backend = Backend::open(&f.linked).unwrap();
@@ -347,6 +368,9 @@ fn untrusted_identity_allows_plain_editor_save_but_git_writers_stay_gated() {
 
 #[test]
 fn untrusted_fetch_facades_refuse_before_cli_or_ref_changes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _log = TestLog::new();
     let f = Fixture::new();
     let mut backend = Backend::open(&f.linked).unwrap();
@@ -360,6 +384,8 @@ fn untrusted_fetch_facades_refuse_before_cli_or_ref_changes() {
     assert_eq!(std::fs::read(f.linked.join("file")).unwrap(), b"original\n");
 }
 
+#[path = "support/isolated.rs"]
+mod test_support;
 /// #482 stage 1 G: closing the owning tab is not evidence that the writer
 /// stopped. `detach` drops the display, never the reservation, so every real
 /// writer stays refused while the reserved operation is still in flight — and a

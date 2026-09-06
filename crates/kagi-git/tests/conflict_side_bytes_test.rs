@@ -72,6 +72,9 @@ fn binary_conflict() -> (TempDir, Vec<u8>, Vec<u8>) {
 /// (main_bytes != side_bytes by construction).
 #[test]
 fn binary_conflict_side_bytes_are_exact_per_side() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (tmp, main_bytes, side_bytes) = binary_conflict();
     let repo = Repository::open(tmp.path()).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
@@ -108,6 +111,9 @@ fn binary_conflict_side_bytes_are_exact_per_side() {
 /// distinct target must come back byte-for-byte.
 #[test]
 fn symlink_conflict_side_bytes_are_link_targets() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
     std::os::unix::fs::symlink("placeholder", dir.join("link")).unwrap();
@@ -141,3 +147,6 @@ fn symlink_conflict_side_bytes_are_link_targets() {
     assert_eq!(cur, b"current-target", "current symlink target verbatim");
     assert_eq!(inc, b"incoming-target", "incoming symlink target verbatim");
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

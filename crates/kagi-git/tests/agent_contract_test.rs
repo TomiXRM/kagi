@@ -60,6 +60,9 @@ fn foreign_entry(op: &str) -> OpLogEntry {
 
 #[test]
 fn confirm_response_names_this_runs_entry_not_the_global_tail() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -101,6 +104,9 @@ fn confirm_response_names_this_runs_entry_not_the_global_tail() {
 
 #[test]
 fn same_repo_same_op_runs_report_their_own_entries() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -129,6 +135,9 @@ fn same_repo_same_op_runs_report_their_own_entries() {
 #[cfg(unix)]
 #[test]
 fn a_failed_append_is_reported_as_unrecorded_not_as_an_older_entry() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
 
     let _guard = ENV.lock().unwrap();
@@ -184,6 +193,9 @@ fn a_failed_append_is_reported_as_unrecorded_not_as_an_older_entry() {
 
 #[test]
 fn resolve_operation_covers_exactly_the_advertised_ops() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = fixture();
     let backend = Backend::discover(tmp.path()).unwrap();
     let head = git(tmp.path(), &["rev-parse", "HEAD"]);
@@ -217,3 +229,6 @@ fn resolve_operation_covers_exactly_the_advertised_ops() {
         Operation::Checkout { .. }
     ));
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

@@ -47,6 +47,9 @@ fn with_tempdir() -> (tempfile::TempDir, String) {
 
 #[test]
 fn five_ops_produce_five_jsonl_lines() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -138,6 +141,9 @@ fn five_ops_produce_five_jsonl_lines() {
 
 #[test]
 fn refused_entry_recorded() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -177,6 +183,9 @@ fn refused_entry_recorded() {
 
 #[test]
 fn failed_entry_recorded() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -208,6 +217,9 @@ fn failed_entry_recorded() {
 
 #[test]
 fn special_chars_escaped_in_output() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -259,6 +271,9 @@ fn special_chars_escaped_in_output() {
 
 #[test]
 fn explicit_kagi_log_dir_overrides_home() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -297,6 +312,9 @@ fn explicit_kagi_log_dir_overrides_home() {
 
 #[test]
 fn read_tail_empty_when_no_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -321,6 +339,9 @@ fn read_tail_empty_when_no_file() {
 
 #[test]
 fn read_tail_round_trips_all_outcome_kinds() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -401,6 +422,9 @@ fn read_tail_round_trips_all_outcome_kinds() {
 
 #[test]
 fn read_tail_limits_to_n() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -437,6 +461,9 @@ fn read_tail_limits_to_n() {
 
 #[test]
 fn read_tail_skips_malformed_lines() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -496,6 +523,9 @@ fn read_tail_skips_malformed_lines() {
 
 #[test]
 fn read_tail_restores_escaped_strings() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let (dir, log_dir) = with_tempdir();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -542,3 +572,6 @@ fn read_tail_restores_escaped_strings() {
     }
     drop(dir);
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

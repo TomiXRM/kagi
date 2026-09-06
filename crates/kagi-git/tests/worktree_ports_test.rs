@@ -35,6 +35,9 @@ fn wt_live(store: &std::path::Path, name: &str) -> PathBuf {
 
 #[test]
 fn three_worktrees_get_three_different_consecutive_blocks() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _g = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -51,6 +54,9 @@ fn three_worktrees_get_three_different_consecutive_blocks() {
 
 #[test]
 fn already_assigned_worktree_keeps_its_block_across_restart() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _g = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -73,6 +79,9 @@ fn already_assigned_worktree_keeps_its_block_across_restart() {
 
 #[test]
 fn range_exhaustion_returns_none() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _g = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -109,6 +118,9 @@ fn range_exhaustion_returns_none() {
 /// recovered even as worktrees came and went.
 #[test]
 fn removed_worktree_block_is_reclaimed_on_exhaustion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _g = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -140,3 +152,6 @@ fn removed_worktree_block_is_reclaimed_on_exhaustion() {
 
     std::env::remove_var("KAGI_LOG_DIR");
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

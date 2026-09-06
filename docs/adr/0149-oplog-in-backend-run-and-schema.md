@@ -137,3 +137,19 @@ This does not supply crash durability, multi-process locking or GC retention.
   new non-run mutating subsystem is added and forgets `record_op_persist`, it
   loses log coverage (never a double-record) — a known, bounded risk until those
   subsystems join the pipeline.
+
+### Test-process storage confinement (#573)
+
+When runtime `CARGO_MANIFEST_DIR` is present, oplog path resolution requires a
+nonempty `KAGI_LOG_DIR`; it must return `tests must set KAGI_LOG_DIR` instead of
+falling back to the user's home directory. This is a runtime environment check,
+not `cfg(test)`, so integration-test consumers of the production library receive
+the same protection. An explicit log directory keeps normal durable recording
+and receipts enabled. Normal launches without the Cargo marker retain the
+existing home-directory fallback.
+
+Git fixtures use `tests/support/isolated.rs` to run each exact test in a child
+with its own temporary log directory. The parent never changes its environment
+and retains the directory until the child exits. The shared helper is also the
+fixture route for the raw-executor caller migration in #566/#575. Tests must not
+remove the Cargo marker or disable oplog recording to bypass this protection.

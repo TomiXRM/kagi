@@ -227,6 +227,9 @@ fn check_invariants(commits: &[Commit], gl: &GraphLayout) {
 
 #[test]
 fn test_linear_10() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![
         c("J", &["I"]),
         c("I", &["H"]),
@@ -280,6 +283,9 @@ fn test_linear_10() {
 
 #[test]
 fn test_branch_and_merge() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![
         c("M", &["B", "D"]),
         c("B", &["A"]),
@@ -355,6 +361,9 @@ fn test_branch_and_merge() {
 
 #[test]
 fn test_octopus_merge_3parents() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![
         c("O", &["A", "B", "C"]),
         c("A", &[]),
@@ -426,6 +435,9 @@ fn test_octopus_merge_3parents() {
 
 #[test]
 fn test_criss_cross_merge() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Construct: two commits A and B, two merges M1 and M2 each merging both.
     //   M2 (parents=[M1, B])  — latest
     //   M1 (parents=[A, B])
@@ -463,6 +475,9 @@ fn test_criss_cross_merge() {
 
 #[test]
 fn test_parallel_long_branch_pass_edges() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![
         c("M5", &["M4"]),
         c("F5", &["F4"]),
@@ -515,6 +530,9 @@ fn test_parallel_long_branch_pass_edges() {
 
 #[test]
 fn test_multiple_roots_lane_reuse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Two disconnected roots followed by a small linear chain.
     // Topo order: [T, P, R1, R2]
     // T and P are on their own chain; R1 and R2 are orphans.
@@ -555,6 +573,9 @@ fn test_multiple_roots_lane_reuse() {
 
 #[test]
 fn test_lane_reuse_after_merge() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Build: merge M consumes lanes 0 and 1 temporarily,
     // then both are freed. New tip X should land on lane 0.
     let commits = vec![
@@ -587,6 +608,9 @@ fn test_lane_reuse_after_merge() {
 
 #[test]
 fn test_single_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![c("A", &[])];
     let gl = layout(&commits);
 
@@ -641,6 +665,9 @@ fn test_single_commit() {
 
 #[test]
 fn test_stress_three_level_nested() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![
         c("M3", &["B3", "F3"]),
         c("B3", &["M2a"]),
@@ -713,6 +740,9 @@ fn write_file(dir: &Path, name: &str, content: &str) {
 
 #[test]
 fn test_end_to_end_layout() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
 
@@ -805,6 +835,9 @@ fn test_end_to_end_layout() {
 
 #[test]
 fn test_criss_cross_full() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![
         c("Z", &["X", "Y"]),
         c("X", &["A", "B"]),
@@ -830,6 +863,9 @@ fn test_criss_cross_full() {
 
 #[test]
 fn test_two_roots_lane_concurrent_then_reuse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // M  (merge: parents=[X, Y])   — lane 0
     // X  (branch a tip)            — lane 0
     // Y  (branch b tip)            — lane 1
@@ -882,6 +918,9 @@ fn test_two_roots_lane_concurrent_then_reuse() {
 
 #[test]
 fn test_stable_stacked_branches_staircase() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let commits = vec![
         c("P1", &["P2", "T1"]),
         c("P2", &["P3", "T4"]),
@@ -939,3 +978,6 @@ fn test_stable_stacked_branches_staircase() {
         "the branch line must bend into P4 at P4's own row"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

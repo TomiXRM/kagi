@@ -75,6 +75,9 @@ fn head_commit_id(repo: &Repository) -> CommitId {
 
 #[test]
 fn commit_added_file_counts_all_additions() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -93,6 +96,9 @@ fn commit_added_file_counts_all_additions() {
 
 #[test]
 fn commit_modified_file_counts_add_and_del() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -113,6 +119,9 @@ fn commit_modified_file_counts_add_and_del() {
 
 #[test]
 fn commit_deleted_file_counts_all_deletions() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -130,6 +139,9 @@ fn commit_deleted_file_counts_all_deletions() {
 
 #[test]
 fn commit_binary_file_is_flagged_zero_counts() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -148,6 +160,9 @@ fn commit_binary_file_is_flagged_zero_counts() {
 
 #[test]
 fn commit_renamed_file_collapses_to_renamed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -173,6 +188,9 @@ fn commit_renamed_file_collapses_to_renamed() {
 
 #[test]
 fn staged_diffstat_reports_index_changes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -189,6 +207,9 @@ fn staged_diffstat_reports_index_changes() {
 
 #[test]
 fn unstaged_diffstat_reports_workdir_changes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -206,6 +227,9 @@ fn unstaged_diffstat_reports_workdir_changes() {
 
 #[test]
 fn unstaged_diffstat_excludes_untracked_files() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Untracked files are intentionally NOT diffstatted: line stats require
     // reading every file, which made a bulk untracked drop (e.g. 300 images)
     // freeze the UI on each reload. They show in the commit panel as new ("A")
@@ -222,3 +246,6 @@ fn unstaged_diffstat_excludes_untracked_files() {
         "untracked files must be excluded from unstaged_diffstat (perf)"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

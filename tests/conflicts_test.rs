@@ -16,12 +16,8 @@ use std::process::Command;
 use git2::Repository;
 use tempfile::TempDir;
 
-/// Process-global serial guard for tests that mutate the `KAGI_LOG_DIR`
-/// environment variable (which `ResolutionBuffer` autosave reads).  `std::env`
-/// is process-global, so concurrent set/remove across parallel test threads
-/// races (the known flaky `abort_restores_pre_op_state_and_retains_buffer`).
-/// Every test that touches `KAGI_LOG_DIR` holds this lock for its duration.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[path = "support/isolated.rs"]
+mod test_support;
 
 use kagi_git::{
     continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_skip,
@@ -132,6 +128,9 @@ fn merge_conflict_repo() -> TempDir {
 
 #[test]
 fn detects_merge_session_with_content_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
 
@@ -150,6 +149,9 @@ fn detects_merge_session_with_content_conflict() {
 
 #[test]
 fn no_session_on_clean_repo() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -163,6 +165,9 @@ fn no_session_on_clean_repo() {
 
 #[test]
 fn detects_cherry_pick_session() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -201,6 +206,9 @@ fn detects_cherry_pick_session() {
 
 #[test]
 fn classifies_modify_delete_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -233,6 +241,9 @@ fn classifies_modify_delete_conflict() {
 
 #[test]
 fn classifies_binary_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -269,6 +280,9 @@ fn classifies_binary_conflict() {
 
 #[test]
 fn add_add_text_conflict_materializes_as_text() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -345,6 +359,9 @@ fn add_add_text_conflict_materializes_as_text() {
 
 #[test]
 fn buffer_choices_undo_and_provenance() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
 
@@ -388,10 +405,9 @@ fn buffer_choices_undo_and_provenance() {
 
 #[test]
 fn buffer_autosave_round_trip() {
-    // Redirect autosave to a temp dir via KAGI_LOG_DIR.
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
@@ -416,9 +432,7 @@ fn buffer_autosave_round_trip() {
         buffer.provenance(path).unwrap()
     );
 
-    // Cleanup the global env var so other test binaries are unaffected.
     ResolutionBuffer::clear(tmp.path()).unwrap();
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 // ────────────────────────────────────────────────────────────
@@ -427,6 +441,9 @@ fn buffer_autosave_round_trip() {
 
 #[test]
 fn continue_blocked_until_resolved_and_marker_free() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
@@ -474,9 +491,9 @@ fn continue_blocked_until_resolved_and_marker_free() {
 
 #[test]
 fn abort_restores_pre_op_state_and_retains_buffer() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
@@ -526,11 +543,13 @@ fn abort_restores_pre_op_state_and_retains_buffer() {
     assert!(reloaded.has_resolution(Path::new("file.txt")));
 
     ResolutionBuffer::clear(dir).unwrap();
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 #[test]
 fn execute_continue_merge_creates_merge_commit() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -566,6 +585,9 @@ fn execute_continue_merge_creates_merge_commit() {
 /// way to finish it without dropping to a terminal.
 #[test]
 fn execute_continue_cherry_pick_advances_and_finishes() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = cherry_pick_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -608,6 +630,9 @@ fn execute_continue_cherry_pick_advances_and_finishes() {
 /// feature this fixes exists to unblock ("Rebase current onto").
 #[test]
 fn execute_continue_rebase_advances_and_finishes() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = rebase_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -653,6 +678,9 @@ fn execute_continue_rebase_advances_and_finishes() {
 /// Staging on Continue must collapse the conflict so the commit succeeds.
 #[test]
 fn stage_then_merge_commit_without_per_file_save() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -742,6 +770,9 @@ fn two_hunk_conflict_repo() -> TempDir {
 
 #[test]
 fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::resolution::HunkChoice;
 
     let tmp = two_hunk_conflict_repo();
@@ -794,6 +825,9 @@ fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
 
 #[test]
 fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::resolution::HunkChoice;
 
     let tmp = two_hunk_conflict_repo();
@@ -828,6 +862,9 @@ fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
 
 #[test]
 fn continue_gate_reports_specific_blocker_codes() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
@@ -854,6 +891,9 @@ fn continue_gate_reports_specific_blocker_codes() {
 
 #[test]
 fn continue_gate_flags_unresolved_binary_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = binary_merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
@@ -942,6 +982,9 @@ fn binary_merge_conflict_repo() -> TempDir {
 
 #[test]
 fn skip_is_rejected_for_merge() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
     let session = detect_conflict_session(&repo).unwrap();
@@ -954,9 +997,9 @@ fn skip_is_rejected_for_merge() {
 
 #[test]
 fn skip_cherry_pick_drops_current_step() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = cherry_pick_conflict_repo();
     let dir = tmp.path();
@@ -994,8 +1037,6 @@ fn skip_cherry_pick_drops_current_step() {
 
     // Buffer preserved.
     assert!(outcome.buffer_preserved_at.is_some());
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1007,6 +1048,9 @@ fn skip_cherry_pick_drops_current_step() {
 /// unmerged entries (stage 1/2/3) collapse to stage 0 (T-CONFLICT-UX-014).
 #[test]
 fn save_resolution_stages_file_to_stage_zero() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::execute_conflict_save;
 
     let tmp = merge_conflict_repo();
@@ -1056,6 +1100,9 @@ fn save_resolution_stages_file_to_stage_zero() {
 /// Save refuses (blocks) when the resolved text still has conflict markers.
 #[test]
 fn save_resolution_blocks_on_marker_residue() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::execute_conflict_save;
 
     let tmp = merge_conflict_repo();
@@ -1083,6 +1130,9 @@ fn save_resolution_blocks_on_marker_residue() {
 /// panel (T-CONFLICT-FLOW-030).  HEAD is unchanged after routing.
 #[test]
 fn merge_continue_routes_to_commit_panel_without_committing() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::{plan_conflict_continue_route, ContinueRoute};
 
     let tmp = merge_conflict_repo();
@@ -1121,6 +1171,9 @@ fn merge_continue_routes_to_commit_panel_without_committing() {
 /// (HEAD + MERGE_HEAD) and cleans up the merge state (T-CONFLICT-FLOW-031).
 #[test]
 fn merge_commit_has_two_parents_and_cleans_state() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::{execute_conflict_save, execute_merge_commit};
 
     let tmp = merge_conflict_repo();
@@ -1163,11 +1216,10 @@ fn merge_commit_has_two_parents_and_cleans_state() {
 /// not a merge-commit-panel route (T-CONFLICT-FLOW-032).
 #[test]
 fn sequencer_continue_produces_a_plan() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::{plan_conflict_continue_route, ContinueRoute};
-
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
 
     let tmp = cherry_pick_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
@@ -1192,14 +1244,15 @@ fn sequencer_continue_produces_a_plan() {
         }
         other => panic!("sequencer must produce a plan, got {:?}", other),
     }
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 /// Per-hunk accept is independent: each hunk's choice can differ, and changing
 /// one hunk does not alter another (T-CONFLICT-UX-010/012).
 #[test]
 fn per_hunk_accept_is_independent() {
+    if !test_support::run_isolated() {
+        return;
+    }
     use kagi_git::resolution::{HunkChoice, Region};
 
     let tmp = two_hunk_conflict_repo();
@@ -1290,9 +1343,9 @@ fn wide_merge_conflict_repo() -> TempDir {
 
 #[test]
 fn abort_restores_cleanly_merged_files_and_removes_added_files() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = wide_merge_conflict_repo();
     let dir = tmp.path();
@@ -1346,15 +1399,13 @@ fn abort_restores_cleanly_merged_files_and_removes_added_files() {
     );
     assert_eq!(git_output(dir, &["diff", "--name-only"]), "untouched.txt");
     assert_eq!(git_output(dir, &["diff", "--cached", "--name-only"]), "");
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 #[test]
 fn abort_leaves_status_clean_without_user_dirt() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = wide_merge_conflict_repo();
     let dir = tmp.path();
@@ -1371,8 +1422,6 @@ fn abort_leaves_status_clean_without_user_dirt() {
         "",
         "`git status --porcelain` must be empty after abort"
     );
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 /// Rebase of two commits onto `main` where the FIRST replayed commit conflicts
@@ -1404,9 +1453,9 @@ fn rebase_two_step_conflict_repo() -> TempDir {
 
 #[test]
 fn skip_keeps_the_remaining_sequencer_picks() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = rebase_two_step_conflict_repo();
     let dir = tmp.path();
@@ -1447,8 +1496,6 @@ fn skip_keeps_the_remaining_sequencer_picks() {
         "side"
     );
     assert_eq!(git_output(dir, &["status", "--porcelain"]), "");
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 /// A cleanly-merged file edited DURING Conflict Mode must block the abort.
@@ -1461,9 +1508,9 @@ fn skip_keeps_the_remaining_sequencer_picks() {
 /// kagi must not silently destroy what git protects.
 #[test]
 fn abort_refuses_when_a_cleanly_merged_file_was_edited_mid_conflict() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = wide_merge_conflict_repo();
     let dir = tmp.path();
@@ -1512,9 +1559,9 @@ fn abort_refuses_when_a_cleanly_merged_file_was_edited_mid_conflict() {
 /// output and refuses when the staged blob differs from it.
 #[test]
 fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = wide_merge_conflict_repo();
     let dir = tmp.path();
@@ -1559,8 +1606,6 @@ fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
         dir.join(".git/MERGE_HEAD").exists(),
         "the refusal must leave the conflicted state fully intact"
     );
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 /// #369: the staged-edit abort guard must protect the SEQUENCER ops too, not
@@ -1569,9 +1614,9 @@ fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
 /// (reconstruct_op_result now covers cherry-pick via CHERRY_PICK_HEAD).
 #[test]
 fn abort_refuses_staged_non_conflicted_edit_during_cherry_pick() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     // Base carries both files; `side` and `main` diverge only on file.txt, so a
     // cherry-pick of side onto main conflicts on file.txt while b.txt stays clean.
@@ -1617,8 +1662,6 @@ fn abort_refuses_staged_non_conflicted_edit_during_cherry_pick() {
         dir.join(".git/CHERRY_PICK_HEAD").exists(),
         "the refusal must leave the cherry-pick state intact"
     );
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }
 
 /// #540 fixture: a rebase whose first TWO replayed commits both conflict on the
@@ -1654,9 +1697,9 @@ fn rebase_two_conflicting_steps_repo() -> TempDir {
 /// detecting the new conflict session.
 #[test]
 fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let log_tmp = TempDir::new().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+    if !test_support::run_isolated() {
+        return;
+    }
 
     let tmp = rebase_two_conflicting_steps_repo();
     let dir = tmp.path();
@@ -1695,6 +1738,4 @@ fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
         git_output(dir, &["rev-parse", "main"]),
         "side is now exactly main"
     );
-
-    std::env::remove_var("KAGI_LOG_DIR");
 }

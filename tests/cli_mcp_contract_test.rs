@@ -99,6 +99,9 @@ fn sample_args(op: &str, head: &str) -> Vec<String> {
 
 #[test]
 fn cli_and_mcp_emit_the_same_plan_for_every_supported_op() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = TempDir::new().unwrap();
     let logs = TempDir::new().unwrap();
     build_repo(repo.path());
@@ -142,6 +145,9 @@ fn cli_and_mcp_emit_the_same_plan_for_every_supported_op() {
 
 #[test]
 fn cli_and_mcp_reject_the_same_unsupported_and_underspecified_requests() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = TempDir::new().unwrap();
     let logs = TempDir::new().unwrap();
     build_repo(repo.path());
@@ -178,6 +184,9 @@ fn cli_and_mcp_reject_the_same_unsupported_and_underspecified_requests() {
 
 #[test]
 fn confirm_reports_its_own_oplog_entry_on_both_frontends() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = TempDir::new().unwrap();
     let logs = TempDir::new().unwrap();
     build_repo(repo.path());
@@ -230,3 +239,6 @@ fn confirm_reports_its_own_oplog_entry_on_both_frontends() {
     };
     assert_eq!(keys(&done), keys(&confirmed), "confirm shapes must match");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

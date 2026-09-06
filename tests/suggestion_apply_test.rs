@@ -63,6 +63,9 @@ fn suggestion(start: u32, end: u32, replacement: &str) -> Suggestion {
 
 #[test]
 fn apply_replaces_exactly_the_anchored_range() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -111,6 +114,9 @@ fn apply_replaces_exactly_the_anchored_range() {
 
 #[test]
 fn stale_range_after_plan_makes_execute_refuse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -156,6 +162,9 @@ fn stale_range_after_plan_makes_execute_refuse() {
 
 #[test]
 fn apply_is_recorded_in_oplog() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -193,3 +202,6 @@ fn apply_is_recorded_in_oplog() {
         None => std::env::remove_var("KAGI_LOG_DIR"),
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

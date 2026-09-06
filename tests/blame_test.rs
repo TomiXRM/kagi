@@ -58,6 +58,9 @@ fn init_repo(tmp: &TempDir) -> (Backend, std::path::PathBuf) {
 
 #[test]
 fn attributes_each_line_to_its_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (backend, dir) = init_repo(&tmp);
 
@@ -94,6 +97,9 @@ fn attributes_each_line_to_its_commit() {
 
 #[test]
 fn ignore_revs_file_marks_and_counts_reformatting_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (backend, dir) = init_repo(&tmp);
 
@@ -131,3 +137,6 @@ fn ignore_revs_file_marks_and_counts_reformatting_commit() {
     // ...and the "N revisions ignored" count surfaces the single formatting rev.
     assert_eq!(after.ignored_revs, 1);
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

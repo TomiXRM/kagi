@@ -68,7 +68,7 @@ fn open_lock(path: &std::path::Path) -> Result<File, GitError> {
 }
 
 pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogPlan, GitError> {
-    let path = log_file_path().ok_or_else(|| io("missing log path"))?;
+    let path = log_file_path()?.ok_or_else(|| io("missing log path"))?;
     let _lock = lock(&path)?;
     let before = std::fs::read_to_string(&path).map_err(io)?;
     let owner = Repository::discover(&entry.repo).map_err(io)?;
@@ -154,7 +154,7 @@ pub(crate) fn execute(
     retired: &mut bool,
 ) -> Result<(), GitError> {
     if std::fs::canonicalize(repo.commondir()).map_err(io)? != plan.common_dir
-        || log_file_path().as_ref() != Some(&plan.path)
+        || log_file_path()?.as_ref() != Some(&plan.path)
     {
         return Err(io("repository/log identity changed; re-plan"));
     }

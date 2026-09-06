@@ -64,6 +64,8 @@ jobs:
           - modal-lists
           # gates stay in one dialect (this file included)
           - shell-hygiene
+          # canonical verification recipe references must remain real files (#544)
+          - skill-refs
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

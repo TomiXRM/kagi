@@ -202,8 +202,9 @@ When a PR changes a verification seam, environment flag, script, or runner featu
 update the matching part of this skill and state `skill 更新済み` in the PR body.
 Adding a `tests/gui_e2e_runner.rs` scenario also requires updating Tier A's inventory.
 Keep `.agents/skills/kagi-verify` as a symlink to the canonical source. Manually
-check every referenced `scripts/*` and test path until the automated reference gate
-tracked in [#544](https://github.com/TomiXRM/kagi/issues/544) lands.
+run `uv run --project ci check-skill-refs` before merging. It verifies concrete
+`scripts/*` and `tests/**/*.rs` references in inline code, fenced commands, and
+Markdown links in this canonical skill (#544).
 
 Finish by exiting the launched application so it cannot retain a socket or test
 state. Fixtures and isolated log directories live below `/tmp`; remove them only

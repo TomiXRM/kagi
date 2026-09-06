@@ -318,7 +318,7 @@ pub fn plan_merge_into_branch(
 /// calls in [`super::merge::execute_merge_branch`] that touch the working tree
 /// — are deliberately absent: the files on disk belong to the current branch,
 /// which this operation is not changing.
-pub fn execute_merge_into_branch(
+pub(crate) fn execute_merge_into_branch(
     repo: &Repository,
     source: &str,
     target: &str,

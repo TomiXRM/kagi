@@ -245,6 +245,26 @@ Finish by exiting the launched application so it cannot retain a socket or test
 state. Fixtures and isolated log directories live below `/tmp`; remove them only
 when their evidence is no longer needed.
 
+
+### Backend executor visibility (#566)
+
+`tests/support/backend_ops.rs` adapts legacy fixture signatures to Backend run or
+a dedicated method, with the optional snapshot policy explicitly OFF. It must
+never call raw executors or clear plan blockers. `tests/support/remove.rs` freezes
+the opaque remove plan before any fixture drift. Compile-fail doctests guard old
+root/ops/conflicts/staging/step-runner imports. D/F fixtures check owner trust and
+frozen OID/child-list rejection through the dedicated Backend boundary.
+`tests/backend_fixture_storage_test.rs` drives the migrated branch adapter in
+the shared isolated child, asserts a record in its log directory and preserves
+a fake HOME oplog sentinel. Every new migrated fixture must use the same helper.
+
+The low-level trust/headless acceptance cases are crate-internal tests in
+`crates/kagi-git/src/ops/worktree_steps_acceptance_tests.rs`, with global env
+changes isolated in child test processes. Run `cargo test --workspace`; GUI E2E
+may be compiled with `--features gui-e2e --no-run`, but do not execute it for this
+visibility refactor. Preserve the private safe-checkout and unapproved-config
+oracles when updating fixture adapters.
+
 ### Ref-backed discard/remove recovery (#523)
 
 Use `crates/kagi-git/tests/ref_backups_test.rs` for G: disable optional snapshots,

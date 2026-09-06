@@ -21,6 +21,9 @@
 //! All write operations are confined to `TempDir` repositories. No `force`
 //! flags are exercised; every assertion checks that the repo stays fsck-clean.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{execute_checkout_commit, execute_stash_push, execute_undo_commit};
 use std::path::Path;
 use std::process::Command;
 
@@ -29,8 +32,8 @@ use tempfile::TempDir;
 
 use kagi_domain::plan_note::{HistoryNote, PlanNote};
 use kagi_git::{
-    execute_checkout_commit, execute_stash_push, execute_undo_commit, plan_amend,
-    plan_checkout_commit, plan_stash_pop, plan_stash_push, snapshot, AmendMode, CommitId,
+    plan_amend, plan_checkout_commit, plan_stash_pop, plan_stash_push, snapshot, AmendMode,
+    CommitId,
 };
 
 // ────────────────────────────────────────────────────────────

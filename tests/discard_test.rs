@@ -10,6 +10,9 @@
 //!
 //! All write operations are confined to `TempDir` repositories — never user repos.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_discard;
 use std::path::Path;
 use std::process::Command;
 
@@ -17,7 +20,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{DiscardNote, PlanNote};
-use kagi_git::{execute_discard, plan_discard, working_tree_status};
+use kagi_git::{plan_discard, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

@@ -136,7 +136,10 @@ pub fn plan_delete_remote_branch(
 /// is rejected by the remote like any other non-fast-forward push would be
 /// only if branch protection denies deletion, which surfaces as a normal
 /// `GitError`.
-pub fn execute_delete_remote_branch(repo_path: &Path, remote_branch: &str) -> Result<(), GitError> {
+pub(crate) fn execute_delete_remote_branch(
+    repo_path: &Path,
+    remote_branch: &str,
+) -> Result<(), GitError> {
     let (remote, branch) = split_remote_branch(remote_branch).ok_or_else(|| {
         GitError::Other(format!(
             "'{}' is not a <remote>/<branch> name",

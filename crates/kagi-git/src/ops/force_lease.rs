@@ -189,7 +189,7 @@ fn plan_lease_sha(plan: &OperationPlan) -> Option<&str> {
     }
 }
 
-pub fn execute_force_with_lease_push(
+pub(crate) fn execute_force_with_lease_push(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,

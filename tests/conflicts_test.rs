@@ -10,6 +10,12 @@
 //! - the marker-residue gate blocking continue,
 //! - abort restoring the pre-op state with the buffer retained.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_conflict_abort, execute_conflict_continue, execute_conflict_save,
+    execute_conflict_skip, execute_merge_commit,
+};
 use std::path::Path;
 use std::process::Command;
 
@@ -20,9 +26,9 @@ use tempfile::TempDir;
 mod test_support;
 
 use kagi_git::{
-    continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_skip,
-    plan_conflict_abort, plan_conflict_continue, plan_conflict_skip, ConflictKind, ConflictOp,
-    LineOrigin, ResolutionBuffer, ResolutionChoice, SkipProgress,
+    continue_blockers, detect_conflict_session, plan_conflict_abort, plan_conflict_continue,
+    plan_conflict_skip, ConflictKind, ConflictOp, LineOrigin, ResolutionBuffer, ResolutionChoice,
+    SkipProgress,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -560,8 +566,7 @@ fn execute_continue_merge_creates_merge_commit() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::BothCurrentFirst)
         .unwrap();
 
-    let outcome =
-        kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue merge");
+    let outcome = execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue merge");
     match outcome.outcome {
         kagi_git::ContinueOutcome::Committed(id) => {
             // The new commit is a merge (two parents).
@@ -599,8 +604,8 @@ fn execute_continue_cherry_pick_advances_and_finishes() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
         .unwrap();
 
-    let outcome = kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer)
-        .expect("continue cherry-pick");
+    let outcome =
+        execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue cherry-pick");
     match outcome.outcome {
         kagi_git::ContinueOutcome::Committed(id) => {
             // A real commit was created (not just staged) with a single parent
@@ -644,8 +649,8 @@ fn execute_continue_rebase_advances_and_finishes() {
         .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
         .unwrap();
 
-    let outcome = kagi_git::execute_conflict_continue(&repo, dir, &session, &buffer)
-        .expect("continue rebase");
+    let outcome =
+        execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue rebase");
     assert!(
         matches!(outcome.outcome, kagi_git::ContinueOutcome::Committed(_)),
         "single-commit rebase should finish in one continue, got {:?}",
@@ -699,7 +704,7 @@ fn stage_then_merge_commit_without_per_file_save() {
     );
 
     // Continue route stages the resolution into the index.
-    kagi_git::stage_conflict_resolution(&repo, &session, &buffer).expect("stage on continue");
+    backend_ops::stage_conflict_resolution(&repo, &session, &buffer).expect("stage on continue");
 
     let index = repo.index().unwrap();
     assert!(
@@ -714,7 +719,7 @@ fn stage_then_merge_commit_without_per_file_save() {
 
     // Commit panel button → execute_merge_commit now succeeds (it would have
     // refused the conflicted index before).
-    let id = kagi_git::execute_merge_commit(&repo, "Merge feature into main")
+    let id = execute_merge_commit(&repo, "Merge feature into main")
         .expect("merge commit from staged index");
     let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
     assert_eq!(
@@ -1051,8 +1056,6 @@ fn save_resolution_stages_file_to_stage_zero() {
     if !test_support::run_isolated() {
         return;
     }
-    use kagi_git::execute_conflict_save;
-
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -1103,8 +1106,6 @@ fn save_resolution_blocks_on_marker_residue() {
     if !test_support::run_isolated() {
         return;
     }
-    use kagi_git::execute_conflict_save;
-
     let tmp = merge_conflict_repo();
     let repo = Repository::open(tmp.path()).unwrap();
     let path = Path::new("file.txt");
@@ -1174,12 +1175,23 @@ fn merge_commit_has_two_parents_and_cleans_state() {
     if !test_support::run_isolated() {
         return;
     }
-    use kagi_git::{execute_conflict_save, execute_merge_commit};
-
     let tmp = merge_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
     let path = Path::new("file.txt");
+
+    let backend = kagi_git::Backend::open(dir).unwrap();
+    assert!(backend
+        .plan_merge_commit("merge")
+        .unwrap()
+        .blockers
+        .iter()
+        .any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Commit(
+                kagi_domain::plan_note::commit::CommitNote::ConflictedFiles { .. }
+            )
+        )));
 
     // Save the resolution (stages the file).
     let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
@@ -1210,6 +1222,13 @@ fn merge_commit_has_two_parents_and_cleans_state() {
         detect_conflict_session(&repo3).is_none(),
         "no longer in conflict"
     );
+    let clean_plan = backend.plan_merge_commit("not an active merge").unwrap();
+    assert!(clean_plan.blockers.iter().any(|note| matches!(
+        note,
+        kagi_domain::plan_note::PlanNote::Commit(
+            kagi_domain::plan_note::commit::CommitNote::NothingStaged
+        )
+    )));
 }
 
 /// A sequencer (cherry-pick) Continue produces a `--continue` OperationPlan,

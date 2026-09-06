@@ -462,7 +462,7 @@ fn plan_create_worktree_impl(
 // ────────────────────────────────────────────────────────────
 
 /// Create a new branch at `start` and attach it to a new linked worktree.
-pub fn execute_create_worktree(
+pub(crate) fn execute_create_worktree(
     repo: &Repository,
     branch: &str,
     path: impl AsRef<Path>,
@@ -472,7 +472,7 @@ pub fn execute_create_worktree(
 }
 
 /// Attach an existing local branch to a new linked worktree.
-pub fn execute_open_worktree_for_branch(
+pub(crate) fn execute_open_worktree_for_branch(
     repo: &Repository,
     branch: &str,
     path: impl AsRef<Path>,
@@ -683,7 +683,7 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
 
 /// Unlock the linked worktree `name`: preflight (HEAD unchanged) → unlock →
 /// verify the lock is gone.
-pub fn execute_unlock_worktree(
+pub(crate) fn execute_unlock_worktree(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,

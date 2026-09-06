@@ -174,7 +174,11 @@ pub fn plan_create_branch(
 /// - `at` is not a valid or existing commit OID.
 /// - A branch named `name` already exists (`force=false` is enforced by libgit2).
 /// - Any other libgit2 failure.
-pub fn execute_create_branch(repo: &Repository, name: &str, at: &CommitId) -> Result<(), GitError> {
+pub(crate) fn execute_create_branch(
+    repo: &Repository,
+    name: &str,
+    at: &CommitId,
+) -> Result<(), GitError> {
     // Resolve the target commit.
     let oid = git2::Oid::from_str(&at.0)
         .map_err(|e| GitError::Other(format!("invalid commit id '{}': {}", at.0, e.message())))?;
@@ -360,7 +364,7 @@ pub fn plan_rename_branch(
     })
 }
 
-pub fn execute_rename_branch(
+pub(crate) fn execute_rename_branch(
     repo: &Repository,
     plan: &OperationPlan,
     old_name: &str,
@@ -744,7 +748,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
 /// - Branch no longer exists at execute time (already deleted externally).
 /// - `branch.delete()` fails for any reason.
 /// - Post-delete verify finds the branch still present.
-pub fn execute_delete_branch(
+pub(crate) fn execute_delete_branch(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,

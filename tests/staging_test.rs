@@ -24,6 +24,9 @@
 //! | 14 | `test_plan_commit_warning_unstaged_remains` | plan_commit warns when unstaged remain |
 //! | 15 | `test_execute_commit_creates_commit_and_clears_staged` | execute_commit creates commit, unstaged remain |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{execute_commit, stage_file, unstage_file};
 use std::path::Path;
 use std::process::Command;
 
@@ -31,8 +34,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{
-    commit_preview, execute_commit, plan_commit, stage_file, staged_file_diff, unstage_file,
-    unstaged_file_diff, working_tree_status, DiffLineKind,
+    commit_preview, plan_commit, staged_file_diff, unstaged_file_diff, working_tree_status,
+    DiffLineKind,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -799,7 +802,7 @@ fn test_stage_files_batch() {
     let paths: Vec<std::path::PathBuf> = (1..=5)
         .map(|i| std::path::PathBuf::from(format!("f{}.txt", i)))
         .collect();
-    let n = kagi_git::stage_files(&repo, &paths).unwrap();
+    let n = backend_ops::stage_files(&repo, &paths).unwrap();
     assert_eq!(n, 5);
     let st = working_tree_status(&repo).unwrap();
     assert_eq!(st.staged.len(), 5);
@@ -820,7 +823,7 @@ fn test_unstage_files_batch() {
     let paths: Vec<std::path::PathBuf> = (1..=4)
         .map(|i| std::path::PathBuf::from(format!("g{}.txt", i)))
         .collect();
-    let n = kagi_git::unstage_files(&repo, &paths).unwrap();
+    let n = backend_ops::unstage_files(&repo, &paths).unwrap();
     assert_eq!(n, 4);
     let st = working_tree_status(&repo).unwrap();
     assert!(st.staged.is_empty());

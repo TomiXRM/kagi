@@ -18,13 +18,16 @@
 //! | 12 | `test_amend_preflight_mismatch` | HEAD moved since plan → preflight_check fails |
 //! | 13 | `test_amend_no_upstream_allowed` | local branch without upstream → amend allowed |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_amend;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_amend, plan_amend, preflight_check, AmendMode};
+use kagi_git::{plan_amend, preflight_check, AmendMode};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

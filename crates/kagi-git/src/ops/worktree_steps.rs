@@ -234,7 +234,7 @@ mod command_execution_tests;
 /// step failure is never allowed to undo it. `copy`/`symlink` always run;
 /// `command` runs only when `trusted` and not headless. Returns a human summary
 /// of what happened, for the oplog.
-pub fn run_post_create(steps: &[WorktreeStep], env: &StepEnv, trusted: bool) -> Vec<String> {
+pub(crate) fn run_post_create(steps: &[WorktreeStep], env: &StepEnv, trusted: bool) -> Vec<String> {
     let mut log = Vec::new();
     for step in steps {
         let line = match step {
@@ -268,14 +268,6 @@ pub fn run_post_create(steps: &[WorktreeStep], env: &StepEnv, trusted: bool) -> 
 /// a copy/symlink error, or a `command` that fails, is untrusted, or is blocked
 /// by headless — returns `Err`, and the caller must then abort the removal so
 /// the worktree survives (issue #341 §5, matching kagi's preflight ethos).
-pub fn run_pre_remove(
-    steps: &[WorktreeStep],
-    env: &StepEnv,
-    trusted: bool,
-) -> Result<(), GitError> {
-    run_pre_remove_progress(steps, env, trusted, &mut Default::default(), None)
-}
-
 pub(crate) fn run_pre_remove_progress(
     steps: &[WorktreeStep],
     env: &StepEnv,
@@ -905,3 +897,7 @@ run = "docker compose down"
         assert!(trust_worktree_config_at(root.path(), &sha_a).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "worktree_steps_acceptance_tests.rs"]
+mod acceptance_tests;

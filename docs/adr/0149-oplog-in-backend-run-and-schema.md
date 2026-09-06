@@ -56,6 +56,9 @@ consume them are later work.
   time. The UI remains its recorder: `record_op` still appends `Refused`.
 - Remaining non-run families (conflict resolution, terminal start and PR
   merge) still use `record_op_persist`. They are not migrated by this recovery.
+  **Superseded for PR merge and SSH pull by [ADR-0177](0177-transport-recording-boundary.md)**
+  (#501): both now record at their transport boundary, and that ADR carries the
+  full ownership table plus the remaining synchronous UI writers.
 - **2026-09-06 recovery:** stash drop now uses `Backend::run`, including stash
   list/HEAD preflight, trust and one durable full-OID result; it remains exempt
   from automatic snapshots because dropping a stash must not create a stash.

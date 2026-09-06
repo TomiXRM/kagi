@@ -56,8 +56,7 @@ impl RepoSession {
     /// receiver for the `OperationOutcome`. The caller typically awaits this
     /// inside a `cx.background_spawn` task.
     ///
-    /// The worker thread owns its own `Backend` (opened once on spawn), so this
-    /// does NOT re-open the repo. The operation runs through `Backend::run`
+    /// The worker re-opens its mutation Backend per request to re-evaluate trust. The operation runs through `Backend::run`
     /// (ADR-0104 enforced pipeline — preflight cannot be bypassed).
     ///
     /// On first call, spawns the worker thread. If the worker fails to spawn
@@ -67,6 +66,16 @@ impl RepoSession {
         op: Operation,
         plan: OperationPlan,
     ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
+        self.submit_with_policy(op, plan, self.backend.execution_policy())
+    }
+
+    /// Supply the same frozen policy used by the direct mutation path.
+    pub fn submit_with_policy(
+        &self,
+        op: Operation,
+        plan: OperationPlan,
+        policy: crate::backend::ExecutionPolicy,
+    ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
         // Lazily spawn the worker if it doesn't exist yet.
         let mut worker_slot = self.worker.borrow_mut();
         if worker_slot.is_none() {
@@ -74,6 +83,6 @@ impl RepoSession {
             *worker_slot = Some(w);
         }
         let worker = worker_slot.as_ref().unwrap();
-        worker.submit(op, plan)
+        worker.submit_with_policy(op, plan, policy)
     }
 }

@@ -130,9 +130,9 @@ fn merge_fast_forward_execute_updates_worktree() {
         "an ahead branch fast-forwards"
     );
 
-    let merged = backend
-        .execute_merge_branch("feature")
-        .expect("execute FF merge");
+    let merged =
+        kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
+            .expect("execute FF merge");
 
     // The ref advanced to exactly the feature tip (and is the returned oid).
     assert_eq!(merged.0, feature_tip, "FF lands the ref on the target tip");
@@ -224,9 +224,9 @@ fn merge_bulk_clean_execute_lands_all_files_and_bounds_preview() {
         plan.preview_files.len()
     );
 
-    let merged = backend
-        .execute_merge_branch("feature")
-        .expect("execute merge");
+    let merged =
+        kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
+            .expect("execute merge");
 
     // Two-parent merge, current branch advanced, target untouched.
     assert_eq!(rev_parse(dir, "main"), merged.0);

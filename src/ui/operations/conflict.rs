@@ -832,7 +832,7 @@ impl KagiApp {
         prev_editing_path: Option<PathBuf>,
         current_branch: String,
     ) -> ConflictDetectOutcome {
-        let repo = match kagi_git::Backend::open(repo_path) {
+        let repo = match crate::ui::blocking_ops::open_backend(repo_path) {
             Ok(r) => r,
             Err(_) => return ConflictDetectOutcome::OpenFailed,
         };

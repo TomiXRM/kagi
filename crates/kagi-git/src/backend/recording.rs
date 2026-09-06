@@ -31,8 +31,10 @@ pub struct RunReport {
     pub stash: Option<super::stash::StashEvidence>,
 }
 
-/// Single append implementation, shared with factories that fail before open.
-pub(crate) fn finalize(entry: OpLogEntry) -> Recording {
+/// Single append implementation, shared with factories that fail before open
+/// and with the transport boundaries outside this crate (`src/remote`, #501).
+/// Every recorded mutation goes through here — never a second writer.
+pub fn finalize(entry: OpLogEntry) -> Recording {
     match append_oplog_receipt(&entry) {
         Ok((path, entry)) => Recording::Appended { path, entry },
         Err(error) => Recording::Failed {
@@ -102,7 +104,7 @@ impl Backend {
     ) -> Recording {
         let repo = self.path.display().to_string();
         let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
-            .with_actor(self.actor)
+            .with_actor(self.policy.actor)
             .with_worktree(Some(repo));
         finalize(entry)
     }
@@ -115,8 +117,11 @@ impl Backend {
         entry: &HistoryEntry,
     ) -> Result<ops::HistoryMoveOutcome, GitError> {
         let result = self
-            .preflight_check(plan)
-            .map_err(|e| GitError::Preflight(Box::new(e)))
+            .require_trust()
+            .and_then(|()| {
+                self.preflight_check(plan)
+                    .map_err(|e| GitError::Preflight(Box::new(e)))
+            })
             .and_then(|()| match dir {
                 HistoryMoveDir::Undo => self.execute_undo(entry),
                 HistoryMoveDir::Redo => self.execute_redo(entry),

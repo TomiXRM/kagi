@@ -145,8 +145,8 @@ fn force_lease_push_blocking(
     repo_path: &std::path::Path,
     plan: &kagi_git::ops::OperationPlan,
 ) -> Result<kagi_git::ops::StateSummary, String> {
-    let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
+        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ForceWithLeasePush;
     repo.run(&op, plan)
         .map_err(|e| i18n::op_failed(i18n::Op::Push, e))?;

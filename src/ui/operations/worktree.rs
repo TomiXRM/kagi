@@ -313,7 +313,7 @@ impl KagiApp {
     /// failure. Shared by the four lifecycle open_* methods below.
     fn worktree_backend(&mut self, op: &str) -> Option<kagi_git::Backend> {
         let repo_path = self.repo_path.clone()?;
-        match kagi_git::Backend::open(&repo_path) {
+        match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => Some(r),
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
@@ -691,7 +691,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match kagi_git::Backend::open(&repo_path) {
+        let repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
@@ -749,7 +749,7 @@ impl KagiApp {
             cx.notify();
             return;
         }
-        let repo = match kagi_git::Backend::open(&repo_path) {
+        let repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.unlock_worktree_modal_mut() {

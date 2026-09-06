@@ -139,11 +139,14 @@ pub(crate) fn render_history_pane(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    if view.history_loading {
+    if view.history_loading() {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
     }
+    // Same lesson as `render_snapshot_pane` below (#489): with no load in
+    // flight, "no list" is a settled outcome — a failed or never-started
+    // load — not a spinner that will resolve on its own.
     let Some(history) = view.history.as_ref() else {
-        return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
+        return placeholder_text(Msg::EditorHistoryEmpty.t()).into_any_element();
     };
     if history.entries.is_empty() {
         return placeholder_text(Msg::EditorHistoryEmpty.t()).into_any_element();
@@ -289,7 +292,7 @@ pub(crate) fn render_snapshot_pane(
     view: &EditorWorkspaceView,
     _cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    if view.snapshot_loading {
+    if view.snapshot_loading() {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
     }
     // Bug report: this used to also show "Loading…" here, forever — but a

@@ -13,7 +13,7 @@ crates/kagi-git/src/ops/worktree_steps.rs 907
 crates/kagi-git/src/resolution.rs 1537
 crates/kagi-ui-core/src/i18n/mod.rs 2593
 crates/kagi-ui-core/src/theme.rs 1428
-crates/kagi-ui-editor/src/lib.rs 3383
+crates/kagi-ui-editor/src/lib.rs 3428
 src/ui/blocking_ops.rs 849
 src/ui/branch_cleanup.rs 1062
 src/ui/branch_menu.rs 965

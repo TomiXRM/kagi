@@ -414,8 +414,6 @@ mod macos {
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();
         cx.update(e2e::init_app);
-        // #546 stays compiled but disabled until its follow-up presentation
-        // path has a deterministic driver.
         let mut scenarios: Vec<(&str, Box<dyn FnMut(&mut VisualTestAppContext)>)> = vec![
             (
                 "stash_drop_persists",
@@ -452,6 +450,10 @@ mod macos {
             (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
+            ),
+            (
+                "stash_conflict_followup",
+                Box::new(crate::app_stash::scenario_stash_conflict_followup),
             ),
             (
                 "stash_replan_error",

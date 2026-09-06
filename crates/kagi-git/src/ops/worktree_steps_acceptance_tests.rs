@@ -11,7 +11,6 @@
 //! - the plan lists steps per type
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
 
 use crate::ops::{
@@ -44,7 +43,7 @@ fn write_config(root: &Path, body: &str) {
 
 #[test]
 fn copy_and_symlink_run_without_trust_and_never_overwrite() {
-    if !isolated("copy_and_symlink_run_without_trust_and_never_overwrite") {
+    if !crate::test_support::run_isolated() {
         return;
     }
     let main = tempfile::tempdir().unwrap();
@@ -101,7 +100,7 @@ fn copy_and_symlink_run_without_trust_and_never_overwrite() {
 
 #[test]
 fn command_trust_sha_and_headless_gating() {
-    if !isolated("command_trust_sha_and_headless_gating") {
+    if !crate::test_support::run_isolated() {
         return;
     }
     let _guard = ENV_LOCK.lock().unwrap();
@@ -175,7 +174,7 @@ fn command_trust_sha_and_headless_gating() {
 
 #[test]
 fn plan_lists_steps_per_type_and_neutralizes_control_bytes() {
-    if !isolated("plan_lists_steps_per_type_and_neutralizes_control_bytes") {
+    if !crate::test_support::run_isolated() {
         return;
     }
     let _guard = ENV_LOCK.lock().unwrap();
@@ -218,28 +217,4 @@ fn plan_lists_steps_per_type_and_neutralizes_control_bytes() {
     assert_eq!(escape_control_bytes("a\tb"), "a\\x09b");
 
     std::env::remove_var("KAGI_LOG_DIR");
-}
-
-// These acceptance cases mutate process-wide headless/trust variables. Their
-// own test process prevents interference with unrelated Backend worker tests.
-fn isolated(name: &str) -> bool {
-    if std::env::var("KAGI_STEP_ACCEPTANCE_CHILD").ok().as_deref() == Some(name) {
-        return true;
-    }
-    let output = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            &format!("ops::worktree_steps::acceptance_tests::{name}"),
-            "--nocapture",
-        ])
-        .env("KAGI_STEP_ACCEPTANCE_CHILD", name)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    false
 }

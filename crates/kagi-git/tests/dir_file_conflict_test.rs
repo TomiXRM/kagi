@@ -83,6 +83,9 @@ fn blob_text(repo: &Repository, oid: git2::Oid) -> String {
 /// early false) and this asserts fails with ModifyDelete.
 #[test]
 fn dir_file_conflict_is_classified() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for (co, other) in [("file-side", "dir-side"), ("dir-side", "file-side")] {
         let (_td, repo) = df_conflict(co, other);
         let session = detect_conflict_session(&repo).unwrap();
@@ -103,6 +106,9 @@ fn dir_file_conflict_is_classified() {
 /// file blob at `thing`.
 #[test]
 fn keep_directory_yields_directory_side() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_td, repo) = df_conflict("file-side", "dir-side");
     let plan =
         plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepDirectory).unwrap();
@@ -126,6 +132,9 @@ fn keep_directory_yields_directory_side() {
 /// no directory entries under `thing/`.
 #[test]
 fn keep_file_yields_file_side() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_td, repo) = df_conflict("file-side", "dir-side");
     let plan =
         plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
@@ -157,6 +166,9 @@ fn keep_file_yields_file_side() {
 /// `snapshot=` assertion fail.
 #[test]
 fn resolution_recorded_in_oplog() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let logdir = TempDir::new().unwrap();
     std::env::set_var("KAGI_LOG_DIR", logdir.path());
 
@@ -200,6 +212,9 @@ fn resolution_recorded_in_oplog() {
 /// call and both assertions fail (nothing rewrites the working tree).
 #[test]
 fn keep_directory_reconciles_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_td, repo) = df_conflict("file-side", "dir-side");
     let wd = repo.workdir().unwrap().to_path_buf();
     let plan =
@@ -227,6 +242,9 @@ fn keep_directory_reconciles_working_tree() {
 /// Mutation: drop the `reconcile_worktree` call and the dir-gone assertion fails.
 #[test]
 fn keep_file_reconciles_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_td, repo) = df_conflict("dir-side", "file-side");
     let wd = repo.workdir().unwrap().to_path_buf();
     let plan =
@@ -245,6 +263,9 @@ fn keep_file_reconciles_working_tree() {
 
 #[test]
 fn frozen_dir_file_boundary_refuses_untrusted_or_changed_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_td, repo) = df_conflict("file-side", "dir-side");
     let plan =
         plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
@@ -280,3 +301,6 @@ fn frozen_dir_file_boundary_refuses_untrusted_or_changed_plan() {
         0
     );
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

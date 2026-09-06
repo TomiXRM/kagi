@@ -89,6 +89,9 @@ fn build_repo(tmp: &TempDir) -> std::path::PathBuf {
 // a dishonest equivalent. The field is deliberately left `None`.
 #[test]
 fn discard_has_no_equivalent_command() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -105,6 +108,9 @@ fn discard_has_no_equivalent_command() {
 
 #[test]
 fn discard_modification_restores_from_index() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -146,6 +152,9 @@ fn discard_modification_restores_from_index() {
 
 #[test]
 fn discard_unstaged_deletion_restores_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -181,6 +190,9 @@ fn discard_unstaged_deletion_restores_file() {
 
 #[test]
 fn discard_leaves_staged_content_unchanged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -241,6 +253,9 @@ fn discard_leaves_staged_content_unchanged() {
 
 #[test]
 fn discard_untracked_deletes_file_and_backs_it_up() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -297,6 +312,9 @@ fn discard_untracked_deletes_file_and_backs_it_up() {
 // now-empty folder (the `-d` of `git clean -fd`).
 #[test]
 fn discard_untracked_prunes_now_empty_dirs() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -330,6 +348,9 @@ fn discard_untracked_prunes_now_empty_dirs() {
 
 #[test]
 fn discard_conflicted_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
 
@@ -428,6 +449,9 @@ fn discard_conflicted_is_blocked() {
 
 #[test]
 fn discard_empty_selection_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -449,6 +473,9 @@ fn discard_empty_selection_is_blocked() {
 
 #[test]
 fn discard_multi_file_one_outcome() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -496,6 +523,9 @@ fn discard_multi_file_one_outcome() {
 /// (verify) exists to catch.
 #[test]
 fn discard_verify_catches_unrestorable_target() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
 
@@ -596,6 +626,9 @@ fn discard_verify_catches_unrestorable_target() {
 #[cfg(unix)]
 #[test]
 fn discard_partial_untracked_removal_keeps_backups() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = TempDir::new().unwrap();
@@ -657,6 +690,9 @@ fn discard_partial_untracked_removal_keeps_backups() {
 
 #[test]
 fn discard_relative_path_targets_the_workdir_root_not_a_shadow_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
 
@@ -701,6 +737,9 @@ fn discard_relative_path_targets_the_workdir_root_not_a_shadow_file() {
 
 #[test]
 fn discard_absolute_path_matches_relative_form() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     write_file(&d, "tracked.txt", "DIRTY EDIT\n");
@@ -753,6 +792,9 @@ fn object_exists(dir: &Path, sha: &str) -> bool {
 #[cfg(unix)]
 #[test]
 fn discard_untracked_symlink_does_not_ingest_target_bytes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -863,6 +905,9 @@ fn add_dirty_submodule(d: &Path) -> TempDir {
 // stops detecting the gitlink mode, the first assert flips and this test fails.
 #[test]
 fn backend_is_submodule_detects_gitlink_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let _subsrc = add_dirty_submodule(&d);
@@ -884,6 +929,9 @@ fn backend_is_submodule_detects_gitlink_only() {
 
 #[test]
 fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let _subsrc = add_dirty_submodule(&d);
@@ -918,3 +966,6 @@ fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
         status.unstaged
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

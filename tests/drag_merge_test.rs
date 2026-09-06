@@ -101,6 +101,9 @@ fn branches_main_only() -> Vec<(String, bool)> {
 
 #[test]
 fn drag_merge_same_branch_is_rejected_before_planning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Dragging the current branch onto itself must be rejected by the gate, so
     // the planner is never even reached (drop is a trigger, not an execution).
     let err = drag_merge_gate("main", &branches_main_feature(), &[], false)
@@ -114,6 +117,9 @@ fn drag_merge_same_branch_is_rejected_before_planning() {
 
 #[test]
 fn drag_merge_unknown_source_is_rejected() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let err = drag_merge_gate("ghost", &branches_main_feature(), &[], false)
         .expect_err("unknown source must be rejected");
     assert!(err.contains("not a branch"), "got: {}", err);
@@ -121,6 +127,9 @@ fn drag_merge_unknown_source_is_rejected() {
 
 #[test]
 fn drag_merge_while_busy_is_rejected() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let err = drag_merge_gate("feature", &branches_main_feature(), &[], true)
         .expect_err("a drag while busy must be rejected");
     assert!(!err.is_empty());
@@ -128,6 +137,9 @@ fn drag_merge_while_busy_is_rejected() {
 
 #[test]
 fn drag_merge_fast_forward_produces_ff_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -155,6 +167,9 @@ fn drag_merge_fast_forward_produces_ff_plan() {
 
 #[test]
 fn drag_merge_diverged_produces_merge_commit_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -183,6 +198,9 @@ fn drag_merge_diverged_produces_merge_commit_plan() {
 
 #[test]
 fn drag_merge_dirty_working_tree_warns_in_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -216,6 +234,9 @@ fn drag_merge_dirty_working_tree_warns_in_plan() {
 
 #[test]
 fn drag_merge_remote_only_branch_produces_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // An upstream-only branch: a remote-tracking ref `origin/feature` exists but
     // there is NO local `feature`. Dragging it onto the current branch must be
     // accepted by the gate and the planner must resolve the remote ref directly
@@ -271,6 +292,9 @@ fn drag_merge_remote_only_branch_produces_plan() {
 /// it (the target branch left where it was).
 #[test]
 fn execute_merge_branch_creates_a_two_parent_merge_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -338,3 +362,6 @@ fn rev_parse(dir: &Path, rev: &str) -> String {
     assert!(out.status.success(), "git rev-parse {} failed", rev);
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

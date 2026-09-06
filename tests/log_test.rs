@@ -147,6 +147,9 @@ fn build_branching_repo(tmp: &TempDir) -> Repository {
 
 #[test]
 fn test_unborn_repo_is_empty() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     git(dir, &["init", "-b", "main", "."]);
@@ -170,6 +173,9 @@ fn test_unborn_repo_is_empty() {
 
 #[test]
 fn test_all_commits_returned() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_branching_repo(&tmp);
 
@@ -191,6 +197,9 @@ fn test_all_commits_returned() {
 
 #[test]
 fn test_topological_order() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_branching_repo(&tmp);
 
@@ -232,6 +241,9 @@ fn test_topological_order() {
 
 #[test]
 fn test_merge_commit_parents() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     let repo = build_branching_repo(tmp.borrow());
@@ -280,6 +292,9 @@ fn test_merge_commit_parents() {
 
 #[test]
 fn test_limit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_branching_repo(&tmp);
 
@@ -314,6 +329,9 @@ fn test_limit() {
 
 #[test]
 fn test_summary_and_multiline_message() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -370,6 +388,9 @@ fn test_summary_and_multiline_message() {
 
 #[test]
 fn test_all_refs_included() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
 
@@ -417,3 +438,6 @@ impl Borrow for TempDir {
         self
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

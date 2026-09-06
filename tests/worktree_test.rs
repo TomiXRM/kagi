@@ -72,6 +72,9 @@ fn head_commit_id(repo: &Repository) -> CommitId {
 
 #[test]
 fn create_worktree_success_creates_branch_and_linked_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -98,6 +101,9 @@ fn create_worktree_success_creates_branch_and_linked_repo() {
 
 #[test]
 fn create_worktree_path_collision_is_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -118,6 +124,9 @@ fn create_worktree_path_collision_is_blocker() {
 
 #[test]
 fn create_worktree_branch_collision_is_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -136,6 +145,9 @@ fn create_worktree_branch_collision_is_blocker() {
 
 #[test]
 fn create_worktree_preflight_detects_head_move() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -159,6 +171,9 @@ fn create_worktree_preflight_detects_head_move() {
 
 #[test]
 fn validate_worktree_path_rejects_repo_inside_and_accepts_japanese_path() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo_root = repo_tmp.path();
@@ -193,6 +208,9 @@ fn add_worktree(repo_dir: &Path, name: &str) -> std::path::PathBuf {
 
 #[test]
 fn unlock_plan_surfaces_lock_reason_and_execute_unlocks() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let repo = build_repo(&tmp);
     let d = tmp.path();
@@ -230,6 +248,9 @@ fn unlock_plan_surfaces_lock_reason_and_execute_unlocks() {
 
 #[test]
 fn unlock_plan_without_reason_notes_none_recorded() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let repo = build_repo(&tmp);
     let d = tmp.path();
@@ -249,6 +270,9 @@ fn unlock_plan_without_reason_notes_none_recorded() {
 
 #[test]
 fn unlock_unlocked_worktree_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let repo = build_repo(&tmp);
     add_worktree(tmp.path(), "wt-free");
@@ -267,6 +291,9 @@ fn unlock_unlocked_worktree_is_blocked() {
 
 #[test]
 fn unlock_missing_worktree_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let repo = build_repo(&tmp);
 
@@ -285,6 +312,9 @@ fn unlock_missing_worktree_is_blocked() {
 /// directory is the cheapest way to make libgit2's read of it fail.
 #[test]
 fn unlock_plan_reports_an_unreadable_lock_state() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let repo = build_repo(&tmp);
     add_worktree(tmp.path(), "wt-broken");
@@ -313,6 +343,9 @@ fn unlock_plan_reports_an_unreadable_lock_state() {
 /// this branch" on a name that is not a local branch must be a blocker.
 #[test]
 fn open_worktree_for_a_name_that_is_not_a_local_branch_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -336,6 +369,9 @@ fn open_worktree_for_a_name_that_is_not_a_local_branch_is_blocked() {
 /// that holds it so the user can go there instead.
 #[test]
 fn open_worktree_for_a_branch_checked_out_elsewhere_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -371,6 +407,9 @@ fn open_worktree_for_a_branch_checked_out_elsewhere_is_blocked() {
 /// content — and no new branch invented.
 #[test]
 fn execute_open_worktree_for_branch_checks_out_the_existing_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let d = repo_tmp.path();
@@ -428,6 +467,9 @@ fn build_repo_with_worktreeinclude(tmp: &TempDir) -> Repository {
 
 #[test]
 fn worktreeinclude_copies_ignored_env() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo_with_worktreeinclude(&repo_tmp);
@@ -453,6 +495,9 @@ fn worktreeinclude_copies_ignored_env() {
 
 #[test]
 fn worktreeinclude_does_not_copy_tracked_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let d = repo_tmp.path();
@@ -478,6 +523,9 @@ fn worktreeinclude_does_not_copy_tracked_file() {
 
 #[test]
 fn worktreeinclude_does_not_copy_non_ignored_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let d = repo_tmp.path();
@@ -500,6 +548,9 @@ fn worktreeinclude_does_not_copy_non_ignored_file() {
 #[cfg(unix)]
 #[test]
 fn worktreeinclude_skips_symlinks() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let d = repo_tmp.path();
@@ -540,6 +591,9 @@ fn worktreeinclude_skips_symlinks() {
 #[cfg(unix)]
 #[test]
 fn worktreeinclude_refuses_terminal_symlink_out_of_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
@@ -576,6 +630,9 @@ fn worktreeinclude_refuses_terminal_symlink_out_of_tree() {
 #[cfg(unix)]
 #[test]
 fn worktreeinclude_refuses_symlinked_parent_dir() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
@@ -618,6 +675,9 @@ use kagi_git::ops::{plan_lock_worktree, plan_prune_worktrees, plan_repair_worktr
 /// Worktree-only remove leaves the branch (§6). `delete_branch=false`.
 #[test]
 fn remove_worktree_only_keeps_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     let wt = add_worktree(tmp.path(), "wt-rm");
@@ -639,6 +699,9 @@ fn remove_worktree_only_keeps_branch() {
 /// Also-delete-branch removes both the worktree and its (merged) branch.
 #[test]
 fn remove_worktree_also_deletes_branch_when_asked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     add_worktree(tmp.path(), "wt-rm2");
@@ -655,6 +718,9 @@ fn remove_worktree_also_deletes_branch_when_asked() {
 /// also refuses while the blocker stands (reverting the guard lets it through).
 #[test]
 fn remove_dirty_worktree_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     let wt = add_worktree(tmp.path(), "wt-dirty");
@@ -678,6 +744,9 @@ fn remove_dirty_worktree_is_blocked() {
 /// The main worktree is never removable (§6). Mutation-verify: execute refuses.
 #[test]
 fn remove_main_worktree_is_always_refused() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
 
@@ -698,6 +767,9 @@ fn remove_main_worktree_is_always_refused() {
 /// `lock --reason` records the reason in `git worktree list --porcelain` (§6).
 #[test]
 fn lock_worktree_reason_appears_in_porcelain() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     add_worktree(tmp.path(), "wt-lock");
@@ -734,6 +806,9 @@ fn lock_worktree_reason_appears_in_porcelain() {
 /// marker into its admin dir (`$GIT_DIR/worktrees/<name>/`).
 #[test]
 fn create_worktree_writes_kagi_created_marker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -757,6 +832,9 @@ fn create_worktree_writes_kagi_created_marker() {
 /// gone). A bulk op must never touch a worktree the user set up outside kagi.
 #[test]
 fn bulk_prune_targets_marked_skips_unmarked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -800,6 +878,9 @@ fn bulk_prune_targets_marked_skips_unmarked() {
 /// user removing one specific worktree they chose.
 #[test]
 fn explicit_remove_works_on_unmarked_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     let wt = add_worktree(tmp.path(), "wt-manual"); // hand-added, no marker
@@ -818,6 +899,9 @@ fn explicit_remove_works_on_unmarked_worktree() {
 /// Nothing prunable → a no-op blocker (empty dry-run preview).
 #[test]
 fn prune_with_nothing_to_prune_is_a_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     add_worktree(tmp.path(), "wt-live"); // present, not prunable
@@ -836,6 +920,9 @@ fn prune_with_nothing_to_prune_is_a_blocker() {
 /// run from the moved main restores it (§6, case 1).
 #[test]
 fn repair_restores_links_after_moving_main() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let base = TempDir::new().unwrap();
     let main1 = base.path().join("main");
     std::fs::create_dir(&main1).unwrap();
@@ -877,6 +964,9 @@ fn repair_restores_links_after_moving_main() {
 /// remove path never touches the repo root.
 #[test]
 fn remove_never_deletes_repo_root() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     // "main" resolves to no admin entry → refused before any fs touch.
@@ -894,6 +984,9 @@ fn remove_never_deletes_repo_root() {
 /// the dirty worktree (work lost).
 #[test]
 fn remove_refuses_worktree_dirtied_after_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     let wt = add_worktree(tmp.path(), "wt-race");
@@ -919,6 +1012,9 @@ fn remove_refuses_worktree_dirtied_after_plan() {
 /// refused at execute time (lock = "do not touch this").
 #[test]
 fn remove_refuses_worktree_locked_after_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
     let wt = add_worktree(tmp.path(), "wt-race2");
@@ -947,6 +1043,9 @@ fn remove_refuses_worktree_locked_after_plan() {
 #[test]
 #[cfg(target_os = "macos")]
 fn repair_reports_failure_instead_of_false_success() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let base = TempDir::new().unwrap();
     let main1 = base.path().join("main");
     std::fs::create_dir(&main1).unwrap();
@@ -998,6 +1097,9 @@ fn repair_reports_failure_instead_of_false_success() {
 
 #[test]
 fn create_worktree_auto_creates_missing_parent_and_copies() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo_with_worktreeinclude(&repo_tmp);
@@ -1024,6 +1126,9 @@ fn create_worktree_auto_creates_missing_parent_and_copies() {
 
 #[test]
 fn no_worktreeinclude_leaves_plan_unchanged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let worktrees_tmp = TempDir::new().unwrap();
     let repo = build_repo(&repo_tmp);
@@ -1044,3 +1149,6 @@ fn no_worktreeinclude_leaves_plan_unchanged() {
         plan.warnings
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -106,6 +106,9 @@ fn init_repo() -> TempDir {
 /// working tree is stale" gap on the merge side.
 #[test]
 fn merge_fast_forward_execute_updates_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -182,6 +185,9 @@ fn merge_fast_forward_execute_updates_worktree() {
 /// one of the touched files has the correct content on disk afterwards.
 #[test]
 fn merge_bulk_clean_execute_lands_all_files_and_bounds_preview() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     const BASE: usize = 300;
     // feature edits f0..f259 (260 files); main edits f260..f299 (40 files).
     // Disjoint edits → a clean merge; the incoming diff (260 files) exceeds the
@@ -266,3 +272,6 @@ fn merge_bulk_clean_execute_lands_all_files_and_bounds_preview() {
         dangling_commits(dir)
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -78,6 +78,9 @@ fn head_commit_id(repo: &Repository) -> CommitId {
 
 #[test]
 fn test_root_commit_all_added() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     git(dir, &["init", "-b", "main", "."]);
@@ -113,6 +116,9 @@ fn test_root_commit_all_added() {
 
 #[test]
 fn test_added_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -135,6 +141,9 @@ fn test_added_file() {
 
 #[test]
 fn test_modified_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -157,6 +166,9 @@ fn test_modified_file() {
 
 #[test]
 fn test_deleted_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -178,6 +190,9 @@ fn test_deleted_file() {
 
 #[test]
 fn test_renamed_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -228,6 +243,9 @@ fn test_renamed_file() {
 
 #[test]
 fn test_merge_commit_first_parent_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     git(dir, &["init", "-b", "main", "."]);
@@ -304,6 +322,9 @@ fn test_merge_commit_first_parent_only() {
 
 #[test]
 fn test_file_diff_modified_hunk_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -361,6 +382,9 @@ fn test_file_diff_modified_hunk_content() {
 
 #[test]
 fn test_file_diff_added_all_lines_added() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -406,6 +430,9 @@ fn test_file_diff_added_all_lines_added() {
 
 #[test]
 fn test_file_diff_binary() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -432,6 +459,9 @@ fn test_file_diff_binary() {
 
 #[test]
 fn test_file_diff_japanese_no_panic() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -476,6 +506,9 @@ fn test_file_diff_japanese_no_panic() {
 
 #[test]
 fn binary_classification_survives_staging_and_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let before = head_commit_id(&repo);
@@ -508,6 +541,9 @@ fn binary_classification_survives_staging_and_commit() {
 
 #[test]
 fn empty_file_is_not_binary_in_any_diff_source() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let before = head_commit_id(&repo);
@@ -540,6 +576,9 @@ fn empty_file_is_not_binary_in_any_diff_source() {
 #[cfg(unix)]
 #[test]
 fn mode_only_diff_is_not_binary() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = TempDir::new().unwrap();
@@ -578,3 +617,6 @@ fn mode_only_diff_is_not_binary() {
         assert_eq!(diff.change, ChangeKind::Modified);
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

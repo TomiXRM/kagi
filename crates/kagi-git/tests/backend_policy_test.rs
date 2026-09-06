@@ -52,6 +52,9 @@ fn unchanged(path: &Path) -> (String, String, Vec<u8>, Vec<u8>) {
 
 #[test]
 fn snapshot_policy_matches_direct_and_worker_for_rewriting_families() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -101,6 +104,9 @@ fn snapshot_policy_matches_direct_and_worker_for_rewriting_families() {
 
 #[test]
 fn explicit_cli_mcp_policy_records_actor_and_does_not_read_gui_settings() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -128,6 +134,9 @@ fn explicit_cli_mcp_policy_records_actor_and_does_not_read_gui_settings() {
 
 #[test]
 fn untrusted_snapshot_delete_and_absorb_leave_refs_index_and_worktree_unchanged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -151,6 +160,9 @@ fn untrusted_snapshot_delete_and_absorb_leave_refs_index_and_worktree_unchanged(
 
 #[test]
 fn absorb_snapshot_toggle_and_stale_preflight_are_owned_by_boundary() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -183,6 +195,9 @@ fn absorb_snapshot_toggle_and_stale_preflight_are_owned_by_boundary() {
 
 #[test]
 fn run_refuses_plan_with_omitted_safety_requirements_before_savepoint() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -232,6 +247,9 @@ fn run_refuses_plan_with_omitted_safety_requirements_before_savepoint() {
 
 #[test]
 fn one_worker_applies_new_policy_each_time_and_refuses_stale_requests() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -274,6 +292,9 @@ fn one_worker_applies_new_policy_each_time_and_refuses_stale_requests() {
 
 #[test]
 fn optional_snapshot_off_does_not_disable_restore_recovery() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -299,6 +320,9 @@ fn optional_snapshot_off_does_not_disable_restore_recovery() {
 
 #[test]
 fn post_plan_dirty_checkout_refuses_before_creating_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -328,6 +352,9 @@ fn post_plan_dirty_checkout_refuses_before_creating_branch() {
 
 #[test]
 fn absorb_index_write_failure_records_partial_actual_head_and_recovery_oid() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
@@ -378,6 +405,9 @@ fn absorb_index_write_failure_records_partial_actual_head_and_recovery_oid() {
 
 #[test]
 fn create_branch_checkbox_plan_matches_combined_operation_and_executes_once() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     for checkout_after in [false, true] {
         let log = tempfile::tempdir().unwrap();
@@ -417,6 +447,9 @@ fn create_branch_checkbox_plan_matches_combined_operation_and_executes_once() {
 
 #[test]
 fn worktree_config_identity_changes_are_refused_before_creation_or_copy() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV.lock().unwrap();
     let config = "[[post_create]]\ntype='copy'\nfrom='a.txt'\nto='copied.txt'\n";
     for open_existing in [false, true] {
@@ -487,3 +520,6 @@ fn worktree_config_identity_changes_are_refused_before_creation_or_copy() {
     }
     std::env::remove_var("KAGI_LOG_DIR");
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

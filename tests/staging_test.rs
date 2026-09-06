@@ -109,6 +109,9 @@ fn build_unborn_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
 
 #[test]
 fn test_stage_modified_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -147,6 +150,9 @@ fn test_stage_modified_file() {
 
 #[test]
 fn test_stage_new_untracked_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -190,6 +196,9 @@ fn test_stage_new_untracked_file() {
 
 #[test]
 fn test_stage_deleted_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -234,6 +243,9 @@ fn test_stage_deleted_file() {
 
 #[test]
 fn test_stage_does_not_change_workdir() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -256,6 +268,9 @@ fn test_stage_does_not_change_workdir() {
 
 #[test]
 fn test_unstage_modified_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -291,6 +306,9 @@ fn test_unstage_modified_file() {
 
 #[test]
 fn test_unstage_new_file_becomes_untracked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -336,6 +354,9 @@ fn test_unstage_new_file_becomes_untracked() {
 
 #[test]
 fn test_unstage_does_not_change_workdir() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -359,6 +380,9 @@ fn test_unstage_does_not_change_workdir() {
 
 #[test]
 fn test_unborn_repo_stage_and_initial_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_unborn_repo(&tmp);
 
@@ -409,6 +433,9 @@ fn test_unborn_repo_stage_and_initial_commit() {
 
 #[test]
 fn test_unstaged_file_diff_returns_wt_change() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -441,6 +468,9 @@ fn test_unstaged_file_diff_returns_wt_change() {
 
 #[test]
 fn test_staged_file_diff_returns_index_change() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -470,6 +500,9 @@ fn test_staged_file_diff_returns_index_change() {
 
 #[test]
 fn test_partial_stage_diffs_are_independent() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -551,6 +584,9 @@ fn test_partial_stage_diffs_are_independent() {
 
 #[test]
 fn test_plan_commit_blocker_empty_message() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -588,6 +624,9 @@ fn test_plan_commit_blocker_empty_message() {
 
 #[test]
 fn test_plan_commit_blocker_nothing_staged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_dir, repo) = build_clean_repo(&tmp);
 
@@ -615,6 +654,9 @@ fn test_plan_commit_blocker_nothing_staged() {
 
 #[test]
 fn test_plan_commit_warning_unstaged_remains() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -657,6 +699,9 @@ fn test_plan_commit_warning_unstaged_remains() {
 
 #[test]
 fn test_execute_commit_creates_commit_and_clears_staged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -746,6 +791,9 @@ fn test_execute_commit_creates_commit_and_clears_staged() {
 // ── T-UI-002: batch stage / unstage ──
 #[test]
 fn test_stage_files_batch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
     for i in 1..=5 {
@@ -763,6 +811,9 @@ fn test_stage_files_batch() {
 
 #[test]
 fn test_unstage_files_batch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
     for i in 1..=4 {
@@ -787,6 +838,9 @@ fn test_unstage_files_batch() {
 /// target branch/author reflect the attached HEAD + config.
 #[test]
 fn test_commit_preview_amd_counts_attached() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_clean_repo(&tmp);
 
@@ -826,6 +880,9 @@ fn test_commit_preview_amd_counts_attached() {
 /// Unborn HEAD: no commits yet — branch field marked "(unborn)", no panic.
 #[test]
 fn test_commit_preview_unborn_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = build_unborn_repo(&tmp);
 
@@ -842,6 +899,9 @@ fn test_commit_preview_unborn_head() {
 /// Detached HEAD: branch field is "<short-sha> (detached)".
 #[test]
 fn test_commit_preview_detached_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, _repo) = build_clean_repo(&tmp);
 
@@ -877,6 +937,9 @@ fn test_commit_preview_detached_head() {
 /// global path and are therefore unaffected.
 #[test]
 fn test_commit_preview_author_unknown_fallback() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use std::sync::Mutex;
     static GUARD: Mutex<()> = Mutex::new(());
     let _lock = GUARD.lock().unwrap_or_else(|e| e.into_inner());
@@ -920,3 +983,6 @@ fn test_commit_preview_author_unknown_fallback() {
     assert_eq!(pv.author, "(unknown)", "fallback when no identity set");
     assert_eq!(pv.summary(), "", "empty staged -> empty summary");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

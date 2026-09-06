@@ -145,6 +145,9 @@ fn remote_commit(r: &Repos, name: &str, content: &str, msg: &str) {
 
 #[test]
 fn test_pull_fast_forward() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "remote.txt", "from remote\n", "remote work");
 
@@ -163,6 +166,9 @@ fn test_pull_fast_forward() {
 
 #[test]
 fn test_pull_merge_clean() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "remote.txt", "from remote\n", "remote work");
 
@@ -194,6 +200,9 @@ fn test_pull_merge_clean() {
 
 #[test]
 fn test_pull_conflict_leaves_repo_untouched() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     // Both sides edit the same line of base.txt.
     remote_commit(&r, "base.txt", "remote version\n", "remote edit");
@@ -237,6 +246,9 @@ fn test_pull_conflict_leaves_repo_untouched() {
 
 #[test]
 fn test_pull_up_to_date() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).unwrap();
     let outcome = execute_pull(&repo, &r.local).expect("pull should succeed");
@@ -245,6 +257,9 @@ fn test_pull_up_to_date() {
 
 #[test]
 fn test_pull_ahead_only_up_to_date() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     // Local ahead of upstream.
     write_file(&r.local, "ahead.txt", "ahead\n");
@@ -260,6 +275,9 @@ fn test_pull_ahead_only_up_to_date() {
 
 #[test]
 fn test_plan_pull_dirty_warning_no_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     write_file(&r.local, "base.txt", "dirty\n");
 
@@ -282,6 +300,9 @@ fn test_plan_pull_dirty_warning_no_blocker() {
 
 #[test]
 fn test_plan_pull_no_upstream_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     git(&r.local, &["checkout", "-q", "-b", "no-upstream-branch"]);
 
@@ -296,6 +317,9 @@ fn test_plan_pull_no_upstream_blocker() {
 
 #[test]
 fn test_pull_fetch_failure_untouched() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let head_before = head_sha(&r.local);
 
@@ -314,6 +338,9 @@ fn test_pull_fetch_failure_untouched() {
 
 #[test]
 fn test_pull_ff_updates_modified_existing_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Regression: FF must update files that EXIST locally but were modified
     // upstream (not just create new files).
     let r = setup();
@@ -333,6 +360,9 @@ fn test_pull_ff_updates_modified_existing_file() {
 
 #[test]
 fn test_pull_merge_updates_modified_existing_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Regression: merge must update an EXISTING file modified upstream while
     // the local side changed a different file.
     let r = setup();
@@ -357,6 +387,9 @@ fn test_pull_merge_updates_modified_existing_file() {
 
 #[test]
 fn test_pull_ff_allows_dirty_non_overlapping_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "remote.txt", "from remote\n", "remote work");
     write_file(&r.local, ".vscode/settings.json", "{ \"local\": true }\n");
@@ -382,6 +415,9 @@ fn test_pull_ff_allows_dirty_non_overlapping_file() {
 
 #[test]
 fn test_pull_ff_refuses_dirty_overlapping_modified_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "base.txt", "updated upstream\n", "edit base");
     write_file(&r.local, "base.txt", "local dirty\n");
@@ -402,6 +438,9 @@ fn test_pull_ff_refuses_dirty_overlapping_modified_file() {
 
 #[test]
 fn test_pull_ff_refuses_untracked_overlapping_new_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(
         &r,
@@ -430,6 +469,9 @@ fn test_pull_ff_refuses_untracked_overlapping_new_file() {
 
 #[test]
 fn test_pull_ff_refuses_dirty_overlapping_staged_rename_source() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "base.txt", "updated upstream\n", "edit base");
     git(&r.local, &["mv", "base.txt", "renamed-local.txt"]);
@@ -454,6 +496,9 @@ fn test_pull_ff_refuses_dirty_overlapping_staged_rename_source() {
 /// uncommitted content survives.
 #[test]
 fn test_pull_dirty_overlap_refuses_and_preserves_user_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "base.txt", "from remote\n", "remote edits base");
 
@@ -478,6 +523,9 @@ fn test_pull_dirty_overlap_refuses_and_preserves_user_content() {
 /// checkout would reset it to the committed content.
 #[test]
 fn test_pull_fast_forward_keeps_unrelated_dirty_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "remote.txt", "from remote\n", "remote work");
 
@@ -500,6 +548,9 @@ fn test_pull_fast_forward_keeps_unrelated_dirty_file() {
 /// Merge pull leaves an unrelated dirty file alone (same pin, merge path).
 #[test]
 fn test_pull_merge_keeps_unrelated_dirty_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     remote_commit(&r, "remote.txt", "from remote\n", "remote work");
 
@@ -522,3 +573,6 @@ fn test_pull_merge_keeps_unrelated_dirty_file() {
         "safe-mode merge checkout must not discard uncommitted work"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

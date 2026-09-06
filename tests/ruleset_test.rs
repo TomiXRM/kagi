@@ -75,6 +75,9 @@ fn has_ruleset_note(notes: &[PlanNote]) -> bool {
 
 #[test]
 fn plan_commit_surfaces_commit_message_pattern_violation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     std::fs::write(d.join("a.txt"), "hi\n").unwrap();
@@ -110,6 +113,9 @@ fn plan_commit_surfaces_commit_message_pattern_violation() {
 
 #[test]
 fn plan_commit_surfaces_max_file_size_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     std::fs::write(d.join("big.bin"), vec![7u8; 4096]).unwrap();
@@ -138,6 +144,9 @@ fn plan_commit_surfaces_max_file_size_warning() {
 
 #[test]
 fn plan_create_branch_surfaces_branch_name_pattern_violation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_d, repo) = init_repo(&tmp);
     let head = repo.head().unwrap().target().unwrap().to_string();
@@ -168,6 +177,9 @@ fn plan_create_branch_surfaces_branch_name_pattern_violation() {
 
 #[test]
 fn empty_ruleset_is_unknown_not_unconstrained() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The parse of an empty API response must be Unknown, never Active.
     let st = kagi_git::ruleset::parse_ruleset("[]");
     assert_eq!(st, RulesetStatus::Unknown);
@@ -176,6 +188,9 @@ fn empty_ruleset_is_unknown_not_unconstrained() {
 
 #[test]
 fn no_cached_ruleset_leaves_plan_unchanged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Simulates `gh` unauthenticated / feature disabled: nothing is cached, so
     // the commit plan must carry zero ruleset notes (conventional flow intact).
     let tmp = TempDir::new().unwrap();
@@ -197,6 +212,9 @@ fn no_cached_ruleset_leaves_plan_unchanged() {
 
 #[test]
 fn unknown_ruleset_adds_no_findings_but_is_not_active() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     std::fs::write(d.join("a.txt"), "hi\n").unwrap();
@@ -214,3 +232,6 @@ fn unknown_ruleset_adds_no_findings_but_is_not_active() {
     let plan = plan_commit(&repo, "msg").expect("plan_commit");
     assert!(!has_ruleset_note(&plan.warnings) && !has_ruleset_note(&plan.blockers));
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

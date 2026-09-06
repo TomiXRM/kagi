@@ -111,6 +111,9 @@ fn setup_repo() -> TestRepo {
 
 #[test]
 fn test_delete_branch_merged_success() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_repo();
 
     let repo = Repository::open(&r.path).unwrap();
@@ -145,6 +148,9 @@ fn test_delete_branch_merged_success() {
 
 #[test]
 fn test_plan_delete_branch_unmerged_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_repo();
 
     let repo = Repository::open(&r.path).unwrap();
@@ -175,6 +181,9 @@ fn test_plan_delete_branch_unmerged_blocker() {
 
 #[test]
 fn test_plan_delete_branch_current_branch_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_repo();
 
     // HEAD is on `main`.
@@ -206,6 +215,9 @@ fn test_plan_delete_branch_current_branch_blocker() {
 
 #[test]
 fn test_plan_delete_branch_nonexistent_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_repo();
 
     let repo = Repository::open(&r.path).unwrap();
@@ -236,6 +248,9 @@ fn test_plan_delete_branch_nonexistent_blocker() {
 
 #[test]
 fn test_delete_branch_recovery_sha() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_repo();
 
     // Get the tip SHA of `merged`.
@@ -277,6 +292,9 @@ fn test_delete_branch_recovery_sha() {
 
 #[test]
 fn test_execute_delete_branch_preflight_mismatch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
@@ -340,6 +358,9 @@ fn test_execute_delete_branch_preflight_mismatch() {
 
 #[test]
 fn test_delete_branch_upstream_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let remote = tmp.path().join("remote.git");
     let local = tmp.path().join("local");
@@ -418,6 +439,9 @@ fn test_delete_branch_upstream_warning() {
 
 #[test]
 fn test_delete_branch_with_duplicated_gh_config_keys() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_repo();
 
     // Simulate gh CLI's duplicated-key pollution on the merged branch.
@@ -477,6 +501,9 @@ fn test_delete_branch_with_duplicated_gh_config_keys() {
 /// (remove-then-delete), and execute removes the worktree and the branch.
 #[test]
 fn clean_worktree_is_removed_then_branch_deleted() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_repo();
     let wt_path = repo.path.join("wt-merged");
     git(
@@ -511,6 +538,9 @@ fn clean_worktree_is_removed_then_branch_deleted() {
 /// execute refuses (no data loss).
 #[test]
 fn dirty_worktree_blocks_delete() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_repo();
     let wt_path = repo.path.join("wt-merged");
     git(
@@ -536,6 +566,9 @@ fn dirty_worktree_blocks_delete() {
 /// A LOCKED worktree blocks with an unlock hint.
 #[test]
 fn locked_worktree_blocks_delete() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_repo();
     let wt_path = repo.path.join("wt-merged");
     git(
@@ -601,6 +634,9 @@ fn setup_squash_repo() -> TestRepo {
 
 #[test]
 fn squash_merged_branch_is_deletable_with_a_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_squash_repo();
     let repo = Repository::open(&r.path).unwrap();
 
@@ -638,6 +674,9 @@ fn squash_merged_branch_is_deletable_with_a_warning() {
 
 #[test]
 fn a_genuinely_unmerged_branch_is_still_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_squash_repo();
     let repo = Repository::open(&r.path).unwrap();
 
@@ -665,6 +704,9 @@ fn a_genuinely_unmerged_branch_is_still_blocked() {
 /// `squash_links_test.rs::a_whitespace_only_difference_is_not_a_squash_merge`.
 #[test]
 fn a_whitespace_only_difference_must_not_unblock_the_delete() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
@@ -736,3 +778,6 @@ fn a_whitespace_only_difference_must_not_unblock_the_delete() {
         plan.warnings
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

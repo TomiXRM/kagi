@@ -80,6 +80,9 @@ fn fixture(tmp: &TempDir) -> PathBuf {
 /// final assertion fires ("fsmonitor ran under run_git").
 #[test]
 fn fsmonitor_does_not_run_under_run_git() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = fixture(&tmp);
     let marker = tmp.path().join("PWNED_FSM");
@@ -116,6 +119,9 @@ fn fsmonitor_does_not_run_under_run_git() {
 /// final assertion fires ("sshCommand ran under run_git").
 #[test]
 fn ssh_command_does_not_run_under_run_git() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = fixture(&tmp);
     let marker = tmp.path().join("PWNED_SSH");
@@ -156,6 +162,9 @@ fn ssh_command_does_not_run_under_run_git() {
 /// and the marker assertions fire (the injected command runs).
 #[test]
 fn dash_remote_name_is_rejected() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = fixture(&tmp);
     let src = tmp.path().join("src");
@@ -215,6 +224,9 @@ fn dash_remote_name_is_rejected() {
 /// `is_flag_like` predicate for names kagi creates).
 #[test]
 fn check_operand_rejects_leading_dash_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     assert!(check_operand("remote", "origin").is_ok());
     assert!(check_operand("branch", "feature/x").is_ok());
     assert!(check_operand("remote", "-x").is_err());
@@ -229,6 +241,9 @@ fn check_operand_rejects_leading_dash_only() {
 /// local-path remote still fetches and pushes with them in place.
 #[test]
 fn hardening_is_applied_and_local_remotes_still_work() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = fixture(&tmp);
     let bare = tmp.path().join("remote.git");
@@ -270,3 +285,6 @@ fn hardening_is_applied_and_local_remotes_still_work() {
     fetch_remote(&g, &repo).expect("fetch against a local-path remote");
     fetch_remote_branch(&g, &repo, "origin", "main").expect("fetch remote branch");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

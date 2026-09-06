@@ -184,6 +184,31 @@ pre-remove command keeps the worktree; it never proceeds with removal.
 | Conflict | Continue, then verify conflicts are re-detected immediately. |
 | Backend policy | Toggle auto-snapshot OFF/ON; reset and amend must use the same policy from button and Enter. Guarded rebase keeps its existing no-auto-snapshot rule; explicit restore still creates its mandatory savepoint. CLI/MCP default to snapshots ON independently of GUI settings. Confirm create-branch with checkout ON/OFF: ON switches to the new branch with one backend operation; OFF keeps HEAD. Absorb with an index-write failure must show Partial and its original full OID, never a plain Failed after HEAD advanced. Worktree config added/removed/changed after the plan must refuse before target creation. |
 
+### Parallel fixture isolation (#573)
+
+Git fixtures use `tests/support/isolated.rs`: each parent test starts only its
+own exact test in a child process with a fresh `KAGI_LOG_DIR`. The parent owns
+the TempDir until the child finishes. This preserves normal parallelism without
+changing the parent process's environment or sharing the user's oplog. Tests
+that specifically exercise environment overrides may change them inside that
+single-test child. Prefer explicit directory arguments for pure path tests.
+
+The oplog refuses its default home path when runtime `CARGO_MANIFEST_DIR` is
+present and `KAGI_LOG_DIR` is absent: `tests must set KAGI_LOG_DIR`. Do not remove
+the Cargo marker or disable recording to make a fixture pass. Use the child
+helper or pass an explicit storage directory through an existing API.
+
+For an environment-race fix, run the following three times consecutively with
+default test parallelism and record the results in the PR:
+
+```bash
+CARGO_TARGET_DIR="$PWD/target" cargo test -j 8 --workspace
+```
+
+`-j 8` controls Cargo build jobs; it does not serialize Rust test threads. Do
+not use `RUST_TEST_THREADS=1` to mask a race. GUI runner execution is a separate
+lane and is not part of this fixture check.
+
 ## Other runtime seams
 
 Use a real filesystem change to test the watcher and wait through its debounce:
@@ -220,6 +245,7 @@ Finish by exiting the launched application so it cannot retain a socket or test
 state. Fixtures and isolated log directories live below `/tmp`; remove them only
 when their evidence is no longer needed.
 
+
 ### Backend executor visibility (#566)
 
 `tests/support/backend_ops.rs` adapts legacy fixture signatures to Backend run or
@@ -235,3 +261,25 @@ changes isolated in child test processes. Run `cargo test --workspace`; GUI E2E
 may be compiled with `--features gui-e2e --no-run`, but do not execute it for this
 visibility refactor. Preserve the private safe-checkout and unapproved-config
 oracles when updating fixture adapters.
+
+### Ref-backed discard/remove recovery (#523)
+
+Use `crates/kagi-git/tests/ref_backups_test.rs` for G: disable optional snapshots,
+prune a disposable fixture with real Git GC, and recover the original bytes via
+receipt `backup_refs`. A sibling naked blob must disappear to prove actual GC.
+Check remove Success/Partial/Unknown and append failure. Explicit oplog retirement
+must delete only its unshared roots; the final retained entry controls lifetime.
+Default retention is indefinite, matching the oplog; snapshot pruning must not
+expire backup refs. For M, inspect the receipt's ref and export its bytes before
+choosing to retire that entry. Legacy naked-OID logs do not gain retroactive GC
+protection. For Tier A, scope `KAGI_GUI_E2E_ONLY=worktree_panel,remove_public_boundary`:
+the worktree discard scenario parses the blob from the existing `backup:` summary
+and checks that the structured receipt ref resolves to that blob from both
+worktrees. Ref names must not change existing executed lines or after/dirty text;
+they have a separate `backup refs:` contract line. The same filter includes
+`worktree_panel_discard_recording_failure`: hold the real oplog lock through
+append timeout, check "changed but not recorded" and recover from the attempted
+receipt, then repeat with a stale owner and require the owner-named notice.
+G also covers a queued append after actual retirement, colon-before whitespace,
+legacy id-less cleanup, and a pre_remove-created unreadable file: removal must
+stop before deleting the worktree.

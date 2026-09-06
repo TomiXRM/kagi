@@ -82,6 +82,9 @@ fn init_repo(tmp: &TempDir) -> Repository {
 
 #[test]
 fn merge_plan_reports_fast_forward_direction() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -113,6 +116,9 @@ fn merge_plan_reports_fast_forward_direction() {
 
 #[test]
 fn merge_plan_reports_merge_commit_for_diverged_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -170,6 +176,9 @@ fn conflicting_merge_repo() -> (TempDir, Repository) {
 /// file(s), warn about the conflict, and not touch the working tree.
 #[test]
 fn merge_plan_conflict_is_warning_not_blocker_and_leaves_worktree_intact() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (tmp, repo) = conflicting_merge_repo();
     let dir = tmp.path();
 
@@ -212,6 +221,9 @@ fn merge_plan_conflict_is_warning_not_blocker_and_leaves_worktree_intact() {
 /// abort restores the pre-merge clean HEAD.
 #[test]
 fn execute_merge_into_conflict_then_abort_restores_pre_merge_state() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (tmp, repo) = conflicting_merge_repo();
     let dir = tmp.path();
 
@@ -269,6 +281,9 @@ fn execute_merge_into_conflict_then_abort_restores_pre_merge_state() {
 
 #[test]
 fn checkout_tracking_branch_plan_and_execute_from_file_remote() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let remote_tmp = TempDir::new().unwrap();
     let repo = init_repo(&repo_tmp);
@@ -338,6 +353,9 @@ fn repo_with_pushed_topic() -> (TempDir, TempDir, String) {
 
 #[test]
 fn switch_to_latest_creates_local_branch_when_missing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (repo_tmp, _remote_tmp, _url) = repo_with_pushed_topic();
     let dir = repo_tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -366,6 +384,9 @@ fn switch_to_latest_creates_local_branch_when_missing() {
 
 #[test]
 fn switch_to_latest_fast_forwards_behind_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (repo_tmp, remote_tmp, remote_url) = repo_with_pushed_topic();
     let dir = repo_tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -419,6 +440,9 @@ fn switch_to_latest_fast_forwards_behind_branch() {
 /// into a silent no-op while the ref still advances.
 #[test]
 fn switch_to_latest_head_on_target_branch_updates_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (repo_tmp, remote_tmp, remote_url) = repo_with_pushed_topic();
     let dir = repo_tmp.path();
     // HEAD stays ON topic (repo_with_pushed_topic leaves it on main by default).
@@ -481,6 +505,9 @@ fn switch_to_latest_head_on_target_branch_updates_working_tree() {
 /// already been force-moved to the remote tip.
 #[test]
 fn switch_to_latest_dirty_conflict_leaves_ref_unmoved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (repo_tmp, remote_tmp, remote_url) = repo_with_pushed_topic();
     let dir = repo_tmp.path();
     git(dir, &["checkout", "-q", "topic"]);
@@ -529,6 +556,9 @@ fn switch_to_latest_dirty_conflict_leaves_ref_unmoved() {
 
 #[test]
 fn switch_to_latest_ahead_branch_is_switch_only_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (repo_tmp, _remote_tmp, _url) = repo_with_pushed_topic();
     let dir = repo_tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -553,6 +583,9 @@ fn switch_to_latest_ahead_branch_is_switch_only_warning() {
 
 #[test]
 fn switch_to_latest_dirty_working_tree_is_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (repo_tmp, _remote_tmp, _url) = repo_with_pushed_topic();
     let dir = repo_tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -572,6 +605,9 @@ fn switch_to_latest_dirty_working_tree_is_blocker() {
 
 #[test]
 fn checkout_tracking_branch_name_collision_is_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let remote_tmp = TempDir::new().unwrap();
     let repo = init_repo(&repo_tmp);
@@ -601,6 +637,9 @@ fn checkout_tracking_branch_name_collision_is_blocker() {
 /// `execute_merge_branch` fast-forward path (merge.rs FF checkout).
 #[test]
 fn merge_fast_forward_refuses_to_overwrite_dirty_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -634,6 +673,9 @@ fn merge_fast_forward_refuses_to_overwrite_dirty_file() {
 /// `execute_merge_branch` true-merge path (merge.rs post-merge-commit checkout).
 #[test]
 fn merge_commit_refuses_to_overwrite_dirty_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -673,6 +715,9 @@ fn merge_commit_refuses_to_overwrite_dirty_file() {
 /// even the deliberately conflicting merge must not stomp uncommitted work.
 #[test]
 fn merge_into_conflict_refuses_to_overwrite_dirty_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (tmp, repo) = conflicting_merge_repo();
     let dir = tmp.path();
 
@@ -699,6 +744,9 @@ fn merge_into_conflict_refuses_to_overwrite_dirty_file() {
 /// `execute_checkout_tracking_branch` (switch.rs tracking-branch checkout).
 #[test]
 fn checkout_tracking_branch_refuses_to_overwrite_dirty_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let remote_tmp = TempDir::new().unwrap();
     let repo = init_repo(&repo_tmp);
@@ -740,6 +788,9 @@ fn checkout_tracking_branch_refuses_to_overwrite_dirty_file() {
 /// `execute_switch_to_latest` (switch.rs `checkout_branch_tree`).
 #[test]
 fn switch_to_latest_refuses_to_overwrite_dirty_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo_tmp = TempDir::new().unwrap();
     let remote_tmp = TempDir::new().unwrap();
     let repo = init_repo(&repo_tmp);
@@ -781,6 +832,9 @@ fn switch_to_latest_refuses_to_overwrite_dirty_file() {
 /// checkout oracle remains in kagi-git's private merge_executor_tests module.
 #[test]
 fn merge_boundary_refuses_dirty_worktree_without_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (tmp, repo) = conflicting_merge_repo();
     let dir = tmp.path();
     write_file(dir, "base.txt", "UNSAVED USER WORK\n");
@@ -793,3 +847,6 @@ fn merge_boundary_refuses_dirty_worktree_without_mutation() {
         "UNSAVED USER WORK\n"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

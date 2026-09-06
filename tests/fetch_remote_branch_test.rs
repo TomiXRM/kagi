@@ -101,6 +101,9 @@ fn setup() -> Repos {
 
 #[test]
 fn test_fetch_creates_the_remote_tracking_ref() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).expect("open local");
 
@@ -130,6 +133,9 @@ fn test_fetch_creates_the_remote_tracking_ref() {
 
 #[test]
 fn test_fetch_is_noop_when_nothing_moved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).expect("open local");
 
@@ -147,6 +153,9 @@ fn test_fetch_is_noop_when_nothing_moved() {
 
 #[test]
 fn test_fetch_never_moves_head_or_local_branches() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).expect("open local");
 
@@ -162,3 +171,6 @@ fn test_fetch_never_moves_head_or_local_branches() {
         "fetch must not create a local branch"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -101,6 +101,7 @@ pub use kagi_domain::plan_note::{
 // ────────────────────────────────────────────────────────────
 
 mod absorb;
+pub(crate) mod backup;
 mod branch;
 mod branch_cleanup;
 mod checkout;

@@ -104,6 +104,9 @@ fn latest_outcome() -> OpOutcome {
 
 #[test]
 fn pr_merge_records_before_returning_when_the_ui_completion_is_dropped() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = tempfile::tempdir().unwrap();
     let (bin, logs, workdir) = (
@@ -160,6 +163,9 @@ fn pr_merge_records_before_returning_when_the_ui_completion_is_dropped() {
 
 #[test]
 fn a_failed_gh_whose_reread_says_merged_is_not_recorded_as_a_failure() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The server holds the truth: `gh` can fail after GitHub already merged
     // (a broken response, a failing post-merge step). Recording that as Failed
     // invites a second merge attempt.
@@ -185,6 +191,9 @@ fn a_failed_gh_whose_reread_says_merged_is_not_recorded_as_a_failure() {
 
 #[test]
 fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // `--delete-branch` was requested and `gh` failed after the merge landed:
     // the merge is done, the deletion is not confirmed. Neither Success nor
     // Failed is honest.
@@ -211,6 +220,9 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
 
 #[test]
 fn a_failed_gh_that_cannot_be_re_read_is_unknown_not_failed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Disconnected between the merge and the re-read: neither confirmed nor
     // refuted. The existing Unknown contract says so and forbids a retry.
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -236,6 +248,9 @@ fn a_failed_gh_that_cannot_be_re_read_is_unknown_not_failed() {
 
 #[test]
 fn pr_merge_reports_recording_failure_without_hiding_the_merge() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = tempfile::tempdir().unwrap();
     let (bin, logs, workdir) = (
@@ -270,3 +285,6 @@ fn pr_merge_reports_recording_failure_without_hiding_the_merge() {
     assert_eq!(attempted.op, "pr-merge");
     assert!(matches!(attempted.outcome, OpOutcome::Success { .. }));
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -99,6 +99,9 @@ fn remote_has_branch(remote: &Path, branch: &str) -> bool {
 
 #[test]
 fn test_plan_normal_no_blockers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).expect("open local");
 
@@ -125,6 +128,9 @@ fn test_plan_normal_no_blockers() {
 
 #[test]
 fn test_plan_not_found_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).expect("open local");
 
@@ -147,6 +153,9 @@ fn test_plan_not_found_blocker() {
 /// guess at a remote.
 #[test]
 fn test_plan_unsplittable_name_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).expect("open local");
 
@@ -166,6 +175,9 @@ fn test_plan_unsplittable_name_blocker() {
 
 #[test]
 fn test_execute_deletes_the_remote_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     execute_delete_remote_branch(&r.local, "origin/feature/x")
@@ -183,6 +195,9 @@ fn test_execute_deletes_the_remote_branch() {
 
 #[test]
 fn test_execute_does_not_touch_local_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     execute_delete_remote_branch(&r.local, "origin/feature/x")
@@ -199,3 +214,6 @@ fn test_execute_does_not_touch_local_branch() {
     let head_ref = repo.head().expect("repo.head()");
     assert_eq!(head_ref.shorthand().unwrap_or(""), "main");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

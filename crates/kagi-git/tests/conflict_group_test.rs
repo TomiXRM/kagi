@@ -102,6 +102,9 @@ fn head_tree_entry(repo: &Repository, path: &str) -> (i32, git2::Oid) {
 /// `Err`, so the assertion `is_err()` fails.
 #[test]
 fn continue_empty_cherry_pick_surfaces_error() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
     write_file(dir, "f.txt", "BASE\n");
@@ -171,6 +174,9 @@ fn binary_merge_conflict() -> (TempDir, Vec<u8>, Vec<u8>) {
 /// and the byte assertion is never reached.
 #[test]
 fn binary_conflict_take_current_and_incoming_are_byte_identical() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for take_current in [true, false] {
         let (tmp, main_bytes, side_bytes) = binary_merge_conflict();
         let dir = tmp.path();
@@ -223,6 +229,9 @@ fn binary_conflict_take_current_and_incoming_are_byte_identical() {
 /// treated as Content, `apply_choice` errors, and the tree-mode assertion fails.
 #[test]
 fn submodule_conflict_resolves_via_raw_oid() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
     // Three real commits whose shas we reuse as gitlink targets.
@@ -328,6 +337,9 @@ fn resolved_buffer(repo: &Repository, path: &str, text: &str) -> ResolutionBuffe
 /// disagreeing with Save's 0o100755.
 #[test]
 fn exec_bit_preserved_and_save_continue_agree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let resolved = "#!/bin/sh\nMAIN\nSIDE\n";
 
     // Continue path: stage via stage_conflict_resolution, read staged mode.
@@ -367,6 +379,9 @@ fn exec_bit_preserved_and_save_continue_agree() {
 /// "outside bytes unchanged" assertion fails.
 #[test]
 fn conflicted_symlink_never_written_through() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The outside target lives in a sibling dir the repo must never touch.
     let outside = TempDir::new().unwrap();
     let secret = outside.path().join("secret.txt");
@@ -476,6 +491,9 @@ fn conflicted_symlink_never_written_through() {
 /// ref → `repo.head().is_branch()` is false and the shorthand is not the branch.
 #[test]
 fn rebase_abort_returns_to_branch_not_detached() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
     write_file(dir, "f.txt", "L1\n");
@@ -516,6 +534,9 @@ fn rebase_abort_returns_to_branch_not_detached() {
 /// add/add (both sides add the path, no common ancestor) is classified AddAdd.
 #[test]
 fn add_add_is_classified() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
     write_file(dir, "seed.txt", "x\n");
@@ -551,6 +572,9 @@ fn add_add_is_classified() {
 /// is what guarantees distinct sides are never merged away — this locks the count.
 #[test]
 fn rename_rename_not_collapsed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
     write_file(dir, "a.txt", "l1\nl2\nl3\n");
@@ -593,6 +617,9 @@ fn rename_rename_not_collapsed() {
 /// metadata authoritative and overlays only the saved drafts.
 #[test]
 fn binary_choice_works_and_survives_reload_through_autosave() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Hermetic autosave dir (this is the only test that exercises autosave).
     let logdir = TempDir::new().unwrap();
     std::env::set_var("KAGI_LOG_DIR", logdir.path());
@@ -643,3 +670,6 @@ fn binary_choice_works_and_survives_reload_through_autosave() {
 
     std::env::remove_var("KAGI_LOG_DIR");
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

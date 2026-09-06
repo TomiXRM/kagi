@@ -102,6 +102,9 @@ fn outcome(c: &StashCompletion) -> &OpOutcome {
 
 #[test]
 fn four_operations_on_three_stashes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for action in [
         StashAction::Apply { index: 1 },
         StashAction::Pop { index: 1 },
@@ -163,6 +166,9 @@ fn four_operations_on_three_stashes() {
 }
 #[test]
 fn same_count_replacement_refuses_wrong_entry() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let job = f.job(&mut s, StashAction::Drop { index: 1 });
@@ -177,6 +183,9 @@ fn same_count_replacement_refuses_wrong_entry() {
 }
 #[test]
 fn pop_second_step_drift_is_partial_not_refused() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let before = f.ids();
     let mut s = Sessions::new();
@@ -205,6 +214,9 @@ fn pop_second_step_drift_is_partial_not_refused() {
 }
 #[test]
 fn plan_error_is_recorded_only_after_acceptance_once() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let mut bad = f.request(StashAction::Drop { index: 0 });
@@ -229,6 +241,9 @@ fn plan_error_is_recorded_only_after_acceptance_once() {
 }
 #[test]
 fn admission_both_directions_and_abandoned_job() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let guard = s.write_lease(&f.repo, LegacyBusy(false)).unwrap();
@@ -253,6 +268,9 @@ fn admission_both_directions_and_abandoned_job() {
 }
 #[test]
 fn wrappers_record_one_receipt_per_independent_attempt() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut b = Backend::open(&f.repo).unwrap();
     let plan = b.plan_stash_drop(0).unwrap();
@@ -269,6 +287,9 @@ fn wrappers_record_one_receipt_per_independent_attempt() {
 }
 #[test]
 fn append_failure_keeps_mutation_result_without_retry() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     std::fs::create_dir_all(f.log.join("operations.jsonl")).unwrap();
     let mut s = Sessions::new();
@@ -283,6 +304,9 @@ fn append_failure_keeps_mutation_result_without_retry() {
 
 #[test]
 fn changed_count_and_missing_target_are_refused_before_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for remove in [false, true] {
         let f = Fixture::new();
         let mut s = Sessions::new();
@@ -303,6 +327,9 @@ fn changed_count_and_missing_target_are_refused_before_mutation() {
 
 #[test]
 fn push_without_untracked_preserves_untracked_bytes_and_message() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     std::fs::write(f.repo.join("file"), "four\n").unwrap();
@@ -332,6 +359,9 @@ fn push_without_untracked_preserves_untracked_bytes_and_message() {
 
 #[test]
 fn blocker_confirmation_has_one_refused_receipt_no_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let before = f.ids();
@@ -356,6 +386,9 @@ fn blocker_confirmation_has_one_refused_receipt_no_mutation() {
 
 #[test]
 fn blocker_plan_early_failures_report_actual_reason_and_log_lane() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     {
         let f = Fixture::new();
         let mut s = Sessions::new();
@@ -411,6 +444,9 @@ fn blocker_plan_early_failures_report_actual_reason_and_log_lane() {
 
 #[test]
 fn cancellation_policy_revision_and_double_confirmation_are_stale() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let old = f.ready(&mut s, StashAction::Drop { index: 1 });
@@ -436,6 +472,9 @@ fn cancellation_policy_revision_and_double_confirmation_are_stale() {
 
 #[test]
 fn faults_and_open_failure_record_once_without_delivery_retry() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for fault in [
         StashFaultPoint::BeforeMutation,
         StashFaultPoint::AfterMutation,
@@ -521,6 +560,9 @@ fn conflict(f: &Fixture, s: &mut Sessions, action: StashAction) -> StashCompleti
 
 #[test]
 fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for action in [
         StashAction::Pop { index: 1 },
         StashAction::Apply { index: 1 },
@@ -591,6 +633,9 @@ fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
 
 #[test]
 fn continued_conflict_owner_close_clears_before_or_after_reload() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for reload_settled in [false, true] {
         let f = Fixture::new();
         let mut s = Sessions::new();
@@ -613,6 +658,9 @@ fn continued_conflict_owner_close_clears_before_or_after_reload() {
 
 #[test]
 fn unrelated_drop_during_conflict_preserves_origin_payload() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for duplicate_drop_oid in [false, true] {
         let f = Fixture::new();
         let initial = f.ids();
@@ -654,6 +702,9 @@ fn unrelated_drop_during_conflict_preserves_origin_payload() {
 
 #[test]
 fn followup_never_chooses_missing_or_duplicate_oid_or_unknown_origin() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     assert!(s.stash_conflict(&f.repo).is_none());
@@ -680,6 +731,9 @@ fn followup_never_chooses_missing_or_duplicate_oid_or_unknown_origin() {
 
 #[test]
 fn conflict_abort_end_and_replacement_clear_only_matching_owner() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for abort in [false, true] {
         let f = Fixture::new();
         let ids = f.ids();
@@ -704,6 +758,9 @@ fn conflict_abort_end_and_replacement_clear_only_matching_owner() {
 
 #[test]
 fn drop_receipt_can_restore_exact_content_despite_another_append() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let ids = f.ids();
     let mut s = Sessions::new();
@@ -731,6 +788,9 @@ fn drop_receipt_can_restore_exact_content_despite_another_append() {
 
 #[test]
 fn fresh_open_trust_refusal_never_mutates() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let before = f.ids();
@@ -747,6 +807,9 @@ fn fresh_open_trust_refusal_never_mutates() {
 
 #[test]
 fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let linked = f.repo.with_file_name("linked");
@@ -856,6 +919,9 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
 
 #[test]
 fn late_ready_cannot_replace_new_error_or_cancelled_modal() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let old = plan_stash(
@@ -891,6 +957,9 @@ fn late_ready_cannot_replace_new_error_or_cancelled_modal() {
 
 #[test]
 fn lost_delivery_never_appends_again_or_claims_unconfirmed_release() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let completion = f.job(&mut s, StashAction::Drop { index: 1 }).run();
@@ -901,3 +970,6 @@ fn lost_delivery_never_appends_again_or_claims_unconfirmed_release() {
     assert_eq!(read_oplog_tail(100).len(), 1);
     assert_eq!(f.ids().len(), 2);
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

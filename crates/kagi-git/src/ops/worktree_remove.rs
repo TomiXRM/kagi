@@ -348,20 +348,16 @@ fn advance_branch_before_delete_for_test(
 }
 
 /// Write every uncommitted file in the worktree at `wt_path` into the MAIN
-/// repo's ODB, returning `path → blob SHA`. Best-effort: clean worktrees return
+/// repo's ODB, returning `path → blob SHA`. Fail closed: clean worktrees return
 /// an empty vec. Never follows symlinks (mirrors discard's #324 guard).
 fn odb_backup_worktree(
     repo: &Repository,
     wt_path: &Path,
     backups: &mut Vec<DiscardBackup>,
 ) -> Result<(), GitError> {
-    let Ok(wt_repo) = Repository::open(wt_path) else {
-        return Ok(());
-    };
-    let status = match working_tree_status(&wt_repo) {
-        Ok(st) => st,
-        Err(_) => return Ok(()),
-    };
+    let wt_repo = Repository::open(wt_path)
+        .map_err(|error| GitError::Other(format!("backup: open worktree: {error}")))?;
+    let status = working_tree_status(&wt_repo)?;
     let mut rels: Vec<String> = Vec::new();
     let push_rel = |p: &Path, rels: &mut Vec<String>| {
         let rel = p.to_string_lossy().replace('\\', "/");
@@ -375,31 +371,46 @@ fn odb_backup_worktree(
     for p in &status.untracked {
         push_rel(p, &mut rels);
     }
+    let backup_id = super::backup::operation_id();
     for rel in rels {
         let abs = wt_path.join(&rel);
-        let is_symlink = std::fs::symlink_metadata(&abs)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false);
-        let content: Vec<u8> = if is_symlink {
-            match std::fs::read_link(&abs) {
-                Ok(t) => t.to_string_lossy().into_owned().into_bytes(),
-                Err(_) => continue,
-            }
-        } else {
-            match std::fs::read(&abs) {
-                Ok(b) => b,
-                Err(_) => continue, // deletion / unreadable — nothing to back up
-            }
+        let Some(content) = read_worktree_backup(&abs)? else {
+            continue; // Already deleted paths have no working-tree bytes to capture.
         };
-        let oid = repo.blob(&content).map_err(|e| {
-            GitError::Other(format!("ODB backup failed for '{}': {}", rel, e.message()))
-        })?;
-        backups.push(DiscardBackup {
-            path: rel,
-            blob: oid.to_string(),
-        });
+        backups.push(super::backup::write_blob(
+            repo,
+            &backup_id,
+            backups.len(),
+            rel,
+            &content,
+        )?);
     }
     Ok(())
+}
+
+fn read_worktree_backup(path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+    use std::io::ErrorKind;
+    let failure = |error| GitError::Other(format!("backup: read {}: {error}", path.display()));
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(failure(error)),
+    };
+    let content = if metadata.file_type().is_symlink() {
+        std::fs::read_link(path).map(|target| target.to_string_lossy().into_owned().into_bytes())
+    } else {
+        std::fs::read(path)
+    };
+    match content {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error)
+            if error.kind() == ErrorKind::NotFound
+                && matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(failure(error)),
+    }
 }
 
 #[cfg(test)]
@@ -454,6 +465,30 @@ mod tests {
             .find_blob(oid)
             .expect("backup blob SHA must resolve in the main ODB (issue #413)");
         assert_eq!(blob.content(), b"raced work\n");
+        // A tracked deletion is absent, whereas a dirty unreadable file must
+        // abort the backup phase. Neither case may silently lose existing bytes.
+        std::fs::remove_file(wt.join("README.md")).unwrap();
+        let mut deleted = Vec::new();
+        odb_backup_worktree(&repo, &wt, &mut deleted).unwrap();
+        assert_eq!(deleted.len(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = wt.join("scratch.txt");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+            let failed = odb_backup_worktree(&repo, &wt, &mut Vec::new());
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert!(failed.is_err(), "unreadable dirty content must stop backup");
+            assert_eq!(std::fs::read(&path).unwrap(), b"raced work\n");
+            let link = wt.join("broken-link");
+            std::os::unix::fs::symlink("absent-target", &link).unwrap();
+            assert_eq!(
+                read_worktree_backup(&link).unwrap().unwrap(),
+                b"absent-target"
+            );
+        }
+        // Failed repository open/status is not a successful empty backup.
+        assert!(odb_backup_worktree(&repo, &base.path().join("absent"), &mut Vec::new()).is_err());
     }
     #[test]
     fn pre_remove_failure_keeps_the_worktree() {

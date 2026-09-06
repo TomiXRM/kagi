@@ -133,6 +133,9 @@ const COPY: &str = "[[pre_remove]]\ntype = 'copy'\nfrom = 'source'\nto = 'copied
 
 #[test]
 fn normal_receipt_identity_and_invalidation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let done = f.job(&mut s).run();
@@ -154,6 +157,9 @@ fn normal_receipt_identity_and_invalidation() {
 }
 #[test]
 fn revision_replan_failure_never_revives_ready() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let old = f.ready(&mut s);
@@ -169,6 +175,9 @@ fn revision_replan_failure_never_revives_ready() {
 }
 #[test]
 fn refused_dirty_locked_main_missing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     std::fs::write(f.linked.join("dirty"), "keep").unwrap();
     for name in ["linked", "main", "missing"] {
@@ -191,6 +200,9 @@ fn refused_dirty_locked_main_missing() {
 }
 #[test]
 fn preflight_drift_dirty_lock_config_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for change in ["dirty", "lock", "config", "head"] {
         let f = Fixture::new(None);
         let mut s = Sessions::new();
@@ -227,6 +239,9 @@ fn preflight_drift_dirty_lock_config_head() {
 }
 #[test]
 fn same_locator_aba_refused() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let job = f.job(&mut s);
@@ -240,6 +255,9 @@ fn same_locator_aba_refused() {
 }
 #[test]
 fn open_failure_still_records() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let job = f.job(&mut s);
@@ -253,6 +271,9 @@ fn open_failure_still_records() {
 }
 #[test]
 fn duplicate_and_both_legacy_admission_directions() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let token = f.ready(&mut s);
@@ -277,6 +298,9 @@ fn duplicate_and_both_legacy_admission_directions() {
 }
 #[test]
 fn tab_switch_close_welcome_background_close_never_discards_completion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for _event in [
         "switch",
         "owner close",
@@ -298,10 +322,16 @@ fn tab_switch_close_welcome_background_close_never_discards_completion() {
 }
 #[test]
 fn window_close_may_close_host_predicate_tracks_remove_completion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     may_close_host_predicate_tracks_remove_completion();
 }
 #[test]
 fn abandoned_job_records_and_releases_after_poll() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     drop(f.job(&mut s));
@@ -315,6 +345,9 @@ fn abandoned_job_records_and_releases_after_poll() {
 }
 #[test]
 fn policy_and_session_mismatch_refuse_approval() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let token = f.ready(&mut s);
@@ -333,6 +366,9 @@ fn policy_and_session_mismatch_refuse_approval() {
 }
 #[test]
 fn reconcile_failed_read_and_replayed_ack_do_not_unlock() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(Some(COPY));
     let mut s = Sessions::new();
     let job = f
@@ -352,6 +388,9 @@ fn reconcile_failed_read_and_replayed_ack_do_not_unlock() {
 }
 #[test]
 fn quit_may_close_host_predicate_tracks_remove_completion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     may_close_host_predicate_tracks_remove_completion();
 }
 
@@ -365,6 +404,9 @@ fn may_close_host_predicate_tracks_remove_completion() {
 }
 #[test]
 fn owner_trust_refusal_at_each_fresh_open_is_recorded_without_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for fault in [Fault::UntrustedMain, Fault::UntrustedTarget] {
         let f = Fixture::new(None);
         let repo = git2::Repository::open(&f.repo).unwrap();
@@ -403,6 +445,9 @@ fn owner_trust_refusal_at_each_fresh_open_is_recorded_without_mutation() {
 }
 #[test]
 fn initial_pre_remove_policy_refusal_is_failed_without_started_evidence() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(Some("[[pre_remove]]\ntype = 'command'\nrun = 'true'\n"));
     let cfg = kagi_git::ops::load_worktree_config(&f.linked)
         .unwrap()
@@ -424,6 +469,9 @@ fn initial_pre_remove_policy_refusal_is_failed_without_started_evidence() {
 }
 #[test]
 fn policy_refusal_after_trust_grant_is_partial() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(Some("[[pre_remove]]\ntype = 'command'\nrun = 'true'\n"));
     let mut s = Sessions::new();
     let job = f.job(&mut s);
@@ -435,6 +483,9 @@ fn policy_refusal_after_trust_grant_is_partial() {
 }
 #[test]
 fn policy_refusal_after_copy_is_partial() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(Some(
         "[[pre_remove]]\ntype = 'copy'\nfrom = 'source'\nto = 'copied'\n\
          [[pre_remove]]\ntype = 'command'\nrun = 'true'\n",
@@ -457,6 +508,9 @@ fn policy_refusal_after_copy_is_partial() {
 }
 #[test]
 fn branch_moved_after_admin_prune_is_kept_and_receipt_is_partial() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let repo = git2::Repository::open(&f.repo).unwrap();
     let captured = repo
@@ -490,6 +544,9 @@ fn branch_moved_after_admin_prune_is_kept_and_receipt_is_partial() {
 }
 #[test]
 fn partial_and_executor_panic_jsonl_preserve_bytes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for fault in [
         Fault::FailAfterBackupBeforeDelete,
         Fault::FailAfterDirectoryDelete,
@@ -541,6 +598,9 @@ fn partial_and_executor_panic_jsonl_preserve_bytes() {
 }
 #[test]
 fn pre_remove_partial_and_termination_unknown() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let config = format!("{COPY}\n[[pre_remove]]\ntype='copy'\nfrom='missing'\nto='bad'\n");
     let f = Fixture::new(Some(&config));
     let mut s = Sessions::new();
@@ -553,6 +613,9 @@ fn pre_remove_partial_and_termination_unknown() {
 }
 #[test]
 fn unknown_stop_keeps_lease_even_after_read_ack_attempt() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(Some(COPY));
     let mut s = Sessions::new();
     let job = f
@@ -568,6 +631,9 @@ fn unknown_stop_keeps_lease_even_after_read_ack_attempt() {
 }
 #[test]
 fn before_mutation_panic_is_failed_once() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let done = f
@@ -582,6 +648,9 @@ fn before_mutation_panic_is_failed_once() {
 }
 #[test]
 fn append_failure_does_not_reexecute_or_return_old_tail() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let job = f.job(&mut s);
@@ -595,6 +664,9 @@ fn append_failure_does_not_reexecute_or_return_old_tail() {
 }
 #[test]
 fn receipt_is_exact_entry_despite_later_append_and_unknown_roundtrip() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let done = f.job(&mut s).run();
@@ -613,3 +685,6 @@ fn receipt_is_exact_entry_despite_later_append_and_unknown_roundtrip() {
         kagi_git::oplog::entry_to_json(&read_oplog_tail(1)[0])
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

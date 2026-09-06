@@ -195,6 +195,9 @@ fn repo_state(path: &Path) -> (String, String, String, String) {
 
 #[test]
 fn stash_drop_records_recoverable_oid_without_worktree_snapshot() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -230,6 +233,9 @@ fn stash_drop_records_recoverable_oid_without_worktree_snapshot() {
 
 #[test]
 fn stash_drop_refuses_shifted_stash_list_and_records_refusal() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -259,6 +265,9 @@ fn stash_drop_refuses_shifted_stash_list_and_records_refusal() {
 
 #[test]
 fn history_undo_redo_preserves_edits_and_records_full_oid_chain() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -334,6 +343,9 @@ fn history_undo_redo_preserves_edits_and_records_full_oid_chain() {
 
 #[test]
 fn history_undo_refuses_moved_head_and_records_failure() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -362,6 +374,9 @@ fn history_undo_refuses_moved_head_and_records_failure() {
 
 #[test]
 fn cleanup_records_full_tips_and_allows_local_and_remote_recovery() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -413,6 +428,9 @@ fn cleanup_records_full_tips_and_allows_local_and_remote_recovery() {
 
 #[test]
 fn untrusted_cleanup_preserves_branch_and_records_failure() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -442,6 +460,9 @@ fn untrusted_cleanup_preserves_branch_and_records_failure() {
 #[cfg(unix)]
 #[test]
 fn cleanup_remote_success_local_failure_preserves_recovery_and_records_partial() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
 
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -531,6 +552,9 @@ fn cleanup_remote_success_local_failure_preserves_recovery_and_records_partial()
 
 #[test]
 fn cleanup_moved_local_tip_without_deletions_records_failed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -562,3 +586,6 @@ fn cleanup_moved_local_tip_without_deletions_records_failed() {
         other => panic!("expected Failed with no deleted refs, got {other:?}"),
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

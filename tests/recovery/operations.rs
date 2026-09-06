@@ -9,7 +9,7 @@ use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
 use kagi_git::{CommitId, OperationKind};
 
-use crate::macos::{build_fixture, git, mount, repo_fingerprint};
+use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 
 fn output(repo: &Path, args: &[&str]) -> String {
     let result = Command::new("git")
@@ -122,8 +122,7 @@ pub fn scenario_stash_drop_persists(cx: &mut VisualTestAppContext) {
             assert!(app.stash_drop_modal().is_none());
             assert_eq!(app.active_tab, usize::from(switch_away));
         });
-        cx.update_window(window, |_, window, _| window.remove_window())
-            .unwrap();
+        unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS stash_drop_persists active/stale completion and recovery");
 }
@@ -166,8 +165,7 @@ pub fn scenario_history_persists(cx: &mut VisualTestAppContext) {
     recovery_oid(&redo[0], &before);
     recovery_oid(&redo[0], &after);
     cx.read(|cx| assert!(app.read(cx).history_modal().is_none()));
-    cx.update_window(window, |_, window, _| window.remove_window())
-        .unwrap();
+    unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS history_persists undo/redo with both recovery OIDs");
 }
 
@@ -219,8 +217,7 @@ pub fn scenario_cleanup_stale_tab(cx: &mut VisualTestAppContext) {
     let logged_oid = recovery_oid(&entries[0], &oid);
     git(repo, &["branch", "merged", &logged_oid]);
     assert_eq!(output(repo, &["rev-parse", "merged"]), oid);
-    cx.update_window(window, |_, window, _| window.remove_window())
-        .unwrap();
+    unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS cleanup_stale_tab durable recovery and UI ownership");
 }
 
@@ -270,8 +267,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
         let entries = records(repo, "stash-drop");
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
-        cx.update_window(window, |_, window, _| window.remove_window())
-            .unwrap();
+        unmount(cx, app, window);
 
         let fixture = build_fixture();
         let repo = fixture.path();
@@ -312,8 +308,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
         let entries = records(repo, "undo-commit");
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Failed { .. }));
-        cx.update_window(window, |_, window, _| window.remove_window())
-            .unwrap();
+        unmount(cx, app, window);
     }
     i18n::set_lang(language);
     eprintln!("[gui-e2e] PASS preflight_presentation EN/JA stash handler/history Enter, refusal and localized phase");
@@ -376,8 +371,7 @@ pub fn scenario_cleanup_open_failure(cx: &mut VisualTestAppContext) {
                 assert!(matches!(app.status_footer, FooterStatus::Failed(_)));
             }
         });
-        cx.update_window(window, |_, window, _| window.remove_window())
-            .unwrap();
+        unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS cleanup_open_failure active/stale durable refusal without mutation");
 }
@@ -485,7 +479,6 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(output(remote.path(), &["rev-parse", "merged"]), oid);
     assert_eq!(output(repo, &["rev-parse", "merged"]), moved);
-    cx.update_window(window, |_, window, _| window.remove_window())
-        .unwrap();
+    unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS cleanup_partial_presentation per-target details and remote recovery");
 }

@@ -334,6 +334,21 @@ mod macos {
         (kagi, window.into())
     }
 
+    /// Release an offscreen root before the next scenario mounts a native
+    /// window. The root entity can retain input state and tasks after its
+    /// window closes, so drop it before parking the dispatcher.
+    pub(super) fn unmount<T: 'static>(
+        cx: &mut VisualTestAppContext,
+        entity: Entity<T>,
+        window: AnyWindowHandle,
+    ) {
+        cx.update_window(window, |_, window, _| window.remove_window())
+            .expect("close offscreen window");
+        drop(entity);
+        cx.update(|_| {});
+        cx.run_until_parked();
+    }
+
     /// `git rev-parse HEAD` + porcelain status, for the no-mutation assertion.
     pub(super) fn repo_fingerprint(dir: &Path) -> (String, String) {
         let head = Command::new("git")
@@ -359,6 +374,20 @@ mod macos {
         dir
     }
 
+    /// Parse the optional comma-separated scenario substring filter. Empty
+    /// entries are ignored; only an unset variable runs the full suite.
+    fn scenario_filters() -> Option<Vec<String>> {
+        std::env::var_os("KAGI_GUI_E2E_ONLY").map(|value| {
+            value
+                .to_string_lossy()
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+    }
+
     /// The scenario suite. Returns a process exit code (0 = pass). Each scenario
     /// asserts observable `KagiApp` state / clipboard / repo refs (ADR-0166 §3:
     /// deterministic assertions are the oracle, screenshots are triage only) and
@@ -371,6 +400,7 @@ mod macos {
             eprintln!("[gui-e2e] SKIP: set KAGI_GUI_E2E=1 to run the visual scenarios");
             return 0;
         }
+        let filters = scenario_filters();
 
         // Redirect settings.json to a throwaway dir so scenarios that touch
         // settings (graph_copy_target, theme via set_active) never read or clobber
@@ -384,60 +414,122 @@ mod macos {
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();
         cx.update(e2e::init_app);
-
-        // Issue #548's draw-time measurement, run ALONE: every scenario opens a
-        // real window macOS clamps onto the display, and the timing wants an
-        // otherwise idle process anyway.
-        //   KAGI_GUI_E2E=1 KAGI_OPLOG_PERF=1 cargo test -p kagi \
-        //     --features gui-e2e --test gui_e2e_runner -- --nocapture
-        if std::env::var_os("KAGI_OPLOG_PERF").is_some() {
-            crate::perf_oplog_detail::scenario_expanded_detail_draw(&mut cx);
-            cx.run_until_parked();
-            drain_native_events();
-            drop(native_pool);
-            cx.update(|_| {});
-            cx.run_until_parked();
-            eprintln!("[gui-e2e] PASS oplog perf scenario only (KAGI_OPLOG_PERF)");
-            return 0;
+        // #546 stays compiled but disabled until its follow-up presentation
+        // path has a deterministic driver.
+        let mut scenarios: Vec<(&str, Box<dyn FnMut(&mut VisualTestAppContext)>)> = vec![
+            (
+                "stash_drop_persists",
+                Box::new(crate::recovery_operations::scenario_stash_drop_persists),
+            ),
+            (
+                "history_persists",
+                Box::new(crate::recovery_operations::scenario_history_persists),
+            ),
+            (
+                "cleanup_stale_tab",
+                Box::new(crate::recovery_operations::scenario_cleanup_stale_tab),
+            ),
+            (
+                "preflight_presentation",
+                Box::new(crate::recovery_operations::scenario_preflight_presentation),
+            ),
+            (
+                "cleanup_open_failure",
+                Box::new(crate::recovery_operations::scenario_cleanup_open_failure),
+            ),
+            (
+                "cleanup_partial_presentation",
+                Box::new(crate::recovery_operations::scenario_cleanup_partial_presentation),
+            ),
+            (
+                "remove_public_boundary",
+                Box::new(crate::app_remove::scenario_remove_public_boundary),
+            ),
+            (
+                "editor_save_admission",
+                Box::new(crate::app_writer_admission::scenario_editor_save_admission),
+            ),
+            (
+                "stash_public_boundary",
+                Box::new(crate::app_stash::scenario_stash_public_boundary),
+            ),
+            (
+                "stash_replan_error",
+                Box::new(crate::app_stash::scenario_stash_replan_error),
+            ),
+            (
+                "external_stash_conflict_has_no_drop_prompt",
+                Box::new(crate::app_stash::scenario_external_stash_conflict_has_no_drop_prompt),
+            ),
+            (
+                "commit_row_layout",
+                Box::new(crate::recovery_layout::scenario_commit_row_layout),
+            ),
+            (
+                "editor_history_layout",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_editor_history_layout(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+            ),
+            ("bottom_panel", Box::new(scenario_bottom_panel)),
+            (
+                "graph_copy",
+                Box::new(|cx| scenario_graph_copy(cx, log_dir.path())),
+            ),
+            ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
+            ("create_snapshot", Box::new(scenario_create_snapshot)),
+            ("theme_switch", Box::new(scenario_theme_switch)),
+            ("agent_provenance", Box::new(scenario_agent_provenance)),
+            ("wip_head_connector", Box::new(scenario_wip_head_connector)),
+            (
+                "worktree_wip_inline",
+                Box::new(scenario_worktree_wip_inline),
+            ),
+            (
+                "worktree_panel_commit",
+                Box::new(scenario_worktree_panel_commit),
+            ),
+            (
+                "worktree_panel_amend_discard",
+                Box::new(scenario_worktree_panel_amend_discard),
+            ),
+            (
+                "oplog_detail_draw",
+                Box::new(crate::perf_oplog_detail::scenario_expanded_detail_draw),
+            ),
+        ];
+        let mut executed = 0;
+        for (name, scenario) in &mut scenarios {
+            if filters
+                .as_ref()
+                .is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
+            {
+                scenario(&mut cx);
+                executed += 1;
+            } else {
+                eprintln!("[gui-e2e] SKIP {} (filtered)", name);
+            }
         }
-
-        crate::recovery_operations::scenario_stash_drop_persists(&mut cx);
-        crate::recovery_operations::scenario_history_persists(&mut cx);
-        crate::recovery_operations::scenario_cleanup_stale_tab(&mut cx);
-        crate::recovery_operations::scenario_preflight_presentation(&mut cx);
-        crate::recovery_operations::scenario_cleanup_open_failure(&mut cx);
-        crate::recovery_operations::scenario_cleanup_partial_presentation(&mut cx);
-        crate::app_remove::scenario_remove_public_boundary(&mut cx);
-        crate::app_writer_admission::scenario_editor_save_admission(&mut cx);
-        crate::app_stash::scenario_stash_public_boundary(&mut cx);
-        // #546: keep the scenario compiled, but exclude it from PR 1's E run
-        // until the GUI follow-up presentation path has a deterministic driver.
-        crate::app_stash::scenario_stash_replan_error(&mut cx);
-        crate::app_stash::scenario_external_stash_conflict_has_no_drop_prompt(&mut cx);
-        crate::recovery_layout::scenario_commit_row_layout(&mut cx);
-        let history_fixture = build_fixture();
-        let history_before = repo_fingerprint(history_fixture.path());
-        crate::recovery_layout::scenario_editor_history_layout(&mut cx, history_fixture.path());
-        assert_eq!(history_before, repo_fingerprint(history_fixture.path()));
-
-        scenario_bottom_panel(&mut cx);
-        scenario_graph_copy(&mut cx, log_dir.path());
-        scenario_oplog_expand_copy(&mut cx);
-        scenario_create_snapshot(&mut cx);
-        scenario_theme_switch(&mut cx);
-        scenario_agent_provenance(&mut cx);
-        scenario_wip_head_connector(&mut cx);
-        scenario_worktree_wip_inline(&mut cx);
-        scenario_worktree_panel_commit(&mut cx);
-        scenario_worktree_panel_amend_discard(&mut cx);
-        crate::perf_oplog_detail::scenario_expanded_detail_draw(&mut cx);
+        if executed == 0 {
+            eprintln!(
+                "[gui-e2e] ERROR: KAGI_GUI_E2E_ONLY={filters:?} matched no enabled scenarios"
+            );
+            return 1;
+        }
         cx.run_until_parked();
         drain_native_events();
         drop(native_pool);
         cx.update(|_| {});
         cx.run_until_parked();
 
-        eprintln!("[gui-e2e] PASS all scenarios");
+        if filters.is_none() {
+            eprintln!("[gui-e2e] PASS all scenarios");
+        } else {
+            eprintln!("[gui-e2e] PASS filtered scenarios");
+        }
         0
     }
 
@@ -473,6 +565,7 @@ mod macos {
             repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
         );
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS bottom_panel initial={initial}");
     }
 
@@ -521,6 +614,7 @@ mod macos {
             Some(branch.as_str()),
             "graph Cmd+C (branch) should copy the local branch name"
         );
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS graph_copy hash={} branch={branch}",
             &full_sha[..8]
@@ -544,7 +638,7 @@ mod macos {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let long_error = "e".repeat(200);
         kagi.update(cx, |app, cx| {
@@ -634,6 +728,8 @@ mod macos {
             repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
         );
+        drop(panel);
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS oplog_expand_copy grew {:?} -> {:?}, row1 {:?} -> {:?}, copied {} chars",
             collapsed0.size.height,
@@ -652,7 +748,7 @@ mod macos {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);
-        let (_kagi, win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         assert!(
             for_each_ref(&repo_path, "refs/kagi/snapshots/")
@@ -674,6 +770,7 @@ mod macos {
             repo_fingerprint(&repo_path),
             "CreateSnapshot must not move HEAD or dirty the working tree"
         );
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS create_snapshot ref_count={count}");
     }
 
@@ -683,7 +780,7 @@ mod macos {
     fn scenario_theme_switch(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let before = theme::theme().slug;
         let target = if before == "dracula" {
@@ -700,6 +797,7 @@ mod macos {
             "SetTheme should make {target} the active theme"
         );
         assert_ne!(after, before, "active theme should have changed");
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS theme_switch {before} -> {after}");
     }
 
@@ -709,7 +807,7 @@ mod macos {
     fn scenario_agent_provenance(cx: &mut VisualTestAppContext) {
         let fixture = build_agent_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let (head_agent, parent_agent) = cx.read(|app| {
             let rows = &kagi.read(app).active_view.rows;
@@ -733,6 +831,7 @@ mod macos {
             parent_agent, None,
             "plain human commit should carry no provenance"
         );
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS agent_provenance head=ClaudeCode human=None");
     }
 
@@ -748,7 +847,7 @@ mod macos {
     fn scenario_wip_head_connector(cx: &mut VisualTestAppContext) {
         let (_fixture, repo_path, _wt_path) = build_wip_connector_fixture();
         let before_fp = repo_fingerprint(&repo_path);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         // One WIP-ghost edge of `row`, by kind and colour index.
         fn ghost(
@@ -849,6 +948,7 @@ mod macos {
             repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
         );
+        unmount(cx, kagi, win);
     }
 
     /// Issue #473 + #476 slice 1: clicking a LINKED WORKTREE's WIP row shows
@@ -870,7 +970,7 @@ mod macos {
         let (_fixture, repo_path, wt_path) = build_wip_connector_fixture();
         let repo_fp = repo_fingerprint(&repo_path);
         let wt_fp = repo_fingerprint(&wt_path);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let tabs_before = cx.read(|app| kagi.read(app).tabs.len());
 
@@ -1084,6 +1184,8 @@ mod macos {
             "staging in the open repo must not touch the worktree"
         );
 
+        drop(panel);
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS worktree_wip_inline tabs={tabs_before} panel={} files={files:?} \
              own-panel-staged={:?}",
@@ -1112,7 +1214,7 @@ mod macos {
         let wt_b_fp = repo_fingerprint(&wt_b);
         let wt_a_head_before = repo_fingerprint(&wt_a).0;
         let wt_a_commits_before = commit_count(&wt_a);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         // Where each worktree sits in the snapshot's list — its `WipTarget` key
         // and its lane colour index are both that position.
@@ -1289,6 +1391,7 @@ mod macos {
             "the tab's Undo must not point at the WORKTREE's commit: {undo_head:?}"
         );
 
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS worktree_panel_commit wt-a {}..{} lanes open={lane_open:?} \
              b={lane_b:?} oplog={op}@{repo}",
@@ -1594,6 +1697,7 @@ mod macos {
             "the panel's discard must not touch the open repo"
         );
 
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS worktree_panel_amend_discard wt-a {}..{} backup={} undo={undo_head:?}",
             &head_before[..8],

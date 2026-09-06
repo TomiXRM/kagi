@@ -22,13 +22,31 @@ the Git states needed to exercise safety-sensitive flows.
 ```bash
 KAGI_GUI_E2E=1 CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+
+# Run only scenarios whose names contain either substring.
+KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph_copy' \
+  CARGO_TARGET_DIR="$PWD/target" \
+  cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
 
-It uses `VisualTestAppContext` with deterministic assertions. Do not use it to
-wait on a child process or to validate IME/focus behavior: `TestDispatcher`'s
-`run_until_parked` waits while a job is outstanding. Each new scenario must close
-its native window with `remove_window` and drop its held entities before the
-dispatcher is drained, otherwise the runner's leak detector can retain them.
+It uses `VisualTestAppContext` with deterministic assertions. Its test windows
+can appear at the primary display's top-left while a scenario runs; each must
+disappear when the scenario ends, and none may remain when the runner exits.
+Do not use it to wait on a child process or to validate IME/focus behavior:
+`TestDispatcher`'s `run_until_parked` waits while a job is outstanding. Each
+new scenario must call the runner's shared `unmount(cx, entity, window)` helper,
+which calls `remove_window`, drops the root entity, flushes the app, and then
+drains the dispatcher. Drop retained child entities before that helper when
+needed, otherwise the runner's leak detector can retain them.
+
+`KAGI_GUI_E2E_ONLY` is a comma-separated, case-sensitive substring filter.
+Whitespace is trimmed and empty entries are ignored; only an unset value runs
+the full suite. An all-empty value or a filter with no enabled scenario match
+exits nonzero after reporting each scenario as filtered out.
+The pinned GPUI revision has no public API to hide an individual mounted native
+window; [`open_offscreen_window` keeps `show: true`](https://github.com/zed-industries/zed/blob/5a9b9558db01a6b906cec2fb70a797affdc58cdd/crates/gpui/src/app/visual_test_context.rs#L97-L120).
+The runner therefore keeps its existing mount behavior and relies on `unmount`
+to remove each window after its scenario.
 
 The current suite covers:
 

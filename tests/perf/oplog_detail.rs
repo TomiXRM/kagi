@@ -6,6 +6,10 @@
 //! mount the real root, push one synthetic `Failed` entry whose error is the
 //! measured 158,051 bytes, expand it, then time `window.refresh();
 //! window.draw(cx).clear()` — one warm-up draw dropped, median of 7.
+//!
+//! Timing wants an otherwise idle process, so run it alone (#549's filter):
+//!   KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY=oplog_detail_draw cargo test -p kagi \
+//!     --features gui-e2e --test gui_e2e_runner -- --nocapture
 
 use std::time::Instant;
 
@@ -87,6 +91,7 @@ pub fn scenario_expanded_detail_draw(cx: &mut VisualTestAppContext) {
         crate::macos::repo_fingerprint(&repo_path),
         "repo mutated during a read-only scenario"
     );
+    crate::macos::unmount(cx, kagi, win);
     eprintln!(
         "[gui-e2e] PASS oplog_detail_draw bytes={PAYLOAD_BYTES} \
          warmup_ms={warmup:.3} median_ms={median:.3} max_ms={max:.3} row_height={height:?}"

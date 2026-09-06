@@ -21,6 +21,8 @@ use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLay
 use kagi_ui_core::{i18n, theme};
 use kagi_ui_editor::RightPaneTab;
 
+use crate::macos::unmount;
+
 const SIZES: [(f32, f32); 4] = [(320., 240.), (640., 480.), (1024., 768.), (1440., 900.)];
 const ZOOMS: [f32; 4] = [0.8, 1., 1.25, 1.5];
 const EPS: f32 = 1.; // GPUI snaps layout edges to device pixels.
@@ -309,8 +311,7 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
                                 &original,
                                 "{label}: rendering changed raw commit strings"
                             );
-                            cx.update_window(win.into(), |_, window, _| window.remove_window())
-                                .expect("close row matrix window");
+                            unmount(cx, rows, win.into());
                         }
                     }
                 }
@@ -436,14 +437,9 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
                 cx.notify();
             });
         }
-        cx.update_window(win.into(), |_, window, _| window.remove_window())
-            .expect("close Editor window");
         drop(editor);
-        drop(app);
         drop(captured);
-        // Release entity-owned input tasks while the test context is still alive.
-        cx.update(|_| {});
-        cx.run_until_parked();
+        unmount(cx, app, win.into());
     }
     drop(restore);
     eprintln!("[gui-e2e] PASS editor_history_layout actual KagiApp/Editor 11 inputs at fresh 1440/1024/1440 mounts; native resize unavailable");

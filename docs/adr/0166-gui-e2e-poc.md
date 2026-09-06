@@ -6,6 +6,41 @@
 - 前提 ADR: 0077（4層テスト戦略、`VisualTestContext` は「window が本当に要る箇所だけ」）、
   ADR-0097（web harness は pure-domain、Backend を含まない）。
 
+## Update 2026-09-06 — compile-time opt-in and build cost
+
+The runtime guard prevented GUI execution, but the unconditional development
+dependency still compiled `gpui/test-support` and linked the full runner during
+ordinary workspace tests and Clippy. This update supersedes the dev-dependency
+wiring described in the historical PoC below.
+
+- The root feature `gui-e2e = ["gpui/test-support"]` enables support on the
+  existing GPUI dependency; no alias or second implementation is needed.
+- `gui_e2e_runner` requires that feature. `tests/recovery/{operations,layout}.rs`
+  are modules of that target, so they are excluded with it. The production
+  `src/ui/e2e.rs` seam uses only ordinary GPUI APIs and needs no code change.
+- Default build/test/Clippy graphs have no `gpui/test-support`. Enabling
+  `gui-e2e` deliberately changes that graph, including for a build with that
+  flag; release builds must not opt into the testing feature.
+- On macOS, GPUI still appears as both a `gpui_macos` build-dependency and a
+  runtime dependency. The check is absence of the test-support feature family
+  by default, not the number of GPUI headings in the inverted dependency tree.
+- Keep `KAGI_GUI_E2E=1` as a separate execution guard, so `--all-features` does
+  not unexpectedly open native windows. Normal workspace tests do not even
+  compile the runner. CI keeps its existing workspace-test command.
+- Dev (and inherited test) profiles use `debug = "line-tables-only"` for
+  workspace code and `debug = false` for external dependencies. Existing
+  per-crate `opt-level = 3` overrides remain intact. Dependency-level LLDB
+  inspection requires a temporary `--config 'profile.dev.package."*".debug=2'`;
+  package profile overrides [do not support environment variables](https://doc.rust-lang.org/cargo/reference/config.html#profilenamepackagename).
+- Build hygiene lives in `AGENTS.md` / its `CLAUDE.md` symlink: shared target,
+  serial cargo commands and weekly age-based sweeping. Machine configuration
+  and sweep installation are local administration, not part of this change.
+
+Deferred: consolidating integration tests could reduce linking/scanning, but
+the current root tests have eight separate `ENV_LOCK` statics. A single test
+process needs a shared environment lock first; that is a separate PR after
+measuring this feature/profile change.
+
 ## 何を実証したか
 
 `gpui` の `test-support` feature が解禁する **`VisualTestAppContext`**（macOS 専用、
@@ -166,8 +201,8 @@ mount するには意図的な seam が要る = これは issue の論点 #1 そ
 ### 実行
 
 ```
-KAGI_GUI_E2E=1 CARGO_TARGET_DIR=…/target \
-  cargo test -p kagi --test gui_e2e_runner -- --nocapture
+KAGI_GUI_E2E=1 CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target \
+  cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
 
 ### 依存分離の検証（再掲・実測）

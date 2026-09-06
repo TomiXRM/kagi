@@ -9,10 +9,10 @@
 //!
 //! It links the `kagi` lib (which now hosts `ui`, ADR-0166) and drives the REAL
 //! `KagiApp` root through `gpui::VisualTestAppContext` (unlocked by the
-//! `test-support` **dev**-dependency feature — never in the release binary).
+//! explicit `gui-e2e` feature; default builds leave `test-support` disabled).
 //! Every normal-dep detail (`gpui_component`, `gpui_platform`, `kagi_git`) is
 //! hidden behind the `kagi::ui::e2e` seam, so this file touches only `gpui`
-//! (dev-dep), `image`/`tempfile` (dev-deps), and `kagi`.
+//! (normal dependency), `image`/`tempfile` (dev-deps), and `kagi`.
 //!
 //! Each scenario mounts the real root, drives it (keystroke / registered action
 //! / entity update), settles deterministically, and asserts observable state —
@@ -24,11 +24,11 @@
 //! Exits 0 on success, non-zero (panic → 101) on failure.
 //!
 //! Run (opt-in — see the `KAGI_GUI_E2E` guard in `run`):
-//!   KAGI_GUI_E2E=1 CARGO_TARGET_DIR=…/target \
-//!     cargo test -p kagi --test gui_e2e_runner -- --nocapture
+//!   KAGI_GUI_E2E=1 CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target \
+//!     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 //!
-//! Without `KAGI_GUI_E2E`, and on `cargo test --workspace`, it prints SKIP and
-//! exits 0, so it never gates the normal suite (ADR-0166 §CI: evidence lane).
+//! Default workspace tests omit this target (including its recovery modules).
+//! With `gui-e2e` but without `KAGI_GUI_E2E`, it still prints SKIP and exits 0.
 //!
 //! PNGs would land in `$CARGO_TARGET_DIR/gui_e2e_poc/{before,after}.png` — but
 //! the locked gpui rev does not implement `render_to_image` for the real Mac

@@ -420,6 +420,30 @@ impl WriteGuard {
     }
 }
 
+/// C0 bridge for conflict Continue / Skip / Abort while those writers still
+/// use the legacy UI execution path (#569). Preserve an unconfirmed process
+/// termination as `Unknown` and deliberately retain the repository lease.
+/// Known termination releases normally. The full conflict-family report and
+/// read/ack lifecycle replace this bridge in C3.
+pub fn settle_conflict_write<R>(
+    guard: WriteGuard,
+    result: &Result<R, kagi_git::GitError>,
+    after: kagi_git::StateSummary,
+) -> Option<kagi_git::OpOutcome> {
+    let unknown = match result {
+        Err(kagi_git::GitError::TerminationUnknown(reason)) => Some(kagi_git::OpOutcome::Unknown {
+            after,
+            evidence: format!(
+                "{}; process termination is unconfirmed — do not retry this operation",
+                reason
+            ),
+        }),
+        _ => None,
+    };
+    guard.complete_git(result);
+    unknown
+}
+
 #[derive(Clone, Debug)]
 pub enum Delivery {
     Invalidate(InvalidTarget),

@@ -1157,11 +1157,7 @@ pub(crate) fn execute_conflict_continue(
     // message (no editor is opened) and, for rebase, keeps auto-continuing
     // through any further non-conflicting commits until it either finishes or
     // stops at the next conflict.
-    //
-    // A single `--continue` call is *usually* enough to run the whole
-    // remaining sequence. Loop, bounded by the sequence length, nudging once
-    // per resolved step.
-    //
+    // A bounded loop nudges once per resolved step.
     // #296(a): `--continue` exit status is authoritative. EVERY other run_git
     // caller checks `out.status`; this site used to ignore it, so a hard
     // refusal (e.g. "The previous cherry-pick is now empty", "You must edit all
@@ -1172,8 +1168,10 @@ pub(crate) fn execute_conflict_continue(
     let slug = session.op.slug();
     let max_attempts = read_rebase_progress(repo.path()).1.max(1) + 1;
     for _attempt in 0..max_attempts {
-        let out = run_git(repo_path, &[slug, "--continue"])
-            .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
+        let out = run_git(repo_path, &[slug, "--continue"]).map_err(|e| match e {
+            GitError::TerminationUnknown(_) => e,
+            other => GitError::Other(format!("{} --continue failed to start: {}", slug, other)),
+        })?;
 
         // #296(b): libgit2 caches the index on the long-lived session repo and
         // does NOT re-read it after an external `git … --continue`. Force a
@@ -2418,8 +2416,10 @@ pub(crate) fn execute_conflict_skip(
         .to_path_buf();
     let slug = session.op.slug();
     let position_before = sequencer_position(repo, session);
-    let out = run_git(&workdir, &[slug, "--skip"])
-        .map_err(|e| GitError::Other(format!("{} --skip failed to start: {}", slug, e)))?;
+    let out = run_git(&workdir, &[slug, "--skip"]).map_err(|e| match e {
+        GitError::TerminationUnknown(_) => e,
+        other => GitError::Other(format!("{} --skip failed to start: {}", slug, other)),
+    })?;
 
     let progress = classify_skip(SkipObservation {
         ok: out.status == 0,

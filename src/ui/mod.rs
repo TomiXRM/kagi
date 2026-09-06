@@ -1974,16 +1974,16 @@ impl KagiApp {
         cx: &mut Context<Self>,
         persist_non_run: bool,
     ) {
-        // Build the footer message before moving `outcome`.
         let (footer_msg, footer_ok) = match &outcome {
             OpOutcome::Success { after } => (
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
                 true,
             ),
-            OpOutcome::Unknown {
-                evidence: error, ..
-            }
-            | OpOutcome::Partial { error, .. } => (
+            OpOutcome::Unknown { evidence, .. } => (
+                SharedString::from(format!("{}: outcome unknown — {}", op, evidence)),
+                false,
+            ),
+            OpOutcome::Partial { error, .. } => (
                 SharedString::from(format!("{}: partially applied — {}", op, error)),
                 false,
             ),

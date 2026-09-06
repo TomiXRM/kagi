@@ -10,6 +10,7 @@ pub mod checkout;
 pub mod cherry_revert;
 pub mod commit;
 pub mod conflict;
+mod conflict_skip;
 pub mod discard;
 pub mod editor_fs;
 pub mod force_lease;

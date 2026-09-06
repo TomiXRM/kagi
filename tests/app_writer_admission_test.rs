@@ -1,7 +1,7 @@
 //! Slice 1b: public reservation API, real fixture writers, no window/UI methods.
 use kagi::app::*;
 use kagi_domain::remove::RemoveFaultPoint;
-use kagi_git::{Backend, GitError, OpOutcome};
+use kagi_git::{Backend, GitError, OpOutcome, StateSummary};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
@@ -298,6 +298,41 @@ fn fetch_unknown_retains_but_known_failure_releases() {
         guard.complete_git(&Err::<(), _>(error));
         assert_eq!(sessions.has_leases(), unknown);
     }
+}
+
+#[test]
+fn conflict_c0_termination_unknown_records_unknown_and_retains_owner_lease() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut sessions = Sessions::new();
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let result = Err::<(), _>(GitError::TerminationUnknown(
+        "git rebase --continue timed out".into(),
+    ));
+
+    let outcome = kagi::app::settle_conflict_write(
+        guard,
+        &result,
+        StateSummary {
+            head: "before".into(),
+            dirty: "conflict".into(),
+        },
+    )
+    .expect("unconfirmed termination must produce an Unknown outcome");
+
+    assert!(matches!(
+        outcome,
+        OpOutcome::Unknown { evidence, .. }
+            if evidence.contains("do not retry") && evidence.contains("timed out")
+    ));
+    assert!(sessions.has_leases(), "the owner lease must remain held");
+    assert!(matches!(
+        sessions.write_lease(&f.linked, LegacyBusy(false)),
+        Err(AdmissionError::Busy)
+    ));
 }
 
 #[test]

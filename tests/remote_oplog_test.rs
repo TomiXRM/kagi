@@ -57,6 +57,9 @@ fn fake_ssh(bin: &Path) {
 
 #[test]
 fn remote_drop_persists_recovery_and_failed_attempt_before_returning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("repo with spaces");
@@ -126,6 +129,9 @@ fn remote_drop_persists_recovery_and_failed_attempt_before_returning() {
 /// record must exist without any UI completion running.
 #[test]
 fn remote_pull_records_success_and_failure_at_the_transport() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = tempfile::tempdir().unwrap();
     let origin = root.path().join("origin.git");
@@ -270,6 +276,9 @@ fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome 
 /// `git pull` may already have run.
 #[test]
 fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     for banner in [
@@ -292,3 +301,6 @@ fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
         "a recognized refusal must stay Failed, got {outcome:?}"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

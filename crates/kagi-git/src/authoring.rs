@@ -49,11 +49,19 @@ pub fn load_commit_template(repo: &Repository) -> Option<String> {
 
 /// Expand a leading `~` against `$HOME`. Returns `None` for an empty path.
 fn expand_tilde(raw: &str) -> Option<PathBuf> {
+    expand_tilde_with_home(raw, std::env::var_os("HOME").as_deref())
+}
+
+/// Expand a leading `~` using an explicitly supplied home directory.
+///
+/// The environment lookup stays in [`expand_tilde`], leaving the path parsing
+/// deterministic for unit tests.
+fn expand_tilde_with_home(raw: &str, home: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     if raw.is_empty() {
         return None;
     }
     match raw.strip_prefix("~/") {
-        Some(rest) => std::env::var_os("HOME").map(|h| Path::new(&h).join(rest)),
+        Some(rest) => home.map(|home| Path::new(home).join(rest)),
         None => Some(PathBuf::from(raw)),
     }
 }
@@ -114,12 +122,14 @@ mod tests {
 
     #[test]
     fn expand_tilde_resolves_against_home() {
-        std::env::set_var("HOME", "/home/ada");
         assert_eq!(
-            expand_tilde("~/.gitmessage"),
+            expand_tilde_with_home("~/.gitmessage", Some(std::ffi::OsStr::new("/home/ada"))),
             Some(PathBuf::from("/home/ada/.gitmessage"))
         );
-        assert_eq!(expand_tilde("/etc/tpl"), Some(PathBuf::from("/etc/tpl")));
-        assert_eq!(expand_tilde(""), None);
+        assert_eq!(
+            expand_tilde_with_home("/etc/tpl", None),
+            Some(PathBuf::from("/etc/tpl"))
+        );
+        assert_eq!(expand_tilde_with_home("", None), None);
     }
 }

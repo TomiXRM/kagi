@@ -123,6 +123,9 @@ fn stash_conflict_repo() -> TempDir {
 /// `detect_conflict_session` return `None` here → this `.expect` panics.
 #[test]
 fn detects_stash_conflict_session() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = stash_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -163,6 +166,9 @@ fn detects_stash_conflict_session() {
 /// unchanged, no commit.
 #[test]
 fn continue_stages_resolution_without_committing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = stash_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -217,6 +223,9 @@ fn continue_stages_resolution_without_committing() {
 /// session would persist → the content / conflict assertions fail.
 #[test]
 fn abort_restores_head_and_keeps_stash() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = stash_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -265,3 +274,6 @@ fn abort_restores_head_and_keeps_stash() {
         "abort must leave the stash entry intact"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

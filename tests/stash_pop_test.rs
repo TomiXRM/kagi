@@ -66,6 +66,9 @@ fn build_clean_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
 
 #[test]
 fn test_stash_pop_normal_restores_and_removes_entry() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -122,6 +125,9 @@ fn test_stash_pop_normal_restores_and_removes_entry() {
 
 #[test]
 fn test_stash_drop_removes_entry_without_touching_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -177,6 +183,9 @@ fn test_stash_drop_removes_entry_without_touching_working_tree() {
 
 #[test]
 fn test_stash_pop_conflict_prediction_warns_and_touches_nothing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-q", "-b", "main", "."]);
@@ -245,6 +254,9 @@ fn test_stash_pop_conflict_prediction_warns_and_touches_nothing() {
 
 #[test]
 fn test_stash_pop_blocker_dirty_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -279,6 +291,9 @@ fn test_stash_pop_blocker_dirty_working_tree() {
 
 #[test]
 fn test_stash_pop_blocker_index_out_of_range() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -311,6 +326,9 @@ fn test_stash_pop_blocker_index_out_of_range() {
 
 #[test]
 fn test_stash_pop_planning_a_conflicting_pop_changes_nothing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // This test demonstrates the "apply failure → no drop" guarantee
     // via the conflict prediction blocker path (ADR-0009 design intent).
     let tmp = TempDir::new().unwrap();
@@ -362,6 +380,9 @@ fn test_stash_pop_planning_a_conflicting_pop_changes_nothing() {
 
 #[test]
 fn test_stash_push_include_untracked_false_untracked_remains() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -413,6 +434,9 @@ fn test_stash_push_include_untracked_false_untracked_remains() {
 
 #[test]
 fn test_stash_pop_plan_title_and_recovery_mention_destructive() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -466,6 +490,9 @@ fn test_stash_pop_plan_title_and_recovery_mention_destructive() {
 
 #[test]
 fn test_stash_pop_removes_only_target_index() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -537,6 +564,9 @@ fn build_conflicting_stash_repo(tmp: &TempDir) -> (std::path::PathBuf, Repositor
 /// that execute must be safe on its own.)
 #[test]
 fn test_stash_pop_conflicting_apply_keeps_stash() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_conflicting_stash_repo(&tmp);
 
@@ -580,6 +610,9 @@ fn test_stash_pop_conflicting_apply_keeps_stash() {
 /// (base = stash parent[0]) does. The prediction must now block it.
 #[test]
 fn test_stash_pop_prediction_uses_stash_parent_as_base() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-q", "-b", "main", "."]);
@@ -639,6 +672,9 @@ fn test_stash_pop_prediction_uses_stash_parent_as_base() {
 /// blocker instead of silently reporting "clean".
 #[test]
 fn test_stash_pop_prediction_failure_is_fail_closed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -693,6 +729,9 @@ fn test_stash_pop_prediction_failure_is_fail_closed() {
 /// because the confirm UI must gate pop like drop/reset, not like apply.)
 #[test]
 fn test_stash_pop_plan_is_destructive() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -710,6 +749,9 @@ fn test_stash_pop_plan_is_destructive() {
 /// `stash_apply` write conflicts — preflight must refuse.
 #[test]
 fn test_preflight_check_stash_rejects_dirty_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -745,6 +787,9 @@ fn test_preflight_check_stash_rejects_dirty_tree() {
 /// against the working tree, so the injected markers are visible.
 #[test]
 fn test_conflicted_pop_file_diff_shows_the_markers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-q", "-b", "main", "."]);
@@ -792,3 +837,6 @@ fn test_conflicted_pop_file_diff_shows_the_markers() {
         assert!(body.contains(needle), "diff must show {needle:?}:\n{body}");
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

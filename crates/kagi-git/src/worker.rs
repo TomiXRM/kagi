@@ -175,6 +175,9 @@ mod tests {
 
     #[test]
     fn worker_spawns_and_shuts_down() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let tmp = init_test_repo();
         let mut worker = RepoWorker::spawn(tmp.path()).expect("spawn");
         worker.shutdown();
@@ -184,6 +187,9 @@ mod tests {
 
     #[test]
     fn worker_executes_create_branch() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let tmp = init_test_repo();
         let session = super::super::session::RepoSession::open(tmp.path()).expect("session");
 
@@ -214,6 +220,9 @@ mod tests {
 
     #[test]
     fn worker_rejects_stale_plan() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let tmp = init_test_repo();
         let session = super::super::session::RepoSession::open(tmp.path()).expect("session");
         let backend = session.backend();

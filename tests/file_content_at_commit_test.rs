@@ -65,6 +65,9 @@ fn head_commit_id(backend: &Backend) -> CommitId {
 
 #[test]
 fn returns_content_at_the_requested_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let backend = init_repo(&tmp);
     let dir = tmp.path();
@@ -94,6 +97,9 @@ fn returns_content_at_the_requested_commit() {
 
 #[test]
 fn follows_a_rename_at_the_old_path_before_the_rename() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let backend = init_repo(&tmp);
     let dir = tmp.path();
@@ -120,6 +126,9 @@ fn follows_a_rename_at_the_old_path_before_the_rename() {
 
 #[test]
 fn path_absent_at_commit_returns_none() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let backend = init_repo(&tmp);
     let first = head_commit_id(&backend);
@@ -132,6 +141,9 @@ fn path_absent_at_commit_returns_none() {
 
 #[test]
 fn binary_blob_reports_is_binary_with_no_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let backend = init_repo(&tmp);
     let dir = tmp.path();
@@ -148,3 +160,6 @@ fn binary_blob_reports_is_binary_with_no_content() {
     assert!(snapshot.is_binary);
     assert!(snapshot.content.is_none());
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

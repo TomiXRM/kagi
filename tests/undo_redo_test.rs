@@ -126,6 +126,9 @@ fn entry(kind: OperationKind, branch: &str, before: &str, after: &str) -> Histor
 
 #[test]
 fn commit_undo_then_redo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -199,6 +202,9 @@ fn commit_undo_then_redo() {
 
 #[test]
 fn merge_undo_then_redo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -275,6 +281,9 @@ fn merge_undo_then_redo() {
 
 #[test]
 fn undo_preserves_working_tree_changes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -337,6 +346,9 @@ fn undo_preserves_working_tree_changes() {
 
 #[test]
 fn reflog_seed_enables_undo_on_freshly_opened_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -398,6 +410,9 @@ fn reflog_seed_enables_undo_on_freshly_opened_repo() {
 
 #[test]
 fn plan_undo_stale_entry_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -446,6 +461,9 @@ fn plan_undo_stale_entry_is_blocked() {
 
 #[test]
 fn undo_redo_pipeline_via_domain_history() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -491,3 +509,6 @@ fn undo_redo_pipeline_via_domain_history() {
     assert!(history.can_undo());
     assert!(!history.can_redo());
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -101,6 +101,9 @@ fn dangling_commits(dir: &Path) -> Vec<String> {
 
 #[test]
 fn merge_of_unrelated_histories_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -126,6 +129,9 @@ fn merge_of_unrelated_histories_is_blocked() {
 
 #[test]
 fn merge_with_a_shared_ancestor_is_not_blocked_by_the_unrelated_guard() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Mutation guard for the above: a normal diverged merge must still proceed.
     let tmp = init_repo();
     let dir = tmp.path();
@@ -155,6 +161,9 @@ fn merge_with_a_shared_ancestor_is_not_blocked_by_the_unrelated_guard() {
 
 #[test]
 fn merge_blocks_while_another_merge_is_in_progress_even_if_conflicts_are_staged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -204,6 +213,9 @@ fn merge_blocks_while_another_merge_is_in_progress_even_if_conflicts_are_staged(
 
 #[test]
 fn a_revision_expression_is_not_accepted_as_a_merge_target() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
     write_file(dir, "a.txt", "a\n");
@@ -224,6 +236,9 @@ fn a_revision_expression_is_not_accepted_as_a_merge_target() {
 
 #[test]
 fn a_true_merge_that_would_clobber_an_untracked_file_blocks_and_leaves_no_orphan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -273,6 +288,9 @@ fn a_true_merge_that_would_clobber_an_untracked_file_blocks_and_leaves_no_orphan
 
 #[test]
 fn a_clean_true_merge_still_succeeds_and_leaves_no_dangling_objects() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Mutation guard for the dry-run: the happy path must be unaffected.
     let tmp = init_repo();
     let dir = tmp.path();
@@ -314,6 +332,9 @@ fn a_clean_true_merge_still_succeeds_and_leaves_no_dangling_objects() {
 
 #[test]
 fn a_merge_with_many_conflicts_caps_the_file_list_in_the_note() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     const N: usize = 120; // well past the 50-file cap
     let tmp = init_repo();
     let dir = tmp.path();
@@ -367,3 +388,6 @@ fn a_merge_with_many_conflicts_caps_the_file_list_in_the_note() {
         plan.preview_files.len()
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -30,6 +30,9 @@ fn with_log_dir<T>(f: impl FnOnce(&Path) -> T) -> T {
 
 #[test]
 fn round_trip_preserves_message_mode_and_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_log_dir(|_| {
         let repo = Path::new("/tmp/kagi-it/repo");
         save_draft(repo, "feature/x", "subject\n\nbody line", "template").expect("save");
@@ -45,6 +48,9 @@ fn round_trip_preserves_message_mode_and_branch() {
 
 #[test]
 fn drafts_are_isolated_by_branch_and_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_log_dir(|_| {
         let repo_a = Path::new("/tmp/kagi-it/a");
         let repo_b = Path::new("/tmp/kagi-it/b");
@@ -61,6 +67,9 @@ fn drafts_are_isolated_by_branch_and_repo() {
 
 #[test]
 fn clear_deletes_the_branch_draft() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_log_dir(|_| {
         let repo = Path::new("/tmp/kagi-it/repo");
         save_draft(repo, "main", "draft body", "plain").expect("save");
@@ -73,6 +82,9 @@ fn clear_deletes_the_branch_draft() {
 
 #[test]
 fn saving_blank_message_clears_existing_draft() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_log_dir(|_| {
         let repo = Path::new("/tmp/kagi-it/repo");
         save_draft(repo, "main", "non-empty", "plain").expect("save");
@@ -88,6 +100,9 @@ fn saving_blank_message_clears_existing_draft() {
 
 #[test]
 fn corrupt_draft_file_loads_as_none() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_log_dir(|log_dir| {
         // Save a valid draft first to materialise the filename, then corrupt it.
         let repo = Path::new("/tmp/kagi-it/repo");
@@ -112,6 +127,9 @@ fn corrupt_draft_file_loads_as_none() {
 
 #[test]
 fn load_without_any_draft_returns_none() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_log_dir(|_| {
         assert!(load_draft(Path::new("/tmp/kagi-it/empty"), "main").is_none());
     });
@@ -119,8 +137,14 @@ fn load_without_any_draft_returns_none() {
 
 #[test]
 fn clear_with_no_existing_file_is_ok() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_log_dir(|_| {
         // Clearing a branch that never had a draft must succeed silently.
         clear_draft(Path::new("/tmp/kagi-it/repo"), "main").expect("no-op clear ok");
     });
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -382,3 +382,7 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

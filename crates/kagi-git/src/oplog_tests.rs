@@ -1,5 +1,24 @@
 use super::*;
 
+#[test]
+fn test_runtime_without_log_dir_refuses_home_fallback() {
+    let error = log_file_path_from_env(None, Some(Path::new("/home/tester")), true)
+        .expect_err("test runtime must not fall back to HOME");
+    assert!(matches!(error, GitError::Other(message) if message == "tests must set KAGI_LOG_DIR"));
+}
+
+#[test]
+fn log_dir_override_selects_that_directory() {
+    let path = log_file_path_from_env(
+        Some(std::ffi::OsStr::new("/tmp/kagi-logs")),
+        Some(Path::new("/home/tester")),
+        true,
+    )
+    .expect("KAGI_LOG_DIR must be accepted")
+    .expect("KAGI_LOG_DIR produces a path");
+    assert_eq!(path, Path::new("/tmp/kagi-logs/operations.jsonl"));
+}
+
 // ── escape_json_string ────────────────────────────────────
 
 #[test]
@@ -175,6 +194,9 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn append_two_entries_creates_two_jsonl_lines() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().expect("tempdir");
     let log_dir = dir.path().to_str().unwrap().to_string();
@@ -230,6 +252,9 @@ fn append_two_entries_creates_two_jsonl_lines() {
 
 #[test]
 fn append_includes_expected_json_fields() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().expect("tempdir");
     let log_dir = dir.path().to_str().unwrap().to_string();
@@ -276,6 +301,9 @@ fn append_includes_expected_json_fields() {
 
 #[test]
 fn oplog_filter_scopes_to_bound_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The global oplog holds entries for many repos. A server/CLI bound to repo
     // A must only ever see A's entries, never repo B's — and the filter must
     // survive path-shape differences (trailing slash, `.`, symlinked $TMPDIR).

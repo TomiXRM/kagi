@@ -153,6 +153,9 @@ impl Fixture {
 
 #[test]
 fn abort_large_rebase_restores_branch_head_index_worktree_and_state() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // 1,678 data files + conflict-3 are legitimate upstream-only changes.
     let fixture = Fixture::new(2000, 1678, &[3]);
     let repo = fixture.repo();
@@ -170,6 +173,9 @@ fn abort_large_rebase_restores_branch_head_index_worktree_and_state() {
 
 #[test]
 fn abort_second_stop_after_multiple_replayed_commits_restores_original_topic() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let fixture = Fixture::new(12, 8, &[0, 3, 0, 4]);
     let repo = fixture.repo();
     let first = detect_conflict_session(&repo).unwrap();
@@ -210,6 +216,9 @@ fn abort_second_stop_after_multiple_replayed_commits_restores_original_topic() {
 
 #[test]
 fn continue_redetects_each_following_rebase_stop_without_snapshot_reload() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let fixture = Fixture::new(12, 8, &[3, 4, 3]);
     for expected in [(1, 3), (2, 4), (3, 3)] {
         let repo = fixture.repo();
@@ -236,6 +245,9 @@ fn continue_redetects_each_following_rebase_stop_without_snapshot_reload() {
 
 #[test]
 fn abort_refuses_only_real_staged_or_unstaged_nonconflict_edits() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for staged in [false, true] {
         let fixture = Fixture::new(12, 8, &[3]);
         let repo = fixture.repo();
@@ -273,3 +285,6 @@ fn abort_refuses_only_real_staged_or_unstaged_nonconflict_edits() {
         }
     }
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

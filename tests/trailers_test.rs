@@ -15,12 +15,18 @@ fn ca(name: &str, email: &str) -> CoAuthor {
 
 #[test]
 fn no_trailers_returns_empty() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "fix: something\n\njust a body with no trailers";
     assert!(parse_coauthors(msg).is_empty());
 }
 
 #[test]
 fn single_coauthor() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "feat: thing\n\nbody\n\nCo-authored-by: Alice Example <alice@example.com>";
     assert_eq!(
         parse_coauthors(msg),
@@ -30,6 +36,9 @@ fn single_coauthor() {
 
 #[test]
 fn multiple_coauthors_preserve_order() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\n\
         Co-authored-by: Alice <alice@example.com>\n\
         Co-authored-by: Bob <bob@example.com>";
@@ -44,6 +53,9 @@ fn multiple_coauthors_preserve_order() {
 
 #[test]
 fn key_is_case_insensitive() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\n\
         co-authored-by: Lower <lower@example.com>\n\
         CO-AUTHORED-BY: Upper <upper@example.com>\n\
@@ -60,6 +72,9 @@ fn key_is_case_insensitive() {
 
 #[test]
 fn leading_whitespace_tolerated() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\n   Co-authored-by: Indented <indent@example.com>";
     assert_eq!(
         parse_coauthors(msg),
@@ -69,24 +84,36 @@ fn leading_whitespace_tolerated() {
 
 #[test]
 fn name_only_no_email() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\nCo-authored-by: NoEmail Person";
     assert_eq!(parse_coauthors(msg), vec![ca("NoEmail Person", "")]);
 }
 
 #[test]
 fn email_only_no_name() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\nCo-authored-by: <onlyemail@example.com>";
     assert_eq!(parse_coauthors(msg), vec![ca("", "onlyemail@example.com")]);
 }
 
 #[test]
 fn empty_value_is_skipped() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\nCo-authored-by:   \nCo-authored-by: Real <real@example.com>";
     assert_eq!(parse_coauthors(msg), vec![ca("Real", "real@example.com")]);
 }
 
 #[test]
 fn duplicates_are_deduplicated() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\n\
         Co-authored-by: Alice <alice@example.com>\n\
         Co-authored-by: Alice <ALICE@example.com>\n\
@@ -97,6 +124,9 @@ fn duplicates_are_deduplicated() {
 
 #[test]
 fn mid_prose_mention_is_not_a_trailer() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The key must be the first non-whitespace token on the line.
     let msg = "subject\n\nThis was Co-authored-by: someone, informally.";
     assert!(parse_coauthors(msg).is_empty());
@@ -104,6 +134,9 @@ fn mid_prose_mention_is_not_a_trailer() {
 
 #[test]
 fn cjk_name_preserved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\nCo-authored-by: 田中太郎 <tanaka@example.com>";
     assert_eq!(
         parse_coauthors(msg),
@@ -113,6 +146,9 @@ fn cjk_name_preserved() {
 
 #[test]
 fn trailers_interspersed_with_other_lines() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "subject\n\n\
         Some body text.\n\
         Co-authored-by: Alice <alice@example.com>\n\
@@ -132,6 +168,9 @@ fn trailers_interspersed_with_other_lines() {
 // char boundary; it is inside 'を'").
 #[test]
 fn japanese_prose_line_does_not_panic() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let msg = "回路図修正\n\n基板の配線を全面的に見直した。\nハーネスを整理。\n\nCo-authored-by: 太郎 <taro@example.jp>\n";
     let co = kagi_git::parse_coauthors(msg);
     assert_eq!(co.len(), 1);
@@ -140,8 +179,14 @@ fn japanese_prose_line_does_not_panic() {
 
 #[test]
 fn japanese_prose_only_no_trailer_does_not_panic() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Lines >= 15 bytes of pure Japanese (3 bytes/char) hit the old
     // split_at(15) mid-char.
     let msg = "実装メモ\n\nこの変更では設定を読み込む処理を追加した。\n";
     assert!(kagi_git::parse_coauthors(msg).is_empty());
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -71,6 +71,9 @@ fn run_create_branch(repo: &Path, name: &str) {
 
 #[test]
 fn create_branch_with_checkout_records_partial_after_checkout_failure() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -145,6 +148,9 @@ fn create_branch_with_checkout_records_partial_after_checkout_failure() {
 
 #[test]
 fn create_branch_with_checkout_records_success_when_clean() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -182,6 +188,9 @@ fn create_branch_with_checkout_records_success_when_clean() {
 
 #[test]
 fn create_branch_with_checkout_records_failed_when_creation_fails() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -216,6 +225,9 @@ fn create_branch_with_checkout_records_failed_when_creation_fails() {
 
 #[test]
 fn run_records_oplog_without_ui() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -245,6 +257,9 @@ fn run_records_oplog_without_ui() {
 
 #[test]
 fn run_records_actor_set_on_backend() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -275,6 +290,9 @@ fn run_records_actor_set_on_backend() {
 
 #[test]
 fn ids_are_monotonic_and_parent_chains() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -313,6 +331,9 @@ fn ids_are_monotonic_and_parent_chains() {
 
 #[test]
 fn old_and_new_format_lines_both_parse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let logdir = TempDir::new().unwrap();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -357,6 +378,9 @@ fn old_and_new_format_lines_both_parse() {
 
 #[test]
 fn new_fields_round_trip() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let logdir = TempDir::new().unwrap();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -396,6 +420,9 @@ fn new_fields_round_trip() {
 
 #[test]
 fn partial_discard_maps_to_partial_outcome() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let predicted = StateSummary {
         head: "branch: main".into(),
         dirty: "clean".into(),
@@ -422,3 +449,6 @@ fn partial_discard_maps_to_partial_outcome() {
         OpOutcome::Success { .. }
     ));
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

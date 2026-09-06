@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{modals::ActiveModal, FooterStatus, KagiApp};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
@@ -736,9 +736,30 @@ pub fn scenario_create_branch_replan_error(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, &repo);
 
     app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
-    // The first paint creates and focuses the real branch-name input.
+    // The first paint creates the real branch-name input; the modal's own focus
+    // call happens while that frame is still being built, so it is not yet in the
+    // dispatch tree a keystroke resolves against. Focus the handle from the test
+    // and repaint before typing — same shape as `scenario_editor_save_admission`.
     paint(cx, window);
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .and_then(|m| m.input_state.clone())
+        })
+        .expect("the first paint creates the branch-name input");
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
     cx.simulate_keystrokes(window, "f e a t");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| input.read(cx).value().to_string()),
+        "feat",
+        "the keystrokes must land in the branch-name input, not the root"
+    );
     wait_painted(cx, &app, window, |app| {
         app.create_branch_modal()
             .and_then(|m| m.plan.plan())

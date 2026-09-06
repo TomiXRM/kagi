@@ -135,45 +135,52 @@ impl KagiApp {
             self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
             klog!("async: remote pull started");
             let (host, root) = (rv.host.clone(), rv.root.clone());
+            // #501: the transport records the attempt; this callback is
+            // presentation only and may be dropped on a tab switch.
+            let recorded_before = before.clone();
             let task = cx.background_spawn(async move {
-                crate::remote::remote_pull(&host, &root).map_err(|e| e.to_string())
+                crate::remote::remote_pull(&host, &root, &recorded_before)
             });
-            self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-                Ok(summary) => {
-                    klog!("async: remote pull finished — {summary}");
-                    app.record_op(
-                        "pull",
-                        before.clone(),
-                        OpOutcome::Success {
-                            after: kagi_git::StateSummary {
-                                head: before.head.clone(),
-                                dirty: summary.clone(),
-                            },
-                        },
-                        &oplog_path,
-                        cx,
+            let notice_path = oplog_path.clone();
+            self.finish_op_on_main_settled(
+                cx,
+                task,
+                move |app, report: &crate::remote::RemotePullReport, _cx| {
+                    app.notice_recording_failure("pull", &report.recording, &notice_path);
+                },
+                move |app, report, cx| {
+                    let recorded_clean = matches!(
+                        report.recording,
+                        kagi_git::backend::recording::Recording::Appended { .. }
                     );
-                    app.status_footer =
-                        FooterStatus::Success(SharedString::from(format!("pull: {summary}")));
-                    app.refresh_remote_view(cx);
-                }
-                Err(err_msg) => {
-                    klog!("async: remote pull failed — {err_msg}");
-                    app.record_op(
-                        "pull",
-                        before.clone(),
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &oplog_path,
-                        cx,
-                    );
-                    app.set_pull_modal(PullPlanModal {
-                        plan: modal.plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
-                    });
-                }
-            });
+                    match &report.result {
+                        Ok(summary) => {
+                            klog!("async: remote pull finished — {summary}");
+                            app.present_recorded("pull", &report.recording, &oplog_path, cx);
+                            // A pull whose record never landed is not a clean
+                            // success; the notice above already said so.
+                            if recorded_clean {
+                                app.status_footer = FooterStatus::Success(SharedString::from(
+                                    format!("pull: {summary}"),
+                                ));
+                            }
+                            app.refresh_remote_view(cx);
+                        }
+                        Err(error) => {
+                            let err_msg = error.to_string();
+                            klog!("async: remote pull failed — {err_msg}");
+                            app.present_recorded("pull", &report.recording, &oplog_path, cx);
+                            // Unknown/Partial changed the host: re-read rather
+                            // than re-offering the same pull.
+                            app.refresh_remote_view(cx);
+                            app.set_pull_modal(PullPlanModal {
+                                plan: modal.plan.clone(),
+                                error: Some(SharedString::from(err_msg)),
+                            });
+                        }
+                    }
+                },
+            );
             return;
         }
 

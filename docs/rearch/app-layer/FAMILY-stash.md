@@ -208,6 +208,8 @@ Error と通知に反映し、旧 Ready を復活させない。cancel/置換後
 
 conflicted pop/apply → reload → `ConflictOp::StashConflict` の検出を保持する。
 continue は解決を stage するだけ（commit しない）、abort は stash を保持する。
+既存 conflict の観測を別 Drop の conflict evidence に流用せず、payload の生成・置換は
+当該 Apply/Pop が新たに生成した stash-kept conflict に限定する。
 continue 後の opt-in drop prompt は reload の modal clear 後に開く。
 現状 `pending_stash_drop = Some(0)` は深い index の pop と一致しない既知の欠落。
 この接続では完了 report の **canonical worktree + 元 operation id + full OID** を、
@@ -346,6 +348,8 @@ PASS 行だけでなく **runner exit 0・leak detector 通過**を必要条件�
 既存 `tests/stash_conflict_test.rs`、`tests/stash_pop_test.rs`、
 `tests/oplog_nonrun_ops_test.rs` と E `scenario_stash_drop_persists` の assertions を弱めない。
 run wrapper の非 stash 互換も既存 backend run/partial tests で検証する。
+GUI の conflict continue 後の follow-up 提示は PR 1 の E では未検証であり、#546 で追跡する。
+window なしの G は owner/full OID payload から一意な新規 Drop plan が Ready になるまでを保証する。
 実装時の専用 target/実行分担は PM 指定に従う。本 docs PR では cargo は一切実行しない。
 
 M は PM: 大きい stash の応答性、Enter 連打、危険確認、EN/JA、conflict 解決→取消/Drop、

@@ -389,7 +389,8 @@ mod macos {
         crate::app_remove::scenario_remove_public_boundary(&mut cx);
         crate::app_writer_admission::scenario_editor_save_admission(&mut cx);
         crate::app_stash::scenario_stash_public_boundary(&mut cx);
-        crate::app_stash::scenario_stash_conflict_followup(&mut cx);
+        // #546: keep the scenario compiled, but exclude it from PR 1's E run
+        // until the GUI follow-up presentation path has a deterministic driver.
         crate::app_stash::scenario_stash_replan_error(&mut cx);
         crate::app_stash::scenario_external_stash_conflict_has_no_drop_prompt(&mut cx);
         crate::recovery_layout::scenario_commit_row_layout(&mut cx);

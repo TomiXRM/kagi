@@ -36,6 +36,8 @@ plan の full OID 列は順序・重複を保持し、count / index / 選択 OID
 push も status digest と message/include_untracked を凍結する。
 pop の apply 後は list を再照合してから drop。不一致なら変更済み Partial、未変更拒否に戻さない。
 conflict は stash を保持し、receipt / JSONL / 非緑通知が同じ Partial を表す。
+conflict evidence は当該 Apply/Pop が生成したものだけとし、既存 conflict 中の独立 Drop は
+list / WT / index verify が通れば Success。別操作の継続 payload を置換しない。
 
 verify は list と実 status/index を読む。clean apply/pop は in-memory three-way merge と
 実 worktree の diff、untracked stash tree を照合する。drop は返却 OID、前後 ordered list、
@@ -44,6 +46,8 @@ push は新規 OID、tracked clean と include_untracked 方針を確認する�
 snapshot OID / 適用済み / 観測 after を副作用の evidence とし、verify failure は
 Partial、実行中 unwind は Unknown。停止済み Unknown も read→ack 前は write 不可。
 有限 fault は doc-hidden integration-test API と既存 uv fault gate を使う。
+report は実際の停止境界（open / identity / trust / blocker / preflight / abandon）を保持する。
+plan に blocker があるだけでは blocker gate 到達とみなさず、receipt と klog lane を実停止理由に揃える。
 
 ## GUI と conflict 継続
 
@@ -71,5 +75,7 @@ conflict payload は in-memory。永続 session は #485、CLI/MCP tail 撤去�
 G は同じ公開 plan/approve/prepare/run/apply 列を window なしで駆動する。
 E は実 modal / focus / current-window bounds で 4 op の両入力と conflict/replan failure を駆動し、
 window remove と entity drop で後始末する。E は PM 実行の全 PASS と exit 0 が必要。
+ただし GUI の conflict continue 後の follow-up 提示は E 未検証で、#546 で追跡する。
+payload から一意な新規 Drop plan が Ready になるまでの application 列は G で検証する。
 旧 stash conflict/pop/oplog の実 mutation assertions は保持し、preflight outcome assertion のみ
 承認済み Refused に変更。remove 24 件・1b admission 8 件は既存 assertion を変更しない。

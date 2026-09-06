@@ -287,7 +287,11 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             }
         }
         (Planned::Stash { plan, .. }, FamilyEvidence::Stash(r)) => {
-            if !r.evidence.conflicts.is_empty() {
+            if matches!(
+                plan.action,
+                StashAction::Apply { .. } | StashAction::Pop { .. }
+            ) && !r.evidence.conflicts.is_empty()
+            {
                 if let Some(oid) = &r.evidence.oid {
                     s.stash_conflicts.insert(
                         plan.repo.clone(),

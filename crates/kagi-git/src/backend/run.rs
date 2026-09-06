@@ -88,10 +88,12 @@ impl Backend {
         // user grants trust. Headless never grants trust, so it stays read-only.
         if !self.trust.is_trusted() {
             let e = GitError::Untrusted(self.path.display().to_string());
+            evidence.stop = Some(stash::StashStopReason::Untrusted);
             return Err(e);
         }
         if stash::StashAction::from_operation(op).is_some() && !plan.blockers.is_empty() {
             evidence.plan_blocked = true;
+            evidence.stop = Some(stash::StashStopReason::PlanBlocked);
             return Err(GitError::Other("plan has blockers".into()));
         }
         if stash::StashAction::from_operation(op).is_some() {
@@ -131,6 +133,7 @@ impl Backend {
         if let Err(e) = preflight {
             if stash::StashAction::from_operation(op).is_some() {
                 evidence.preflight_error = Some(e.to_string());
+                evidence.stop = Some(stash::StashStopReason::Preflight);
             }
             // ADR-0149: a preflight refusal is still a failed attempt — record
             // it so no write path has an unlogged hole, then propagate.
@@ -160,6 +163,12 @@ impl Backend {
         // A dropped stash commit is its own savepoint (`git stash store <oid>`).
         if matches!(op, Operation::StashDrop { .. }) {
             evidence.worktree_before = Some(self.stash_worktree_fingerprint()?);
+        }
+        if matches!(
+            op,
+            Operation::StashApply { .. } | Operation::StashPop { .. }
+        ) {
+            evidence.conflict_identity_before = self.stash_conflict_identity()?;
         }
         if matches!(op, Operation::StashPush { .. }) {
             evidence.untracked_before = self.working_tree_status()?.untracked;

@@ -62,6 +62,7 @@ fn confirm(
         cx.simulate_keystrokes(window, "enter");
     }
 }
+#[allow(dead_code)] // #546 keeps the disabled follow-up scenario buildable.
 fn dismiss_app_notice_if_present(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -158,6 +159,7 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     }
 }
 
+#[allow(dead_code)] // #546: excluded from PR 1's E run after four driver failures.
 pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
     for duplicate in [false, true] {
         let fixture = build_fixture();

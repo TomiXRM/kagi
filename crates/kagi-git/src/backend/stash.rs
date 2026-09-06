@@ -164,11 +164,14 @@ impl Backend {
         actor: Actor,
         auto_snapshot: bool,
         fault: Option<StashFaultPoint>,
-        event: impl FnMut(StashEvent),
+        mut event: impl FnMut(StashEvent),
     ) -> StashReport {
         let mut backend = match Self::open(&plan.repo) {
             Ok(backend) => backend,
-            Err(e) => return stash_failure(plan, actor, &e.to_string()),
+            Err(e) => {
+                event(StashEvent::Started);
+                return stash_failure(plan, actor, &e.to_string(), StashStopReason::OpenFailed);
+            }
         };
         backend.set_actor(actor);
         backend.set_auto_snapshot(auto_snapshot);
@@ -176,7 +179,18 @@ impl Backend {
             backend.trust = crate::trust::RepoTrust::Untrusted;
         }
         if backend.write_repo_id().ok().as_ref() != Some(&plan.common_dir) {
-            return stash_failure(plan, actor, "repository identity changed after planning");
+            event(StashEvent::Started);
+            return stash_failure(
+                plan,
+                actor,
+                "repository identity changed after planning",
+                StashStopReason::IdentityChanged,
+            );
+        }
+        if backend.trust.is_trusted() && !plan.preview.blockers.is_empty() {
+            event(StashEvent::PlanBlocked);
+        } else {
+            event(StashEvent::Started);
         }
         let report =
             backend.run_recorded_with_events(&plan.action.operation(), &plan.preview, fault, event);
@@ -227,12 +241,24 @@ impl Backend {
             .ok_or_else(|| GitError::Other("missing stash identity".into()))?;
         let status = self.working_tree_status()?;
         let dirty = status.is_dirty();
-        evidence.conflicts = status
+        let observed_conflicts: Vec<_> = status
             .conflicted
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
-        evidence.conflict_identity = self.stash_conflict_identity()?;
+        let observed_identity = self.stash_conflict_identity()?;
+        let operation_created_conflict =
+            matches!(action, StashAction::Apply { .. } | StashAction::Pop { .. })
+                && !observed_conflicts.is_empty()
+                && (observed_identity != evidence.conflict_identity_before
+                    || !evidence.conflicts.is_empty());
+        if operation_created_conflict {
+            evidence.conflicts = observed_conflicts;
+            evidence.conflict_identity = observed_identity;
+        } else {
+            evidence.conflicts.clear();
+            evidence.conflict_identity.clear();
+        }
         evidence.after = Some(ops::StateSummary {
             head: resolve_head(&self.repo)?.display(),
             dirty: if evidence.conflicts.is_empty() {
@@ -319,7 +345,12 @@ pub fn record_stash_plan_error(
     .with_worktree(Some(path.display().to_string()));
     finalize(entry)
 }
-pub fn stash_failure(plan: &StashPlan, actor: Actor, error: &str) -> StashReport {
+pub fn stash_failure(
+    plan: &StashPlan,
+    actor: Actor,
+    error: &str,
+    stop: StashStopReason,
+) -> StashReport {
     let entry = OpLogEntry::new(
         plan.action.name(),
         plan.repo.display().to_string(),
@@ -333,7 +364,11 @@ pub fn stash_failure(plan: &StashPlan, actor: Actor, error: &str) -> StashReport
     StashReport {
         action: plan.action.clone(),
         recording: finalize(entry),
-        evidence: StashEvidence::default(),
+        evidence: StashEvidence {
+            plan_blocked: stop == StashStopReason::PlanBlocked,
+            stop: Some(stop),
+            ..Default::default()
+        },
     }
 }
 
@@ -359,7 +394,7 @@ pub(super) fn stash_outcome(
         };
     }
     if !evidence.started {
-        if !plan.blockers.is_empty() {
+        if evidence.stop == Some(StashStopReason::PlanBlocked) {
             return OpOutcome::Refused {
                 blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
             };

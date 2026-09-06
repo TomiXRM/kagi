@@ -60,6 +60,7 @@ pub struct StashEvidence {
     pub oid: Option<String>,
     pub conflicts: Vec<String>,
     pub conflict_identity: Vec<String>,
+    pub conflict_identity_before: Vec<String>,
     pub after: Option<ops::StateSummary>,
     pub observations: Vec<String>,
     pub worktree_before: Option<u64>,
@@ -67,6 +68,16 @@ pub struct StashEvidence {
     pub snapshot: Option<String>,
     pub plan_blocked: bool,
     pub preflight_error: Option<String>,
+    pub stop: Option<StashStopReason>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StashStopReason {
+    OpenFailed,
+    IdentityChanged,
+    Untrusted,
+    PlanBlocked,
+    Preflight,
+    Abandoned,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum StashFaultPoint {
@@ -78,6 +89,8 @@ pub enum StashFaultPoint {
 }
 #[derive(Clone, Debug)]
 pub enum StashEvent {
+    Started,
+    PlanBlocked,
     VerifyFailed {
         error: String,
     },

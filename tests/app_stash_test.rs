@@ -1,5 +1,6 @@
 //! Window-free production approval/lease/recording contract for local stash.
 use kagi::app::*;
+use kagi_git::backend::stash::{StashEvent, StashStopReason};
 use kagi_git::oplog::read_oplog_tail;
 use kagi_git::{Backend, OpOutcome};
 use std::path::{Path, PathBuf};
@@ -334,6 +335,7 @@ fn blocker_confirmation_has_one_refused_receipt_no_mutation() {
     let f = Fixture::new();
     let mut s = Sessions::new();
     let before = f.ids();
+    let mut events = vec![];
     let c = f
         .job(
             &mut s,
@@ -342,12 +344,69 @@ fn blocker_confirmation_has_one_refused_receipt_no_mutation() {
                 include_untracked: true,
             },
         )
-        .run();
+        .run_with_events(|event| events.push(event));
     assert!(matches!(outcome(&c), OpOutcome::Refused { .. }));
     assert!(c.report().evidence.plan_blocked);
+    assert_eq!(c.report().evidence.stop, Some(StashStopReason::PlanBlocked));
+    assert!(matches!(events.as_slice(), [StashEvent::PlanBlocked]));
     assert!(!c.report().evidence.started);
     assert_eq!(f.ids(), before);
     assert_eq!(read_oplog_tail(100).len(), 1);
+}
+
+#[test]
+fn blocker_plan_early_failures_report_actual_reason_and_log_lane() {
+    {
+        let f = Fixture::new();
+        let mut s = Sessions::new();
+        let before = f.ids();
+        let job = f.job(
+            &mut s,
+            StashAction::Push {
+                message: None,
+                include_untracked: true,
+            },
+        );
+        let moved = f.repo.with_file_name("moved-before-blocker-run");
+        std::fs::rename(&f.repo, &moved).unwrap();
+        let mut events = vec![];
+        let c = job.run_with_events(|event| events.push(event));
+        assert!(matches!(outcome(&c), OpOutcome::Failed { .. }));
+        assert_eq!(c.report().evidence.stop, Some(StashStopReason::OpenFailed));
+        assert!(!c.report().evidence.plan_blocked);
+        assert!(matches!(events.as_slice(), [StashEvent::Started]));
+        assert_eq!(
+            git(&moved, &["stash", "list", "--format=%H"])
+                .lines()
+                .collect::<Vec<_>>(),
+            before
+        );
+        assert_eq!(read_oplog_tail(100).len(), 1);
+    }
+    {
+        let f = Fixture::new();
+        let mut s = Sessions::new();
+        let before = f.ids();
+        let mut events = vec![];
+        let c = f
+            .job(
+                &mut s,
+                StashAction::Push {
+                    message: None,
+                    include_untracked: true,
+                },
+            )
+            .with_fault_for_test(StashFaultPoint::Untrusted)
+            .run_with_events(|event| events.push(event));
+        assert!(
+            matches!(outcome(&c), OpOutcome::Failed { error } if error.contains("not trusted"))
+        );
+        assert_eq!(c.report().evidence.stop, Some(StashStopReason::Untrusted));
+        assert!(!c.report().evidence.plan_blocked);
+        assert!(matches!(events.as_slice(), [StashEvent::Started]));
+        assert_eq!(f.ids(), before);
+        assert_eq!(read_oplog_tail(100).len(), 1);
+    }
 }
 
 #[test]
@@ -523,6 +582,47 @@ fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
         s.invalidate_plan();
         assert!(approve(&mut s, token, StashPolicy::default()).is_err());
         assert_eq!(f.ids(), before);
+    }
+}
+
+#[test]
+fn unrelated_drop_during_conflict_preserves_origin_payload() {
+    for duplicate_drop_oid in [false, true] {
+        let f = Fixture::new();
+        let initial = f.ids();
+        let mut s = Sessions::new();
+        let conflict = conflict(&f, &mut s, StashAction::Pop { index: 1 });
+        s.apply(conflict);
+        let origin = s.stash_conflict(&f.repo).unwrap();
+        let conflict_id = origin.operation;
+        let origin_oid = origin.oid.clone();
+        assert_eq!(origin_oid, initial[1]);
+
+        let unrelated_oid = initial[0].clone();
+        if duplicate_drop_oid {
+            git(
+                &f.repo,
+                &["stash", "store", "-m", "duplicate B", &unrelated_oid],
+            );
+        }
+        let before = f.ids();
+        let bytes = std::fs::read(f.repo.join("file")).unwrap();
+        let index = git(&f.repo, &["ls-files", "--stage"]);
+        let drop = f.job(&mut s, StashAction::Drop { index: 0 }).run();
+        assert!(matches!(outcome(&drop), OpOutcome::Success { .. }));
+        assert!(drop.report().evidence.conflicts.is_empty());
+        assert_eq!(f.ids().len(), before.len() - 1);
+        assert_eq!(std::fs::read(f.repo.join("file")).unwrap(), bytes);
+        assert_eq!(git(&f.repo, &["ls-files", "--stage"]), index);
+        s.apply(drop);
+
+        let payload = s.stash_conflict(&f.repo).unwrap();
+        assert_eq!(payload.operation, conflict_id);
+        assert_eq!(payload.oid, origin_oid);
+        let entries = read_oplog_tail(100);
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+        assert!(matches!(entries[1].outcome, OpOutcome::Partial { .. }));
     }
 }
 

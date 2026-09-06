@@ -155,6 +155,7 @@ impl Drop for StashJob {
                 &self.plan,
                 self.policy.actor,
                 "job dropped before execution",
+                kagi_git::backend::stash::StashStopReason::Abandoned,
             );
             let _ = self.abandoned.send(Completion::Stash(StashCompletion {
                 id: self.id,

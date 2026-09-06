@@ -10,6 +10,19 @@ fn log_stash_event(
 ) {
     use kagi_git::backend::stash::{StashAction, StashEvent};
     match event {
+        StashEvent::Started => {
+            if name != "stash-apply" {
+                klog!("async: {} started", name);
+            }
+        }
+        StashEvent::PlanBlocked => {
+            let label = match name {
+                "stash-pop" => "pop",
+                "stash-drop" => "drop",
+                other => other,
+            };
+            klog!("refused: {} plan has blockers, not executing", label);
+        }
         StashEvent::VerifyFailed { error } => match name {
             "stash-apply" => klog!("verify: snapshot error: {}", error),
             "stash-push" => klog!(
@@ -88,6 +101,11 @@ impl KagiApp {
         let success = matches!(entry.outcome, OpOutcome::Success { .. });
         let partial = matches!(entry.outcome, OpOutcome::Partial { .. });
         let summary = oplog_panel::outcome_summary(&entry.outcome);
+        if report.evidence.stop == Some(kagi_git::backend::stash::StashStopReason::Abandoned)
+            && name != "stash-apply"
+        {
+            klog!("async: {} started", name);
+        }
         if name != "stash-apply" && !report.evidence.plan_blocked {
             if success || (partial && !report.evidence.conflicts.is_empty()) {
                 klog!("async: {} finished", name);
@@ -179,7 +197,6 @@ impl KagiApp {
         }
     }
     pub(crate) fn dispatch_job(&mut self, approved: Approved, cx: &mut Context<Self>) {
-        let stash_blocked = matches!(&approved.prepared, app::Planned::Stash { plan, .. } if !plan.preview.blockers.is_empty());
         let (name, label) = match &approved.prepared {
             app::Planned::Remove { .. } => ("remove-worktree", Msg::BusyRemoveWorktree),
             app::Planned::Stash { plan, .. } => (
@@ -218,15 +235,8 @@ impl KagiApp {
             _ => unreachable!(),
         }
         self.status_footer = FooterStatus::Busy(SharedString::from(label.t()));
-        if stash_blocked {
-            let label = match name {
-                "stash-pop" => "pop",
-                "stash-drop" => "drop",
-                other => other,
-            };
-            klog!("refused: {} plan has blockers, not executing", label);
-        } else if name != "stash-apply" {
-            klog!("async: {} started", name);
+        if name == "remove-worktree" {
+            klog!("async: remove-worktree started");
         }
         let task = cx.background_spawn(async move {
             let started = std::time::Instant::now();

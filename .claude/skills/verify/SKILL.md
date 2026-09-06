@@ -253,7 +253,10 @@ a dedicated method, with the optional snapshot policy explicitly OFF. It must
 never call raw executors or clear plan blockers. `tests/support/remove.rs` freezes
 the opaque remove plan before any fixture drift. Compile-fail doctests guard old
 root/ops/conflicts/staging/step-runner imports. D/F fixtures check owner trust and
-frozen OID rejection through the dedicated Backend boundary.
+frozen OID/child-list rejection through the dedicated Backend boundary.
+`tests/backend_fixture_storage_test.rs` drives the migrated branch adapter in
+the shared isolated child, asserts a record in its log directory and preserves
+a fake HOME oplog sentinel. Every new migrated fixture must use the same helper.
 
 The low-level trust/headless acceptance cases are crate-internal tests in
 `crates/kagi-git/src/ops/worktree_steps_acceptance_tests.rs`, with global env

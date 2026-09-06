@@ -91,6 +91,12 @@ Remove fixtures freeze `RemovePlan` when planning and use `run_recorded_remove`.
 `execute_planned_dir_file_resolution` adds a dedicated owner-trust boundary for
 a reviewed D/F plan; the immediate UI method delegates to it. Its existing
 preflight, savepoint and record owner stay together in the family executor.
+The frozen D/F preflight compares the entire child list with the live index,
+including additions, omissions and duplicates, before its savepoint or checkout.
+A caller cannot add an unrelated dirty path to the forced-checkout list.
+Migrated fixtures use the shared #573 child-process helper, keeping recording
+enabled under a per-test log directory. The storage G preserves a fake HOME
+oplog sentinel while checking the migrated branch adapter's real record.
 
 Low-level unapproved-config and safe-checkout assertions now live inside the
 executor crate. They do not justify public bypasses. Tests that modify global

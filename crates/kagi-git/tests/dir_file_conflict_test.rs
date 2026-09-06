@@ -304,3 +304,81 @@ fn frozen_dir_file_boundary_refuses_untrusted_or_changed_plan() {
 
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
+
+#[test]
+fn frozen_dir_file_plan_rejects_extra_missing_or_duplicate_children() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for choice in [DirFileChoice::KeepDirectory, DirFileChoice::KeepFile] {
+        let (_td, repo) = df_conflict("file-side", "dir-side");
+        let root = repo.workdir().unwrap();
+        std::fs::write(root.join("base.txt"), b"UNSAVED outside the conflict\n").unwrap();
+        let plan = plan_dir_file_resolution(&repo, Path::new("thing"), choice).unwrap();
+        assert_eq!(plan.dir_children, vec![PathBuf::from("thing/child")]);
+        let before_index = std::fs::read(repo.path().join("index")).unwrap();
+        let before_head = repo.head().unwrap().target();
+        let child = std::fs::read(root.join("thing/child")).unwrap();
+        let backend = kagi_git::Backend::open(root).unwrap();
+        for children in [
+            vec![PathBuf::from("thing/child"), PathBuf::from("base.txt")],
+            Vec::new(),
+            vec![PathBuf::from("thing/child"), PathBuf::from("thing/child")],
+        ] {
+            let mut changed = plan.clone();
+            changed.dir_children = children;
+            let error = backend
+                .execute_planned_dir_file_resolution(&changed)
+                .expect_err("unreviewed child list must be rejected before mutation");
+            assert!(error.to_string().contains("changed since it was planned"));
+            assert_eq!(
+                std::fs::read(repo.path().join("index")).unwrap(),
+                before_index
+            );
+            assert_eq!(repo.head().unwrap().target(), before_head);
+            assert_eq!(std::fs::read(root.join("thing/child")).unwrap(), child);
+            assert_eq!(
+                std::fs::read(root.join("base.txt")).unwrap(),
+                b"UNSAVED outside the conflict\n"
+            );
+            assert_eq!(
+                repo.references_glob("refs/kagi/snapshots/*")
+                    .unwrap()
+                    .count(),
+                0
+            );
+        }
+    }
+}
+
+#[test]
+fn frozen_dir_file_plan_rejects_a_new_index_child() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (_td, repo) = df_conflict("file-side", "dir-side");
+    let root = repo.workdir().unwrap();
+    let plan =
+        plan_dir_file_resolution(&repo, Path::new("thing"), DirFileChoice::KeepFile).unwrap();
+    std::fs::write(root.join("thing/new"), b"newly staged child\n").unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("thing/new")).unwrap();
+    index.write().unwrap();
+    let before_index = std::fs::read(repo.path().join("index")).unwrap();
+    let backend = kagi_git::Backend::open(root).unwrap();
+    assert!(backend.execute_planned_dir_file_resolution(&plan).is_err());
+    assert_eq!(
+        std::fs::read(repo.path().join("index")).unwrap(),
+        before_index
+    );
+    assert_eq!(
+        std::fs::read(root.join("thing/new")).unwrap(),
+        b"newly staged child\n"
+    );
+    assert_eq!(
+        repo.references_glob("refs/kagi/snapshots/*")
+            .unwrap()
+            .count(),
+        0
+    );
+}

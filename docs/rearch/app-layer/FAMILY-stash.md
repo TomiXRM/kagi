@@ -1,8 +1,10 @@
 # #484 family 2: stash push / apply / pop / drop
 
-状態: **設計レビュー r3・未実装**。PM Round 1 の (1)〜(5)/A〜E、
+状態: **PR 1 local 4 op 実装済み・PR 2 remote 未実装**。PR 1 の E 実行/M/workspace 全体は PM 検証待ち。
+実装境界と残る競合窓は [ADR-0176](../../adr/0176-app-stash-local-boundary.md)。
+以下は採用済み設計 r3 の経緯・契約（実装前の記述を含む）。PM Round 1 の (1)〜(5)/A〜E、
 omp-plan 第 2 レビュー R1〜R4 と PM Round 2 の全件採用裁定を反映。
-追加 D と C の完了範囲は §7 の調整案を PM 採用済み。r3 の反映確認待ち。
+追加 D と C の完了範囲は §7 の調整案を PM 採用済み。PR 1 は #533 merge `6ee0147` を取り込み済み。
 読解基準は `origin/dev` の `4ad4ad28`
 （#530 merge）。2026-09-07。コード変更・cargo・G/E/M 実行は本 PR に含めない。
 PM 報告では 1a/1b の G/E と **1b の M は通過済み**。

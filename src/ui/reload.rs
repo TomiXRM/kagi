@@ -279,9 +279,7 @@ impl KagiApp {
         // sweep above, so it survives this async reload (opening it before reload
         // would have it wiped by `clear_stash_drop_modal`). Just plans + sets the
         // modal — no further reload.
-        if let Some(i) = self.pending_stash_drop.take() {
-            self.open_stash_drop_modal(i);
-        }
+        self.present_stash_followup(cx);
 
         cx.notify();
     }

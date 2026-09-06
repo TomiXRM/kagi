@@ -162,7 +162,7 @@ pub(crate) fn render_stash_push_modal(
     );
 
     if !has_blockers {
-        button_row = button_row.child(
+        button_row = button_row.child(crate::ui::e2e::measure_confirm(
             KagiButton::accent(
                 "stash-push-confirm",
                 "Stash",
@@ -171,7 +171,7 @@ pub(crate) fn render_stash_push_modal(
             )
             .small()
             .on_click(confirm_handler),
-        );
+        ));
     }
 
     let card = card
@@ -219,8 +219,10 @@ pub(crate) fn render_stash_push_modal(
 pub(crate) fn render_stash_apply_modal(
     modal: StashApplyModal,
     cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let plan = modal.plan.clone();
+) -> gpui::AnyElement {
+    let Some(plan) = modal.plan.clone() else {
+        return super::modal_renderers_plan::render_stash_planning(modal.error, cx);
+    };
     let has_blockers = !plan.blockers.is_empty();
 
     // T-BP-003: return focus to root_focus on cancel/confirm.
@@ -302,7 +304,7 @@ pub(crate) fn render_stash_apply_modal(
     );
 
     if !has_blockers {
-        button_row = button_row.child(
+        button_row = button_row.child(crate::ui::e2e::measure_confirm(
             KagiButton::accent(
                 "stash-apply-confirm",
                 "Apply",
@@ -311,7 +313,7 @@ pub(crate) fn render_stash_apply_modal(
             )
             .small()
             .on_click(confirm_handler),
-        );
+        ));
     }
 
     let card = card
@@ -319,5 +321,5 @@ pub(crate) fn render_stash_apply_modal(
         .child(div().flex_shrink_0().child(button_row));
 
     // ── Full-screen overlay wrapper ─────────────────────────
-    modal_overlay(card)
+    modal_overlay(card).into_any_element()
 }

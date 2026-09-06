@@ -2,7 +2,148 @@
 use crate::app::{self, Approved, Delivery, LegacyBusy};
 use crate::ui::*;
 
+fn log_stash_event(
+    event: kagi_git::backend::stash::StashEvent,
+    name: &str,
+    started: std::time::Instant,
+    executed: &mut std::time::Instant,
+) {
+    use kagi_git::backend::stash::{StashAction, StashEvent};
+    match event {
+        StashEvent::VerifyFailed { error } => match name {
+            "stash-apply" => klog!("verify: snapshot error: {}", error),
+            "stash-push" => klog!(
+                "async: stash-push timing stash={:.1}s verify={:.1}s",
+                executed.duration_since(started).as_secs_f32(),
+                executed.elapsed().as_secs_f32()
+            ),
+            _ => {}
+        },
+        StashEvent::Executed {
+            action,
+            oid,
+            conflicts,
+        } => {
+            *executed = std::time::Instant::now();
+            match action {
+                StashAction::Push { message, .. } => klog!(
+                    "executed: stash-push message={:?}",
+                    message.unwrap_or_default()
+                ),
+                StashAction::Apply { index } => klog!("executed: stash-apply index={}", index),
+                StashAction::Pop { index } => {
+                    klog!("executed: stash-pop index={}", index);
+                    if conflicts > 0 {
+                        klog!(
+                            "executed: stash-pop index={} — conflicts in {} file(s), stash kept",
+                            index,
+                            conflicts
+                        );
+                    }
+                }
+                StashAction::Drop { index } => klog!(
+                    "executed: stash-drop index={} oid={}",
+                    index,
+                    oid.unwrap_or_default()
+                ),
+            }
+        }
+        StashEvent::Verified { dirty, count } => match name {
+            "stash-push" => {
+                if dirty {
+                    klog!("verify: working tree NOT clean after stash-push");
+                } else {
+                    klog!("verified: working tree clean after stash-push");
+                }
+                klog!("verified: stash count={}", count);
+                klog!(
+                    "async: stash-push timing stash={:.1}s verify={:.1}s",
+                    executed.duration_since(started).as_secs_f32(),
+                    executed.elapsed().as_secs_f32()
+                );
+            }
+            "stash-apply" => {
+                if dirty {
+                    klog!("verified: working tree dirty (stash applied)");
+                } else {
+                    klog!("verify: working tree NOT dirty after stash-apply");
+                }
+                klog!("verified: stash count={} (entry preserved)", count);
+            }
+            _ => {}
+        },
+    }
+}
+
 impl KagiApp {
+    fn deliver_stash_result(
+        &mut self,
+        id: app::OperationId,
+        owner: app::Attachment,
+        report: kagi_git::backend::stash::StashReport,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = report.recording.entry().clone();
+        let name = report.action.name();
+        let success = matches!(entry.outcome, OpOutcome::Success { .. });
+        let partial = matches!(entry.outcome, OpOutcome::Partial { .. });
+        let summary = oplog_panel::outcome_summary(&entry.outcome);
+        if name != "stash-apply" && !report.evidence.plan_blocked {
+            if success || (partial && !report.evidence.conflicts.is_empty()) {
+                klog!("async: {} finished", name);
+            } else {
+                klog!("async: {} failed — {}", name, summary);
+            }
+        }
+        if let Some(panel) = &self.op_log {
+            panel.update(cx, |panel, cx| {
+                panel.push(entry.clone());
+                cx.notify();
+            });
+        }
+        let footer = if let Some(error) = &report.evidence.preflight_error {
+            i18n::op_failed(i18n::Op::Preflight, error)
+        } else if !report.evidence.conflicts.is_empty() {
+            format!("{}: {}", name, Msg::StashPopConflictedKept.t())
+        } else {
+            format!("{}: {}", name, summary)
+        };
+        let recording_failed = matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        );
+        self.push_toast(
+            if success && !recording_failed {
+                ToastKind::Success
+            } else {
+                ToastKind::Error
+            },
+            format!("{}: {}", entry.repo, footer),
+            cx,
+        );
+        if self.repo_path.as_ref() == Some(&owner.path)
+            && self.switch_generation == owner.generation
+        {
+            self.status_footer = if success && !recording_failed {
+                FooterStatus::Success(footer.clone().into())
+            } else if partial {
+                FooterStatus::Idle(footer.clone().into())
+            } else {
+                FooterStatus::Failed(footer.clone().into())
+            };
+        }
+        if !success {
+            let mut notice = modals::AppNotice::from(format!("{}: {}", entry.repo, footer));
+            if report.evidence.unknown {
+                notice.inspect = Some(id);
+            }
+            self.app_notices.push_back(notice);
+        }
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
+            self.app_notices
+                .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
+        }
+    }
     /// Reserve and mirror in the same UI turn, before any writer dispatch.
     pub(crate) fn reserve_write(
         &mut self,
@@ -38,7 +179,19 @@ impl KagiApp {
         }
     }
     pub(crate) fn dispatch_job(&mut self, approved: Approved, cx: &mut Context<Self>) {
-        let job = match app::prepare_remove(
+        let stash_blocked = matches!(&approved.prepared, app::Planned::Stash { plan, .. } if !plan.preview.blockers.is_empty());
+        let (name, label) = match &approved.prepared {
+            app::Planned::Remove { .. } => ("remove-worktree", Msg::BusyRemoveWorktree),
+            app::Planned::Stash { plan, .. } => (
+                plan.action.name(),
+                match plan.action {
+                    app::StashAction::Drop { .. } => Msg::BusyStashDrop,
+                    app::StashAction::Pop { .. } => Msg::BusyStashPop,
+                    _ => Msg::BusyStash,
+                },
+            ),
+        };
+        let job = match app::prepare(
             &mut self.app_sessions,
             approved,
             LegacyBusy(self.busy_op.is_some()),
@@ -50,20 +203,46 @@ impl KagiApp {
                 return;
             }
         };
-        self.busy_op = Some("remove-worktree");
-        self.clear_remove_worktree_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRemoveWorktree.t()));
-        klog!("async: remove-worktree started");
+        let busy = if name == "remove-worktree" {
+            name
+        } else {
+            "app-writer"
+        };
+        self.busy_op = Some(busy);
+        match name {
+            "remove-worktree" => self.clear_remove_worktree_modal(),
+            "stash-push" => self.clear_stash_push_modal(),
+            "stash-apply" => self.clear_stash_apply_modal(),
+            "stash-pop" => self.clear_pop_modal(),
+            "stash-drop" => self.clear_stash_drop_modal(),
+            _ => unreachable!(),
+        }
+        self.status_footer = FooterStatus::Busy(SharedString::from(label.t()));
+        if stash_blocked {
+            let label = match name {
+                "stash-pop" => "pop",
+                "stash-drop" => "drop",
+                other => other,
+            };
+            klog!("refused: {} plan has blockers, not executing", label);
+        } else if name != "stash-apply" {
+            klog!("async: {} started", name);
+        }
         let task = cx.background_spawn(async move {
+            let started = std::time::Instant::now();
+            let mut executed = started;
             job.run_with_events(|event| {
                 use kagi_git::backend::remove::RemoveEvent;
                 match event {
-                    RemoveEvent::ConfigTrusted => {
+                    app::Event::Remove(RemoveEvent::ConfigTrusted) => {
                         klog!("worktree: trusted .kagi/worktree.toml (pre_remove)")
                     }
-                    RemoveEvent::ExecutionStarting => {}
-                    RemoveEvent::ConfigRefused => {
+                    app::Event::Remove(RemoveEvent::ExecutionStarting) => {}
+                    app::Event::Remove(RemoveEvent::ConfigRefused) => {
                         klog!("refused: remove-worktree config changed after plan, not executing")
+                    }
+                    app::Event::Stash(event) => {
+                        log_stash_event(event, name, started, &mut executed);
                     }
                 }
             })
@@ -72,7 +251,7 @@ impl KagiApp {
             let completion = task.await;
             let _ = this.update(cx, |app, cx| {
                 let deliveries = app::apply(&mut app.app_sessions, completion);
-                if !app.app_sessions.has_leases() && app.busy_op == Some("remove-worktree") {
+                if !app.app_sessions.has_leases() && app.busy_op == Some(busy) {
                     app.busy_op = None;
                 }
                 for delivery in deliveries {
@@ -101,6 +280,13 @@ impl KagiApp {
                 attachment,
                 report,
             } => {
+                let report = match report.evidence {
+                    app::FamilyEvidence::Remove(report) => report,
+                    app::FamilyEvidence::Stash(report) => {
+                        self.deliver_stash_result(id, attachment, report, cx);
+                        return;
+                    }
+                };
                 let entry = report.recording.entry().clone();
                 let summary = oplog_panel::outcome_summary(&entry.outcome);
                 let success = matches!(entry.outcome, OpOutcome::Success { .. });

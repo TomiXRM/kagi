@@ -1,387 +1,74 @@
-//! Stash operations (push/apply/pop/drop + menu).
-//!
-//! Extracted verbatim from `ui/mod.rs` (issue #13 Phase 4, P1) as an additional
-//! `impl KagiApp` block. Behaviour and signatures are unchanged; a descendant
-//! module can access `KagiApp` privates so no visibility was widened.
-
-#![allow(clippy::too_many_arguments)]
-use crate::ui::blocking_ops::*;
-
+//! Local stash intent adapters; remote remains legacy until PR 2.
+use crate::app::{self, PlanState, Planned, StashAction, StashPolicy, StashRequest};
 use crate::ui::*;
-
 impl KagiApp {
-    /// Open the stash push modal.
-    ///
-    /// Plans the stash push immediately and stores the result in
-    /// `self.stash_push_modal`.  The input is initially empty (no message).
+    pub(crate) fn present_stash_followup(&mut self, cx: &mut Context<Self>) {
+        if self.has_active_modal() {
+            return;
+        }
+        let Some(owner) = self.repo_path.clone() else {
+            return;
+        };
+        let Some(payload) = self.app_sessions.take_stash_followup(&owner) else {
+            return;
+        };
+        self.set_stash_drop_modal(StashDropModal {
+            stash_index: 0,
+            plan: None,
+            error: None,
+        });
+        self.begin_stash_plan_with_oid(StashAction::Drop { index: 0 }, Some(payload.oid), cx);
+    }
     pub fn open_stash_push_modal(&mut self, cx: &mut Context<Self>) {
         if self.stash_push_focus.is_none() {
             self.stash_push_focus = Some(cx.focus_handle());
         }
         self.set_stash_push_modal(StashPushModal {
             input: String::new(),
-            input_state: None, // lazy (render)
+            input_state: None,
             plan: None,
             error: None,
         });
-        self.replan_stash_push();
+        self.replan_stash_push(cx);
     }
-
-    /// Close the stash push modal without making any changes.
-    pub fn cancel_stash_push_modal(&mut self) {
-        self.clear_stash_push_modal();
-    }
-
-    /// Re-generate the live stash push plan from the current input.
-    pub(crate) fn replan_stash_push(&mut self) {
-        let message_str = match self.stash_push_modal() {
-            Some(m) => m.input.clone(),
-            None => return,
+    pub(crate) fn replan_stash_push(&mut self, cx: &mut Context<Self>) {
+        let Some(m) = self.stash_push_modal() else {
+            return;
         };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("replan_stash_push: repo open error: {}", e);
-                return;
-            }
-        };
-        let msg_opt = if message_str.is_empty() {
+        let message = if m.input.is_empty() {
             None
         } else {
-            Some(message_str.as_str())
+            Some(m.input.clone())
         };
-        match repo.plan_stash_push(msg_opt, true) {
-            Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: stash-push blockers={} warnings={}",
-                    plan.blockers.len(),
-                    plan.warnings.len()
-                );
-                if let Some(modal) = self.stash_push_modal_mut() {
-                    modal.plan = Some(std::sync::Arc::new(plan));
-                }
-            }
-            Err(e) => {
-                klog!("plan: stash-push error: {}", e);
-            }
-        }
-    }
-
-    /// Confirm the stash push plan: run preflight, execute, then reload.
-    ///
-    /// On failure the modal remains open and shows the error text.
-    pub fn confirm_stash_push(&mut self, cx: &mut Context<Self>) {
-        // The live plan is debounced; rebuild it from the latest input so a
-        // fast type-then-click can never execute a stale plan.
-        self.run_modal_replans();
-        if self.busy_op.is_some() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
-            return;
-        }
-        let modal = match self.stash_push_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let plan = match modal.plan.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
-        };
-        if !plan.blockers.is_empty() {
-            klog!("refused: stash-push plan has blockers, not executing");
-            if let Some(ref rp) = self.repo_path.clone() {
-                self.record_op(
-                    "stash-push",
-                    plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                    },
-                    rp,
-                    cx,
-                );
-            }
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-
-        // Stashing copies the working tree (incl. untracked) into the stash
-        // — minutes on big repos. Run it on a background thread (W3 pattern)
-        // so the UI stays responsive instead of appearing frozen.
-        self.busy_op = Some("stash");
-        self.clear_stash_push_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStash.t()));
-        klog!("async: stash-push started");
-
-        let msg_opt = if modal.input.is_empty() {
-            None
-        } else {
-            Some(modal.input.clone())
-        };
-        let bg_path = repo_path.clone();
-        let bg_plan = plan.clone();
-        let task =
-            cx.background_spawn(async move { stash_push_blocking(&bg_path, &bg_plan, msg_opt) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok((summary, after)) => {
-                klog!("async: stash-push finished");
-                app.record_op(
-                    "stash-push",
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("stash: {}", summary)));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: stash-push failed — {}", err_msg);
-                app.record_op(
-                    "stash-push",
-                    plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
-                    &repo_path,
-                    cx,
-                );
-            }
-        });
-    }
-
-    /// Open the stash apply modal for stash entry at `index`.
-    ///
-    /// Plans the apply using the current repository state and stores the result.
-    pub fn open_stash_apply_modal(&mut self, index: usize) {
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => {
-                klog!("open_stash_apply_modal: no repo_path set");
-                return;
-            }
-        };
-
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("plan: stash-apply repo open error: {}", e);
-                return;
-            }
-        };
-
-        match repo.plan_stash_apply(index) {
-            Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: stash-apply index={} blockers={} warnings={}",
-                    index,
-                    plan.blockers.len(),
-                    plan.warnings.len()
-                );
-                self.set_stash_apply_modal(StashApplyModal {
-                    index,
-                    plan: std::sync::Arc::new(plan),
-                    error: None,
-                });
-            }
-            Err(e) => {
-                klog!("plan: stash-apply error: {}", e);
-            }
-        }
-    }
-
-    /// Close the stash apply modal without making any changes.
-    pub fn cancel_stash_apply_modal(&mut self) {
-        self.clear_stash_apply_modal();
-    }
-
-    /// Confirm the stash apply plan: run preflight, execute, then reload.
-    ///
-    /// On failure the modal remains open and shows the error text.
-    /// The stash entry is **never** removed (apply, not pop).
-    pub fn confirm_stash_apply(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.stash_apply_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let plan = modal.plan.clone();
-        // Defence in depth: refuse if blockers exist.
-        if !plan.blockers.is_empty() {
-            klog!("refused: stash-apply plan has blockers, not executing");
-            if let Some(ref rp) = self.repo_path.clone() {
-                self.record_op(
-                    "stash-apply",
-                    plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                    },
-                    rp,
-                    cx,
-                );
-            }
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
-                self.record_op(
-                    "stash-apply",
-                    plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.stash_apply_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
-        };
-
-        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
-        // in one place (run() calls preflight_check_stash for StashApply: HEAD +
-        // stash-count guard). The separate preflight_check_stash + execute above
-        // collapses into run().
-        let op = kagi_git::Operation::StashApply { index: modal.index };
-        if let Err(e) = repo.run(&op, &plan) {
-            let err_msg = i18n::op_failed(i18n::Op::StashApply, e);
-            self.record_op(
-                "stash-apply",
-                plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-                cx,
-            );
-            if let Some(m) = self.stash_apply_modal_mut() {
-                m.error = Some(SharedString::from(err_msg));
-            }
-            return;
-        }
-
-        klog!("executed: stash-apply index={}", modal.index);
-
-        // Verify: check working tree is dirty and stash entry still exists.
-        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("verify: repo open error: {}", e);
-                self.reload(cx);
-                return;
-            }
-        };
-        let after_summary = match repo2.snapshot(10_000) {
-            Ok(snap) => {
-                let is_dirty = snap.status.is_dirty();
-                let stash_count = snap.stashes.len();
-                if is_dirty {
-                    klog!("verified: working tree dirty (stash applied)");
-                } else {
-                    klog!("verify: working tree NOT dirty after stash-apply");
-                }
-                // Stash must remain (apply, not pop).
-                if stash_count >= plan.stash_count_at_plan() {
-                    eprintln!(
-                        "[kagi] verified: stash count={} (entry preserved)",
-                        stash_count
-                    );
-                } else {
-                    eprintln!(
-                        "[kagi] verify: stash count={} (expected >= {})",
-                        stash_count,
-                        plan.stash_count_at_plan()
-                    );
-                }
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if is_dirty {
-                        "dirty".to_string()
-                    } else {
-                        "clean".to_string()
-                    },
-                }
-            }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
-                plan.predicted.clone()
-            }
-        };
-
-        // Record success to oplog + update footer.
-        self.record_op(
-            "stash-apply",
-            plan.current.clone(),
-            OpOutcome::Success {
-                after: after_summary,
+        self.begin_stash_plan(
+            StashAction::Push {
+                message,
+                include_untracked: true,
             },
-            &repo_path,
             cx,
         );
-
-        // Reload display data.
-        self.reload(cx);
     }
-
-    /// Build a stash-pop plan and open the confirmation modal.
-    pub fn open_pop_modal(&mut self, index: usize) {
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "pop: repo open error: {}",
-                    e
-                )));
-                return;
-            }
-        };
-        match repo.plan_stash_pop(index) {
-            Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: stash-pop index={} blockers={} warnings={}",
-                    index,
-                    plan.blockers.len(),
-                    plan.warnings.len()
-                );
-                self.set_pop_modal(PopPlanModal {
-                    plan: std::sync::Arc::new(plan),
-                    error: None,
-                    stash_index: index,
-                });
-            }
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Pop, e),
-                ));
-            }
+    pub fn open_stash_apply_modal(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.repo_path.is_none() {
+            klog!("open_stash_apply_modal: no repo_path set");
+            return;
         }
+        self.set_stash_apply_modal(StashApplyModal {
+            index,
+            plan: None,
+            error: None,
+        });
+        self.begin_stash_plan(StashAction::Apply { index }, cx);
     }
-
-    pub fn cancel_pop_modal(&mut self) {
-        self.clear_pop_modal();
+    pub fn open_pop_modal(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.set_pop_modal(PopPlanModal {
+            stash_index: index,
+            plan: None,
+            error: None,
+        });
+        self.begin_stash_plan(StashAction::Pop { index }, cx);
     }
-
-    /// Open the standalone stash-drop confirmation (ADR-0087, Destructive).
-    pub fn open_stash_drop_modal(&mut self, index: usize) {
-        // Remote read-only view (ADR-0089 Phase 3): there is no local Repository
-        // to dry-run against, so synthesise the danger-confirm plan; the drop
-        // itself runs over SSH in `start_stash_drop`.
+    pub fn open_stash_drop_modal(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.remote_view.is_some() {
             let label = self
                 .active_view
@@ -394,53 +81,278 @@ impl KagiApp {
             let plan = kagi_git::plan_stash_drop_remote(&label, head);
             klog!("plan: remote stash-drop index={index} blockers=0");
             self.set_stash_drop_modal(StashDropModal {
-                plan: std::sync::Arc::new(plan),
+                plan: Some(std::sync::Arc::new(plan)),
                 error: None,
                 stash_index: index,
             });
             return;
         }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
+
+        self.set_stash_drop_modal(StashDropModal {
+            stash_index: index,
+            plan: None,
+            error: None,
+        });
+        self.begin_stash_plan(StashAction::Drop { index }, cx);
+    }
+    pub(crate) fn stash_policy(&self) -> StashPolicy {
+        StashPolicy {
+            actor: kagi_git::Actor::Human,
+            auto_snapshot: settings::Settings::load().auto_snapshot(),
+        }
+    }
+    fn begin_stash_plan(&mut self, action: StashAction, cx: &mut Context<Self>) {
+        self.begin_stash_plan_with_oid(action, None, cx);
+    }
+    fn begin_stash_plan_with_oid(
+        &mut self,
+        action: StashAction,
+        oid: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.repo_path.clone() else {
+            return;
         };
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "drop: repo open error: {}",
-                    e
-                )));
+        let policy = self.stash_policy();
+        let request = StashRequest {
+            owner: app::Attachment {
+                path,
+                generation: self.switch_generation,
+            },
+            action: action.clone(),
+        };
+        let owner = request.owner.clone();
+        let job = if let Some(oid) = oid {
+            app::plan_stash_followup(&mut self.app_sessions, request.owner, oid, policy)
+        } else {
+            app::plan_stash(&mut self.app_sessions, request, policy)
+        };
+        let task = cx.background_spawn(async move { job.run() });
+        cx.spawn(async move |this, cx| {
+            let completion = task.await;
+            let _ = this.update(cx, |app, cx| {
+                if app.repo_path.as_ref() != Some(&owner.path)
+                    || app.switch_generation != owner.generation
+                    || !app.stash_modal_matches(&action)
+                {
+                    if completion.is_current(&app.app_sessions) {
+                        app.app_sessions.invalidate_plan();
+                    }
+                } else if app::apply_plan(&mut app.app_sessions, completion) {
+                    app.show_stash_plan(&action, cx);
+                }
+                for job in app.app_sessions.take_plan_error_jobs() {
+                    let task = cx.background_spawn(async move { job.run() });
+                    cx.spawn(async move |this, cx| {
+                        let completion = task.await;
+                        let _ = this.update(cx, |app, cx| {
+                            if let kagi_git::backend::recording::Recording::Failed {
+                                attempted,
+                                error,
+                            } = &completion.recording
+                            {
+                                let message =
+                                    format!("{}: recording failed: {}", attempted.repo, error);
+                                app.push_toast(ToastKind::Error, message.clone(), cx);
+                                app.app_notices.push_back(message.into());
+                            }
+                            app.app_sessions.apply_plan_error(completion);
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn stash_modal_matches(&self, action: &StashAction) -> bool {
+        match action {
+            StashAction::Push { message, .. } => self
+                .stash_push_modal()
+                .is_some_and(|m| m.input == message.as_deref().unwrap_or("")),
+            StashAction::Apply { index } => {
+                self.stash_apply_modal().is_some_and(|m| m.index == *index)
+            }
+            StashAction::Pop { index } => self.pop_modal().is_some_and(|m| m.stash_index == *index),
+            StashAction::Drop { index } => self
+                .stash_drop_modal()
+                .is_some_and(|m| m.stash_index == *index),
+        }
+    }
+    fn show_stash_plan(&mut self, action: &StashAction, cx: &mut Context<Self>) {
+        if !self.stash_modal_matches(action) {
+            self.app_sessions.invalidate_plan();
+            return;
+        }
+        let (plan, error, resolved) = match self.app_sessions.plan_state() {
+            PlanState::Ready {
+                prepared: Planned::Stash { plan, request, .. },
+                ..
+            } => {
+                if self.repo_path.as_ref() != Some(&request.owner.path)
+                    || self.switch_generation != request.owner.generation
+                {
+                    self.app_sessions.invalidate_plan();
+                    return;
+                }
+                (Some(plan.preview.clone()), None, request.action.clone())
+            }
+            PlanState::Error {
+                error, open_failed, ..
+            } => {
+                match (action, open_failed) {
+                    (StashAction::Push { .. }, true) => {
+                        klog!("replan_stash_push: repo open error: {}", error)
+                    }
+                    (StashAction::Push { .. }, false) => klog!("plan: stash-push error: {}", error),
+                    (StashAction::Apply { .. }, true) => {
+                        klog!("plan: stash-apply repo open error: {}", error)
+                    }
+                    (StashAction::Apply { .. }, false) => {
+                        klog!("plan: stash-apply error: {}", error)
+                    }
+                    _ => {}
+                }
+                (
+                    None,
+                    Some(SharedString::from(error.clone())),
+                    action.clone(),
+                )
+            }
+            PlanState::Draft => {
+                self.clear_stash_drop_modal();
                 return;
             }
+            _ => return,
         };
-        match repo.plan_stash_drop(index) {
-            Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: stash-drop index={} blockers={}",
+        let action = &resolved;
+        if let Some(p) = &plan {
+            match action {
+                StashAction::Push { .. } => klog!(
+                    "plan: stash-push blockers={} warnings={}",
+                    p.blockers.len(),
+                    p.warnings.len()
+                ),
+                StashAction::Apply { index } => klog!(
+                    "plan: stash-apply index={} blockers={} warnings={}",
                     index,
-                    plan.blockers.len()
-                );
-                self.set_stash_drop_modal(StashDropModal {
-                    plan: std::sync::Arc::new(plan),
-                    error: None,
-                    stash_index: index,
-                });
+                    p.blockers.len(),
+                    p.warnings.len()
+                ),
+                StashAction::Pop { index } => klog!(
+                    "plan: stash-pop index={} blockers={} warnings={}",
+                    index,
+                    p.blockers.len(),
+                    p.warnings.len()
+                ),
+                StashAction::Drop { index } => klog!(
+                    "plan: stash-drop index={} blockers={}",
+                    index,
+                    p.blockers.len()
+                ),
             }
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Drop, e),
-                ));
+        }
+        if let Some(error) = &error {
+            self.status_footer = FooterStatus::Failed(error.clone());
+            self.push_toast(ToastKind::Error, error.clone(), cx);
+        }
+        match action {
+            StashAction::Push { .. } => {
+                if let Some(m) = self.stash_push_modal_mut() {
+                    m.plan = plan;
+                    m.error = error;
+                }
+            }
+            StashAction::Apply { index } => self.set_stash_apply_modal(StashApplyModal {
+                index: *index,
+                plan,
+                error,
+            }),
+            StashAction::Pop { index } => self.set_pop_modal(PopPlanModal {
+                stash_index: *index,
+                plan,
+                error,
+            }),
+            StashAction::Drop { index } => self.set_stash_drop_modal(StashDropModal {
+                stash_index: *index,
+                plan,
+                error,
+            }),
+        }
+    }
+    fn confirm_stash(&mut self, cx: &mut Context<Self>) {
+        let PlanState::Ready {
+            token,
+            prepared: Planned::Stash {
+                request, policy, ..
+            },
+        } = self.app_sessions.plan_state()
+        else {
+            return;
+        };
+        if self.repo_path.as_ref() != Some(&request.owner.path)
+            || self.switch_generation != request.owner.generation
+            || !self.stash_modal_matches(&request.action)
+        {
+            self.app_sessions.invalidate_plan();
+            return;
+        }
+        let token = token.clone();
+        let current = self.stash_policy();
+        if &current != policy {
+            let action = request.action.clone();
+            self.begin_stash_plan(action, cx);
+            return;
+        }
+        match app::approve(&mut self.app_sessions, token, current) {
+            Ok(approved) => self.dispatch_job(approved, cx),
+            Err(error) => {
+                self.app_notices.push_back(error.to_string().into());
+                cx.notify();
             }
         }
     }
-
+    pub fn confirm_stash_push(&mut self, cx: &mut Context<Self>) {
+        // Flush pending input, but never approve before the fresh async plan arrives.
+        if matches!(self.app_sessions.plan_state(), PlanState::Draft)
+            && self
+                .stash_push_modal()
+                .is_some_and(|m| m.plan.is_none() && m.error.is_none())
+        {
+            self.modal_replan_gen = self.modal_replan_gen.wrapping_add(1);
+            self.replan_stash_push(cx);
+            return;
+        }
+        self.confirm_stash(cx);
+    }
+    pub fn confirm_stash_apply(&mut self, cx: &mut Context<Self>) {
+        self.confirm_stash(cx);
+    }
+    pub fn confirm_pop(&mut self, cx: &mut Context<Self>) {
+        self.confirm_stash(cx);
+    }
+    pub fn start_pop(&mut self, cx: &mut Context<Self>) {
+        self.confirm_stash(cx);
+    }
+    pub fn cancel_stash_push_modal(&mut self) {
+        self.clear_stash_push_modal();
+        self.app_sessions.invalidate_plan();
+    }
+    pub fn cancel_stash_apply_modal(&mut self) {
+        self.clear_stash_apply_modal();
+        self.app_sessions.invalidate_plan();
+    }
+    pub fn cancel_pop_modal(&mut self) {
+        self.clear_pop_modal();
+        self.app_sessions.invalidate_plan();
+    }
     pub fn cancel_stash_drop_modal(&mut self) {
         self.clear_stash_drop_modal();
+        self.app_sessions.invalidate_plan();
     }
-
-    /// Open the stash right-click context menu (Apply / Drop). Left-click on a
-    /// stash row pops instead (handled in the sidebar row builder).
     pub fn open_stash_menu(
         &mut self,
         index: usize,
@@ -467,28 +379,28 @@ impl KagiApp {
     ) {
         match action {
             stash_menu::StashAction::Peek => self.open_stash_peek(state.index, cx),
-            stash_menu::StashAction::Pop => self.open_pop_modal(state.index),
-            stash_menu::StashAction::Apply => self.open_stash_apply_modal(state.index),
-            stash_menu::StashAction::Drop => self.open_stash_drop_modal(state.index),
+            stash_menu::StashAction::Pop => self.open_pop_modal(state.index, cx),
+            stash_menu::StashAction::Apply => self.open_stash_apply_modal(state.index, cx),
+            stash_menu::StashAction::Drop => self.open_stash_drop_modal(state.index, cx),
         }
     }
 
-    /// Execute the stash drop on a background thread (Destructive, ADR-0087).
     pub fn start_stash_drop(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.stash_drop_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        if self.busy_op.is_some() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        if self.remote_view.is_none() {
+            self.confirm_stash(cx);
             return;
         }
-
-        // Remote read-only view (ADR-0089 Phase 3): drop over SSH, then
-        // re-snapshot. Same confirm + oplog discipline as the local path.
+        let Some(modal) = self.stash_drop_modal().cloned() else {
+            return;
+        };
+        if self.reject_if_busy(cx) {
+            return;
+        }
         if let Some(rv) = self.remote_view.clone() {
             let stash_index = modal.stash_index;
-            let plan = modal.plan.clone();
+            let Some(plan) = modal.plan.clone() else {
+                return;
+            };
             let before = plan.current.clone();
             let oplog_path = std::path::PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
             self.busy_op = Some("stash-drop");
@@ -533,275 +445,12 @@ impl KagiApp {
                         cx,
                     );
                     app.set_stash_drop_modal(StashDropModal {
-                        plan: plan.clone(),
+                        plan: Some(plan.clone()),
                         error: Some(SharedString::from(err_msg)),
                         stash_index,
                     });
                 }
             });
-            return;
         }
-
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: drop plan has blockers, not executing");
-            self.record_op(
-                "stash-drop",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            self.clear_stash_drop_modal();
-            cx.notify();
-            return;
-        }
-
-        self.busy_op = Some("stash-drop");
-        self.clear_stash_drop_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashDrop.t()));
-        klog!("async: stash-drop started");
-
-        let plan = modal.plan.clone();
-        let stash_index = modal.stash_index;
-        let bg_path = repo_path.clone();
-        let bg_plan = plan.clone();
-        let task = cx
-            .background_spawn(async move { stash_drop_blocking(&bg_path, &bg_plan, stash_index) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok((summary, after)) => {
-                klog!("async: stash-drop finished");
-                app.record_op(
-                    "stash-drop",
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("stash drop: {}", summary)));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: stash-drop failed — {}", err_msg);
-                app.record_op(
-                    "stash-drop",
-                    plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_stash_drop_modal(StashDropModal {
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    stash_index,
-                });
-            }
-        });
-    }
-
-    /// Map a finished pop to its oplog record and footer, shared by the
-    /// button path (`start_pop`) and the Enter path (`confirm_pop`).
-    ///
-    /// Pure on purpose: the #280 regression happened because the two paths
-    /// each interpreted the outcome independently and only one was fixed —
-    /// a conflicted pop went into the oplog as `Success` / "applied and
-    /// dropped" when confirmed with Enter. One mapping, one truth, and a unit
-    /// test can hold it down without a `Context`.
-    fn pop_outcome_for(
-        stash_kept: bool,
-        after: StateSummary,
-        summary: &str,
-    ) -> (OpOutcome, FooterStatus) {
-        if stash_kept {
-            (
-                OpOutcome::Partial {
-                    after,
-                    error: summary.to_string(),
-                },
-                FooterStatus::Idle(SharedString::from(format!("stash pop: {}", summary))),
-            )
-        } else {
-            (
-                OpOutcome::Success { after },
-                FooterStatus::Success(SharedString::from(format!("stash pop: {}", summary))),
-            )
-        }
-    }
-
-    /// Confirm stash pop: preflight → apply-then-drop → oplog → reload.
-    pub fn confirm_pop(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.pop_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: pop plan has blockers, not executing");
-            self.record_op(
-                "stash-pop",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-        // Same execution + outcome interpretation as start_pop, via
-        // stash_pop_blocking — this used to run repo.run inline and hardcode
-        // Success/"applied and dropped", so a conflicted pop confirmed with
-        // Enter lied about the stash being gone (#280 review finding).
-        match crate::ui::blocking_ops::stash_pop_blocking(
-            &repo_path,
-            &modal.plan,
-            modal.stash_index,
-        ) {
-            Ok((summary, after, stash_kept)) => {
-                self.clear_pop_modal();
-                let (outcome, footer) = Self::pop_outcome_for(stash_kept, after, &summary);
-                self.record_op(
-                    "stash-pop",
-                    modal.plan.current.clone(),
-                    outcome,
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer = footer;
-                self.reload(cx);
-            }
-            Err(err_msg) => {
-                self.record_op(
-                    "stash-pop",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_pop_modal(PopPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    stash_index: modal.stash_index,
-                });
-            }
-        }
-    }
-
-    /// W15-ASYNCOPS: UI-path stash-pop — background thread + start/finish toasts.
-    /// Headless keeps `confirm_pop` (sync).
-    pub fn start_pop(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.pop_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        if self.busy_op.is_some() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: pop plan has blockers, not executing");
-            self.record_op(
-                "stash-pop",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            self.clear_pop_modal();
-            cx.notify();
-            return;
-        }
-
-        self.busy_op = Some("stash-pop");
-        self.clear_pop_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashPop.t()));
-        klog!("async: stash-pop started");
-
-        let plan = modal.plan.clone();
-        let stash_index = modal.stash_index;
-        let bg_path = repo_path.clone();
-        let bg_plan = plan.clone();
-        let task =
-            cx.background_spawn(async move { stash_pop_blocking(&bg_path, &bg_plan, stash_index) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok((summary, after, stash_kept)) => {
-                klog!("async: stash-pop finished");
-                let (outcome, footer) = Self::pop_outcome_for(stash_kept, after, &summary);
-                app.record_op("stash-pop", plan.current.clone(), outcome, &repo_path, cx);
-                app.status_footer = footer;
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: stash-pop failed — {}", err_msg);
-                app.record_op(
-                    "stash-pop",
-                    plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_pop_modal(PopPlanModal {
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    stash_index,
-                });
-            }
-        });
-    }
-}
-
-#[cfg(test)]
-mod pop_outcome_tests {
-    use super::*;
-
-    fn after() -> StateSummary {
-        StateSummary {
-            head: "main".into(),
-            dirty: "2 conflicted (stash kept)".into(),
-        }
-    }
-
-    /// The #280 review finding: the Enter path recorded a conflicted pop as
-    /// `Success` / "applied and dropped". Both paths now go through this one
-    /// mapping, so pinning it here pins them both.
-    #[test]
-    fn a_kept_stash_is_never_recorded_as_success() {
-        let (outcome, footer) = KagiApp::pop_outcome_for(true, after(), "stash kept");
-        match outcome {
-            OpOutcome::Partial { error, .. } => assert_eq!(error, "stash kept"),
-            other => panic!("a conflicted pop must be Partial, got {other:?}"),
-        }
-        assert!(
-            !matches!(footer, FooterStatus::Success(_)),
-            "a kept stash must not flash a green success"
-        );
-    }
-
-    #[test]
-    fn a_clean_pop_is_a_success() {
-        let (outcome, footer) = KagiApp::pop_outcome_for(false, after(), "applied and dropped");
-        assert!(matches!(outcome, OpOutcome::Success { .. }));
-        assert!(matches!(footer, FooterStatus::Success(_)));
     }
 }

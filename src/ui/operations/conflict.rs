@@ -261,6 +261,12 @@ impl KagiApp {
         };
 
         let op_name = format!("{}-continue", mode.session.op.slug());
+        if matches!(mode.session.op, kagi_git::ConflictOp::StashConflict) {
+            self.app_sessions.observe_stash_conflict(
+                &repo_path,
+                &repo.stash_conflict_identity().unwrap_or_default(),
+            );
+        }
         let route = match repo.plan_conflict_continue_route(
             &mode.session,
             &mode.buffer,
@@ -368,16 +374,9 @@ impl KagiApp {
                             &repo_path,
                             cx,
                         );
-                        // Offer to drop the kept stash (opt-in — the standard
-                        // conflicted `stash pop` keeps stash@{0}). reload() is
-                        // ASYNC and its apply clears every modal, so opening the
-                        // drop prompt here would be wiped; instead arm a one-shot
-                        // that reload consumes AFTER the clear sweep.
-                        // ponytail: index 0 is the standard pop target; threading
-                        // the real popped index through Conflict Mode would need the
-                        // stash op to persist it — add that if deeper-stash pops
-                        // become common.
-                        self.pending_stash_drop = Some(0);
+                        // Consume this owner's proven OID once, after reload's
+                        // modal clear. A fresh unique-OID plan requires new approval.
+                        self.app_sessions.continue_stash_conflict(&repo_path);
                         // Conflicts are gone → re-detect clears Conflict Mode.
                         self.reload(cx);
                     }
@@ -504,6 +503,12 @@ impl KagiApp {
             }
         };
 
+        if matches!(mode.session.op, kagi_git::ConflictOp::StashConflict) {
+            self.app_sessions.observe_stash_conflict(
+                &repo_path,
+                &repo.stash_conflict_identity().unwrap_or_default(),
+            );
+        }
         let plan = match repo.plan_conflict_abort(&mode.session) {
             Ok(p) => p,
             Err(e) => {
@@ -527,6 +532,7 @@ impl KagiApp {
         };
         match abort_result {
             Ok(_outcome) => {
+                self.app_sessions.clear_stash_conflict(&repo_path);
                 klog!("executed: {}", op_name);
                 let after = StateSummary {
                     head: plan.predicted.head.clone(),
@@ -774,6 +780,7 @@ pub(crate) enum ConflictDetectOutcome {
 /// Payload of [`ConflictDetectOutcome::Detected`] — the assembled conflict state
 /// the UI-thread apply moves into `self.conflict`.
 pub(crate) struct ConflictDetected {
+    stash_identity: Vec<String>,
     session: kagi_git::conflicts::ConflictSession,
     buffer: kagi_git::resolution::ResolutionBuffer,
     current_branch: String,
@@ -870,6 +877,11 @@ impl KagiApp {
         }
 
         ConflictDetectOutcome::Detected(Box::new(ConflictDetected {
+            stash_identity: if matches!(session.op, kagi_git::ConflictOp::StashConflict) {
+                repo.stash_conflict_identity().unwrap_or_default()
+            } else {
+                vec![]
+            },
             session,
             buffer,
             current_branch,
@@ -894,6 +906,17 @@ impl KagiApp {
         outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
+        if let Some(owner) = &self.repo_path {
+            let identity = match &outcome {
+                ConflictDetectOutcome::Detected(d) => d.stash_identity.as_slice(),
+                _ => &[],
+            };
+            if matches!(outcome, ConflictDetectOutcome::OpenFailed) {
+                self.app_sessions.clear_stash_conflict(owner);
+            } else {
+                self.app_sessions.observe_stash_conflict(owner, identity);
+            }
+        }
         match outcome {
             ConflictDetectOutcome::OpenFailed => {
                 // Mirrors the original early-return on `Backend::open` failure,
@@ -922,6 +945,7 @@ impl KagiApp {
             }
             ConflictDetectOutcome::Detected(detected) => {
                 let ConflictDetected {
+                    stash_identity: _,
                     session,
                     buffer,
                     current_branch,

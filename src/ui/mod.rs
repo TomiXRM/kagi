@@ -1324,7 +1324,6 @@ pub struct KagiApp {
     /// kept stash's index to offer for dropping. Set before `reload`; consumed
     /// (via `take`) at the END of the reload apply, so the drop-confirm modal is
     /// opened AFTER reload's `clear_*_modal()` sweep instead of being wiped by it.
-    pub pending_stash_drop: Option<usize>,
     /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
     /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
     /// index entries).  This is the "ready to create the merge commit" state — the
@@ -1597,7 +1596,6 @@ impl KagiApp {
             conflict: None,
             conflict_detected_for: None,
             conflict_merge_pending: false,
-            pending_stash_drop: None,
             merge_commit_ready: false,
             update_available: None,
             update_checked: false,
@@ -1850,6 +1848,10 @@ impl KagiApp {
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
     /// silence before doing git work, so typing stays fluid.
     fn schedule_modal_replan(&mut self, cx: &mut Context<Self>) {
+        if let Some(modal) = self.stash_push_modal_mut() {
+            modal.plan = None;
+            self.app_sessions.invalidate_plan();
+        }
         self.modal_replan_gen = self.modal_replan_gen.wrapping_add(1);
         let gen = self.modal_replan_gen;
         cx.spawn(async move |this, acx| {
@@ -1858,7 +1860,7 @@ impl KagiApp {
                 .await;
             let _ = this.update(acx, |app, cx| {
                 if app.modal_replan_gen == gen {
-                    app.run_modal_replans();
+                    app.run_modal_replans(cx);
                     cx.notify();
                 }
             });
@@ -1868,7 +1870,7 @@ impl KagiApp {
 
     /// Re-plan whichever input-bearing modal is open (used by the debounce
     /// timer and as a freshness guard right before confirm).
-    fn run_modal_replans(&mut self) {
+    fn run_modal_replans(&mut self, cx: &mut Context<Self>) {
         if self.create_branch_modal().is_some() {
             self.replan_create_branch();
         }
@@ -1879,7 +1881,7 @@ impl KagiApp {
             self.replan_create_worktree();
         }
         if self.stash_push_modal().is_some() {
-            self.replan_stash_push();
+            self.replan_stash_push(cx);
         }
         if self.set_upstream_modal().is_some() {
             self.replan_set_upstream();
@@ -3224,6 +3226,8 @@ impl KagiApp {
             self.start_pr_merge(cx);
         } else if self.stash_apply_modal().is_some() {
             self.confirm_stash_apply(cx);
+        } else if self.stash_drop_modal().is_some() {
+            self.start_stash_drop(cx);
         } else if self.stash_push_modal().is_some() {
             self.confirm_stash_push(cx);
         } else if self.unlock_worktree_modal().is_some() {

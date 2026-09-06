@@ -1,0 +1,75 @@
+# ADR-0176: local stash family の application boundary
+
+状態: 採用・PR 1 実装（E 実行 / M / workspace 全体は PM の検証待ち）
+日付: 2026-09-07
+関連: #484、[FAMILY-stash](../rearch/app-layer/FAMILY-stash.md)、
+[ADR-0175](0175-app-remove-boundary.md)、[ADR-0149](0149-oplog-in-backend-run-and-schema.md)、
+[ADR-0148](0148-stash-conflict-resolution.md)、[ADR-0097](0097-remote-stash-drop.md)
+
+## 決定
+
+local push/apply/pop/drop は既存 `Sessions` の単一 plan slot と lease を使う。
+`Planned` / `Job` / `Completion` / `FamilyEvidence` は remove と stash の有限 enum。
+共通 `ExecutionReport` は実 receipt と family evidence を配送し、remove の progress、
+target_exists、停止不明を欠落させない。新 controller / worker / crate は設けない。
+承認 revision と policy は prepare 前に照合し、一回消費する。Busy 後も新 plan が必要。
+host は引き続き KagiApp。spawn・settings・localization は app 層に入れない。
+
+`Backend::run` は互換 facade として result を返す。
+`run_recorded` は同じ `backend/run.rs` の dispatch に実 verify と一回の finalize を接続し、
+append が採番した entry/path または attempted entry/error を返す。
+非 stash mapper は #524 の partial_after を含め変更しない。remove の Recording も
+同じ小さな recording module を再 export し、共通 finalize を使う。
+fresh-open 失敗と abandon は同じ finalizer への材料生成のみ。
+実行・verify unwind は finalize の内側で捕捉する。配送や重複 apply で append し直さない。
+
+stash plan error は未記録 completion。revision 採用時だけ非 Clone の記録 job を発行し、
+採用後の modal/revision の終了とは独立に完了させる。旧 completion は記録しない。
+runtime preflight drift は未変更 Refused（旧 local stash の Failed を変更）。
+plan blocker、Busy、StaleApproval と区別し、runtime refusal の理由は EN/JA の
+既存 preflight 表現で toast/footer/共通通知 modal に出す。
+
+## 対象と観測
+
+plan の full OID 列は順序・重複を保持し、count / index / 選択 OID と同じ読取に束縛する。
+既存 HEAD / status classification digest に追加して実行直前に照合する。
+push も status digest と message/include_untracked を凍結する。
+pop の apply 後は list を再照合してから drop。不一致なら変更済み Partial、未変更拒否に戻さない。
+conflict は stash を保持し、receipt / JSONL / 非緑通知が同じ Partial を表す。
+
+verify は list と実 status/index を読む。clean apply/pop は in-memory three-way merge と
+実 worktree の diff、untracked stash tree を照合する。drop は返却 OID、前後 ordered list、
+WT bytes/index fingerprint を確認し、auto-snapshot を作らない。
+push は新規 OID、tracked clean と include_untracked 方針を確認する。
+snapshot OID / 適用済み / 観測 after を副作用の evidence とし、verify failure は
+Partial、実行中 unwind は Unknown。停止済み Unknown も read→ack 前は write 不可。
+有限 fault は doc-hidden integration-test API と既存 uv fault gate を使う。
+
+## GUI と conflict 継続
+
+4 modal を Planning で開き、Ready だけ承認可能。debounce 入力更新で即 revision 無効化。
+raw Enter / button は同じ confirm → approve → dispatch を通す。
+pop Enter に started/finished を追加する承認済み契約変更以外は既存 klog 列を保つ。
+local stash の UI record_op / finish_op_on_main / blocking core は撤去した。
+既存 remote 分岐の finish 1 箇所・record 2 箇所は PR 2 まで残し、双方向 admission のみ接続。
+
+conflict 継続 payload は canonical worktree ごとに operation id、full OID、HEAD と
+index conflict sides の evidence を保持し、表示 guard より先に保存する。
+別 linked worktree に流用しない。再検出時に同じ conflict sides の連続性を確認できなければ
+破棄する（解決済み paths の減少は許す）。abort/終了/置換で clear。
+continue 成功時だけ一回 follow-up に移し、reload 後に一意 OID を新 plan に束縛する。
+候補 0 / 複数 / 読取間 drift なら prompt を出さない。新確認の取消は stash を保持する。
+外部 Git / 再起動後など出所不明の conflict に自動 drop は提案しない。
+
+## 保証しないもの・検証
+
+app lease は外部 Git を排他しない。最終照合と index 指定 libgit2 drop の間の競合窓、
+観測値が完全に同一に戻る ABA、OID の GC 後保持は保証しない。
+conflict payload は in-memory。永続 session は #485、CLI/MCP tail 撤去は #505。
+保証するのはアプリ内 close/Quit 入口の保留のみ。Dock/OS Quit は GPUI の veto API がなく保証外。
+
+G は同じ公開 plan/approve/prepare/run/apply 列を window なしで駆動する。
+E は実 modal / focus / current-window bounds で 4 op の両入力と conflict/replan failure を駆動し、
+window remove と entity drop で後始末する。E は PM 実行の全 PASS と exit 0 が必要。
+旧 stash conflict/pop/oplog の実 mutation assertions は保持し、preflight outcome assertion のみ
+承認済み Refused に変更。remove 24 件・1b admission 8 件は既存 assertion を変更しない。

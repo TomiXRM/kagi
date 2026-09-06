@@ -102,6 +102,7 @@ pub fn plan_checkout_tracking_branch(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: vec![format!(
@@ -314,6 +315,7 @@ pub fn plan_switch_to_latest(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,

@@ -63,7 +63,7 @@ impl KagiApp {
     ///
     /// On failure the modal remains open and shows the error text.
     pub fn confirm_create_tag(&mut self, cx: &mut Context<Self>) {
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         let modal = match self.create_tag_modal().cloned() {
             Some(m) => m,
             None => return,

@@ -56,6 +56,10 @@ mod recovery_operations;
 mod app_remove;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/app_stash.rs"]
+mod app_stash;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]
 mod app_writer_admission;
 
@@ -384,6 +388,10 @@ mod macos {
         crate::recovery_operations::scenario_cleanup_partial_presentation(&mut cx);
         crate::app_remove::scenario_remove_public_boundary(&mut cx);
         crate::app_writer_admission::scenario_editor_save_admission(&mut cx);
+        crate::app_stash::scenario_stash_public_boundary(&mut cx);
+        crate::app_stash::scenario_stash_conflict_followup(&mut cx);
+        crate::app_stash::scenario_stash_replan_error(&mut cx);
+        crate::app_stash::scenario_external_stash_conflict_has_no_drop_prompt(&mut cx);
         crate::recovery_layout::scenario_commit_row_layout(&mut cx);
         let history_fixture = build_fixture();
         let history_before = repo_fingerprint(history_fixture.path());

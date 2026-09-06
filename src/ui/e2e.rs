@@ -33,6 +33,33 @@ pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpu
 pub fn confirm_bounds(id: gpui::WindowId) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONFIRM_BOUNDS.with(|map| map.borrow().get(&id).copied())
 }
+pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    use gpui::{IntoElement as _, ParentElement as _};
+    #[cfg(feature = "gui-e2e")]
+    {
+        gpui::div()
+            .relative()
+            .child(
+                gpui::canvas(
+                    |bounds, window, _| {
+                        record_confirm_bounds(window.window_handle().window_id(), bounds)
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .child(button)
+            .into_any_element()
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        button.into_any_element()
+    }
+}
 
 use gpui::{App, AppContext as _, AssetSource, Entity, KeyBinding, Platform, Styled as _, Window};
 
@@ -40,6 +67,11 @@ use super::assets::KagiAssets;
 use super::{
     fonts, oplog_panel, theme, toast_stack, CopyDiffSelection, KagiApp, ToggleBottomPanel,
 };
+
+#[cfg(feature = "gui-e2e")]
+pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
+    app.app_notice().map(|notice| notice.message.as_str())
+}
 
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.
 /// (`gpui_platform` is a normal dep, so the runner cannot call it directly.)

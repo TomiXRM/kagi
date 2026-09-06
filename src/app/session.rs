@@ -1,6 +1,5 @@
-use super::worktree::{PlanState, RemoveCompletion};
+use super::*;
 use kagi_domain::remove::RepoId;
-use kagi_git::backend::remove::RemovePlan;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,18 +37,20 @@ impl std::fmt::Display for AdmissionError {
 pub struct LegacyBusy(pub bool);
 
 pub(crate) struct InFlight {
-    pub plan: RemovePlan,
+    pub plan: Planned,
     pub attachment: Attachment,
 }
 pub struct Sessions {
-    pub(crate) abandoned_tx: std::sync::mpsc::Sender<RemoveCompletion>,
-    abandoned_rx: std::sync::mpsc::Receiver<RemoveCompletion>,
+    pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
+    abandoned_rx: std::sync::mpsc::Receiver<Completion>,
+    pub(crate) plan_errors: Vec<PlanErrorJob>,
+    pub(crate) stash_conflicts: HashMap<PathBuf, StashConflict>,
     pub(crate) state: PlanState,
     pub(crate) revision: RequestId,
     pub(crate) operations: HashMap<OperationId, InFlight>,
     pub(crate) leases: Arc<Mutex<HashMap<RepoId, OperationId>>>,
     pub(crate) stale: HashSet<PathBuf>,
-    pub(crate) reconcile: HashMap<OperationId, (RemovePlan, bool)>,
+    pub(crate) reconcile: HashMap<OperationId, (Planned, bool)>,
     pub(crate) settled: HashSet<OperationId>,
 }
 impl Default for Sessions {
@@ -63,6 +64,8 @@ impl Sessions {
         Self {
             abandoned_tx,
             abandoned_rx,
+            plan_errors: Vec::new(),
+            stash_conflicts: HashMap::new(),
             state: PlanState::Draft,
             revision: RequestId(next_id()),
             operations: HashMap::new(),
@@ -104,7 +107,7 @@ impl Sessions {
         if self
             .reconcile
             .values()
-            .any(|(plan, _)| plan.common_dir == repo)
+            .any(|(plan, _)| plan.common_dir() == &repo)
         {
             return Err(AdmissionError::NeedsReconcile);
         }
@@ -149,7 +152,7 @@ impl Sessions {
     pub fn read_applied(&mut self, path: &std::path::Path) {
         self.stale.remove(path);
     }
-    pub fn apply(&mut self, completion: RemoveCompletion) -> Vec<Delivery> {
+    pub fn apply(&mut self, completion: impl Into<Completion>) -> Vec<Delivery> {
         super::apply(self, completion)
     }
 }
@@ -192,7 +195,7 @@ pub enum Delivery {
     Completed {
         id: OperationId,
         attachment: Attachment,
-        report: Box<kagi_git::backend::remove::RemoveReport>,
+        report: Box<ExecutionReport>,
     },
 }
 
@@ -203,12 +206,15 @@ pub struct ReconcileRead {
 }
 pub struct ReconcileJob {
     id: OperationId,
-    plan: RemovePlan,
+    plan: Planned,
 }
 impl ReconcileJob {
     pub fn run(self) -> Result<ReconcileRead, String> {
-        let observation =
-            kagi_git::Backend::read_remove_status(&self.plan).map_err(|e| e.to_string())?;
+        let observation = match &self.plan {
+            Planned::Remove { plan, .. } => kagi_git::Backend::read_remove_status(plan),
+            Planned::Stash { plan, .. } => kagi_git::Backend::read_stash_status(plan),
+        }
+        .map_err(|e| e.to_string())?;
         Ok(ReconcileRead {
             id: self.id,
             observation,

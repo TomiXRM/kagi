@@ -143,9 +143,7 @@ impl KagiApp {
             format!("{}: {}", entry.repo, footer),
             cx,
         );
-        if self.repo_path.as_ref() == Some(&owner.path)
-            && self.switch_generation == owner.generation
-        {
+        if self.active_session() == Some(owner.session) {
             self.status_footer = if success && !recording_failed {
                 FooterStatus::Success(footer.clone().into())
             } else if partial {
@@ -292,16 +290,26 @@ impl KagiApp {
     }
     fn deliver_app_result(&mut self, delivery: Delivery, cx: &mut Context<Self>) {
         match delivery {
-            Delivery::RemovedTarget(path) => {
-                self.tab_cache.remove(&path);
+            Delivery::RemovedTarget(target) => {
+                self.tab_cache.remove(&target.path);
                 // #528: the worktree no longer exists, so neither should its
                 // tab. `close_tab` keeps the existing dirty guard and only
                 // re-activates a neighbour when this tab was the active one.
-                self.close_tab_by_path(&path, cx);
+                // #482: found by `WorktreeId`, so a tab opened on the same path
+                // after the plan is never the one that closes — and every tab
+                // aliasing that worktree closes, not an arbitrary one.
+                for session in self.app_sessions.sessions_for(&target.worktree) {
+                    self.close_tab_by_session(session, cx);
+                }
             }
-            Delivery::Invalidate(path) => {
-                self.tab_cache.remove(&path);
-                if self.repo_path.as_ref() == Some(&path) {
+            Delivery::Invalidate(target) => {
+                self.tab_cache.remove(&target.path);
+                let active = self.active_session();
+                if active.is_some_and(|active| {
+                    self.app_sessions
+                        .sessions_for(&target.worktree)
+                        .contains(&active)
+                }) {
                     self.reload(cx);
                 }
             }
@@ -370,9 +378,7 @@ impl KagiApp {
                     text.clone(),
                     cx,
                 );
-                if self.repo_path.as_ref() == Some(&attachment.path)
-                    && self.switch_generation == attachment.generation
-                {
+                if self.active_session() == Some(attachment.session) {
                     klog!("footer: {}", footer);
                     self.status_footer = if success {
                         FooterStatus::Success(footer.into())
@@ -446,7 +452,7 @@ impl KagiApp {
         let active = self.remote_view.as_ref().is_some_and(|view| {
             view.host == owner.host
                 && view.root == owner.root
-                && self.switch_generation == owner.generation
+                && self.active_session() == Some(owner.session)
         });
         if active {
             self.status_footer = if success {
@@ -485,6 +491,16 @@ impl KagiApp {
         self.present_app_notice();
         cx.notify();
         true
+    }
+    /// #510: a `plan_*` that failed before it could open a modal must still
+    /// reach the user — footer plus the shared app-notice modal, never stderr
+    /// alone. The `[kagi]` plan-error line the caller already emitted is a test
+    /// contract and stays exactly as it was.
+    pub(crate) fn report_plan_failure(&mut self, op: i18n::Op, error: impl std::fmt::Display) {
+        let message = i18n::op_plan_failed(op, error);
+        self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+        self.app_notices.push_back(message.into());
+        self.present_app_notice();
     }
     pub(crate) fn present_app_notice(&mut self) {
         if self.has_active_modal() {

@@ -23,6 +23,7 @@ fn make_summary(head: &str, dirty: &str) -> StateSummary {
 
 fn make_entry(op: &str, ts: i64, outcome: OpOutcome) -> OpLogEntry {
     OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -213,6 +214,7 @@ fn special_chars_escaped_in_output() {
     std::env::set_var("KAGI_LOG_DIR", &log_dir);
 
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -500,6 +502,7 @@ fn read_tail_restores_escaped_strings() {
     std::env::set_var("KAGI_LOG_DIR", &log_dir);
 
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,

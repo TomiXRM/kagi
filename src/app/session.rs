@@ -1,6 +1,6 @@
 use super::*;
 use kagi_domain::remote::RemoteRepoId;
-use kagi_domain::remove::RepoId;
+use kagi_domain::remove::{RepoId, WorktreeId};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,16 +14,86 @@ pub(crate) fn next_id() -> u64 {
     static IDS: AtomicU64 = AtomicU64::new(1);
     IDS.fetch_add(1, Ordering::Relaxed)
 }
+
+/// One display slot in the tab strip. Stable while the tab exists; a closed and
+/// reopened path gets a new `TabId`, so tab-strip index reuse can never make a
+/// stale result look current (#482 stage 1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TabId(pub(crate) u64);
+
+/// A `TabId` plus the incarnation issued when that slot was attached to a
+/// repository. Monotonic and globally unique: `SessionId` equality is the *only*
+/// owner test in the application layer — never `(path, index)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SessionId {
+    pub(crate) tab: TabId,
+    pub(crate) incarnation: u64,
+}
+impl SessionId {
+    pub fn tab(&self) -> TabId {
+        self.tab
+    }
+}
+
+/// What the application layer knows about one attached tab. GPUI views, rows and
+/// snapshots stay in the UI — this is identity and lifetime only.
+struct TabSession {
+    /// `None` for a remote read-only tab (ADR-0089): its path is a synthetic
+    /// `<host>:<root>` key with no local worktree to write to.
+    worktree: Option<WorktreeId>,
+    /// Locator, not identity (DESIGN §2.1). Used as plan input and for the
+    /// still-path-keyed view cache until stage 2 removes it.
+    path: PathBuf,
+    /// Departure revision: bumped every time the user leaves this tab. The
+    /// incarnation is unchanged (the tab is still open) but every *proposal*
+    /// made during the previous visit is dead — a stash follow-up must be
+    /// produced again from a live re-observation, never restored (#482 / #557).
+    visit: u64,
+}
+
+/// The frozen delivery owner of one operation. Captured at plan time and carried
+/// through execution: completion is routed by `session`, never re-resolved.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attachment {
+    pub session: SessionId,
     pub path: PathBuf,
-    pub generation: u64,
+    /// Frozen at attach time. `None` only for a remote tab, which cannot write.
+    /// Re-checked against what the plan actually resolved before adoption and
+    /// again before approval, so a path swapped under an open tab is refused.
+    pub worktree: Option<WorktreeId>,
+    /// The visit this request was made in. A completion arriving after the user
+    /// left the tab may still be recorded and displayed, but may not create a
+    /// proposal for the next visit.
+    pub visit: u64,
+}
+
+/// A synthetic remote key never opens, so that tab simply has no worktree.
+fn resolve_worktree(path: &std::path::Path) -> Option<WorktreeId> {
+    kagi_git::Backend::open(path)
+        .and_then(|backend| backend.write_worktree_id())
+        .ok()
+}
+
+/// Where an invalidation lands. Identity is the `WorktreeId`; `path` is the
+/// locator the stage-1 UI still needs for its path-keyed view cache.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidTarget {
+    pub worktree: WorktreeId,
+    pub path: PathBuf,
 }
 
 #[derive(Clone, Debug)]
 pub enum OwnerAttachment {
     Local(Attachment),
     Remote(crate::remote::stash::RemoteAttachment),
+}
+impl OwnerAttachment {
+    pub(crate) fn session(&self) -> SessionId {
+        match self {
+            Self::Local(owner) => owner.session,
+            Self::Remote(owner) => owner.session,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -62,13 +132,17 @@ pub struct Sessions {
     pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
     abandoned_rx: std::sync::mpsc::Receiver<Completion>,
     pub(crate) plan_errors: Vec<PlanErrorJob>,
-    pub(crate) stash_conflicts: HashMap<PathBuf, StashConflict>,
-    pub(crate) stash_followups: HashMap<PathBuf, StashConflict>,
+    sessions: HashMap<SessionId, TabSession>,
+    pub(crate) stash_conflicts: HashMap<SessionId, StashConflict>,
+    pub(crate) stash_followups: HashMap<SessionId, StashConflict>,
     pub(crate) state: PlanState,
+    /// Owner of the single plan slot. The slot expires when that session
+    /// detaches, so an approval planned in A can never be spent in B.
+    pub(crate) plan_owner: Option<SessionId>,
     pub(crate) revision: RequestId,
     pub(crate) operations: HashMap<OperationId, InFlight>,
     pub(crate) leases: Arc<Mutex<HashMap<WriteScope, OperationId>>>,
-    pub(crate) stale: HashSet<PathBuf>,
+    pub(crate) stale: HashSet<WorktreeId>,
     pub(crate) reconcile: HashMap<OperationId, ReconcileEntry>,
     pub(crate) settled: HashSet<OperationId>,
 }
@@ -84,9 +158,11 @@ impl Sessions {
             abandoned_tx,
             abandoned_rx,
             plan_errors: Vec::new(),
+            sessions: HashMap::new(),
             stash_conflicts: HashMap::new(),
             stash_followups: HashMap::new(),
             state: PlanState::Draft,
+            plan_owner: None,
             revision: RequestId(next_id()),
             operations: HashMap::new(),
             leases: Arc::new(Mutex::new(HashMap::new())),
@@ -97,6 +173,138 @@ impl Sessions {
     }
     pub fn plan_state(&self) -> &PlanState {
         &self.state
+    }
+
+    // ── tab attach / detach ───────────────────────────────────────────────
+    /// Open a display slot for `path` and issue its first incarnation. The
+    /// `WorktreeId` is resolved once, here, and frozen for the slot's life: a
+    /// later rename or replacement of the path cannot re-target an operation.
+    /// Two locators for one worktree (`/repo` and `/repo/.git`, a symlink, a
+    /// `..`-relative path) resolve to the same `WorktreeId` and therefore to the
+    /// **same session** — identity unification happens here, not in path
+    /// comparison, so a second tab for one worktree is never opened.
+    pub fn attach(&mut self, path: PathBuf) -> SessionId {
+        if let Some(existing) = resolve_worktree(&path)
+            .and_then(|worktree| self.sessions_for(&worktree).first().copied())
+        {
+            return existing;
+        }
+        self.attach_incarnation(TabId(next_id()), path)
+    }
+    /// Same slot, fresh incarnation — used when a tab is re-pointed at a new
+    /// session of the same repository (a remote re-snapshot). Everything the old
+    /// incarnation owned expires exactly as it would on close.
+    pub fn reattach(&mut self, session: SessionId, path: PathBuf) -> SessionId {
+        self.detach(session);
+        self.attach_incarnation(session.tab, path)
+    }
+    fn attach_incarnation(&mut self, tab: TabId, path: PathBuf) -> SessionId {
+        let session = SessionId {
+            tab,
+            incarnation: next_id(),
+        };
+        let worktree = resolve_worktree(&path);
+        self.sessions.insert(
+            session,
+            TabSession {
+                worktree,
+                path,
+                visit: 0,
+            },
+        );
+        session
+    }
+    /// The user left this tab (a real switch, not a re-select of the live tab).
+    /// The tab stays open and its incarnation is unchanged, but the visit ends:
+    /// a pending follow-up proposal is discarded and no late completion may
+    /// create one for the next visit.
+    pub fn depart(&mut self, session: SessionId) {
+        self.stash_followups.remove(&session);
+        if let Some(tab) = self.sessions.get_mut(&session) {
+            tab.visit += 1;
+        }
+    }
+    pub(crate) fn visit(&self, session: SessionId) -> Option<u64> {
+        self.sessions.get(&session).map(|tab| tab.visit)
+    }
+    /// Close a display slot. Drops what belonged to the *display* — the conflict
+    /// and follow-up payloads and the plan slot if this session owned it — and
+    /// deliberately keeps `operations` / `leases` / `settled` / `reconcile`:
+    /// closing a tab is not cancelling an execution (ADR-0175).
+    pub fn detach(&mut self, session: SessionId) {
+        self.sessions.remove(&session);
+        self.stash_conflicts.remove(&session);
+        self.stash_followups.remove(&session);
+        if self.plan_owner == Some(session) {
+            self.invalidate_plan();
+        }
+    }
+    pub fn is_attached(&self, session: SessionId) -> bool {
+        self.sessions.contains_key(&session)
+    }
+    /// The frozen owner record for an attached slot. The only way to build an
+    /// [`Attachment`]: a caller cannot forge one for a session that is gone.
+    pub fn attachment(&self, session: SessionId) -> Option<Attachment> {
+        self.sessions.get(&session).map(|tab| Attachment {
+            session,
+            path: tab.path.clone(),
+            worktree: tab.worktree.clone(),
+            visit: tab.visit,
+        })
+    }
+    /// The identity check both the plan-adoption and the approval gate use: what
+    /// the backend resolves for this locator *now* must still be the identity
+    /// frozen when the tab attached. A path swapped under an open tab, or an
+    /// identity that no longer resolves, requires a re-attach rather than an
+    /// execution against whatever the locator points at today.
+    pub(crate) fn confirm_identity(&self, owner: &Attachment) -> Result<(), AdmissionError> {
+        let frozen = owner
+            .worktree
+            .as_ref()
+            .ok_or_else(|| AdmissionError::Identity("no local worktree identity".into()))?;
+        match resolve_worktree(&owner.path) {
+            Some(current) if &current == frozen => Ok(()),
+            Some(_) => Err(AdmissionError::Identity(
+                "the path now resolves to a different worktree; reopen the repository".into(),
+            )),
+            None => Err(AdmissionError::Identity(
+                "worktree identity could not be resolved; reopen the repository".into(),
+            )),
+        }
+    }
+    /// Every open slot holding this worktree, by identity rather than by path.
+    /// `attach` unifies aliases so this is normally one, but delivery must never
+    /// pick an arbitrary `HashMap` entry when a bootstrap path pushed two.
+    pub fn sessions_for(&self, worktree: &WorktreeId) -> Vec<SessionId> {
+        self.sessions
+            .iter()
+            .filter(|(_, tab)| tab.worktree.as_ref() == Some(worktree))
+            .map(|(session, _)| *session)
+            .collect()
+    }
+    /// Open worktrees sharing `repo`. Changing shared refs/stash makes every one
+    /// of them stale, not only the one that was written (#482 invariant).
+    pub fn siblings_of(&self, repo: &RepoId) -> Vec<WorktreeId> {
+        let mut worktrees: Vec<_> = self
+            .sessions
+            .values()
+            .filter_map(|tab| tab.worktree.clone())
+            .filter(|worktree| &worktree.repo == repo)
+            .collect();
+        worktrees.sort_by(|a, b| a.git_dir.cmp(&b.git_dir));
+        worktrees.dedup();
+        worktrees
+    }
+    /// The locator an open tab uses for a worktree — the stage-1 path-keyed view
+    /// cache still needs one to evict by.
+    pub fn path_of(&self, worktree: &WorktreeId) -> Option<PathBuf> {
+        self.sessions
+            .values()
+            .find(|tab| tab.worktree.as_ref() == Some(worktree))
+            .map(|tab| tab.path.clone())
+    }
+    pub fn worktree_of(&self, session: SessionId) -> Option<&WorktreeId> {
+        self.sessions.get(&session)?.worktree.as_ref()
     }
     pub fn drain_abandoned(&mut self) -> Vec<Delivery> {
         let completions: Vec<_> = self.abandoned_rx.try_iter().collect();
@@ -165,12 +373,16 @@ impl Sessions {
     pub fn invalidate_plan(&mut self) {
         self.revision = RequestId(next_id());
         self.state = PlanState::Draft;
+        self.plan_owner = None;
     }
-    pub fn is_stale(&self, path: &std::path::Path) -> bool {
-        self.stale.contains(path)
+    pub fn is_stale(&self, worktree: &WorktreeId) -> bool {
+        self.stale.contains(worktree)
     }
-    pub fn read_applied(&mut self, path: &std::path::Path) {
-        self.stale.remove(path);
+    /// A fresh read landed for this slot's worktree.
+    pub fn read_applied(&mut self, session: SessionId) {
+        if let Some(worktree) = self.worktree_of(session).cloned() {
+            self.stale.remove(&worktree);
+        }
     }
     pub fn apply(&mut self, completion: impl Into<Completion>) -> Vec<Delivery> {
         super::apply(self, completion)
@@ -210,8 +422,8 @@ impl WriteGuard {
 
 #[derive(Clone, Debug)]
 pub enum Delivery {
-    Invalidate(PathBuf),
-    RemovedTarget(PathBuf),
+    Invalidate(InvalidTarget),
+    RemovedTarget(InvalidTarget),
     Completed {
         id: OperationId,
         attachment: Attachment,

@@ -262,10 +262,12 @@ impl KagiApp {
 
         let op_name = format!("{}-continue", mode.session.op.slug());
         if matches!(mode.session.op, kagi_git::ConflictOp::StashConflict) {
-            self.app_sessions.observe_stash_conflict(
-                &repo_path,
-                &repo.stash_conflict_identity().unwrap_or_default(),
-            );
+            if let Some(owner) = self.active_session() {
+                self.app_sessions.observe_stash_conflict(
+                    owner,
+                    &repo.stash_conflict_identity().unwrap_or_default(),
+                );
+            }
         }
         let route = match repo.plan_conflict_continue_route(
             &mode.session,
@@ -376,7 +378,9 @@ impl KagiApp {
                         );
                         // Consume this owner's proven OID once, after reload's
                         // modal clear. A fresh unique-OID plan requires new approval.
-                        self.app_sessions.continue_stash_conflict(&repo_path);
+                        if let Some(owner) = self.active_session() {
+                            self.app_sessions.continue_stash_conflict(owner);
+                        }
                         // Conflicts are gone → re-detect clears Conflict Mode.
                         self.reload(cx);
                     }
@@ -506,10 +510,12 @@ impl KagiApp {
         };
 
         if matches!(mode.session.op, kagi_git::ConflictOp::StashConflict) {
-            self.app_sessions.observe_stash_conflict(
-                &repo_path,
-                &repo.stash_conflict_identity().unwrap_or_default(),
-            );
+            if let Some(owner) = self.active_session() {
+                self.app_sessions.observe_stash_conflict(
+                    owner,
+                    &repo.stash_conflict_identity().unwrap_or_default(),
+                );
+            }
         }
         let plan = match repo.plan_conflict_abort(&mode.session) {
             Ok(p) => p,
@@ -534,7 +540,9 @@ impl KagiApp {
         };
         match abort_result {
             Ok(_outcome) => {
-                self.app_sessions.clear_stash_conflict(&repo_path);
+                if let Some(owner) = self.active_session() {
+                    self.app_sessions.clear_stash_conflict(owner);
+                }
                 klog!("executed: {}", op_name);
                 let after = StateSummary {
                     head: plan.predicted.head.clone(),
@@ -936,7 +944,7 @@ impl KagiApp {
         outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
-        if let Some(owner) = &self.repo_path {
+        if let Some(owner) = self.active_session() {
             let identity = match &outcome {
                 ConflictDetectOutcome::Detected(d) => d.stash_identity.as_slice(),
                 _ => &[],

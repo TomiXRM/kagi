@@ -409,7 +409,10 @@ fn partial_discard_maps_to_partial_outcome() {
         Ok(OperationOutcome::Discard(partial));
     // MUTATION GUARD: dropping the is_partial() branch makes this Success.
     match oplog_outcome_from(&result, &predicted, None) {
-        OpOutcome::Partial { error, .. } => assert_eq!(error, "write failed"),
+        OpOutcome::Partial { after, error } => {
+            assert_eq!(after, predicted, "legacy persisted discard after-state");
+            assert_eq!(error, "write failed");
+        }
         other => panic!("expected Partial, got {other:?}"),
     }
 

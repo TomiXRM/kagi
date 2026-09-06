@@ -41,7 +41,7 @@ impl KagiApp {
             path_state: None, // lazy (render)
             path_touched: false,
             allow_existing_branch,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_create_worktree();
@@ -97,6 +97,10 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_worktree: repo session unavailable");
+                let outcome = session_unavailable(i18n::Op::CreateWorktree);
+                if let Some(modal) = self.create_worktree_modal_mut() {
+                    modal.plan.replan(outcome);
+                }
                 return;
             }
         };
@@ -105,7 +109,7 @@ impl KagiApp {
         } else {
             repo.plan_create_worktree(&branch, &path, &at)
         };
-        match plan_result {
+        match &plan_result {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
@@ -114,18 +118,17 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                // ADR-0129 Phase 3: the keyed branch-name and worktree-path
-                // reasons are now typed (`CommonNote::BranchNameErrorKeyed` /
-                // `WorktreePathErrorKeyed`) and localize automatically via
-                // `plan_note_text()` — no separate localized-blocker
-                // computation needed.
-                if let Some(modal) = self.create_worktree_modal_mut() {
-                    modal.plan = Some(std::sync::Arc::new(plan));
-                }
+                // ADR-0129 Phase 3: the keyed branch-name/worktree-path reasons
+                // are typed notes that `plan_note_text()` localizes on render.
             }
             Err(e) => {
                 klog!("plan: create-worktree error: {}", e);
             }
+        }
+        // #510: a failed replan replaces the plan instead of leaving it behind.
+        let outcome = plan_outcome(i18n::Op::CreateWorktree, plan_result);
+        if let Some(modal) = self.create_worktree_modal_mut() {
+            modal.plan.replan(outcome);
         }
     }
 
@@ -146,9 +149,9 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // #510: pending/failed yield None, refusing Enter and the button alike.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         if !plan.blockers.is_empty() {
             klog!("refused: create-worktree plan has blockers, not executing");
@@ -331,15 +334,16 @@ impl KagiApp {
         delete_branch: bool,
         cx: &mut Context<Self>,
     ) {
-        use crate::app::{self, Attachment, RemovePolicy, RemoveRequest};
-        let Some(path) = self.repo_path.clone() else {
+        use crate::app::{self, RemovePolicy, RemoveRequest};
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+            .filter(|owner| owner.worktree.is_some())
+        else {
             return;
         };
         let request = RemoveRequest {
-            owner: Attachment {
-                path,
-                generation: self.switch_generation,
-            },
+            owner,
             name: name.clone(),
             delete_branch,
         };
@@ -416,9 +420,7 @@ impl KagiApp {
         else {
             return;
         };
-        if self.repo_path.as_ref() != Some(&request.owner.path)
-            || self.switch_generation != request.owner.generation
-        {
+        if self.active_session() != Some(request.owner.session) {
             self.cancel_remove_worktree_modal();
             return;
         }

@@ -345,12 +345,18 @@ fn assert_no_kagi_trace(root: &Path) {
     visit(root);
 }
 
-fn request(host: &RemoteHost, root: &Path, index: usize) -> RemoteStashRequest {
+fn request(
+    sessions: &mut Sessions,
+    host: &RemoteHost,
+    root: &Path,
+    index: usize,
+) -> RemoteStashRequest {
+    let key = PathBuf::from(format!("{}:{}", host.label(), root.display()));
     RemoteStashRequest {
         owner: RemoteAttachment {
+            session: sessions.attach(key),
             host: host.clone(),
             root: root.display().to_string(),
-            generation: 1,
         },
         index,
     }
@@ -364,7 +370,8 @@ struct ReadyRemote {
 
 fn ready(sessions: &mut Sessions, host: &RemoteHost, root: &Path, index: usize) -> ReadyRemote {
     let policy = StashPolicy::default();
-    let completion = plan_remote_stash(sessions, request(host, root, index), policy).run();
+    let request = request(sessions, host, root, index);
+    let completion = plan_remote_stash(sessions, request, policy).run();
     assert!(app::apply_plan(sessions, completion));
     let PlanState::Ready { token, prepared } = sessions.plan_state() else {
         panic!(

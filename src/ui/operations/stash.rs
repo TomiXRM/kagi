@@ -10,10 +10,10 @@ impl KagiApp {
         if self.conflict.is_some() || self.has_active_modal() {
             return;
         }
-        let Some(owner) = self.repo_path.clone() else {
+        let Some(owner) = self.active_session() else {
             return;
         };
-        let Some(payload) = self.app_sessions.take_stash_followup(&owner) else {
+        let Some(payload) = self.app_sessions.take_stash_followup(owner) else {
             return;
         };
         self.set_stash_drop_modal(StashDropModal {
@@ -88,10 +88,13 @@ impl KagiApp {
         let Some(remote) = self.remote_view.clone() else {
             return;
         };
+        let Some(session) = self.active_session() else {
+            return;
+        };
         let owner = crate::remote::stash::RemoteAttachment {
+            session,
             host: remote.host,
             root: remote.root,
-            generation: self.switch_generation,
         };
         let request = app::RemoteStashRequest {
             owner: owner.clone(),
@@ -106,7 +109,7 @@ impl KagiApp {
                 let current = app.remote_view.as_ref().is_some_and(|view| {
                     view.host == owner.host
                         && view.root == owner.root
-                        && app.switch_generation == owner.generation
+                        && app.active_session() == Some(owner.session)
                 });
                 let current_completion = completion.is_current(&app.app_sessions);
                 if current
@@ -163,15 +166,16 @@ impl KagiApp {
         oid: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = self.repo_path.clone() else {
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+            .filter(|owner| owner.worktree.is_some())
+        else {
             return;
         };
         let policy = self.stash_policy();
         let request = StashRequest {
-            owner: app::Attachment {
-                path,
-                generation: self.switch_generation,
-            },
+            owner,
             action: action.clone(),
         };
         let owner = request.owner.clone();
@@ -184,9 +188,7 @@ impl KagiApp {
         cx.spawn(async move |this, cx| {
             let completion = task.await;
             let _ = this.update(cx, |app, cx| {
-                if app.repo_path.as_ref() != Some(&owner.path)
-                    || app.switch_generation != owner.generation
-                    || !app.stash_modal_matches(&action)
+                if app.active_session() != Some(owner.session) || !app.stash_modal_matches(&action)
                 {
                     if completion.is_current(&app.app_sessions) {
                         app.app_sessions.invalidate_plan();
@@ -245,9 +247,7 @@ impl KagiApp {
                 prepared: Planned::Stash { plan, request, .. },
                 ..
             } => {
-                if self.repo_path.as_ref() != Some(&request.owner.path)
-                    || self.switch_generation != request.owner.generation
-                {
+                if self.active_session() != Some(request.owner.session) {
                     self.app_sessions.invalidate_plan();
                     return;
                 }
@@ -342,14 +342,13 @@ impl KagiApp {
         };
         let valid = match prepared {
             Planned::Stash { request, .. } => {
-                self.repo_path.as_ref() == Some(&request.owner.path)
-                    && self.switch_generation == request.owner.generation
+                self.active_session() == Some(request.owner.session)
                     && self.stash_modal_matches(&request.action)
             }
             Planned::RemoteStash { request, .. } => self.remote_view.as_ref().is_some_and(|view| {
                 view.host == request.owner.host
                     && view.root == request.owner.root
-                    && self.switch_generation == request.owner.generation
+                    && self.active_session() == Some(request.owner.session)
                     && self
                         .stash_drop_modal()
                         .is_some_and(|m| m.stash_index == request.index)

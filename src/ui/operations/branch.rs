@@ -26,7 +26,7 @@ impl KagiApp {
             input: String::new(),
             input_state: None, // created lazily on first render (needs Window)
             checkout_after: false,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         // Re-plan immediately (empty name → blocker).
@@ -68,10 +68,15 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_branch: repo session unavailable");
+                let outcome = session_unavailable(i18n::Op::CreateBranch);
+                if let Some(modal) = self.create_branch_modal_mut() {
+                    modal.plan.replan(outcome);
+                }
                 return;
             }
         };
-        match repo.plan_create_branch_with_checkout(&name, &at, checkout_after) {
+        let result = repo.plan_create_branch_with_checkout(&name, &at, checkout_after);
+        match &result {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-branch '{}' checkout_after={} blockers={} warnings={}",
@@ -84,13 +89,16 @@ impl KagiApp {
                 // typed (`CommonNote::BranchNameErrorKeyed`) and localize
                 // automatically via `plan_note_text()` — no separate
                 // localized-blocker computation needed.
-                if let Some(modal) = self.create_branch_modal_mut() {
-                    modal.plan = Some(std::sync::Arc::new(plan));
-                }
             }
             Err(e) => {
                 klog!("plan: create-branch error: {}", e);
             }
+        }
+        // #510: adopt the outcome either way — a failure replaces the plan it
+        // was recomputing, so neither Enter nor the button can confirm a stale one.
+        let outcome = plan_outcome(i18n::Op::CreateBranch, result);
+        if let Some(modal) = self.create_branch_modal_mut() {
+            modal.plan.replan(outcome);
         }
     }
 
@@ -105,9 +113,10 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // #510: `Pending` and `Failed` both yield None, so a failed replan
+        // refuses Enter and the button alike.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
@@ -353,7 +362,7 @@ impl KagiApp {
             branch_name,
             input,
             input_state: None,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_set_upstream();
@@ -375,22 +384,22 @@ impl KagiApp {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => return,
+            None => {
+                let outcome = session_unavailable(i18n::Op::SetUpstream);
+                if let Some(m) = self.set_upstream_modal_mut() {
+                    m.plan.replan(outcome);
+                }
+                return;
+            }
         };
-        match repo.plan_set_upstream(&branch_name, &input) {
-            Ok(plan) => {
-                if let Some(m) = self.set_upstream_modal_mut() {
-                    m.plan = Some(std::sync::Arc::new(plan));
-                }
-            }
-            Err(e) => {
-                if let Some(m) = self.set_upstream_modal_mut() {
-                    m.error = Some(SharedString::from(format!(
-                        "Set upstream plan error: {}",
-                        e
-                    )));
-                }
-            }
+        // #510: the failure now lands in the plan slot, so the previous plan is
+        // gone rather than merely accompanied by an error line.
+        let outcome = plan_outcome(
+            i18n::Op::SetUpstream,
+            repo.plan_set_upstream(&branch_name, &input),
+        );
+        if let Some(m) = self.set_upstream_modal_mut() {
+            m.plan.replan(outcome);
         }
     }
 
@@ -404,9 +413,9 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.clone() {
-            Some(p) => p,
-            None => return,
+        // #510: a failed replan leaves no plan, so Enter and the button both refuse.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -459,7 +468,7 @@ impl KagiApp {
                     branch_name: modal.branch_name.clone(),
                     input: modal.input.clone(),
                     input_state: None,
-                    plan: Some(plan.clone()),
+                    plan: ModalPlan::Ready(plan.clone()),
                     error: Some(SharedString::from(err_msg)),
                 });
             }
@@ -479,7 +488,7 @@ impl KagiApp {
             input: branch_name,
             input_state: None,
             validation,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_rename_branch();
@@ -508,24 +517,21 @@ impl KagiApp {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => return,
+            None => {
+                let outcome = session_unavailable(i18n::Op::Rename);
+                if let Some(m) = self.rename_branch_modal_mut() {
+                    m.validation = validation;
+                    m.plan.replan(outcome);
+                }
+                return;
+            }
         };
-        match repo.plan_rename_branch(&old_name, &input) {
-            Ok(plan) => {
-                if let Some(m) = self.rename_branch_modal_mut() {
-                    m.validation = validation;
-                    m.plan = Some(std::sync::Arc::new(plan));
-                }
-            }
-            Err(e) => {
-                if let Some(m) = self.rename_branch_modal_mut() {
-                    m.validation = validation;
-                    m.error = Some(SharedString::from(i18n::op_plan_failed(
-                        i18n::Op::Rename,
-                        e,
-                    )));
-                }
-            }
+        // #510: the localized failure now lands in the plan slot, which drops the
+        // plan it was recomputing instead of leaving it confirmable.
+        let outcome = plan_outcome(i18n::Op::Rename, repo.plan_rename_branch(&old_name, &input));
+        if let Some(m) = self.rename_branch_modal_mut() {
+            m.validation = validation;
+            m.plan.replan(outcome);
         }
     }
 
@@ -539,9 +545,9 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.clone() {
-            Some(p) => p,
-            None => return,
+        // #510: a failed replan leaves no plan, so Enter and the button both refuse.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -594,7 +600,7 @@ impl KagiApp {
                     input: modal.input.clone(),
                     input_state: None,
                     validation: modal.validation.clone(),
-                    plan: Some(plan.clone()),
+                    plan: ModalPlan::Ready(plan.clone()),
                     error: Some(SharedString::from(err_msg)),
                 });
             }

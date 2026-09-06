@@ -35,6 +35,24 @@ impl Planned {
             Self::RemoteStash { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
         }
     }
+    pub fn owner_session(&self) -> SessionId {
+        self.owner().session()
+    }
+    /// Whether this operation changes resources the whole repository shares
+    /// (refs, the stash reflog, worktree administration) rather than only the
+    /// target worktree's index and working tree. Shared changes make every open
+    /// sibling worktree stale (#482 invariant).
+    pub fn changes_shared_refs(&self) -> bool {
+        match self {
+            Self::Remove { .. } => true,
+            // Apply reads the stash and writes only this worktree's index/WT;
+            // push/pop/drop all rewrite the stash reflog.
+            Self::Stash { plan, .. } => !matches!(plan.action, StashAction::Apply { .. }),
+            // Remote invalidation is routed to its frozen session; local
+            // WorktreeId sibling discovery cannot describe a remote repository.
+            Self::RemoteStash { .. } => false,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Policy {
@@ -110,9 +128,59 @@ pub struct PlanErrorCompletion {
     revision: RequestId,
     pub recording: Recording,
 }
+/// Local plans must keep their frozen attachment, planned identity, and current
+/// locator on one worktree. Remote plans instead require an attached remote
+/// session (`worktree=None`); their frozen connection and `RemoteRepoId` are
+/// rechecked by the transport.
+fn identity_matches(s: &Sessions, prepared: &Planned) -> Result<(), AdmissionError> {
+    match prepared {
+        Planned::Remove { plan, request, .. } => {
+            s.confirm_identity(&request.owner)?;
+            if request.owner.worktree.as_ref() != Some(&plan.worktree) {
+                return Err(AdmissionError::Identity(
+                    "the plan resolved a different worktree than this tab; reopen the repository"
+                        .into(),
+                ));
+            }
+        }
+        Planned::Stash { plan, request, .. } => {
+            s.confirm_identity(&request.owner)?;
+            if request.owner.worktree.as_ref() != Some(&plan.worktree) {
+                return Err(AdmissionError::Identity(
+                    "the plan resolved a different worktree than this tab; reopen the repository"
+                        .into(),
+                ));
+            }
+        }
+        // The transport freezes and rechecks the remote connection and
+        // RemoteRepoId. The application boundary owns only the remote tab's
+        // SessionId; its Attachment intentionally has no local WorktreeId.
+        Planned::RemoteStash { request, .. } => {
+            if s.worktree_of(request.owner.session).is_some() {
+                return Err(AdmissionError::Identity(
+                    "a remote operation requires a remote tab attachment".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 pub fn apply_plan(s: &mut Sessions, c: PlanCompletion) -> bool {
     if s.revision != c.revision || !matches!(s.state, PlanState::Planning { .. }) {
         return false;
+    }
+    // #482: never adopt a plan built against a different worktree than the one
+    // this tab froze at attach time. The preview, stash indices and OIDs in it
+    // came from that other repository — showing them is already the bug.
+    if let PlanState::Ready { prepared, .. } = &c.state {
+        if let Err(error) = identity_matches(s, prepared) {
+            s.state = PlanState::Error {
+                error: error.to_string(),
+                open_failed: false,
+                recording: None,
+            };
+            return true;
+        }
     }
     s.state = c.state;
     if let Some(evidence) = c.error_job {
@@ -156,6 +224,13 @@ pub fn approve(
     if current.revision != token.revision || planned_policy != policy.into() {
         return Err(AdmissionError::StaleApproval);
     }
+    // #482 stage 1: an approval whose owner has left cannot be dispatched. The
+    // plan slot is already expired by `detach`; this is the belt to that brace.
+    if !s.is_attached(prepared.owner_session()) {
+        return Err(AdmissionError::StaleApproval);
+    }
+    // Re-resolve: the modal was on screen while the user could swap the path.
+    identity_matches(s, prepared)?;
     let approved = Approved {
         revision: token.revision,
         prepared: prepared.clone(),
@@ -318,39 +393,87 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     let mut deliveries = vec![];
     match (&owner.plan, &report.evidence) {
         (Planned::Remove { plan, .. }, FamilyEvidence::Remove(r)) => {
-            for path in [&plan.repo, &plan.target] {
-                s.stale.insert(path.clone());
-                deliveries.push(if path == &plan.target && r.target_exists == Some(false) {
-                    Delivery::RemovedTarget(path.clone())
-                } else {
-                    Delivery::Invalidate(path.clone())
-                });
-            }
+            let manager = InvalidTarget {
+                worktree: plan.worktree.clone(),
+                path: plan.repo.clone(),
+            };
+            let target = InvalidTarget {
+                worktree: plan.worktree_id.clone(),
+                path: plan.target.clone(),
+            };
+            deliveries.push(Delivery::Invalidate(manager.clone()));
+            s.stale.insert(manager.worktree.clone());
+            deliveries.push(if r.target_exists == Some(false) {
+                Delivery::RemovedTarget(target.clone())
+            } else {
+                Delivery::Invalidate(target.clone())
+            });
+            s.stale.insert(target.worktree);
         }
-        (Planned::Stash { plan, .. }, FamilyEvidence::Stash(r)) => {
+        (Planned::Stash { plan, request, .. }, FamilyEvidence::Stash(r)) => {
+            let manager = InvalidTarget {
+                worktree: plan.worktree.clone(),
+                path: plan.repo.clone(),
+            };
             if matches!(
                 plan.action,
                 StashAction::Apply { .. } | StashAction::Pop { .. }
             ) && !r.evidence.conflicts.is_empty()
             {
-                if let Some(oid) = &r.evidence.oid {
-                    s.clear_stash_conflict(&plan.repo);
+                // The conflict belongs to the session that approved the stash,
+                // and to the *visit* it approved it in. A closed owner leaves no
+                // payload behind, and one the user has since left gets no new
+                // proposal — the next visit must re-observe it live (#557).
+                let session = request.owner.session;
+                if let (Some(oid), true) = (
+                    &r.evidence.oid,
+                    s.visit(session) == Some(request.owner.visit),
+                ) {
+                    s.clear_stash_conflict(session);
                     s.stash_conflicts.insert(
-                        plan.repo.clone(),
+                        session,
                         StashConflict {
                             operation: id,
                             oid: oid.clone(),
                             identity: r.evidence.conflict_identity.clone(),
                             pending: false,
+                            visit: request.owner.visit,
                         },
                     );
                 }
             }
-            s.stale.insert(plan.repo.clone());
-            deliveries.push(Delivery::Invalidate(plan.repo.clone()));
+            deliveries.push(Delivery::Invalidate(manager.clone()));
+            s.stale.insert(manager.worktree.clone());
         }
         (Planned::RemoteStash { .. }, FamilyEvidence::RemoteStash(_)) => {}
         _ => unreachable!("completion family is fixed by its owned job"),
+    }
+    // Shared refs / stash / worktree administration make every *open* sibling
+    // worktree of the same repository stale, not only the one that was written.
+    // Index- and working-tree-only changes stay scoped to their target (#482).
+    if owner.plan.changes_shared_refs() {
+        let common_dir = match &owner.plan {
+            Planned::Remove { plan, .. } => &plan.common_dir,
+            Planned::Stash { plan, .. } => &plan.common_dir,
+            Planned::RemoteStash { .. } => unreachable!("remote refs have no local siblings"),
+        };
+        let delivered: Vec<_> = deliveries
+            .iter()
+            .filter_map(|delivery| match delivery {
+                Delivery::Invalidate(t) | Delivery::RemovedTarget(t) => Some(t.worktree.clone()),
+                Delivery::Completed { .. } | Delivery::RemoteCompleted { .. } => None,
+            })
+            .collect();
+        for worktree in s.siblings_of(common_dir) {
+            if delivered.contains(&worktree) {
+                continue;
+            }
+            let path = s
+                .path_of(&worktree)
+                .unwrap_or_else(|| worktree.git_dir.clone());
+            s.stale.insert(worktree.clone());
+            deliveries.push(Delivery::Invalidate(InvalidTarget { worktree, path }));
+        }
     }
     deliveries.push(match owner.attachment {
         OwnerAttachment::Local(attachment) => Delivery::Completed {
@@ -365,4 +488,89 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
         },
     });
     deliveries
+}
+
+/// A modal's plan before it has earned an execution token: the plan computed
+/// for the current input, or the explicit failure that replaced it.
+///
+/// This is the tokenless rung of the same ladder as [`PlanState`]: modals that
+/// plan synchronously against the per-tab `RepoSession` have no `RequestId` and
+/// no [`PlanToken`], but they need the same guarantee — a (re)plan that fails
+/// **replaces** the plan it was recomputing instead of leaving it behind
+/// (#510). `Failed` carries no plan, so [`PlanSlot::plan`] — the only way a
+/// confirm path reaches one — returns `None`, and both Enter and the confirm
+/// button refuse. A later successful replan puts the slot back in `Ready`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum PlanSlot<P> {
+    /// No plan yet: the modal just opened, or the first plan is still running.
+    #[default]
+    Pending,
+    /// The plan for the current input. The only confirmable state.
+    Ready(P),
+    /// The last (re)plan failed. Any previous plan is gone, not merely hidden.
+    Failed(String),
+}
+
+impl<P> PlanSlot<P> {
+    /// Adopt one (re)plan result, whichever way it went.
+    pub fn replan(&mut self, result: Result<P, impl std::fmt::Display>) {
+        *self = match result {
+            Ok(plan) => Self::Ready(plan),
+            Err(error) => Self::Failed(error.to_string()),
+        };
+    }
+    /// The confirmable plan. `None` while pending or failed.
+    pub fn plan(&self) -> Option<&P> {
+        match self {
+            Self::Ready(plan) => Some(plan),
+            _ => None,
+        }
+    }
+    /// The plan failure to render. `None` unless the last (re)plan failed.
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Failed(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod plan_slot_tests {
+    use super::PlanSlot;
+
+    #[test]
+    fn failure_invalidates_the_plan_it_replaces() {
+        let mut slot = PlanSlot::Ready("old plan");
+        slot.replan(Err::<&str, _>("repo went away"));
+        assert!(
+            slot.plan().is_none(),
+            "a stale plan must not stay confirmable"
+        );
+        assert_eq!(slot.error(), Some("repo went away"));
+    }
+
+    #[test]
+    fn retry_after_failure_restores_a_confirmable_plan() {
+        let mut slot = PlanSlot::<&str>::default();
+        assert!(matches!(slot, PlanSlot::Pending));
+        slot.replan(Err::<&str, _>("transient"));
+        slot.replan(Ok::<_, &str>("fresh plan"));
+        assert_eq!(slot.plan(), Some(&"fresh plan"));
+        assert_eq!(slot.error(), None, "a successful replan clears the failure");
+    }
+
+    #[test]
+    fn a_pending_slot_is_not_confirmable_and_shows_no_error() {
+        let slot = PlanSlot::<&str>::Pending;
+        assert!(slot.plan().is_none());
+        assert!(slot.error().is_none());
+    }
+
+    #[test]
+    fn replan_keeps_only_the_newest_plan() {
+        let mut slot = PlanSlot::Ready("first");
+        slot.replan(Ok::<_, &str>("second"));
+        assert_eq!(slot.plan(), Some(&"second"));
+    }
 }

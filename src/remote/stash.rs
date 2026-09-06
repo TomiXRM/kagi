@@ -33,9 +33,9 @@ pub use security::verify_known_hosts_snapshot_for_test;
 use security::{snapshot_known_hosts, verify_known_hosts_snapshots, FrozenFile};
 #[derive(Clone, Debug)]
 pub struct RemoteAttachment {
+    pub session: crate::app::SessionId,
     pub host: RemoteHost,
     pub root: String,
-    pub generation: u64,
 }
 #[derive(Clone, Debug)]
 pub struct FrozenConnection {

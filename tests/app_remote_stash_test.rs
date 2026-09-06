@@ -6,6 +6,7 @@ use kagi::remote::stash::{RemoteAttachment, RemotePlanFixture, RemoteStashFault}
 use kagi_domain::remote::{
     KnownHostsIdentity, RemoteConnectionId, RemoteDropOutcome, RemoteHost, RemoteStashState,
 };
+use std::path::PathBuf;
 use std::sync::Mutex;
 #[path = "support/remote_stash.rs"]
 mod remote_stash_support;
@@ -44,11 +45,16 @@ fn prepare(
         port: Some(22),
         identity_file: Some("/keys/id".into()),
     };
+    let session = sessions.attach(PathBuf::from(format!("{}:{root}", host.label())));
+    assert!(
+        sessions.worktree_of(session).is_none(),
+        "remote tab attachment must not acquire a local WorktreeId"
+    );
     let request = RemoteStashRequest {
         owner: RemoteAttachment {
+            session,
             host,
             root: root.into(),
-            generation: 7,
         },
         index: 1,
     };

@@ -110,6 +110,7 @@ pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {
     // no-op, which would let a scenario pass for the wrong reason (#473).
     app.repo_session = kagi_git::session::RepoSession::open(repo_path).ok();
     app.tabs.push(super::tabs::RepoTab {
+        session: app.app_sessions.attach(repo_path.to_path_buf()),
         path: repo_path.to_path_buf(),
         name: info.name.clone(),
         remote: None,

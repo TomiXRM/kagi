@@ -7,6 +7,8 @@ use kagi_domain::remote::{
     KnownHostsIdentity, RemoteConnectionId, RemoteDropOutcome, RemoteHost, RemoteStashState,
 };
 use std::sync::Mutex;
+#[path = "support/remote_stash.rs"]
+mod remote_stash_support;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn oid(ch: char) -> String {
@@ -79,20 +81,29 @@ fn run(sessions: &mut Sessions, fault: RemoteStashFault) -> (app::OperationId, R
     let completion = prepare(sessions, fault, "/srv/linked", "/srv/repo/.git")
         .unwrap()
         .run();
-    let app::Completion::Stash(stash) = &completion else {
-        unreachable!()
-    };
-    let report = stash.remote_report().unwrap();
-    let outcome = report.evidence.outcome;
-    let deliveries = app::apply(sessions, completion);
-    let id = deliveries
-        .into_iter()
-        .find_map(|delivery| match delivery {
-            app::Delivery::RemoteCompleted { id, .. } => Some(id),
-            _ => None,
-        })
-        .unwrap();
-    (id, outcome)
+    let applied = remote_stash_support::assert_remote_completion(
+        sessions,
+        completion,
+        match fault {
+            RemoteStashFault::Success => RemoteDropOutcome::Success,
+            RemoteStashFault::ConfigDrift | RemoteStashFault::PreflightDrift => {
+                RemoteDropOutcome::Refused
+            }
+            RemoteStashFault::NonZeroUnchanged | RemoteStashFault::LocalSpawn => {
+                RemoteDropOutcome::Failed
+            }
+            RemoteStashFault::VerifyMismatch => RemoteDropOutcome::Partial,
+            RemoteStashFault::TimeoutBeforeDrop
+            | RemoteStashFault::MissingToken
+            | RemoteStashFault::MalformedToken
+            | RemoteStashFault::WrongScopeToken
+            | RemoteStashFault::UnreadableToken
+            | RemoteStashFault::ValidTokenAfterTimeout
+            | RemoteStashFault::MalformedTerminal => RemoteDropOutcome::Unknown,
+            RemoteStashFault::None => unreachable!(),
+        },
+    );
+    (applied.id, applied.report.evidence.outcome)
 }
 
 #[test]

@@ -3584,7 +3584,9 @@ pub fn run_app(app_state: KagiApp) {
         cx.set_menus(commands::build_menus());
 
         open_main_window(app_state, cx);
-        cx.activate(true);
+        if std::env::var_os("KAGI_NO_ACTIVATE").as_deref() != Some(std::ffi::OsStr::new("1")) {
+            cx.activate(true);
+        }
     });
 }
 

@@ -3,11 +3,8 @@
 # ADR-0072 (v1.0 re-architecture): crates/* host the layered workspace; the pure
 # `kagi-domain` crate is the first extracted layer (strangler migration).
 members = ["xtask", "crates/kagi-domain", "crates/kagi-git", "crates/kagi-mcp", "crates/kagi-ui-core", "crates/kagi-ui-ecosystem", "crates/kagi-ui-editor", "crates/kagi-ui-file-history", "crates/kagi-web"]
-# Feature resolver v2 (already implied by the root package's edition 2021) made
-# explicit: ADR-0166's guarantee that `gpui/test-support` (a dev-dependency
-# feature) never reaches the release binary depends on dev-dep features NOT
-# being unified into normal builds — which is exactly resolver v2 behaviour.
-# Pinning it here keeps that guarantee robust against future member/edition changes.
+# Keep host/build and target feature sets separate. GUI test support is enabled
+# only by the explicit `gui-e2e` feature below (ADR-0166).
 resolver = "2"
 
 [package]
@@ -20,6 +17,10 @@ edition = "2021"
 # a concrete newer version; this documents the minimum and gives a clean
 # `cargo` error instead of an opaque dep failure.
 rust-version = "1.92"
+
+[features]
+# Compile the native visual runner only when explicitly requested (ADR-0166).
+gui-e2e = ["gpui/test-support"]
 
 [dependencies]
 # Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it
@@ -78,22 +79,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
-# Distributed/release builds run compute-heavy paths (tree-sitter highlighting,
-# git2 diffs, commit-graph layout), so tune past Cargo's default release profile
-# (opt-level=3, lto=off, codegen-units=16) for faster runtime + a smaller binary.
-# ── Test-only GPUI visual-test support (ADR-0166, GUI E2E PoC) ─────────────
-# `gpui`'s `test-support` feature unlocks `VisualTestAppContext` (macOS: real
-# off-screen Metal rendering, deterministic TestDispatcher, keyboard/mouse/
-# Action injection, `capture_screenshot`). Declared ONLY here as a dev-dep, so
-# it is compiled into test/bench/example targets but NOT the release binary:
-# the root package is edition 2021 with no explicit `resolver`, so Cargo's
-# feature resolver v2 is in effect and dev-dependency features are not unified
-# into a normal `cargo build`. Same git source (no rev) as the normal `gpui`
-# dep above → cargo unifies them to one crate, only the feature set differs by
-# target kind. `image` matches gpui's transitive version so `RgbaImage::save`
-# uses the same crate the screenshot came from.
+# `gpui/test-support` must not be an unconditional dev-dependency feature:
+# that would compile it even when the visual runner skips at runtime.
+# `image` matches gpui's transitive version for screenshot encoding.
 [dev-dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", features = ["test-support"] }
 image = "0.25"
 # ADR-0166 GUI E2E runner: throwaway fixture repos. Already a normal dep (cargo
 # unifies it), listed here so the `tests/` crate can name it directly.
@@ -104,11 +93,13 @@ tempfile = "3"
 # creation SIGABRTs; `harness = false` gives this target its own `fn main` (=
 # process entry, main thread) so the real Metal off-screen window opens. macOS
 # only in practice — the runner is a no-op success on other targets. Runs on
-# demand: `cargo test -p kagi --test gui_e2e_runner`.
+# demand with `--features gui-e2e --test gui_e2e_runner` and KAGI_GUI_E2E=1.
 [[test]]
 name = "gui_e2e_runner"
 harness = false
+required-features = ["gui-e2e"]
 
+# Distributed builds optimize compute-heavy rendering, diffs and graph layout.
 # Trade-off: longer link time in CI. Applies workspace-wide (this is the root).
 [profile.release]
 lto = "thin"
@@ -120,6 +111,16 @@ strip = true
 # code compiles fast. Optimize only those hot lower-level crates to opt-level 3
 # (mirrors the gpui-component catalog) so debug runs stay snappy without slowing
 # incremental rebuilds of kagi's own code. First build recompiles these crates.
+[profile.dev]
+# Keep source locations in workspace backtraces without variable/type info.
+# The test profile inherits these settings.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+# For dependency-level LLDB work, append --config 'profile.dev.package."*".debug=2'.
+# CARGO_PROFILE_DEV_PACKAGE_ALL_DEBUG is not supported by Cargo.
+
 [profile.dev.package]
 gpui        = { opt-level = 3 }
 taffy       = { opt-level = 3 }

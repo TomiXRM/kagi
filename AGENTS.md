@@ -120,6 +120,15 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 ## Verifying changes
 
 - `cargo build` and `cargo test --workspace` must stay green at every step.
+- Native GUI E2E is compile-time opt-in (ADR-0166). Default builds, tests and
+  Clippy do not compile the runner or enable `gpui/test-support`. On macOS use:
+
+  ```sh
+  CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target KAGI_GUI_E2E=1 \
+    cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+  ```
+
+  The feature enables compilation; `KAGI_GUI_E2E=1` permits native execution.
 - **Before committing/pushing, run `cargo fmt --all`.** CI's `fmt + clippy` job is
   advisory (non-blocking) but `cargo fmt --check` exits non-zero on any diff, which
   turns the job red. Run `cargo fmt --check` to confirm clean. Also run
@@ -150,3 +159,21 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   repetition at 255, so a valid GNU pattern matches *nothing* and the gate goes green
   having checked zero files. That shipped once (#454) and a human, not CI, caught it.
   Interactive searching is a different matter — use `rg`/`fd` freely there.
+
+## Build hygiene
+
+- Run only one cargo command at a time per tree. Wait for tests to finish
+  before starting Clippy, check or another build.
+- Agent worktrees share the primary target: prefix every cargo command with
+  `CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target` on this machine
+  (use the primary checkout's absolute target path elsewhere). Cargo's build
+  lock serializes competing worktrees; wait for it instead of using a new target.
+- For Claude Code's `.claude/worktrees/*`, the primary checkout may provide an
+  untracked `.claude/worktrees/.cargo/config.toml` containing
+  `[build]` and `target-dir = "../../target"`. Cargo resolves that path relative
+  to `.claude/worktrees/`, yielding the primary target. This local file is not
+  part of the repository; do not create a target per worktree.
+- Once a week, when no build is running, prune artifacts older than seven days:
+  `CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target cargo sweep --time 7`
+  (requires cargo-sweep). Do not routinely clean the shared target; clean-build
+  benchmarks need an idle build window and destroy reusable build artifacts.

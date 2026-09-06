@@ -40,6 +40,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::Sizable as _;
 use kagi_domain::file_history::{FileHistory, FileSnapshotContent};
+use kagi_domain::load_request::RequestSlot;
 use kagi_domain::status::{ChangeKind, WorkingTreeStatus};
 use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::file_tree::{self, status_badge, TreeRow};
@@ -379,8 +380,10 @@ pub struct EditorWorkspaceView {
     /// `None` while loading or before the tab has ever been opened for this
     /// file.
     pub history: Option<FileHistory>,
-    /// `true` while the History load is in flight.
-    pub history_loading: bool,
+    /// The in-flight History load, owned by its own request key
+    /// (`(file_req, path)`) rather than by a bare bool — see
+    /// [`kagi_domain::load_request`] and [`Self::history_loading`] (#489).
+    history_req: RequestSlot<(u64, PathBuf)>,
     /// Full hash of the History row the user clicked, if any. Drives the
     /// center pane's Diff/Snapshot tabs — `None` means "show the normal WIP
     /// code viewer" regardless of `middle_tab`.
@@ -394,8 +397,10 @@ pub struct EditorWorkspaceView {
     /// second, independent field from `diff` (the WIP hunks) so switching
     /// History commits never touches the right pane's WIP diff.
     pub history_diff: Option<Box<dyn Any>>,
-    /// `true` while the History-commit diff load is in flight.
-    pub history_diff_loading: bool,
+    /// The in-flight History-commit diff load, keyed by `(file_req,
+    /// commit_hash)`. Cleared in lockstep with `history_diff` above — the
+    /// request and the data it would fill are one thing (#489).
+    history_diff_req: RequestSlot<(u64, String)>,
     /// Scroll state for `history_diff`'s list — separate from `diff_scroll`
     /// (the WIP hunks pane), which the History diff never shares.
     pub history_diff_scroll: gpui::ListState,
@@ -403,8 +408,9 @@ pub struct EditorWorkspaceView {
     /// ([`seed_snapshot`](Self::seed_snapshot)). Plain `kagi_domain` data —
     /// no downcast needed, unlike the diff views above.
     pub snapshot: Option<FileSnapshotContent>,
-    /// `true` while the Snapshot load is in flight.
-    pub snapshot_loading: bool,
+    /// The in-flight Snapshot load, keyed like `history_diff_req` above and
+    /// cleared in lockstep with `snapshot` (#489).
+    snapshot_req: RequestSlot<(u64, String)>,
     /// Scroll handle for the virtualized History commit list.
     pub history_scroll: UniformListScrollHandle,
     /// Resolved commit-author avatars, pushed in by the host each frame while
@@ -535,14 +541,14 @@ impl EditorWorkspaceView {
             file_req: 0,
             right_tab: RightPaneTab::default(),
             history: None,
-            history_loading: false,
+            history_req: RequestSlot::new(),
             selected_history_commit: None,
             middle_tab: MiddlePaneTab::default(),
             history_diff: None,
-            history_diff_loading: false,
+            history_diff_req: RequestSlot::new(),
             history_diff_scroll: new_diff_list_state(),
             snapshot: None,
-            snapshot_loading: false,
+            snapshot_req: RequestSlot::new(),
             history_scroll: UniformListScrollHandle::new(),
             avatars: Default::default(),
             snapshot_editor: None,
@@ -1017,19 +1023,42 @@ impl EditorWorkspaceView {
     /// if `right_tab` is still `History` after this reset.
     fn reset_history_panel(&mut self) {
         self.history = None;
-        self.history_loading = false;
+        self.history_req.clear();
         self.selected_history_commit = None;
         // `middle_tab` (Diff ⇄ Snapshot), like `right_tab`, is a persistent
         // preference — not reset here. See `select_history_commit`.
-        self.history_diff = None;
-        self.history_diff_loading = false;
-        self.snapshot = None;
-        self.snapshot_loading = false;
+        self.clear_selected_commit_views();
         // Drop the InputState too, not just its content — otherwise it
         // lingers (unrendered but alive) for every file ever snapshotted in
         // the session.
         self.snapshot_editor = None;
         self.snapshot_pushed_sig = 0;
+    }
+
+    /// Drop the selected commit's Diff/Snapshot content **and** whatever load
+    /// was in flight to fill it (#489) — clearing only the data left the old
+    /// request owning "loading", which then suppressed the new commit's
+    /// request and was never cleared by the stale answer.
+    fn clear_selected_commit_views(&mut self) {
+        self.history_diff = None;
+        self.history_diff_req.clear();
+        self.snapshot = None;
+        self.snapshot_req.clear();
+    }
+
+    /// `true` while the History commit-list load is in flight.
+    pub fn history_loading(&self) -> bool {
+        self.history_req.is_loading()
+    }
+
+    /// `true` while the selected commit's Diff load is in flight.
+    pub fn history_diff_loading(&self) -> bool {
+        self.history_diff_req.is_loading()
+    }
+
+    /// `true` while the selected commit's Snapshot load is in flight.
+    pub fn snapshot_loading(&self) -> bool {
+        self.snapshot_req.is_loading()
     }
 
     /// Right-pane tab click: WIP hunks ⇄ commit history. Kicks off the
@@ -1064,14 +1093,18 @@ impl EditorWorkspaceView {
     /// must refresh it instead of silently showing the old file's list, or
     /// nothing at all).
     fn maybe_load_history(&mut self, cx: &mut Context<Self>) {
-        if self.right_tab != RightPaneTab::History || self.history.is_some() || self.history_loading
-        {
+        if self.right_tab != RightPaneTab::History || self.history.is_some() {
             return;
         }
         let Some(path) = self.open_path.clone() else {
             return;
         };
-        self.history_loading = true;
+        // The slot — not a bool — decides whether this is a new request: an
+        // identical one already in flight is skipped, a different file
+        // supersedes the old one (#489).
+        if !self.history_req.begin((self.file_req, path.clone())) {
+            return;
+        }
         cx.emit(EditorWorkspaceEvent::HistoryRequested {
             req: self.file_req,
             path,
@@ -1086,10 +1119,10 @@ impl EditorWorkspaceView {
         result: Result<FileHistory, String>,
         cx: &mut Context<Self>,
     ) {
-        if self.file_req != req || self.open_path.as_deref() != Some(path) {
+        if self.open_path.as_deref() != Some(path) || !self.history_req.accept(&(req, path.into()))
+        {
             return;
         }
-        self.history_loading = false;
         self.history = result.ok();
         cx.notify();
     }
@@ -1169,8 +1202,10 @@ impl EditorWorkspaceView {
         // back to Diff even while browsing Snapshot) — only the CONTENT
         // resets here; `request_middle_tab_load` reads the still-current
         // `middle_tab` to fetch the right side for the newly selected commit.
-        self.history_diff = None;
-        self.snapshot = None;
+        // Both the content AND the in-flight loads for the previous commit go
+        // (#489) — including the tab the user isn't looking at, whose late
+        // answer would otherwise be accepted for the wrong commit.
+        self.clear_selected_commit_views();
         self.request_middle_tab_load(commit_hash, cx);
         // Same focus-reclaim as `set_right_tab` — a row click doesn't itself
         // steal focus, but the code editor Input might already hold it from
@@ -1244,22 +1279,31 @@ impl EditorWorkspaceView {
     /// that resolution themselves, from the same `FileHistory` this crate
     /// already handed them via `seed_history` — one implementation, not two.
     fn request_middle_tab_load(&mut self, commit_hash: String, cx: &mut Context<Self>) {
+        // `X.is_some()` still short-circuits (content for the current commit
+        // is already here); the "is one in flight?" half is the slot's job, so
+        // a *different* commit supersedes instead of being suppressed (#489).
         match self.middle_tab {
             MiddlePaneTab::Diff => {
-                if self.history_diff.is_some() || self.history_diff_loading {
+                if self.history_diff.is_some()
+                    || !self
+                        .history_diff_req
+                        .begin((self.file_req, commit_hash.clone()))
+                {
                     return;
                 }
-                self.history_diff_loading = true;
                 cx.emit(EditorWorkspaceEvent::HistoryDiffRequested {
                     req: self.file_req,
                     commit_hash,
                 });
             }
             MiddlePaneTab::Snapshot => {
-                if self.snapshot.is_some() || self.snapshot_loading {
+                if self.snapshot.is_some()
+                    || !self
+                        .snapshot_req
+                        .begin((self.file_req, commit_hash.clone()))
+                {
                     return;
                 }
-                self.snapshot_loading = true;
                 cx.emit(EditorWorkspaceEvent::SnapshotRequested {
                     req: self.file_req,
                     commit_hash,
@@ -1284,10 +1328,12 @@ impl EditorWorkspaceView {
         diff: Option<Box<dyn Any>>,
         cx: &mut Context<Self>,
     ) {
-        if self.file_req != req || self.selected_history_commit.as_deref() != Some(commit_hash) {
+        if !self
+            .history_diff_req
+            .accept(&(req, commit_hash.to_string()))
+        {
             return;
         }
-        self.history_diff_loading = false;
         self.history_diff = diff;
         cx.notify();
     }
@@ -1302,10 +1348,9 @@ impl EditorWorkspaceView {
         result: Option<FileSnapshotContent>,
         cx: &mut Context<Self>,
     ) {
-        if self.file_req != req || self.selected_history_commit.as_deref() != Some(commit_hash) {
+        if !self.snapshot_req.accept(&(req, commit_hash.to_string())) {
             return;
         }
-        self.snapshot_loading = false;
         self.snapshot = result;
         cx.notify();
     }
@@ -2687,7 +2732,7 @@ fn render_center_pane(
             MiddlePaneTab::Diff => match &view.history_diff {
                 Some(_) => pane.child((view.hooks.render_history_diff)(view, cx)),
                 None => {
-                    let msg = if view.history_diff_loading {
+                    let msg = if view.history_diff_loading() {
                         Msg::EditorWorkspaceLoading.t()
                     } else {
                         Msg::EditorWorkspaceNoDiff.t()

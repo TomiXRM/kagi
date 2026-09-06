@@ -27,6 +27,16 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
             ],
         );
         let (app, window) = mount(cx, &repo);
+        // #488 / #528: the target worktree is also open, in a *background* tab.
+        // Removing it must close that tab without re-initializing the session
+        // the operation is attached to (a re-init would strand this very
+        // completion behind a stale `switch_generation`).
+        let generation = app.update(cx, |app, cx| {
+            assert!(app.open_repository(linked.clone(), cx));
+            app.switch_repo(0, cx);
+            app.switch_generation
+        });
+        cx.run_until_parked();
         app.update(cx, |app, cx| {
             app.open_remove_worktree_modal("remove-target".into(), true, cx);
             cx.notify();
@@ -72,6 +82,18 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         }
         wait_idle(cx, &app);
         assert!(!linked.exists(), "input must reach real remove executor");
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(
+                !app.tabs.iter().any(|t| t.path == linked),
+                "#528: the removed worktree's tab must close"
+            );
+            assert_eq!(app.active_tab, 0, "the surviving tab stays active");
+            assert_eq!(
+                app.switch_generation, generation,
+                "#488: closing a background tab must not re-initialize the session"
+            );
+        });
         let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
             .into_iter()
             .filter(|e| e.op == "remove-worktree")

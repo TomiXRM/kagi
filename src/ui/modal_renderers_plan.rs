@@ -38,7 +38,7 @@ pub(crate) fn render_plan_modal(
 
 /// Pull plan confirmation overlay (T-HT-003) — richer icon-badge card
 /// (user request 2026-07-22: "make the popup cards richer, starting with
-/// Pull/Push"), wired to `confirm_pull`. Accent colour matches the toolbar's
+/// Pull/Push"), wired to `start_pull`. Accent colour matches the toolbar's
 /// Pull button (`color_branch`, same as the ↓N chip).
 pub(crate) fn render_pull_modal(
     modal: PullPlanModal,
@@ -276,7 +276,7 @@ pub(crate) fn render_repair_worktrees_modal(
 }
 
 /// Push plan confirmation overlay (T-HT-004) — richer icon-badge card (see
-/// `render_pull_modal`), wired to `confirm_push`. Accent colour is
+/// `render_pull_modal`), wired to `start_push`. Accent colour is
 /// `color_success` (green "sending" feel), distinct from Pull's blue so the
 /// two are scannable at a glance.
 pub(crate) fn render_push_modal(

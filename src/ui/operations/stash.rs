@@ -335,9 +335,6 @@ impl KagiApp {
     pub fn confirm_stash_apply(&mut self, cx: &mut Context<Self>) {
         self.confirm_stash(cx);
     }
-    pub fn confirm_pop(&mut self, cx: &mut Context<Self>) {
-        self.confirm_stash(cx);
-    }
     pub fn start_pop(&mut self, cx: &mut Context<Self>) {
         self.confirm_stash(cx);
     }

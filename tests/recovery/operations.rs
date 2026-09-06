@@ -4,7 +4,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
-use kagi::ui::{FooterStatus, KagiApp};
+use kagi::ui::{modals::ActiveModal, FooterStatus, KagiApp};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
 use kagi_git::{CommitId, OperationKind};
@@ -36,17 +36,26 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     }
 }
 
-fn press_enter(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+fn press_key(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    key: &str,
+) {
     app.update(cx, |_, cx| cx.notify());
     cx.update_window(window, |_, window, cx| {
         let focus = app.read(cx).root_focus.clone().unwrap();
         window.focus(&focus, cx);
         // Native offscreen windows do not pump AppKit frames. Paint the real
-        // modal and its focus dispatch tree before delivering a raw Enter key.
+        // modal and its focus dispatch tree before delivering a raw key.
         window.draw(cx).clear();
     })
     .unwrap();
-    cx.simulate_keystrokes(window, "enter");
+    cx.simulate_keystrokes(window, key);
+}
+
+fn press_enter(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    press_key(cx, app, window, "enter");
 }
 
 fn records(repo: &Path, op: &str) -> Vec<OpLogEntry> {
@@ -481,4 +490,126 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
     assert_eq!(output(repo, &["rev-parse", "merged"]), moved);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS cleanup_partial_presentation per-target details and remote recovery");
+}
+
+/// #492: the five modals the old hand-written Enter chain never named
+/// (create-tag, delete-remote-branch, reset-current, force-with-lease-push,
+/// rebase-onto). With a commit row selected behind them, Enter used to fall
+/// through to `checkout_selected_commit`, which replaced the confirmation with
+/// a checkout plan for that commit. Each one must now consume Enter itself,
+/// Esc must clear the slot and leave the app idle, and a confirmation planned
+/// in repo A must not survive a switch to repo B.
+///
+/// The oracle is the modal slot, not stderr: the fall-through's only
+/// observable act is `open_plan_modal` / `open_checkout_commit_modal`, which
+/// sets `ActiveModal::Checkout` and emits the `[kagi] plan: checkout …` line
+/// together. Asserting the slot therefore also asserts the absent klog line —
+/// without teaching the runner to capture its own stderr.
+pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = output(repo, &["rev-parse", "HEAD"]);
+    let parent = CommitId(output(repo, &["rev-parse", "HEAD~1"]));
+    let (app, window) = mount(cx, repo);
+
+    // Row 1 is the parent commit — deliberately NOT HEAD. `checkout_selected_commit`
+    // returns early on an already-checked-out row, so selecting row 0 would hide
+    // the regression instead of catching it.
+    app.update(cx, |app, _| app.select_headless(1));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected),
+        Some(1),
+        "the fall-through needs a non-HEAD row selected behind the modal"
+    );
+
+    for case in [
+        "create-tag",
+        "delete-remote-branch",
+        "reset-current",
+        "force-lease-push",
+        "rebase-onto",
+    ] {
+        // Every plan below carries blockers on a fixture with no remote and no
+        // second branch, so a two-stage confirm only ever arms and a single
+        // confirm only ever refuses — no scenario step can mutate the repo.
+        app.update(cx, |app, cx| match case {
+            "create-tag" => app.open_create_tag_modal(parent.clone(), cx),
+            "delete-remote-branch" => app.open_delete_remote_branch_modal("origin/main"),
+            "reset-current" => app.open_reset_current_modal(parent.clone(), cx),
+            "force-lease-push" => app.open_force_lease_push_modal(cx),
+            _ => app.open_rebase_modal("main".to_string(), cx),
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|cx| app.read(cx).active_modal.is_some()),
+            "{case}: the modal must open before Enter is tested"
+        );
+
+        press_enter(cx, &app, window);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert!(
+                !matches!(app.read(cx).active_modal, Some(ActiveModal::Checkout(_))),
+                "{case}: Enter fell through to the commit checkout behind the modal"
+            );
+        });
+        assert_eq!(
+            output(repo, &["rev-parse", "HEAD"]),
+            head,
+            "{case}: Enter must not move HEAD"
+        );
+
+        press_key(cx, &app, window, "escape");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(
+                app.active_modal.is_none(),
+                "{case}: Esc must clear the modal slot"
+            );
+            assert!(
+                app.busy_op.is_none(),
+                "{case}: the app must stay usable after Esc"
+            );
+        });
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+    }
+
+    // Repo binding: a destructive confirmation planned against A must be gone
+    // once B is active, so its plan can never be applied to B.
+    let other = build_fixture();
+    let other_before = repo_fingerprint(other.path());
+    app.update(cx, |app, cx| app.open_reset_current_modal(parent, cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| matches!(
+            app.read(cx).active_modal,
+            Some(ActiveModal::ResetCurrent(_))
+        )),
+        "reset-current must be the active modal before the switch"
+    );
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.active_modal.is_none(),
+            "a confirmation planned in repo A must not survive the switch to repo B"
+        );
+        assert!(app.busy_op.is_none());
+    });
+    assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        repo_fingerprint(other.path()),
+        other_before,
+        "repo B must be untouched by A's dropped confirmation"
+    );
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS modal_no_fallthrough: 5 previously-unrouted modals consume Enter/Esc, repo-scoped confirm dropped on switch"
+    );
 }

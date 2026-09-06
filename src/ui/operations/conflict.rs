@@ -623,7 +623,10 @@ impl KagiApp {
         let (outcome, failure, ran) = match repo.execute_conflict_skip(&mode.session, &mode.buffer)
         {
             Ok(o) => {
-                let git_said = o.error.unwrap_or_default();
+                // Through `GitError`'s Display, exactly like the Err arm — the
+                // `git error: …` payload prefix is part of the klog contract
+                // line for a genuine failure (#567 P2).
+                let git_said = o.error.map(|e| format!("{}", e)).unwrap_or_default();
                 let (outcome, failure) = match o.progress {
                     SkipProgress::Finished | SkipProgress::Advanced => {
                         (OpOutcome::Success { after: o.after }, None)

@@ -40,7 +40,9 @@ use kagi_domain::plan_note::{
     ConflictsNote, ConflictsRecovery, ConflictsTitle, PlanDisposition, PlanNote, PlanRecovery,
     PlanTitle, RecoveryKind,
 };
-pub use kagi_domain::sequencer_skip::{classify_skip, SkipObservation, SkipProgress};
+pub use kagi_domain::sequencer_skip::{
+    classify_skip, ReplayPosition, SkipObservation, SkipProgress,
+};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryState};
@@ -2324,8 +2326,10 @@ pub struct SkipOutcome {
     pub after: StateSummary,
     /// git's complaint when it exited non-zero, `None` otherwise. Present even
     /// for [`SkipProgress::Advanced`], where it is only the "could not apply …"
-    /// notice for the *next* commit.
-    pub error: Option<String>,
+    /// notice for the *next* commit. A [`GitError`] rather than a bare string
+    /// so callers render it through the same `Display` as every other failure
+    /// and the `git error: …` payload prefix survives (#567 P2).
+    pub error: Option<GitError>,
 }
 
 /// Plan a `skip` of the current sequencer step (rebase / cherry-pick / revert).
@@ -2422,7 +2426,8 @@ pub fn execute_conflict_skip(
         in_progress: repo.state() != RepositoryState::Clean,
         // Same libgit2 index-cache trap as `--continue` (#296b): re-read.
         unmerged: fresh_index_has_conflicts(repo),
-        replay_advanced: sequencer_position(repo, session) != position_before,
+        before: position_before,
+        after: sequencer_position(repo, session),
     });
     let error = (out.status != 0).then(|| {
         format!(
@@ -2441,28 +2446,60 @@ pub fn execute_conflict_skip(
         .and_then(|h| h.target())
         .map(|oid| oid.to_string());
 
+    // 4. git has already run, so a failure to read the state it left is NOT
+    //    "the skip did not happen" (#567 P1). Returning `Err` here made the UI
+    //    record Failed and skip its reload, leaving the stale conflict session
+    //    on screen. Degrade to `Unclear` with the read error as evidence: the
+    //    caller still reloads and re-detects.
+    let (progress, after, error) = match current_state_summary(repo) {
+        Ok(after) => (progress, after, error),
+        Err(e) => {
+            let note = format!(
+                "{} --skip: reading the state after it ran failed: {}",
+                slug, e
+            );
+            (
+                SkipProgress::Unclear,
+                StateSummary {
+                    head: "unknown".to_string(),
+                    dirty: note.clone(),
+                },
+                Some(match error {
+                    Some(prev) => format!("{}; {}", prev, note),
+                    None => note,
+                }),
+            )
+        }
+    };
+
     Ok(SkipOutcome {
         head: head_sha,
         buffer_preserved_at,
         progress,
-        after: current_state_summary(repo)?,
-        error,
+        after,
+        // One `GitError` at the end so the payload reaches callers through the
+        // same `Display` as every other failure (#567 P2).
+        error: error.map(GitError::Other),
     })
 }
 
 /// Where the sequencer stands: the commit being replayed plus the rebase step
 /// counter. Comparing this across `git <op> --skip` is what tells "we left the
 /// step you asked us to drop" from "we are still sitting on it" (#540).
-fn sequencer_position(repo: &Repository, session: &ConflictSession) -> (Option<git2::Oid>, usize) {
+///
+/// Both readers collapse absent / unreadable / unparsable into `None`, which
+/// [`classify_skip`] treats as a missing observation rather than a changed
+/// value (#567 P1) — so this must never substitute a placeholder such as `0`.
+fn sequencer_position(repo: &Repository, session: &ConflictSession) -> ReplayPosition {
     let name = match session.op {
         ConflictOp::CherryPick { .. } => "CHERRY_PICK_HEAD",
         ConflictOp::Revert { .. } => "REVERT_HEAD",
         _ => "REBASE_HEAD",
     };
-    (
-        read_head_oid(repo, name),
-        read_rebase_progress(repo.path()).0,
-    )
+    ReplayPosition {
+        marker: read_head_oid(repo, name).map(|oid| oid.to_string()),
+        step: read_trimmed_usize(&repo.path().join("rebase-merge").join("msgnum")),
+    }
 }
 
 /// Display string for a [`Head`] (mirrors `current_state_summary`'s head line).

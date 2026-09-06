@@ -15,14 +15,90 @@
 //! a working tree, and the point of this tab is that you can open it while
 //! standing somewhere else.
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 use gpui::SharedString;
 use kagi_domain::resolution::{HunkModel, Region};
 use kagi_git::{PrConflictFile, PrConflictKind};
 
 use super::diff_view::{DiffRow, MainDiffSource, MainDiffView};
-use super::i18n::Msg;
+use super::i18n::{self, Lang, Msg};
 use super::theme::theme;
 use kagi_domain::diff::DiffLineKind;
+
+/// One loaded conflict file per PR tab. The backend caps marker input at
+/// 512 KiB; only its rendered rows survive loading, not a second raw-text copy.
+/// File selection or a new load replaces this owner. Snapshot clones share
+/// rows and jump indices, so repainting also shares split-cache derivations.
+pub(crate) struct ConflictPreview {
+    path: PathBuf,
+    view: MainDiffView,
+    jumps: Arc<Vec<usize>>,
+    empty_message: Option<Msg>,
+    lang: Lang,
+    theme_slug: &'static str,
+}
+
+impl ConflictPreview {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn snapshot(&mut self) -> (MainDiffView, Arc<Vec<usize>>) {
+        let lang = i18n::lang();
+        let theme_slug = theme().slug;
+        if self.lang != lang || self.theme_slug != theme_slug {
+            // Detach from outstanding render snapshots and weak split-cache
+            // keys before changing presentation. Source text stays unchanged.
+            let rows = Arc::make_mut(&mut self.view.rows);
+            if self.lang != lang {
+                for (index, &row) in self.jumps.iter().enumerate() {
+                    rows[row] = DiffRow::HunkHeader(conflict_header(index + 1, self.jumps.len()));
+                }
+                if let Some(message) = self.empty_message {
+                    rows[0] = DiffRow::HunkHeader(message.t().into());
+                }
+            }
+            if self.theme_slug != theme_slug {
+                super::diff_view::highlight_diff_rows(rows, &self.path);
+            }
+            self.lang = lang;
+            self.theme_slug = theme_slug;
+        }
+        (self.view.clone(), Arc::clone(&self.jumps))
+    }
+}
+
+fn conflict_header(index: usize, total: usize) -> SharedString {
+    format!("@@ {} {index}/{total} @@", Msg::PrConflictHunk.t()).into()
+}
+
+impl super::pr_mode::PrTab {
+    pub(super) fn apply_conflict_text(
+        &mut self,
+        path: &Path,
+        text: Option<&str>,
+    ) -> Option<(usize, Arc<Vec<DiffRow>>)> {
+        let files = self.conflicts.as_ref()?.as_ref().ok()?;
+        let file = files.get(
+            self.conflict_selected
+                .unwrap_or(0)
+                .min(files.len().saturating_sub(1)),
+        )?;
+        if file.path != path {
+            return None;
+        }
+        let preview = conflict_diff_view(file, text);
+        let first = preview
+            .jumps
+            .first()
+            .map(|&row| (row, Arc::clone(&preview.view.rows)));
+        self.conflict_preview = Some(preview);
+        self.conflict_at = 0;
+        first
+    }
+}
 
 /// Build the diff view for one conflicted file.
 ///
@@ -36,11 +112,8 @@ use kagi_domain::diff::DiffLineKind;
 /// conflict advances only its own. That is the numbering you would see after
 /// actually merging.
 ///
-/// Returns the view and the row index of each conflict, for the jump control.
-pub(crate) fn conflict_diff_view(
-    f: &PrConflictFile,
-    marker_text: Option<&str>,
-) -> (MainDiffView, Vec<usize>) {
+/// Returns the loaded preview, including conflict jump targets.
+pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) -> ConflictPreview {
     let mut rows: Vec<DiffRow> = Vec::new();
     let mut jumps: Vec<usize> = Vec::new();
     let model = HunkModel::from_marker_text(marker_text.unwrap_or_default());
@@ -61,12 +134,7 @@ pub(crate) fn conflict_diff_view(
                 // The header row is the jump target, so the conflict lands at
                 // the top of the viewport with its own label above it.
                 jumps.push(rows.len());
-                rows.push(DiffRow::HunkHeader(SharedString::from(format!(
-                    "@@ {} {}/{} @@",
-                    Msg::PrConflictHunk.t(),
-                    n,
-                    0 // filled in below once the total is known
-                ))));
+                rows.push(DiffRow::HunkHeader(conflict_header(n, 0)));
                 for l in &h.current {
                     rows.push(line(DiffLineKind::Removed, l, Some(old_no), None));
                     old_no += 1;
@@ -82,26 +150,27 @@ pub(crate) fn conflict_diff_view(
     // Now that the total is known, restate each header as "i/total".
     let total = jumps.len();
     for (i, &ix) in jumps.iter().enumerate() {
-        rows[ix] = DiffRow::HunkHeader(SharedString::from(format!(
-            "@@ {} {}/{} @@",
-            Msg::PrConflictHunk.t(),
-            i + 1,
-            total
-        )));
+        rows[ix] = DiffRow::HunkHeader(conflict_header(i + 1, total));
     }
 
+    let empty_message = rows
+        .is_empty()
+        .then(|| match f.kind {
+            PrConflictKind::DeleteModify => Some(Msg::PrConflictDeleteModify),
+            PrConflictKind::BothAdded | PrConflictKind::BothModified if marker_text.is_none() => {
+                Some(Msg::PrConflictTooLarge)
+            }
+            PrConflictKind::BothAdded => Some(Msg::PrConflictBothAdded),
+            PrConflictKind::Binary => Some(Msg::PrConflictBinary),
+            PrConflictKind::BothModified => None,
+        })
+        .flatten();
     if rows.is_empty() {
         // No hunks: either the kind has no three-way text, or the file was
         // past the size cap. Say which, rather than showing an empty pane.
-        rows.push(DiffRow::HunkHeader(SharedString::from(match f.kind {
-            PrConflictKind::DeleteModify => Msg::PrConflictDeleteModify.t().to_string(),
-            PrConflictKind::BothAdded | PrConflictKind::BothModified if marker_text.is_none() => {
-                Msg::PrConflictTooLarge.t().to_string()
-            }
-            PrConflictKind::BothAdded => Msg::PrConflictBothAdded.t().to_string(),
-            PrConflictKind::Binary => Msg::PrConflictBinary.t().to_string(),
-            PrConflictKind::BothModified => String::new(),
-        })));
+        rows.push(DiffRow::HunkHeader(
+            empty_message.map(Msg::t).unwrap_or_default().into(),
+        ));
     }
 
     // Syntax highlighting, the same pass the Diff tab runs — the language is
@@ -115,7 +184,14 @@ pub(crate) fn conflict_diff_view(
         source: MainDiffSource::Synthetic,
         images: None,
     };
-    (view, jumps)
+    ConflictPreview {
+        path: f.path.clone(),
+        view,
+        jumps: Arc::new(jumps),
+        empty_message,
+        lang: i18n::lang(),
+        theme_slug: theme().slug,
+    }
 }
 
 /// One row, carrying the leading sigil the diff renderer and the syntax
@@ -147,7 +223,7 @@ fn line(
 /// row, so the label lands at the top of the view rather than the first
 /// clashing line arriving with no indication of which side it is.
 pub(crate) fn render_jump_nav(
-    jumps: Vec<usize>,
+    jumps: Arc<Vec<usize>>,
     rows: std::sync::Arc<Vec<DiffRow>>,
     at: usize,
     cx: &mut gpui::Context<crate::ui::KagiApp>,
@@ -221,7 +297,7 @@ mod tests {
     #[test]
     fn line_numbers_follow_diff_semantics() {
         let text = "a\nb\n<<<<<<< base\nBASE1\nBASE2\n=======\nPR1\n>>>>>>> PR\nz\n";
-        let (view, jumps) = conflict_diff_view(&file(), Some(text));
+        let ConflictPreview { view, jumps, .. } = conflict_diff_view(&file(), Some(text));
         assert_eq!(jumps.len(), 1);
 
         let nums: Vec<(Option<u32>, Option<u32>)> = view
@@ -257,7 +333,7 @@ mod tests {
     fn each_conflict_has_a_numbered_header_and_a_jump_target() {
         let text = "x\n<<<<<<< base\nA\n=======\nB\n>>>>>>> PR\ny\n\
                     <<<<<<< base\nC\n=======\nD\n>>>>>>> PR\nz\n";
-        let (view, jumps) = conflict_diff_view(&file(), Some(text));
+        let ConflictPreview { view, jumps, .. } = conflict_diff_view(&file(), Some(text));
         assert_eq!(jumps.len(), 2, "both conflicts must be jump targets");
         for (i, &ix) in jumps.iter().enumerate() {
             match &view.rows[ix] {
@@ -276,7 +352,7 @@ mod tests {
     #[test]
     fn every_line_carries_its_sigil() {
         let text = "keep\n<<<<<<< base\nBASE\n=======\nPR\n>>>>>>> PR\n";
-        let (view, _) = conflict_diff_view(&file(), Some(text));
+        let ConflictPreview { view, .. } = conflict_diff_view(&file(), Some(text));
         let seen: Vec<(&str, &str)> = view
             .rows
             .iter()
@@ -309,18 +385,78 @@ mod tests {
     /// renders a row saying why, rather than an empty pane.
     #[test]
     fn an_untextable_conflict_still_explains_itself() {
-        for kind in [
-            PrConflictKind::Binary,
-            PrConflictKind::DeleteModify,
-            PrConflictKind::BothModified,
+        for (kind, reason) in [
+            (PrConflictKind::Binary, Msg::PrConflictBinary),
+            (PrConflictKind::DeleteModify, Msg::PrConflictDeleteModify),
+            (PrConflictKind::BothModified, Msg::PrConflictTooLarge),
         ] {
             let f = PrConflictFile {
                 path: PathBuf::from("f.bin"),
                 kind,
             };
-            let (view, jumps) = conflict_diff_view(&f, None);
+            let ConflictPreview { view, jumps, .. } = conflict_diff_view(&f, None);
             assert!(jumps.is_empty());
-            assert_eq!(view.rows.len(), 1, "{kind:?}");
+            match view.rows.as_slice() {
+                [DiffRow::HunkHeader(message)] => assert_eq!(message.as_ref(), reason.t()),
+                _ => panic!("a file without text must explain its conflict kind"),
+            }
         }
+    }
+
+    #[test]
+    fn loaded_preview_snapshots_preserve_visible_rows_jumps_and_move_marks() {
+        let text = "keep\n<<<<<<< base\nlong_function_name_moved_unchanged\n=======\n\
+                    long_function_name_moved_unchanged\n>>>>>>> PR\nend\n";
+        let mut preview = conflict_diff_view(&file(), Some(text));
+        for _ in 0..3 {
+            let (view, jumps) = preview.snapshot();
+            assert_eq!(jumps.as_slice(), &[1]);
+            let projection = super::super::diff_split::split_projection(&view.rows);
+            assert_eq!(projection.moved, std::collections::HashSet::from([2, 3]));
+            let lines: Vec<_> = view
+                .rows
+                .iter()
+                .filter_map(|row| match row {
+                    DiffRow::Line { text, .. } => Some(text.as_ref()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                lines,
+                [
+                    " keep",
+                    "-long_function_name_moved_unchanged",
+                    "+long_function_name_moved_unchanged",
+                    " end",
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn replacing_loaded_text_updates_jumps_and_moves_and_releases_old_source() {
+        let first_text = "keep\n<<<<<<< base\nlong_function_name_moved_unchanged\n=======\n\
+                          long_function_name_moved_unchanged\n>>>>>>> PR\nend\n";
+        let next_text = "start\n<<<<<<< base\nremoved\n=======\nadded\n>>>>>>> PR\nmiddle\n\
+                         <<<<<<< base\nother\n=======\nnew\n>>>>>>> PR\n";
+        let mut preview = conflict_diff_view(&file(), Some(first_text));
+        let (first, first_jumps) = preview.snapshot();
+        let first_lifetime = Arc::downgrade(&first.rows);
+        preview = conflict_diff_view(&file(), Some(next_text));
+        let (next, next_jumps) = preview.snapshot();
+        assert_eq!(first_jumps.as_slice(), &[1]);
+        assert_eq!(next_jumps.as_slice(), &[1, 5]);
+        assert!(super::super::diff_split::split_projection(&next.rows)
+            .moved
+            .is_empty());
+        assert_eq!(
+            super::super::diff_split::split_projection(&first.rows).moved,
+            std::collections::HashSet::from([2, 3]),
+        );
+        drop(first);
+        assert!(
+            first_lifetime.upgrade().is_none(),
+            "replacement must not retain old source rows"
+        );
     }
 }

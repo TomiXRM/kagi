@@ -129,7 +129,7 @@ pub fn preflight_apply_suggestion(repo: &Repository, plan: &OperationPlan) -> Re
 /// anchored range still matches `expected` (TOCTOU stale guard). Backs up the
 /// pre-apply file content to the ODB and returns the blob SHA as the recovery
 /// handle. Never stages or commits.
-pub fn execute_apply_suggestion(
+pub(crate) fn execute_apply_suggestion(
     repo: &Repository,
     plan: &OperationPlan,
     s: &Suggestion,

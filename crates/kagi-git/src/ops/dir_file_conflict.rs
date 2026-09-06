@@ -97,14 +97,18 @@ pub fn plan_dir_file_resolution(
 }
 
 /// Re-verify the plan against the current index just before executing: the file
-/// side must still be unmerged and the directory side must still be present.
+/// side must still be unmerged, and the complete directory child list must
+/// match before any savepoint, index mutation or forced checkout.
 /// (TOCTOU guard — mirrors the preflight step of the `Backend::run` path.)
 pub fn preflight_dir_file_resolution(
     repo: &Repository,
     plan: &DirFilePlan,
 ) -> Result<(), GitError> {
     let fresh = plan_dir_file_resolution(repo, &plan.path, plan.choice)?;
-    if fresh.file_oid != plan.file_oid || fresh.file_mode != plan.file_mode {
+    if fresh.file_oid != plan.file_oid
+        || fresh.file_mode != plan.file_mode
+        || fresh.dir_children != plan.dir_children
+    {
         return Err(GitError::Other(format!(
             "{} changed since it was planned — re-plan before executing",
             plan.path.display()
@@ -131,7 +135,7 @@ pub fn preflight_dir_file_resolution(
 /// capturing worktree + index (`add -A`) so every removed blob (including the
 /// untracked directory-side children) stays referenced and gc-safe. Its id is
 /// the recovery handle recorded in the oplog.
-pub fn execute_dir_file_resolution(
+pub(crate) fn execute_dir_file_resolution(
     repo: &Repository,
     repo_path: &Path,
     plan: &DirFilePlan,

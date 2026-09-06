@@ -12,6 +12,9 @@
 //! | 6 | `test_execute_delete_branch_preflight_mismatch` | HEAD moved → execute returns Refused |
 //! | 7 | `test_delete_branch_upstream_warning` | upstream configured → plan shows warning |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_delete_branch;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -19,7 +22,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{BranchNote, PlanNote};
-use kagi_git::{execute_delete_branch, plan_delete_branch};
+use kagi_git::plan_delete_branch;
 
 // ────────────────────────────────────────────────────────────
 // Helpers

@@ -75,7 +75,7 @@ use super::{
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
+pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
@@ -128,7 +128,7 @@ pub fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn unstage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
+pub(crate) fn unstage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
     let head = resolve_head(repo)?;
 
     match head {
@@ -635,7 +635,7 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn execute_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
+pub(crate) fn execute_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
     // ── 1. Write the current index as a tree ─────────────────
     let mut index = repo
         .index()
@@ -689,7 +689,10 @@ pub fn execute_commit(repo: &Repository, message: &str) -> Result<CommitId, GitE
 /// deleted files have their removal staged), but the on-disk index is
 /// written once at the end, so staging hundreds of files is fast.
 /// Returns the number of paths processed.
-pub fn stage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<usize, GitError> {
+pub(crate) fn stage_files(
+    repo: &Repository,
+    paths: &[std::path::PathBuf],
+) -> Result<usize, GitError> {
     if paths.is_empty() {
         return Ok(0);
     }
@@ -731,7 +734,10 @@ pub fn stage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<us
 /// Same semantics as [`unstage_file`] (`git reset HEAD -- <paths>`), done in
 /// a single `reset_default` call when HEAD exists.  Returns the number of
 /// paths processed.
-pub fn unstage_files(repo: &Repository, paths: &[std::path::PathBuf]) -> Result<usize, GitError> {
+pub(crate) fn unstage_files(
+    repo: &Repository,
+    paths: &[std::path::PathBuf],
+) -> Result<usize, GitError> {
     if paths.is_empty() {
         return Ok(0);
     }

@@ -8,6 +8,9 @@
 //!
 //! All repos are created inside `TempDir`s (no network, no writes to real repos).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_merge_branch;
 use std::path::Path;
 use std::process::Command;
 
@@ -312,9 +315,8 @@ fn execute_merge_branch_creates_a_two_parent_merge_commit() {
     let main_before = rev_parse(dir, "main");
     let feature_before = rev_parse(dir, "feature");
 
-    let merged =
-        kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
-            .expect("execute_merge_branch");
+    let merged = execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
+        .expect("execute_merge_branch");
 
     // The current branch advanced to the new commit; HEAD is still on main.
     assert_eq!(rev_parse(dir, "HEAD"), merged.0);

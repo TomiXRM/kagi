@@ -310,7 +310,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any failure.
-pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, GitError> {
+pub(crate) fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, GitError> {
     // ── 1. Resolve current branch ─────────────────────────────
     let head_ref = repo
         .head()
@@ -677,7 +677,7 @@ pub fn plan_push_branch(
     })
 }
 
-pub fn execute_push_branch(
+pub(crate) fn execute_push_branch(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,
@@ -789,7 +789,7 @@ pub fn plan_set_upstream(
     })
 }
 
-pub fn execute_set_upstream(
+pub(crate) fn execute_set_upstream(
     repo: &Repository,
     plan: &OperationPlan,
     branch_name: &str,

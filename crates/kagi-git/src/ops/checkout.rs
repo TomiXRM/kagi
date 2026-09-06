@@ -240,7 +240,7 @@ pub fn preflight_check(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure, including safe-mode
 /// conflicts where an untracked file would be overwritten.
-pub fn execute_checkout(repo: &Repository, branch: &str) -> Result<(), GitError> {
+pub(crate) fn execute_checkout(repo: &Repository, branch: &str) -> Result<(), GitError> {
     // Locate the branch reference.
     let branch_ref = repo
         .find_branch(branch, BranchType::Local)
@@ -455,7 +455,7 @@ fn predict_checkout_conflict(
 /// Order matters: this checks out the target tree while HEAD still points at
 /// the old baseline, then detaches HEAD at the target commit. Moving HEAD first
 /// would make safe checkout compare the target tree to itself and risk a no-op.
-pub fn execute_checkout_commit(repo: &Repository, id: &CommitId) -> Result<(), GitError> {
+pub(crate) fn execute_checkout_commit(repo: &Repository, id: &CommitId) -> Result<(), GitError> {
     let target_oid = git2::Oid::from_str(&id.0)
         .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
         .map_err(|e| GitError::Other(format!("commit '{}' not found: {}", id.0, e.message())))?;

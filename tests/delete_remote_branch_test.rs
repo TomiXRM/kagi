@@ -4,6 +4,9 @@
 //! All repositories (local + bare remote) are created inside `TempDir`s. No
 //! network access: the "remote" is a local bare repository on disk.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_delete_remote_branch;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,7 +14,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{CommonNote, PlanNote, RemoteBranchNote};
-use kagi_git::ops::{execute_delete_remote_branch, plan_delete_remote_branch};
+use kagi_git::ops::plan_delete_remote_branch;
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")

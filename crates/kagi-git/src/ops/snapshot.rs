@@ -66,7 +66,7 @@ pub struct SnapshotEntry {
 /// is never modified — the in-memory index mutation is discarded afterwards.
 ///
 /// Non-destructive: it only writes objects and ADDS a ref.
-pub fn create_snapshot(repo: &Repository, message: &str) -> Result<SnapshotEntry, GitError> {
+pub(crate) fn create_snapshot(repo: &Repository, message: &str) -> Result<SnapshotEntry, GitError> {
     let tree_oid = write_worktree_tree(repo)?;
     let tree = repo
         .find_tree(tree_oid)
@@ -183,7 +183,7 @@ fn snapshot_sort_key(id: &str) -> u128 {
 /// Returns the ids that were removed. Deleting a ref only drops the savepoint
 /// (the commit becomes unreachable and gc-able later) — it never touches the
 /// working tree, so this is non-destructive to the user's files.
-pub fn prune_snapshots(repo: &Repository, cap: usize) -> Result<Vec<String>, GitError> {
+pub(crate) fn prune_snapshots(repo: &Repository, cap: usize) -> Result<Vec<String>, GitError> {
     let mut all = list_snapshots(repo)?; // newest-first
     if all.len() <= cap {
         return Ok(Vec::new());
@@ -199,7 +199,7 @@ pub fn prune_snapshots(repo: &Repository, cap: usize) -> Result<Vec<String>, Git
 }
 
 /// Explicitly delete one snapshot by id. Non-destructive to the working tree.
-pub fn delete_snapshot(repo: &Repository, id: &str) -> Result<(), GitError> {
+pub(crate) fn delete_snapshot(repo: &Repository, id: &str) -> Result<(), GitError> {
     let refname = format!("{}{}", SNAPSHOT_REF_PREFIX, id);
     let mut r = repo
         .find_reference(&refname)
@@ -298,7 +298,7 @@ pub fn preflight_restore_snapshot(repo: &Repository, id: &str) -> Result<(), Git
 ///   3. Verify (see [`verify_restore_snapshot`]).
 ///
 /// Returns the savepoint's id (the recovery handle).
-pub fn execute_restore_snapshot(repo: &Repository, id: &str) -> Result<String, GitError> {
+pub(crate) fn execute_restore_snapshot(repo: &Repository, id: &str) -> Result<String, GitError> {
     preflight_restore_snapshot(repo, id)?;
 
     // ── 1. Savepoint the current state first. ──

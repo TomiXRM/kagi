@@ -3,6 +3,9 @@
 //! All repositories are created under `TempDir`; no existing user repository is
 //! touched.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_revert;
 use std::path::Path;
 use std::process::Command;
 
@@ -10,7 +13,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{
-    ops::{execute_revert, plan_revert, preflight_check},
+    ops::{plan_revert, preflight_check},
     CommitId,
 };
 

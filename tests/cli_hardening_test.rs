@@ -8,6 +8,9 @@
 //!
 //! No network access: remotes are local paths / bare repos in a `TempDir`.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{fetch_remote, fetch_remote_branch};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -15,7 +18,6 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::cli::{check_operand, run_git};
-use kagi_git::ops::{fetch_remote, fetch_remote_branch};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = raw_git(dir, args);

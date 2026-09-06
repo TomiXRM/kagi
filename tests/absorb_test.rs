@@ -14,11 +14,14 @@
 //! | 5 | `test_absorb_preflight_head_moved` | HEAD moved since plan → preflight refuses |
 //! | 6 | `test_absorb_protected_branch_blocked` | protected branch → blocker |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_absorb;
 use std::path::Path;
 use std::process::Command;
 
 use kagi_domain::absorb::{HunkDisposition, KeepReason};
-use kagi_git::{execute_absorb, plan_absorb, preflight_absorb, Backend};
+use kagi_git::{plan_absorb, preflight_absorb, Backend};
 
 #[path = "support/isolated.rs"]
 mod test_support;

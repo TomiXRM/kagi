@@ -358,7 +358,7 @@ pub fn plan_delete_merged_branches(
 /// global preflight failure (HEAD moved since planning) returns `Err`.
 /// A branch can appear in both `deleted` and `failed`: a completed remote
 /// deletion retains its recovery OID even when the later local deletion fails.
-pub fn execute_delete_merged_branches(
+pub(crate) fn execute_delete_merged_branches(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,

@@ -5,6 +5,12 @@
 //! the fix. Every test is written so that reverting its fix flips it red — the
 //! per-test comment records the mutation.
 
+#[path = "../../../tests/support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_conflict_abort, execute_conflict_continue, execute_conflict_save,
+    stage_conflict_resolution,
+};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
@@ -13,9 +19,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{
-    continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_continue,
-    execute_conflict_save, stage_conflict_resolution, ConflictKind, ContinueOutcome,
-    ResolutionBuffer, ResolutionChoice,
+    continue_blockers, detect_conflict_session, ConflictKind, ContinueOutcome, ResolutionBuffer,
+    ResolutionChoice,
 };
 
 // ────────────────────────────────────────────────────────────

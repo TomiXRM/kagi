@@ -8,16 +8,16 @@
 //! | 4 | `execute_deletes_local_and_remote` | full pipeline vs a file:// bare origin: both halves deleted, tips recorded |
 //! | 5 | `execute_refuses_moved_local_tip` | commit lands after plan → per-branch failure, branch survives |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_delete_merged_branches;
 use std::path::Path;
 use std::process::Command;
 
 use tempfile::TempDir;
 
 use git2::Repository;
-use kagi_git::ops::{
-    collect_branch_cleanup, execute_delete_merged_branches, plan_delete_merged_branches,
-    MergedBranchStatus,
-};
+use kagi_git::ops::{collect_branch_cleanup, plan_delete_merged_branches, MergedBranchStatus};
 
 /// 2026-01-10T00:00:00Z — all fixture dates are relative to this "now".
 const NOW: i64 = 1_768_003_200;

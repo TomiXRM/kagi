@@ -54,7 +54,7 @@ M は PM 確認待ち、1b は未実装であり横展開 gate は未通過。
 |---|---|---|---|
 | `RepoId` | slice 1: Backend が解決した canonical common Git directory の値 | operation/軽量 owner record が参照中は保持 | linked worktree 間で共有する refs/ODB/admin 資源 |
 | `WorktreeId` | slice 1: `RepoId` + canonical per-worktree Git directory（main も明示） | locator を凍結し、remove 承認は下記 admin fingerprint にも束縛 | HEAD/index/status/conflict、書込対象 |
-| `TabId` / session incarnation | **slice 1 では導入しない**。#482/#488 で発行元・同一性検証を設計してから導入 | resource fingerprint とは別の session 世代 | 将来の表示・session 寿命 |
+| `TabId` / session incarnation | **#482 段階1 で導入済み**。`Sessions::attach` が tab slot と incarnation を単調発行し、`WorktreeId` を attach 時に凍結する | resource fingerprint とは別の session 世代。close→同 path reopen は必ず別 incarnation | 表示 attachment・plan slot 所有・invalidation 配送先 |
 | `OperationId` | 実行試行を一意に区別する opaque ID | plan digest/entry の連番とは別。receipt と完了を束縛 | 二重配送防止、失敗の照会 |
 | `RequestId` | slice 1 の plan は単調 request/revision。read の incarnation 付き ID は後続 | request 完了/置換で失効 | 将来 loading/data/error の一体所有 |
 | remote identity | transport authority（接続先/user/port 等）+ remote 側の解決済み repo/worktree identity | alias 名だけで同一視しない。再接続は検証 | ローカル path canonicalization と混同しない |
@@ -88,15 +88,36 @@ Git の lock、preflight、lease/OID 条件は Backend に残す。cross-process
 slice 1 は第二の global/actor/Workspace を新設しない。
 
 ```rust,ignore
-// slice 1: KagiApp の一フィールドに保持。snapshot/tab_cache は入れない。
+// #482 段階1 到達状態: KagiApp の一フィールドに保持。snapshot/tab_cache は入れない。
 struct Sessions {
-    operations: HashMap<OperationId, InFlight>,
+    sessions: HashMap<SessionId, TabSession>,   // 段階1: attach/detach/depart する表示 slot
+    operations: HashMap<OperationId, InFlight>, // InFlight は凍結 Attachment を持つ
     leases: HashMap<RepoId, OperationId>,
-    stale: HashSet<WorktreeId>,
+    stale: HashSet<WorktreeId>,                 // 段階1: path key を廃止
+    stash_conflicts: HashMap<SessionId, StashConflict>, // 同上（#557 の owner 束縛）
+    stash_followups: HashMap<SessionId, StashConflict>,
+    plan_owner: Option<SessionId>,              // 単一 plan slot の所有者
 }
 // KagiApp { app_sessions: Sessions, ...既存 active_view/tab_cache/busy_op... }
 // completion と最小 owner 情報は operation に所属し、tab reset では消さない。
 ```
+
+**#482 段階1 到達状態**: `Attachment` は `(SessionId, path locator, 凍結 WorktreeId, visit)`。
+凍結 `WorktreeId` は plan 採用時に `plan.worktree`（実解決値）と、承認直前に locator の
+再解決値と照合する。不一致・解決不能は再 attach を要求して拒否する。
+共有 refs/stash/admin を変える操作は同 RepoId の開いている全 sibling worktree を stale にし、
+index/WT だけの変更（stash apply）は対象 worktree に限定する。
+`visit` は tab を離れるたびに増える離脱 revision で、incarnation は変えない。
+離脱で stash follow-up 提案は破棄され、遅着 completion は提案を作らず、復帰後の提案は
+実 conflict の再観測でのみ再証明される。`attach` は解決済み `WorktreeId` で alias を統合し、
+配送は一致する全 session へ行う。
+UI 側の owner 判定は `KagiApp::active_session()` の `SessionId` 一致のみで、
+`(repo_path, switch_generation)` の組は app family から消えた。`Delivery::Invalidate` /
+`RemovedTarget` は `WorktreeId` で宛先 tab を引く。tab close は `Sessions::detach` を呼び、
+conflict/follow-up payload と（所有していれば）plan slot だけを失効させ、
+`operations` / `leases` / `settled` / `reconcile` には触れない（close は実行取消ではない）。
+`switch_generation` は read load の世代 guard として残る（段階2 の #489 で置換）。
+snapshot / `active_view` / `tab_cache` は段階1 では未変更。
 
 最後の **tab** close は Welcome へ遷移して KagiApp が残る。
 KagiApp は window が生きている間だけの host。slice 1a は **実行中 lease がある間、window close と
@@ -700,7 +721,7 @@ progress/owner、window close/Quit 保留、保存競合を検証できること
 | app root module + backend 共通契約 | 先に crate を作らず、MCP が job を必要とするときに抽出。安全/request 契約の共有は先行可能 |
 | tab close 後の通知 | KagiApp で Welcome/owner 通知、1a で window close/Quit 保留。window 外 registry は後続 |
 | sync/index/FS の例外 | 記録所有移管と scheduling/UX 変更を分離。全 mutation に modal を強制しない |
-| 初回の成果範囲 | 1a: remove/最小 registry/receipt/lifetime/fingerprint、1b: writer admission のみ。TabId/session incarnation、全 session 移管や worker は含めない |
+| 初回の成果範囲 | 1a: remove/最小 registry/receipt/lifetime/fingerprint、1b: writer admission のみ。全 session 移管や worker は含めない（TabId/session incarnation は #482 段階1 で追加、[ADR-0182](../../adr/0182-session-identity-and-lifetime.md)） |
 
 ## 10. 読解根拠・関連入力
 

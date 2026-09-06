@@ -24,6 +24,10 @@ pub struct RemovePlan {
     pub preview: Arc<OperationPlan>,
     pub repo: PathBuf,
     pub common_dir: RepoId,
+    /// Identity of the *managing* worktree this plan was resolved against
+    /// (#482); `worktree_id` below is the removal target. Compared with the
+    /// frozen `Attachment` before adoption and again before approval.
+    pub worktree: WorktreeId,
     pub target: PathBuf,
     pub worktree_id: WorktreeId,
     name: String,
@@ -118,6 +122,7 @@ impl Backend {
         Ok(RemovePlan {
             preview: Arc::new(preview),
             repo,
+            worktree: backend.write_worktree_id()?,
             common_dir: RepoId(common_dir),
             target,
             worktree_id,

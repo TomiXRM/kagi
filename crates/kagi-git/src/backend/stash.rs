@@ -2,7 +2,7 @@
 use super::recording::{finalize, Recording};
 use super::*;
 use crate::oplog::{Actor, OpLogEntry, OpOutcome};
-use kagi_domain::remove::RepoId;
+use kagi_domain::remove::{RepoId, WorktreeId};
 pub use kagi_domain::stash::*;
 use std::sync::Arc;
 
@@ -11,6 +11,10 @@ pub struct StashPlan {
     pub preview: Arc<OperationPlan>,
     pub repo: PathBuf,
     pub common_dir: RepoId,
+    /// Identity of the worktree this plan was actually resolved against (#482).
+    /// Compared with the frozen `Attachment` before the plan is adopted and
+    /// again before approval, so an attach→plan swap cannot be executed.
+    pub worktree: WorktreeId,
     pub action: StashAction,
 }
 #[derive(Clone, Debug)]
@@ -150,12 +154,14 @@ impl Backend {
         let backend = Self::open(path)?;
         let repo =
             std::fs::canonicalize(&backend.path).map_err(|e| GitError::Other(e.to_string()))?;
-        let common_dir = backend.write_repo_id()?;
+        let worktree = backend.write_worktree_id()?;
+        let common_dir = worktree.repo.clone();
         let preview = backend.plan(&action.operation())?;
         Ok(StashPlan {
             preview: Arc::new(preview),
             repo,
             common_dir,
+            worktree,
             action,
         })
     }

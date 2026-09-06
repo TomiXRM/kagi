@@ -930,3 +930,168 @@ fn lost_delivery_never_appends_again_or_claims_unconfirmed_release() {
     assert_eq!(read_oplog_tail(100).len(), 1);
     assert_eq!(f.ids().len(), 2);
 }
+
+/// #482 review P2: leaving a tab ends the visit. A pending follow-up proposal is
+/// discarded, a completion that lands after the departure creates no proposal,
+/// and on return the payload proposes nothing until a **live** re-observation of
+/// the same conflict re-proves it. The OID a proposal carries therefore always
+/// comes from the current repository state, never from a preserved payload.
+#[test]
+fn departing_a_tab_expires_proposals_and_late_completions_make_none() {
+    let f = Fixture::new();
+    let before = f.ids();
+    let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
+
+    // A completion that lands after the user left A proposes nothing.
+    let late = conflict(&f, &mut s, owner, StashAction::Pop { index: 1 });
+    s.depart(owner);
+    s.apply(late);
+    assert!(
+        s.stash_conflict(owner).is_none(),
+        "late completion, no proposal"
+    );
+    let live = Backend::open(&f.repo)
+        .unwrap()
+        .stash_conflict_identity()
+        .unwrap();
+    assert!(
+        !live.is_empty(),
+        "the repository really is still conflicted"
+    );
+    s.observe_stash_conflict(owner, &live);
+    assert!(
+        s.stash_conflict(owner).is_none(),
+        "a proposal the user never saw is not resurrected by observing the conflict"
+    );
+    assert_eq!(f.ids(), before);
+}
+
+/// Continuing and then leaving before the authoritative reload lands must not
+/// leave a drop proposal waiting on the next visit.
+#[test]
+fn departing_between_continue_and_reload_discards_the_follow_up() {
+    let f = Fixture::new();
+    let before = f.ids();
+    let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
+    let completion = conflict(&f, &mut s, owner, StashAction::Pop { index: 1 });
+    s.apply(completion);
+    let b = Backend::open(&f.repo).unwrap();
+    s.observe_stash_conflict(owner, &b.stash_conflict_identity().unwrap());
+    s.continue_stash_conflict(owner);
+    s.depart(owner);
+    s.observe_stash_conflict(owner, &[]); // the reload finally lands
+    assert!(s.take_stash_followup(owner).is_none());
+    assert!(s.stash_conflict(owner).is_none());
+    assert_eq!(f.ids(), before);
+}
+
+#[test]
+fn a_proposal_is_re_proven_by_live_re_observation_after_a_return() {
+    let f = Fixture::new();
+    let before = f.ids();
+    let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
+    let completion = conflict(&f, &mut s, owner, StashAction::Pop { index: 1 });
+    s.apply(completion);
+    assert_eq!(s.stash_conflict(owner).unwrap().oid, before[1]);
+
+    // A→B: same tab, same incarnation, but the visit is over.
+    s.depart(owner);
+    assert!(s.is_attached(owner), "the tab is still open");
+    assert!(
+        s.stash_conflict(owner).is_none(),
+        "a departed visit proposes nothing"
+    );
+    s.continue_stash_conflict(owner);
+    assert!(
+        s.stash_conflict(owner).is_none(),
+        "and cannot be marked continued while inert"
+    );
+
+    // B→A: the reload re-observes the real conflict, and *that* is what makes it
+    // proposable again — the OID is the one the live conflict still matches.
+    let b = Backend::open(&f.repo).unwrap();
+    let live = b.stash_conflict_identity().unwrap();
+    assert!(!live.is_empty());
+    s.observe_stash_conflict(owner, &live);
+    let payload = s
+        .stash_conflict(owner)
+        .expect("a live conflict is proposable again");
+    assert_eq!(
+        payload.oid, before[1],
+        "the OID comes from the re-observed conflict"
+    );
+    assert_eq!(f.ids(), before);
+    // The stale continue was not carried over: promoting still needs a fresh one.
+    s.observe_stash_conflict(owner, &[]);
+    assert!(s.take_stash_followup(owner).is_none());
+}
+
+/// Resolving the conflict while away leaves nothing to re-prove on return.
+#[test]
+fn a_conflict_resolved_while_away_proposes_nothing_on_return() {
+    let f = Fixture::new();
+    let before = f.ids();
+    let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
+    let completion = conflict(&f, &mut s, owner, StashAction::Pop { index: 1 });
+    s.apply(completion);
+    s.depart(owner);
+
+    let b = Backend::open(&f.repo).unwrap();
+    let session = b.detect_conflict_session().unwrap();
+    let mut buffer = b.resolution_buffer_from_repo_with_autosave().unwrap();
+    buffer
+        .apply_choice(Path::new("file"), kagi_git::ResolutionChoice::Incoming)
+        .unwrap();
+    b.execute_conflict_continue(&session, &buffer).unwrap();
+
+    // The return re-observes a clean index: nothing to propose, and the old
+    // payload is not promoted to a drop follow-up.
+    s.observe_stash_conflict(owner, &[]);
+    assert!(s.stash_conflict(owner).is_none());
+    assert!(s.take_stash_followup(owner).is_none());
+    assert_eq!(f.ids(), before, "no stash was dropped without a proposal");
+}
+
+/// #482 review P2: `refs/stash` is shared, so push/pop/drop make every open
+/// sibling worktree stale. `apply` writes only this worktree's index and working
+/// tree, so it stays scoped to its own target.
+#[test]
+fn shared_stash_changes_reach_siblings_and_index_only_changes_do_not() {
+    for (action, shared) in [
+        (StashAction::Drop { index: 1 }, true),
+        (StashAction::Apply { index: 1 }, false),
+    ] {
+        let f = Fixture::new();
+        let mut s = Sessions::new();
+        let owner = s.attach(f.repo.clone());
+        let linked = f.repo.with_file_name("linked");
+        git(
+            &f.repo,
+            &["worktree", "add", "-qb", "linked", linked.to_str().unwrap()],
+        );
+        let sibling = Backend::open(&linked)
+            .and_then(|b| b.write_worktree_id())
+            .unwrap();
+        let _open = s.attach(linked.clone());
+
+        let done = f.job(&mut s, owner, action.clone()).run();
+        let deliveries = s.apply(done);
+        assert_eq!(s.is_stale(&sibling), shared, "{action:?} sibling staleness");
+        assert_eq!(
+            deliveries.iter().any(|delivery| matches!(
+                delivery,
+                Delivery::Invalidate(target) if target.worktree == sibling
+            )),
+            shared,
+            "{action:?} sibling delivery"
+        );
+        assert!(matches!(
+            deliveries.last(),
+            Some(Delivery::Completed { .. })
+        ));
+    }
+}

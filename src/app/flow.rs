@@ -28,6 +28,26 @@ impl Planned {
             Self::Stash { plan, .. } => &plan.common_dir,
         }
     }
+    /// The worktree the backend actually resolved while planning — compared with
+    /// the owner's frozen identity before adoption and before approval (#482).
+    pub fn worktree(&self) -> &kagi_domain::remove::WorktreeId {
+        match self {
+            Self::Remove { plan, .. } => &plan.worktree,
+            Self::Stash { plan, .. } => &plan.worktree,
+        }
+    }
+    /// Whether this operation changes resources the whole repository shares
+    /// (refs, the stash reflog, worktree administration) rather than only the
+    /// target worktree's index and working tree. Shared changes make every open
+    /// sibling worktree stale (#482 invariant).
+    pub fn changes_shared_refs(&self) -> bool {
+        match self {
+            Self::Remove { .. } => true,
+            // Apply reads the stash and writes only this worktree's index/WT;
+            // push/pop/drop all rewrite the stash reflog.
+            Self::Stash { plan, .. } => !matches!(plan.action, StashAction::Apply { .. }),
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Policy {
@@ -103,9 +123,36 @@ pub struct PlanErrorCompletion {
     revision: RequestId,
     pub recording: Recording,
 }
+/// The frozen attachment, what the plan resolved, and what the locator resolves
+/// *now* must all name the same worktree. A `RepoId` check at execute time does
+/// not cover attach→plan drift: a symlink swapped to a sibling worktree keeps
+/// the repository and changes the target.
+fn identity_matches(s: &Sessions, prepared: &Planned) -> Result<(), AdmissionError> {
+    let owner = prepared.owner();
+    s.confirm_identity(owner)?;
+    if owner.worktree.as_ref() != Some(prepared.worktree()) {
+        return Err(AdmissionError::Identity(
+            "the plan resolved a different worktree than this tab; reopen the repository".into(),
+        ));
+    }
+    Ok(())
+}
 pub fn apply_plan(s: &mut Sessions, c: PlanCompletion) -> bool {
     if s.revision != c.revision || !matches!(s.state, PlanState::Planning { .. }) {
         return false;
+    }
+    // #482: never adopt a plan built against a different worktree than the one
+    // this tab froze at attach time. The preview, stash indices and OIDs in it
+    // came from that other repository — showing them is already the bug.
+    if let PlanState::Ready { prepared, .. } = &c.state {
+        if let Err(error) = identity_matches(s, prepared) {
+            s.state = PlanState::Error {
+                error: error.to_string(),
+                open_failed: false,
+                recording: None,
+            };
+            return true;
+        }
     }
     s.state = c.state;
     if let Some(evidence) = c.error_job {
@@ -153,6 +200,8 @@ pub fn approve(
     if !s.is_attached(prepared.owner().session) {
         return Err(AdmissionError::StaleApproval);
     }
+    // Re-resolve: the modal was on screen while the user could swap the path.
+    identity_matches(s, prepared)?;
     let approved = Approved {
         revision: token.revision,
         prepared: prepared.clone(),
@@ -279,20 +328,16 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     ) {
         s.reconcile.insert(id, (owner.plan.clone(), stopped));
     }
-    // #482 stage 1: invalidation is addressed by frozen `WorktreeId`, never by
-    // re-resolving a path. The manager repo's identity was frozen on the owning
-    // tab at attach time; the removal target's came from the plan.
-    let manager = owner
-        .attachment
-        .worktree
-        .clone()
-        .map(|worktree| InvalidTarget {
-            worktree,
-            path: match &owner.plan {
-                Planned::Remove { plan, .. } => plan.repo.clone(),
-                Planned::Stash { plan, .. } => plan.repo.clone(),
-            },
-        });
+    // #482 stage 1: invalidation is addressed by `WorktreeId`, never by
+    // re-resolving a path. The plan's own resolution is the identity here — it
+    // was proven equal to the owner's frozen one before approval.
+    let manager = InvalidTarget {
+        worktree: owner.plan.worktree().clone(),
+        path: match &owner.plan {
+            Planned::Remove { plan, .. } => plan.repo.clone(),
+            Planned::Stash { plan, .. } => plan.repo.clone(),
+        },
+    };
     let mut deliveries = vec![];
     match (&owner.plan, &report.evidence) {
         (Planned::Remove { plan, .. }, FamilyEvidence::Remove(r)) => {
@@ -300,16 +345,14 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                 worktree: plan.worktree_id.clone(),
                 path: plan.target.clone(),
             };
-            for target in manager.into_iter().chain(std::iter::once(target)) {
-                s.stale.insert(target.worktree.clone());
-                deliveries.push(
-                    if target.path == plan.target && r.target_exists == Some(false) {
-                        Delivery::RemovedTarget(target)
-                    } else {
-                        Delivery::Invalidate(target)
-                    },
-                );
-            }
+            deliveries.push(Delivery::Invalidate(manager.clone()));
+            s.stale.insert(manager.worktree.clone());
+            deliveries.push(if r.target_exists == Some(false) {
+                Delivery::RemovedTarget(target.clone())
+            } else {
+                Delivery::Invalidate(target.clone())
+            });
+            s.stale.insert(target.worktree);
         }
         (Planned::Stash { plan, .. }, FamilyEvidence::Stash(r)) => {
             if matches!(
@@ -317,12 +360,15 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                 StashAction::Apply { .. } | StashAction::Pop { .. }
             ) && !r.evidence.conflicts.is_empty()
             {
-                // The conflict belongs to the session that approved the stash.
-                // A closed owner leaves no payload behind to resurrect (#557).
-                if let (Some(oid), true) =
-                    (&r.evidence.oid, s.is_attached(owner.attachment.session))
-                {
-                    let session = owner.attachment.session;
+                // The conflict belongs to the session that approved the stash,
+                // and to the *visit* it approved it in. A closed owner leaves no
+                // payload behind, and one the user has since left gets no new
+                // proposal — the next visit must re-observe it live (#557).
+                let session = owner.attachment.session;
+                if let (Some(oid), true) = (
+                    &r.evidence.oid,
+                    s.visit(session) == Some(owner.attachment.visit),
+                ) {
                     s.clear_stash_conflict(session);
                     s.stash_conflicts.insert(
                         session,
@@ -331,16 +377,37 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                             oid: oid.clone(),
                             identity: r.evidence.conflict_identity.clone(),
                             pending: false,
+                            visit: owner.attachment.visit,
                         },
                     );
                 }
             }
-            if let Some(target) = manager {
-                s.stale.insert(target.worktree.clone());
-                deliveries.push(Delivery::Invalidate(target));
-            }
+            deliveries.push(Delivery::Invalidate(manager.clone()));
+            s.stale.insert(manager.worktree.clone());
         }
         _ => unreachable!("completion family is fixed by its owned job"),
+    }
+    // Shared refs / stash / worktree administration make every *open* sibling
+    // worktree of the same repository stale, not only the one that was written.
+    // Index- and working-tree-only changes stay scoped to their target (#482).
+    if owner.plan.changes_shared_refs() {
+        let delivered: Vec<_> = deliveries
+            .iter()
+            .filter_map(|delivery| match delivery {
+                Delivery::Invalidate(t) | Delivery::RemovedTarget(t) => Some(t.worktree.clone()),
+                Delivery::Completed { .. } => None,
+            })
+            .collect();
+        for worktree in s.siblings_of(owner.plan.common_dir()) {
+            if delivered.contains(&worktree) {
+                continue;
+            }
+            let path = s
+                .path_of(&worktree)
+                .unwrap_or_else(|| worktree.git_dir.clone());
+            s.stale.insert(worktree.clone());
+            deliveries.push(Delivery::Invalidate(InvalidTarget { worktree, path }));
+        }
     }
     deliveries.push(Delivery::Completed {
         id,

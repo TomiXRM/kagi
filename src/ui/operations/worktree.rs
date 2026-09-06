@@ -338,6 +338,7 @@ impl KagiApp {
         let Some(owner) = self
             .active_session()
             .and_then(|session| self.app_sessions.attachment(session))
+            .filter(|owner| owner.worktree.is_some())
         else {
             return;
         };

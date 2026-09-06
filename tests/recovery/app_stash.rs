@@ -164,26 +164,36 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         assert!(cx.read(|cx| !matches!(app.read(cx).status_footer, FooterStatus::Success(_))));
         let other = build_fixture();
         let other_path = other.path().canonicalize().unwrap();
+        let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
         app.update(cx, |app, cx| {
             assert!(app.open_repository(other_path.clone(), cx));
         });
         cx.run_until_parked();
+        // #482 stage 1: the conflict belongs to the *session* that popped it, and
+        // to the visit it popped it in. B is a different session of a different
+        // repository and stays clean; A has been departed, so its payload
+        // proposes nothing while the user is away.
+        let sibling = cx.read(|cx| app.read(cx).active_session().unwrap());
+        assert_ne!(owner, sibling);
+        cx.read(|cx| {
+            let sessions = &app.read(cx).app_sessions;
+            assert!(sessions.stash_conflict(sibling).is_none());
+            assert!(
+                sessions.stash_conflict(owner).is_none(),
+                "#482: leaving A ends its visit — a departed proposal is inert"
+            );
+        });
         app.update(cx, |app, cx| app.switch_repo(0, cx));
         wait(cx, &app, |app| app.conflict.is_some());
-        // #482 stage 1: the conflict belongs to the *session* that popped it.
-        // B is a different session of a different repository and stays clean.
-        let (owner, sibling) = cx.read(|cx| {
-            let app = app.read(cx);
-            (app.active_session().unwrap(), app.tabs[1].session)
-        });
-        assert_ne!(owner, sibling);
-        assert!(cx.read(|cx| app.read(cx).app_sessions.stash_conflict(sibling).is_none()));
+        // Returning re-detects the conflict from the repository, and *that* live
+        // re-observation is what makes it proposable again — the OID belongs to
+        // the conflict that is actually still there, not to a preserved payload.
         assert_eq!(
             cx.read(|cx| app
                 .read(cx)
                 .app_sessions
                 .stash_conflict(owner)
-                .unwrap()
+                .expect("the live re-detect re-proves the conflict")
                 .oid
                 .clone()),
             before[1]

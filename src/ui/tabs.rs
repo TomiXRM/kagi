@@ -112,8 +112,18 @@ impl KagiApp {
         // Remember it for the Welcome screen's "Recent" list.
         record_recent_repo(&path);
 
+        // #482: `attach` unifies by the *resolved* `WorktreeId`, so two locators
+        // for one worktree (`/repo` and `/repo/.git`, a symlink) come back as the
+        // session an existing tab already holds. Path comparison above cannot
+        // see that, so switch to that tab rather than opening a second one.
+        let session = self.app_sessions.attach(path.clone());
+        if let Some(idx) = self.tabs.iter().position(|t| t.session == session) {
+            self.switch_repo(idx, cx);
+            return true;
+        }
+
         let tab = RepoTab {
-            session: self.app_sessions.attach(path.clone()),
+            session,
             path: path.clone(),
             name: info.name.clone(),
             remote: None,
@@ -132,6 +142,16 @@ impl KagiApp {
     /// from the one that was closed, and a session can.
     pub fn active_session(&self) -> Option<crate::app::SessionId> {
         self.tabs.get(self.active_tab).map(|tab| tab.session)
+    }
+
+    /// The user is leaving the tab that is on screen (#482). The tab stays open
+    /// and keeps its incarnation, but the visit ends: a pending stash follow-up
+    /// proposal is discarded and a completion landing afterwards cannot create a
+    /// new one. Returning re-observes the real conflict state instead.
+    fn depart_active_tab(&mut self) {
+        if let Some(session) = self.active_session() {
+            self.app_sessions.depart(session);
+        }
     }
 
     /// Identity of the repository currently on screen, in tab-path terms:
@@ -170,6 +190,7 @@ impl KagiApp {
             self.open_editor_dirty_guard(EditorPendingIntent::SwitchRepo(tab.path.clone()), cx);
             return;
         }
+        self.depart_active_tab();
         self.active_tab = index;
         self.error = None;
 
@@ -309,6 +330,7 @@ impl KagiApp {
 
         // No local path: every `self.repo_path.as_ref()?` operation no-ops, and
         // `arm_watcher` returns early.
+        self.depart_active_tab();
         self.repo_path = None;
         self.repo_session = None;
         self.reset_per_repo_ui();

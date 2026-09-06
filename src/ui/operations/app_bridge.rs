@@ -283,15 +283,21 @@ impl KagiApp {
                 // #528: the worktree no longer exists, so neither should its
                 // tab. `close_tab` keeps the existing dirty guard and only
                 // re-activates a neighbour when this tab was the active one.
-                // #482 stage 1: found by frozen `WorktreeId`, so a tab opened on
-                // the same path after the plan is never the one that closes.
-                if let Some(session) = self.app_sessions.session_for(&target.worktree) {
+                // #482: found by `WorktreeId`, so a tab opened on the same path
+                // after the plan is never the one that closes — and every tab
+                // aliasing that worktree closes, not an arbitrary one.
+                for session in self.app_sessions.sessions_for(&target.worktree) {
                     self.close_tab_by_session(session, cx);
                 }
             }
             Delivery::Invalidate(target) => {
                 self.tab_cache.remove(&target.path);
-                if self.app_sessions.session_for(&target.worktree) == self.active_session() {
+                let active = self.active_session();
+                if active.is_some_and(|active| {
+                    self.app_sessions
+                        .sessions_for(&target.worktree)
+                        .contains(&active)
+                }) {
                     self.reload(cx);
                 }
             }

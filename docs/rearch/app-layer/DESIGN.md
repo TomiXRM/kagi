@@ -90,7 +90,7 @@ slice 1 は第二の global/actor/Workspace を新設しない。
 ```rust,ignore
 // #482 段階1 到達状態: KagiApp の一フィールドに保持。snapshot/tab_cache は入れない。
 struct Sessions {
-    sessions: HashMap<SessionId, TabSession>,   // 段階1: attach/detach する表示 slot
+    sessions: HashMap<SessionId, TabSession>,   // 段階1: attach/detach/depart する表示 slot
     operations: HashMap<OperationId, InFlight>, // InFlight は凍結 Attachment を持つ
     leases: HashMap<RepoId, OperationId>,
     stale: HashSet<WorktreeId>,                 // 段階1: path key を廃止
@@ -102,7 +102,15 @@ struct Sessions {
 // completion と最小 owner 情報は operation に所属し、tab reset では消さない。
 ```
 
-**#482 段階1 到達状態**: `Attachment` は `(SessionId, path locator, 凍結 WorktreeId)`。
+**#482 段階1 到達状態**: `Attachment` は `(SessionId, path locator, 凍結 WorktreeId, visit)`。
+凍結 `WorktreeId` は plan 採用時に `plan.worktree`（実解決値）と、承認直前に locator の
+再解決値と照合する。不一致・解決不能は再 attach を要求して拒否する。
+共有 refs/stash/admin を変える操作は同 RepoId の開いている全 sibling worktree を stale にし、
+index/WT だけの変更（stash apply）は対象 worktree に限定する。
+`visit` は tab を離れるたびに増える離脱 revision で、incarnation は変えない。
+離脱で stash follow-up 提案は破棄され、遅着 completion は提案を作らず、復帰後の提案は
+実 conflict の再観測でのみ再証明される。`attach` は解決済み `WorktreeId` で alias を統合し、
+配送は一致する全 session へ行う。
 UI 側の owner 判定は `KagiApp::active_session()` の `SessionId` 一致のみで、
 `(repo_path, switch_generation)` の組は app family から消えた。`Delivery::Invalidate` /
 `RemovedTarget` は `WorktreeId` で宛先 tab を引く。tab close は `Sessions::detach` を呼び、

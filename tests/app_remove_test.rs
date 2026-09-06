@@ -731,3 +731,151 @@ fn detach_expires_the_plan_slot_and_its_approval() {
     assert!(approve(&mut s, token, RemovePolicy::default()).is_err());
     assert!(f.linked.exists(), "an expired approval never executes");
 }
+
+/// #482 review P1: the frozen identity is compared with what the backend
+/// actually resolved. Swapping the locator to another worktree after attach —
+/// same repository, different HEAD/index — is refused at plan adoption *and* at
+/// approval, and requires reopening rather than executing against the swap.
+#[test]
+fn a_worktree_swapped_under_an_open_tab_is_refused_not_executed() {
+    let f = Fixture::new(None);
+    let mut s = Sessions::new();
+    let alias = f.repo.with_file_name("alias");
+    std::os::unix::fs::symlink(&f.repo, &alias).unwrap();
+    let session = s.attach(alias.clone());
+    let owner = s.attachment(session).expect("attached");
+    assert_eq!(owner.worktree, Some(Fixture::worktree_id(&f.repo)));
+
+    // A plan made before the swap is still approvable.
+    let request = RemoveRequest {
+        owner: owner.clone(),
+        name: "linked".into(),
+        delete_branch: true,
+    };
+    let job = plan_remove(&mut s, request.clone(), RemovePolicy::default());
+    apply_plan(&mut s, job.run());
+    let PlanState::Ready { token, .. } = s.plan_state() else {
+        panic!("{:?}", s.plan_state())
+    };
+    let good = token.clone();
+
+    // Now the same locator points at the linked worktree instead.
+    std::fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink(&f.linked, &alias).unwrap();
+
+    // Approval of the still-Ready plan is refused: the locator moved.
+    let Err(error) = approve(&mut s, good, RemovePolicy::default()) else {
+        panic!("a moved locator must not be approvable")
+    };
+    assert!(matches!(error, AdmissionError::Identity(_)), "{error:?}");
+    assert!(f.linked.exists(), "a refused approval never executes");
+
+    // And a fresh plan through the swapped locator is not adopted either: the
+    // preview would describe a repository this tab is not attached to.
+    let job = plan_remove(&mut s, request, RemovePolicy::default());
+    assert!(apply_plan(&mut s, job.run()));
+    assert!(
+        matches!(s.plan_state(), PlanState::Error { .. }),
+        "{:?}",
+        s.plan_state()
+    );
+    assert!(read_oplog_tail(100).is_empty(), "no mutation was recorded");
+}
+
+/// #482 review P1: an identity that no longer resolves at all is refused rather
+/// than executed against whatever the locator names today.
+#[test]
+fn an_unresolvable_identity_requires_reattach() {
+    let f = Fixture::new(None);
+    let mut s = Sessions::new();
+    let moved = f.repo.with_file_name("moved");
+    let session = s.attach(f.repo.clone());
+    let owner = s.attachment(session).expect("attached");
+    let job = plan_remove(
+        &mut s,
+        RemoveRequest {
+            owner,
+            name: "linked".into(),
+            delete_branch: true,
+        },
+        RemovePolicy::default(),
+    );
+    apply_plan(&mut s, job.run());
+    let PlanState::Ready { token, .. } = s.plan_state() else {
+        panic!("{:?}", s.plan_state())
+    };
+    let token = token.clone();
+    std::fs::rename(&f.repo, &moved).unwrap();
+    let Err(error) = approve(&mut s, token, RemovePolicy::default()) else {
+        panic!("an unresolvable identity must not be approvable")
+    };
+    assert!(matches!(error, AdmissionError::Identity(_)), "{error:?}");
+    std::fs::rename(&moved, &f.repo).unwrap();
+}
+
+/// #482 review P2: worktree administration is shared, so completing a remove
+/// makes every *open* sibling worktree of the same repository stale — not only
+/// the manager and the target.
+#[test]
+fn shared_worktree_administration_invalidates_open_siblings() {
+    let f = Fixture::new(None);
+    let mut s = Sessions::new();
+    let sibling = f.repo.with_file_name("sibling");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "sibling",
+            sibling.to_str().unwrap(),
+        ],
+    );
+    let sibling_id = Fixture::worktree_id(&sibling);
+    let _open = s.attach(sibling.clone());
+    let done = f.job(&mut s).run();
+    let deliveries = apply(&mut s, done);
+
+    assert!(s.is_stale(&sibling_id), "an open sibling shares refs/admin");
+    assert!(deliveries.iter().any(|delivery| matches!(
+        delivery,
+        Delivery::Invalidate(target) if target.worktree == sibling_id
+    )));
+    // The completion is still delivered exactly once, last.
+    assert!(matches!(
+        deliveries.last(),
+        Some(Delivery::Completed { .. })
+    ));
+    assert_eq!(
+        deliveries
+            .iter()
+            .filter(|d| matches!(d, Delivery::Completed { .. }))
+            .count(),
+        1
+    );
+}
+
+/// #482 review P2: two locators for one worktree are one session, so a delivery
+/// cannot land on an arbitrary alias and leave the other tab stale.
+#[test]
+fn aliases_of_one_worktree_share_a_single_session() {
+    let f = Fixture::new(None);
+    let mut s = Sessions::new();
+    let by_root = s.attach(f.repo.clone());
+    let by_gitdir = s.attach(f.repo.join(".git"));
+    assert_eq!(
+        by_root, by_gitdir,
+        "/repo and /repo/.git resolve to one worktree, so one session"
+    );
+    let worktree = Fixture::worktree_id(&f.repo);
+    assert_eq!(s.sessions_for(&worktree), vec![by_root]);
+
+    // A linked worktree is a different identity and keeps its own session.
+    let linked = s.attach(f.linked.clone());
+    assert_ne!(linked, by_root);
+    assert_eq!(
+        s.sessions_for(&Fixture::worktree_id(&f.linked)),
+        vec![linked]
+    );
+}

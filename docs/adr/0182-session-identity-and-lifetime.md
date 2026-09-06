@@ -37,6 +37,48 @@ canonical な per-worktree Git dir。main worktree と linked worktree は `repo
 
 RepoId の導入は **独立 repo の並行 write 解禁ではない**。保守的な global busy は維持する。
 
+## identity の再照合（凍結値と実解決値）
+
+`RemovePlan` / `StashPlan` に、その plan が **実際に解決した** 管理 worktree の
+`worktree: WorktreeId` を追加した。owner 判定は 3 点照合になる。
+
+1. plan 採用時（`apply_plan`）— 凍結 `Attachment.worktree` と `plan.worktree` を比較。
+2. 承認直前（`approve`）— locator を **その場で再解決** して凍結値と比較。
+3. 実行時 — 既存の `RepoId` / admin fingerprint 照合（ADR-0175）。
+
+不一致・identity 取得不能はどちらも `AdmissionError::Identity`（plan 側は `PlanState::Error`）で
+拒否し、再 open を要求する。execute 時の `RepoId` 照合だけでは attach→plan の drift を防げない:
+同一 repository 内で sibling worktree への symlink に差し替えると `RepoId` は一致したまま
+HEAD/index が変わる。preview・stash index・OID がその時点で別 worktree のものになるため、
+「表示する前に」拒否する必要がある。
+
+## 配送範囲 — 共有 refs と worktree 限定変更
+
+`Planned::changes_shared_refs()` が段階1 の配送契約。
+
+| 変更 | 範囲 |
+|---|---|
+| remove-worktree（refs/admin） | 管理 worktree ＋対象 worktree ＋**同 RepoId の開いている全 sibling** |
+| stash push / pop / drop（`refs/stash` 書換） | 対象 worktree ＋同 RepoId の開いている全 sibling |
+| stash apply（index/WT のみ） | 対象 worktree のみ |
+
+`Sessions::siblings_of(&RepoId)` が開いている worktree を返し、`apply()` が既配送分を除いて
+`Delivery::Invalidate` を追加し `stale` に入れる。段階2 の read 移管ではなく段階1 の配送契約。
+
+## 離脱 revision — 提案は保存せず再観測する
+
+`TabSession.visit` を追加した。tab を**離れる**たびに increment する（incarnation は不変、
+tab は開いたまま）。`Attachment` は plan 時の `visit` を運ぶ。
+
+- 離脱で `stash_followups` は即破棄する。元の conflict は既に解決済みで、再証明する手段がない。
+- 離脱後に着地した completion は payload を **作らない**（`s.visit(session) == attachment.visit` 判定）。
+- conflict payload 自体は残るが **evidence にすぎず**、`visit` が古い間は
+  `stash_conflict()` も `continue_stash_conflict()` も `take_stash_followup()` も何も返さない。
+- 復帰時の再 detect が実 repository の conflict identity で `observe_stash_conflict` を呼び、
+  identity が一致したときだけ `visit` を現在値へ再束縛する。つまり提案の OID は常に
+  「今そこにある conflict」に由来し、保存された提案が復活することはない。
+- 離れている間に conflict が解決されていれば identity は空になり、payload は破棄される。
+
 ## close は実行取消ではない
 
 `detach` が捨てるのは表示に属するものだけ — conflict / follow-up payload と、
@@ -53,6 +95,12 @@ RepoId の導入は **独立 repo の並行 write 解禁ではない**。保守�
   app family から消えた。close→同 path reopen は別 session なので旧結果が届かない。
 - `EditorPendingIntent::CloseRepoTab` と remove の `RemovedTarget` は session / `WorktreeId`
   経由で対象 tab を閉じる。`close_tab_by_path` は削除した。
+- **alias 統合**: `Sessions::attach` は解決済み `WorktreeId` が既存 session と一致すれば
+  その session を返す。`/repo` と `/repo/.git`、symlink、相対 path はすべて同じ tab になる
+  （path 比較では見抜けない）。配送は `sessions_for()` で **一致する全 session** へ行い、
+  `HashMap` の任意 1 件を選ばない。
+- `switch_repo` と `enter_remote_view` は離れる tab に対して `Sessions::depart` を呼ぶ。
+  #562 の同一 tab 再選択は early return するので depart しない。背景 close も呼ばない。
 - `close_tab` の `clear_stash_conflict(&path)` は `detach(session)` に置き換えた。
 - `switch_generation` は read load の世代 guard として残す（#489 / 段階2 の RequestSlot で置換）。
 - `#488`/`#562` の同一 tab 再選択 no-op と背景 close `Keep` は不変。背景 close は

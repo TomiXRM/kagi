@@ -4,10 +4,10 @@
 use super::RemoteError;
 use kagi_domain::plan::{OperationPlan, StateSummary};
 use kagi_domain::remote::{
-    self, classify_remote_drop, completion_proves_stop, parse_completion_token,
-    parse_effective_ssh_config, parse_stash_frame, KnownHostsIdentity, RemoteConnectionId,
-    RemoteDropOutcome, RemoteHost, RemoteRepoId, RemoteStashFrame, RemoteStashPhase,
-    RemoteStashState,
+    self, classify_remote_drop, completion_proves_stop, encode_completion_token,
+    parse_completion_token, parse_effective_ssh_config, parse_stash_frame, KnownHostsIdentity,
+    RemoteConnectionId, RemoteDropOutcome, RemoteHost, RemoteRepoId, RemoteStashFrame,
+    RemoteStashPhase, RemoteStashState,
 };
 use kagi_git::backend::recording::Recording;
 use kagi_git::{Actor, OpLogEntry, OpOutcome};
@@ -623,7 +623,8 @@ material=$(printf '%s\n' 1 complete "$exit_code" "$selected" "$stdout_oid" "$bef
   "$before_worktree" "$head" "$oids" "$index_hash" "$worktree" git)
 digest=$(printf %s "$material" | git hash-object --stdin)
 token="$ops/$job"; tmp="$token.tmp"
-printf 'KAGI-STASH-TOKEN\0%s\0%s\0%s\0%s\0%s\0KAGI-TOKEN-END\n' 1 "$operation" "$job" "$scope_digest" "$digest" >"$tmp"
+printf 'KAGI-STASH-TOKEN\0%s\0%s\0%s\0%s\0%s\0%s\0KAGI-TOKEN-END\n' \
+  1 "$operation" "$job" "$scope_digest" "$digest" "$material" >"$tmp"
 chmod 600 "$tmp"; mv "$tmp" "$token"
 printf 'KAGI-STASH-DROP\0%s\0complete\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0git\0KAGI-STASH-END\n' \
   1 "$exit_code" "$selected" "$stdout_oid" "$before_head" "$before_oids" "$before_index" \
@@ -707,13 +708,7 @@ pub fn reconcile_remote_stash(
         let token = parse_completion_token(bytes)
             .map_err(|e| format!("completion token is invalid: {e:?}"))?;
         let scope = scope_digest(&plan.repo_id);
-        if !completion_proves_stop(
-            &token,
-            operation_id,
-            &evidence.remote_job_id,
-            &scope,
-            &token.result_digest,
-        ) {
+        if !completion_proves_stop(&token, operation_id, &evidence.remote_job_id, &scope) {
             return Err("completion token does not match the operation and remote scope".into());
         }
         return Ok(format!(
@@ -732,13 +727,7 @@ pub fn reconcile_remote_stash(
     let token = parse_completion_token(&bytes)
         .map_err(|e| format!("completion token is invalid: {e:?}; {stderr}"))?;
     let scope = scope_digest(&plan.repo_id);
-    if !completion_proves_stop(
-        &token,
-        operation_id,
-        &evidence.remote_job_id,
-        &scope,
-        &token.result_digest,
-    ) {
+    if !completion_proves_stop(&token, operation_id, &evidence.remote_job_id, &scope) {
         return Err("completion token does not match the operation and remote scope".into());
     }
     let state = read_state(&plan.connection, &plan.attachment.root).map_err(|e| e.to_string())?;
@@ -776,12 +765,7 @@ fn fake_recovery_fixture(
     } else {
         scope_digest(&plan.repo_id)
     };
-    let result = "a".repeat(40);
-    let valid = format!(
-        "KAGI-STASH-TOKEN\01\0{}\0{}\0{}\0{}\0KAGI-TOKEN-END\n",
-        operation_id, remote_job_id, scope, result,
-    )
-    .into_bytes();
+    let valid = encode_completion_token(operation_id, remote_job_id, &scope, &refusal_frame(plan));
     let token = match fault {
         RemoteStashFault::MalformedToken => Ok(b"broken".to_vec()),
         RemoteStashFault::UnreadableToken => Err("completion token is unreadable".into()),

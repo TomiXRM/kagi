@@ -316,6 +316,126 @@ pub struct RemoteCompletionToken {
     pub remote_job_id: String,
     pub scope_digest: String,
     pub result_digest: String,
+    pub result: RemoteStashFrame,
+}
+
+/// Canonical bytes hashed by `git hash-object --stdin` in the remote script.
+pub fn remote_result_material(frame: &RemoteStashFrame) -> String {
+    let phase = match frame.phase {
+        RemoteStashPhase::Preflight => "preflight",
+        RemoteStashPhase::Dropped => "dropped",
+        RemoteStashPhase::Complete => "complete",
+    };
+    [
+        STASH_FRAME_VERSION.to_string(),
+        phase.into(),
+        frame.exit.to_string(),
+        frame.selected_oid.clone(),
+        frame.stdout_oid.clone(),
+        frame.before.head.clone(),
+        frame.before.ordered_oids.join(","),
+        frame.before.index_fingerprint.clone(),
+        frame.before.worktree_fingerprint.clone(),
+        frame.after.head.clone(),
+        frame.after.ordered_oids.join(","),
+        frame.after.index_fingerprint.clone(),
+        frame.after.worktree_fingerprint.clone(),
+        frame.error_class.clone(),
+    ]
+    .join("\n")
+}
+
+fn parse_result_material(value: &str) -> Result<RemoteStashFrame, FrameError> {
+    let fields: Vec<&str> = value.split('\n').collect();
+    if fields.len() != 14 || fields.iter().any(|field| field.contains('\0')) {
+        return Err(FrameError::Value("result material"));
+    }
+    let bytes = format!(
+        "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0KAGI-STASH-END\n",
+        STASH_FRAME_MAGIC,
+        fields[0],
+        fields[1],
+        fields[2],
+        fields[3],
+        fields[4],
+        fields[5],
+        fields[6],
+        fields[7],
+        fields[8],
+        fields[9],
+        fields[10],
+        fields[11],
+        fields[12],
+        fields[13],
+    );
+    parse_stash_frame(bytes.as_bytes())
+}
+
+/// Git's SHA-1 object id for a blob. Kept dependency-free for `kagi-domain`.
+fn git_blob_digest(bytes: &[u8]) -> String {
+    let mut input = format!("blob {}\0", bytes.len()).into_bytes();
+    input.extend_from_slice(bytes);
+    let bit_len = (input.len() as u64) * 8;
+    input.push(0x80);
+    while input.len() % 64 != 56 {
+        input.push(0);
+    }
+    input.extend_from_slice(&bit_len.to_be_bytes());
+    let mut h = [
+        0x6745_2301_u32,
+        0xefcd_ab89,
+        0x98ba_dcfe,
+        0x1032_5476,
+        0xc3d2_e1f0,
+    ];
+    for chunk in input.chunks_exact(64) {
+        let mut w = [0_u32; 80];
+        for (index, word) in chunk.chunks_exact(4).enumerate() {
+            w[index] = u32::from_be_bytes(word.try_into().expect("four-byte SHA-1 word"));
+        }
+        for index in 16..80 {
+            w[index] = (w[index - 3] ^ w[index - 8] ^ w[index - 14] ^ w[index - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (index, word) in w.iter().enumerate() {
+            let (f, k) = match index {
+                0..=19 => ((b & c) | ((!b) & d), 0x5a82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ed9_eba1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1b_bcdc),
+                _ => (b ^ c ^ d, 0xca62_c1d6),
+            };
+            let next = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = next;
+        }
+        for (slot, value) in h.iter_mut().zip([a, b, c, d, e]) {
+            *slot = slot.wrapping_add(value);
+        }
+    }
+    h.iter().map(|word| format!("{word:08x}")).collect()
+}
+
+#[doc(hidden)]
+pub fn encode_completion_token(
+    operation_id: u64,
+    remote_job_id: &str,
+    scope_digest: &str,
+    result: &RemoteStashFrame,
+) -> Vec<u8> {
+    let material = remote_result_material(result);
+    let digest = git_blob_digest(material.as_bytes());
+    format!(
+        "KAGI-STASH-TOKEN\0{STASH_FRAME_VERSION}\0{operation_id}\0{remote_job_id}\0{scope_digest}\0{digest}\0{material}\0KAGI-TOKEN-END\n"
+    )
+    .into_bytes()
 }
 
 pub fn parse_completion_token(bytes: &[u8]) -> Result<RemoteCompletionToken, FrameError> {
@@ -323,7 +443,7 @@ pub fn parse_completion_token(bytes: &[u8]) -> Result<RemoteCompletionToken, Fra
         .strip_suffix(b"\0KAGI-TOKEN-END\n")
         .ok_or(FrameError::MissingTerminator)?;
     let fields: Vec<&[u8]> = body.split(|b| *b == 0).collect();
-    if fields.len() != 6 {
+    if fields.len() != 7 {
         return Err(FrameError::FieldCount);
     }
     let field = |index: usize, name| {
@@ -340,6 +460,11 @@ pub fn parse_completion_token(bytes: &[u8]) -> Result<RemoteCompletionToken, Fra
     if !valid_hex(&scope_digest, 64) || !valid_hex(&result_digest, 40) {
         return Err(FrameError::Value("token digest"));
     }
+    let material = field(6, "result material")?;
+    let result = parse_result_material(material)?;
+    if git_blob_digest(material.as_bytes()) != result_digest {
+        return Err(FrameError::Value("result digest"));
+    }
     Ok(RemoteCompletionToken {
         operation_id: field(2, "operation id")?
             .parse()
@@ -347,6 +472,7 @@ pub fn parse_completion_token(bytes: &[u8]) -> Result<RemoteCompletionToken, Fra
         remote_job_id: field(3, "remote job id")?.to_string(),
         scope_digest,
         result_digest,
+        result,
     })
 }
 
@@ -355,12 +481,10 @@ pub fn completion_proves_stop(
     operation_id: u64,
     remote_job_id: &str,
     scope_digest: &str,
-    result_digest: &str,
 ) -> bool {
     token.operation_id == operation_id
         && token.remote_job_id == remote_job_id
         && token.scope_digest == scope_digest
-        && token.result_digest == result_digest
 }
 
 /// Pure r5 outcome matrix; transport stop proof is an explicit input.
@@ -531,16 +655,39 @@ mod tests {
     #[test]
     fn before_state_without_matching_completion_never_proves_stop() {
         let scope = "1".repeat(64);
-        let result = oid('a');
-        let raw = format!("KAGI-STASH-TOKEN\01\07\0job\0{scope}\0{result}\0KAGI-TOKEN-END\n");
-        let token = parse_completion_token(raw.as_bytes()).unwrap();
-        assert!(!completion_proves_stop(
-            &token,
-            7,
-            "other-live-job",
-            &scope,
-            &result
-        ));
-        assert!(completion_proves_stop(&token, 7, "job", &scope, &result));
+        let result = RemoteStashFrame {
+            phase: RemoteStashPhase::Preflight,
+            exit: 1,
+            selected_oid: oid('a'),
+            stdout_oid: String::new(),
+            before: RemoteStashState {
+                head: oid('b'),
+                ordered_oids: vec![oid('a')],
+                index_fingerprint: oid('c'),
+                worktree_fingerprint: oid('d'),
+            },
+            after: RemoteStashState {
+                head: oid('b'),
+                ordered_oids: vec![oid('a')],
+                index_fingerprint: oid('c'),
+                worktree_fingerprint: oid('d'),
+            },
+            error_class: "preflight".into(),
+        };
+        let raw = encode_completion_token(7, "job", &scope, &result);
+        let token = parse_completion_token(&raw).unwrap();
+        assert!(!completion_proves_stop(&token, 7, "other-live-job", &scope));
+        assert!(completion_proves_stop(&token, 7, "job", &scope));
+        let mut corrupt = raw;
+        let digest = token.result_digest.as_bytes();
+        let offset = corrupt
+            .windows(digest.len())
+            .position(|window| window == digest)
+            .unwrap();
+        corrupt[offset] = if corrupt[offset] == b'a' { b'b' } else { b'a' };
+        assert_eq!(
+            parse_completion_token(&corrupt),
+            Err(FrameError::Value("result digest"))
+        );
     }
 }

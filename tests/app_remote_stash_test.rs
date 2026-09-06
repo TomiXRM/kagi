@@ -59,6 +59,7 @@ fn prepare(
             index_fingerprint: oid('d'),
             worktree_fingerprint: oid('e'),
         },
+        runtime_root: "/run/user/1000".into(),
     };
     let policy = StashPolicy::default();
     let completion = plan_remote_stash_for_test(sessions, request, policy.clone(), fixture).run();
@@ -126,6 +127,11 @@ fn remote_outcome_matrix_and_single_scope_lease() {
         ),
         (
             RemoteStashFault::MissingToken,
+            RemoteDropOutcome::Unknown,
+            true,
+        ),
+        (
+            RemoteStashFault::MalformedTerminal,
             RemoteDropOutcome::Unknown,
             true,
         ),

@@ -1,5 +1,6 @@
 //! Finite GUI-E2E transport. It exercises the real app/UI adapter without SSH.
 use super::*;
+use kagi_domain::remote::KnownHostsIdentity;
 use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +77,7 @@ pub(super) fn plan(
                 index_fingerprint: oid(b'd'),
                 worktree_fingerprint: oid(b'e'),
             },
+            runtime_root: "/run/user/1000".into(),
         },
     ))
 }

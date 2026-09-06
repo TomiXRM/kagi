@@ -5,15 +5,14 @@ use super::RemoteError;
 use kagi_domain::plan::{OperationPlan, StateSummary};
 use kagi_domain::remote::{
     self, classify_remote_drop, completion_proves_stop, encode_completion_token,
-    parse_completion_token, parse_effective_ssh_config, parse_stash_frame, KnownHostsIdentity,
-    RemoteConnectionId, RemoteDropOutcome, RemoteHost, RemoteRepoId, RemoteStashFrame,
-    RemoteStashPhase, RemoteStashState,
+    parse_completion_token, parse_effective_ssh_config, parse_stash_frame, RemoteConnectionId,
+    RemoteDropOutcome, RemoteHost, RemoteRepoId, RemoteStashFrame, RemoteStashPhase,
+    RemoteStashState,
 };
 use kagi_git::backend::{recording, recording::Recording, ExecutionPolicy};
 use kagi_git::{OpLogEntry, OpOutcome};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
@@ -21,12 +20,17 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(feature = "gui-e2e")]
 mod e2e;
 mod scripts;
+mod security;
 #[cfg(feature = "gui-e2e")]
 pub use e2e::{
     note_remote_stash_e2e_refresh, remote_stash_e2e_refreshes, set_remote_stash_e2e_mode,
     RemoteStashE2eMode,
 };
-use scripts::{COMMON_DIR_SCRIPT, DROP_SCRIPT, READ_TOKEN_SCRIPT, STATE_SCRIPT};
+use scripts::{
+    COMMON_DIR_SCRIPT, DROP_SCRIPT, READ_TOKEN_SCRIPT, RUNTIME_ROOT_SCRIPT, STATE_SCRIPT,
+};
+pub use security::verify_known_hosts_snapshot_for_test;
+use security::{snapshot_known_hosts, verify_known_hosts_snapshots, FrozenFile};
 #[derive(Clone, Debug)]
 pub struct RemoteAttachment {
     pub host: RemoteHost,
@@ -38,6 +42,7 @@ pub struct FrozenConnection {
     pub alias: RemoteHost,
     pub id: RemoteConnectionId,
     argv_prefix: Vec<String>,
+    known_hosts_snapshots: Vec<FrozenFile>,
     _snapshot_dir: Arc<tempfile::TempDir>,
 }
 #[derive(Clone, Debug)]
@@ -49,6 +54,7 @@ pub struct RemoteStashPlan {
     pub before: RemoteStashState,
     pub index: usize,
     pub selected_oid: String,
+    pub runtime_root: String,
 }
 #[derive(Clone, Debug)]
 pub struct RemoteStashEvidence {
@@ -114,6 +120,7 @@ pub enum RemoteStashFault {
     WrongScopeToken,
     UnreadableToken,
     ValidTokenAfterTimeout,
+    MalformedTerminal,
 }
 
 #[derive(Clone, Debug)]
@@ -122,6 +129,7 @@ pub struct RemotePlanFixture {
     pub connection: RemoteConnectionId,
     pub common_dir: String,
     pub before: RemoteStashState,
+    pub runtime_root: String,
 }
 
 #[doc(hidden)]
@@ -148,6 +156,7 @@ pub fn plan_remote_stash_drop_for_test(
         alias: attachment.host.clone(),
         id: fixture.connection.clone(),
         argv_prefix: Vec::new(),
+        known_hosts_snapshots: Vec::new(),
         _snapshot_dir: temp,
     };
     Ok(RemoteStashPlan {
@@ -161,6 +170,7 @@ pub fn plan_remote_stash_drop_for_test(
         before: fixture.before,
         index,
         selected_oid,
+        runtime_root: fixture.runtime_root,
     })
 }
 
@@ -180,6 +190,7 @@ pub fn plan_remote_stash_drop(
     let connection = freeze_connection(&attachment.host)?;
     let common_dir = probe_common_dir(&connection, &attachment.root)?;
     let before = read_state(&connection, &attachment.root)?;
+    let runtime_root = probe_runtime_root(&connection)?;
     let selected_oid = before.ordered_oids.get(index).cloned().ok_or_else(|| {
         RemotePlanError::InvalidState(format!("stash@{{{index}}} no longer exists"))
     })?;
@@ -200,6 +211,7 @@ pub fn plan_remote_stash_drop(
         before,
         index,
         selected_oid,
+        runtime_root,
     })
 }
 
@@ -255,56 +267,24 @@ fn freeze_connection(host: &RemoteHost) -> Result<FrozenConnection, RemotePlanEr
         host_key_algorithms: effective.host_key_algorithms.clone(),
     };
     let argv = remote::frozen_ssh_argv(&id, &user.1, &global.1);
+    let known_hosts_snapshots = user.2.into_iter().chain(global.2).collect();
     Ok(FrozenConnection {
         alias: host.clone(),
         id,
         argv_prefix: argv,
+        known_hosts_snapshots,
         _snapshot_dir: snapshot_dir,
     })
 }
 
-fn snapshot_known_hosts(
-    paths: &[String],
-    dir: &Path,
-    prefix: &str,
-) -> Result<(Vec<KnownHostsIdentity>, Vec<String>), RemotePlanError> {
-    let mut identities = Vec::new();
-    let mut snapshots = Vec::new();
-    for (index, path) in paths.iter().enumerate() {
-        if path == "none" {
-            continue;
-        }
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(io_error(error)),
-        };
-        let digest = hex_digest(&bytes);
-        let snapshot = dir.join(format!("{prefix}-{index}"));
-        fs::write(&snapshot, &bytes).map_err(io_error)?;
-        set_owner_only(&snapshot)?;
-        identities.push(KnownHostsIdentity {
-            path: path.clone(),
-            digest,
-        });
-        snapshots.push(snapshot.display().to_string());
-    }
-    if snapshots.is_empty() {
-        return Err(RemotePlanError::UnsafeConfig(
-            "no known_hosts file can be frozen".into(),
-        ));
-    }
-    Ok((identities, snapshots))
+#[doc(hidden)]
+pub fn remote_stash_drop_script_for_test() -> &'static str {
+    DROP_SCRIPT
 }
 
-#[cfg(unix)]
-fn set_owner_only(path: &Path) -> Result<(), RemotePlanError> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(io_error)
-}
-#[cfg(not(unix))]
-fn set_owner_only(_path: &Path) -> Result<(), RemotePlanError> {
-    Ok(())
+#[doc(hidden)]
+pub fn remote_stash_read_token_script_for_test() -> &'static str {
+    READ_TOKEN_SCRIPT
 }
 fn io_error(error: std::io::Error) -> RemotePlanError {
     RemotePlanError::Transport(error.to_string())
@@ -381,6 +361,30 @@ fn probe_common_dir(connection: &FrozenConnection, root: &str) -> Result<String,
     Ok(common.into())
 }
 
+fn probe_runtime_root(connection: &FrozenConnection) -> Result<String, RemotePlanError> {
+    let (code, bytes, stderr) = run_frozen(connection, RUNTIME_ROOT_SCRIPT, &[], COMMAND_TIMEOUT)
+        .map_err(|e| RemotePlanError::Transport(e.to_string()))?;
+    if code != 0 {
+        return Err(RemotePlanError::UnsafeConfig(format!(
+            "remote runtime directory is unsafe: {stderr}"
+        )));
+    }
+    let fields: Vec<&[u8]> = bytes.split(|b| *b == 0).collect();
+    if fields.len() != 3 || fields[0] != b"KAGI-RUNTIME" || fields[2] != b"KAGI-END\n" {
+        return Err(RemotePlanError::UnsafeConfig(
+            "malformed runtime-directory frame".into(),
+        ));
+    }
+    let runtime = std::str::from_utf8(fields[1])
+        .map_err(|_| RemotePlanError::UnsafeConfig("runtime path is not UTF-8".into()))?;
+    if !runtime.starts_with('/') || runtime.contains('\n') || runtime.contains('\0') {
+        return Err(RemotePlanError::UnsafeConfig(
+            "runtime directory is not a physical absolute path".into(),
+        ));
+    }
+    Ok(runtime.into())
+}
+
 fn read_state(
     connection: &FrozenConnection,
     root: &str,
@@ -441,7 +445,10 @@ pub fn run_remote_stash_drop(
         Ok(id) => (id, None),
         Err(error) => (String::new(), Some(error)),
     };
-    let token_path = format!("$XDG_RUNTIME_DIR/kagi/remote-ops/{remote_job_id}");
+    let token_path = format!(
+        "{}/kagi/remote-ops/{remote_job_id}",
+        plan.runtime_root.trim_end_matches('/')
+    );
     let result = if let Some(error) = random_error {
         Err((RemoteTransportPhase::LocalSpawn, true, error))
     } else {
@@ -511,6 +518,8 @@ fn execute(
             "SSH configuration changed after plan".into(),
         ));
     }
+    verify_known_hosts_snapshots(&plan.connection)
+        .map_err(|error| (RemoteTransportPhase::LocalSpawn, true, error.to_string()))?;
     let operation = operation_id.to_string();
     let index = plan.index.to_string();
     let before_oids = plan.before.ordered_oids.join(",");
@@ -527,6 +536,7 @@ fn execute(
         &plan.before.index_fingerprint,
         &plan.before.worktree_fingerprint,
         &scope_digest,
+        &plan.runtime_root,
     ];
     match run_frozen(&plan.connection, DROP_SCRIPT, &args, COMMAND_TIMEOUT) {
         Ok((_code, bytes, stderr)) => match parse_stash_frame(&bytes) {
@@ -538,7 +548,7 @@ fn execute(
             )),
             Err(error) => Err((
                 RemoteTransportPhase::ScriptStarted,
-                true,
+                false,
                 format!("malformed terminal frame: {error:?}; {stderr}"),
             )),
         },
@@ -564,6 +574,7 @@ fn execute_fake(plan: &RemoteStashPlan, fault: RemoteStashFault) -> ExecutionRes
             | RemoteStashFault::WrongScopeToken
             | RemoteStashFault::UnreadableToken
             | RemoteStashFault::ValidTokenAfterTimeout
+            | RemoteStashFault::MalformedTerminal
     ) {
         return Err((
             RemoteTransportPhase::ScriptStarted,
@@ -702,10 +713,16 @@ pub fn reconcile_remote_stash(
             fixture.observed.ordered_oids.len()
         ));
     }
+    verify_known_hosts_snapshots(&plan.connection).map_err(|error| error.to_string())?;
     let (_, bytes, stderr) = run_frozen(
         &plan.connection,
         READ_TOKEN_SCRIPT,
-        &[&evidence.remote_job_id],
+        &[
+            &plan.attachment.root,
+            &plan.repo_id.common_dir,
+            &plan.runtime_root,
+            &evidence.token_path,
+        ],
         COMMAND_TIMEOUT,
     )
     .map_err(|e| e.to_string())?;
@@ -754,9 +771,9 @@ fn fake_recovery_fixture(
     let token = match fault {
         RemoteStashFault::MalformedToken => Ok(b"broken".to_vec()),
         RemoteStashFault::UnreadableToken => Err("completion token is unreadable".into()),
-        RemoteStashFault::TimeoutBeforeDrop | RemoteStashFault::MissingToken => {
-            Err("completion token is absent".into())
-        }
+        RemoteStashFault::TimeoutBeforeDrop
+        | RemoteStashFault::MissingToken
+        | RemoteStashFault::MalformedTerminal => Err("completion token is absent".into()),
         _ => Ok(valid),
     };
     Some(RemoteRecoveryFixture {

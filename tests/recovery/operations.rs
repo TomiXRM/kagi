@@ -562,10 +562,9 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
 
         press_key(cx, &app, window, "escape");
         cx.run_until_parked();
-        // Whether the root still owned focus is the decisive datum when this
-        // fails: `false` means a modal text input consumed the keystroke through
-        // gpui_component's `Input`-context binding (the #492 root-Escape
-        // handler's case), `true` means something else refilled the slot.
+        // The root must own focus for Esc to resolve against the app keymap;
+        // `false` here would mean a modal text input took it, which is a
+        // different failure than the slot surviving a delivered Esc.
         let root_focused = cx
             .update_window(window, |_, window, cx| {
                 app.read(cx)
@@ -586,6 +585,9 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
             );
         });
         assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+        // Per-case progress: the loop aborts on the first failure, so without
+        // this the log cannot show which variants were actually exercised.
+        eprintln!("[gui-e2e] ok modal_no_fallthrough/{case}");
     }
 
     // Repo binding: a destructive confirmation planned against A must be gone
@@ -624,4 +626,67 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
     eprintln!(
         "[gui-e2e] PASS modal_no_fallthrough: 5 previously-unrouted modals consume Enter/Esc, repo-scoped confirm dropped on switch"
     );
+}
+
+/// #493 safety review: a failed push must reach the **modal** as well as the
+/// oplog and the footer (CLAUDE.md's error rule). `start_push` closes the plan
+/// modal before the background push, so the completion path has to bring it
+/// back with the error — the same thing `start_checkout` / `start_delete_branch`
+/// / `start_amend` / the remote-view pull arm already do. Enter and the button
+/// share this one completion path, so driving it once covers both.
+///
+/// The failure is offline and deterministic: push to a bare remote, delete the
+/// remote, then commit — the upstream ref still resolves (so the plan is clean
+/// and never touches the network) but `git push` cannot find the repository.
+pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_dir = tempfile::tempdir().expect("remote tempdir");
+    let bare = remote_dir.path().join("target.git");
+    let bare_str = bare.to_str().unwrap();
+    git(repo, &["init", "--bare", "-q", bare_str]);
+    git(repo, &["remote", "add", "origin", bare_str]);
+    git(repo, &["push", "-q", "-u", "origin", "main"]);
+    std::fs::remove_dir_all(&bare).unwrap();
+    git(repo, &["commit", "-q", "--allow-empty", "-m", "ahead"]);
+    let before = repo_fingerprint(repo);
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_push_modal(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .push_modal()
+            .is_some_and(|m| m.plan.blockers.is_empty())),
+        "the fixture must produce a clean push plan for the failure to be the executor's"
+    );
+
+    app.update(cx, |app, cx| app.start_push(cx));
+    wait_idle(cx, &app);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app
+            .push_modal()
+            .expect("a failed push must re-open the plan modal, not only record the failure");
+        assert!(
+            modal.error.is_some(),
+            "the failure text must be shown in the modal"
+        );
+        assert!(app.busy_op.is_none(), "busy must be released on failure");
+    });
+    assert!(
+        records(repo, "push")
+            .iter()
+            .any(|e| matches!(e.outcome, OpOutcome::Failed { .. })),
+        "the failure must also be durable in the oplog"
+    );
+    assert_eq!(
+        repo_fingerprint(repo),
+        before,
+        "a failed push must not touch the repository"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS push_failure_keeps_modal: failure reaches the modal and the oplog");
 }

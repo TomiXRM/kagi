@@ -61,12 +61,10 @@ pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElemen
     }
 }
 
-use gpui::{App, AppContext as _, AssetSource, Entity, KeyBinding, Platform, Styled as _, Window};
+use gpui::{App, AppContext as _, AssetSource, Entity, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
-use super::{
-    fonts, oplog_panel, theme, toast_stack, CopyDiffSelection, KagiApp, ToggleBottomPanel,
-};
+use super::{fonts, oplog_panel, theme, toast_stack, KagiApp};
 
 #[cfg(feature = "gui-e2e")]
 pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
@@ -85,20 +83,18 @@ pub fn asset_source() -> Arc<dyn AssetSource> {
 }
 
 /// App-level one-time init a first render needs, mirroring `run_app`: bundled
-/// fonts, `gpui_component` init, theme sync, and the keybindings the E2E
-/// scenarios exercise (`cmd-j` → [`ToggleBottomPanel`], `cmd-c` →
-/// [`CopyDiffSelection`], the latter scoped like `run_app` so a focused text
-/// field/terminal keeps its own copy — ADR-0170 graph Cmd+C).
+/// fonts, `gpui_component` init, theme sync, and **the app's whole keymap**.
+///
+/// #492: this used to hand-pick two bindings (`cmd-j`, `cmd-c`), so scenarios
+/// ran against a different keymap than the app — `escape` was bound to nothing
+/// here, and a modal survived an Esc that closes it for real users. Call
+/// [`super::commands::bind_app_keys`] instead of re-listing bindings; keep it after
+/// `gpui_component::init`, which several of them deliberately outrank.
 pub fn init_app(cx: &mut App) {
     fonts::load_bundled_fonts(cx);
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);
-    cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
-    cx.bind_keys([KeyBinding::new(
-        "secondary-c",
-        CopyDiffSelection,
-        Some("!Terminal && !Input"),
-    )]);
+    super::commands::bind_app_keys(cx);
 }
 
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via

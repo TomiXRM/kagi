@@ -127,8 +127,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     actions, div, prelude::*, px, rgb, uniform_list, App, ClipboardItem, Context, Entity,
-    FocusHandle, KeyBinding, KeyDownEvent, MouseButton, ScrollStrategy, SharedString,
-    UniformListScrollHandle, Window,
+    FocusHandle, KeyDownEvent, MouseButton, ScrollStrategy, SharedString, UniformListScrollHandle,
+    Window,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::Scrollbar;
@@ -3491,79 +3491,7 @@ pub fn run_app(app_state: KagiApp) {
         // render in kagi's colours rather than the system default.
         theme::sync_gpui_component_theme(cx);
 
-        // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
-        // the toggle key for the bottom panel. context = None means the binding
-        // fires regardless of focus context. GUI-CLICK: was `cmd-j`, which on
-        // Linux is Super-J — so Ctrl-J never toggled the panel.
-        cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
-        // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
-        // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
-        cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
-        // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
-        // text field keeps its own copy; no-ops when nothing is selected.
-        cx.bind_keys([KeyBinding::new(
-            "secondary-c",
-            CopyDiffSelection,
-            Some("!Terminal && !Input"),
-        )]);
-        // T-TERM-INTERACT-001 follow-up: Tab completion in the embedded
-        // terminal. Deeper "Terminal" context outranks gpui_component Root's
-        // "tab" → focus-cycling binding; handlers live on the terminal
-        // wrapper div in render_bottom.rs and write \t / ESC[Z to the PTY.
-        cx.bind_keys([
-            KeyBinding::new("tab", TerminalSendTab, Some("Terminal")),
-            KeyBinding::new("shift-tab", TerminalSendShiftTab, Some("Terminal")),
-        ]);
-        // Arrow keys step through files while the main diff is open
-        // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
-        // reach a focused terminal (shell history), and `!Input` so they reach
-        // a focused text field / code editor: these bindings register AFTER
-        // gpui_component::init, so at equal context depth they would shadow
-        // Input's own MoveUp/MoveDown — the editor cursor stopped moving
-        // vertically while left/right (unbound here) still worked
-        // (user-reported).
-        cx.bind_keys([
-            KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
-            KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
-            // GitHub Phase 1c: ←/→ cycle PR mode's focused pane. No-op outside
-            // PR mode (handler checks), so graph mode keeps ←/→ free.
-            KeyBinding::new("left", PrModePrevPane, Some("!Terminal && !Input")),
-            KeyBinding::new("right", PrModeNextPane, Some("!Terminal && !Input")),
-        ]);
-        // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
-        // No context predicate — gpui-component 0.5.1's "Input" context binds
-        // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in
-        // its src/input/state.rs), so this fires even while the code editor
-        // has focus. `save_editor_file` no-ops when there is nothing to save.
-        cx.bind_keys([KeyBinding::new("secondary-s", SaveEditorFile, None)]);
-        // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
-        // focused text field (gpui-component Input, key_context "Input") keeps
-        // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
-        // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
-        // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
-        cx.bind_keys([
-            KeyBinding::new(
-                "secondary-z",
-                commands::HistoryUndo,
-                Some("!Input && !Terminal"),
-            ),
-            KeyBinding::new(
-                "secondary-shift-z",
-                commands::HistoryRedo,
-                Some("!Input && !Terminal"),
-            ),
-        ]);
-        // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
-        // *both* SelectAll and MoveHome (emacs-style) in the "Input" context,
-        // and the later (MoveHome) wins — so on this platform Ctrl+A jumped to
-        // line start instead of selecting all. Re-bind it to SelectAll here
-        // (registered after gpui_component::init, so it takes precedence).
-        // cmd-a (SelectAll) and double-click word-select already work natively.
-        cx.bind_keys([KeyBinding::new(
-            "ctrl-a",
-            gpui_component::input::SelectAll,
-            Some("Input"),
-        )]);
+        commands::bind_app_keys(cx);
 
         // NOTE: a KeyBinding::new("enter", …) here never dispatched (the
         // Return key's key_char "\n" path); Enter is handled as a raw key

@@ -240,10 +240,21 @@ impl KagiApp {
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                     cx,
                 );
+                // #493 safety review: `start_pull` closes the modal before the
+                // background pull, so the failure has to bring it back — a
+                // user-facing error surfaces via the oplog AND a modal
+                // (CLAUDE.md). Same shape as the remote-view arm above and as
+                // `start_checkout` / `start_delete_branch` / `start_amend`.
+                self.set_pull_modal(PullPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
             }
         }
     }
@@ -384,10 +395,18 @@ impl KagiApp {
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                     cx,
                 );
+                // #493 safety review: see `finish_pull` — the failure must reach
+                // the modal, not just the oplog and the footer.
+                self.set_push_modal(PushPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
             }
         }
     }

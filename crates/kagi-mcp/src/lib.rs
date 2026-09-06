@@ -564,7 +564,7 @@ mod tests {
                 "reset" => vec![head.clone()],
                 other => panic!("no representative args for op '{}'", other),
             };
-            let op = write::build_operation(&backend, op_name, &args).unwrap();
+            let op = kagi_git::api::resolve_operation(&backend, op_name, &args).unwrap();
             let plan = backend.plan(&op).unwrap();
             any_destructive |= plan.destructive;
         }

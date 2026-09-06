@@ -3388,6 +3388,7 @@ dependencies = [
  "image",
  "kagi-domain",
  "kagi-git",
+ "kagi-mcp",
  "kagi-ui-core",
  "kagi-ui-ecosystem",
  "kagi-ui-editor",

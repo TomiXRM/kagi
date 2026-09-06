@@ -7,11 +7,12 @@
 //! execute → verify → oplog, ADR-0104/0149). `status` and `oplog` are
 //! read-only introspection.
 //!
-//! Serialization lives HERE (the bin crate), not in `kagi-domain`, which stays
-//! dependency-free (CLAUDE.md invariant #2): `serde`/`serde_json` are only used
-//! in this file, reading the domain types' public fields + `message_en()`
-//! renderers. `confirm` never deserializes the full plan tree — it re-plans from
-//! `{plan_id, op, args}` and compares `plan_id`.
+//! Operation resolution and the plan/confirm JSON shapes are NOT owned here:
+//! they are the shared agent contract in [`kagi_git::api`] (#509), used verbatim
+//! by the MCP server too, so adding an operation edits one match and one
+//! serializer. This file owns the CLI edge only — argv, `--yes`, stdin/stdout
+//! and exit codes. `confirm` never deserializes the full plan tree; it re-plans
+//! from `{plan_id, op, args}` and compares `plan_id`.
 //!
 //! Design (§5 decisions on #330):
 //! - **plan-id = content hash** ([`OperationPlan::plan_id`]). The id itself is
@@ -29,8 +30,8 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use kagi_domain::commit::CommitId;
-use kagi_git::{Backend, Operation, OperationPlan};
+use kagi_git::api;
+use kagi_git::{Backend, OperationPlan};
 
 /// The subcommands that switch `kagi` into headless CLI mode.
 const SUBCOMMANDS: &[&str] = &["plan", "confirm", "status", "oplog"];
@@ -90,8 +91,8 @@ fn usage() -> i32 {
          kagi confirm [--yes] [--plan FILE] [--repo PATH] [--json]   (plan JSON on stdin if no --plan)\n  \
          kagi status [--repo PATH] [--json]\n  \
          kagi oplog [--limit N] [--repo PATH] [--json]\n\
-         supported ops: checkout <branch> | create-branch <name> [at-commit] | \
-         delete-branch <name> | discard <path...> | reset <commit>"
+         supported ops: {}",
+        api::OPS_USAGE
     );
     1
 }
@@ -123,58 +124,6 @@ fn take_flags(args: &[String]) -> (PathBuf, Option<String>, bool, Vec<String>) {
     (repo, plan_file, yes, rest)
 }
 
-/// Build the [`Operation`] for `op_name` + positional `args`. Needs the backend
-/// to default `create-branch`'s start point to HEAD.
-fn build_operation(backend: &Backend, op_name: &str, args: &[String]) -> Result<Operation, String> {
-    let need = |n: usize| -> Result<(), String> {
-        if args.len() < n {
-            Err(format!("`{}` needs {} argument(s)", op_name, n))
-        } else {
-            Ok(())
-        }
-    };
-    match op_name {
-        "checkout" => {
-            need(1)?;
-            Ok(Operation::Checkout {
-                branch: args[0].clone(),
-            })
-        }
-        "create-branch" => {
-            need(1)?;
-            let at = match args.get(1) {
-                Some(c) => CommitId(c.clone()),
-                None => backend
-                    .head_commit_id()
-                    .ok_or_else(|| "HEAD has no commit to branch from".to_string())?,
-            };
-            Ok(Operation::CreateBranch {
-                name: args[0].clone(),
-                at,
-            })
-        }
-        "delete-branch" => {
-            need(1)?;
-            Ok(Operation::DeleteBranch {
-                name: args[0].clone(),
-            })
-        }
-        "discard" => {
-            need(1)?;
-            Ok(Operation::Discard {
-                paths: args.to_vec(),
-            })
-        }
-        "reset" => {
-            need(1)?;
-            Ok(Operation::ResetCurrentToHead {
-                target: CommitId(args[0].clone()),
-            })
-        }
-        other => Err(format!("unsupported op '{}'", other)),
-    }
-}
-
 fn open_backend(repo: &std::path::Path) -> Result<Backend, String> {
     Backend::discover_with_policy(repo, kagi_git::backend::ExecutionPolicy::cli())
         .map_err(|e| format!("{}", e))
@@ -188,41 +137,17 @@ fn cmd_plan(args: &[String]) -> Result<i32, String> {
         .split_first()
         .ok_or_else(|| "plan: missing <op>".to_string())?;
     let backend = open_backend(&repo)?;
-    let op = build_operation(&backend, op_name, op_args)?;
+    let op = api::resolve_operation(&backend, op_name, op_args)?;
     // Planning is side-effect-free: `Backend::plan` never mutates the repo.
     let plan = backend.plan(&op).map_err(|e| format!("{}", e))?;
     // Top-level: what `confirm` reads back (op + args + id + staleness snapshot).
     // `plan`: a human-readable display block for the agent (ignored by confirm).
-    let out = serde_json::json!({
-        "plan_id": plan.plan_id(),
-        "op": op_name,
-        "args": op_args,
-        "head_at_plan": head_desc(&plan.head_at_plan),
-        "stash_count_at_plan": plan.stash_count_at_plan(),
-        "worktree_digest": plan.worktree_digest().map(|d| d.0),
-        "plan": plan_body(&plan),
-    });
+    let out = api::plan_envelope(op_name, op_args, &plan);
     println!(
         "{}",
         serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
     );
     Ok(0)
-}
-
-/// Human-readable plan block. Uses the domain types' `message_en()` renderers
-/// (the same strings the GUI/oplog use) instead of serializing the enum tree —
-/// so `kagi-domain` needs no serde derive.
-fn plan_body(p: &OperationPlan) -> serde_json::Value {
-    serde_json::json!({
-        "title": p.title.message_en(),
-        "current": { "head": p.current.head, "dirty": p.current.dirty },
-        "predicted": { "head": p.predicted.head, "dirty": p.predicted.dirty },
-        "warnings": p.warnings.iter().map(|n| n.message_en()).collect::<Vec<_>>(),
-        "blockers": p.blockers.iter().map(|n| n.message_en()).collect::<Vec<_>>(),
-        "recovery": p.recovery.as_ref().map(|r| r.message_en()),
-        "disposition": format!("{:?}", p.disposition),
-        "destructive": p.destructive,
-    })
 }
 
 // ── confirm ─────────────────────────────────────────────────
@@ -245,7 +170,7 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
         serde_json::from_str(&raw).map_err(|e| format!("invalid plan JSON: {}", e))?;
 
     let mut backend = open_backend(&repo)?;
-    let op = build_operation(&backend, &input.op, &input.args)?;
+    let op = api::resolve_operation(&backend, &input.op, &input.args)?;
     // Re-plan against the repo NOW. If nothing moved, the recomputed id equals
     // the id the agent holds; if it differs, the repo changed (TOCTOU).
     let fresh = backend.plan(&op).map_err(|e| format!("{}", e))?;
@@ -276,22 +201,14 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
     }
 
     // Execute through the one true write path: preflight → execute → verify →
-    // oplog all happen inside `Backend::run` (#329). Actor=cli tags the log.
-    let outcome = backend.run(&op, &fresh).map_err(|e| format!("{}", e))?;
-
-    // The oplog entry `run` just wrote (newest-first tail).
-    let last = kagi_git::read_oplog_tail(1);
-    let oplog_json = last
-        .first()
-        .map(kagi_git::entry_to_json)
-        .unwrap_or_else(|| "null".to_string());
-
+    // oplog all happen inside `run_recorded` (#329). Actor=cli tags the log, and
+    // the report carries THIS run's oplog receipt — never a global tail read
+    // that a concurrent writer could have moved out from under it (#505).
+    let report = backend.run_recorded(&op, &fresh);
+    let outcome = report.result.map_err(|e| format!("{}", e))?;
     println!(
-        "{{\"status\":\"ok\",\"op\":{},\"plan_id\":{},\"outcome\":{},\"oplog\":{}}}",
-        json_str(op.oplog_name()),
-        json_str(&input.plan_id),
-        json_str(&format!("{:?}", outcome)),
-        oplog_json,
+        "{}",
+        api::confirm_response(&op, &input.plan_id, &outcome, &report.recording)
     );
     Ok(0)
 }
@@ -300,7 +217,7 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
 /// snapshot carried in the envelope) and a freshly recomputed plan.
 fn describe_changes(old: &ConfirmInput, fresh: &OperationPlan) -> Vec<String> {
     let mut out = Vec::new();
-    let fresh_head = head_desc(&fresh.head_at_plan);
+    let fresh_head = api::head_desc(&fresh.head_at_plan);
     if old.head_at_plan != fresh_head {
         out.push(format!(
             "HEAD changed (was {}, now {})",
@@ -323,18 +240,6 @@ fn describe_changes(old: &ConfirmInput, fresh: &OperationPlan) -> Vec<String> {
         out.push("plan is stale".to_string());
     }
     out
-}
-
-/// Like `Head::display` but keeps the branch tip's short SHA, so a same-branch
-/// move (a new commit on the branch) is visible in the change message.
-fn head_desc(h: &kagi_git::Head) -> String {
-    use kagi_git::Head;
-    let short = |t: &str| t.get(..8).unwrap_or(t).to_string();
-    match h {
-        Head::Attached { branch, target } => format!("branch: {} @ {}", branch, short(target)),
-        Head::Detached { target } => format!("detached: {}", short(target)),
-        Head::Unborn { branch } => format!("unborn ({})", branch),
-    }
 }
 
 // ── status ──────────────────────────────────────────────────

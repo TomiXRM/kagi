@@ -190,13 +190,17 @@ fn read_tools() -> Vec<Value> {
 fn plan_tool() -> Value {
     tool(
         "kagi_plan",
-        "Stage 1 of 2 for any write. Returns a side-effect-free plan for `op` \
-         (with plan_id, predicted state, warnings, blockers, and whether it is \
-         destructive). NOTHING is executed — call kagi_confirm(plan_id) to run \
-         it. Supported ops: checkout <branch> | create-branch <name> [at] | \
-         delete-branch <name> | discard <path...> | reset <commit> (soft/mixed \
-         only). There is deliberately no force-push, reset --hard, or clean op: \
-         Kagi cannot perform destructive history/working-tree rewrites.",
+        // The op list comes from the shared CLI/MCP contract (#509), so the
+        // advertised set can never drift from what `resolve_operation` accepts.
+        &format!(
+            "Stage 1 of 2 for any write. Returns a side-effect-free plan for `op` \
+             (with plan_id, predicted state, warnings, blockers, and whether it is \
+             destructive). NOTHING is executed — call kagi_confirm(plan_id) to run \
+             it. `reset` is soft/mixed only. Supported ops: {}. \
+             There is deliberately no force-push, reset --hard, or clean op: \
+             Kagi cannot perform destructive history/working-tree rewrites.",
+            kagi_git::api::OPS_USAGE
+        ),
         obj(
             json!({
                 "op": { "type": "string", "description": "operation name (see description)" },

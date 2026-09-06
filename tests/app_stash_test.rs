@@ -559,6 +559,10 @@ fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
         );
         s.continue_stash_conflict(&f.repo);
         s.observe_stash_conflict(&f.repo, &[]);
+        assert!(
+            s.stash_conflict(&f.repo).is_none(),
+            "resolved conflicts must leave the active-conflict map"
+        );
         let payload = s.take_stash_followup(&f.repo).unwrap();
         assert!(s.take_stash_followup(&f.repo).is_none());
         let job = plan_stash_followup(
@@ -582,6 +586,28 @@ fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
         s.invalidate_plan();
         assert!(approve(&mut s, token, StashPolicy::default()).is_err());
         assert_eq!(f.ids(), before);
+    }
+}
+
+#[test]
+fn continued_conflict_owner_close_clears_before_or_after_reload() {
+    for reload_settled in [false, true] {
+        let f = Fixture::new();
+        let mut s = Sessions::new();
+        let completion = conflict(&f, &mut s, StashAction::Pop { index: 1 });
+        s.apply(completion);
+        s.continue_stash_conflict(&f.repo);
+        if reload_settled {
+            s.observe_stash_conflict(&f.repo, &[]);
+            assert!(s.stash_conflict(&f.repo).is_none());
+        }
+
+        // The host's tab-close adapter calls this owner-scoped API. Closing
+        // either side of the reload transition must discard the one-shot.
+        s.clear_stash_conflict(&f.repo);
+        s.observe_stash_conflict(&f.repo, &[]); // reopen sees a clean index
+        assert!(s.stash_conflict(&f.repo).is_none());
+        assert!(s.take_stash_followup(&f.repo).is_none());
     }
 }
 

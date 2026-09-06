@@ -533,6 +533,7 @@ impl KagiApp {
             self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closed_path), cx);
             return;
         }
+        self.app_sessions.clear_stash_conflict(&closed_path);
         let closed = self.tabs.remove(index);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);

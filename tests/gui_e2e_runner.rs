@@ -68,6 +68,10 @@ mod app_writer_admission;
 mod recovery_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "perf/oplog_detail.rs"]
+mod perf_oplog_detail;
+
+#[cfg(target_os = "macos")]
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -500,6 +504,10 @@ mod macos {
             (
                 "worktree_panel_amend_discard",
                 Box::new(scenario_worktree_panel_amend_discard),
+            ),
+            (
+                "oplog_detail_draw",
+                Box::new(crate::perf_oplog_detail::scenario_expanded_detail_draw),
             ),
         ];
         let mut executed = 0;

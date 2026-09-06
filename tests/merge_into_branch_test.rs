@@ -5,13 +5,16 @@
 //! what moved — a merge that quietly checked the target out would satisfy
 //! "the target advanced" just as well.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_merge_into_branch;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_merge_into_branch, plan_merge_into_branch, MergeIntoKind};
+use kagi_git::{plan_merge_into_branch, MergeIntoKind};
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")

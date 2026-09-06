@@ -213,7 +213,7 @@ pub fn plan_lock_worktree(
 }
 
 /// Lock the linked worktree `name`: preflight → lock → verify.
-pub fn execute_lock_worktree(
+pub(crate) fn execute_lock_worktree(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,
@@ -326,7 +326,10 @@ pub fn plan_prune_worktrees(repo: &Repository) -> Result<OperationPlan, GitError
 
 /// Prune the stale worktree admin entries kagi selected: preflight → prune each
 /// → verify none remain prunable.
-pub fn execute_prune_worktrees(repo: &Repository, plan: &OperationPlan) -> Result<usize, GitError> {
+pub(crate) fn execute_prune_worktrees(
+    repo: &Repository,
+    plan: &OperationPlan,
+) -> Result<usize, GitError> {
     if !plan.blockers.is_empty() {
         return Err(GitError::Other(
             "prune-worktrees refused: plan has blockers".to_string(),
@@ -411,7 +414,10 @@ fn unrepaired_worktrees(repo: &Repository) -> Vec<String> {
 /// surfaces that in `out.status`, not as `Err` (issue #391, same class as #296).
 /// It can also exit 0 having repaired only *some* links, so the exit check is
 /// paired with a verify pass, exactly as `execute_prune_worktrees` verifies.
-pub fn execute_repair_worktrees(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
+pub(crate) fn execute_repair_worktrees(
+    repo: &Repository,
+    plan: &OperationPlan,
+) -> Result<(), GitError> {
     preflight_check(repo, plan)?;
     let repo_dir = repo
         .workdir()

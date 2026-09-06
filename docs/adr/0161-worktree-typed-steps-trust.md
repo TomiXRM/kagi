@@ -111,7 +111,7 @@ means no quoting/expansion); quoted-arg support is a `ponytail:` follow-up.
   re-prompts. copy/symlink work with no prompt.
 - Removing a worktree whose `pre_remove` cleanup fails / is untrusted keeps the
   worktree instead of orphaning its resources.
-- Acceptance §6 is covered by `crates/kagi-git/tests/worktree_steps_test.rs`
+- Acceptance §6 is covered by `crates/kagi-git/src/ops/worktree_steps_acceptance_tests.rs` (crate-internal since #566; unapproved pre-remove execution is tested in `ops/worktree_remove.rs`)
   (each assertion mutation-verified) plus unit tests in both crates.
 - **GUI-unverified:** the plan modal now renders the step enumeration and the
   trust line, and the confirm handlers grant trust — this needs a human to

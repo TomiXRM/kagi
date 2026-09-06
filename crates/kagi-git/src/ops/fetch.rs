@@ -22,7 +22,7 @@ use super::*;
 ///
 /// Returns [`GitError::Other`] when the git CLI fails to start or exits
 /// non-zero.
-pub fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome, GitError> {
+pub(crate) fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome, GitError> {
     // Resolve the upstream remote for the current branch, falling back to
     // fetching every remote when no single upstream can be determined.
     let remote = resolve_fetch_remote(repo);
@@ -97,7 +97,7 @@ fn remote_ref_oids(repo: &Repository) -> Vec<(String, String)> {
 ///
 /// Returns [`GitError::Other`] when the git CLI fails to start or exits
 /// non-zero.
-pub fn fetch_remote_branch(
+pub(crate) fn fetch_remote_branch(
     repo: &Repository,
     repo_path: &Path,
     remote: &str,

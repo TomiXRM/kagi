@@ -153,7 +153,10 @@ fn short_oid(oid: git2::Oid) -> String {
 /// Move the current branch's ref to point at `target`. Ref-only —
 /// `force=true` on the ref update only, never on the index or working tree
 /// (there is no `reset --hard` path in this codebase).
-pub fn execute_reset_current_to_head(repo: &Repository, target: &CommitId) -> Result<(), GitError> {
+pub(crate) fn execute_reset_current_to_head(
+    repo: &Repository,
+    target: &CommitId,
+) -> Result<(), GitError> {
     let head_ref = repo
         .head()
         .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;

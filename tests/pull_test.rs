@@ -14,13 +14,16 @@
 //! | 7 | `test_plan_pull_no_upstream_blocker` | branch without upstream → blocker |
 //! | 8 | `test_pull_fetch_failure_untouched` | remote gone → Err mentions fetch, repo untouched |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_pull;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_pull, plan_pull, working_tree_status, PullOutcome};
+use kagi_git::{plan_pull, working_tree_status, PullOutcome};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

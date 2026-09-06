@@ -3,7 +3,7 @@
 //! Source of truth is `crates/kagi-git/src/staging.rs::plan_commit` (a
 //! producer that lives outside `ops/` — see the appendix's "staging.rs(ops
 //! 外)" row, discovered mid-Phase-1). `backend.rs::plan_merge_commit` reuses
-//! `plan_commit` and overrides only the title with the
+//! `plan_commit`, permits an unchanged tree for an active merge, and uses the
 //! [`CommitTitle::FinalizeMergeCommit`] variant added here.
 
 /// The `"{n} modified" / "{n} untracked"` fragment of the leftover-changes

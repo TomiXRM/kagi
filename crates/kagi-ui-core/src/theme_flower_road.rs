@@ -16,7 +16,8 @@
 //! tell "selected row" from "added line" in a diff. At L=0.82 the gap is 61 and
 //! text still reads at 10.6:1 — the same as the old navy.
 //!
-//! Split out of `theme.rs` for the LOC ratchet, following `theme_apple`.
+//! The theme definition lives in its own module; the registry stays in
+//! `theme.rs`.
 
 use crate::theme::{SyntaxPalette, Theme};
 
@@ -27,7 +28,7 @@ pub const FLOWER_ROAD: Theme = Theme {
 
     // A warm ivory rather than white — the palette this theme is built from is
     // warm, and a blue-white base fought it.
-    bg_base: 0xfff9f5, // BG1
+    bg_base: 0xfff8f3, // BG1 — a barely warm white
     // BG2: the same step down from BG1, with roughly two thirds of the warmth
     // taken out. At full saturation the stripe read as an orange band rather
     // than an alternating row; the point of a zebra is to be noticed only when
@@ -114,7 +115,7 @@ pub const FLOWER_ROAD: Theme = Theme {
     avatar_sat: 0.42,
     avatar_light: 0.46,
 
-    term_bg: (0xff, 0xf9, 0xf5),
+    term_bg: (0xff, 0xf8, 0xf3),
     term_fg: (0x17, 0x25, 0x40),
     term_cursor: (0xa5, 0x27, 0x6b),
     term_black: (0x17, 0x25, 0x40),
@@ -152,3 +153,59 @@ pub const FLOWER_ROAD: Theme = Theme {
         attribute: 0x87419f,   // purple
     },
 };
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        theme_flower_road_bloom::FLOWER_ROAD_BLOOM, theme_flower_road_vivid::FLOWER_ROAD_VIVID,
+    };
+
+    fn hsl_to_rgb(h: f32, s: f32, l: f32) -> u32 {
+        let a = s * l.min(1.0 - l);
+        let channel = |n: f32| {
+            let k = (n + h * 12.0) % 12.0;
+            let value = l - a * (-1.0_f32).max((k - 3.0).min((9.0 - k).min(1.0)));
+            (value * 255.0).round() as u32
+        };
+        (channel(0.0) << 16) | (channel(8.0) << 8) | channel(4.0)
+    }
+
+    fn luminance(c: u32) -> f64 {
+        let channel = |value: u32| {
+            let value = value as f64 / 255.0;
+            if value <= 0.03928 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel((c >> 16) & 0xff)
+            + 0.7152 * channel((c >> 8) & 0xff)
+            + 0.0722 * channel(c & 0xff)
+    }
+
+    #[test]
+    fn candidates_cover_the_wheel_with_legible_lanes() {
+        for theme in [FLOWER_ROAD_BLOOM, FLOWER_ROAD_VIVID] {
+            let mut hues: Vec<f32> = theme.lane_hsl.iter().map(|(hue, _, _)| *hue).collect();
+            hues.sort_by(f32::total_cmp);
+            for pair in hues.windows(2) {
+                assert!(
+                    (pair[1] - pair[0] - 0.125).abs() < f32::EPSILON,
+                    "{}: flower hues must divide the wheel evenly",
+                    theme.slug
+                );
+            }
+            for (hue, saturation, lightness) in theme.lane_hsl {
+                let lane = hsl_to_rgb(hue, saturation, lightness);
+                let contrast = (luminance(lane).max(luminance(theme.bg_base)) + 0.05)
+                    / (luminance(lane).min(luminance(theme.bg_base)) + 0.05);
+                assert!(
+                    contrast >= 3.5,
+                    "{}: lane {lane:#08x} is only {contrast:.2}:1 on the background",
+                    theme.slug
+                );
+            }
+        }
+    }
+}

@@ -12,7 +12,7 @@ use gpui::{
     canvas, div, px, size, uniform_list, AnyWindowHandle, AvailableSpace, Bounds, Context, Pixels,
     Render, ScrollHandle, Size, UniformListScrollHandle, VisualTestAppContext, Window,
 };
-use kagi::ui::{e2e, KagiApp};
+use kagi::ui::{e2e, view_models, FooterStatus, KagiApp};
 use kagi_domain::file_history::{
     CommitSummary, FileChangeSummary, FileChangeType, FileHistory, FileHistoryEntry,
     FileHistoryEntryKind,
@@ -443,4 +443,124 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
     }
     drop(restore);
     eprintln!("[gui-e2e] PASS editor_history_layout actual KagiApp/Editor 11 inputs at fresh 1440/1024/1440 mounts; native resize unavailable");
+}
+
+/// Issue #547: the 22 px footer must show ONE line — the beginning of the
+/// operation result — at every window width.
+///
+/// The regression this pins: the message was laid out as wrapped, multi-line
+/// text inside a fixed-height `items_center()` row, so the bar centre-clipped
+/// it and a *middle* line was what the user saw (measured: y=859.5/h=58.5 for
+/// a 3-line message, y=-86/h=1950 at 320 px). Real `KagiApp`, real footer, and
+/// the message element's own laid-out bounds — not a screenshot.
+pub fn scenario_footer_status_line(cx: &mut VisualTestAppContext, repo_path: &Path) {
+    let restore = GlobalSettings::capture();
+    theme::set_zoom(1.);
+    const HEIGHT: f32 = 900.;
+    const BAR_H: f32 = 22.; // STATUS_BAR_H (src/ui/mod.rs)
+    let messages: Vec<(&str, String)> = vec![
+        // The short single-line case is first: it defines one line's height.
+        ("short", "failed: nothing to do".into()),
+        (
+            "three-line-lf",
+            "first line\nsecond line\nthird line".into(),
+        ),
+        (
+            "three-line-crlf",
+            "first line\r\nsecond line\r\nthird line".into(),
+        ),
+        (
+            "three-line-cr",
+            "first line\rsecond line\rthird line".into(),
+        ),
+        ("long", "failed: long message ".repeat(50)),
+        ("spaces", format!("failed:{}reason", " ".repeat(4096))),
+        (
+            "japanese",
+            "\u{5931}\u{6557}: \u{9577}\u{3044}\u{7406}\u{7531} ".repeat(50),
+        ),
+        (
+            "emoji-combining",
+            "\u{1f469}\u{200d}\u{1f4bb}e\u{301} ".repeat(128),
+        ),
+    ];
+    let mut one_line: Option<Pixels> = None;
+    for width in [1440., 640., 320.] {
+        let dimensions = (width, HEIGHT);
+        let app_state = e2e::app_state(repo_path).expect("fixture app state");
+        let captured: Rc<RefCell<Option<gpui::Entity<KagiApp>>>> = Rc::default();
+        let output = captured.clone();
+        let win = cx
+            .open_offscreen_window(size(px(width), px(HEIGHT)), move |window, cx| {
+                e2e::mount_root(app_state, window, cx, &output)
+            })
+            .expect("mount actual KagiApp");
+        let app = captured.borrow().clone().expect("captured KagiApp");
+        cx.run_until_parked();
+        for (name, text) in &messages {
+            let label = format!("{name}/{width}");
+            app.update(cx, |app, cx| {
+                app.status_footer = FooterStatus::Failed(gpui::SharedString::from(text.clone()));
+                cx.notify();
+            });
+            draw(cx, win.into(), dimensions);
+            let bounds = e2e::footer_message_bounds();
+            finite(bounds, &label);
+            assert!(
+                bounds.size.height > px(0.),
+                "{label}: footer message not mounted"
+            );
+            // Inside the bar band — the bug put the top far above it and let
+            // the bar clip down to a middle line.
+            assert!(
+                bounds.top() + px(EPS) >= px(HEIGHT - BAR_H)
+                    && bounds.bottom() <= px(HEIGHT) + px(EPS),
+                "{label}: message escapes the footer band [{}, {HEIGHT}]: {bounds:?}",
+                HEIGHT - BAR_H,
+            );
+            assert!(
+                bounds.size.height <= px(BAR_H) + px(EPS),
+                "{label}: message is taller than the bar: {bounds:?}"
+            );
+            // flex_1 + min_w_0: the message never pushes the Terminal /
+            // Operation Log icons past the right edge.
+            assert!(
+                bounds.right() <= px(width) + px(EPS),
+                "{label}: message overflows the window: {bounds:?}"
+            );
+            // Every input lays out to exactly the short message's one line.
+            let expected = *one_line.get_or_insert(bounds.size.height);
+            assert!(
+                f32::from(bounds.size.height - expected).abs() <= EPS,
+                "{label}: {:?} is not one line ({expected:?})",
+                bounds.size.height,
+            );
+            // …and the line the user reads starts at the start of the body.
+            let line = view_models::footer_line(text);
+            assert!(
+                !line.contains(['\n', '\r']),
+                "{label}: preview is multi-line: {line:?}"
+            );
+            let head = text
+                .split(['\n', '\r'])
+                .next()
+                .unwrap_or_default()
+                .split_whitespace()
+                .next()
+                .unwrap_or_default();
+            assert!(
+                line.starts_with(head),
+                "{label}: preview {line:?} does not start with {head:?}"
+            );
+            let stored = cx.read(|cx| match &app.read(cx).status_footer {
+                FooterStatus::Failed(m) => m.to_string(),
+                other => panic!("{label}: footer status changed: {other:?}"),
+            });
+            assert_eq!(&stored, text, "{label}: rendering changed the message");
+        }
+        drop(captured);
+        unmount(cx, app, win.into());
+    }
+    drop(restore);
+    eprintln!("[gui-e2e] PASS footer_status_line 8 messages x 1440/640/320: one line inside the 22 px bar, first line first");
 }

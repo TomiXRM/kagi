@@ -152,6 +152,16 @@ pub fn build_kagi_entity(
     kagi
 }
 
+/// Issue #547: the laid-out bounds of the footer's message element after the
+/// last draw, in window coordinates. The footer is a fixed 22 px
+/// `items_center()` row, so a message that wraps is centre-clipped and the
+/// first line — the op name and reason — is what gets hidden; the scenario
+/// asserts these bounds stay one line inside the bar.
+#[cfg(feature = "gui-e2e")]
+pub fn footer_message_bounds() -> gpui::Bounds<gpui::Pixels> {
+    super::render_status::footer_message_bounds()
+}
+
 /// Issue #468: push a synthetic `Failed` op-log entry onto the panel, through
 /// the same `OpLogPanel::push` the real `record_op` path uses. Part of the seam
 /// because `kagi_git::oplog::OpLogEntry` is a normal dep the runner cannot name.

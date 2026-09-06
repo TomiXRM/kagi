@@ -5,6 +5,28 @@
 
 use super::*;
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    /// #547 layout oracle: where the footer message element actually ended up.
+    ///
+    /// A `track_scroll` handle on a non-scrolling div records the laid-out
+    /// bounds and nothing else; the GUI E2E footer scenario reads them back
+    /// (via `e2e::footer_message_bounds`) and checks them against the 22 px
+    /// bar. Thread-local rather than a 111th `KagiApp` field: it is
+    /// measurement, not app state, and GPUI renders only on the main thread.
+    /// With several windows open it holds the most recently drawn footer,
+    /// which is all a single-window scenario needs — same shape as
+    /// `e2e::confirm_bounds`, and compiled out of ordinary builds.
+    static FOOTER_MSG_BOUNDS: gpui::ScrollHandle = gpui::ScrollHandle::new();
+}
+
+/// The last drawn footer message's laid-out bounds (#547) — see
+/// [`FOOTER_MSG_BOUNDS`]. Zero-sized until the status bar has been drawn once.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn footer_message_bounds() -> gpui::Bounds<gpui::Pixels> {
+    FOOTER_MSG_BOUNDS.with(|handle| handle.bounds())
+}
+
 impl KagiApp {
     /// Status bar slot — the 22 px footer (T-BP-003 full implementation).
     ///
@@ -183,15 +205,33 @@ impl KagiApp {
             bar = bar.child(chip);
         }
 
-        // Last operation message: flex_1, overflow_hidden, only if space allows.
-        bar = bar.child(
-            div()
-                .flex_1()
-                .ml(theme::scaled_px(6.))
-                .overflow_hidden()
-                .text_color(rgb(footer_color))
-                .child(footer_text),
-        );
+        // Last operation message (#547): a bounded, single-line preview.
+        //
+        // The bar is a fixed 22 px `items_center()` row, so a message that
+        // wraps is laid out tall and then *centre*-clipped — the first line
+        // (op name + reason) scrolls out of the bar and a middle line shows.
+        // `footer_line` collapses it to the first line and `truncate()` keeps
+        // it one line at any width; `min_w_0` lets it shrink past its own text
+        // so the Terminal / Operation Log icons stay reachable at 320 px. The
+        // untruncated body is unchanged in the Operation Log and the oplog.
+        let mut message = div()
+            .id("status-footer-msg")
+            .flex_1()
+            .min_w_0()
+            .ml(theme::scaled_px(6.))
+            .truncate()
+            .text_color(rgb(footer_color))
+            .child(SharedString::from(view_models::footer_line(&footer_text)));
+        #[cfg(feature = "gui-e2e")]
+        {
+            message = message.track_scroll(&FOOTER_MSG_BOUNDS.with(gpui::ScrollHandle::clone));
+        }
+        if let Some(tip) = view_models::footer_excerpt(&footer_text) {
+            let tip = SharedString::from(tip);
+            message =
+                message.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
+        }
+        bar = bar.child(message);
 
         // Icon buttons at the right end.
         bar.child(icon_terminal).child(icon_oplog)

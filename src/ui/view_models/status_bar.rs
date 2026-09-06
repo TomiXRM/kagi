@@ -141,6 +141,75 @@ pub fn fetch_age_chip(s: &StatusBarSummary, now_secs: i64) -> Option<StatusChip>
     })
 }
 
+// ── Footer message preview (#547) ───────────────────────────────
+//
+// The footer is one fixed 22 px line laid out with `items_center()` +
+// `overflow_hidden()`. Handing it a raw operation result (which may be
+// multi-line, or a whole `git` stderr) made GPUI wrap the *full* text into a
+// tall block and then centre-clip it, so the first line — the op name and the
+// failure reason — was scrolled out of view and a middle line showed instead.
+// So the view renders a bounded, single-line preview; the untruncated body
+// keeps living in the Operation Log (and the persisted oplog), untouched.
+
+/// Character budget for the footer's one-line preview. Wide enough that at a
+/// 1,440 px window the CSS ellipsis, not this cap, is what usually trims —
+/// small enough that a 1 MB failure body is never normalised in full.
+pub const FOOTER_LINE_CHARS: usize = 256;
+
+/// Character budget for the hover excerpt. The tooltip is a peek at the
+/// beginning of the body, not a second copy of it: the full text is one click
+/// away in the Operation Log.
+pub const FOOTER_TOOLTIP_CHARS: usize = 512;
+
+/// The footer's one-line preview: the first line (LF / CRLF / CR), with runs
+/// of whitespace collapsed to single spaces and a `…` when anything was left
+/// behind. Reads at most [`FOOTER_LINE_CHARS`] characters of `msg` plus the
+/// whitespace run that follows.
+pub fn footer_line(msg: &str) -> String {
+    let mut out = String::new();
+    let mut chars = 0usize;
+    let mut gap = false;
+    let mut more = false;
+    let mut rest = msg.chars();
+    while let Some(ch) = rest.next() {
+        if ch == '\n' || ch == '\r' {
+            // A trailing newline is not "more text": only ink counts.
+            more = rest.any(|c| !c.is_whitespace());
+            break;
+        }
+        if ch.is_whitespace() {
+            gap = !out.is_empty();
+            continue;
+        }
+        if chars >= FOOTER_LINE_CHARS {
+            more = true;
+            break;
+        }
+        if std::mem::take(&mut gap) {
+            out.push(' ');
+            chars += 1;
+        }
+        out.push(ch);
+        chars += 1;
+    }
+    if more {
+        out.push('\u{2026}'); // …
+    }
+    out
+}
+
+/// Bounded hover text for the footer message, or `None` when the one-line
+/// preview already shows everything there is.
+pub fn footer_excerpt(msg: &str) -> Option<String> {
+    let head: String = msg.chars().take(FOOTER_TOOLTIP_CHARS).collect();
+    let truncated = msg.chars().nth(FOOTER_TOOLTIP_CHARS).is_some();
+    let mut out = head.trim().to_string();
+    if truncated {
+        out.push('\u{2026}');
+    }
+    (out != footer_line(msg)).then_some(out)
+}
+
 /// Compact age label: `42s` / `3m` / `2h` / `5d`.
 fn age_label(age_secs: i64) -> String {
     match age_secs {
@@ -280,6 +349,63 @@ mod tests {
             ..Default::default()
         };
         assert!(fetch_age_chip(&s, now).is_none());
+    }
+
+    // ── #547: footer one-line preview ──────────────────────────
+
+    #[test]
+    fn footer_line_keeps_the_first_line_of_every_newline_flavour() {
+        for msg in [
+            "first line\nsecond line\nthird line",
+            "first line\r\nsecond line\r\nthird line",
+            "first line\rsecond line\rthird line",
+        ] {
+            assert_eq!(footer_line(msg), "first line\u{2026}");
+        }
+    }
+
+    #[test]
+    fn footer_line_collapses_whitespace_and_stays_single_line() {
+        assert_eq!(footer_line("push:   ok\t\tdone  "), "push: ok done");
+        assert_eq!(footer_line(""), "");
+        assert_eq!(footer_line("   "), "");
+        // A trailing newline is not "more text" — no misleading ellipsis.
+        assert_eq!(footer_line("push: ok\n"), "push: ok");
+        assert_eq!(footer_line("push: ok\n\n  \n"), "push: ok");
+        for msg in [
+            "a\nb".to_string(),
+            "\u{1f469}\u{200d}\u{1f4bb}e\u{301}".repeat(200),
+        ] {
+            assert!(!footer_line(&msg).contains(['\n', '\r']));
+        }
+    }
+
+    #[test]
+    fn footer_line_is_bounded_for_huge_bodies() {
+        let huge = "failed: long message ".repeat(50_000); // ~1 MB, one line
+        let line = footer_line(&huge);
+        assert!(line.ends_with('\u{2026}'), "{line}");
+        assert!(line.chars().count() <= FOOTER_LINE_CHARS + 2, "{line}");
+        assert!(line.starts_with("failed: long message"), "{line}");
+        // Japanese and combining marks are counted as chars, never split
+        // mid-`char` (which would not even be valid UTF-8).
+        let ja = footer_line(&"\u{5931}\u{6557}: \u{9577}\u{3044}".repeat(200));
+        assert!(ja.chars().count() <= FOOTER_LINE_CHARS + 2);
+        assert!(ja.starts_with("\u{5931}\u{6557}:"));
+    }
+
+    #[test]
+    fn footer_excerpt_only_when_there_is_more_to_see() {
+        assert_eq!(footer_excerpt("push: ok"), None);
+        assert_eq!(footer_excerpt(""), None);
+        assert_eq!(
+            footer_excerpt("first line\nsecond line").as_deref(),
+            Some("first line\nsecond line"),
+        );
+        let huge = "x".repeat(FOOTER_TOOLTIP_CHARS * 4);
+        let tip = footer_excerpt(&huge).expect("truncated body gets an excerpt");
+        assert_eq!(tip.chars().count(), FOOTER_TOOLTIP_CHARS + 1);
+        assert!(tip.ends_with('\u{2026}'));
     }
 
     #[test]

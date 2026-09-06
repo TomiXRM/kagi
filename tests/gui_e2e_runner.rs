@@ -470,6 +470,15 @@ mod macos {
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
             ),
+            (
+                "footer_status_line",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_footer_status_line(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+            ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
                 "graph_copy",

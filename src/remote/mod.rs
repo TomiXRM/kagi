@@ -462,47 +462,113 @@ pub fn remote_stash_drop(
 /// #501: like [`remote_stash_drop`], the attempt is recorded **here**, at the
 /// transport boundary, before returning across the UI's tab-owned completion
 /// guard. Previously the only recorder was the UI's presentation-only
-/// `record_op`, so a remote pull was never persisted at all.
+/// `record_op`, so a remote pull was never persisted at all. The receipt comes
+/// back with the result — a failed append is never swallowed.
+pub struct RemotePullReport {
+    pub result: Result<String, RemoteError>,
+    pub recording: kagi_git::backend::recording::Recording,
+}
+
+/// ssh could not keep the session: the remote `git pull` was started and is
+/// **not proven stopped**, so its effect is unknown rather than failed (#501).
+const SSH_DISCONNECT_MARKERS: [&str; 4] = [
+    "Connection timed out",
+    "Operation timed out",
+    "Connection closed by",
+    "Connection reset by",
+];
+
+/// git left the remote worktree mid-merge. Conflict text goes to stdout, the
+/// "Automatic merge failed" summary too; scan both streams.
+const GIT_CONFLICT_MARKERS: [&str; 2] = ["CONFLICT", "Automatic merge failed"];
+
 pub fn remote_pull(
     host: &RemoteHost,
     repo: &str,
     before: &kagi_git::StateSummary,
-) -> Result<String, RemoteError> {
-    let result = remote_pull_transport(host, repo);
-    let outcome = match &result {
-        Ok(summary) => kagi_git::oplog::OpOutcome::Success {
-            after: kagi_git::StateSummary {
-                head: before.head.clone(),
-                dirty: summary.clone(),
+) -> RemotePullReport {
+    use kagi_git::oplog::OpOutcome;
+    let transport = run_ssh(host, &["git", "-C", repo, "pull"]);
+    let after = |dirty: String| kagi_git::StateSummary {
+        head: before.head.clone(),
+        dirty,
+    };
+    let (result, outcome) = match transport {
+        Ok(out) if out.code == 0 => {
+            // Combine stdout+stderr in the message: git prints progress to
+            // stderr but the "Fast-forward" / "Already up to date." summary to
+            // stdout.
+            let summary = out.stdout.trim();
+            let summary = if summary.is_empty() {
+                "pull complete".to_string()
+            } else {
+                summary.lines().last().unwrap_or(summary).to_string()
+            };
+            let outcome = OpOutcome::Success {
+                after: after(summary.clone()),
+            };
+            (Ok(summary), outcome)
+        }
+        Ok(out) => {
+            let text = format!("{}\n{}", out.stdout, out.stderr);
+            let error = RemoteError::NonZero {
+                code: out.code,
+                stderr: out.stderr.clone(),
+            };
+            let outcome = if SSH_DISCONNECT_MARKERS.iter().any(|m| text.contains(m)) {
+                OpOutcome::Unknown {
+                    after: after("remote pull not proven stopped".into()),
+                    evidence: format!(
+                        "ssh lost the session ({error}); the remote git pull may still be \
+                         running — do not retry until the host is checked"
+                    ),
+                }
+            } else if GIT_CONFLICT_MARKERS.iter().any(|m| text.contains(m)) {
+                // The merge started and stopped mid-way: the host's worktree
+                // and index changed. Not a clean failure.
+                OpOutcome::Partial {
+                    after: after(format!(
+                        "remote worktree left mid-merge; {}",
+                        text.trim().replace('\n', " / ")
+                    )),
+                    error: error.to_string(),
+                }
+            } else {
+                // An explicit refusal: ssh auth/host-key, or git declining
+                // before it touched anything ("no tracking information").
+                OpOutcome::Failed {
+                    error: error.to_string(),
+                }
+            };
+            (Err(error), outcome)
+        }
+        // The whole-command backstop fired. The child was never reaped, so the
+        // remote command is not proven stopped.
+        Err(RemoteError::Timeout) => (
+            Err(RemoteError::Timeout),
+            OpOutcome::Unknown {
+                after: after("remote pull not proven stopped".into()),
+                evidence: format!(
+                    "{}; the remote git pull may still be running — do not retry \
+                     until the host is checked",
+                    RemoteError::Timeout
+                ),
             },
-        },
-        Err(error) => kagi_git::oplog::OpOutcome::Failed {
-            error: error.to_string(),
-        },
+        ),
+        // Pre-spawn: nothing ran.
+        Err(error) => {
+            let outcome = OpOutcome::Failed {
+                error: error.to_string(),
+            };
+            (Err(error), outcome)
+        }
     };
     let scope = format!("{}:{repo}", host.label());
     let entry = kagi_git::oplog::OpLogEntry::new("pull", scope.clone(), before.clone(), outcome)
         .with_worktree(Some(scope));
-    let _ = kagi_git::oplog::append_oplog(&entry);
-    result
-}
-
-fn remote_pull_transport(host: &RemoteHost, repo: &str) -> Result<String, RemoteError> {
-    // Combine stdout+stderr in the message: git prints progress to stderr but
-    // the "Fast-forward" / "Already up to date." summary to stdout.
-    let out = run_ssh(host, &["git", "-C", repo, "pull"])?;
-    if out.code == 0 {
-        let summary = out.stdout.trim();
-        Ok(if summary.is_empty() {
-            "pull complete".to_string()
-        } else {
-            summary.lines().last().unwrap_or(summary).to_string()
-        })
-    } else {
-        Err(RemoteError::NonZero {
-            code: out.code,
-            stderr: out.stderr,
-        })
+    RemotePullReport {
+        result,
+        recording: kagi_git::backend::recording::finalize(entry),
     }
 }
 

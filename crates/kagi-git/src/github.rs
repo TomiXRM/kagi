@@ -491,18 +491,43 @@ pub fn merge_pr(
     plan: &OperationPlan,
 ) -> PrMergeReport {
     let result = merge_pr_transport(workdir, number, method, delete_branch, head_sha);
+    // Recovery material: the exact head the merge was bound to
+    // (`--match-head-commit`), so the merged state stays identifiable after the
+    // PR leaves the open list.
+    let merged_after = || StateSummary {
+        head: plan.predicted.head.clone(),
+        dirty: format!("{} (head {head_sha})", plan.predicted.dirty),
+    };
     let outcome = match &result {
         Ok(_) => crate::oplog::OpOutcome::Success {
-            after: StateSummary {
-                head: plan.predicted.head.clone(),
-                // Recovery material: the exact head the merge was bound to
-                // (`--match-head-commit`), so the merged state is identifiable
-                // after the PR leaves the open list.
-                dirty: format!("{} (head {head_sha})", plan.predicted.dirty),
-            },
+            after: merged_after(),
         },
-        Err(error) => crate::oplog::OpOutcome::Failed {
-            error: error.to_string(),
+        // A non-zero `gh` exit does not mean "not merged": the merge can land
+        // and a later step (`--delete-branch`) or the response itself fail. The
+        // server holds the truth, so re-read it before deciding (#501).
+        Err(error) => match pr_merged_on_server(workdir, number) {
+            Some(true) if delete_branch => crate::oplog::OpOutcome::Partial {
+                after: merged_after(),
+                error: format!(
+                    "merged; gh failed after the merge (branch deletion unconfirmed): {error}"
+                ),
+            },
+            Some(true) => crate::oplog::OpOutcome::Success {
+                after: merged_after(),
+            },
+            Some(false) => crate::oplog::OpOutcome::Failed {
+                error: error.to_string(),
+            },
+            None => crate::oplog::OpOutcome::Unknown {
+                after: StateSummary {
+                    head: plan.predicted.head.clone(),
+                    dirty: format!("#{number} state unconfirmed (head {head_sha})"),
+                },
+                evidence: format!(
+                    "gh failed ({error}) and `gh pr view --json merged` could not be re-read; \
+                     the merge is neither confirmed nor refuted — do not retry"
+                ),
+            },
         },
     };
     let repo = workdir.display().to_string();
@@ -513,6 +538,30 @@ pub fn merge_pr(
         result,
         recording: crate::backend::recording::finalize(entry),
     }
+}
+
+/// Did GitHub actually merge the PR? `None` means the question could not be
+/// answered (gh missing, offline, auth gone) — the honest outcome is then
+/// `Unknown`, never an assumed failure. Server state is authoritative; the
+/// exit status of the merge command is not.
+fn pr_merged_on_server(workdir: &Path, number: u64) -> Option<bool> {
+    let out = crate::cli::gh_command()
+        .args([
+            "pr",
+            "view",
+            &number.to_string(),
+            "--json",
+            "merged,mergedAt",
+        ])
+        .current_dir(workdir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).ok()?;
+    value.get("merged")?.as_bool()
 }
 
 fn merge_pr_transport(

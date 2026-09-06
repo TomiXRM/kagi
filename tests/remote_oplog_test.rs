@@ -171,7 +171,15 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     std::env::set_var("KAGI_LOG_DIR", &logs);
     let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
 
-    let summary = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &before).unwrap();
+    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &before);
+    let summary = report.result.expect("fixture pull should succeed");
+    assert!(
+        matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ),
+        "the transport must hand back its receipt, not swallow the append"
+    );
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 1, "a remote pull must be recorded");
     assert_eq!(entries[0].op, "pull");
@@ -183,13 +191,83 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     };
     assert_eq!(after.dirty, summary);
 
-    // A repository that is not there is still an accepted attempt.
+    // A repository that is not there is an explicit refusal — git declined
+    // before touching anything, so Failed is provable.
     let missing = root.path().join("gone");
-    assert!(kagi::remote::remote_pull(&host, missing.to_str().unwrap(), &before).is_err());
+    let report = kagi::remote::remote_pull(&host, missing.to_str().unwrap(), &before);
+    assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 2);
     assert!(matches!(
         entries[0].outcome,
         kagi_git::oplog::OpOutcome::Failed { .. }
     ));
+
+    // A pull that stopped mid-merge changed the host: Partial, not Failed.
+    git(&seed, &["pull", "-q", origin.to_str().unwrap(), "main"]);
+    std::fs::write(seed.join("file"), "theirs\n").unwrap();
+    git(&seed, &["commit", "-qam", "theirs"]);
+    git(&seed, &["push", "-q", origin.to_str().unwrap(), "main"]);
+    git(&repo, &["config", "pull.rebase", "false"]);
+    git(&repo, &["config", "user.email", "fixture@example.invalid"]);
+    git(&repo, &["config", "user.name", "fixture"]);
+    std::fs::write(repo.join("file"), "ours\n").unwrap();
+    git(&repo, &["commit", "-qam", "ours"]);
+    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &before);
+    assert!(report.result.is_err());
+    let entries = kagi_git::oplog::read_oplog_tail(10);
+    assert_eq!(entries.len(), 3);
+    let kagi_git::oplog::OpOutcome::Partial { after, .. } = &entries[0].outcome else {
+        panic!(
+            "a conflicted pull must be partial, got {:?}",
+            entries[0].outcome
+        );
+    };
+    assert!(after.dirty.contains("mid-merge"), "{}", after.dirty);
+    assert!(!git(&repo, &["status", "--porcelain"]).is_empty());
+}
+
+/// #501: ssh losing the session does not prove the remote `git pull` stopped.
+#[test]
+fn a_remote_pull_that_loses_the_session_is_unknown_not_failed() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    let logs = root.path().join("logs");
+    std::fs::create_dir_all(&bin).unwrap();
+    // ssh's own disconnect banner, on the exit status ssh uses for it.
+    let ssh = bin.join("ssh");
+    std::fs::write(
+        &ssh,
+        "#!/bin/sh\necho 'Connection closed by 10.0.0.1 port 22' >&2\nexit 255\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _restore = Environment {
+        path: std::env::var_os("PATH"),
+        log: std::env::var_os("KAGI_LOG_DIR"),
+    };
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &_restore.path.clone().unwrap_or_default(),
+    ));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    std::env::set_var("KAGI_LOG_DIR", &logs);
+    let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
+    let before = kagi_git::StateSummary {
+        head: "main".into(),
+        dirty: "clean".into(),
+    };
+
+    let report = kagi::remote::remote_pull(&host, "/srv/repo", &before);
+    assert!(report.result.is_err());
+    let entries = kagi_git::oplog::read_oplog_tail(10);
+    assert_eq!(entries.len(), 1);
+    let kagi_git::oplog::OpOutcome::Unknown { evidence, .. } = &entries[0].outcome else {
+        panic!(
+            "a lost session must be Unknown, got {:?}",
+            entries[0].outcome
+        );
+    };
+    assert!(evidence.contains("do not retry"), "{evidence}");
 }

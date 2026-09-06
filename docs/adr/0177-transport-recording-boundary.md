@@ -12,13 +12,36 @@
 remote mutation（`github::merge_pr`、`remote::remote_pull`）は **自分の実行境界で
 記録し終えてから返る**。UI の完了 callback は表示専用にする。
 
-`merge_pr` は `PrMergeReport { result, recording }` を返す。`recording` は
-ADR-0175 と同じ `backend::recording::Recording`（`finalize` を再利用、writer の
-二重実装はしない）。`Success + Recording::Failed` は「GitHub 上ではマージ済み・
-記録失敗」であり、**再実行の根拠にしない**。UI はその旨を app notice に出す。
+`merge_pr` は `PrMergeReport { result, recording }`、`remote_pull` は
+`RemotePullReport { result, recording }` を返す。`recording` は ADR-0175 と同じ
+`backend::recording::Recording` で、append は `recording::finalize` 一箇所だけ
+（`pub` へ引き上げた。writer を二重実装しない、`let _ = append_oplog` もしない）。
+`Success + Recording::Failed` は「変更済み・記録失敗」であり、**再実行の根拠に
+しない**。UI は成功 toast を出さず「changed but not recorded」として提示する。
 
-`remote_pull` は sibling の `remote_stash_drop` と同じ形にし、`before` を受け取り
-`{host}:{repo}` scope の entry を append してから結果を返す。
+### 結果不明を Failed にしない
+
+**PR merge**: `gh` の非ゼロ終了は「未 merge」の証拠ではない。merge が成立して
+から後段（`--delete-branch`、応答自体）が壊れることがある。非ゼロ終了時は
+`gh pr view --json merged,mergedAt` で server 状態を再読し、server 側を正とする。
+
+| 再読結果 | outcome |
+|---|---|
+| merged=true かつ `--delete-branch` 要求あり | `Partial`（削除は未確認） |
+| merged=true | `Success` |
+| merged=false（未 merge が確定） | `Failed` |
+| 再読不能（gh 不在 / offline / 認証切れ） | `Unknown`（再送しない） |
+
+**SSH remote pull**: child の停止を証明できない限り Failed にしない。
+
+| 観測 | outcome |
+|---|---|
+| whole-command timeout、ssh の切断バナー（`Connection closed by` 等） | `Unknown`（remote の `git pull` が動作中かもしれない） |
+| 非ゼロ終了で `CONFLICT` / `Automatic merge failed` | `Partial`（host の worktree/index は変化済み） |
+| spawn 前失敗、明確な拒否応答（auth / host key / no tracking information） | `Failed` |
+
+UI は生の exit ではなく**記録済み outcome** を見て提示する。`gh` が失敗しても
+再読が merged なら「executed」であり、失敗として見せない。
 
 plan blocker による `Refused` は transport に到達しないので UI が記録者のまま。
 `record_op` は `Refused` だけを persist する既存規約（ADR-0149）で足りるため、
@@ -59,12 +82,23 @@ DESIGN §5.3（"Backend へ移す"）の残作業として据え置く。
 | `confirm_unlock_worktree` | `unlock-worktree` | 同上 |
 | `confirm_prune_worktrees` | `prune-worktrees` | 同上 |
 | `confirm_repair_worktrees` | `repair-worktrees` | 同上 |
-| conflict save / dir-file / continue / abort / skip | `conflict-save:*`、`conflict-dir-file:*`、`<op>-continue` / `-abort` / `-skip` | `src/ui/operations/conflict.rs` |
+| conflict save / continue / abort / skip | `conflict-save:*`、`<op>-continue` / `-abort` / `-skip` | `src/ui/operations/conflict.rs` |
 | terminal 起動失敗 | `terminal-start` | `src/ui/mod.rs` |
 | plan blocker の `Refused`（全 family） | 各 op 名 | `record_op` が persist |
 
 `record_op_persist` の残存 caller はこの表が全数である。新しい writer を
 ここへ足す前に、その family の実行境界で記録できないか先に確認する。
+
+dir/file conflict（`conflict-dir-file:*`）はこの表に**含まれない**。writer は
+既に `crates/kagi-git/src/ops/dir_file_conflict.rs` にあり、UI 側は表示専用の
+`record_op` を呼んでいる。
+
+## 配送
+
+`Recording::Failed` の通知は `finish_op_on_main` の DropStale で消えてはならない。
+`finish_op_on_main_settled` の settle 半分（stale-tab guard より前、DESIGN §4
+「operation の終端化は常に先」）で owner repo 名付き app notice として配送する。
+stash family の配送と同じ位置づけで、表示半分（`on_done`）だけが落ちる。
 
 ## 検証
 
@@ -78,12 +112,22 @@ DESIGN §5.3（"Backend へ移す"）の残作業として据え置く。
   oplog のファイル位置をディレクトリにして append を失敗させ（DESIGN の
   決定的 fixture）、`result` は `Ok`、`recording` は `Recording::Failed` に
   なることを確認する。
-- `remote_pull_records_success_and_failure_at_the_transport` —
-  `tests/remote_oplog_test.rs` と同じローカル ssh transport fixture。
+- `a_failed_gh_whose_reread_says_merged_is_not_recorded_as_a_failure` /
+  `a_merged_pr_whose_branch_deletion_is_unproven_is_partial` /
+  `a_failed_gh_that_cannot_be_re_read_is_unknown_not_failed` —
+  fake `gh` が `pr merge` と `pr view` を別々に応答し、上の再読表を実証する。
+
+`tests/remote_oplog_test.rs`（ローカル ssh transport fixture）:
+
+- `remote_pull_records_success_and_failure_at_the_transport` — Success の
+  receipt、拒否応答の Failed、実際に conflict を起こした pull の Partial。
+- `a_remote_pull_that_loses_the_session_is_unknown_not_failed` — ssh の切断
+  バナーで Unknown。
 
 ## 保証しないもの
 
-外部 remote の「結果不明」と確定 failure の区別（`gh` の timeout/切断）は
-本 ADR の対象外。現状は `gh` の非ゼロ終了をすべて `Failed` として記録する。
-transport 用の `Unknown` は remove/stash と同じ判定材料を持たないため、
-別途 #505 / transport family の設計で決める。
+再読は `gh` の 1 往復であり、その往復自体が壊れれば `Unknown` になる。
+merged=true のときに `--delete-branch` が実際に成功したかは照会していない
+（`Partial` に倒す）。branch 削除の確認を足すなら transport 往復が一回増える。
+SSH 側の判定は ssh / git の出力文字列に依存する。marker に一致しない未知の
+切断メッセージは `Failed` に落ちる。exit code だけで確定できる契約は無い。

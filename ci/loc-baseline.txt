@@ -30,7 +30,7 @@ src/ui/operations/commit.rs 1376
 src/ui/operations/conflict.rs 1020
 src/ui/operations/modal_state.rs 1142
 src/ui/pr_mode.rs 2343
-src/ui/render.rs 916
+src/ui/render.rs 931
 src/ui/render_header.rs 807
 src/ui/settings_view.rs 823
 src/ui/sidebar.rs 2007

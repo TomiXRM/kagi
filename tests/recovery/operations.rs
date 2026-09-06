@@ -562,11 +562,23 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
 
         press_key(cx, &app, window, "escape");
         cx.run_until_parked();
+        // Whether the root still owned focus is the decisive datum when this
+        // fails: `false` means a modal text input consumed the keystroke through
+        // gpui_component's `Input`-context binding (the #492 root-Escape
+        // handler's case), `true` means something else refilled the slot.
+        let root_focused = cx
+            .update_window(window, |_, window, cx| {
+                app.read(cx)
+                    .root_focus
+                    .as_ref()
+                    .is_some_and(|fh| fh.is_focused(window))
+            })
+            .unwrap();
         cx.read(|cx| {
             let app = app.read(cx);
             assert!(
                 app.active_modal.is_none(),
-                "{case}: Esc must clear the modal slot"
+                "{case}: Esc must clear the modal slot (root focused at Esc: {root_focused})"
             );
             assert!(
                 app.busy_op.is_none(),

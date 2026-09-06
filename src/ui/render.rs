@@ -672,6 +672,21 @@ impl Render for KagiApp {
             .on_action(toggle_bottom_panel)
             // T-UI-003: Esc closes the main diff view.
             .on_action(close_main_diff)
+            // #492: a modal whose text input owns focus resolves `escape` through
+            // gpui_component's own `Input`-context binding, so `CloseMainDiff`
+            // may never land and the confirmation is stranded with no keyboard
+            // way out (create-tag/-branch/-worktree, rename-branch, lock-worktree
+            // and stash-push all focus their input on open; a per-renderer key
+            // listener cannot cover it — key listeners are skipped once a binding
+            // consumed the key). Propagate when no modal is open so a plain text
+            // input keeps its own Escape behaviour.
+            .on_action(
+                cx.listener(|this, _: &gpui_component::input::Escape, _window, cx| {
+                    if !this.cancel_active_modal(cx) {
+                        cx.propagate();
+                    }
+                }),
+            )
             .on_action(copy_diff_selection)
             .on_action(save_editor_file)
             // Arrows: step diff files while the main diff is open, otherwise

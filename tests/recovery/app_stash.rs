@@ -62,22 +62,6 @@ fn confirm(
         cx.simulate_keystrokes(window, "enter");
     }
 }
-fn dismiss_app_notice_if_present(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-) {
-    if !cx.read(|cx| matches!(&app.read(cx).active_modal, Some(ActiveModal::AppNotice(_)))) {
-        return;
-    }
-    cx.update_window(window, |_, window, cx| {
-        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
-        window.draw(cx).clear();
-    })
-    .unwrap();
-    cx.simulate_keystrokes(window, "escape");
-    cx.run_until_parked();
-}
 pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     for button in [false, true] {
         for action in [
@@ -174,6 +158,9 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Partial { .. }));
         assert_eq!(ids(&repo), before);
+        assert!(
+            cx.read(|cx| !matches!(&app.read(cx).active_modal, Some(ActiveModal::AppNotice(_))))
+        );
         assert!(cx.read(|cx| !matches!(app.read(cx).status_footer, FooterStatus::Success(_))));
         let other = build_fixture();
         let other_path = other.path().canonicalize().unwrap();
@@ -217,10 +204,6 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
         wait(cx, &app, |app| app.conflict.is_none());
-        // Partial delivery does not always present its queued notice before
-        // Conflict Mode. If one is active after continue/reload, dismiss it;
-        // otherwise let the follow-up proceed without depending on a notice.
-        dismiss_app_notice_if_present(cx, &app, window);
         wait(cx, &app, |app| {
             if duplicate {
                 app.app_sessions.stash_conflict(&repo).is_none()

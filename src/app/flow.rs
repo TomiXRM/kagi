@@ -148,6 +148,11 @@ pub fn approve(
     if current.revision != token.revision || planned_policy != policy.into() {
         return Err(AdmissionError::StaleApproval);
     }
+    // #482 stage 1: an approval whose owner has left cannot be dispatched. The
+    // plan slot is already expired by `detach`; this is the belt to that brace.
+    if !s.is_attached(prepared.owner().session) {
+        return Err(AdmissionError::StaleApproval);
+    }
     let approved = Approved {
         revision: token.revision,
         prepared: prepared.clone(),
@@ -274,16 +279,36 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     ) {
         s.reconcile.insert(id, (owner.plan.clone(), stopped));
     }
+    // #482 stage 1: invalidation is addressed by frozen `WorktreeId`, never by
+    // re-resolving a path. The manager repo's identity was frozen on the owning
+    // tab at attach time; the removal target's came from the plan.
+    let manager = owner
+        .attachment
+        .worktree
+        .clone()
+        .map(|worktree| InvalidTarget {
+            worktree,
+            path: match &owner.plan {
+                Planned::Remove { plan, .. } => plan.repo.clone(),
+                Planned::Stash { plan, .. } => plan.repo.clone(),
+            },
+        });
     let mut deliveries = vec![];
     match (&owner.plan, &report.evidence) {
         (Planned::Remove { plan, .. }, FamilyEvidence::Remove(r)) => {
-            for path in [&plan.repo, &plan.target] {
-                s.stale.insert(path.clone());
-                deliveries.push(if path == &plan.target && r.target_exists == Some(false) {
-                    Delivery::RemovedTarget(path.clone())
-                } else {
-                    Delivery::Invalidate(path.clone())
-                });
+            let target = InvalidTarget {
+                worktree: plan.worktree_id.clone(),
+                path: plan.target.clone(),
+            };
+            for target in manager.into_iter().chain(std::iter::once(target)) {
+                s.stale.insert(target.worktree.clone());
+                deliveries.push(
+                    if target.path == plan.target && r.target_exists == Some(false) {
+                        Delivery::RemovedTarget(target)
+                    } else {
+                        Delivery::Invalidate(target)
+                    },
+                );
             }
         }
         (Planned::Stash { plan, .. }, FamilyEvidence::Stash(r)) => {
@@ -292,10 +317,15 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                 StashAction::Apply { .. } | StashAction::Pop { .. }
             ) && !r.evidence.conflicts.is_empty()
             {
-                if let Some(oid) = &r.evidence.oid {
-                    s.clear_stash_conflict(&plan.repo);
+                // The conflict belongs to the session that approved the stash.
+                // A closed owner leaves no payload behind to resurrect (#557).
+                if let (Some(oid), true) =
+                    (&r.evidence.oid, s.is_attached(owner.attachment.session))
+                {
+                    let session = owner.attachment.session;
+                    s.clear_stash_conflict(session);
                     s.stash_conflicts.insert(
-                        plan.repo.clone(),
+                        session,
                         StashConflict {
                             operation: id,
                             oid: oid.clone(),
@@ -305,8 +335,10 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                     );
                 }
             }
-            s.stale.insert(plan.repo.clone());
-            deliveries.push(Delivery::Invalidate(plan.repo.clone()));
+            if let Some(target) = manager {
+                s.stale.insert(target.worktree.clone());
+                deliveries.push(Delivery::Invalidate(target));
+            }
         }
         _ => unreachable!("completion family is fixed by its owned job"),
     }

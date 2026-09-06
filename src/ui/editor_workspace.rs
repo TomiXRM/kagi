@@ -514,9 +514,9 @@ impl KagiApp {
                 self.close_editor_workspace();
                 self.switch_repo_by_path(&path, cx);
             }
-            EditorPendingIntent::CloseRepoTab(path) => {
+            EditorPendingIntent::CloseRepoTab(session) => {
                 self.close_editor_workspace();
-                self.close_tab_by_path(&path, cx);
+                self.close_tab_by_session(session, cx);
             }
             EditorPendingIntent::EnterRemoteView { host, root, snap } => {
                 self.close_editor_workspace();

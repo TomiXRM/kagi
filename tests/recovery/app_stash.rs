@@ -170,16 +170,19 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         app.update(cx, |app, cx| app.switch_repo(0, cx));
         wait(cx, &app, |app| app.conflict.is_some());
-        assert!(cx.read(|cx| app
-            .read(cx)
-            .app_sessions
-            .stash_conflict(&other_path)
-            .is_none()));
+        // #482 stage 1: the conflict belongs to the *session* that popped it.
+        // B is a different session of a different repository and stays clean.
+        let (owner, sibling) = cx.read(|cx| {
+            let app = app.read(cx);
+            (app.active_session().unwrap(), app.tabs[1].session)
+        });
+        assert_ne!(owner, sibling);
+        assert!(cx.read(|cx| app.read(cx).app_sessions.stash_conflict(sibling).is_none()));
         assert_eq!(
             cx.read(|cx| app
                 .read(cx)
                 .app_sessions
-                .stash_conflict(&repo)
+                .stash_conflict(owner)
                 .unwrap()
                 .oid
                 .clone()),
@@ -206,7 +209,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         wait(cx, &app, |app| app.conflict.is_none());
         wait(cx, &app, |app| {
             if duplicate {
-                app.app_sessions.stash_conflict(&repo).is_none()
+                app.app_sessions.stash_conflict(owner).is_none()
                     && !matches!(app.app_sessions.plan_state(), PlanState::Planning { .. })
             } else {
                 app.stash_drop_modal().is_some()
@@ -244,6 +247,7 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         app.busy_op.is_none() && app.conflict.is_some()
     });
 
+    let closed = cx.read(|cx| app.read(cx).active_session().unwrap());
     // Continue and close in the same host turn, before its async reload can
     // present the one-shot drop follow-up.
     cx.update_window(window, |_, window, cx| {
@@ -269,8 +273,17 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         app.repo_path.as_ref() == Some(&repo) && app.conflict.is_none()
     });
     app.update(cx, |app, _| {
-        assert!(app.app_sessions.stash_conflict(&repo).is_none());
-        assert!(app.app_sessions.take_stash_followup(&repo).is_none());
+        // #482 stage 1: same path, new session. The closed owner's payloads went
+        // with it, so nothing from before the close can be delivered here.
+        let reopened = app.active_session().unwrap();
+        assert_ne!(
+            reopened, closed,
+            "reopening a path must not reuse its owner"
+        );
+        assert!(!app.app_sessions.is_attached(closed));
+        assert!(app.app_sessions.stash_conflict(reopened).is_none());
+        assert!(app.app_sessions.take_stash_followup(reopened).is_none());
+        assert!(app.app_sessions.stash_conflict(closed).is_none());
         assert!(app.stash_drop_modal().is_none());
     });
     unmount(cx, app, window);
@@ -337,7 +350,12 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.reload(cx));
     wait(cx, &app, |app| app.conflict.is_some());
-    assert!(cx.read(|cx| app.read(cx).app_sessions.stash_conflict(&repo).is_none()));
+    assert!(cx.read(|cx| {
+        let app = app.read(cx);
+        app.app_sessions
+            .stash_conflict(app.active_session().unwrap())
+            .is_none()
+    }));
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.conflict.as_ref().unwrap().update(cx, |view, _| {

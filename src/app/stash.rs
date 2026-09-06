@@ -2,7 +2,6 @@ use super::*;
 pub use kagi_git::backend::stash::{StashAction, StashFaultPoint};
 use kagi_git::backend::stash::{StashPlan, StashReport};
 use kagi_git::Backend;
-use std::path::Path;
 
 pub use kagi_git::backend::ExecutionPolicy as StashPolicy;
 #[derive(Clone, Debug)]
@@ -70,6 +69,7 @@ impl StashPlanJob {
 }
 pub fn plan_stash(s: &mut Sessions, request: StashRequest, policy: StashPolicy) -> StashPlanJob {
     s.invalidate_plan();
+    s.plan_owner = Some(request.owner.session);
     s.state = PlanState::Planning {
         request: s.revision,
     };
@@ -190,17 +190,20 @@ pub struct StashConflict {
     pub(crate) identity: Vec<String>,
     pub(crate) pending: bool,
 }
+/// #482 stage 1: the conflict and its follow-up proposal belong to the session
+/// that approved the stash, not to a path. Closing the tab detaches the session
+/// and the payloads go with it, so a reopened tab on the same path starts clean.
 impl Sessions {
-    pub fn observe_stash_conflict(&mut self, owner: &Path, identity: &[String]) {
-        let Some(payload) = self.stash_conflicts.get(owner) else {
+    pub fn observe_stash_conflict(&mut self, owner: SessionId, identity: &[String]) {
+        let Some(payload) = self.stash_conflicts.get(&owner) else {
             return;
         };
         if payload.pending && identity.is_empty() {
             let payload = self
                 .stash_conflicts
-                .remove(owner)
+                .remove(&owner)
                 .expect("stash conflict was observed above");
-            self.stash_followups.insert(owner.to_path_buf(), payload);
+            self.stash_followups.insert(owner, payload);
         } else if payload.pending
             || identity.is_empty()
             || !identity
@@ -210,19 +213,19 @@ impl Sessions {
             self.clear_stash_conflict(owner);
         }
     }
-    pub fn stash_conflict(&self, owner: &Path) -> Option<&StashConflict> {
-        self.stash_conflicts.get(owner)
+    pub fn stash_conflict(&self, owner: SessionId) -> Option<&StashConflict> {
+        self.stash_conflicts.get(&owner)
     }
-    pub fn clear_stash_conflict(&mut self, owner: &Path) {
-        self.stash_conflicts.remove(owner);
-        self.stash_followups.remove(owner);
+    pub fn clear_stash_conflict(&mut self, owner: SessionId) {
+        self.stash_conflicts.remove(&owner);
+        self.stash_followups.remove(&owner);
     }
-    pub fn continue_stash_conflict(&mut self, owner: &Path) {
-        if let Some(payload) = self.stash_conflicts.get_mut(owner) {
+    pub fn continue_stash_conflict(&mut self, owner: SessionId) {
+        if let Some(payload) = self.stash_conflicts.get_mut(&owner) {
             payload.pending = true;
         }
     }
-    pub fn take_stash_followup(&mut self, owner: &Path) -> Option<StashConflict> {
-        self.stash_followups.remove(owner)
+    pub fn take_stash_followup(&mut self, owner: SessionId) -> Option<StashConflict> {
+        self.stash_followups.remove(&owner)
     }
 }

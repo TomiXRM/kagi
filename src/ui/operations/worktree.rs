@@ -331,15 +331,15 @@ impl KagiApp {
         delete_branch: bool,
         cx: &mut Context<Self>,
     ) {
-        use crate::app::{self, Attachment, RemovePolicy, RemoveRequest};
-        let Some(path) = self.repo_path.clone() else {
+        use crate::app::{self, RemovePolicy, RemoveRequest};
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+        else {
             return;
         };
         let request = RemoveRequest {
-            owner: Attachment {
-                path,
-                generation: self.switch_generation,
-            },
+            owner,
             name: name.clone(),
             delete_branch,
         };
@@ -416,9 +416,7 @@ impl KagiApp {
         else {
             return;
         };
-        if self.repo_path.as_ref() != Some(&request.owner.path)
-            || self.switch_generation != request.owner.generation
-        {
+        if self.active_session() != Some(request.owner.session) {
             self.cancel_remove_worktree_modal();
             return;
         }

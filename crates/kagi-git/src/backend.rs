@@ -43,6 +43,18 @@ impl Backend {
             .map_err(|error| GitError::Other(error.to_string()))
     }
 
+    /// Read-only identity of the *worktree* this handle points at: the shared
+    /// [`RepoId`](kagi_domain::remove::RepoId) plus this worktree's own canonical
+    /// Git directory. The main worktree and every linked worktree of one
+    /// repository share the `RepoId` and differ in `git_dir` (#482 stage 1).
+    pub fn write_worktree_id(&self) -> Result<kagi_domain::remove::WorktreeId, GitError> {
+        Ok(kagi_domain::remove::WorktreeId {
+            repo: self.write_repo_id()?,
+            git_dir: std::fs::canonicalize(self.repo.path())
+                .map_err(|error| GitError::Other(error.to_string()))?,
+        })
+    }
+
     /// Open the repository at `path`.
     pub fn open(path: &Path) -> Result<Self, GitError> {
         let path_str = path.display().to_string();

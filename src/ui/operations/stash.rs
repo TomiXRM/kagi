@@ -10,10 +10,10 @@ impl KagiApp {
         if self.conflict.is_some() || self.has_active_modal() {
             return;
         }
-        let Some(owner) = self.repo_path.clone() else {
+        let Some(owner) = self.active_session() else {
             return;
         };
-        let Some(payload) = self.app_sessions.take_stash_followup(&owner) else {
+        let Some(payload) = self.app_sessions.take_stash_followup(owner) else {
             return;
         };
         self.set_stash_drop_modal(StashDropModal {
@@ -111,15 +111,15 @@ impl KagiApp {
         oid: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = self.repo_path.clone() else {
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+        else {
             return;
         };
         let policy = self.stash_policy();
         let request = StashRequest {
-            owner: app::Attachment {
-                path,
-                generation: self.switch_generation,
-            },
+            owner,
             action: action.clone(),
         };
         let owner = request.owner.clone();
@@ -132,9 +132,7 @@ impl KagiApp {
         cx.spawn(async move |this, cx| {
             let completion = task.await;
             let _ = this.update(cx, |app, cx| {
-                if app.repo_path.as_ref() != Some(&owner.path)
-                    || app.switch_generation != owner.generation
-                    || !app.stash_modal_matches(&action)
+                if app.active_session() != Some(owner.session) || !app.stash_modal_matches(&action)
                 {
                     if completion.is_current(&app.app_sessions) {
                         app.app_sessions.invalidate_plan();
@@ -193,9 +191,7 @@ impl KagiApp {
                 prepared: Planned::Stash { plan, request, .. },
                 ..
             } => {
-                if self.repo_path.as_ref() != Some(&request.owner.path)
-                    || self.switch_generation != request.owner.generation
-                {
+                if self.active_session() != Some(request.owner.session) {
                     self.app_sessions.invalidate_plan();
                     return;
                 }
@@ -294,8 +290,7 @@ impl KagiApp {
         else {
             return;
         };
-        if self.repo_path.as_ref() != Some(&request.owner.path)
-            || self.switch_generation != request.owner.generation
+        if self.active_session() != Some(request.owner.session)
             || !self.stash_modal_matches(&request.action)
         {
             self.app_sessions.invalidate_plan();

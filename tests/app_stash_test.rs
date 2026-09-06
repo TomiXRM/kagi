@@ -59,25 +59,23 @@ impl Fixture {
             old,
         }
     }
-    fn request(&self, action: StashAction) -> StashRequest {
+    fn request(&self, s: &Sessions, owner: SessionId, action: StashAction) -> StashRequest {
         StashRequest {
-            owner: Attachment {
-                path: self.repo.clone(),
-                generation: 1,
-            },
+            owner: s.attachment(owner).expect("owner is attached"),
             action,
         }
     }
-    fn ready(&self, s: &mut Sessions, action: StashAction) -> PlanToken {
-        let plan = plan_stash(s, self.request(action), StashPolicy::default());
+    fn ready(&self, s: &mut Sessions, owner: SessionId, action: StashAction) -> PlanToken {
+        let request = self.request(s, owner, action);
+        let plan = plan_stash(s, request, StashPolicy::default());
         assert!(apply_plan(s, plan.run()));
         let PlanState::Ready { token, .. } = s.plan_state() else {
             panic!("{:?}", s.plan_state())
         };
         token.clone()
     }
-    fn job(&self, s: &mut Sessions, action: StashAction) -> StashJob {
-        let token = self.ready(s, action);
+    fn job(&self, s: &mut Sessions, owner: SessionId, action: StashAction) -> StashJob {
+        let token = self.ready(s, owner, action);
         let approved = approve(s, token, StashPolicy::default()).unwrap();
         prepare_stash(s, approved, LegacyBusy(false)).unwrap()
     }
@@ -115,10 +113,11 @@ fn four_operations_on_three_stashes() {
         let before = f.ids();
         let index_before = git(&f.repo, &["ls-files", "--stage"]);
         let mut s = Sessions::new();
+        let owner = s.attach(f.repo.clone());
         if matches!(action, StashAction::Push { .. }) {
             std::fs::write(f.repo.join("new"), "four\n").unwrap();
         }
-        let c = f.job(&mut s, action.clone()).run();
+        let c = f.job(&mut s, owner, action.clone()).run();
         assert!(
             matches!(outcome(&c), OpOutcome::Success { .. }),
             "{:?}",
@@ -158,14 +157,15 @@ fn four_operations_on_three_stashes() {
         assert_eq!(s.apply(c).len(), 2);
         assert!(s.apply(duplicate).is_empty());
         assert!(!s.has_leases());
-        assert!(s.is_stale(&f.repo));
+        assert!(s.is_stale(s.worktree_of(owner).unwrap()));
     }
 }
 #[test]
 fn same_count_replacement_refuses_wrong_entry() {
     let f = Fixture::new();
     let mut s = Sessions::new();
-    let job = f.job(&mut s, StashAction::Drop { index: 1 });
+    let owner = s.attach(f.repo.clone());
+    let job = f.job(&mut s, owner, StashAction::Drop { index: 1 });
     git(&f.repo, &["stash", "drop", "stash@{0}"]);
     std::fs::write(f.repo.join("file"), "replacement\n").unwrap();
     git(&f.repo, &["stash", "push", "-qm", "replacement"]);
@@ -180,8 +180,9 @@ fn pop_second_step_drift_is_partial_not_refused() {
     let f = Fixture::new();
     let before = f.ids();
     let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
     let c = f
-        .job(&mut s, StashAction::Pop { index: 1 })
+        .job(&mut s, owner, StashAction::Pop { index: 1 })
         .with_fault_for_test(StashFaultPoint::ListChangeBeforeDrop)
         .run();
     assert!(
@@ -207,10 +208,11 @@ fn pop_second_step_drift_is_partial_not_refused() {
 fn plan_error_is_recorded_only_after_acceptance_once() {
     let f = Fixture::new();
     let mut s = Sessions::new();
-    let mut bad = f.request(StashAction::Drop { index: 0 });
+    let owner = s.attach(f.repo.clone());
+    let mut bad = f.request(&s, owner, StashAction::Drop { index: 0 });
     bad.owner.path = f.repo.join("missing");
     let old = plan_stash(&mut s, bad.clone(), StashPolicy::default()).run();
-    f.ready(&mut s, StashAction::Drop { index: 0 });
+    f.ready(&mut s, owner, StashAction::Drop { index: 0 });
     assert!(!apply_plan(&mut s, old));
     assert!(read_oplog_tail(100).is_empty());
     let c = plan_stash(&mut s, bad, StashPolicy::default()).run();
@@ -231,15 +233,16 @@ fn plan_error_is_recorded_only_after_acceptance_once() {
 fn admission_both_directions_and_abandoned_job() {
     let f = Fixture::new();
     let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
     let guard = s.write_lease(&f.repo, LegacyBusy(false)).unwrap();
-    let token = f.ready(&mut s, StashAction::Drop { index: 0 });
+    let token = f.ready(&mut s, owner, StashAction::Drop { index: 0 });
     let approved = approve(&mut s, token, StashPolicy::default()).unwrap();
     assert!(matches!(
         prepare_stash(&mut s, approved, LegacyBusy(false)),
         Err(AdmissionError::Busy)
     ));
     guard.complete();
-    let job = f.job(&mut s, StashAction::Drop { index: 0 });
+    let job = f.job(&mut s, owner, StashAction::Drop { index: 0 });
     assert!(matches!(
         s.write_lease(&f.repo, LegacyBusy(false)),
         Err(AdmissionError::Busy)
@@ -272,7 +275,8 @@ fn append_failure_keeps_mutation_result_without_retry() {
     let f = Fixture::new();
     std::fs::create_dir_all(f.log.join("operations.jsonl")).unwrap();
     let mut s = Sessions::new();
-    let c = f.job(&mut s, StashAction::Drop { index: 0 }).run();
+    let owner = s.attach(f.repo.clone());
+    let c = f.job(&mut s, owner, StashAction::Drop { index: 0 }).run();
     assert!(matches!(
         c.report().recording,
         kagi_git::backend::recording::Recording::Failed { .. }
@@ -286,7 +290,8 @@ fn changed_count_and_missing_target_are_refused_before_mutation() {
     for remove in [false, true] {
         let f = Fixture::new();
         let mut s = Sessions::new();
-        let job = f.job(&mut s, StashAction::Drop { index: 1 });
+        let owner = s.attach(f.repo.clone());
+        let job = f.job(&mut s, owner, StashAction::Drop { index: 1 });
         if remove {
             git(&f.repo, &["stash", "drop", "stash@{1}"]);
         } else {
@@ -305,11 +310,13 @@ fn changed_count_and_missing_target_are_refused_before_mutation() {
 fn push_without_untracked_preserves_untracked_bytes_and_message() {
     let f = Fixture::new();
     let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
     std::fs::write(f.repo.join("file"), "four\n").unwrap();
     std::fs::write(f.repo.join("untracked"), "keep\n").unwrap();
     let c = f
         .job(
             &mut s,
+            owner,
             StashAction::Push {
                 message: Some("explicit message".into()),
                 include_untracked: false,
@@ -334,11 +341,13 @@ fn push_without_untracked_preserves_untracked_bytes_and_message() {
 fn blocker_confirmation_has_one_refused_receipt_no_mutation() {
     let f = Fixture::new();
     let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
     let before = f.ids();
     let mut events = vec![];
     let c = f
         .job(
             &mut s,
+            owner,
             StashAction::Push {
                 message: None,
                 include_untracked: true,
@@ -359,9 +368,11 @@ fn blocker_plan_early_failures_report_actual_reason_and_log_lane() {
     {
         let f = Fixture::new();
         let mut s = Sessions::new();
+        let owner = s.attach(f.repo.clone());
         let before = f.ids();
         let job = f.job(
             &mut s,
+            owner,
             StashAction::Push {
                 message: None,
                 include_untracked: true,
@@ -386,11 +397,13 @@ fn blocker_plan_early_failures_report_actual_reason_and_log_lane() {
     {
         let f = Fixture::new();
         let mut s = Sessions::new();
+        let owner = s.attach(f.repo.clone());
         let before = f.ids();
         let mut events = vec![];
         let c = f
             .job(
                 &mut s,
+                owner,
                 StashAction::Push {
                     message: None,
                     include_untracked: true,
@@ -413,10 +426,11 @@ fn blocker_plan_early_failures_report_actual_reason_and_log_lane() {
 fn cancellation_policy_revision_and_double_confirmation_are_stale() {
     let f = Fixture::new();
     let mut s = Sessions::new();
-    let old = f.ready(&mut s, StashAction::Drop { index: 1 });
+    let owner = s.attach(f.repo.clone());
+    let old = f.ready(&mut s, owner, StashAction::Drop { index: 1 });
     s.invalidate_plan();
     assert!(approve(&mut s, old, StashPolicy::default()).is_err());
-    let token = f.ready(&mut s, StashAction::Drop { index: 1 });
+    let token = f.ready(&mut s, owner, StashAction::Drop { index: 1 });
     assert!(approve(
         &mut s,
         token.clone(),
@@ -443,7 +457,8 @@ fn faults_and_open_failure_record_once_without_delivery_retry() {
     ] {
         let f = Fixture::new();
         let mut s = Sessions::new();
-        let job = f.job(&mut s, StashAction::Drop { index: 1 });
+        let owner = s.attach(f.repo.clone());
+        let job = f.job(&mut s, owner, StashAction::Drop { index: 1 });
         let id = job.id();
         let c = job.with_fault_for_test(fault).run();
         match fault {
@@ -483,7 +498,8 @@ fn faults_and_open_failure_record_once_without_delivery_retry() {
     }
     let f = Fixture::new();
     let mut s = Sessions::new();
-    let job = f.job(&mut s, StashAction::Drop { index: 1 });
+    let owner = s.attach(f.repo.clone());
+    let job = f.job(&mut s, owner, StashAction::Drop { index: 1 });
     let moved = f.repo.with_file_name("moved");
     std::fs::rename(&f.repo, &moved).unwrap();
     let c = job.run();
@@ -498,10 +514,15 @@ fn faults_and_open_failure_record_once_without_delivery_retry() {
     );
 }
 
-fn conflict(f: &Fixture, s: &mut Sessions, action: StashAction) -> StashCompletion {
+fn conflict(
+    f: &Fixture,
+    s: &mut Sessions,
+    owner: SessionId,
+    action: StashAction,
+) -> StashCompletion {
     std::fs::write(f.repo.join("file"), "ours\n").unwrap();
     git(&f.repo, &["commit", "-qam", "ours"]);
-    let c = f.job(s, action).run();
+    let c = f.job(s, owner, action).run();
     assert!(
         matches!(outcome(&c), OpOutcome::Partial { .. }),
         "{:?}",
@@ -528,23 +549,26 @@ fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
         let f = Fixture::new();
         let before = f.ids();
         let mut s = Sessions::new();
-        let c = conflict(&f, &mut s, action);
+        let owner = s.attach(f.repo.clone());
+        let c = conflict(&f, &mut s, owner, action);
         let id = c.report().recording.entry().id;
         // The owner is closed/inactive: terminal apply still stores its evidence.
         let deliveries = s.apply(c);
         assert_eq!(deliveries.len(), 2);
-        let payload = s.stash_conflict(&f.repo).unwrap();
+        let payload = s.stash_conflict(owner).unwrap();
         assert_eq!(payload.oid, before[1]);
         let linked = f.repo.with_file_name("linked");
         git(
             &f.repo,
             &["worktree", "add", "-qb", "linked", linked.to_str().unwrap()],
         );
-        assert!(s.stash_conflict(&linked).is_none());
-        assert!(s.take_stash_followup(&linked).is_none());
+        let sibling = s.attach(linked.clone());
+        assert_ne!(sibling, owner, "a linked worktree is its own session");
+        assert!(s.stash_conflict(sibling).is_none());
+        assert!(s.take_stash_followup(sibling).is_none());
         assert_eq!(f.ids(), before);
         let b = Backend::open(&f.repo).unwrap();
-        s.observe_stash_conflict(&f.repo, &b.stash_conflict_identity().unwrap());
+        s.observe_stash_conflict(owner, &b.stash_conflict_identity().unwrap());
         let session = b.detect_conflict_session().unwrap();
         let mut buffer = b.resolution_buffer_from_repo_with_autosave().unwrap();
         buffer
@@ -557,20 +581,16 @@ fn deep_conflict_receipt_payload_continue_and_new_oid_bound_plan() {
             std::fs::read_to_string(f.repo.join("file")).unwrap(),
             "two\n"
         );
-        s.continue_stash_conflict(&f.repo);
-        s.observe_stash_conflict(&f.repo, &[]);
+        s.continue_stash_conflict(owner);
+        s.observe_stash_conflict(owner, &[]);
         assert!(
-            s.stash_conflict(&f.repo).is_none(),
+            s.stash_conflict(owner).is_none(),
             "resolved conflicts must leave the active-conflict map"
         );
-        let payload = s.take_stash_followup(&f.repo).unwrap();
-        assert!(s.take_stash_followup(&f.repo).is_none());
-        let job = plan_stash_followup(
-            &mut s,
-            f.request(StashAction::Drop { index: 0 }).owner,
-            payload.oid,
-            StashPolicy::default(),
-        );
+        let payload = s.take_stash_followup(owner).unwrap();
+        assert!(s.take_stash_followup(owner).is_none());
+        let attachment = f.request(&s, owner, StashAction::Drop { index: 0 }).owner;
+        let job = plan_stash_followup(&mut s, attachment, payload.oid, StashPolicy::default());
         assert!(apply_plan(&mut s, job.run()));
         let PlanState::Ready {
             token,
@@ -594,20 +614,28 @@ fn continued_conflict_owner_close_clears_before_or_after_reload() {
     for reload_settled in [false, true] {
         let f = Fixture::new();
         let mut s = Sessions::new();
-        let completion = conflict(&f, &mut s, StashAction::Pop { index: 1 });
+        let owner = s.attach(f.repo.clone());
+        let completion = conflict(&f, &mut s, owner, StashAction::Pop { index: 1 });
         s.apply(completion);
-        s.continue_stash_conflict(&f.repo);
+        s.continue_stash_conflict(owner);
         if reload_settled {
-            s.observe_stash_conflict(&f.repo, &[]);
-            assert!(s.stash_conflict(&f.repo).is_none());
+            s.observe_stash_conflict(owner, &[]);
+            assert!(s.stash_conflict(owner).is_none());
         }
 
-        // The host's tab-close adapter calls this owner-scoped API. Closing
-        // either side of the reload transition must discard the one-shot.
-        s.clear_stash_conflict(&f.repo);
-        s.observe_stash_conflict(&f.repo, &[]); // reopen sees a clean index
-        assert!(s.stash_conflict(&f.repo).is_none());
-        assert!(s.take_stash_followup(&f.repo).is_none());
+        // #482 stage 1: the host's tab-close adapter detaches the session, and
+        // the conflict/follow-up payloads go with it. Closing on either side of
+        // the reload transition must discard the one-shot, and the tab reopened
+        // on the same path is a new owner that inherits none of it.
+        s.detach(owner);
+        assert!(!s.is_attached(owner));
+        let reopened = s.attach(f.repo.clone());
+        assert_ne!(reopened, owner);
+        s.observe_stash_conflict(reopened, &[]); // reopen sees a clean index
+        assert!(s.stash_conflict(reopened).is_none());
+        assert!(s.take_stash_followup(reopened).is_none());
+        assert!(s.stash_conflict(owner).is_none());
+        assert!(s.take_stash_followup(owner).is_none());
     }
 }
 
@@ -617,9 +645,10 @@ fn unrelated_drop_during_conflict_preserves_origin_payload() {
         let f = Fixture::new();
         let initial = f.ids();
         let mut s = Sessions::new();
-        let conflict = conflict(&f, &mut s, StashAction::Pop { index: 1 });
+        let owner = s.attach(f.repo.clone());
+        let conflict = conflict(&f, &mut s, owner, StashAction::Pop { index: 1 });
         s.apply(conflict);
-        let origin = s.stash_conflict(&f.repo).unwrap();
+        let origin = s.stash_conflict(owner).unwrap();
         let conflict_id = origin.operation;
         let origin_oid = origin.oid.clone();
         assert_eq!(origin_oid, initial[1]);
@@ -634,7 +663,7 @@ fn unrelated_drop_during_conflict_preserves_origin_payload() {
         let before = f.ids();
         let bytes = std::fs::read(f.repo.join("file")).unwrap();
         let index = git(&f.repo, &["ls-files", "--stage"]);
-        let drop = f.job(&mut s, StashAction::Drop { index: 0 }).run();
+        let drop = f.job(&mut s, owner, StashAction::Drop { index: 0 }).run();
         assert!(matches!(outcome(&drop), OpOutcome::Success { .. }));
         assert!(drop.report().evidence.conflicts.is_empty());
         assert_eq!(f.ids().len(), before.len() - 1);
@@ -642,7 +671,7 @@ fn unrelated_drop_during_conflict_preserves_origin_payload() {
         assert_eq!(git(&f.repo, &["ls-files", "--stage"]), index);
         s.apply(drop);
 
-        let payload = s.stash_conflict(&f.repo).unwrap();
+        let payload = s.stash_conflict(owner).unwrap();
         assert_eq!(payload.operation, conflict_id);
         assert_eq!(payload.oid, origin_oid);
         let entries = read_oplog_tail(100);
@@ -656,9 +685,10 @@ fn unrelated_drop_during_conflict_preserves_origin_payload() {
 fn followup_never_chooses_missing_or_duplicate_oid_or_unknown_origin() {
     let f = Fixture::new();
     let mut s = Sessions::new();
-    assert!(s.stash_conflict(&f.repo).is_none());
-    s.continue_stash_conflict(&f.repo);
-    assert!(s.take_stash_followup(&f.repo).is_none());
+    let owner = s.attach(f.repo.clone());
+    assert!(s.stash_conflict(owner).is_none());
+    s.continue_stash_conflict(owner);
+    assert!(s.take_stash_followup(owner).is_none());
     let oid = f.ids()[1].clone();
     git(&f.repo, &["stash", "store", "-m", "duplicate", &oid]);
     assert!(Backend::plan_stash_drop_by_oid(&f.repo, &oid)
@@ -667,12 +697,8 @@ fn followup_never_chooses_missing_or_duplicate_oid_or_unknown_origin() {
     assert!(Backend::plan_stash_drop_by_oid(&f.repo, &"0".repeat(40))
         .unwrap()
         .is_none());
-    let job = plan_stash_followup(
-        &mut s,
-        f.request(StashAction::Drop { index: 0 }).owner,
-        oid,
-        StashPolicy::default(),
-    );
+    let attachment = f.request(&s, owner, StashAction::Drop { index: 0 }).owner;
+    let job = plan_stash_followup(&mut s, attachment, oid, StashPolicy::default());
     assert!(apply_plan(&mut s, job.run()));
     assert!(matches!(s.plan_state(), PlanState::Draft));
     assert!(read_oplog_tail(100).is_empty());
@@ -684,20 +710,22 @@ fn conflict_abort_end_and_replacement_clear_only_matching_owner() {
         let f = Fixture::new();
         let ids = f.ids();
         let mut s = Sessions::new();
-        let c = conflict(&f, &mut s, StashAction::Pop { index: 1 });
+        let owner = s.attach(f.repo.clone());
+        let c = conflict(&f, &mut s, owner, StashAction::Pop { index: 1 });
         s.apply(c);
-        s.observe_stash_conflict(&f.repo.with_file_name("other"), &[]);
-        assert!(s.stash_conflict(&f.repo).is_some());
+        let other = s.attach(f.repo.with_file_name("other"));
+        s.observe_stash_conflict(other, &[]);
+        assert!(s.stash_conflict(owner).is_some());
         if abort {
             let b = Backend::open(&f.repo).unwrap();
             let session = b.detect_conflict_session().unwrap();
             let buffer = b.resolution_buffer_from_repo_with_autosave().unwrap();
             b.execute_stash_conflict_abort(&session, &buffer).unwrap();
-            s.clear_stash_conflict(&f.repo);
+            s.clear_stash_conflict(owner);
         } else {
-            s.observe_stash_conflict(&f.repo, &["different index conflict".into()]);
+            s.observe_stash_conflict(owner, &["different index conflict".into()]);
         }
-        assert!(s.stash_conflict(&f.repo).is_none());
+        assert!(s.stash_conflict(owner).is_none());
         assert_eq!(f.ids(), ids);
     }
 }
@@ -707,7 +735,8 @@ fn drop_receipt_can_restore_exact_content_despite_another_append() {
     let f = Fixture::new();
     let ids = f.ids();
     let mut s = Sessions::new();
-    let c = f.job(&mut s, StashAction::Drop { index: 1 }).run();
+    let owner = s.attach(f.repo.clone());
+    let c = f.job(&mut s, owner, StashAction::Drop { index: 1 }).run();
     let original = c.report().recording.entry().clone();
     assert!(c.report().evidence.snapshot.is_none());
     let mut b = Backend::open(&f.repo).unwrap();
@@ -733,9 +762,10 @@ fn drop_receipt_can_restore_exact_content_despite_another_append() {
 fn fresh_open_trust_refusal_never_mutates() {
     let f = Fixture::new();
     let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
     let before = f.ids();
     let c = f
-        .job(&mut s, StashAction::Drop { index: 1 })
+        .job(&mut s, owner, StashAction::Drop { index: 1 })
         .with_fault_for_test(StashFaultPoint::Untrusted)
         .run();
     assert!(matches!(outcome(&c), OpOutcome::Failed { error } if error.contains("not trusted")));
@@ -749,6 +779,7 @@ fn fresh_open_trust_refusal_never_mutates() {
 fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
     let f = Fixture::new();
     let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
     let linked = f.repo.with_file_name("linked");
     git(
         &f.repo,
@@ -760,7 +791,7 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
     );
     for writer in 0..5 {
         let guard = s.write_lease(&linked, LegacyBusy(false)).unwrap();
-        let token = f.ready(&mut s, StashAction::Drop { index: 1 });
+        let token = f.ready(&mut s, owner, StashAction::Drop { index: 1 });
         let approval = approve(&mut s, token, StashPolicy::default()).unwrap();
         assert!(matches!(
             prepare_stash(&mut s, approval, LegacyBusy(false)),
@@ -792,7 +823,7 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
                 result.unwrap();
             }
         }
-        let job = f.job(&mut s, StashAction::Drop { index: 1 });
+        let job = f.job(&mut s, owner, StashAction::Drop { index: 1 });
         let bytes = std::fs::read(linked.join("file")).unwrap();
         let index = git(&linked, &["ls-files", "--stage"]);
         assert!(matches!(
@@ -811,13 +842,13 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
         &["worktree", "add", "-qb", "clean", clean.to_str().unwrap()],
     );
     let request = RemoveRequest {
-        owner: f.request(StashAction::Drop { index: 1 }).owner,
+        owner: f.request(&s, owner, StashAction::Drop { index: 1 }).owner,
         name: "clean".into(),
         delete_branch: true,
     };
     for stash_first in [false, true] {
         if stash_first {
-            let stash = f.job(&mut s, StashAction::Drop { index: 1 });
+            let stash = f.job(&mut s, owner, StashAction::Drop { index: 1 });
             let plan = plan_remove(&mut s, request.clone(), RemovePolicy::default());
             apply_plan(&mut s, plan.run());
             let PlanState::Ready { token, .. } = s.plan_state() else {
@@ -840,7 +871,7 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
             let token = token.clone();
             let approval = approve(&mut s, token, RemovePolicy::default()).unwrap();
             let remove = prepare_remove(&mut s, approval, LegacyBusy(false)).unwrap();
-            let token = f.ready(&mut s, StashAction::Drop { index: 1 });
+            let token = f.ready(&mut s, owner, StashAction::Drop { index: 1 });
             let approval = approve(&mut s, token, StashPolicy::default()).unwrap();
             assert!(matches!(
                 prepare_stash(&mut s, approval, LegacyBusy(false)),
@@ -858,27 +889,24 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
 fn late_ready_cannot_replace_new_error_or_cancelled_modal() {
     let f = Fixture::new();
     let mut s = Sessions::new();
-    let old = plan_stash(
-        &mut s,
-        f.request(StashAction::Drop { index: 1 }),
-        StashPolicy::default(),
-    )
-    .run();
-    let mut request = f.request(StashAction::Push {
-        message: Some("new input".into()),
-        include_untracked: true,
-    });
+    let owner = s.attach(f.repo.clone());
+    let request = f.request(&s, owner, StashAction::Drop { index: 1 });
+    let old = plan_stash(&mut s, request, StashPolicy::default()).run();
+    let mut request = f.request(
+        &s,
+        owner,
+        StashAction::Push {
+            message: Some("new input".into()),
+            include_untracked: true,
+        },
+    );
     request.owner.path = f.repo.join("missing");
     let error = plan_stash(&mut s, request, StashPolicy::default()).run();
     assert!(apply_plan(&mut s, error));
     assert!(!apply_plan(&mut s, old));
     assert!(matches!(s.plan_state(), PlanState::Error { .. }));
-    let old = plan_stash(
-        &mut s,
-        f.request(StashAction::Drop { index: 1 }),
-        StashPolicy::default(),
-    )
-    .run();
+    let request = f.request(&s, owner, StashAction::Drop { index: 1 });
+    let old = plan_stash(&mut s, request, StashPolicy::default()).run();
     s.invalidate_plan();
     assert!(!apply_plan(&mut s, old));
     assert!(matches!(s.plan_state(), PlanState::Draft));
@@ -893,7 +921,8 @@ fn late_ready_cannot_replace_new_error_or_cancelled_modal() {
 fn lost_delivery_never_appends_again_or_claims_unconfirmed_release() {
     let f = Fixture::new();
     let mut s = Sessions::new();
-    let completion = f.job(&mut s, StashAction::Drop { index: 1 }).run();
+    let owner = s.attach(f.repo.clone());
+    let completion = f.job(&mut s, owner, StashAction::Drop { index: 1 }).run();
     drop(completion);
     assert!(s.drain_abandoned().is_empty());
     assert!(s.has_leases());

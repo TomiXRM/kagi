@@ -349,3 +349,88 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     });
     deliveries
 }
+
+/// A modal's plan before it has earned an execution token: the plan computed
+/// for the current input, or the explicit failure that replaced it.
+///
+/// This is the tokenless rung of the same ladder as [`PlanState`]: modals that
+/// plan synchronously against the per-tab `RepoSession` have no `RequestId` and
+/// no [`PlanToken`], but they need the same guarantee — a (re)plan that fails
+/// **replaces** the plan it was recomputing instead of leaving it behind
+/// (#510). `Failed` carries no plan, so [`PlanSlot::plan`] — the only way a
+/// confirm path reaches one — returns `None`, and both Enter and the confirm
+/// button refuse. A later successful replan puts the slot back in `Ready`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum PlanSlot<P> {
+    /// No plan yet: the modal just opened, or the first plan is still running.
+    #[default]
+    Pending,
+    /// The plan for the current input. The only confirmable state.
+    Ready(P),
+    /// The last (re)plan failed. Any previous plan is gone, not merely hidden.
+    Failed(String),
+}
+
+impl<P> PlanSlot<P> {
+    /// Adopt one (re)plan result, whichever way it went.
+    pub fn replan(&mut self, result: Result<P, impl std::fmt::Display>) {
+        *self = match result {
+            Ok(plan) => Self::Ready(plan),
+            Err(error) => Self::Failed(error.to_string()),
+        };
+    }
+    /// The confirmable plan. `None` while pending or failed.
+    pub fn plan(&self) -> Option<&P> {
+        match self {
+            Self::Ready(plan) => Some(plan),
+            _ => None,
+        }
+    }
+    /// The plan failure to render. `None` unless the last (re)plan failed.
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Failed(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod plan_slot_tests {
+    use super::PlanSlot;
+
+    #[test]
+    fn failure_invalidates_the_plan_it_replaces() {
+        let mut slot = PlanSlot::Ready("old plan");
+        slot.replan(Err::<&str, _>("repo went away"));
+        assert!(
+            slot.plan().is_none(),
+            "a stale plan must not stay confirmable"
+        );
+        assert_eq!(slot.error(), Some("repo went away"));
+    }
+
+    #[test]
+    fn retry_after_failure_restores_a_confirmable_plan() {
+        let mut slot = PlanSlot::<&str>::default();
+        assert!(matches!(slot, PlanSlot::Pending));
+        slot.replan(Err::<&str, _>("transient"));
+        slot.replan(Ok::<_, &str>("fresh plan"));
+        assert_eq!(slot.plan(), Some(&"fresh plan"));
+        assert_eq!(slot.error(), None, "a successful replan clears the failure");
+    }
+
+    #[test]
+    fn a_pending_slot_is_not_confirmable_and_shows_no_error() {
+        let slot = PlanSlot::<&str>::Pending;
+        assert!(slot.plan().is_none());
+        assert!(slot.error().is_none());
+    }
+
+    #[test]
+    fn replan_keeps_only_the_newest_plan() {
+        let mut slot = PlanSlot::Ready("first");
+        slot.replan(Ok::<_, &str>("second"));
+        assert_eq!(slot.plan(), Some(&"second"));
+    }
+}

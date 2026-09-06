@@ -1,12 +1,17 @@
 # `kagi` CLI JSON schema (#330)
 
-> **UNSTABLE / internal — v1.** The shapes below are produced by hand in the bin
-> crate (`src/cli_main.rs`) from the domain types' public fields and their
-> `message_en()` renderers. `kagi-domain` stays **dependency-free** (no serde) —
-> JSON lives only at the CLI edge, matching the existing hand-rolled-JSON pattern
-> in `oplog.rs` / `resolution.rs` / `drafts.rs`. These shapes are **not a stable
-> public API yet**: field names can change between Kagi versions without notice.
-> #331 (MCP server) is expected to be the first frozen surface, layered on this.
+> **UNSTABLE / internal — v1.** The shapes below are produced by hand in
+> `crates/kagi-git/src/api.rs` from the domain types' public fields and their
+> `message_en()` renderers. `kagi-domain` stays **dependency-free** (no serde),
+> matching the existing hand-rolled-JSON pattern in `oplog.rs` / `resolution.rs`
+> / `drafts.rs`. These shapes are **not a stable public API yet**: field names
+> can change between Kagi versions without notice.
+>
+> Since #509 this is **one contract with two transports** (ADR-0181): the CLI
+> (`src/cli_main.rs`) owns argv/stdin/exit codes, the MCP server
+> (`crates/kagi-mcp`) owns the tool envelope and plan store, and `kagi_git::api`
+> owns the op set, the operation resolution and both JSON shapes. Adding an
+> operation means editing one match (`api::resolve_operation`) — never two.
 
 The headless CLI lets an agent drive Kagi's safety pipeline
 (`plan → confirm → preflight → execute → verify → oplog`) from outside the GUI.
@@ -35,8 +40,10 @@ kagi oplog [--limit N] [--repo PATH] [--json]
 | `discard <path...>` | `Discard { paths }` (destructive) |
 | `reset <commit>` | `ResetCurrentToHead { target }` (destructive) |
 
-More operations are a matter of adding a match arm in `src/cli_main.rs`
-(`build_operation`); the plan/confirm machinery is operation-agnostic.
+More operations are a matter of adding a match arm in
+`crates/kagi-git/src/api.rs` (`resolve_operation`) and a word in `OPS_USAGE`; the
+plan/confirm machinery is operation-agnostic and the MCP server picks the new op
+up from the same constant.
 
 ## `plan` — the envelope
 
@@ -97,15 +104,28 @@ operation from `op`+`args`, **re-plans**, and gates execution:
    snapshot against the fresh plan.
 2. **blocked?** the fresh plan has blockers → refuse; `detail.blockers` lists them.
 3. **destructive without `--yes`?** → refuse.
-4. otherwise run through `Backend::run` (actor = `cli`) and print the result.
+4. otherwise run through `Backend::run_recorded` (actor = `cli`) and print the
+   result.
 
 Success:
 
 ```jsonc
 { "status": "ok", "op": "checkout", "plan_id": "…",
   "outcome": "Unit",                 // Debug of OperationOutcome
-  "oplog": { /* the OpLogEntry just written */ } }
+  "oplog": { /* THIS run's OpLogEntry */ },
+  "recorded": true,                  // false ⇒ the append failed
+  "recording_error": null }          // the append error when recorded is false
 ```
+
+`oplog` is the receipt `run_recorded` returned for *this* invocation, never a
+read of the global log's tail — a concurrent writer (another repo, another
+process) can no longer be echoed back as your operation (#505 / ADR-0181). When
+the append fails, `status` stays `"ok"` (the mutation happened), `recorded` is
+`false`, `recording_error` names the failure, and `oplog` holds the *attempted*
+entry rather than some unrelated earlier one.
+
+The MCP server's `kagi_confirm` returns this exact object (`actor` = `mcp`), and
+its `kagi_plan` returns the `plan` envelope above plus a `next` hint.
 
 Refusal (exit 2):
 

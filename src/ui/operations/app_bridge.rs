@@ -396,6 +396,16 @@ impl KagiApp {
         cx.notify();
         true
     }
+    /// #510: a `plan_*` that failed before it could open a modal must still
+    /// reach the user — footer plus the shared app-notice modal, never stderr
+    /// alone. The `[kagi]` plan-error line the caller already emitted is a test
+    /// contract and stays exactly as it was.
+    pub(crate) fn report_plan_failure(&mut self, op: i18n::Op, error: impl std::fmt::Display) {
+        let message = i18n::op_plan_failed(op, error);
+        self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+        self.app_notices.push_back(message.into());
+        self.present_app_notice();
+    }
     pub(crate) fn present_app_notice(&mut self) {
         if self.has_active_modal() {
             return;

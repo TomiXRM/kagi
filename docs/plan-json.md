@@ -7,7 +7,7 @@
 > / `drafts.rs`. These shapes are **not a stable public API yet**: field names
 > can change between Kagi versions without notice.
 >
-> Since #509 this is **one contract with two transports** (ADR-0179): the CLI
+> Since #509 this is **one contract with two transports** (ADR-0181): the CLI
 > (`src/cli_main.rs`) owns argv/stdin/exit codes, the MCP server
 > (`crates/kagi-mcp`) owns the tool envelope and plan store, and `kagi_git::api`
 > owns the op set, the operation resolution and both JSON shapes. Adding an
@@ -119,7 +119,7 @@ Success:
 
 `oplog` is the receipt `run_recorded` returned for *this* invocation, never a
 read of the global log's tail — a concurrent writer (another repo, another
-process) can no longer be echoed back as your operation (#505 / ADR-0179). When
+process) can no longer be echoed back as your operation (#505 / ADR-0181). When
 the append fails, `status` stays `"ok"` (the mutation happened), `recorded` is
 `false`, `recording_error` names the failure, and `oplog` holds the *attempted*
 entry rather than some unrelated earlier one.

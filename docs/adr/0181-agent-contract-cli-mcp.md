@@ -1,4 +1,4 @@
-# ADR-0179: one agent contract for CLI and MCP, bound to its own receipt
+# ADR-0181: one agent contract for CLI and MCP, bound to its own receipt
 
 - Status: Implemented for review
 - Issues: [#509](https://github.com/TomiXRM/kagi/issues/509),

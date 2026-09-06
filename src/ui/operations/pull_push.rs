@@ -113,68 +113,6 @@ impl KagiApp {
         self.clear_pull_modal();
     }
 
-    /// Confirm the pull plan synchronously: preflight, fetch via CLI, then
-    /// FF / in-memory merge (see `execute_pull`).  Used by the headless
-    /// KAGI_PULL path (no event loop). The UI button uses `start_pull`,
-    /// which runs the same blocking core on a background thread (W3-NOTIFY).
-    pub fn confirm_pull(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.pull_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        // Defence in depth: refuse blocked plans even if a code path slips through.
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: pull plan has blockers, not executing");
-            self.record_op(
-                "pull",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-
-        match pull_blocking(&repo_path, &modal.plan) {
-            Ok((summary, after_summary)) => {
-                self.clear_pull_modal();
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: after_summary,
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
-                self.reload_async(false, cx);
-            }
-            Err(err_msg) => {
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_pull_modal(PullPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        }
-    }
-
     /// W3-NOTIFY: UI-path pull — runs `pull_blocking` on a background thread
     /// so the window stays responsive, with start/finish toasts.
     pub fn start_pull(&mut self, cx: &mut Context<Self>) {
@@ -197,45 +135,52 @@ impl KagiApp {
             self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
             klog!("async: remote pull started");
             let (host, root) = (rv.host.clone(), rv.root.clone());
+            // #501: the transport records the attempt; this callback is
+            // presentation only and may be dropped on a tab switch.
+            let recorded_before = before.clone();
             let task = cx.background_spawn(async move {
-                crate::remote::remote_pull(&host, &root).map_err(|e| e.to_string())
+                crate::remote::remote_pull(&host, &root, &recorded_before)
             });
-            self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-                Ok(summary) => {
-                    klog!("async: remote pull finished — {summary}");
-                    app.record_op(
-                        "pull",
-                        before.clone(),
-                        OpOutcome::Success {
-                            after: kagi_git::StateSummary {
-                                head: before.head.clone(),
-                                dirty: summary.clone(),
-                            },
-                        },
-                        &oplog_path,
-                        cx,
+            let notice_path = oplog_path.clone();
+            self.finish_op_on_main_settled(
+                cx,
+                task,
+                move |app, report: &crate::remote::RemotePullReport, _cx| {
+                    app.notice_recording_failure("pull", &report.recording, &notice_path);
+                },
+                move |app, report, cx| {
+                    let recorded_clean = matches!(
+                        report.recording,
+                        kagi_git::backend::recording::Recording::Appended { .. }
                     );
-                    app.status_footer =
-                        FooterStatus::Success(SharedString::from(format!("pull: {summary}")));
-                    app.refresh_remote_view(cx);
-                }
-                Err(err_msg) => {
-                    klog!("async: remote pull failed — {err_msg}");
-                    app.record_op(
-                        "pull",
-                        before.clone(),
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &oplog_path,
-                        cx,
-                    );
-                    app.set_pull_modal(PullPlanModal {
-                        plan: modal.plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
-                    });
-                }
-            });
+                    match &report.result {
+                        Ok(summary) => {
+                            klog!("async: remote pull finished — {summary}");
+                            app.present_recorded("pull", &report.recording, &oplog_path, cx);
+                            // A pull whose record never landed is not a clean
+                            // success; the notice above already said so.
+                            if recorded_clean {
+                                app.status_footer = FooterStatus::Success(SharedString::from(
+                                    format!("pull: {summary}"),
+                                ));
+                            }
+                            app.refresh_remote_view(cx);
+                        }
+                        Err(error) => {
+                            let err_msg = error.to_string();
+                            klog!("async: remote pull failed — {err_msg}");
+                            app.present_recorded("pull", &report.recording, &oplog_path, cx);
+                            // Unknown/Partial changed the host: re-read rather
+                            // than re-offering the same pull.
+                            app.refresh_remote_view(cx);
+                            app.set_pull_modal(PullPlanModal {
+                                plan: modal.plan.clone(),
+                                error: Some(SharedString::from(err_msg)),
+                            });
+                        }
+                    }
+                },
+            );
             return;
         }
 
@@ -302,10 +247,21 @@ impl KagiApp {
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                     cx,
                 );
+                // #493 safety review: `start_pull` closes the modal before the
+                // background pull, so the failure has to bring it back — a
+                // user-facing error surfaces via the oplog AND a modal
+                // (CLAUDE.md). Same shape as the remote-view arm above and as
+                // `start_checkout` / `start_delete_branch` / `start_amend`.
+                self.set_pull_modal(PullPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
             }
         }
     }
@@ -371,67 +327,6 @@ impl KagiApp {
     /// Close the push modal without executing.
     pub fn cancel_push_modal(&mut self) {
         self.clear_push_modal();
-    }
-
-    /// Confirm the push plan synchronously: preflight, execute push via CLI.
-    /// Used by the headless KAGI_PUSH path. The UI button uses `start_push`
-    /// (background thread + toasts, W3-NOTIFY).
-    pub fn confirm_push(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.push_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        // Defence in depth: refuse blocked plans even if a code path slips through.
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: push plan has blockers, not executing");
-            self.record_op(
-                "push",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-
-        match push_blocking(&repo_path, &modal.plan) {
-            Ok((summary, after_summary)) => {
-                self.clear_push_modal();
-                self.record_op(
-                    "push",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: after_summary,
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
-                self.reload_async(false, cx);
-            }
-            Err(err_msg) => {
-                self.record_op(
-                    "push",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_push_modal(PushPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        }
     }
 
     /// W3-NOTIFY: UI-path push — background thread + start/finish toasts.
@@ -507,10 +402,18 @@ impl KagiApp {
                 self.record_op(
                     "push",
                     modal.plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
+                    OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
                     &repo_path,
                     cx,
                 );
+                // #493 safety review: see `finish_pull` — the failure must reach
+                // the modal, not just the oplog and the footer.
+                self.set_push_modal(PushPlanModal {
+                    plan: modal.plan.clone(),
+                    error: Some(SharedString::from(err_msg)),
+                });
             }
         }
     }

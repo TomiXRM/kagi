@@ -727,3 +727,58 @@ pub enum ActiveModal {
     EditorDeleteConfirm(EditorDeleteConfirmModal),
     TrustRepo(TrustRepoModal),
 }
+
+impl ActiveModal {
+    /// True when this confirmation belongs to the repo it was opened for and
+    /// must be dropped when the active repo changes (#492). A modal's plan,
+    /// paths, stash indices and OIDs all came from one repo, but the confirm
+    /// methods read `self.repo_path` at Enter time — so a survivor would apply
+    /// repo A's plan to repo B. `AppNotice` is the only app-scoped modal: it
+    /// reports a finished operation that names its own repo. Exhaustive on
+    /// purpose: a new variant must declare its scope before it compiles.
+    pub fn is_repo_scoped(&self) -> bool {
+        use ActiveModal as M;
+        match self {
+            M::AppNotice(_) => false,
+            M::Checkout(_)
+            | M::Pull(_)
+            | M::Amend(_)
+            | M::Pop(_)
+            | M::StashDrop(_)
+            | M::PushTag(_)
+            | M::PrMerge(_)
+            | M::Push(_)
+            | M::BranchPlan(_)
+            | M::SetUpstream(_)
+            | M::RenameBranch(_)
+            | M::Merge(_)
+            | M::TrackingCheckout(_)
+            | M::SwitchToLatest(_)
+            | M::CreateBranch(_)
+            | M::CreateTag(_)
+            | M::CreateWorktree(_)
+            | M::UnlockWorktree(_)
+            | M::RemoveWorktree(_)
+            | M::LockWorktree(_)
+            | M::PruneWorktrees(_)
+            | M::RepairWorktrees(_)
+            | M::StashPush(_)
+            | M::StashApply(_)
+            | M::CherryPick(_)
+            | M::Revert(_)
+            | M::History(_)
+            | M::DeleteBranch(_)
+            | M::DeleteRemoteBranch(_)
+            | M::ResetCurrent(_)
+            | M::ForceLeasePush(_)
+            | M::RebaseCurrentOnto(_)
+            | M::BranchCleanup(_)
+            | M::Discard(_)
+            | M::ConflictContinue(_)
+            | M::EditorDirtyGuard(_)
+            | M::EditorFsPrompt(_)
+            | M::EditorDeleteConfirm(_)
+            | M::TrustRepo(_) => true,
+        }
+    }
+}

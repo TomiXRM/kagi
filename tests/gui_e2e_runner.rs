@@ -509,6 +509,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),
             (
+                "modal_no_fallthrough",
+                Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
+            ),
+            (
+                "push_failure_keeps_modal",
+                Box::new(crate::recovery_operations::scenario_push_failure_keeps_modal),
+            ),
+            (
                 "cleanup_open_failure",
                 Box::new(crate::recovery_operations::scenario_cleanup_open_failure),
             ),

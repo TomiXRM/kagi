@@ -8,6 +8,12 @@ use kagi_git::{
     ops::{AmendMode, BranchRenameValidation, MergeKind, OperationPlan},
     CommitId,
 };
+// #510: the plan slot and its two adapters live next door; re-exported so every
+// `use modals::*` consumer keeps reaching them.
+pub use super::modal_plan::ModalPlan;
+pub(crate) use super::modal_plan::{
+    plan_or_exec_error, plan_outcome, session_unavailable, SESSION_UNAVAILABLE,
+};
 
 // ──────────────────────────────────────────────────────────────
 // CheckoutPlanModal — state for the plan confirmation overlay (T013)
@@ -265,9 +271,11 @@ pub struct CreateBranchModal {
     pub input_state: Option<Entity<InputState>>,
     /// Whether to check out the new branch after creating it.
     pub checkout_after: bool,
-    /// Live plan (re-generated each keystroke from `input` and `at`).
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
+    /// Live plan (re-generated each keystroke from `input` and `at`), or the
+    /// explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
+    /// Error message to show if execute or preflight failed. Plan failures live
+    /// in `plan` instead, so they cannot leave a confirmable plan behind.
     pub error: Option<SharedString>,
 }
 
@@ -291,9 +299,11 @@ pub struct CreateTagModal {
     /// Real text-input entity (gpui-component). Created lazily on first
     /// render (needs a Window); `None` in headless paths.
     pub input_state: Option<Entity<InputState>>,
-    /// Live plan (re-generated each keystroke from `input` and `at`).
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
+    /// Live plan (re-generated each keystroke from `input` and `at`), or the
+    /// explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
+    /// Error message to show if execute or preflight failed. Plan failures live
+    /// in `plan` instead, so they cannot leave a confirmable plan behind.
     pub error: Option<SharedString>,
 }
 
@@ -317,9 +327,11 @@ pub struct CreateWorktreeModal {
     /// True when this modal attaches an existing local branch to a worktree
     /// instead of creating a new branch first.
     pub allow_existing_branch: bool,
-    /// Live plan regenerated from branch/path/start.
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
+    /// Live plan regenerated from branch/path/start, or the explicit failure of
+    /// the last replan (#510).
+    pub plan: ModalPlan,
+    /// Error message to show if execute or preflight failed. Plan failures live
+    /// in `plan` instead, so they cannot leave a confirmable plan behind.
     pub error: Option<SharedString>,
 }
 
@@ -498,7 +510,8 @@ pub struct SetUpstreamModal {
     pub branch_name: String,
     pub input: String,
     pub input_state: Option<Entity<InputState>>,
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Live plan, or the explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
     pub error: Option<SharedString>,
 }
 
@@ -508,7 +521,8 @@ pub struct RenameBranchModal {
     pub input: String,
     pub input_state: Option<Entity<InputState>>,
     pub validation: BranchRenameValidation,
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Live plan, or the explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
     pub error: Option<SharedString>,
 }
 

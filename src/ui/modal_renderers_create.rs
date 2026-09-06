@@ -41,11 +41,14 @@ pub(crate) fn render_create_branch_modal(
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    let plan = modal.plan.clone();
+    // #510: the slot yields a plan only in `Ready`, so a pending or failed
+    // replan renders no confirm button at all.
+    let plan = modal.plan.plan().cloned();
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
         .unwrap_or(true);
+    let error = plan_or_exec_error(&modal.plan, modal.error.clone());
 
     // ── Cancel handler ──────────────────────────────────────
     // T-BP-003: return focus to root_focus so cmd-j keeps working.
@@ -172,7 +175,7 @@ pub(crate) fn render_create_branch_modal(
     }
 
     // ── Error message (preflight / execute failure) ───────
-    if let Some(ref err) = modal.error {
+    if let Some(ref err) = error {
         body = body.child(
             div()
                 .flex_shrink_0()
@@ -192,9 +195,10 @@ pub(crate) fn render_create_branch_modal(
             .on_click(cancel_handler),
     );
 
-    // Create button: only shown when there are no blockers.
+    // Create button: only shown when there are no blockers — and a plan slot
+    // that is pending or failed counts as blocked (#510).
     if !has_blockers {
-        button_row = button_row.child(
+        button_row = button_row.child(crate::ui::e2e::measure_confirm(
             KagiButton::accent(
                 "create-branch-confirm",
                 "Create",
@@ -203,7 +207,7 @@ pub(crate) fn render_create_branch_modal(
             )
             .small()
             .on_click(confirm_handler),
-        );
+        ));
     }
 
     let card = card
@@ -240,11 +244,14 @@ pub(crate) fn render_create_worktree_modal(
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    let plan = modal.plan.clone();
+    // #510: the slot yields a plan only in `Ready`, so a pending or failed
+    // replan renders no confirm button at all.
+    let plan = modal.plan.plan().cloned();
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
         .unwrap_or(true);
+    let error = plan_or_exec_error(&modal.plan, modal.error.clone());
 
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_create_worktree_modal();
@@ -353,7 +360,7 @@ pub(crate) fn render_create_worktree_modal(
         }
     }
 
-    if let Some(ref err) = modal.error {
+    if let Some(ref err) = error {
         body = body.child(
             div()
                 .flex_shrink_0()
@@ -422,11 +429,14 @@ pub(crate) fn render_create_tag_modal(
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    let plan = modal.plan.clone();
+    // #510: the slot yields a plan only in `Ready`, so a pending or failed
+    // replan renders no confirm button at all.
+    let plan = modal.plan.plan().cloned();
     let has_blockers = plan
         .as_ref()
         .map(|p| !p.blockers.is_empty())
         .unwrap_or(true);
+    let error = plan_or_exec_error(&modal.plan, modal.error.clone());
 
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
         this.cancel_create_tag_modal();
@@ -511,7 +521,7 @@ pub(crate) fn render_create_tag_modal(
         }
     }
 
-    if let Some(ref err) = modal.error {
+    if let Some(ref err) = error {
         body = body.child(
             div()
                 .flex_shrink_0()

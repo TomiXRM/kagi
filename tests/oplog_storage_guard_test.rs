@@ -10,6 +10,7 @@ fn entry(op: &str) -> OpLogEntry {
     OpLogEntry {
         id: 0,
         parent: None,
+        backup_refs: Vec::new(),
         actor: Actor::Human,
         worktree: None,
         timestamp: 1,

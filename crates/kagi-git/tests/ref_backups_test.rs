@@ -129,6 +129,9 @@ fn gc(repo: &Path) {
 
 #[test]
 fn discard_receipt_recovers_from_ref_after_gc_without_auto_snapshot() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let content = b"unique discarded bytes\0\xff\n";
     let receipt = f.discard(content);
@@ -151,6 +154,9 @@ fn discard_receipt_recovers_from_ref_after_gc_without_auto_snapshot() {
 
 #[test]
 fn remove_success_partial_and_unknown_keep_persisted_refs_after_gc() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     for fault in [
         None,
         Some(RemoveFaultPoint::FailAfterBackupBeforeDelete),
@@ -205,6 +211,9 @@ fn remove_success_partial_and_unknown_keep_persisted_refs_after_gc() {
 
 #[test]
 fn retiring_one_entry_cleans_only_its_refs_and_gc_reclaims_its_bytes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let first = f.discard(b"first disposable content\n");
     let second = f.discard(b"retained content\n");
@@ -240,6 +249,9 @@ fn retiring_one_entry_cleans_only_its_refs_and_gc_reclaims_its_bytes() {
 
 #[test]
 fn shared_ref_survives_until_its_last_entry_is_retired() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let first = f.discard(b"shared recovery\n");
     let mut other = first.clone();
@@ -270,6 +282,9 @@ fn shared_ref_survives_until_its_last_entry_is_retired() {
 
 #[test]
 fn log_or_ref_drift_refuses_cleanup_and_untrusted_cleanup_is_recorded() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let first = f.discard(b"safe bytes\n");
     let mut backend = f.backend();
@@ -305,6 +320,9 @@ fn log_or_ref_drift_refuses_cleanup_and_untrusted_cleanup_is_recorded() {
 
 #[test]
 fn append_failure_retains_attempted_receipt_ref_through_gc() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     std::fs::create_dir_all(f.log.join("operations.jsonl")).unwrap();
     std::fs::write(f.repo.join("tracked"), b"survive log failure\n").unwrap();
@@ -328,6 +346,9 @@ fn append_failure_retains_attempted_receipt_ref_through_gc() {
 
 #[test]
 fn malformed_log_and_foreign_reference_fail_closed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let first = f.discard(b"keep recovery\n");
     let mut forged = first.clone();
@@ -354,6 +375,9 @@ fn malformed_log_and_foreign_reference_fail_closed() {
 
 #[test]
 fn backup_ref_creation_failure_preserves_worktree_and_ref_namespace() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let raw = git2::Repository::open(&f.repo).unwrap();
     let head = raw.head().unwrap().target().unwrap();
@@ -386,6 +410,9 @@ fn backup_ref_creation_failure_preserves_worktree_and_ref_namespace() {
 
 #[test]
 fn retiring_latest_entry_does_not_reuse_its_sequence_id() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let entry = f.discard(b"retire only entry\n");
     let backend = f.backend();
@@ -399,6 +426,9 @@ fn retiring_latest_entry_does_not_reuse_its_sequence_id() {
 
 #[test]
 fn busy_log_lock_preserves_entry_and_refs_without_mutating_cleanup() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let entry = f.discard(b"preserve while locked\n");
     let backend = f.backend();
@@ -424,6 +454,9 @@ fn busy_log_lock_preserves_entry_and_refs_without_mutating_cleanup() {
 
 #[test]
 fn concurrent_appends_preserve_every_receipt_with_distinct_ids() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let entry = f.discard(b"shared across concurrent receipts\n");
     let barrier = std::sync::Barrier::new(9);
@@ -462,6 +495,9 @@ fn concurrent_appends_preserve_every_receipt_with_distinct_ids() {
 
 #[test]
 fn append_cannot_reacquire_a_retired_root() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let entry = f.discard(b"retired bytes\n");
     let backend = f.backend();
@@ -480,6 +516,9 @@ fn append_cannot_reacquire_a_retired_root() {
 
 #[test]
 fn legacy_retirement_preserves_surviving_ids_and_sequence_floor() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let f = Fixture::new();
     let entry = f.discard(b"legacy naked backup\n");
     let log = f.log.join("operations.jsonl");
@@ -526,6 +565,9 @@ fn legacy_retirement_preserves_surviving_ids_and_sequence_floor() {
 #[cfg(unix)]
 #[test]
 fn remove_stops_before_delete_when_pre_remove_creates_unreadable_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use kagi_domain::remove::RemoveStage;
     use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
@@ -580,3 +622,6 @@ fn remove_stops_before_delete_when_pre_remove_creates_unreadable_content() {
         .find_reference("refs/heads/linked")
         .is_ok());
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

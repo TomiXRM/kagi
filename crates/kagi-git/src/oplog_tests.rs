@@ -428,7 +428,7 @@ fn append_waiting_for_retirement_cannot_publish_a_deleted_root() {
     entry.backup_refs.push(name.into());
     let (_, entry) = append_oplog_receipt(&entry).unwrap();
     let plan = retention::plan(&repo, &entry).unwrap();
-    let mut lock = retention::lock(&log_file_path().unwrap()).unwrap();
+    let mut lock = retention::lock(&log_file_path().unwrap().unwrap()).unwrap();
     let (started, ready) = std::sync::mpsc::channel();
     let (finished, completion) = std::sync::mpsc::channel();
     std::thread::scope(|scope| {

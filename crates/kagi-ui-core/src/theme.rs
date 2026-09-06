@@ -684,6 +684,49 @@ fn to_hsla(rgb_u32: u32) -> Hsla {
     Hsla::from(rgb(rgb_u32))
 }
 
+/// WCAG relative luminance for an `0xRRGGBB` colour.
+fn relative_luminance(c: u32) -> f64 {
+    let channel = |value: u32| {
+        let value = value as f64 / 255.0;
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel((c >> 16) & 0xff)
+        + 0.7152 * channel((c >> 8) & 0xff)
+        + 0.0722 * channel(c & 0xff)
+}
+
+fn contrast_ratio(a: u32, b: u32) -> f64 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Label colour for a filled primary button.
+///
+/// Most themes originally used their base background as the label, which
+/// preserves their intended dark/light appearance. Flower Road's soft pink is
+/// too close to its ivory base for a commit button, so retain that choice only
+/// when it meets WCAG AA. Its dark ink is then preferred; pure black/white is
+/// the final fallback and always gives one accessible option.
+fn primary_button_foreground(theme: &Theme) -> u32 {
+    const MIN_CONTRAST: f64 = 4.5;
+
+    if contrast_ratio(theme.color_branch, theme.bg_base) >= MIN_CONTRAST {
+        theme.bg_base
+    } else if contrast_ratio(theme.color_branch, theme.text_main) >= MIN_CONTRAST {
+        theme.text_main
+    } else if contrast_ratio(theme.color_branch, 0x000000)
+        >= contrast_ratio(theme.color_branch, 0xffffff)
+    {
+        0x000000
+    } else {
+        0xffffff
+    }
+}
+
 /// Push kagi's active [`theme()`] palette into `gpui_component`'s global
 /// `ThemeColor` so every adopted gpui-component widget (Input, Tooltip,
 /// Scrollbar, Checkbox, …) renders with kagi's colours.
@@ -753,7 +796,8 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
 
     // ── Primary / accent (Checkbox checked, focus ring, links) ──
     gc.colors.primary = to_hsla(k.color_branch);
-    gc.colors.primary_foreground = to_hsla(k.bg_base);
+    let primary_foreground = primary_button_foreground(k);
+    gc.colors.primary_foreground = to_hsla(primary_foreground);
     gc.colors.primary_hover = to_hsla(k.color_branch);
     gc.colors.primary_active = to_hsla(k.color_branch);
     gc.colors.ring = to_hsla(k.color_branch);
@@ -787,9 +831,11 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.button_foreground = to_hsla(k.text_main);
     gc.colors.button_hover = to_hsla(k.selected);
     gc.colors.button_active = to_hsla(k.surface);
-    // Primary (Branch here): kagi's branch accent, as before the bump.
+    // Primary (including the Commit button): kagi's branch accent. Preserve
+    // the established label colour when it is legible; otherwise use the
+    // theme's accessible primary-button foreground.
     gc.colors.button_primary = to_hsla(k.color_branch);
-    gc.colors.button_primary_foreground = to_hsla(k.bg_base);
+    gc.colors.button_primary_foreground = to_hsla(primary_foreground);
     gc.colors.button_primary_hover = to_hsla(k.color_branch);
     gc.colors.button_primary_active = to_hsla(k.color_branch);
     gc.colors.button_secondary = to_hsla(k.surface);
@@ -1302,23 +1348,6 @@ mod tests {
     /// upstream palettes routinely put them at 2.5:1.
     #[test]
     fn syntax_colours_are_legible_on_their_background() {
-        /// WCAG relative luminance.
-        fn luminance(c: u32) -> f64 {
-            let ch = |v: u32| {
-                let v = v as f64 / 255.0;
-                if v <= 0.03928 {
-                    v / 12.92
-                } else {
-                    ((v + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * ch((c >> 16) & 0xff) + 0.7152 * ch((c >> 8) & 0xff) + 0.0722 * ch(c & 0xff)
-        }
-        fn contrast(a: u32, b: u32) -> f64 {
-            let (la, lb) = (luminance(a), luminance(b));
-            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-        }
-
         // Deliberately below WCAG AA (4.5) — several *officially published*
         // palettes (notably Catppuccin) sit in the 3s by design, and matching
         // upstream matters more than beating a threshold they never targeted.
@@ -1349,7 +1378,7 @@ mod tests {
                 ("variable", s.variable),
                 ("attribute", s.attribute),
             ] {
-                let c = contrast(colour, t.bg_base);
+                let c = contrast_ratio(colour, t.bg_base);
                 assert!(
                     c >= MIN,
                     "{}: syntax.{} {:#08x} is {:.1}:1 on bg {:#08x} — illegible",
@@ -1360,6 +1389,20 @@ mod tests {
                     t.bg_base
                 );
             }
+        }
+    }
+
+    #[test]
+    fn primary_button_labels_meet_wcag_aa() {
+        for t in THEMES {
+            let foreground = primary_button_foreground(t);
+            let contrast = contrast_ratio(t.color_branch, foreground);
+            assert!(
+                contrast >= 4.5,
+                "{}: primary button label {foreground:#08x} is only {contrast:.2}:1 on {:#08x}",
+                t.slug,
+                t.color_branch,
+            );
         }
     }
 

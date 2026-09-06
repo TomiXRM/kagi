@@ -86,13 +86,15 @@ pub fn scenario_editor_save_during_remove(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.confirm_remove_worktree(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     while !entered.exists() {
-        cx.run_until_parked();
+        // The real-platform dispatcher can wait for the entire remove job.
+        // Do not park while its child is waiting for this test's release file.
         assert!(Instant::now() < deadline, "slow pre_remove was not entered");
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    // Entity update flushes the SaveRequested event synchronously. Admission
+    // refuses here, without polling the foreground future awaiting remove.
     app.update(cx, |app, cx| app.save_editor_file(cx));
-    cx.run_until_parked();
     assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
     assert!(
         cx.read(|cx| editor.read(cx).dirty),
@@ -108,6 +110,7 @@ pub fn scenario_editor_save_during_remove(cx: &mut VisualTestAppContext) {
         .iter()
         .any(|toast| toast.message.as_ref() == Msg::OpInProgress.t())));
     std::fs::write(&release, b"release").unwrap();
+    cx.run_until_parked();
     let deadline = Instant::now() + Duration::from_secs(15);
     while cx.read(|cx| app.read(cx).app_sessions.has_leases()) {
         cx.run_until_parked();

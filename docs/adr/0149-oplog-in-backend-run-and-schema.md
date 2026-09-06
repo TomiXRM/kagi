@@ -98,6 +98,18 @@ consume them are later work.
 
 ## Explicitly deferred (do NOT implement here)
 
+### Slice 1a addendum (#484)
+
+[ADR-0175](0175-app-remove-boundary.md) supersedes the UI-owned non-run writer
+only for worktree remove: recording is now in its Backend execution boundary,
+including open failure and refusal. `append_oplog_receipt` returns the assigned
+entry and the old append API delegates to it. `Unknown { after, evidence }` is
+an additive variant; old variant wire encodings are unchanged. Remove uses
+observed progress/verification and full recovery OIDs, not predicted after.
+This does not supply crash durability, multi-process locking or GC retention.
+
+### Remaining deferrals
+
 - **Snapshot / checkpoint strategy** — no `snapshot` field, no ref-set capture.
   A separate future issue owns point-in-time restore.
 - **Per-repo oplog files** — the single `~/.kagi/operations.jsonl` stays; no

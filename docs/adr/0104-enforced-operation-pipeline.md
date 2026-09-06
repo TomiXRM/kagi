@@ -114,6 +114,15 @@ impl Backend {
 
 ## What this does NOT change
 
+### Slice 1a addendum (#484)
+
+[ADR-0175](0175-app-remove-boundary.md) partially supersedes the universal-run
+and UI-recording claims for worktree remove. Its dedicated Backend boundary
+performs identity/trust/preflight/execution/verify/record and returns a receipt.
+The old GUI remove executor/writer glue is removed. Other families are unchanged.
+
+### Original exclusions
+
 - The `Operation` enum and `OperationPlan` struct (still built by UI/tests).
 - The git2-free UI invariant (CI gate).
 - The forbidden-op policy (no `reset --hard`, `push --force`, `git clean`,

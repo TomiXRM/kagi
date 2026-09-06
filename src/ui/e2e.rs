@@ -21,6 +21,19 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CONFIRM_BOUNDS: RefCell<std::collections::HashMap<gpui::WindowId, gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpui::Pixels>) {
+    CONFIRM_BOUNDS.with(|map| map.borrow_mut().insert(id, bounds));
+}
+#[cfg(feature = "gui-e2e")]
+pub fn confirm_bounds(id: gpui::WindowId) -> Option<gpui::Bounds<gpui::Pixels>> {
+    CONFIRM_BOUNDS.with(|map| map.borrow().get(&id).copied())
+}
+
 use gpui::{App, AppContext as _, AssetSource, Entity, KeyBinding, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
@@ -94,6 +107,12 @@ pub fn build_kagi_entity(
         let seed = std::mem::take(&mut app_state.op_log_seed);
         app_state.op_log = Some(cx.new(|_| oplog_panel::OpLogPanel::from_entries(seed)));
         app_state
+    });
+    let close_owner = kagi.downgrade();
+    window.on_window_should_close(cx, move |_, cx| {
+        close_owner
+            .update(cx, |app, cx| !app.hold_host_close(cx))
+            .unwrap_or(true)
     });
     if let Some(fh) = kagi.read(cx).root_focus.clone() {
         window.focus(&fh, cx);

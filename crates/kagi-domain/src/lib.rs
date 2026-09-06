@@ -8,6 +8,9 @@
 //! via the strangler plan (`docs/rearch/migration/README.md`). The old
 //! `kagi::git` / `kagi::graph` paths continue to work through re-export bridges
 //! during the migration.
+//!
+//! Worktree removal identities and execution evidence live in [`remove`];
+//! collecting that evidence remains the Git backend's responsibility.
 
 pub mod absorb;
 pub mod activity;
@@ -43,6 +46,7 @@ pub mod refs;
 pub mod remote;
 pub mod remote_diff;
 pub mod remote_snapshot;
+pub mod remove;
 pub mod resolution;
 pub mod ruleset;
 pub mod status;

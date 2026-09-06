@@ -28,6 +28,23 @@ use gpui_component::input::InputState;
 // unused `*_mut` shims were removed in the 2026-06-20 rearch sweep; call sites
 // that need to consume match on `active_modal` directly.
 impl KagiApp {
+    pub(crate) fn has_active_modal(&self) -> bool {
+        self.active_modal.is_some()
+    }
+    pub(crate) fn app_notice(&self) -> Option<&crate::ui::modals::AppNotice> {
+        match &self.active_modal {
+            Some(ActiveModal::AppNotice(message)) => Some(message),
+            _ => None,
+        }
+    }
+    pub(crate) fn set_app_notice(&mut self, message: crate::ui::modals::AppNotice) {
+        self.active_modal = Some(ActiveModal::AppNotice(message));
+    }
+    pub(crate) fn clear_app_notice(&mut self) {
+        if self.app_notice().is_some() {
+            self.active_modal = None;
+        }
+    }
     /// #454 Phase 1: flip modal section `id` between its default and the
     /// opposite. Read side is `modal_renderers::section_open` (renderers hold
     /// the defaults); this only records the user's override.

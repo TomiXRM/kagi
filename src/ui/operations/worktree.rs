@@ -278,7 +278,9 @@ impl KagiApp {
         use worktree_menu::WorktreeAction::*;
         match action {
             Unlock => self.open_unlock_worktree_modal(state.name),
-            Remove { delete_branch } => self.open_remove_worktree_modal(state.name, delete_branch),
+            Remove { delete_branch } => {
+                self.open_remove_worktree_modal(state.name, delete_branch, cx)
+            }
             Lock => self.open_lock_worktree_modal(state.name),
             Prune => self.open_prune_worktrees_modal(),
             Repair => self.open_repair_worktrees_modal(),
@@ -323,181 +325,104 @@ impl KagiApp {
         }
     }
 
-    pub fn open_remove_worktree_modal(&mut self, name: String, delete_branch: bool) {
-        let Some(repo) = self.worktree_backend("remove-worktree") else {
+    pub fn open_remove_worktree_modal(
+        &mut self,
+        name: String,
+        delete_branch: bool,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::app::{self, Attachment, RemovePolicy, RemoveRequest};
+        let Some(path) = self.repo_path.clone() else {
             return;
         };
-        match repo.plan_remove_worktree(&name, delete_branch) {
-            Ok(plan) => {
+        let request = RemoveRequest {
+            owner: Attachment {
+                path,
+                generation: self.switch_generation,
+            },
+            name: name.clone(),
+            delete_branch,
+        };
+        let job = app::plan_remove(&mut self.app_sessions, request, RemovePolicy::default());
+        self.clear_remove_worktree_modal();
+        let task = cx.background_spawn(async move { job.run() });
+        cx.spawn(async move |this, cx| {
+            let completion = task.await;
+            let _ = this.update(cx, |app, cx| {
+                if app::apply_plan(&mut app.app_sessions, completion) {
+                    // A different modal opened while planning owns the UI now.
+                    // Check only accepted completions: stale jobs must not
+                    // invalidate a newer remove request's revision.
+                    if app.has_active_modal() && app.remove_worktree_modal().is_none() {
+                        app.app_sessions.invalidate_plan();
+                    } else {
+                        app.show_remove_plan();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn show_remove_plan(&mut self) {
+        use crate::app::PlanState;
+        match self.app_sessions.plan_state() {
+            PlanState::Ready { plan, request, .. } => {
+                let name = request.name.clone();
+                let delete_branch = request.delete_branch;
+                let preview = plan.preview.clone();
                 klog!(
                     "plan: remove-worktree {} delete_branch={}",
                     name,
                     delete_branch
                 );
                 self.set_remove_worktree_modal(RemoveWorktreeModal {
-                    plan: std::sync::Arc::new(plan),
+                    plan: preview,
                     error: None,
                     name,
                     delete_branch,
                 });
             }
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::RemoveWorktree, e),
-                ));
+            PlanState::Error { error, .. } => {
+                let message = i18n::op_plan_failed(i18n::Op::RemoveWorktree, error);
+                self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+                self.app_notices.push_back(message.into());
             }
+            _ => {}
         }
     }
 
     pub fn cancel_remove_worktree_modal(&mut self) {
         self.clear_remove_worktree_modal();
+        self.app_sessions.invalidate_plan();
     }
 
-    /// Confirm remove: preflight → ODB-backup → containment-checked delete →
-    /// prune → optional branch delete → verify → oplog → reload.
-    ///
-    /// issue #404: the execute step can run a `pre_remove` command (e.g.
-    /// `docker compose down`) that takes minutes, so it runs on a background
-    /// thread — the window never blocks. issue #406/#413: the outcome is
-    /// persisted via `record_op_persist` (these ops do not go through
-    /// `Backend::run`), and the returned ODB backup blob SHAs are serialised into
-    /// the oplog `after.dirty` as the recovery handle.
     pub fn confirm_remove_worktree(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.remove_worktree_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: remove-worktree plan has blockers, not executing");
-            self.record_op_persist(
-                "remove-worktree",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            self.clear_remove_worktree_modal();
-            cx.notify();
+        use crate::app::{self, PlanState, RemovePolicy};
+        if self.remove_worktree_modal().is_none() {
             return;
         }
-        // issue #404: refuse to start a second op while one is in flight, so the
-        // async remove cannot race another mutation.
-        if self.busy_op.is_some() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        if self.reject_if_busy(cx) {
             return;
         }
-        let Some(repo) = self.worktree_backend("remove-worktree") else {
+        let PlanState::Ready { token, request, .. } = self.app_sessions.plan_state() else {
             return;
         };
-        // issue #341: confirming a plan whose pre_remove note is trust-required
-        // records repository-level trust so the command steps may run; an
-        // untrusted (or failing) pre_remove command aborts the removal below.
-        // This is a fast local-file write, so it stays on the main thread.
-        if kagi_git::ops::plan_requires_worktree_trust(&modal.plan) {
-            // issue #393: trust ONLY the exact config the plan showed.
-            let sha = kagi_git::ops::plan_worktree_config_sha(&modal.plan).unwrap_or("");
-            if let Err(e) = repo.trust_worktree_config_for_worktree(&modal.name, sha) {
-                klog!("refused: remove-worktree config changed after plan, not executing");
-                let err_msg = e.to_string();
-                self.record_op_persist(
-                    "remove-worktree",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.remove_worktree_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
-            klog!("worktree: trusted .kagi/worktree.toml (pre_remove)");
+        if self.repo_path.as_ref() != Some(&request.owner.path)
+            || self.switch_generation != request.owner.generation
+        {
+            self.cancel_remove_worktree_modal();
+            return;
         }
-
-        // issue #404: run the (possibly slow) execute off the main thread. The
-        // modal closes now; the outcome surfaces via the footer/toast/oplog.
-        self.busy_op = Some("remove-worktree");
-        self.clear_remove_worktree_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRemoveWorktree.t()));
-        klog!("async: remove-worktree started");
-
-        let bg_path = repo_path.clone();
-        let plan = modal.plan.clone();
-        let name = modal.name.clone();
-        let delete_branch = modal.delete_branch;
-        let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&bg_path)
-                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-            repo.execute_remove_worktree(&plan, &name, delete_branch)
-                .map_err(|e| i18n::op_failed(i18n::Op::RemoveWorktree, e))
-        });
-        let plan = modal.plan.clone();
-        let name = modal.name.clone();
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(outcome) => {
-                // issue #413: serialise the path→blob backup list into the oplog
-                // after-state as the recovery handle (empty on the clean path).
-                let pairs: Vec<String> = outcome
-                    .backups
-                    .iter()
-                    .map(|b| format!("{}={}", b.path, b.blob))
-                    .collect();
-                let dirty = if pairs.is_empty() {
-                    plan.predicted.dirty.clone()
-                } else {
-                    format!("backup: {}", pairs.join(", "))
-                };
-                let after = StateSummary {
-                    head: plan.predicted.head.clone(),
-                    dirty,
-                };
-                if let Some(err) = outcome.error {
-                    // issue #413: a partial remove still carries the backups.
-                    klog!("async: remove-worktree partial — {}", err);
-                    app.record_op_persist(
-                        "remove-worktree",
-                        plan.current.clone(),
-                        OpOutcome::Partial { after, error: err },
-                        &repo_path,
-                        cx,
-                    );
-                } else {
-                    klog!(
-                        "executed: remove-worktree {} (backups={})",
-                        name,
-                        outcome.backups.len()
-                    );
-                    app.record_op_persist(
-                        "remove-worktree",
-                        plan.current.clone(),
-                        OpOutcome::Success { after },
-                        &repo_path,
-                        cx,
-                    );
-                }
-                app.reload(cx);
+        let token = token.clone();
+        match app::approve(&mut self.app_sessions, token, RemovePolicy::default()) {
+            Ok(approved) => self.dispatch_job(approved, cx),
+            Err(error) => {
+                self.app_notices.push_back(error.to_string().into());
+                cx.notify();
             }
-            Err(err_msg) => {
-                klog!("async: remove-worktree failed — {}", err_msg);
-                app.record_op_persist(
-                    "remove-worktree",
-                    plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-            }
-        });
+        }
     }
 
     pub fn open_lock_worktree_modal(&mut self, name: String) {

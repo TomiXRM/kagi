@@ -122,6 +122,7 @@ pub fn outcome_summary(outcome: &OpOutcome) -> String {
         OpOutcome::Partial { after, error } => {
             format!("Partial \u{2192} {}: {}", after.head, error)
         }
+        OpOutcome::Unknown { evidence, .. } => format!("Unknown: {}", evidence),
         OpOutcome::Failed { error } => format!("Failed: {}", error),
         OpOutcome::Refused { blockers } => format!(
             "Refused ({} blocker{})",
@@ -142,7 +143,11 @@ pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
             lines.push(format!("  after:   {}", after.head));
             lines.push(format!("  dirty:   {}", after.dirty));
         }
-        OpOutcome::Partial { after, error } => {
+        OpOutcome::Unknown {
+            after,
+            evidence: error,
+        }
+        | OpOutcome::Partial { after, error } => {
             lines.push(format!("  after:   {}", after.head));
             lines.push(format!("  dirty:   {}", after.dirty));
             lines.push(format!("  error:   {}", error));

@@ -4,6 +4,7 @@
 //! operations as additional `impl KagiApp` blocks. Pure physical split —
 //! behaviour and signatures are unchanged.
 
+mod app_bridge;
 pub mod branch;
 pub mod checkout;
 pub mod cherry_revert;
@@ -104,7 +105,7 @@ impl KagiApp {
     /// Reject a state-changing op if another is in flight (#283 stage 1).
     /// Returns true (and sets the footer) when the caller must bail out.
     pub(crate) fn reject_if_busy(&mut self, cx: &mut Context<Self>) -> bool {
-        if op_may_start(self.busy_op) {
+        if op_may_start(self.busy_op) && !self.app_sessions.has_leases() {
             return false;
         }
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));

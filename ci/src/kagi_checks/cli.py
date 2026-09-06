@@ -138,6 +138,14 @@ def check_ui_git2() -> int:
     return _run_rule(_rule("ui-git2"))
 
 
+def check_app_layering() -> int:
+    return _run_rule(_rule("app-layering"))
+
+
+def check_fault_test_only() -> int:
+    return _run_rule(_rule("fault-test-only"))
+
+
 def check_mcp_gpui() -> int:
     status = _run_rule(_rule("mcp-gpui"))
     return status | _run_manifest_rule(_manifest_rule("mcp-gpui-manifest"))

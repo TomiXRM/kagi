@@ -10,6 +10,7 @@
 extern crate kagi_ui_core;
 
 pub use kagi_domain::graph; // ADR-0121: was a shim file
+pub mod app;
 pub mod remote;
 // ADR-0166: `ui` (and its one crate-root dependency, `single_instance`) live in
 // the lib so a `harness = false` main-thread test runner (`tests/gui_e2e_runner`)

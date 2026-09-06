@@ -146,6 +146,8 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.poll_app_jobs(cx);
+        self.present_app_notice();
         // ADR-0121 B2: promote a headless-staged diff (KAGI_OPEN_FIRST_FILE
         // runs before any gpui context exists) into the pane entity on the
         // first frame. Always `None` in the GUI paths.

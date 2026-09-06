@@ -164,6 +164,10 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    AppNoticeDismiss,
+    AppReconcileAcknowledge,
+    AppReconcileInspect,
+    AppReconcileConfirm,
     // ── Generic guards / footers ────────────────────────────────────
     /// "another operation is in progress" (was "別の操作が実行中です").
     OpInProgress,
@@ -979,6 +983,14 @@ impl Msg {
             (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
 
             // ── Generic guards ──────────────────────────────────────
+            (En, AppNoticeDismiss) => "Dismiss",
+            (En, AppReconcileInspect) => "Inspect current state",
+            (Ja, AppReconcileInspect) => "現在の状態を照会",
+            (En, AppReconcileConfirm) => "Acknowledge observation",
+            (Ja, AppReconcileConfirm) => "照会結果を確認",
+            (En, AppReconcileAcknowledge) => "Execution stopped. Acknowledge this read-only observation to allow a new plan (no operation is retried).",
+            (Ja, AppReconcileAcknowledge) => "実行は停止済みです。この照会結果を確認すると新しい計画を作成できます（操作は再実行しません）。",
+            (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
             (En, NoRepoOpen) => "no repository is open",

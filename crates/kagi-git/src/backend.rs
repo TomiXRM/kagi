@@ -15,6 +15,7 @@ use super::{
 };
 
 mod absorb;
+pub mod backups;
 mod policy;
 pub mod recording;
 pub mod remove;

@@ -102,10 +102,21 @@ impl Backend {
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
     ) -> Recording {
+        self.record_run_oplog_with_backups(op, before, outcome, Vec::new())
+    }
+
+    pub(super) fn record_run_oplog_with_backups(
+        &self,
+        op: &str,
+        before: &ops::StateSummary,
+        outcome: crate::oplog::OpOutcome,
+        backup_refs: Vec<String>,
+    ) -> Recording {
         let repo = self.path.display().to_string();
-        let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
+        let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
             .with_actor(self.policy.actor)
             .with_worktree(Some(repo));
+        entry.backup_refs = backup_refs;
         finalize(entry)
     }
 

@@ -1,5 +1,11 @@
 # ADR-0046: Discard Changes(unstaged の変更を捨てる)
 
+> #523 update: new discard/remove file backups are pinned by mandatory refs
+> under [ADR-0179](0179-ref-backed-discard-remove-backups.md). The historical
+> naked-blob limitation below applies to legacy receipts. Snapshot retention
+> remains separate from the lifetime of oplog-owned backup refs.
+
+
 - Status: Accepted(2026-06-13、ユーザー依頼「雑に追加したけど変更をなかったことにする機能」/ 設計は PM 判断)
 - Date: 2026-06-13
 

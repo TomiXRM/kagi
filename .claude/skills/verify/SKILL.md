@@ -244,3 +244,25 @@ Markdown links in this canonical skill (#544).
 Finish by exiting the launched application so it cannot retain a socket or test
 state. Fixtures and isolated log directories live below `/tmp`; remove them only
 when their evidence is no longer needed.
+
+### Ref-backed discard/remove recovery (#523)
+
+Use `crates/kagi-git/tests/ref_backups_test.rs` for G: disable optional snapshots,
+prune a disposable fixture with real Git GC, and recover the original bytes via
+receipt `backup_refs`. A sibling naked blob must disappear to prove actual GC.
+Check remove Success/Partial/Unknown and append failure. Explicit oplog retirement
+must delete only its unshared roots; the final retained entry controls lifetime.
+Default retention is indefinite, matching the oplog; snapshot pruning must not
+expire backup refs. For M, inspect the receipt's ref and export its bytes before
+choosing to retire that entry. Legacy naked-OID logs do not gain retroactive GC
+protection. For Tier A, scope `KAGI_GUI_E2E_ONLY=worktree_panel,remove_public_boundary`:
+the worktree discard scenario parses the blob from the existing `backup:` summary
+and checks that the structured receipt ref resolves to that blob from both
+worktrees. Ref names must not change existing executed lines or after/dirty text;
+they have a separate `backup refs:` contract line. The same filter includes
+`worktree_panel_discard_recording_failure`: hold the real oplog lock through
+append timeout, check "changed but not recorded" and recover from the attempted
+receipt, then repeat with a stale owner and require the owner-named notice.
+G also covers a queued append after actual retirement, colon-before whitespace,
+legacy id-less cleanup, and a pre_remove-created unreadable file: removal must
+stop before deleting the worktree.

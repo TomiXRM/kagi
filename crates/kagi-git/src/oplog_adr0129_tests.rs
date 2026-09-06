@@ -41,6 +41,7 @@ fn mixed_old_and_new_lines_parse_together() {
         PlanNote::Discard(DiscardNote::NothingSelected),
     ];
     let new_entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -79,6 +80,7 @@ fn mixed_old_and_new_lines_parse_together() {
 #[test]
 fn structured_notes_serialize_as_plain_string_array() {
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,

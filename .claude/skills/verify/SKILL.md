@@ -62,6 +62,13 @@ checks, refs, and persisted oplog records are the oracle. It cannot run from the
 Codex sandbox because the required macOS `hiservices` XPC path is unavailable;
 have the PM or a human run this lane.
 
+The locked GPUI revision does not expose the complete, last-rendered hitbox
+collection to `VisualTestAppContext`. Do not treat a scenario-specific recorded
+bound (for example, a measured button or footer) as a generic hitbox dump. A
+complete `id -> window-relative bounds` failure diagnostic needs a public GPUI
+API or a deliberately maintained dependency fork; until then, use Tier A's
+state assertions and Tier B's live-window inspection together.
+
 ## Tier B — real GUI driver
 
 Build `scripts/pidclick.swift`, launch Kagi with a unique `USER` value, and retain

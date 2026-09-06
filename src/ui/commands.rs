@@ -1347,12 +1347,18 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let result = kagi_git::Backend::open(&repo_path).and_then(|backend| {
-            let entry = backend.create_snapshot("manual snapshot")?;
-            // Enforce the generation cap so the ODB does not grow unbounded.
-            let _ = backend.prune_snapshots(kagi_git::DEFAULT_SNAPSHOT_CAP);
-            Ok(entry)
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| {
+            kagi_git::Backend::open(&repo_path).and_then(|backend| {
+                let entry = backend.create_snapshot("manual snapshot")?;
+                // Enforce the generation cap so the ODB does not grow unbounded.
+                let _ = backend.prune_snapshots(kagi_git::DEFAULT_SNAPSHOT_CAP);
+                Ok(entry)
+            })
         });
+        self.refresh_write_busy();
         match result {
             Ok(entry) => {
                 klog!("snapshot: created {}", entry.id);
@@ -1687,12 +1693,18 @@ impl KagiApp {
     /// `reload()` (and the FS watcher would catch the ref change anyway). Never
     /// stacks: a no-op while another fetch is in flight or an operation is busy.
     pub fn fetch_async(&mut self, silent: bool, cx: &mut Context<Self>) {
-        if self.fetch_in_flight || self.busy_op.is_some() {
+        self.refresh_write_busy();
+        if self.fetch_in_flight
+            || (silent && (self.busy_op.is_some() || self.app_sessions.has_leases()))
+        {
             return;
         }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
+        };
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
         };
         self.fetch_in_flight = true;
         let repo_path_guard = repo_path.clone();
@@ -1701,14 +1713,23 @@ impl KagiApp {
             klog!("fetch: start");
         }
         let task = cx.background_spawn(async move {
-            let backend =
-                kagi_git::Backend::open(&repo_path).map_err(|e| format!("repo open error: {e}"))?;
-            backend.fetch_remote().map_err(|e| format!("{e}"))
+            let result = kagi_git::Backend::open(&repo_path);
+            let open_failed = result.is_err();
+            let result = result.and_then(|backend| backend.fetch_remote());
+            lease.complete_git(&result);
+            result.map_err(|e| {
+                if open_failed {
+                    format!("repo open error: {e}")
+                } else {
+                    format!("{e}")
+                }
+            })
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 app.fetch_in_flight = false;
+                app.refresh_write_busy();
                 // A fetch takes seconds; the user may have switched tabs. The
                 // apply below stamps `last_fetch_secs` and can trigger a full
                 // reload, both of which would land on the wrong repo — falsely

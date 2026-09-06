@@ -66,3 +66,47 @@ delivery, abandoned jobs, partial backup, internal executor panic with JSONL
 recovery, failed read/replayed ack, unconfirmed termination, append failure,
 receipt races and Unknown round-trip. E drives raw Enter and an actual button
 click through the real remove modal. M belongs to PM, not this agent.
+
+## Slice 1b: competing writer admission (#484)
+
+Implemented for review; the 1a+1b rollout gate remains a PM decision.
+
+- Extend the same Sessions lease table with an owned `WriteGuard`, not a new
+  registry. `write_lease(path, LegacyBusy)` resolves a canonical common
+  directory through Backend, checks Busy/NeedsReconcile and reserves before
+  returning. All repositories remain mutually exclusive. `reserve_write` mirrors
+  busy in the same host turn; only that mirror is cleared once no lease remains.
+  Identity lookup is read-only and must not require Git trust: plain editor
+  saves retain ADR-0120 behavior. Git writer facades keep their own trust gates;
+  both fetch facades now explicitly require trust before invoking the CLI (#502 C2).
+- The table is shared with guards using Arc/Mutex so executor completion does
+  not depend on the editor/window still existing. Explicit `complete` releases
+  only its own identity/id. Ordinary Drop and panic retain the lease, never
+  pretend an unknown writer has stopped. Poisoned locks fail closed.
+- Editor save/overwrite freezes its existing payload and emits SaveRequested.
+  The host reserves and seeds `save_reserved` with an owned completion callback.
+  Only then does the existing pane executor dispatch. The editor gains no app,
+  Git or new crate dependency. Its disk comparison and write logic are unchanged.
+- All six panel/editor staging entry points reserve around the existing sync
+  calls, including early error paths. Manual snapshot capture/pruning likewise
+  retains its current synchronous scheduling and log contract.
+- Manual/auto/branch fetch reserve before spawn. The guard lives in the actual
+  background future, not a generation-guarded presentation callback. Existing
+  `fetch_in_flight` remains; both forward and reverse contention now use leases.
+- CLI timeout/reap uncertainty has an additive `GitError::TerminationUnknown`
+  tag with the exact previous Display text; fetch cannot mistake it for a known
+  failed process and release admission. No executor relocation or process-tree
+  change is made. Such uncertainty intentionally keeps writes/window close
+  blocked; termination recovery remains follow-up work, not an automatic Drop.
+- G exercises the public reservation API with real fixture save/stage/snapshot/
+  fetch writers, both orderings with remove, saved bytes, canonical identity,
+  read+ack, cross-thread completion and dropped/panicking/unknown guards.
+  E holds a lease through the real host's Sessions API, then drives editor
+  keystrokes and SaveRequested: Busy toast/footer, dirty buffer and unchanged
+  bytes, followed by release and successful re-save. This proves adapter wiring
+  without child-process scheduling; real remove contention is covered by G,
+  and slow pre_remove versus editor save is reserved for PM's manual M check.
+  The agent builds E only; PM executes it and the workspace suite.
+
+This closes only the named GUI bypasses. Other writer families and independent
+repo concurrency are not enabled; LegacyBusy is removed at the last migration.

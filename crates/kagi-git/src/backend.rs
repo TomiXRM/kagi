@@ -37,6 +37,14 @@ pub struct Backend {
 }
 
 impl Backend {
+    /// Read-only identity for admission, not authorization for Git writes.
+    /// Plain editor saves do not require Git owner trust (ADR-0120).
+    pub fn write_repo_id(&self) -> Result<kagi_domain::remove::RepoId, GitError> {
+        std::fs::canonicalize(self.repo.commondir())
+            .map(kagi_domain::remove::RepoId)
+            .map_err(|error| GitError::Other(error.to_string()))
+    }
+
     /// Open the repository at `path`.
     pub fn open(path: &Path) -> Result<Self, GitError> {
         let path_str = path.display().to_string();
@@ -1598,6 +1606,7 @@ impl Backend {
     }
 
     pub fn fetch_remote(&self) -> Result<FetchOutcome, GitError> {
+        self.require_trust()?;
         let outcome = ops::fetch_remote(&self.repo, &self.path)?;
         // Refresh the branch ruleset on fetch (#346, ADR-0150): rulesets are
         // changed by others, so fetch is the natural refresh point (§5).
@@ -1669,6 +1678,7 @@ impl Backend {
     /// Fetch a single remote branch's refspec (`"<remote>/<branch>"`,
     /// e.g. `"origin/feature/x"`), splitting on the first `/`.
     pub fn fetch_remote_branch(&self, remote_branch: &str) -> Result<FetchOutcome, GitError> {
+        self.require_trust()?;
         let (remote, branch) = remote_branch.split_once('/').ok_or_else(|| {
             GitError::Other(format!(
                 "'{}' is not a <remote>/<branch> name",

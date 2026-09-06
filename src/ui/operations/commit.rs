@@ -638,7 +638,12 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.stage_files(&paths)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.stage_files(&paths)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => return,
         };
@@ -680,7 +685,13 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.unstage_files(&paths)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result =
+            lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.unstage_files(&paths)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => return,
         };
@@ -716,7 +727,12 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.stage_file(&path)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.stage_file(&path)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => {
                 klog!("stage_file: repo open error: {}", "session unavailable");
@@ -759,7 +775,12 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.unstage_file(&path)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.unstage_file(&path)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => {
                 klog!("unstage_file: repo open error: {}", "session unavailable");
@@ -797,17 +818,27 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => {
-                klog!(
-                    "editor-ws: stage {} — repo session unavailable",
-                    path.display()
-                );
-                return;
-            }
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
         };
-        match repo.stage_file(&path) {
+        let result = lease.run(|| {
+            let repo = match self.repo_session.as_ref() {
+                Some(s) => s.backend(),
+                None => {
+                    klog!(
+                        "editor-ws: stage {} — repo session unavailable",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
+            Some(repo.stage_file(&path))
+        });
+        self.refresh_write_busy();
+        let Some(result) = result else {
+            return;
+        };
+        match result {
             Ok(()) => klog!("editor-ws: stage {}", path.display()),
             Err(e) => {
                 klog!("editor-ws: stage {} failed: {}", path.display(), e);
@@ -829,17 +860,27 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => {
-                klog!(
-                    "editor-ws: unstage {} — repo session unavailable",
-                    path.display()
-                );
-                return;
-            }
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
         };
-        match repo.unstage_file(&path) {
+        let result = lease.run(|| {
+            let repo = match self.repo_session.as_ref() {
+                Some(s) => s.backend(),
+                None => {
+                    klog!(
+                        "editor-ws: unstage {} — repo session unavailable",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
+            Some(repo.unstage_file(&path))
+        });
+        self.refresh_write_busy();
+        let Some(result) = result else {
+            return;
+        };
+        match result {
             Ok(()) => klog!("editor-ws: unstage {}", path.display()),
             Err(e) => {
                 klog!("editor-ws: unstage {} failed: {}", path.display(), e);

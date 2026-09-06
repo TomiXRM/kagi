@@ -57,6 +57,8 @@ pub(crate) use panes::{render_history_pane, render_snapshot_pane};
 /// via [`EditorWorkspaceView::seed_files`] / [`EditorWorkspaceView::seed_diff`].
 #[derive(Clone, Debug)]
 pub enum EditorWorkspaceEvent {
+    /// Host must reserve write admission before seeding the save back.
+    SaveRequested(EditorSaveRequest),
     /// ← Graph clicked with no dirty tab → host drops the entity.
     CloseRequested,
     /// A destructive action needs the unsaved-changes confirmation
@@ -247,9 +249,16 @@ struct EditorBufferState {
     diff: Option<Box<dyn Any>>,
 }
 
-/// Result of the background save write (`save_impl`): `Conflict` means the
-/// on-disk bytes no longer match the buffer's loaded snapshot, so nothing was
-/// written — the user decides via the external-change banner.
+/// Frozen save payload; only the pane constructs it, before asking the host.
+#[derive(Clone, Debug)]
+pub struct EditorSaveRequest {
+    path: PathBuf,
+    full_path: PathBuf,
+    text: String,
+    snapshot: Option<String>,
+}
+
+/// `Conflict` preserves disk bytes until the user decides via the banner.
 enum SaveOutcome {
     Saved(String),
     Conflict,
@@ -1551,25 +1560,53 @@ impl EditorWorkspaceView {
         // `external_changed` yet.
         let snapshot = if force { None } else { self.content.clone() };
 
+        cx.emit(EditorWorkspaceEvent::SaveRequested(EditorSaveRequest {
+            path,
+            full_path,
+            text,
+            snapshot,
+        }));
+    }
+
+    /// The host supplies an owned reservation's completion callback. Dropping
+    /// it without invoking it (panic/cancellation) must retain the reservation.
+    /// No app/Git dependency crosses the pane boundary.
+    pub fn save_reserved(
+        &mut self,
+        request: EditorSaveRequest,
+        complete: Box<dyn FnOnce() + Send>,
+        cx: &mut Context<Self>,
+    ) {
+        let EditorSaveRequest {
+            path,
+            full_path,
+            text,
+            snapshot,
+        } = request;
+
         let task = cx.background_spawn(async move {
-            // A missing file is NOT a conflict: saving simply recreates it.
-            // Any other read error means the disk-vs-snapshot comparison
-            // couldn't run, so fail the save instead of risking a clobber.
-            if let Some(snap) = &snapshot {
-                match std::fs::read(&full_path) {
-                    Ok(disk) => {
-                        if disk != snap.as_bytes() {
-                            return SaveOutcome::Conflict;
+            let result = (|| {
+                // A missing file is NOT a conflict: saving simply recreates it.
+                // Any other read error means the disk-vs-snapshot comparison
+                // couldn't run, so fail the save instead of risking a clobber.
+                if let Some(snap) = &snapshot {
+                    match std::fs::read(&full_path) {
+                        Ok(disk) => {
+                            if disk != snap.as_bytes() {
+                                return SaveOutcome::Conflict;
+                            }
                         }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e) => return SaveOutcome::Failed(e.to_string()),
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return SaveOutcome::Failed(e.to_string()),
                 }
-            }
-            match std::fs::write(&full_path, text.as_bytes()) {
-                Ok(()) => SaveOutcome::Saved(text),
-                Err(e) => SaveOutcome::Failed(e.to_string()),
-            }
+                match std::fs::write(&full_path, text.as_bytes()) {
+                    Ok(()) => SaveOutcome::Saved(text),
+                    Err(e) => SaveOutcome::Failed(e.to_string()),
+                }
+            })();
+            complete();
+            result
         });
         cx.spawn(async move |view, acx| {
             let result = task.await;

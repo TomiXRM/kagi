@@ -440,7 +440,7 @@ use kagi_git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, OperationPlan,
         StateSummary,
     },
-    CommitId, FileDiffStat, FileStatus, Head, RepoSnapshot,
+    CommitId, FileDiffStat, FileStatus, RepoSnapshot,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -3215,7 +3215,7 @@ impl KagiApp {
         } else if self.history_modal().is_some() {
             self.confirm_history(cx);
         } else if self.amend_modal().is_some() {
-            self.confirm_amend(cx);
+            self.start_amend(cx);
         } else if self.push_tag_modal().is_some() {
             self.start_push_tag(cx);
         } else if self.cherry_pick_modal().is_some() {
@@ -3259,15 +3259,15 @@ impl KagiApp {
         } else if self.branch_cleanup_modal().is_some() {
             self.confirm_branch_cleanup(cx);
         } else if self.delete_branch_modal().is_some() {
-            self.confirm_delete_branch(cx);
+            self.start_delete_branch(cx);
         } else if self.pop_modal().is_some() {
-            self.confirm_pop(cx);
+            self.start_pop(cx);
         } else if self.push_modal().is_some() {
-            self.confirm_push(cx);
+            self.start_push(cx);
         } else if self.pull_modal().is_some() {
-            self.confirm_pull(cx);
+            self.start_pull(cx);
         } else if self.plan_modal().is_some() {
-            self.confirm_checkout(cx);
+            self.start_checkout(cx);
         } else if self.smart_commit.modal.is_some() {
             self.confirm_smart_consent(cx);
         } else if self

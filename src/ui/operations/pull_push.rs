@@ -113,68 +113,6 @@ impl KagiApp {
         self.clear_pull_modal();
     }
 
-    /// Confirm the pull plan synchronously: preflight, fetch via CLI, then
-    /// FF / in-memory merge (see `execute_pull`).  Used by the headless
-    /// KAGI_PULL path (no event loop). The UI button uses `start_pull`,
-    /// which runs the same blocking core on a background thread (W3-NOTIFY).
-    pub fn confirm_pull(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.pull_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        // Defence in depth: refuse blocked plans even if a code path slips through.
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: pull plan has blockers, not executing");
-            self.record_op(
-                "pull",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-
-        match pull_blocking(&repo_path, &modal.plan) {
-            Ok((summary, after_summary)) => {
-                self.clear_pull_modal();
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: after_summary,
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
-                self.reload_async(false, cx);
-            }
-            Err(err_msg) => {
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_pull_modal(PullPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        }
-    }
-
     /// W3-NOTIFY: UI-path pull — runs `pull_blocking` on a background thread
     /// so the window stays responsive, with start/finish toasts.
     pub fn start_pull(&mut self, cx: &mut Context<Self>) {
@@ -371,67 +309,6 @@ impl KagiApp {
     /// Close the push modal without executing.
     pub fn cancel_push_modal(&mut self) {
         self.clear_push_modal();
-    }
-
-    /// Confirm the push plan synchronously: preflight, execute push via CLI.
-    /// Used by the headless KAGI_PUSH path. The UI button uses `start_push`
-    /// (background thread + toasts, W3-NOTIFY).
-    pub fn confirm_push(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.push_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        // Defence in depth: refuse blocked plans even if a code path slips through.
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: push plan has blockers, not executing");
-            self.record_op(
-                "push",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-
-        match push_blocking(&repo_path, &modal.plan) {
-            Ok((summary, after_summary)) => {
-                self.clear_push_modal();
-                self.record_op(
-                    "push",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: after_summary,
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
-                self.reload_async(false, cx);
-            }
-            Err(err_msg) => {
-                self.record_op(
-                    "push",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_push_modal(PushPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        }
     }
 
     /// W3-NOTIFY: UI-path push — background thread + start/finish toasts.

@@ -721,7 +721,7 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
         })?;
     }
 
-    let mut lock = retention::lock(&path)?;
+    let mut lock = retention::append_lock(&path)?;
 
     // ADR-0149: assign the sequence id/parent from the current tail so ids are
     // monotonic and each entry chains to the previous one. Placeholder id/parent

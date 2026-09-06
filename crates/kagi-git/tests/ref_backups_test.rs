@@ -381,7 +381,7 @@ fn retiring_latest_entry_does_not_reuse_its_sequence_id() {
 }
 
 #[test]
-fn busy_log_lock_preserves_entry_and_refs_without_blocking_cleanup() {
+fn busy_log_lock_preserves_entry_and_refs_without_mutating_cleanup() {
     let f = Fixture::new();
     let entry = f.discard(b"preserve while locked\n");
     let backend = f.backend();
@@ -403,4 +403,42 @@ fn busy_log_lock_preserves_entry_and_refs_without_blocking_cleanup() {
     drop(lock);
     backend.execute_forget_oplog_entry(&plan).result.unwrap();
     assert!(backend.read_backup(&entry.backup_refs[0]).is_err());
+}
+
+#[test]
+fn concurrent_appends_preserve_every_receipt_with_distinct_ids() {
+    let f = Fixture::new();
+    let entry = f.discard(b"shared across concurrent receipts\n");
+    let barrier = std::sync::Barrier::new(9);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|index| {
+                let mut entry = entry.clone();
+                entry.op = format!("concurrent-receipt-{index}");
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    append_oplog(&entry).unwrap();
+                })
+            })
+            .collect();
+        barrier.wait();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    });
+    let entries = read_oplog_tail(100);
+    assert_eq!(entries.len(), 9);
+    let ids: std::collections::HashSet<_> = entries.iter().map(|entry| entry.id).collect();
+    assert_eq!(ids.len(), 9);
+    for index in 0..8 {
+        assert!(entries
+            .iter()
+            .any(|entry| entry.op == format!("concurrent-receipt-{index}")));
+    }
+    gc(&f.repo);
+    assert_eq!(
+        f.backend().read_backup(&entry.backup_refs[0]).unwrap(),
+        b"shared across concurrent receipts\n"
+    );
 }

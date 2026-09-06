@@ -73,8 +73,10 @@ in the actual invocation's recording. Cleanup errors can leave extra roots;
 there is no namespace sweep, retry of the original Git mutation, or deletion of
 another receipt's roots. The cleanup itself has one Backend finalization attempt.
 
-Append and retirement share a stable sidecar file lock; a busy lock refuses the
-attempt instead of blocking the UI thread or overwriting another writer's log.
+Append and retirement share a stable sidecar file lock. Append waits at most one
+second for a short competing write, then returns a recording error if still busy;
+retirement preflight refuses immediately. Neither overwrites another writer's
+log. This bounded I/O does not introduce an indefinite lock wait.
 The sidecar also reserves the next sequence id before writes so retirement of
 the newest/only entry cannot reuse its id. Failed writes may leave sequence gaps.
 This is local oplog coordination, not a cross-resource crash-recovery journal:
@@ -93,5 +95,6 @@ Persisted discard and remove Success/Partial/Unknown receipts still recover the
 original bytes through refs. Other G cases cover append failure, ref-creation
 failure with unchanged worktree, deletion of only an expired entry's roots,
 shared-root lifetime, post-plan log/ref drift, trust refusal, malformed records,
-namespace confinement and monotonic ids after retiring the last entry.
+namespace confinement, JSON whitespace, bounded lock refusal, concurrent
+receipt appends and monotonic ids after retiring the last entry.
 GUI runner execution is prohibited; this PR claims Git fixture evidence only.

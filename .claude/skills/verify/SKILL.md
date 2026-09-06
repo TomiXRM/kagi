@@ -182,6 +182,7 @@ pre-remove command keeps the worktree; it never proceeds with removal.
 | Stash | Exercise push, apply, pop, and drop against the three-entry fixture. |
 | Stash conflict | Pop a conflicting entry → resolve → Continue → confirm the suggested drop path. |
 | Conflict | Continue, then verify conflicts are re-detected immediately. |
+| Backend policy | Toggle auto-snapshot OFF/ON; reset and amend must use the same policy from button and Enter. Guarded rebase keeps its existing no-auto-snapshot rule; explicit restore still creates its mandatory savepoint. CLI/MCP default to snapshots ON independently of GUI settings. Confirm create-branch with checkout ON/OFF: ON switches to the new branch with one backend operation; OFF keeps HEAD. Absorb with an index-write failure must show Partial and its original full OID, never a plain Failed after HEAD advanced. Worktree config added/removed/changed after the plan must refuse before target creation. |
 
 ## Other runtime seams
 

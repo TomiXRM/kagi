@@ -208,18 +208,26 @@ fn pre_remove_failure_keeps_the_worktree() {
     let plan = backend.plan_remove_worktree("wt", false).expect("plan");
 
     // Untrusted → removal aborts, worktree survives.
-    let err = backend
-        .execute_remove_worktree(&plan, "wt", false)
-        .expect_err("untrusted pre_remove command must abort the removal");
+    let err = kagi_git::ops::execute_remove_worktree(
+        &git2::Repository::open(&main).unwrap(),
+        &plan,
+        "wt",
+        false,
+    )
+    .expect_err("untrusted pre_remove command must abort the removal");
     assert!(format!("{err:?}").to_lowercase().contains("trust"));
     assert!(wt.exists(), "worktree must survive an aborted removal");
 
     // Trust it → the command now runs, fails (exit 1), still aborts.
     let cfg = load_worktree_config(&wt).unwrap().unwrap();
     trust_worktree_config(&cfg).unwrap();
-    let err = backend
-        .execute_remove_worktree(&plan, "wt", false)
-        .expect_err("a failing pre_remove command must abort the removal");
+    let err = kagi_git::ops::execute_remove_worktree(
+        &git2::Repository::open(&main).unwrap(),
+        &plan,
+        "wt",
+        false,
+    )
+    .expect_err("a failing pre_remove command must abort the removal");
     assert!(format!("{err:?}").contains("exited with status"));
     assert!(
         wt.exists(),

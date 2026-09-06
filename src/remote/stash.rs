@@ -9,8 +9,8 @@ use kagi_domain::remote::{
     RemoteConnectionId, RemoteDropOutcome, RemoteHost, RemoteRepoId, RemoteStashFrame,
     RemoteStashPhase, RemoteStashState,
 };
-use kagi_git::backend::recording::Recording;
-use kagi_git::{Actor, OpLogEntry, OpOutcome};
+use kagi_git::backend::{recording, recording::Recording, ExecutionPolicy};
+use kagi_git::{OpLogEntry, OpOutcome};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -404,7 +404,7 @@ fn read_state(
 pub fn run_remote_stash_drop(
     plan: &RemoteStashPlan,
     operation_id: u64,
-    actor: Actor,
+    policy: ExecutionPolicy,
     fault: RemoteStashFault,
 ) -> RemoteStashReport {
     let (remote_job_id, random_error) = match new_job_id() {
@@ -436,15 +436,9 @@ pub fn run_remote_stash_drop(
         plan.preview.current.clone(),
         oplog_outcome,
     )
-    .with_actor(actor)
+    .with_actor(policy.actor)
     .with_worktree(Some(scope));
-    let recording = match kagi_git::oplog::append_oplog_receipt(&entry) {
-        Ok((path, entry)) => Recording::Appended { path, entry },
-        Err(error) => Recording::Failed {
-            attempted: entry,
-            error: error.to_string(),
-        },
-    };
+    let recording = recording::finalize(entry);
     let recovery = fake_recovery_fixture(fault, operation_id, &remote_job_id, plan);
     RemoteStashReport {
         recording,

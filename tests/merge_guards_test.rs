@@ -192,8 +192,7 @@ fn merge_blocks_while_another_merge_is_in_progress_even_if_conflicts_are_staged(
     );
 
     // Execute must refuse too.
-    let err = backend
-        .execute_merge_branch("feature")
+    let err = kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
         .expect_err("execute must refuse mid-merge");
     assert!(
         format!("{err}").contains("already in progress"),
@@ -254,8 +253,7 @@ fn a_true_merge_that_would_clobber_an_untracked_file_blocks_and_leaves_no_orphan
     let main_before = rev_parse(dir, "main");
 
     // Execute must refuse and name the file, and MUST NOT write an orphan.
-    let err = backend
-        .execute_merge_branch("feature")
+    let err = kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
         .expect_err("execute must refuse the collision");
     let err = format!("{err}");
     assert!(err.contains("new.txt"), "error must name the file: {err}");
@@ -290,7 +288,9 @@ fn a_clean_true_merge_still_succeeds_and_leaves_no_dangling_objects() {
     let backend = Backend::open(dir).expect("open backend");
     let main_before = rev_parse(dir, "main");
     let feature_before = rev_parse(dir, "feature");
-    let merged = backend.execute_merge_branch("feature").expect("merge");
+    let merged =
+        kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
+            .expect("merge");
 
     assert_eq!(
         rev_parse(dir, "main"),

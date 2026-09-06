@@ -1,22 +1,10 @@
 use super::*;
 pub use kagi_git::backend::stash::{StashAction, StashFaultPoint};
 use kagi_git::backend::stash::{StashPlan, StashReport};
-use kagi_git::{Actor, Backend};
+use kagi_git::Backend;
 use std::path::Path;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StashPolicy {
-    pub actor: Actor,
-    pub auto_snapshot: bool,
-}
-impl Default for StashPolicy {
-    fn default() -> Self {
-        Self {
-            actor: Actor::Human,
-            auto_snapshot: true,
-        }
-    }
-}
+pub use kagi_git::backend::ExecutionPolicy as StashPolicy;
 #[derive(Clone, Debug)]
 pub struct StashRequest {
     pub owner: Attachment,
@@ -310,8 +298,9 @@ impl StashJob {
                 ran,
             } => {
                 *ran = true;
-                let report =
-                    crate::remote::stash::run_remote_stash_drop(plan, id.0, policy.actor, *fault);
+                let report = crate::remote::stash::run_remote_stash_drop(
+                    plan, id.0, *policy, *fault,
+                );
                 StashCompletion {
                     id: *id,
                     report: StashExecutionReport::Remote(report),
@@ -337,7 +326,7 @@ impl Drop for StashJob {
             let report = crate::remote::stash::run_remote_stash_drop(
                 plan,
                 id.0,
-                policy.actor,
+                *policy,
                 crate::remote::stash::RemoteStashFault::LocalSpawn,
             );
             let _ = abandoned.send(Completion::Stash(StashCompletion {

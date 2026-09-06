@@ -16,6 +16,9 @@ impl KagiApp {
     /// no working-tree modification) and stores the result in
     /// `self.cherry_pick_modal`.  Emits a plan log entry.
     pub fn open_cherry_pick_modal(&mut self, commit_id: CommitId) {
+        // #510: this request supersedes the previous plan; drop it before
+        // anything can fail, so no earlier commit's payload survives a failure.
+        self.clear_cherry_pick_modal();
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
@@ -31,6 +34,7 @@ impl KagiApp {
                     "cherry-pick plan: repo open error: {}",
                     "session unavailable"
                 );
+                self.report_plan_failure(i18n::Op::CherryPick, SESSION_UNAVAILABLE);
                 return;
             }
         };
@@ -153,6 +157,8 @@ impl KagiApp {
 
     /// Open the revert plan modal for commit `id`.
     pub fn open_revert_modal(&mut self, commit_id: CommitId) {
+        // #510: this request supersedes the previous plan (see cherry-pick).
+        self.clear_revert_modal();
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
@@ -165,6 +171,7 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("revert plan: repo open error: {}", "session unavailable");
+                self.report_plan_failure(i18n::Op::Revert, SESSION_UNAVAILABLE);
                 return;
             }
         };

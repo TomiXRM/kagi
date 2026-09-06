@@ -16,6 +16,10 @@ impl KagiApp {
     /// result in `self.plan_modal`.  Emits a plan log entry.
     pub fn open_plan_modal(&mut self, branch: impl Into<String>) {
         let branch = branch.into();
+        // #510: a new request supersedes the previous one. Drop the old plan
+        // before anything can fail, so a failure can never leave the modal (and
+        // `dblclick_checkout_branch`'s clean check) holding the earlier target.
+        self.clear_plan_modal();
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
@@ -28,6 +32,7 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("plan: repo open error: {}", "session unavailable");
+                self.report_plan_failure(i18n::Op::Checkout, SESSION_UNAVAILABLE);
                 return;
             }
         };
@@ -66,10 +71,13 @@ impl KagiApp {
     pub fn dblclick_checkout_branch(&mut self, branch: impl Into<String>, cx: &mut Context<Self>) {
         let branch = branch.into();
         self.open_plan_modal(branch.clone());
-        // `open_plan_modal` only sets the modal on a successful plan; treat a
-        // missing modal (plan error) as "not clean" so nothing switches.
+        // `open_plan_modal` clears the slot first and only refills it on a
+        // successful plan, so a missing modal (plan error) is "not clean" and
+        // nothing switches. #510: the target check makes that explicit — only a
+        // plan produced by *this* request may start a checkout.
         let clean = self
             .plan_modal()
+            .filter(|m| matches!(&m.target, CheckoutPlanTarget::Branch(b) if b == &branch))
             .map(|m| m.plan.blockers.is_empty() && m.plan.warnings.is_empty())
             .unwrap_or(false);
         if clean {
@@ -80,6 +88,8 @@ impl KagiApp {
 
     /// Open the detached checkout plan modal for commit `commit_id`.
     pub fn open_checkout_commit_modal(&mut self, commit_id: CommitId) {
+        // #510: this request supersedes the previous plan (see `open_plan_modal`).
+        self.clear_plan_modal();
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
@@ -95,6 +105,7 @@ impl KagiApp {
                     "checkout-commit plan: repo open error: {}",
                     "session unavailable"
                 );
+                self.report_plan_failure(i18n::Op::Checkout, SESSION_UNAVAILABLE);
                 return;
             }
         };

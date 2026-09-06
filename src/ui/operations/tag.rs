@@ -38,6 +38,10 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_tag: repo session unavailable");
+                let outcome = session_unavailable(i18n::Op::CreateTag);
+                if let Some(modal) = self.create_tag_modal_mut() {
+                    modal.plan.replan(outcome);
+                }
                 return;
             }
         };

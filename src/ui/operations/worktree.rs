@@ -97,6 +97,10 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_worktree: repo session unavailable");
+                let outcome = session_unavailable(i18n::Op::CreateWorktree);
+                if let Some(modal) = self.create_worktree_modal_mut() {
+                    modal.plan.replan(outcome);
+                }
                 return;
             }
         };
@@ -114,11 +118,8 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                // ADR-0129 Phase 3: the keyed branch-name and worktree-path
-                // reasons are now typed (`CommonNote::BranchNameErrorKeyed` /
-                // `WorktreePathErrorKeyed`) and localize automatically via
-                // `plan_note_text()` — no separate localized-blocker
-                // computation needed.
+                // ADR-0129 Phase 3: the keyed branch-name/worktree-path reasons
+                // are typed notes that `plan_note_text()` localizes on render.
             }
             Err(e) => {
                 klog!("plan: create-worktree error: {}", e);
@@ -148,8 +149,7 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        // #510: `Pending` and `Failed` both yield None, so a failed replan
-        // refuses Enter and the button alike.
+        // #510: pending/failed yield None, refusing Enter and the button alike.
         let Some(plan) = modal.plan.plan().cloned() else {
             return;
         };

@@ -68,6 +68,10 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_branch: repo session unavailable");
+                let outcome = session_unavailable(i18n::Op::CreateBranch);
+                if let Some(modal) = self.create_branch_modal_mut() {
+                    modal.plan.replan(outcome);
+                }
                 return;
             }
         };
@@ -380,7 +384,13 @@ impl KagiApp {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => return,
+            None => {
+                let outcome = session_unavailable(i18n::Op::SetUpstream);
+                if let Some(m) = self.set_upstream_modal_mut() {
+                    m.plan.replan(outcome);
+                }
+                return;
+            }
         };
         // #510: the failure now lands in the plan slot, so the previous plan is
         // gone rather than merely accompanied by an error line.
@@ -507,7 +517,14 @@ impl KagiApp {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => return,
+            None => {
+                let outcome = session_unavailable(i18n::Op::Rename);
+                if let Some(m) = self.rename_branch_modal_mut() {
+                    m.validation = validation;
+                    m.plan.replan(outcome);
+                }
+                return;
+            }
         };
         // #510: the localized failure now lands in the plan slot, which drops the
         // plan it was recomputing instead of leaving it confirmable.

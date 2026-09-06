@@ -20,16 +20,27 @@ modal を開かずに klog で終わり、利用者には無反応に見えた�
    `replan(Result<P, _>)` は結果を**丸ごと入れ替える**。失敗は再計算対象だった plan を捨てる。
    `plan()` は `Ready` でだけ `Some` を返し、これが confirm 経路の唯一の入口になる。
    `PlanState` と同じ語彙だが token を持たない段で、Sessions に移行した family は使わない。
-   単体テストは `src/app/flow.rs` 内（失敗が旧 plan を無効化 / 再試行で復帰 / Pending は実行不可）。
+   単体テストは `src/app/flow.rs` 内（失敗が旧 plan を無効化 / 再試行で復帰 / Pending は実行不可）
+   と `src/ui/modal_plan.rs` 内（slot の Failed が execute error より優先される）。
 2. 上記 5 modal の `plan` を `ModalPlan = PlanSlot<Arc<OperationPlan>>`（`src/ui/modal_plan.rs`）に
-   置き換える。`error` は execute/preflight 失敗専用として残し、plan 失敗とは同居しない。
-   描画は `plan_or_exec_error` で 1 行に集約する。plan が無ければ `has_blockers` が真になり、
-   confirm ボタンは描画されない。#559 で Enter とボタンは同じ `confirm_*` に入るので、
-   `plan()` が `None` を返す時点で両方が拒否される。再 plan 成功で `Ready` に戻り、再試行できる。
+   置き換える。`error` は execute/preflight 失敗専用として残す。描画は `plan_or_exec_error` で
+   1 行に集約し、**slot 側を優先**する。`error` は入力変更（`sync_modal_inputs`）でしか
+   消えないので、execute 失敗のあと入力を変えずに再 confirm して replan も失敗すると
+   `Failed` と `error` は同時に立つ。今 confirm できない理由は slot の方なので、そちらを出す。
+   plan が無ければ `has_blockers` が真になり、confirm ボタンは描画されない。#559 で Enter と
+   ボタンは同じ `confirm_*` に入るので、`plan()` が `None` を返す時点で両方が拒否される。
+   再 plan 成功で `Ready` に戻り、再試行できる。
 3. plan 失敗文言は `i18n::op_plan_failed`（EN/JA 既存）に統一する。
    `Set upstream plan error:` の英語直書きは撤去。
 4. modal を開く前に失敗する checkout / checkout-commit / cherry-pick / revert は
    `report_plan_failure` で footer + 共通 app-notice modal に出す。
+5. per-tab `RepoSession` の取得失敗も同じ失敗経路に入れる（#570 review 2）。
+   5 modal は `session_unavailable` で slot を `Failed` にし、modal 前の 4 経路は
+   `report_plan_failure` に出す。従来は黙って `Pending` のまま戻るか stderr で終わっていた。
+6. checkout / cherry-pick / revert の `open_*` は **request 開始時に旧 plan を破棄**する
+   （#570 review 3）。新 plan が失敗しても前回の対象の modal/payload は残らず、
+   `dblclick_checkout_branch` は `CheckoutPlanTarget` が今回の branch と一致する plan だけを
+   clean 判定に使う。旧 modal が居座って app-notice を待たせる経路も同時に閉じる。
 
 ## 保証しないもの
 

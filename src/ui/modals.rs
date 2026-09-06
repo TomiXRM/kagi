@@ -11,7 +11,9 @@ use kagi_git::{
 // #510: the plan slot and its two adapters live next door; re-exported so every
 // `use modals::*` consumer keeps reaching them.
 pub use super::modal_plan::ModalPlan;
-pub(crate) use super::modal_plan::{plan_or_exec_error, plan_outcome};
+pub(crate) use super::modal_plan::{
+    plan_or_exec_error, plan_outcome, session_unavailable, SESSION_UNAVAILABLE,
+};
 
 // ──────────────────────────────────────────────────────────────
 // CheckoutPlanModal — state for the plan confirmation overlay (T013)

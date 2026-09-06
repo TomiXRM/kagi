@@ -126,12 +126,7 @@ pub(super) fn refresh_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::
 
 pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let login = app.github_login.clone();
-    let local: Vec<String> = app
-        .active_view
-        .branches
-        .iter()
-        .map(|(n, _)| n.clone())
-        .collect();
+    let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
     let all = app.github_prs.clone();
     let buckets = focus_queue(app);
     // Attention is what colours a card and writes its "why" line; the queue

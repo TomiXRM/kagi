@@ -35,7 +35,7 @@ impl KagiApp {
 
     pub(crate) fn commit_title_for(&self, at: &CommitId) -> String {
         self.row_for_commit_id(at)
-            .and_then(|idx| self.active_view.details.get(idx))
+            .and_then(|idx| self.view().details.get(idx))
             .map(|detail| {
                 detail
                     .full_message
@@ -353,7 +353,7 @@ impl KagiApp {
 
     pub fn open_set_upstream_modal(&mut self, branch_name: String) {
         let input = self
-            .active_view
+            .view()
             .branch_upstream_info
             .get(&branch_name)
             .map(|u| u.remote_branch.clone())
@@ -477,7 +477,7 @@ impl KagiApp {
 
     pub fn open_rename_branch_modal(&mut self, branch_name: String) {
         let existing: Vec<String> = self
-            .active_view
+            .view()
             .branches
             .iter()
             .map(|(name, _)| name.clone())
@@ -504,7 +504,7 @@ impl KagiApp {
             None => return,
         };
         let existing: Vec<String> = self
-            .active_view
+            .view()
             .branches
             .iter()
             .map(|(name, _)| name.clone())
@@ -619,7 +619,7 @@ impl KagiApp {
         // Current (checked-out) branch = the merge destination, captured on the
         // main thread for the modal's into-branch label (ADR-0079).
         let into_branch = self
-            .active_view
+            .view()
             .branches
             .iter()
             .find(|(_, is_head)| *is_head)
@@ -694,14 +694,14 @@ impl KagiApp {
     /// dirty-WT / ff / conflict prediction).
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
         let remotes: Vec<String> = self
-            .active_view
+            .view()
             .remote_branches
             .iter()
             .map(|rb| format!("{}/{}", rb.remote, rb.name))
             .collect();
         match validate_merge_from_drag(
             &source,
-            &self.active_view.branches,
+            &self.view().branches,
             &remotes,
             self.busy_op.is_some(),
         ) {
@@ -796,7 +796,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let remotes: Vec<String> = self
-            .active_view
+            .view()
             .remote_branches
             .iter()
             .map(|rb| format!("{}/{}", rb.remote, rb.name))
@@ -804,7 +804,7 @@ impl KagiApp {
         match crate::ui::validate_merge_into_from_drag(
             &source,
             &target,
-            &self.active_view.branches,
+            &self.view().branches,
             &remotes,
             self.busy_op.is_some(),
         ) {
@@ -1407,7 +1407,7 @@ impl KagiApp {
             }
             BranchAction::CopyUpstreamName => {
                 let upstream = self
-                    .active_view
+                    .view()
                     .branch_upstream_info
                     .get(&state.name)
                     .map(|u| u.remote_branch.clone());
@@ -1431,7 +1431,7 @@ impl KagiApp {
             BranchAction::SwitchToLatest => {
                 let (branch_name, remote_branch) = if matches!(state.kind, BranchKind::Local) {
                     let upstream = self
-                        .active_view
+                        .view()
                         .branch_upstream_info
                         .get(&state.name)
                         .map(|u| u.remote_branch.clone());
@@ -1463,7 +1463,7 @@ impl KagiApp {
             BranchAction::Pull => {
                 if matches!(state.kind, BranchKind::Local) {
                     let is_current = self
-                        .active_view
+                        .view()
                         .branches
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
@@ -1477,7 +1477,7 @@ impl KagiApp {
             BranchAction::Push => {
                 if matches!(state.kind, BranchKind::Local) {
                     let is_current = self
-                        .active_view
+                        .view()
                         .branches
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
@@ -1505,7 +1505,7 @@ impl KagiApp {
             }
             BranchAction::OpenWorktreeFromBranch => {
                 let existing_path = self
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
@@ -1523,7 +1523,7 @@ impl KagiApp {
             // #473: open the worktree this branch is already checked out in.
             BranchAction::OpenWorktreeDir => {
                 let path = self
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()) && !wt.is_current)
@@ -1564,7 +1564,7 @@ impl KagiApp {
             }
             BranchAction::ForceWithLeasePush => {
                 let is_current = self
-                    .active_view
+                    .view()
                     .branches
                     .iter()
                     .any(|(name, current)| name == &state.name && *current);

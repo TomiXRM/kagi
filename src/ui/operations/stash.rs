@@ -75,13 +75,13 @@ impl KagiApp {
     pub fn open_stash_drop_modal(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.remote_view.is_some() {
             let label = self
-                .active_view
+                .view()
                 .stashes
                 .iter()
                 .find(|s| s.index == index)
                 .map(|s| format!("stash@{{{}}}: {}", s.index, s.message))
                 .unwrap_or_else(|| format!("stash@{{{index}}}"));
-            let head = self.active_view.header.to_string();
+            let head = self.view().header.to_string();
             let plan = kagi_git::plan_stash_drop_remote(&label, head);
             klog!("plan: remote stash-drop index={index} blockers=0");
             self.set_stash_drop_modal(StashDropModal {

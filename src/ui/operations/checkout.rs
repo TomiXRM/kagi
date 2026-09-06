@@ -238,7 +238,7 @@ impl KagiApp {
         // armed/two-stage style state stays on the main thread). A refused/failed
         // auto-stash aborts the checkout with the error shown in the modal.
         if modal.stash_first
-            && self.active_view.status_summary.is_dirty
+            && self.view().status_summary.is_dirty
             && !self.stash_before_checkout(cx)
         {
             return;
@@ -356,7 +356,7 @@ impl KagiApp {
         let Some(id) = self.commit_id_for_row(ix) else {
             return;
         };
-        let dirty = self.active_view.status_summary.is_dirty;
+        let dirty = self.view().status_summary.is_dirty;
 
         // Prefer a local branch pointing at the commit; fall back to a
         // detached commit checkout.

@@ -104,8 +104,7 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
 
     // KAGI_SELECT_FIRST=1: auto-select row 0 at startup for headless
     // verification of the detail panel render path (T010).
-    if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1")
-        && !app_state.active_view.rows.is_empty()
+    if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") && !app_state.view().rows.is_empty()
     {
         app_state.select_headless(0);
     }

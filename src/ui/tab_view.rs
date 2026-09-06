@@ -1,8 +1,12 @@
-//! W6-TABSPEED: per-tab pure view data — [`TabViewState`], its builder
-//! [`build_tab_view`] and the main-thread apply ([`KagiApp::apply_tab_view`]).
-//! (ADR-0121 Phase A: behaviour-preserving relocation out of `mod.rs`; keeping
-//! the struct and its builder in one file makes the ADR-0075 P2 "2 places"
-//! rule — `TabViewState` field + `build_tab_view` — a single-file edit.)
+//! Per-tab pure read model — [`TabViewState`], its builder [`build_tab_view`],
+//! and the UI-side accessors over the session-owned store ([`KagiApp::view`],
+//! [`KagiApp::view_mut`], [`KagiApp::publish_tab_view`]).
+//!
+//! #482 stage 2 / ADR-0183: the value itself is owned by
+//! [`crate::app::Reads`], keyed by the `SessionId` of the tab that owns the
+//! worktree — there is no `active_view` field and no `tab_cache`. Adding a field
+//! to per-tab data still needs exactly **2 places**: the `TabViewState` struct
+//! and `build_tab_view`.
 
 use std::collections::HashMap;
 
@@ -21,9 +25,12 @@ use super::{BranchSolo, KagiApp, StatusBarSummary, ToolbarState};
 /// [`KagiApp::from_snapshot`] computes from a [`RepoSnapshot`].  It contains
 /// only owned, `Send` data (`SharedString`, `Vec`, `HashMap`, plain values) —
 /// no `Entity`, `FocusHandle`, or `UniformListScrollHandle` — so it can be
-/// built on a background thread (`cx.background_spawn`) and cached across tabs
-/// (`tab_cache`).  [`build_tab_view`] is the pure, `Send` builder;
-/// [`KagiApp::apply_tab_view`] does the main-thread assignment only.
+/// built on a background thread (`cx.background_spawn`) and held by the
+/// application layer's [`crate::app::Reads`] store. `SharedString` is an
+/// `Arc<str>` newtype and stays: it is what the row/detail builders already
+/// produce, and `src/app` never names this type (`Reads<V>` is generic), so the
+/// no-gpui-in-app rule holds structurally rather than by convention.
+/// [`build_tab_view`] is the pure, `Send` builder.
 #[derive(Clone, Default)]
 pub struct TabViewState {
     pub header: SharedString,
@@ -258,15 +265,75 @@ impl KagiApp {
         self.inspector_file_menu = None;
     }
 
-    pub fn apply_tab_view(&mut self, view: TabViewState) {
-        // ADR-0075 P2: the active tab's view data is a single `TabViewState`, so
-        // applying a freshly-built (or cached) view is one move — there is no
-        // field-by-field copy to keep in sync when `TabViewState` gains a field.
-        self.active_view = view;
+    /// The read model on screen. The empty one on the Welcome screen, and while
+    /// a tab's first read is still in flight (`loading_tab` is what says so).
+    pub fn view(&self) -> &TabViewState {
+        self.reads.get(self.active_session())
+    }
+
+    /// In-place update of the read model on screen — a status-only WIP refresh,
+    /// a solo toggle, the branch-cleanup rows, the squash ghost edges. Not a new
+    /// read: it mutates the owner's existing allocation rather than rebuilding
+    /// it, which is why a staging keystroke no longer copies every commit row.
+    pub fn view_mut(&mut self) -> &mut TabViewState {
+        let session = self.active_session();
+        self.reads.get_mut(session)
+    }
+
+    /// #482 stage 2: open the bootstrap tab for a launch that has no `Context`
+    /// yet (CLI argument, offscreen E2E mount). Attaches the session, pushes the
+    /// tab, then publishes the read it was built from — the same order every
+    /// other open follows, so the read model never exists without an owner.
+    pub(crate) fn open_initial_tab(
+        &mut self,
+        path: &std::path::Path,
+        name: &str,
+        is_worktree: bool,
+        view: TabViewState,
+    ) {
+        let session = self.app_sessions.attach(path.to_path_buf());
+        self.tabs.push(super::tabs::RepoTab {
+            session,
+            path: path.to_path_buf(),
+            name: name.to_string(),
+            remote: None,
+            is_worktree,
+            wt_color_idx: None,
+        });
+        self.active_tab = self.tabs.len() - 1;
+        self.publish_tab_view(session, view);
+    }
+
+    /// Publish a freshly-built read model for `session` (bootstrap, remote
+    /// snapshot, load-more) — supersedes anything in flight for that owner.
+    pub fn publish_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
+        self.reads.publish(session, view);
+        self.on_view_published(session);
+    }
+
+    /// Publish the completion of a read that was started with
+    /// [`crate::app::Reads::begin`]. `false` = superseded: nothing was written
+    /// and the caller must drop the result without any display side effect.
+    pub fn accept_tab_view(&mut self, key: crate::app::ReadKey, view: TabViewState) -> bool {
+        if !self.reads.accept(key, view) {
+            return false;
+        }
+        self.on_view_published(key.session());
+        true
+    }
+
+    /// The UI's reaction to a *different* read model being on screen — a new one
+    /// published for the active owner, or a tab switch to another owner. Not
+    /// called when a background tab's read lands: that owner's data is stored,
+    /// but the active tab's diff panes and caches must not be touched.
+    pub(crate) fn on_view_published(&mut self, session: crate::app::SessionId) {
+        if self.active_session() != Some(session) {
+            return;
+        }
         // T-PERF-RENDER-002: a fresh view may change branches/tags/stashes/
         // worktrees, so invalidate the sidebar-rows cache fingerprint.
         self.view_epoch = self.view_epoch.wrapping_add(1);
-        // The background scans write into `active_view` (cleanup rows, squash
+        // The background scans write into the read model (cleanup rows, squash
         // ghost edges) and a fresh view has neither — `build_tab_view` copies
         // `snap.cleanup_rows`, which the snapshot always leaves empty. Every
         // apply therefore erases whatever the last scan produced. Flagging it
@@ -286,7 +353,7 @@ impl KagiApp {
 
         // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
         // lane_color(rank-in-worktrees-list), so record the same rank on the tab.
-        let wt_idx = self.active_view.worktrees.iter().position(|w| w.is_current);
+        let wt_idx = self.view().worktrees.iter().position(|w| w.is_current);
         if let Some(tab) = self.tabs.get_mut(self.active_tab) {
             if tab.is_worktree {
                 tab.wt_color_idx = wt_idx;

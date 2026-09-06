@@ -20,7 +20,7 @@ impl KagiApp {
         // Remote read-only view (ADR-0089 Phase 3): synthesise the plan from the
         // snapshot's ahead/behind; the pull runs over SSH in `start_pull`.
         if self.remote_view.is_some() {
-            let s = &self.active_view.status_summary;
+            let s = &self.view().status_summary;
             let branch = s.branch.clone();
             let behind = s.behind.unwrap_or(0);
             let ahead = s.ahead.unwrap_or(0);
@@ -35,7 +35,7 @@ impl KagiApp {
                 return;
             }
             let upstream = self
-                .active_view
+                .view()
                 .branch_upstream_info
                 .get(&branch)
                 .map(|u| u.remote_branch.clone())
@@ -46,7 +46,7 @@ impl KagiApp {
                 behind,
                 ahead,
                 s.is_dirty,
-                self.active_view.header.to_string(),
+                self.view().header.to_string(),
             );
             klog!("plan: remote pull branch={branch} behind={behind} ahead={ahead}");
             self.set_pull_modal(PullPlanModal {

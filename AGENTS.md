@@ -46,12 +46,17 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## State-update rules
 
-- Per-tab view data is a single `active_view: TabViewState` field on `KagiApp`
-  (ADR-0075 P2 / ADR-0095). Inactive tabs live in `tab_cache`. Adding a field to
-  per-tab data needs **2 places**: the `TabViewState` struct and `build_tab_view`
-  (builds it from a snapshot). `apply_tab_view` is a whole-struct move, so it no
-  longer has to be updated — and the field can't silently vanish on tab switch.
-  Read active per-tab data via `self.active_view.<field>`.
+- Per-tab view data is one **session-owned** read model: `KagiApp::reads`
+  (`app::Reads<TabViewState>`), keyed by the `SessionId` of the tab that owns the
+  worktree (#482 stage 2 / ADR-0183). There is no `active_view` field and no
+  `tab_cache`: switching tabs changes which key is read and copies nothing.
+  Adding a field to per-tab data still needs **2 places**: the `TabViewState`
+  struct and `build_tab_view`.
+  Read it with `self.view().<field>`, update it in place with
+  `self.view_mut().<field>` (a status-only change must not rebuild the rows),
+  and publish a whole new read with `publish_tab_view` / `accept_tab_view` — a
+  background read that is superseded or belongs to a background tab must never
+  touch the active tab's panes.
 - Modals are a single `active_modal: Option<ActiveModal>` field on `KagiApp`
   (ADR-0093 / ADR-0076; the "one modal at a time" invariant is now structural).
   Adding a modal: add an `ActiveModal` variant in `src/ui/modals.rs`, the

@@ -126,11 +126,11 @@ impl KagiApp {
             } else {
                 let reason = if this.busy_op.is_some() {
                     Msg::PullBusy.t()
-                } else if this.active_view.status_summary.is_detached {
+                } else if this.view().status_summary.is_detached {
                     Msg::PullDetached.t()
-                } else if this.active_view.status_summary.is_unborn {
+                } else if this.view().status_summary.is_unborn {
                     Msg::PullUnborn.t()
-                } else if this.active_view.status_summary.no_upstream {
+                } else if this.view().status_summary.no_upstream {
                     Msg::PullNoUpstream.t()
                 } else {
                     Msg::PullNothing.t()
@@ -148,12 +148,12 @@ impl KagiApp {
             } else {
                 let reason = if this.busy_op.is_some() {
                     Msg::PushBusy.t()
-                } else if this.active_view.status_summary.is_detached {
+                } else if this.view().status_summary.is_detached {
                     Msg::PushDetached.t()
-                } else if this.active_view.status_summary.is_unborn {
+                } else if this.view().status_summary.is_unborn {
                     Msg::PushUnborn.t()
-                } else if this.active_view.status_summary.no_upstream
-                    && !this.active_view.status_summary.has_remote
+                } else if this.view().status_summary.no_upstream
+                    && !this.view().status_summary.has_remote
                 {
                     Msg::PushNoRemote.t()
                 } else {
@@ -216,11 +216,11 @@ impl KagiApp {
             // Resolve target commit: selected row → HEAD commit (first detail).
             let at = this
                 .selected
-                .and_then(|i| this.active_view.details.get(i))
+                .and_then(|i| this.view().details.get(i))
                 .map(|d| CommitId(d.full_sha.to_string()))
                 .or_else(|| {
                     // Fall back to HEAD commit (first detail entry).
-                    this.active_view
+                    this.view()
                         .details
                         .first()
                         .map(|d| CommitId(d.full_sha.to_string()))

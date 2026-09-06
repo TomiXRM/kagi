@@ -188,7 +188,7 @@ fn main() {
 
     // Canonicalize so the initial tab's path matches what `open_repository`
     // stores later (avoids a duplicate tab for the same repo via /tmp vs
-    // /private/tmp on macOS, and keeps `tab_cache` keyed consistently).
+    // /private/tmp on macOS, and keeps one tab per repository).
     let repo_path = std::fs::canonicalize(&args[0]).unwrap_or_else(|_| PathBuf::from(&args[0]));
 
     // ── Open repository ──────────────────────────────────────
@@ -258,7 +258,7 @@ fn main() {
     klog!("worktrees: {}", snap.worktrees.len());
 
     // ── Build app state and launch window ────────────────────
-    let mut app_state = KagiApp::from_snapshot(&info.name, &snap);
+    let mut app_state = KagiApp::from_snapshot(&repo_path, &info.name, info.is_worktree, &snap);
     // T011: store repo path so the UI can fetch changed files on-demand.
     app_state.repo_path = Some(repo_path.clone());
     // ADR-0107: open the per-tab RepoSession for the initial CLI-argument tab.
@@ -272,16 +272,8 @@ fn main() {
     // The WIP diffstat is filled by the first render's background scan — two
     // tree diffs for a badge is not worth delaying the window for.
 
-    // W4-TABS / ADR-0027: the CLI argument becomes the initial tab.
-    app_state.tabs.push(ui::tabs::RepoTab {
-        session: app_state.app_sessions.attach(repo_path.clone()),
-        path: repo_path.clone(),
-        name: info.name.clone(),
-        remote: None,
-        is_worktree: info.is_worktree,
-        wt_color_idx: None,
-    });
-    app_state.active_tab = 0;
+    // W4-TABS / ADR-0027: the CLI argument became the initial tab inside
+    // `from_snapshot` (#482 stage 2: attach, then publish that session's read).
     app_state.log_tabs();
 
     // ── KAGI_* headless harness + window launch ───────────────

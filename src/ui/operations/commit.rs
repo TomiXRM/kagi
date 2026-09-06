@@ -1167,7 +1167,7 @@ impl KagiApp {
             Ok(kagi_git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
                 let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                let branch = self.active_view.status_summary.branch.clone();
+                let branch = self.view().status_summary.branch.clone();
                 let _ = kagi_git::clear_draft(&repo_path, &branch);
                 if let Some(entity) = self.commit_panel.clone() {
                     entity.update(cx, |v, _| v.last_draft_value = String::new());
@@ -1279,7 +1279,7 @@ impl KagiApp {
             }
             CommitAction::CopySha => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.active_view.details.get(row_index) {
+                    if let Some(detail) = self.view().details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         let short: String = full_sha.chars().take(8).collect();
                         context_menu::copy_full_sha(self, full_sha, cx);
@@ -1292,7 +1292,7 @@ impl KagiApp {
             }
             CommitAction::CopyShortSha => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.active_view.details.get(row_index) {
+                    if let Some(detail) = self.view().details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         context_menu::copy_short_sha(self, &full_sha, cx);
                     }
@@ -1300,7 +1300,7 @@ impl KagiApp {
             }
             CommitAction::CopyMessage => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.active_view.details.get(row_index) {
+                    if let Some(detail) = self.view().details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         context_menu::copy_message(
                             self,

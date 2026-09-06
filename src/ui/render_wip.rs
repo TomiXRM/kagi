@@ -23,7 +23,7 @@ impl KagiApp {
     ) -> Vec<gpui::AnyElement> {
         let visible_lanes = graph_view::lanes_for_width(graph_col_w);
         let stash_color = theme().color_warning;
-        let stash_lanes = self.active_view.stash_graph_lanes.clone();
+        let stash_lanes = self.view().stash_graph_lanes.clone();
         let rh = row_height(self.graph_compact);
 
         // Lanes of connected stashes rendered *above* the current row, whose
@@ -31,7 +31,7 @@ impl KagiApp {
         // the topmost stash's line vanishing at the next stash row).
         let mut passing_lanes: Vec<usize> = Vec::new();
 
-        self.active_view
+        self.view()
             .stash_graph_rows
             .iter()
             .map(|sr| {

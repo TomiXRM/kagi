@@ -79,7 +79,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let detail = self.active_view.details.get(state.row_index)?;
+        let detail = self.view().details.get(state.row_index)?;
         let target = self.commit_id_for_row(state.row_index)?;
         let ctx = self.menu_context_at(state.row_index, state.is_ancestor_of_head)?;
         let groups = context_menu::build_commit_menu(&ctx);
@@ -272,12 +272,7 @@ impl Render for KagiApp {
         // count so the offset self-heals after tab switches and column
         // resizes.
         {
-            let lane_count = self
-                .active_view
-                .rows
-                .first()
-                .map(|r| r.lane_count)
-                .unwrap_or(0);
+            let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
             // W28: clamp against the scaled lane pitch (matches scroll_graph_by).
             let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
             if self.graph_scroll_x > max {
@@ -288,9 +283,8 @@ impl Render for KagiApp {
         // When the walk filled the current limit there may be more history to
         // pull in, so we append one extra "load more" row at the bottom of the
         // virtual list (rendered specially in the uniform_list processor).
-        let has_more_commits =
-            self.commit_limit > 0 && self.active_view.rows.len() >= self.commit_limit;
-        let row_count = self.active_view.rows.len() + usize::from(has_more_commits);
+        let has_more_commits = self.commit_limit > 0 && self.view().rows.len() >= self.commit_limit;
+        let row_count = self.view().rows.len() + usize::from(has_more_commits);
         let selected = self.selected;
 
         // W4-TABS / ADR-0028: a non-empty error string still shows the error
@@ -351,9 +345,7 @@ impl Render for KagiApp {
         }
 
         // ── Pre-fetch detail for panel (if any row is selected) ─
-        let detail = selected
-            .and_then(|i| self.active_view.details.get(i))
-            .cloned();
+        let detail = selected.and_then(|i| self.view().details.get(i)).cloned();
         // ADR-0121 B2: the changed-files / diffstat / badges / compare inputs
         // for the Inspector are re-derived by `workspace::InspectorItem` in
         // its render — render_body no longer takes them.
@@ -363,7 +355,7 @@ impl Render for KagiApp {
         // MainDiffPane, and the Inspector re-derives compare inputs itself.
 
         // Clone modal state for render.
-        let is_dirty = self.active_view.is_dirty;
+        let is_dirty = self.view().is_dirty;
         // PERF-SIDEBAR-VIRT: the navigator data (branches/remotes/tags/…) is no
         // longer cloned for render_sidebar — it's flattened into
         // `self.sidebar.rows` below and read by the virtualized list processor.
@@ -387,24 +379,24 @@ impl Render for KagiApp {
         let sidebar_fingerprint = sidebar::sidebar_rows_fingerprint(
             self.view_epoch,
             self.github_prs_epoch,
-            self.active_view.branches.len(),
-            self.active_view.remote_branches.len(),
-            self.active_view.tags.len(),
-            self.active_view.stashes.len(),
-            self.active_view.worktrees.len(),
+            self.view().branches.len(),
+            self.view().remote_branches.len(),
+            self.view().tags.len(),
+            self.view().stashes.len(),
+            self.view().worktrees.len(),
             &self.sidebar.collapsed,
             &self.branch_groups_collapsed,
             &sidebar_filter_text,
         );
         if sidebar_fingerprint != self.sidebar.rows_fingerprint {
             self.sidebar.rows = sidebar::build_sidebar_rows(
-                &self.active_view.branches,
+                &self.view().branches,
                 &self.github_prs,
                 self.github_login.as_deref(),
-                &self.active_view.remote_branches,
-                &self.active_view.tags,
-                &self.active_view.stashes,
-                &self.active_view.worktrees,
+                &self.view().remote_branches,
+                &self.view().tags,
+                &self.view().stashes,
+                &self.view().worktrees,
                 &self.sidebar.collapsed,
                 &self.branch_groups_collapsed,
                 &sidebar_filter_text,
@@ -520,7 +512,7 @@ impl Render for KagiApp {
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
         // so operations never overlap.
-        let mut toolbar_state = self.active_view.toolbar_state.clone();
+        let mut toolbar_state = self.view().toolbar_state.clone();
         if self.busy_op.is_some() {
             toolbar_state.pull_on = false;
             toolbar_state.push_on = false;
@@ -528,7 +520,7 @@ impl Render for KagiApp {
             toolbar_state.pop_on = false;
             toolbar_state.undo_on = false;
         }
-        let status_summary = self.active_view.status_summary.clone();
+        let status_summary = self.view().status_summary.clone();
 
         // T023: pane widths for divider rendering.
         let sidebar_width = self.sidebar.width;
@@ -797,7 +789,7 @@ impl Render for KagiApp {
             .child(self.render_header_slot(
                 toolbar_state,
                 status_summary,
-                self.active_view.rows.first().map(|r| r.summary.to_string()),
+                self.view().rows.first().map(|r| r.summary.to_string()),
                 cx,
             ))
             // ── Body slot: in Conflict Mode the conflict resolution pane

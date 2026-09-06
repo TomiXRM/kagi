@@ -512,12 +512,12 @@ impl KagiApp {
             self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closed_path), cx);
             return;
         }
+        self.app_sessions.clear_stash_conflict(&closed_path);
         let closed = self.tabs.remove(index);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
         // W6-TABSPEED / ADR-0030: evict the closed repo's cached view state.
         self.tab_cache.remove(&closed.path);
-
         if self.tabs.is_empty() {
             // Last tab closed → Welcome screen.
             self.active_tab = 0;

@@ -228,6 +228,55 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
     }
 }
 
+pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    stash_three(&repo);
+    std::fs::write(repo.join("README.md"), "ours\n").unwrap();
+    git(&repo, &["commit", "-qam", "ours"]);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_pop_modal(1, cx));
+    wait(cx, &app, |app| {
+        matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+    });
+    confirm(cx, &app, window, false);
+    wait(cx, &app, |app| {
+        app.busy_op.is_none() && app.conflict.is_some()
+    });
+
+    // Continue and close in the same host turn, before its async reload can
+    // present the one-shot drop follow-up.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.conflict.as_ref().unwrap().update(cx, |view, _| {
+                view.mode
+                    .as_mut()
+                    .unwrap()
+                    .buffer
+                    .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
+                    .unwrap();
+            });
+            app.conflict_continue(window, cx);
+            app.close_tab(0, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo.clone(), cx));
+    });
+    wait(cx, &app, |app| {
+        app.repo_path.as_ref() == Some(&repo) && app.conflict.is_none()
+    });
+    app.update(cx, |app, _| {
+        assert!(app.app_sessions.stash_conflict(&repo).is_none());
+        assert!(app.app_sessions.take_stash_followup(&repo).is_none());
+        assert!(app.stash_drop_modal().is_none());
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS app-stash continue → close → reopen has no drop prompt");
+}
+
 pub fn scenario_stash_replan_error(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();

@@ -907,6 +907,7 @@ impl Backend {
         }
 
         // ── Dispatch (behaviour-identical to the former execute(op)). ──
+        let mut partial_after = None;
         let result: Result<OperationOutcome, GitError> = match op {
             Operation::Commit { message } => {
                 self.execute_commit(message).map(OperationOutcome::Commit)
@@ -928,11 +929,23 @@ impl Backend {
                 at,
                 checkout_after,
             } => {
-                self.execute_create_branch(name, at)?;
-                if *checkout_after {
-                    self.execute_checkout(name)?;
+                match self.execute_create_branch(name, at) {
+                    Err(error) => Err(error),
+                    Ok(()) if *checkout_after => match self.execute_checkout(name) {
+                        Ok(()) => Ok(OperationOutcome::Unit),
+                        Err(error) => {
+                            // The ref was created, but safe checkout left HEAD on
+                            // the previous branch. Preserve the exact recovery
+                            // handle while returning the checkout failure.
+                            partial_after = Some(ops::StateSummary {
+                                head: plan.current.head.clone(),
+                                dirty: format!("created branch '{}' @ {}", name, at.0),
+                            });
+                            Err(error)
+                        }
+                    },
+                    Ok(()) => Ok(OperationOutcome::Unit),
                 }
-                Ok(OperationOutcome::Unit)
             }
             Operation::CreateTag { name, at } => self
                 .execute_create_tag(name, at)
@@ -1046,7 +1059,7 @@ impl Backend {
         // ── Oplog (ADR-0149 / #329): record synchronously here so EVERY caller
         // — GUI, MCP, CLI, headless, tests — produces exactly one entry per op.
         // The UI's `record_op` no longer writes the oplog (no double-record).
-        let outcome = oplog_outcome_from(&result, &plan.predicted);
+        let outcome = oplog_outcome_from(&result, &plan.predicted, partial_after);
         self.record_run_oplog(op.oplog_name(), &plan.current, outcome);
 
         result

@@ -5,37 +5,46 @@ use super::{ops, Backend, GitError, OperationOutcome, OperationPlan};
 
 /// Map a `Backend::run` dispatch result into the oplog [`OpOutcome`] (ADR-0149).
 ///
-/// A partially-applied discard (#281) becomes [`OpOutcome::Partial`]; any other
-/// `Ok` becomes [`OpOutcome::Success`] with the plan's predicted after-state;
-/// an `Err` becomes [`OpOutcome::Failed`]. Pure + `pub` so the mapping (notably
-/// the `is_partial` branch) is unit-testable without forcing a real repo
-/// failure.
+/// A partially-applied discard (#281), or a supplied partial after-state from
+/// dispatch, becomes [`OpOutcome::Partial`]; any other `Ok` becomes
+/// [`OpOutcome::Success`] with the plan's predicted after-state; an `Err`
+/// becomes [`OpOutcome::Failed`]. Pure + `pub` so the mapping (notably the
+/// `is_partial` branch) is unit-testable without forcing a real repo failure.
 pub fn oplog_outcome_from(
     result: &Result<OperationOutcome, GitError>,
     predicted: &ops::StateSummary,
+    partial_after: Option<ops::StateSummary>,
 ) -> crate::oplog::OpOutcome {
-    match result {
-        Ok(OperationOutcome::Discard(d)) if d.is_partial() => crate::oplog::OpOutcome::Partial {
-            after: predicted.clone(),
-            error: d.error.clone().unwrap_or_default(),
+    match (result, partial_after) {
+        (Err(e), Some(after)) => crate::oplog::OpOutcome::Partial {
+            after,
+            error: e.to_string(),
         },
+        (Ok(OperationOutcome::Discard(d)), _) if d.is_partial() => {
+            crate::oplog::OpOutcome::Partial {
+                after: predicted.clone(),
+                error: d.error.clone().unwrap_or_default(),
+            }
+        }
         // #418: persist the restore's recovery handle (savepoint id) in `after`.
-        Ok(OperationOutcome::RestoreSnapshot { savepoint }) => crate::oplog::OpOutcome::Success {
-            after: ops::StateSummary {
-                head: predicted.head.clone(),
-                dirty: format!("savepoint {savepoint}"),
-            },
-        },
-        Ok(OperationOutcome::StashDrop { oid }) => crate::oplog::OpOutcome::Success {
+        (Ok(OperationOutcome::RestoreSnapshot { savepoint }), _) => {
+            crate::oplog::OpOutcome::Success {
+                after: ops::StateSummary {
+                    head: predicted.head.clone(),
+                    dirty: format!("savepoint {savepoint}"),
+                },
+            }
+        }
+        (Ok(OperationOutcome::StashDrop { oid }), _) => crate::oplog::OpOutcome::Success {
             after: ops::StateSummary {
                 head: predicted.head.clone(),
                 dirty: format!("stash entry deleted (oid {oid})"),
             },
         },
-        Ok(_) => crate::oplog::OpOutcome::Success {
+        (Ok(_), _) => crate::oplog::OpOutcome::Success {
             after: predicted.clone(),
         },
-        Err(e) => crate::oplog::OpOutcome::Failed {
+        (Err(e), _) => crate::oplog::OpOutcome::Failed {
             error: e.to_string(),
         },
     }

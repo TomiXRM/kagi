@@ -64,6 +64,13 @@ checks, refs, and persisted oplog records are the oracle. It cannot run from the
 Codex sandbox because the required macOS `hiservices` XPC path is unavailable;
 have the PM or a human run this lane.
 
+The locked GPUI revision does not expose the complete, last-rendered hitbox
+collection to `VisualTestAppContext`. Do not treat a scenario-specific recorded
+bound (for example, a measured button or footer) as a generic hitbox dump. A
+complete `id -> window-relative bounds` failure diagnostic needs a public GPUI
+API or a deliberately maintained dependency fork; until then, use Tier A's
+state assertions and Tier B's live-window inspection together.
+
 ## Tier B — real GUI driver
 
 Build `scripts/pidclick.swift`, launch Kagi with a unique `USER` value, and retain
@@ -204,8 +211,9 @@ When a PR changes a verification seam, environment flag, script, or runner featu
 update the matching part of this skill and state `skill 更新済み` in the PR body.
 Adding a `tests/gui_e2e_runner.rs` scenario also requires updating Tier A's inventory.
 Keep `.agents/skills/kagi-verify` as a symlink to the canonical source. Manually
-check every referenced `scripts/*` and test path until the automated reference gate
-tracked in [#544](https://github.com/TomiXRM/kagi/issues/544) lands.
+run `uv run --project ci check-skill-refs` before merging. It verifies concrete
+`scripts/*` and `tests/**/*.rs` references in inline code, fenced commands, and
+Markdown links in this canonical skill (#544).
 
 Finish by exiting the launched application so it cannot retain a socket or test
 state. Fixtures and isolated log directories live below `/tmp`; remove them only

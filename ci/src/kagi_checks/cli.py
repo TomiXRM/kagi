@@ -26,6 +26,8 @@ from kagi_checks.rules import (
     ui_lateral_hits,
     ui_lateral_manifest_hits,
 )
+from kagi_checks.skill_refs import issues as skill_ref_issues
+from kagi_checks.skill_refs import selftest as skill_ref_selftest
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -178,6 +180,16 @@ def check_shell_hygiene() -> int:
     return status | _run_rule(_rule("uv-invocation"))
 
 
+def check_skill_refs() -> int:
+    issues = skill_ref_issues(ROOT)
+    if not issues:
+        print("OK: skill-refs — canonical verification skill references exist.")
+        return 0
+    for issue in issues:
+        print(f"::error::{issue}")
+    return 1
+
+
 # ── Custom check ────────────────────────────────────────────────────────────
 
 
@@ -279,10 +291,13 @@ def selftest() -> int:
                     f"expected, in the sample:\n{_excerpt(sample)}"
                 )
                 failed = True
+    for issue in skill_ref_selftest():
+        print(f"::error::skill-refs selftest: {issue}")
+        failed = True
     if failed:
         return 1
     print(
-        f"OK: {len(RULES) + len(MANIFEST_RULES)} gates match their samples; "
+        f"OK: {len(RULES) + len(MANIFEST_RULES) + 1} gates match their samples; "
         f"{len(RATCHETS)} ratchet counters match their expected counts."
     )
     return 0
@@ -296,6 +311,7 @@ def check_all() -> int:
         status |= _run_rule(rule)
     for manifest_rule in MANIFEST_RULES:
         status |= _run_manifest_rule(manifest_rule)
+    status |= check_skill_refs()
     status |= check_ui_lateral()
     for ratchet in RATCHETS:
         status |= _run_ratchet(ratchet, False)

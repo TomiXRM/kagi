@@ -40,6 +40,7 @@ use kagi_domain::plan_note::{
     ConflictsNote, ConflictsRecovery, ConflictsTitle, PlanDisposition, PlanNote, PlanRecovery,
     PlanTitle, RecoveryKind,
 };
+pub use kagi_domain::sequencer_skip::{classify_skip, SkipObservation, SkipProgress};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryState};
@@ -2315,6 +2316,16 @@ pub struct SkipOutcome {
     pub head: Option<String>,
     /// Path the resolution buffer was preserved at, if a buffer was saved.
     pub buffer_preserved_at: Option<PathBuf>,
+    /// What the repository state says happened (#540). A non-zero exit is NOT
+    /// a failure by itself: stopping at the next conflicting commit is the
+    /// normal way a skip lands.
+    pub progress: SkipProgress,
+    /// Repository state after the skip, for a faithful oplog record.
+    pub after: StateSummary,
+    /// git's complaint when it exited non-zero, `None` otherwise. Present even
+    /// for [`SkipProgress::Advanced`], where it is only the "could not apply …"
+    /// notice for the *next* commit.
+    pub error: Option<String>,
 }
 
 /// Plan a `skip` of the current sequencer step (rebase / cherry-pick / revert).
@@ -2392,24 +2403,35 @@ pub fn execute_conflict_skip(
     // 1. Preserve the buffer first (never lose partial work).
     let buffer_preserved_at = buffer.autosave().ok();
 
-    // 2. Everything else is one fallible step: either `git <op> --skip`
-    //    succeeds and the sequencer is coherently on the next pick, or it
-    //    fails and git left the current step untouched.  No half state.
+    // 2. Run the skip, then judge it by the state git left behind (#540).
+    //    The exit code alone cannot: `rebase --skip` that drops the step and
+    //    then stops on the NEXT conflicting commit exits 1, and treating that
+    //    as a failure recorded "rebase-skip failed" while the UI was already
+    //    detecting the new conflict session.
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
         .to_path_buf();
     let slug = session.op.slug();
+    let position_before = sequencer_position(repo, session);
     let out = run_git(&workdir, &[slug, "--skip"])
         .map_err(|e| GitError::Other(format!("{} --skip failed to start: {}", slug, e)))?;
-    if out.status != 0 {
-        return Err(GitError::Other(format!(
+
+    let progress = classify_skip(SkipObservation {
+        ok: out.status == 0,
+        in_progress: repo.state() != RepositoryState::Clean,
+        // Same libgit2 index-cache trap as `--continue` (#296b): re-read.
+        unmerged: fresh_index_has_conflicts(repo),
+        replay_advanced: sequencer_position(repo, session) != position_before,
+    });
+    let error = (out.status != 0).then(|| {
+        format!(
             "{} --skip failed (exit {}): {}",
             slug,
             out.status,
             out.stderr.trim()
-        )));
-    }
+        )
+    });
 
     // 3. HEAD as git left it (unchanged for a dropped single pick; advanced if
     //    the sequencer replayed further commits).
@@ -2422,7 +2444,25 @@ pub fn execute_conflict_skip(
     Ok(SkipOutcome {
         head: head_sha,
         buffer_preserved_at,
+        progress,
+        after: current_state_summary(repo)?,
+        error,
     })
+}
+
+/// Where the sequencer stands: the commit being replayed plus the rebase step
+/// counter. Comparing this across `git <op> --skip` is what tells "we left the
+/// step you asked us to drop" from "we are still sitting on it" (#540).
+fn sequencer_position(repo: &Repository, session: &ConflictSession) -> (Option<git2::Oid>, usize) {
+    let name = match session.op {
+        ConflictOp::CherryPick { .. } => "CHERRY_PICK_HEAD",
+        ConflictOp::Revert { .. } => "REVERT_HEAD",
+        _ => "REBASE_HEAD",
+    };
+    (
+        read_head_oid(repo, name),
+        read_rebase_progress(repo.path()).0,
+    )
 }
 
 /// Display string for a [`Head`] (mirrors `current_state_summary`'s head line).

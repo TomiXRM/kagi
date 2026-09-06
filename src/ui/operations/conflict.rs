@@ -616,42 +616,65 @@ impl KagiApp {
         };
         let op_name = format!("{}-skip", mode.session.op.slug());
 
-        match repo.execute_conflict_skip(&mode.session, &mode.buffer) {
-            Ok(_outcome) => {
-                klog!("executed: {}", op_name);
-                let after = StateSummary {
-                    head: plan.predicted.head.clone(),
-                    dirty: "current step dropped".to_string(),
+        // #540: git decides the outcome by the state it leaves, not by its exit
+        // code. `rebase --skip` that drops the step and then stops at the NEXT
+        // conflicting commit exits 1 — a success, and the reason the failure
+        // arm must not own every non-zero exit.
+        let (outcome, failure, ran) = match repo.execute_conflict_skip(&mode.session, &mode.buffer)
+        {
+            Ok(o) => {
+                let git_said = o.error.unwrap_or_default();
+                let (outcome, failure) = match o.progress {
+                    SkipProgress::Finished | SkipProgress::Advanced => {
+                        (OpOutcome::Success { after: o.after }, None)
+                    }
+                    SkipProgress::NoProgress => (
+                        OpOutcome::Failed {
+                            error: git_said.clone(),
+                        },
+                        Some(git_said),
+                    ),
+                    // Neither proven done nor proven untouched: never guess.
+                    SkipProgress::Unclear => (
+                        OpOutcome::Unknown {
+                            after: o.after,
+                            evidence: git_said.clone(),
+                        },
+                        Some(git_said),
+                    ),
                 };
-                self.record_op_persist(
-                    &op_name,
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                self.reload(cx);
-                self.conflict_detected_for = None;
-                self.detect_conflict_mode(cx);
+                (outcome, failure, true)
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                klog!("{} failed: {}", op_name, err_msg);
-                self.record_op_persist(
-                    &op_name,
-                    plan.current.clone(),
+                (
                     OpOutcome::Failed {
                         error: err_msg.clone(),
                     },
-                    &repo_path,
-                    cx,
-                );
-                // Without this the failure only reached the oplog: no toast, no
-                // modal, no reload — so the UI kept rendering the pre-failure
-                // conflict state and the user believed the abort/skip had
-                // happened. CLAUDE.md: errors surface via the oplog *and* the UI.
-                self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
+                    Some(err_msg),
+                    false,
+                )
             }
+        };
+
+        match &failure {
+            None => klog!("executed: {}", op_name),
+            Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
+        }
+        self.record_op_persist(&op_name, plan.current.clone(), outcome, &repo_path, cx);
+        if ran {
+            // git ran, so the repository may have moved even when the result
+            // was not a clean success — re-read it rather than keep rendering
+            // the pre-skip conflict session.
+            self.reload(cx);
+            self.conflict_detected_for = None;
+            self.detect_conflict_mode(cx);
+        }
+        if let Some(err_msg) = failure {
+            // Without this the failure only reached the oplog: no toast, no
+            // modal — so the user believed the skip had happened.
+            // CLAUDE.md: errors surface via the oplog *and* the UI.
+            self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
         }
         cx.notify();
     }

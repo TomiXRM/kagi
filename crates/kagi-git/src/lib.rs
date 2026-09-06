@@ -10,6 +10,7 @@
 //! [`backend::remove`] owns the recorded worktree-removal execution boundary,
 //! including panic classification and the exact persisted oplog receipt.
 
+pub mod api;
 pub mod authoring;
 pub mod backend;
 pub mod blame;

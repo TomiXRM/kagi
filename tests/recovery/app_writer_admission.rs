@@ -1,6 +1,6 @@
 //! Real editor event → host reservation while a linked remove is in pre_remove.
 use crate::macos::{build_fixture, git, mount};
-use gpui::VisualTestAppContext;
+use gpui::{Focusable, VisualTestAppContext};
 use kagi::ui::i18n::Msg;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -64,11 +64,11 @@ pub fn scenario_editor_save_during_remove(cx: &mut VisualTestAppContext) {
     }
     cx.update_window(window, |_, window, cx| {
         let input = editor.read(cx).editor.clone().unwrap();
-        input.update(cx, |input, cx| {
-            input.set_value("must remain unsaved\n", window, cx)
-        });
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
     })
     .unwrap();
+    cx.simulate_keystrokes(window, "x");
     cx.run_until_parked();
     assert!(cx.read(|cx| editor.read(cx).dirty));
     app.update(cx, |app, cx| {

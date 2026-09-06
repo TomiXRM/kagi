@@ -37,11 +37,10 @@ pub struct Backend {
 }
 
 impl Backend {
-    /// Canonical common-directory identity for application write admission.
-    pub fn write_repo_id(path: &std::path::Path) -> Result<kagi_domain::remove::RepoId, GitError> {
-        let backend = Self::open(path)?;
-        backend.require_trust()?;
-        std::fs::canonicalize(backend.repo.commondir())
+    /// Read-only identity for admission, not authorization for Git writes.
+    /// Plain editor saves do not require Git owner trust (ADR-0120).
+    pub fn write_repo_id(&self) -> Result<kagi_domain::remove::RepoId, GitError> {
+        std::fs::canonicalize(self.repo.commondir())
             .map(kagi_domain::remove::RepoId)
             .map_err(|error| GitError::Other(error.to_string()))
     }
@@ -1607,6 +1606,7 @@ impl Backend {
     }
 
     pub fn fetch_remote(&self) -> Result<FetchOutcome, GitError> {
+        self.require_trust()?;
         let outcome = ops::fetch_remote(&self.repo, &self.path)?;
         // Refresh the branch ruleset on fetch (#346, ADR-0150): rulesets are
         // changed by others, so fetch is the natural refresh point (§5).
@@ -1678,6 +1678,7 @@ impl Backend {
     /// Fetch a single remote branch's refspec (`"<remote>/<branch>"`,
     /// e.g. `"origin/feature/x"`), splitting on the first `/`.
     pub fn fetch_remote_branch(&self, remote_branch: &str) -> Result<FetchOutcome, GitError> {
+        self.require_trust()?;
         let (remote, branch) = remote_branch.split_once('/').ok_or_else(|| {
             GitError::Other(format!(
                 "'{}' is not a <remote>/<branch> name",

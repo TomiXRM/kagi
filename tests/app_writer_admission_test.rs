@@ -293,8 +293,8 @@ fn canonical_identity_and_conservative_global_exclusion() {
     let other = Fixture::new();
     let mut sessions = Sessions::new();
     assert_eq!(
-        Backend::write_repo_id(&f.repo).unwrap(),
-        Backend::write_repo_id(&f.linked).unwrap()
+        Backend::open(&f.repo).unwrap().write_repo_id().unwrap(),
+        Backend::open(&f.linked).unwrap().write_repo_id().unwrap()
     );
     assert!(matches!(
         sessions.write_lease(&f.repo, LegacyBusy(true)),
@@ -315,4 +315,48 @@ fn canonical_identity_and_conservative_global_exclusion() {
         .write_lease(&other.repo, LegacyBusy(false))
         .unwrap()
         .complete();
+}
+
+#[test]
+fn untrusted_identity_allows_plain_editor_save_but_git_writers_stay_gated() {
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut backend = Backend::open(&f.linked).unwrap();
+    // Existing owner-trust seam: fixture ownership cannot be changed to another uid.
+    backend.set_trust_for_test(kagi_git::trust::RepoTrust::Untrusted);
+    assert!(
+        backend.write_repo_id().is_ok(),
+        "identity is a read, even untrusted"
+    );
+    let mut sessions = Sessions::new();
+    let guard = sessions.write_lease(&f.linked, LegacyBusy(false)).unwrap();
+    guard.run(|| std::fs::write(f.linked.join("file"), b"plain editor save\n").unwrap());
+    assert_eq!(
+        std::fs::read(f.linked.join("file")).unwrap(),
+        b"plain editor save\n"
+    );
+    assert!(!sessions.has_leases());
+    assert!(backend
+        .stage_file(Path::new("file"))
+        .unwrap_err()
+        .is_untrusted());
+    assert!(backend
+        .create_snapshot("untrusted")
+        .unwrap_err()
+        .is_untrusted());
+}
+
+#[test]
+fn untrusted_fetch_facades_refuse_before_cli_or_ref_changes() {
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut backend = Backend::open(&f.linked).unwrap();
+    backend.set_trust_for_test(kagi_git::trust::RepoTrust::Untrusted);
+    assert!(backend.fetch_remote().unwrap_err().is_untrusted());
+    assert!(backend
+        .fetch_remote_branch("origin/main")
+        .unwrap_err()
+        .is_untrusted());
+    assert!(!f.repo.join(".git/refs/remotes/origin/main").exists());
+    assert_eq!(std::fs::read(f.linked.join("file")).unwrap(), b"original\n");
 }

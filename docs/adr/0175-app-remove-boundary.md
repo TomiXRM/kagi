@@ -72,10 +72,13 @@ click through the real remove modal. M belongs to PM, not this agent.
 Implemented for review; the 1a+1b rollout gate remains a PM decision.
 
 - Extend the same Sessions lease table with an owned `WriteGuard`, not a new
-  registry. `write_lease(path, LegacyBusy)` resolves a trusted canonical common
+  registry. `write_lease(path, LegacyBusy)` resolves a canonical common
   directory through Backend, checks Busy/NeedsReconcile and reserves before
   returning. All repositories remain mutually exclusive. `reserve_write` mirrors
   busy in the same host turn; only that mirror is cleared once no lease remains.
+  Identity lookup is read-only and must not require Git trust: plain editor
+  saves retain ADR-0120 behavior. Git writer facades keep their own trust gates;
+  both fetch facades now explicitly require trust before invoking the CLI (#502 C2).
 - The table is shared with guards using Arc/Mutex so executor completion does
   not depend on the editor/window still existing. Explicit `complete` releases
   only its own identity/id. Ordinary Drop and panic retain the lease, never

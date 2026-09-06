@@ -98,7 +98,8 @@ impl Sessions {
         if legacy.0 || self.has_leases() {
             return Err(AdmissionError::Busy);
         }
-        let repo = kagi_git::Backend::write_repo_id(path)
+        let repo = kagi_git::Backend::open(path)
+            .and_then(|backend| backend.write_repo_id())
             .map_err(|error| AdmissionError::Identity(error.to_string()))?;
         if self
             .reconcile

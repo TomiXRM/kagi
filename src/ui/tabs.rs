@@ -121,6 +121,17 @@ impl KagiApp {
         true
     }
 
+    /// Identity of the repository currently on screen, in tab-path terms:
+    /// `repo_path` for a local tab, the synthetic `<host>:<root>` key for a
+    /// remote one (ADR-0089). `None` on the Welcome screen. Used to tell a
+    /// genuine tab switch from re-selecting the live tab (#488).
+    fn live_tab_path(&self) -> Option<PathBuf> {
+        match &self.remote_view {
+            Some(v) => Some(PathBuf::from(format!("{}:{}", v.host.label(), v.root))),
+            None => self.repo_path.clone(),
+        }
+    }
+
     /// Switch the active tab to `index` (W6-TABSPEED / ADR-0030).
     ///
     /// Stale-while-revalidate: if the target repo's [`TabViewState`] is cached
@@ -135,6 +146,13 @@ impl KagiApp {
             Some(t) => t.clone(),
             None => return,
         };
+        // #488: re-selecting the tab that is already on screen is a no-op. A
+        // reset + `switch_generation` bump here would drop the selection, the
+        // undo history and any in-flight operation's presentation callback
+        // (`operations/mod.rs` treats a generation change as stale).
+        if index == self.active_tab && self.live_tab_path().as_ref() == Some(&tab.path) {
+            return;
+        }
         if self.editor_workspace_any_dirty(cx) {
             self.open_editor_dirty_guard(EditorPendingIntent::SwitchRepo(tab.path.clone()), cx);
             return;
@@ -374,15 +392,14 @@ impl KagiApp {
         self.last_working_status = None;
         // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose
         // loop below (MainDiffItem), like the other registered panes.
-        self.clear_plan_modal();
-        self.clear_pull_modal();
-        self.clear_pop_modal();
-        self.clear_push_modal();
-        self.clear_create_branch_modal();
-        self.clear_stash_push_modal();
-        self.clear_stash_apply_modal();
-        self.clear_cherry_pick_modal();
-        self.clear_delete_branch_modal();
+        // #492: a confirmation is bound to the repo it was planned against —
+        // its plan, paths, stash indices and OIDs all came from that repo, while
+        // the confirm methods read `self.repo_path` at Enter time. Dropping the
+        // whole repo-scoped slot (rather than the nine variants this list used
+        // to name) means no destructive confirmation opened in A can be applied
+        // to B. `ActiveModal::is_repo_scoped` is exhaustive, so a new variant
+        // must declare its scope.
+        self.drop_repo_scoped_modal();
         // ADR-0121 B1/B2: registered workspace items (FileHistory / Ecosystem /
         // EditorWorkspace / CommitPanel / Inspector) drop their own per-repo
         // state via the dispose hook — the per-pane rationale lives on each
@@ -504,7 +521,10 @@ impl KagiApp {
     }
 
     pub fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.tabs.len() {
+        // #488: the app layer owns which tab is active afterwards, so the
+        // "background close" case can be told from the "active close" one.
+        let decision = crate::app::close_tab(self.tabs.len(), index, self.active_tab);
+        if decision == crate::app::TabClose::Nothing {
             return;
         }
         let closed_path = self.tabs[index].path.clone();
@@ -518,31 +538,36 @@ impl KagiApp {
         self.terminal_sessions.remove(&closed.path);
         // W6-TABSPEED / ADR-0030: evict the closed repo's cached view state.
         self.tab_cache.remove(&closed.path);
-        if self.tabs.is_empty() {
-            // Last tab closed → Welcome screen.
-            self.active_tab = 0;
-            self.repo_path = None;
-            self.repo_session = None;
-            // Clear any remote view so the Welcome gate (tabs empty &&
-            // remote_view none) actually shows the Welcome screen (ADR-0089).
-            self.remote_view = None;
-            self.show_welcome();
-            self.save_session();
-            self.log_tabs();
-            // Bump generation so the old watcher loop terminates; no new arm.
-            self.watcher_generation = self.watcher_generation.wrapping_add(1);
-            cx.notify();
-            return;
-        }
 
-        // Recompute the active tab index. If we closed a tab before the active
-        // one, the active index shifts left; clamp into range either way.
-        let new_active = if index < self.active_tab {
-            self.active_tab - 1
-        } else {
-            self.active_tab.min(self.tabs.len() - 1)
-        };
-        self.switch_repo(new_active, cx);
+        match decision {
+            crate::app::TabClose::Nothing => unreachable!("filtered above"),
+            crate::app::TabClose::Welcome => {
+                // Last tab closed → Welcome screen.
+                self.active_tab = 0;
+                self.repo_path = None;
+                self.repo_session = None;
+                // Clear any remote view so the Welcome gate (tabs empty &&
+                // remote_view none) actually shows the Welcome screen (ADR-0089).
+                self.remote_view = None;
+                self.show_welcome();
+                self.save_session();
+                self.log_tabs();
+                // Bump generation so the old watcher loop terminates; no new arm.
+                self.watcher_generation = self.watcher_generation.wrapping_add(1);
+                cx.notify();
+            }
+            // #488: a background tab went away. Renumber the strip and persist
+            // it — nothing else. Touching the live session here would reset the
+            // selection/modals/undo history and strand in-flight operations.
+            crate::app::TabClose::Keep(new_active) => {
+                self.active_tab = new_active;
+                self.save_session();
+                self.log_tabs();
+                cx.notify();
+            }
+            // The active tab itself is gone: really switch to the neighbour.
+            crate::app::TabClose::Activate(new_active) => self.switch_repo(new_active, cx),
+        }
     }
 
     pub(crate) fn switch_repo_by_path(&mut self, path: &Path, cx: &mut Context<Self>) {
@@ -584,15 +609,14 @@ impl KagiApp {
         self.wip_diffstat = None;
         self.active_view.status_summary = blank.active_view.status_summary;
         self.active_view.toolbar_state = blank.active_view.toolbar_state;
-        self.clear_plan_modal();
-        self.clear_pull_modal();
-        self.clear_pop_modal();
-        self.clear_push_modal();
-        self.clear_create_branch_modal();
-        self.clear_stash_push_modal();
-        self.clear_stash_apply_modal();
-        self.clear_cherry_pick_modal();
-        self.clear_delete_branch_modal();
+        // #492: a confirmation is bound to the repo it was planned against —
+        // its plan, paths, stash indices and OIDs all came from that repo, while
+        // the confirm methods read `self.repo_path` at Enter time. Dropping the
+        // whole repo-scoped slot (rather than the nine variants this list used
+        // to name) means no destructive confirmation opened in A can be applied
+        // to B. `ActiveModal::is_repo_scoped` is exhaustive, so a new variant
+        // must declare its scope.
+        self.drop_repo_scoped_modal();
         self.commit_panel_open = false;
         // ADR-0118: dropping the single `commit_panel` entity also drops its
         // `commit_input` / template inputs / draft state (all entity-owned).

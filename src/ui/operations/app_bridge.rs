@@ -286,6 +286,10 @@ impl KagiApp {
         match delivery {
             Delivery::RemovedTarget(path) => {
                 self.tab_cache.remove(&path);
+                // #528: the worktree no longer exists, so neither should its
+                // tab. `close_tab` keeps the existing dirty guard and only
+                // re-activates a neighbour when this tab was the active one.
+                self.close_tab_by_path(&path, cx);
             }
             Delivery::Invalidate(path) => {
                 self.tab_cache.remove(&path);

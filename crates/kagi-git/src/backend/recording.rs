@@ -31,8 +31,10 @@ pub struct RunReport {
     pub stash: Option<super::stash::StashEvidence>,
 }
 
-/// Single append implementation, shared with factories that fail before open.
-pub(crate) fn finalize(entry: OpLogEntry) -> Recording {
+/// Single append implementation, shared with factories that fail before open
+/// and with the transport boundaries outside this crate (`src/remote`, #501).
+/// Every recorded mutation goes through here — never a second writer.
+pub fn finalize(entry: OpLogEntry) -> Recording {
     match append_oplog_receipt(&entry) {
         Ok((path, entry)) => Recording::Appended { path, entry },
         Err(error) => Recording::Failed {

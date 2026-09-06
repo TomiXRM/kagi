@@ -119,10 +119,6 @@ impl KagiApp {
         }
     }
 
-    /// Confirm the plan: run preflight, execute checkout, then reload.
-    ///
-    /// On preflight or execute failure the modal remains open and shows the
-    /// error text + recovery guidance.  The app never crashes.
     /// Stash the working tree ahead of an Enter-checkout. Returns `true`
     /// when the tree is clean afterwards; on Refused/Failed the plan modal
     /// shows the error and the checkout is aborted.
@@ -212,194 +208,10 @@ impl KagiApp {
         }
     }
 
-    pub fn confirm_checkout(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.plan_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        // Enter-checkout on a dirty tree: stash the changes first (plan
-        // pipeline; refused/failed stash aborts the checkout with the error
-        // shown in the modal).
-        if modal.stash_first
-            && self.active_view.status_summary.is_dirty
-            && !self.stash_before_checkout(cx)
-        {
-            return;
-        }
-        // Defence in depth: the UI never renders the confirm button when
-        // blockers exist, but refuse here too so no code path can execute a
-        // blocked plan.
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: plan has blockers, not executing");
-            if let Some(ref rp) = self.repo_path.clone() {
-                self.record_op(
-                    "checkout",
-                    modal.plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                    },
-                    rp,
-                    cx,
-                );
-            }
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        let op_name = match &modal.target {
-            CheckoutPlanTarget::Branch(_) => "checkout",
-            CheckoutPlanTarget::Commit(_) => "checkout-commit",
-        };
-
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
-                self.record_op(
-                    op_name,
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_plan_modal(CheckoutPlanModal {
-                    stash_first: false,
-                    target: modal.target.clone(),
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-                return;
-            }
-        };
-
-        // Preflight check.
-        if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = i18n::op_failed(i18n::Op::Preflight, e);
-            self.record_op(
-                op_name,
-                modal.plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-                cx,
-            );
-            self.set_plan_modal(CheckoutPlanModal {
-                stash_first: false,
-                target: modal.target.clone(),
-                plan: modal.plan.clone(),
-                error: Some(SharedString::from(err_msg)),
-            });
-            return;
-        }
-
-        // Execute checkout (safe mode only).
-        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-        let checkout_op = match &modal.target {
-            CheckoutPlanTarget::Branch(branch) => kagi_git::Operation::Checkout {
-                branch: branch.clone(),
-            },
-            CheckoutPlanTarget::Commit(commit_id) => kagi_git::Operation::CheckoutCommit {
-                id: commit_id.clone(),
-            },
-        };
-        if let Err(e) = repo.run(&checkout_op, &modal.plan) {
-            let err_msg = i18n::op_failed(i18n::Op::Checkout, e);
-            self.record_op(
-                op_name,
-                modal.plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-                cx,
-            );
-            self.set_plan_modal(CheckoutPlanModal {
-                stash_first: false,
-                target: modal.target.clone(),
-                plan: modal.plan.clone(),
-                error: Some(SharedString::from(err_msg)),
-            });
-            return;
-        }
-
-        match &modal.target {
-            CheckoutPlanTarget::Branch(branch) => klog!("executed: checkout {}", branch),
-            CheckoutPlanTarget::Commit(commit_id) => {
-                klog!("executed: checkout-commit {}", commit_id.short())
-            }
-        }
-
-        // Verify: re-snapshot and confirm HEAD.
-        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("verify: repo open error: {}", e);
-                self.reload(cx);
-                return;
-            }
-        };
-        let after_summary = match repo2.snapshot(10_000) {
-            Ok(snap) => {
-                match (&modal.target, &snap.head) {
-                    (
-                        CheckoutPlanTarget::Branch(branch),
-                        Head::Attached {
-                            branch: actual_branch,
-                            ..
-                        },
-                    ) if actual_branch == branch => {
-                        klog!("verified: HEAD={}", actual_branch);
-                    }
-                    (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target })
-                        if target == &commit_id.0 =>
-                    {
-                        klog!("verified: detached HEAD={}", commit_id.short());
-                    }
-                    other => {
-                        eprintln!(
-                            "[kagi] verify: unexpected HEAD state after checkout: {:?}",
-                            other
-                        );
-                    }
-                }
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if snap.status.is_dirty() {
-                        "dirty".to_string()
-                    } else {
-                        "clean".to_string()
-                    },
-                }
-            }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
-                modal.plan.predicted.clone()
-            }
-        };
-
-        // Record success to oplog + update footer.
-        self.record_op(
-            op_name,
-            modal.plan.current.clone(),
-            OpOutcome::Success {
-                after: after_summary,
-            },
-            &repo_path,
-            cx,
-        );
-
-        // Reload display data.
-        self.reload(cx);
-    }
-
     /// W15-ASYNCOPS: UI-path checkout — runs `checkout_blocking` on a background
-    /// thread so a large `checkout_tree` write never freezes the window. The
-    /// headless `KAGI_CHECKOUT*` path keeps using `confirm_checkout` (sync).
+    /// thread so a large `checkout_tree` write never freezes the window.
+    /// #493: the single checkout entry — the modal button and the root Enter
+    /// dispatch both land here.
     pub fn start_checkout(&mut self, cx: &mut Context<Self>) {
         let modal = match self.plan_modal().cloned() {
             Some(m) => m,
@@ -504,27 +316,13 @@ impl KagiApp {
             return;
         }
         // Ignore Enter while any overlay / panel / text input is active.
-        if self.plan_modal().is_some()
-            || self.pull_modal().is_some()
-            || self.push_modal().is_some()
-            || self.branch_plan_modal().is_some()
-            || self.set_upstream_modal().is_some()
-            || self.rename_branch_modal().is_some()
-            || self.merge_modal().is_some()
-            || self.tracking_checkout_modal().is_some()
-            || self.history_modal().is_some()
-            || self.amend_modal().is_some()
-            || self.pop_modal().is_some()
-            || self.create_branch_modal().is_some()
-            || self.create_worktree_modal().is_some()
-            || self.stash_push_modal().is_some()
-            || self.stash_apply_modal().is_some()
-            || self.cherry_pick_modal().is_some()
-            || self.delete_branch_modal().is_some()
-            || self.discard_modal().is_some()
-            || self.commit_menu.is_some()
-            || self.commit_panel_open
-        {
+        // #492: `has_active_modal` covers EVERY `ActiveModal` variant. The
+        // hand-written accessor list this replaces named 18 of them, so a
+        // reset-current / force-with-lease / rebase / create-tag /
+        // delete-remote-branch confirmation could not stop Enter from checking
+        // out the commit selected behind it. `confirm_active_modal` consumes
+        // Enter first now; this stays as the second line of defence.
+        if self.has_active_modal() || self.commit_menu.is_some() || self.commit_panel_open {
             return;
         }
         if window.has_focused_input(cx) {

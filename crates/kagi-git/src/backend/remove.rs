@@ -91,11 +91,19 @@ impl Backend {
         let preview = backend.plan_remove_worktree(name, delete_branch)?;
         let common_dir = std::fs::canonicalize(backend.repo.commondir()).map_err(io)?;
         let repo = std::fs::canonicalize(&backend.path).map_err(io)?;
+        // Canonicalized like `repo` above: the registered worktree path can
+        // still be the pre-symlink one (`/tmp/…` vs `/private/tmp/…` on macOS),
+        // and callers match it against canonical paths — the UI closes the
+        // removed worktree's tab by this path (#528). Falls back to the raw
+        // path so a target that cannot be resolved still plans (and refuses).
         let target = backend
             .repo
             .find_worktree(name)
             .ok()
-            .map(|w| w.path().to_path_buf())
+            .map(|w| {
+                let path = w.path();
+                std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+            })
             .unwrap_or_else(|| repo.clone());
         let worktree_id = WorktreeId {
             repo: RepoId(common_dir.clone()),

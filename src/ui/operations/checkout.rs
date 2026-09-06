@@ -335,7 +335,11 @@ impl KagiApp {
         // delete-remote-branch confirmation could not stop Enter from checking
         // out the commit selected behind it. `confirm_active_modal` consumes
         // Enter first now; this stays as the second line of defence.
-        if self.has_active_modal() || self.commit_menu.is_some() || self.commit_panel_open {
+        if self.has_active_modal()
+            || self.commit_menu.is_some()
+            || self.branch_menu.is_some()
+            || self.commit_panel_open
+        {
             return;
         }
         if window.has_focused_input(cx) {

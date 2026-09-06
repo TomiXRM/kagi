@@ -83,18 +83,18 @@ pub fn asset_source() -> Arc<dyn AssetSource> {
 }
 
 /// App-level one-time init a first render needs, mirroring `run_app`: bundled
-/// fonts, `gpui_component` init, theme sync, and **the app's whole keymap**.
+/// fonts, `gpui_component` init, theme sync, and the app command setup.
 ///
 /// #492: this used to hand-pick two bindings (`cmd-j`, `cmd-c`), so scenarios
 /// ran against a different keymap than the app — `escape` was bound to nothing
 /// here, and a modal survived an Esc that closes it for real users. Call
-/// [`super::commands::bind_app_keys`] instead of re-listing bindings; keep it after
-/// `gpui_component::init`, which several of them deliberately outrank.
+/// [`super::commands::setup_app`] instead of re-listing bindings or menus; keep
+/// it after `gpui_component::init`, which several bindings deliberately outrank.
 pub fn init_app(cx: &mut App) {
     fonts::load_bundled_fonts(cx);
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);
-    super::commands::bind_app_keys(cx);
+    super::commands::setup_app(cx);
 }
 
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via

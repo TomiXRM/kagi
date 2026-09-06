@@ -213,21 +213,22 @@ pub struct StepEnv {
     pub worktree: PathBuf,
 }
 
-/// True unless the headless `KAGI_*` test harness is active. A `command` is
+/// True unless a recognized headless-harness signal is active. A `command` is
 /// **never** executed under headless (issue #341 §6). `KAGI_LOG_DIR` is
 /// deliberately excluded: it is only test-isolation for the store and unit
 /// tests, and gating on it would make the trusted-command path untestable.
+/// `KAGI_NO_SINGLE_INSTANCE` is a normal GUI launch-routing override, not a
+/// headless-harness signal, so it does not suppress trusted commands.
 fn command_execution_allowed() -> bool {
-    const HEADLESS_SIGNALS: &[&str] = &[
-        "KAGI_OPEN_REPO",
-        "KAGI_MENU_DUMP",
-        "KAGI_SELECT_FIRST",
-        "KAGI_NO_SINGLE_INSTANCE",
-    ];
+    const HEADLESS_SIGNALS: &[&str] = &["KAGI_OPEN_REPO", "KAGI_MENU_DUMP", "KAGI_SELECT_FIRST"];
     !HEADLESS_SIGNALS
         .iter()
         .any(|k| std::env::var_os(k).is_some())
 }
+
+#[cfg(test)]
+#[path = "worktree_steps_command_tests.rs"]
+mod command_execution_tests;
 
 /// Run the `post_create` steps best-effort: the worktree already exists, so a
 /// step failure is never allowed to undo it. `copy`/`symlink` always run;

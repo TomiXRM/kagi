@@ -25,12 +25,7 @@ use kagi_git::ops::{
 // so every env-touching test serializes on this and saves/restores what it set.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-const HEADLESS_MARKERS: &[&str] = &[
-    "KAGI_OPEN_REPO",
-    "KAGI_MENU_DUMP",
-    "KAGI_SELECT_FIRST",
-    "KAGI_NO_SINGLE_INSTANCE",
-];
+const HEADLESS_MARKERS: &[&str] = &["KAGI_OPEN_REPO", "KAGI_MENU_DUMP", "KAGI_SELECT_FIRST"];
 
 fn clear_headless() {
     for k in HEADLESS_MARKERS {

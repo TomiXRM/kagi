@@ -497,7 +497,7 @@ impl KagiApp {
             klog!("async: remote stash-drop started");
             let (host, root) = (rv.host.clone(), rv.root.clone());
             let task = cx.background_spawn(async move {
-                crate::remote::remote_stash_drop(&host, &root, stash_index)
+                crate::remote::remote_stash_drop(&host, &root, stash_index, &before)
                     .map_err(|e| e.to_string())
             });
             self.finish_op_on_main(cx, task, move |app, result, cx| match result {
@@ -505,10 +505,10 @@ impl KagiApp {
                     klog!("async: remote stash-drop finished");
                     app.record_op(
                         "stash-drop",
-                        before.clone(),
+                        plan.current.clone(),
                         OpOutcome::Success {
                             after: kagi_git::StateSummary {
-                                head: before.head.clone(),
+                                head: plan.current.head.clone(),
                                 dirty: "stash entry removed".to_string(),
                             },
                         },
@@ -525,7 +525,7 @@ impl KagiApp {
                     klog!("async: remote stash-drop failed — {err_msg}");
                     app.record_op(
                         "stash-drop",
-                        before.clone(),
+                        plan.current.clone(),
                         OpOutcome::Failed {
                             error: err_msg.clone(),
                         },

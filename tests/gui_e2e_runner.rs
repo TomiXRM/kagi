@@ -47,6 +47,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/operations.rs"]
+mod recovery_operations;
+
+#[cfg(target_os = "macos")]
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -62,7 +66,7 @@ mod macos {
     };
 
     /// `git` with a deterministic identity + no user-config bleed-through.
-    fn git(dir: &Path, args: &[&str]) {
+    pub(super) fn git(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
             .current_dir(dir)
             .args(args)
@@ -78,7 +82,7 @@ mod macos {
     }
 
     /// A throwaway repo with two commits on `main`.
-    fn build_fixture() -> tempfile::TempDir {
+    pub(super) fn build_fixture() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"]);
@@ -172,7 +176,7 @@ mod macos {
     /// Mount the real `KagiApp` offscreen against `repo_path`, settle the first
     /// frame, and hand back the captured entity + window handle. Mirrors the
     /// PoC mount (ADR-0166) so every scenario builds the root identically.
-    fn mount(
+    pub(super) fn mount(
         cx: &mut VisualTestAppContext,
         repo_path: &Path,
     ) -> (Entity<KagiApp>, AnyWindowHandle) {
@@ -190,7 +194,7 @@ mod macos {
     }
 
     /// `git rev-parse HEAD` + porcelain status, for the no-mutation assertion.
-    fn repo_fingerprint(dir: &Path) -> (String, String) {
+    pub(super) fn repo_fingerprint(dir: &Path) -> (String, String) {
         let head = Command::new("git")
             .current_dir(dir)
             .args(["rev-parse", "HEAD"])
@@ -238,6 +242,11 @@ mod macos {
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         cx.update(e2e::init_app);
+        crate::recovery_operations::scenario_stash_drop_persists(&mut cx);
+        crate::recovery_operations::scenario_history_persists(&mut cx);
+        crate::recovery_operations::scenario_cleanup_stale_tab(&mut cx);
+        crate::recovery_operations::scenario_preflight_presentation(&mut cx);
+        crate::recovery_operations::scenario_cleanup_open_failure(&mut cx);
 
         scenario_bottom_panel(&mut cx);
         scenario_graph_copy(&mut cx, log_dir.path());

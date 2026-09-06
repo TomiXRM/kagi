@@ -50,17 +50,31 @@ consume them are later work.
   `run` stamps `self.actor` on every entry. The GUI leaves the default; the
   future MCP/CLI front-ends call `set_actor(Actor::Mcp | Actor::Cli)`.
 
-### `Refused` and non-run ops stay caller-recorded
+### Refusals and remaining non-run owners
 
 - `Refused` (plan has blockers) never reaches `run` — it is rejected at plan
   time. The UI remains its recorder: `record_op` still appends `Refused`.
-- A handful of subsystems mutate **outside** `Backend::run` (conflict
-  resolution `execute_conflict_*`, terminal start, the branch-cleanup batch
-  `execute_delete_merged_branches`, PR merge). `run` cannot record those, so
-  those call sites use `record_op_persist`, which appends the entry itself.
-  This is the same "recording is a caller responsibility for non-run ops"
-  position, made explicit. Bringing these subsystems under the enforced
-  pipeline is future work.
+- Remaining non-run families (conflict resolution, terminal start and PR
+  merge) still use `record_op_persist`. They are not migrated by this recovery.
+- **2026-09-06 recovery:** stash drop now uses `Backend::run`, including stash
+  list/HEAD preflight, trust and one durable full-OID result; it remains exempt
+  from automatic snapshots because dropping a stash must not create a stash.
+- History undo/redo uses `Backend::run_history_move`: preflight, the existing
+  ref-only executor, then recording before return. Both full OIDs are kept;
+  the index and working tree are not rewritten.
+- Cleanup records in `Backend::execute_delete_merged_branches`. A failure to
+  open that backend is recorded by the background caller, before the UI
+  lifetime boundary. Remote stash drop likewise records at its transport
+  boundary, preserving the recovery OID from Git's actual output.
+- UI completion only presents these results. Cleanup uses the same busy,
+  panic and stale-tab guard as other async operations; its confirmed modal
+  closes before dispatch. Dropping a stale callback cannot discard a record.
+- `GitError::Preflight` preserves the underlying Display text while carrying
+  the failure stage. History/drop retain their existing localized preflight
+  labels without duplicating preflight or parsing error strings.
+- Recording still uses the existing append/error policy and schema; this does
+  not make failed filesystem writes durable. Other non-run owners remain a
+  separate migration, not a second implementation of this boundary.
 
 ### Schema fields (#333)
 
@@ -88,8 +102,8 @@ consume them are later work.
   A separate future issue owns point-in-time restore.
 - **Per-repo oplog files** — the single `~/.kagi/operations.jsonl` stays; no
   per-repo split.
-- **`Refused` recording redesign** and bringing non-run subsystems (conflict /
-  terminal / cleanup / PR merge) under `Backend::run`.
+- **`Refused` recording redesign** and bringing the remaining non-run
+  subsystems (conflict / terminal / PR merge) under `Backend::run`.
 
 ## Consequences
 
@@ -102,7 +116,8 @@ consume them are later work.
   strings remain in the toast/footer.
 - ADR-0084 undo/redo reads the oplog tail unchanged (it consumes `before` and
   `outcome`, which are untouched); the new fields are additive. The end-to-end
-  undo flow is GUI-driven and still needs human runtime verification.
+  undo flow is covered by the native main-thread runner for fixture-only
+  success, stale-head refusal and EN/JA preflight presentation.
 - One-per-op holds structurally for run-path ops (run is the sole writer). If a
   new non-run mutating subsystem is added and forgets `record_op_persist`, it
   loses log coverage (never a double-record) — a known, bounded risk until those

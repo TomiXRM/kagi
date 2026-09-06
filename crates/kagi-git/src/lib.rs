@@ -206,6 +206,9 @@ pub enum GitError {
     /// has not been trusted (ADR-0160). Reads are still allowed; mutating ops
     /// are refused until the user confirms trust. Carries the workdir path.
     Untrusted(String),
+    /// A recorded attempt failed before execution. Display preserves the
+    /// underlying error; callers can retain their preflight-specific UI label.
+    Preflight(Box<GitError>),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -215,6 +218,10 @@ impl GitError {
     /// trust-confirmation prompt instead of a plain error.
     pub fn is_untrusted(&self) -> bool {
         matches!(self, GitError::Untrusted(_))
+    }
+
+    pub fn is_preflight(&self) -> bool {
+        matches!(self, GitError::Preflight(_))
     }
 }
 
@@ -229,6 +236,7 @@ impl std::fmt::Display for GitError {
                 "repository is not trusted for writes (owned by another user): {}",
                 p
             ),
+            GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
             GitError::Other(msg) => write!(f, "git error: {}", msg),
         }
     }

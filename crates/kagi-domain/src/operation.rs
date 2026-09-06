@@ -69,6 +69,9 @@ pub enum Operation {
     StashPop {
         index: usize,
     },
+    StashDrop {
+        index: usize,
+    },
     CherryPick {
         id: CommitId,
     },
@@ -171,6 +174,7 @@ impl Operation {
             Operation::StashPush { .. } => "stash-push",
             Operation::StashApply { .. } => "stash-apply",
             Operation::StashPop { .. } => "stash-pop",
+            Operation::StashDrop { .. } => "stash-drop",
             Operation::CherryPick { .. } => "cherry-pick",
             Operation::MergeBranch { .. } => "merge",
             Operation::MergeIntoConflict { .. } => "merge",
@@ -210,6 +214,10 @@ pub enum OperationOutcome {
     MergeIntoConflict(Vec<String>),
     Rebase(RebaseOutcome),
     StashPop(StashPopOutcome),
+    /// The full commit OID of a deleted stash, recoverable with `git stash store`.
+    StashDrop {
+        oid: String,
+    },
     /// A snapshot restore. Carries the id of the savepoint taken of the
     /// pre-restore working tree — the recovery handle (#418). It must reach the
     /// oplog and UI so the overwritten state is recoverable.

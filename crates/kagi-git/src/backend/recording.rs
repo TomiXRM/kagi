@@ -1,4 +1,7 @@
-use super::{ops, Backend, GitError, Operation, OperationOutcome, OperationPlan};
+use kagi_domain::history::HistoryEntry;
+use kagi_domain::plan_note::HistoryMoveDir;
+
+use super::{ops, Backend, GitError, OperationOutcome, OperationPlan};
 
 /// Map a `Backend::run` dispatch result into the oplog [`OpOutcome`] (ADR-0149).
 ///
@@ -23,6 +26,12 @@ pub fn oplog_outcome_from(
                 dirty: format!("savepoint {savepoint}"),
             },
         },
+        Ok(OperationOutcome::StashDrop { oid }) => crate::oplog::OpOutcome::Success {
+            after: ops::StateSummary {
+                head: predicted.head.clone(),
+                dirty: format!("stash entry deleted (oid {oid})"),
+            },
+        },
         Ok(_) => crate::oplog::OpOutcome::Success {
             after: predicted.clone(),
         },
@@ -33,25 +42,53 @@ pub fn oplog_outcome_from(
 }
 
 impl Backend {
-    /// Build and append the oplog entry for an op run through [`Backend::run`]
-    /// (ADR-0149). `before` comes from `plan.current`; `actor`/`worktree` from
+    /// Build and append the oplog entry for a completed backend attempt
+    /// (ADR-0149). `before` comes from the plan; `actor`/`worktree` from
     /// this backend. Write failures are non-fatal (logged to stderr by
     /// `append_oplog`), mirroring the previous UI behaviour.
     pub(super) fn record_run_oplog(
         &self,
-        op: &Operation,
-        plan: &OperationPlan,
+        op: &str,
+        before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
     ) {
         let repo = self.path.display().to_string();
-        let entry = crate::oplog::OpLogEntry::new(
-            op.oplog_name(),
-            repo.clone(),
-            plan.current.clone(),
-            outcome,
-        )
-        .with_actor(self.actor)
-        .with_worktree(Some(repo));
+        let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
+            .with_actor(self.actor)
+            .with_worktree(Some(repo));
         let _ = crate::oplog::append_oplog(&entry);
+    }
+
+    /// Preflight, move the recorded branch ref, then persist one entry per attempt.
+    pub fn run_history_move(
+        &self,
+        dir: HistoryMoveDir,
+        plan: &OperationPlan,
+        entry: &HistoryEntry,
+    ) -> Result<ops::HistoryMoveOutcome, GitError> {
+        let result = self
+            .preflight_check(plan)
+            .map_err(|e| GitError::Preflight(Box::new(e)))
+            .and_then(|()| match dir {
+                HistoryMoveDir::Undo => self.execute_undo(entry),
+                HistoryMoveDir::Redo => self.execute_redo(entry),
+            });
+        let outcome = match &result {
+            Ok(moved) => crate::oplog::OpOutcome::Success {
+                after: ops::StateSummary {
+                    head: format!("branch '{}' @ {}", moved.branch, moved.to.short()),
+                    dirty: format!(
+                        "moved from {} to {}; index and working tree preserved",
+                        moved.from, moved.to
+                    ),
+                },
+            },
+            Err(error) => crate::oplog::OpOutcome::Failed {
+                error: error.to_string(),
+            },
+        };
+        let op_name = format!("{}-{}", dir.label_en_lower(), entry.kind.slug());
+        self.record_run_oplog(&op_name, &plan.current, outcome);
+        result
     }
 }

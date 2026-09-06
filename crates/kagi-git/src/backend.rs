@@ -730,6 +730,10 @@ impl Backend {
                 let mut backend = Backend::open(&self.path)?;
                 backend.plan_stash_pop(*index)
             }
+            Operation::StashDrop { index } => {
+                let mut backend = Backend::open(&self.path)?;
+                backend.plan_stash_drop(*index)
+            }
             Operation::CherryPick { id } => self.plan_cherry_pick(id),
             Operation::MergeBranch { target } => {
                 self.plan_merge_branch(target).map(|(plan, _)| plan)
@@ -814,8 +818,8 @@ impl Backend {
         if !self.trust.is_trusted() {
             let e = GitError::Untrusted(self.path.display().to_string());
             self.record_run_oplog(
-                op,
-                plan,
+                op.oplog_name(),
+                &plan.current,
                 crate::oplog::OpOutcome::Failed {
                     error: e.to_string(),
                 },
@@ -825,7 +829,9 @@ impl Backend {
 
         // ── Preflight: refuse if the repo changed between plan and execute. ──
         let preflight = match op {
-            Operation::StashApply { .. } | Operation::StashPop { .. } => {
+            Operation::StashApply { .. }
+            | Operation::StashPop { .. }
+            | Operation::StashDrop { .. } => {
                 // Stash ops also verify the stash list hasn't shifted.
                 self.preflight_check_stash(plan, plan.stash_count_at_plan())
             }
@@ -839,13 +845,13 @@ impl Backend {
             // ADR-0149: a preflight refusal is still a failed attempt — record
             // it so no write path has an unlogged hole, then propagate.
             self.record_run_oplog(
-                op,
-                plan,
+                op.oplog_name(),
+                &plan.current,
                 crate::oplog::OpOutcome::Failed {
                     error: e.to_string(),
                 },
             );
-            return Err(e);
+            return Err(GitError::Preflight(Box::new(e)));
         }
 
         // ── issue #393: bind worktree-config execution to the exact content the
@@ -863,7 +869,7 @@ impl Backend {
                 let outcome = crate::oplog::OpOutcome::Failed {
                     error: e.to_string(),
                 };
-                self.record_run_oplog(op, plan, outcome);
+                self.record_run_oplog(op.oplog_name(), &plan.current, outcome);
                 return Err(e);
             }
         }
@@ -874,9 +880,13 @@ impl Backend {
         // on). Skipped for RestoreSnapshot itself (it takes its own savepoint)
         // and when the plan is a no-op. A snapshot failure is logged but never
         // blocks the user's operation.
+        // A dropped stash commit is its own savepoint (`git stash store <oid>`).
         if self.auto_snapshot
             && plan.destructive
-            && !matches!(op, Operation::RestoreSnapshot { .. })
+            && !matches!(
+                op,
+                Operation::RestoreSnapshot { .. } | Operation::StashDrop { .. }
+            )
         {
             match ops::create_snapshot(
                 &self.repo,
@@ -951,6 +961,9 @@ impl Backend {
             Operation::StashPop { index } => self
                 .execute_stash_pop(*index)
                 .map(OperationOutcome::StashPop),
+            Operation::StashDrop { index } => self
+                .execute_stash_drop(*index)
+                .map(|oid| OperationOutcome::StashDrop { oid }),
             Operation::CherryPick { id } => {
                 self.execute_cherry_pick(id).map(OperationOutcome::Commit)
             }
@@ -1033,7 +1046,7 @@ impl Backend {
         // — GUI, MCP, CLI, headless, tests — produces exactly one entry per op.
         // The UI's `record_op` no longer writes the oplog (no double-record).
         let outcome = oplog_outcome_from(&result, &plan.predicted);
-        self.record_run_oplog(op, plan, outcome);
+        self.record_run_oplog(op.oplog_name(), &plan.current, outcome);
 
         result
     }
@@ -1834,12 +1847,7 @@ impl Backend {
                 error: e.to_string(),
             },
         };
-        let repo = self.path.display().to_string();
-        let entry =
-            crate::oplog::OpLogEntry::new("absorb", repo.clone(), plan.current.clone(), outcome)
-                .with_actor(self.actor)
-                .with_worktree(Some(repo));
-        let _ = crate::oplog::append_oplog(&entry);
+        self.record_run_oplog("absorb", &plan.current, outcome);
         result
     }
 
@@ -1930,14 +1938,36 @@ impl Backend {
 
     /// Branch Cleanup (ADR-0128): delete the targeted branches (remote halves
     /// first), re-verifying every tip OID. Per-branch failures are collected
-    /// in the outcome, not returned as `Err`.
+    /// in the outcome, not returned as `Err`. Records every attempt before returning.
     pub fn execute_delete_merged_branches(
         &self,
         plan: &OperationPlan,
         targets: &[ops::CleanupDeleteTarget],
     ) -> Result<ops::CleanupOutcome, GitError> {
-        self.require_trust()?;
-        ops::execute_delete_merged_branches(&self.repo, &self.path, plan, targets)
+        let result = self.require_trust().and_then(|()| {
+            ops::execute_delete_merged_branches(&self.repo, &self.path, plan, targets)
+        });
+        let outcome = match &result {
+            Ok(cleanup) => {
+                let summary = cleanup.oplog_summary();
+                if !cleanup.failed.is_empty() && cleanup.deleted.is_empty() {
+                    crate::oplog::OpOutcome::Failed { error: summary }
+                } else {
+                    // Partial deletion remains Success, with failures in the summary.
+                    crate::oplog::OpOutcome::Success {
+                        after: ops::StateSummary {
+                            head: plan.current.head.clone(),
+                            dirty: summary,
+                        },
+                    }
+                }
+            }
+            Err(error) => crate::oplog::OpOutcome::Failed {
+                error: error.to_string(),
+            },
+        };
+        self.record_run_oplog("branch-cleanup", &plan.current, outcome);
+        result
     }
 
     pub fn plan_discard(&self, paths: &[String]) -> Result<OperationPlan, GitError> {

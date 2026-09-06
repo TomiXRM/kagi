@@ -21,6 +21,7 @@ from kagi_checks.rules import (
     ManifestRule,
     Ratchet,
     Rule,
+    is_excluded,
     ui_lateral_crate_count,
     ui_lateral_hits,
     ui_lateral_manifest_hits,
@@ -246,6 +247,14 @@ def selftest() -> int:
                 print(
                     f"::error::gate {gate.name} matches a negative sample "
                     f"(false positive):\n{sample}"
+                )
+                failed = True
+        for path, expected_exclusion in (gate.path_samples if isinstance(gate, Rule) else ()):
+            actual = is_excluded(Path(path), gate.excludes)
+            if actual != expected_exclusion:
+                print(
+                    f"::error::gate {gate.name} path sample {path!r} exclusion was "
+                    f"{actual}, expected {expected_exclusion}"
                 )
                 failed = True
     for ratchet in RATCHETS:

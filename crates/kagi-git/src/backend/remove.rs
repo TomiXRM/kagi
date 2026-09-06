@@ -154,13 +154,19 @@ impl Backend {
         let mut progress = RemoveProgress::default();
         let mut opened = false;
         let result = catch_unwind(AssertUnwindSafe(|| -> Result<DiscardOutcome, GitError> {
-            let backend = Self::open(&plan.repo)?;
+            let mut backend = Self::open(&plan.repo)?;
             opened = true;
+            if fault == Some(RemoveFaultPoint::UntrustedMain) {
+                backend.set_trust_for_test(crate::trust::RepoTrust::Untrusted);
+            }
             backend.require_trust()?;
             if !plan.preview.blockers.is_empty() {
                 return Err(io("plan has blockers"));
             }
-            let linked = Self::open(&plan.target)?;
+            let mut linked = Self::open(&plan.target)?;
+            if fault == Some(RemoveFaultPoint::UntrustedTarget) {
+                linked.set_trust_for_test(crate::trust::RepoTrust::Untrusted);
+            }
             linked.require_trust()?;
             if Some(fingerprint(&backend.repo, &plan.name)?) != plan.fingerprint {
                 return Err(io("remove-worktree admin identity changed after plan"));
@@ -214,6 +220,11 @@ impl Backend {
                 after,
                 evidence: evidence(&progress, &error.to_string()),
             },
+            Ok(Err(error)) if progress.policy_rejected && !progress.started() => {
+                OpOutcome::Failed {
+                    error: error.to_string(),
+                }
+            }
             Ok(Err(error)) if progress.started() => OpOutcome::Partial {
                 after,
                 error: evidence(&progress, &error.to_string()),

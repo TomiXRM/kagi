@@ -35,6 +35,11 @@ SKIP_PARTS = frozenset({".git", "target", "vendor", "node_modules", ".claude", "
 LOC_CEILING = 800
 
 
+def is_excluded(rel: Path, excludes: tuple[str, ...]) -> bool:
+    """Whether a repo-relative path belongs to an excluded root directory."""
+    return any(rel.as_posix().startswith(exclude) for exclude in excludes)
+
+
 def iter_files(globs: list[str], excludes: tuple[str, ...] = ()) -> list[Path]:
     """Repo-relative files matching any glob, minus build output and `excludes`.
 
@@ -48,7 +53,7 @@ def iter_files(globs: list[str], excludes: tuple[str, ...] = ()) -> list[Path]:
             rel = path.relative_to(ROOT)
             if SKIP_PARTS & set(rel.parts):
                 continue
-            if any(ex in rel.as_posix() for ex in excludes):
+            if is_excluded(rel, excludes):
                 continue
             seen[rel] = None
     return list(seen)
@@ -70,6 +75,8 @@ class Rule:
     excludes: tuple[str, ...] = ()
     samples: tuple[str, ...] = ()
     samples_ok: tuple[str, ...] = ()
+    # (repo-relative path, should be excluded), checked by the selftest.
+    path_samples: tuple[tuple[str, bool], ...] = ()
     flags: int = re.MULTILINE | re.DOTALL
     # Skip matches on `#`-comment lines. Set for rules whose subject is shell
     # or YAML, where the words being banned also appear in prose explaining
@@ -140,12 +147,17 @@ RULES: tuple[Rule, ...] = (
     Rule(
         name="fault-test-only",
         summary="remove fault injection is called only from tests (#484 N1)",
-        pattern=r"(?<!fn )\bwith_fault_for_test\s*(?:\(|::)",
+        pattern=r"(?<!fn )\bwith_fault_for_test\b",
         globs=("**/*.rs",),
         excludes=("tests/",),
         message="with_fault_for_test callers must live under tests/",
-        samples=("job.with_fault_for_test(point)", "RemoveJob::with_fault_for_test(job, point)"),
+        samples=(
+            "job.with_fault_for_test(point)",
+            "RemoveJob::with_fault_for_test(job, point)",
+            "let f = RemoveJob::with_fault_for_test;",
+        ),
         samples_ok=("pub fn with_fault_for_test(mut self, point: Fault) -> Self { self }",),
+        path_samples=(("tests/app_remove_test.rs", True), ("src/contests/x.rs", False)),
     ),
     Rule(
         name="ui-git2",
@@ -540,7 +552,6 @@ RATCHETS: tuple[Ratchet, ...] = (
             ("fn f() {}\n" * (LOC_CEILING + 1), LOC_CEILING + 1),
             ("fn f() {}\n" * LOC_CEILING, 0),
         ),
-        excludes=("/tests/",),
     ),
 )
 

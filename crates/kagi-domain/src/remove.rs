@@ -45,6 +45,9 @@ pub struct RemoveProgress {
     pub observations: Vec<String>,
     pub termination_unknown: bool,
     pub config_granted: bool,
+    /// A pre-remove command was refused before it could begin. This is distinct
+    /// from owner trust: no mutation was admitted, so its receipt is Failed.
+    pub policy_rejected: bool,
 }
 
 impl RemoveProgress {
@@ -61,4 +64,9 @@ pub enum RemoveFaultPoint {
     FailAfterBackupBeforeDelete,
     FailAfterDirectoryDelete,
     PreRemoveTerminationUnknown,
+    /// Test seam: move the checked-out branch after its tip was captured.
+    MoveBranchBeforeDelete,
+    /// Test seams for the fresh-open owner-trust boundary.
+    UntrustedMain,
+    UntrustedTarget,
 }

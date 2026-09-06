@@ -1,6 +1,6 @@
 # #484 アプリケーション層 — 所有・実行・配送の設計案
 
-状態: **レビュー用 Draft / 未合意・未実装**。2026-09-06。
+状態: **レビュー用 Draft r2 / 最終合意待ち・未実装**。2026-09-06。PM Round 1・omp-plan R1〜R5・PM Round 1.5 裁定の反映版。
 読解基準: `origin/dev` = `85b0159a6d9455632db1c6cf758459d1b6e9558d`。
 この PR は文書だけ。コード・ビルド・実測は含まない。
 
@@ -13,8 +13,8 @@
 | 項目 | 本文の推奨案（PM 合意待ち） | 実証・後続で決めること |
 |---|---|---|
 | 所有境界 | application は進行・所属・配送、Backend/transport は安全判定・mutation・verify・記録 | family ごとの最小 API 名と内部配置 |
-| session | map が単独所有、active は `TabId`。tab と worktree session は別 | 全 `TabViewState` 移管の粒度・cache 容量 |
-| 排他 | 初期は同一 common Git directory の全 mutation を直列化 | index-only を worktree ごとに並行化する利益と証明 |
+| session | slice 1 は `KagiApp` 内の最小 `Sessions` が operation/lease/stale mark だけ所有 | #482/#488 で session map、`TabId`、incarnation、snapshot 共有を導入 |
+| 排他 | slice 1a は remove lease + `busy_op`、1b は editor save/staging/snapshot/fetch の admission 接続。横展開には両方必須 | 全移行後は common Git directory 単位。index-only の並行化はさらに後 |
 | 実行 | GPUI 非依存の owned job と完了メッセージ。spawn は adapter host | worker 導入は #314 の独立実証後 |
 | 記録 | mutation 境界からその実行の receipt を返す。UI は append しない | multi-process 採番・crash recovery journal は別設計 |
 | 配置 | root `src/app/` の小さな session/family module から | 本物の第 2 consumer が必要になった時点の crate 抽出 |
@@ -22,6 +22,8 @@
 
 `architecture.md` の古い「app に GPUI」「controller が oplog を書く」図を
 実装済みの事実として継承しない。S5 deferred と ADR-0121 の pane 分離は維持する。
+**§1〜7 は全体の到達設計を含む。slice 1 の実装範囲は §8 の列挙だけ**。
+後続の session/worker/全 mutation executor 移管を slice 1 の前提にしない。1a/1b の範囲と gate は §8。
 
 ## 1. 責務所有表
 
@@ -34,7 +36,7 @@
 | application family service | request→plan job、approval の束縛、admission、job と結果の対応、対象別 invalidation | trust の実装、preflight/verify の再実装、表示文言 | `ui/operations/*`、`blocking_ops.rs` の orchestration 部分。family ごとに小さく移管 |
 | Git backend / execution boundary | repository 解決、trust 再評価、policy 適用、plan/preflight/execute/verify、復元材料、記録 receipt | active tab、modal、toast、window 寿命 | `git::Backend::{plan,run,run_history_move}`、`backend/recording.rs`、`ops/*`。non-run の欠落をここで閉じる |
 | Git worker（後続） | Backend handle の thread 所有、直列実行、liveness、完了保証 | 承認 UX、session map、再実行の可否を推測すること | `git::{session,worker}.rs`。production submit caller は未配線。初回は使わない |
-| GUI adapter / host | input、`WriteOrigin` 解決、承認表示、GPUI Task の実行・main-thread 復帰、`TabView`、通知 | per-handler busy/世代 guard、記録、安全 policy のコピー | `ui/operations/mod.rs`、`modal_state.rs`、pane event/seed seam。host は window より長寿命 |
+| GUI adapter / host | input、`WriteOrigin` 解決、承認表示、GPUI Task の実行・main-thread 復帰、表示、通知 | per-handler busy/世代 guard、記録、安全 policy のコピー | slice 1 は **既存 `KagiApp` が host**。`ui/operations/mod.rs` に共通 `dispatch_job`。最後の tab close 後も Welcome として生存 |
 | CLI adapter | argv、明示承認、stdout/stderr、exit code | 独自 operation resolver/plan serializer、global oplog tail の推測 | `src/cli_main.rs`。共通契約の同期 consumer |
 | MCP adapter | tool envelope、接続ごとの plan store、承認 token の消費、protocol error | 独自安全 gate、再plan失敗後の旧承認再利用 | `crates/kagi-mcp/src/write.rs`、server の plan store |
 | transport / filesystem capability | PR/SSH の実行・結果照会・記録、editor の明示 FS 操作 | GPUI、active tab、安全な Git operation と偽ること | `git::{github,github_merge}`、`src/remote/mod.rs`、`ui/editor_fs_ops.rs` と editor 内 FS job。後二者は順次 UI 外へ |
@@ -45,48 +47,62 @@
 
 | 識別子 | 解決規約 | 寿命 / 再利用 | 用途 |
 |---|---|---|---|
-| `RepoId` | Backend が解決した canonical common Git directory を process 内で intern | session/operation が参照中は存続。再open時は incarnation を検証 | linked worktree 間で共有する refs/ODB/admin 資源 |
-| `WorktreeId` | `RepoId` + canonical per-worktree Git directory（main も明示）+ incarnation | 削除後は tombstone。同じ名前・path の再作成は別 incarnation | HEAD/index/status/conflict、書込対象 |
-| `TabId` | process 内の単調 ID。配列 index/path ではない | close で廃止、再利用しない | 選択・scroll・modal の表示先 |
+| `RepoId` | slice 1: Backend が解決した canonical common Git directory の値 | operation/軽量 owner record が参照中は保持 | linked worktree 間で共有する refs/ODB/admin 資源 |
+| `WorktreeId` | slice 1: `RepoId` + canonical per-worktree Git directory（main も明示） | locator を凍結し、remove 承認は下記 admin fingerprint にも束縛 | HEAD/index/status/conflict、書込対象 |
+| `TabId` / session incarnation | **slice 1 では導入しない**。#482/#488 で発行元・同一性検証を設計してから導入 | resource fingerprint とは別の session 世代 | 将来の表示・session 寿命 |
 | `OperationId` | 実行試行を一意に区別する opaque ID | plan digest/entry の連番とは別。receipt と完了を束縛 | 二重配送防止、失敗の照会 |
-| `RequestId` | session incarnation + read 種別 + 単調 revision | request 完了/置換で失効 | loading/data/error の一体所有 |
+| `RequestId` | slice 1 の plan は単調 request/revision。read の incarnation 付き ID は後続 | request 完了/置換で失効 | 将来 loading/data/error の一体所有 |
 | remote identity | transport authority（接続先/user/port 等）+ remote 側の解決済み repo/worktree identity | alias 名だけで同一視しない。再接続は検証 | ローカル path canonicalization と混同しない |
 
 Backend が canonicalize/discover する。UI の `canon(path)` の失敗時 raw-path fallback は
 表示・過去ログ検索には残せるが、**新規 mutation の排他 identity には使わない**。
 解決不能は refusal。削除予定の worktree の locator は dispatch 前に凍結し、完了時に再解決しない。
-外部で同じ path を置換された場合に備え、preflight は admin identity・対象 ref/OID・config digest
-も検査する。path の一致だけでは承認を復活させない。
+slice 1a の remove 承認は `<common>/worktrees/<name>` の **`(inode, st_birthtime)` +
+`gitdir` ファイル内容 + config SHA + HEAD OID** を plan 時に凍結し、preflight で再照合する。
+不一致/取得不能は Refused。path/name/OID/config が同じ再作成でも古い承認で削除しない。
+これが今回の resource incarnation の出所であり、session 世代は #482 の別設計。
+birthtime 等が得られない filesystem/platform は path-only に縮退せず拒否する。対応拡張時は
+代替 identity と ABA fixture を別途合意する。任意の外部改変に対する cross-process lock ではない。
 
 | 資源 | 初期の排他キー | 理由 / 限界 |
 |---|---|---|
-| local Git mutation（index-only、fetch、snapshot 含む） | `RepoId` | HEAD/index は別でも refs/stash/ODB/admin は共有。remove と sibling commit も競合させない |
+| local Git mutation（index-only、fetch、snapshot 含む） | 到達目標 `RepoId` | HEAD/index は別でも refs/stash/ODB/admin は共有。slice 1 は gate を通る旧操作とのみ相互排他（§7） |
 | worktree lifecycle | 管理元 `RepoId`、対象 `WorktreeId` は payload | tab の repo と削除される worktree は違う。管理元から記録・verify できる |
-| PR/SSH mutation | transport authority + repository identity。local 更新もあれば local `RepoId` を併用 | 複数キーは順序固定し、一括 admission。network timeout だけでは解放しない |
+| PR/SSH mutation | **後続**: transport authority + repository identity 候補 | 複数キー一括 admission/取得順序は slice 1 の設計・実装対象外。transport family で決める |
 | editor FS write | 所属 worktree の `RepoId`（移行後） | Git mutation と同じファイルを書き得る。plan を省略することと排他を省略することは別 |
 | read | write lease を保持しない。read revision で整合を管理 | 作業中の status は stale と表示。mutation 前の read が後着しても fresh に戻さない |
 
 busy は `HashMap<ConflictKey, OperationId>` 相当の admission 状態。キュー UX は作らず
-競合 request を Busy として拒否する。独立 repo は並行可。承認待ち中は lease を占有しない。
+競合 request を Busy として拒否する。独立 repo の並行許可は全移行後。slice 1 は保守的な global busy も使用。
+承認待ち中は lease を占有しない。
 これは **同一 process の協調排他**であり、別 CLI process・外部 Git を止める保証ではない。
 Git の lock、preflight、lease/OID 条件は Backend に残す。cross-process transaction lock は未合意。
 
 ### 2.2 状態と close
 
+slice 1 は第二の global/actor/Workspace を新設しない。
+
 ```rust,ignore
-// 配置/所有のスケッチ。実 API ではない。
+// slice 1: KagiApp の一フィールドに保持。snapshot/tab_cache は入れない。
 struct Sessions {
-    repos: HashMap<RepoId, RepositoryState>,
-    worktrees: HashMap<WorktreeId, WorktreeSession>,
     operations: HashMap<OperationId, InFlight>,
+    leases: HashMap<RepoId, OperationId>,
+    stale: HashSet<WorktreeId>,
 }
-struct GuiWorkspace {
-    tabs: HashMap<TabId, TabView>, // selection/scroll/focus/Entity/modal
-    order: Vec<TabId>,
-    active: Option<TabId>,
-    // Sessions は host 側に所有され、window の drop では落ちない。
-}
+// KagiApp { app_sessions: Sessions, ...既存 active_view/tab_cache/busy_op... }
+// completion と最小 owner 情報は operation に所属し、tab reset では消さない。
 ```
+
+最後の **tab** close は Welcome へ遷移して KagiApp が残る。
+KagiApp は window が生きている間だけの host。slice 1a は **実行中 lease がある間、window close と
+Quit を共通入口で保留**し、既存 dirty guard と同様に「操作中」の modal を提示する。
+native close/menu/shortcut/Quit の全経路を共通判定へ接続し、実行中に remove_window/cx.quit へ進めない。
+完了・停止確認と lease 解放後に閉じられる。停止不明は保留を続ける。
+tab close、window close、Quit は別々に実証する。Dock reopen は新しい KagiApp だが、その時点で旧 in-flight は無い。
+window より長寿命の registry/drain/mailbox は後続。強制 kill/電源断の完了保証はない。
+
+以下の full session/map/`TabView`/read 所有表は **後続 #482/#488/#489** の到達目標。
+slice 1 は既存 snapshot/reload/cache をそのまま利用し、operation 情報の第三のコピーを作らない。
 
 | 状態 | owner / 保持 | 切替・close 規約 |
 |---|---|---|
@@ -124,7 +140,7 @@ Draft(revision) → Planning → Ready(plan, owner, revision) → Approved
 | 事象 | 状態遷移・規則 | 記録 / lease |
 |---|---|---|
 | 入力変更 | revision++、旧 Ready/Approved を即時失効。Planning/PlanError は実行不能 | keypress ごとに mutation entry は作らない。現行 request の plan/open 失敗は boundary が失敗記録を返し、GUI は error modal とログに提示 |
-| replan 後着 | owner/incarnation/revision が一致した結果だけ Ready にする | 旧 plan を参考表示しても execute token を持たせない（#510） |
+| replan 後着 | owner/request revision が一致した結果だけ Ready にする（incarnation 検証は後続） | 旧 plan を参考表示しても execute token を持たせない（#510） |
 | approve | plan digest・resolved request・対象・policy revision・承認主体を束縛 | 二段階確認を飛ばせない。UI は private な Approved 値を直接構築しない |
 | confirm 再送 / busy | 受理済み token は再消費不可。競合は Busy、未dispatchなら再試行前に再検証 | 他 operation の lease を消さない。Busy は mutation entry ではない |
 | admission 成功 | 所属と revision を確認し token を消費、lease と job を同時に確立 | spawn 失敗も terminal outcome。中途半端な busy を残さない |
@@ -133,7 +149,7 @@ Draft(revision) → Planning → Ready(plan, owner, revision) → Approved
 | 実行例外 / panic | unwind は mutation 境界で捕捉。未変更と証明不能なら `Unknown` | 使用 handle を再利用しない。停止が確実なら lease 解放、要照会状態は残す |
 | タブ切替 / close | Draft/Ready の承認は失効、Running は継続 | 記録と lease は tab と無関係。表示配送は §4 |
 | timeout / channel loss | timeout は実行停止の証拠ではない。Cancelling/Unknown の区別 | 生存不明 job の lease を時間だけで解放しない。自動 mutation 再送禁止 |
-| 最後の window close | Welcome への tab close と process quit は別。host が完了を drain | Quit は進行中確認・待機。強制 kill/電源断の完了記録は保証しない |
+| 最後の tab close / window close / Quit | tab close は Welcome、window close/Quit は実行中 lease があれば共通入口で保留 | 完了・停止確認後は閉じられる。強制 kill/電源断は保証外 |
 
 ```rust,ignore
 enum PlanState<P> {
@@ -163,24 +179,49 @@ CLI/MCP も token を実行開始前に消費する。失敗後も同じ token �
 |---|---|
 | mutation → recording | Backend/transport が success/partial/refusal/error と recovery を確定し append を試みる。UI 到着前に終了 |
 | Backend open 前の失敗 | execution boundary の factory が凍結済み target/actor/OperationId で記録。Backend が存在しなくても UI writer へ戻さない |
-| job → host | window の弱参照ではなく host-owned mailbox へ完了を送る。operation map は receipt を受理し、該当 lease だけ解放 |
+| job → host | slice 1 は `KagiApp::dispatch_job` が OperationId ごとの completion を受け、**表示 guard より先に** `apply(&mut app_sessions, completion)`。global mailbox/別 actor は作らない |
 | active owner tab | 既記録結果の toast/footer/oplog と必要な error modal。snapshot 更新は別 read request |
-| inactive owner session | read を stale、receipt を owner 通知として保持。現在の別 repo の footer/modal/selection は変更しない |
-| owner tab が close 済み | closed tab に callback は送らない。pinned operation を終端化して軽量な通知を host に残し、session を解放 |
-| Welcome | repo 名付き完了/失敗通知と既記録ログへの導線のみ。閉じた repo を暗黙に reopen しない |
-| 同じ path を reopen | 新 TabId/incarnation へ旧 modal/selection を適用しない。identity が確認できれば read を新しく取得、ログは明示照会 |
+| inactive owner | slice 1 は Sessions に stale mark、repo 名付き toast/既記録ログへの導線。現在の別 repo の footer/modal/selection は変更しない |
+| owner tab が close 済み | closed tab に callback は送らない。operation を終端化し KagiApp に対象付き通知。失敗/partial/record failure は既存 error modal への pending 表示要求も保持 |
+| Welcome | repo 名付き通知と既記録ログ、失敗は対象明示の error modal。閉じた repo を暗黙に reopen しない |
+| 同じ path を reopen | slice 1 は既存 switch_generation の不一致で旧 modal/selection を適用しない。新しい read と明示ログ照会。TabId/incarnation は後続 |
 | 同じ completion を再配送 | OperationId で既受理なら no-op。UI ring-buffer にも重複追加しない |
 
-表示の破棄条件は `(TabId, attachment generation, WorktreeId, RequestId)` の不一致。
-tab switch の global generation を理由に **operation の終端化**を破棄しない。
-read completion の stale 判定も application に集約し、pane は request stamp を seed/event で受け渡す。
+slice 1 の GUI attachment は既存 **`(repo_path, switch_generation)`**。
+Delivery は owner `RepoId/WorktreeId` と発行時 attachment を持つ。adapter の共通 bridge が
+現在 attachment と一致する場合だけ footer/modal を反映する。**operation の終端化は常に先**。
+背景 tab close で generation が変わる #488 自体は直さず、完了/記録は届き表示だけ落ちるところまで。
+read completion の全面移管と request stamp 統一は #482/#489 で行う。
+失敗の modal は他 repo の操作確認として開かない。KagiApp の既存 modal が空なら対象 repo を
+明記して提示し、別 modal がある間は receipt/OperationId に束縛した表示要求を保留する。
+repo を選び直す承認 modal の復活ではなく、既記録エラーの説明である。toast のみで失敗を終わらせない。
+
+| `Delivery::Invalidate(WorktreeId)` の受取状態 | slice 1 の adapter 動作 |
+|---|---|
+| owner が現在 active | 既存 `reload(cx)` を呼ぶ。表示 attachment が stale でも、同じ owner への read 更新は許す（旧 modal は戻さない） |
+| owner が inactive | Sessions に stale mark。次の `switch_repo` でその owner に戻る際、既存 reload を必ず起動。失敗時は stale を残す |
+| owner/対象が closed・削除済み | 勝手に reopen しない。既存 cache の該当データを失効、管理元への invalidation と repo 名付き通知。次回 open は新規読込 |
+
+remove は管理元と対象を別々に invalidate する。削除された L を無条件 reload せず、登録一覧は
+管理元 A の reload で更新する。失効通知は read ownership の移管ではなく既存 reload への接続。
 
 記録の「必ず」は **すべての受理した試行が recording boundary に到達する設計**の意味。
 現行 JSONL は disk-full・process kill に対する exactly-once durable transaction ではない。
 append 失敗を successful receipt にしない。panic 直前の副作用を完全復元するには別の journal が必要であり、
-本件の initial slice は通常結果・捕捉可能な unwind・UI 消滅の境界を対象とする。
-停止確認済み Unknown は busy lease を解放しても、対象を `NeedsReconcile` として新 mutation を拒否する。
-対象の実状態を再照会し、必要な復旧/新 plan を明示承認するまで通常状態には戻さない。
+slice 1 は通常結果・捕捉可能な unwind・tab 消滅（KagiApp 生存）の境界を対象とする。
+slice 1 の `NeedsReconcile` 発生源は **副作用領域の捕捉可能 unwind と pre_remove の結果/停止不明**。
+副作用開始は削除ではなく config grant / pre_remove の開始を含む（§8.1 実行証跡）。
+PM 裁定により、pre_remove 開始後の既知の失敗は Partial、結果/停止不明は Unknown。
+削除前・unwind 以外という理由で単純 Failed に限定しない。
+停止確認後は busy lease を解放し、新 app admission は対象を要確認として拒否する。
+出口は **read（管理元の再 snapshot/status、対象登録/存在の照会）→確認 modal の acknowledge**。
+read 失敗では留まり、**実行主体の停止確認済み**かつ成功した照会結果を acknowledge して通常状態へ戻す。
+これは mutation/復旧の承認ではない。snapshot/status の成功は process 停止の証明には使わない。
+復旧が必要なら通常状態へ戻した後に別 request/plan を作る。自動再実行はしない。
+legacy bypass まで一律保護する保証は slice 1a にない。1b の共通 admission も要確認状態を拒否する（§7）。
+pre_remove の直接 child 終了と子孫 process の停止は区別する。停止不明なら新 app admission を拒否し続け、
+**lease を保持し read+ack で解除しない**。現行 runner の process-tree 制限は #507 に委ね、slice 1 で supervisor は作らない。
+PR/SSH/worker channel loss からの reconcile は後続 family の設計事項。
 
 ## 5. GUI / CLI / MCP の共通実行契約
 
@@ -193,7 +234,7 @@ append 失敗を successful receipt にしない。panic 直前の副作用を�
 | actor | adapter identity から `Human/Cli/Mcp`。tool 引数で任意 actor に偽装させない |
 | auto_snapshot | GUI は既存 Settings を host が読む。CLI/MCP は当面明示 policy（default on）、GUI 設定ファイルを暗黙に読まない |
 | policy の凍結 | plan 時に適用値を提示し approval に束縛。承認後に安全関連設定が変われば再plan。worker の起動時 default に依存しない |
-| trust | 評価は Backend/transport が **実行直前**に対象について行う。plan 時の評価は表示用。長寿命 Backend も再評価。application が trusted bool を権限として与えない |
+| trust | slice 1 は job 内で dispatch 後に新しく `Backend::open` し、その評価と専用実行入口の gate を使う。RepoSession の長寿命 read handle は mutation に使わない。worker 導入時の再評価は後続。application が trusted bool を権限として与えない |
 | worktree config trust | repo owner trust とは別。表示した config SHA への明示承認だけ許可。grant 後も実行直前に digest を再検証 |
 | 対象 worktree | `WriteOrigin`/argv/server scope から解決済み Target。実行時の active tab から引き直さない |
 | verify | family の実状態確認は Backend の記録前。GUI reload 成功を verify 代わりにしない |
@@ -238,6 +279,20 @@ receipt の導入だけで解決したと主張しない。OperationId の永続
 記録の再試行を将来提供する場合も record-only に限定し、mutation を再送しない。
 確認応答は成功時だけでなく refusal/partial/record failure も report を失わない。
 
+| ExecutionReport / Recording | 永続 JSONL (`OpOutcome`) と receipt の対応（slice 1a） |
+|---|---|
+| Success / Refused / NotStarted Failed | 既存 Success / Refused / Failed variant。未観測 after を予測で埋めない |
+| Partial / 停止済みの pre_remove 失敗 / verify failure | 既存 `Partial { after, error }`。after に取得済み path→full blob OID・branch full OID、error に stage/観測済み step/再試行リスクを保持 |
+| Unknown / 副作用領域の unwind / 停止不明 | **`Unknown { after, evidence }` を OpOutcome に追加**。after に同じ復元材料、evidence に stage・step・停止状態・検証結果を保持。Partial への隠し encoding はしない |
+| Recording::Appended | 上記 outcome を含め、その append が書いた実 entry を RecordReceipt に返す |
+| Recording::Failed | 同じ outcome/evidence の attempted entry と append error。過去 tail を返さず、mutation の再実行は禁止 |
+| Recording::Exempt | §5.3 の明示例外のみ。remove は該当しない |
+
+既存 variant と JSON 表現は変更せず、旧 JSONL の parse/serialize 互換を保つ。
+新 Unknown は全 reader/UI の網羅処理で非成功として扱い、手書き serializer/parser も同時に対応する。
+古い実行バイナリが新 variant を読めるとは保証しない。新旧 golden round-trip と
+Partial/Unknown の after から full OID を取り出す復元 test を実証に含め、ADR-0149 へ追記する。
+
 ### 5.3 public mutation の安全要件表
 
 **以下は移行先の契約。現状すべて満たすとの主張ではない。**
@@ -260,7 +315,7 @@ T=実行時 trust、P=plan/承認、F=対象別 preflight、V=実状態 verify�
 | `execute_conflict_continue/save/abort/skip`、`execute_stash_conflict_abort`、`stage_conflict_resolution`、`execute_dir_file_resolution` | 必須 | continue/abort/skip は plan、save は明示編集承認 | conflict/index/buffer revision、path | index/session/内容 | 既存 conflict autosave/ODB/ORIG_HEAD。WT 破棄は保護必須 | 各 boundary の既存 writer を一つに集約 |
 | `execute_delete_merged_branches` | 必須 | 必須 | 各 local/remote tip | 両側の結果を個別確認 | full deleted tips | 既存 Backend owner。partial を保持 |
 | `execute_absorb` | 必須（現状欠落） | AbsorbPlan 必須 | distribution/HEAD/index | `verify_absorb` を完了条件にする | destructive 用 auto snapshot を適用 | 既存 recorder + receipt |
-| `stage_file(s)`, `unstage_file(s)` | 必須 | 明示クリック/要求。modal plan 免除 | worktree/path/index/content 条件 | index の対象差分 | WT/refs 非変更なので自動 snapshot 免除 | index-only 例外として durable oplog 免除、失敗 report は返す |
+| `stage_file(s)`, `unstage_file(s)` | 必須 | 明示クリック/要求。modal 表示は免除、対象 plan は boundary で束縛 | worktree/path/index/content 条件 | index の対象差分 | WT/refs 非変更なので自動 snapshot 免除 | 到達契約は一件記録。現行の未記録を恒久例外にしない（slice 1 は変更しない） |
 | `fetch_remote`, `fetch_remote_branch` | 必須 | 明示操作/auto-fetch policy。modal 免除 | remote/refspec | 更新 refs | WT 非変更、自動 snapshot 免除 | fetch boundary に一件（auto は actor/source 明示） |
 | `create_snapshot` | 必須 | 明示要求、plan modal 免除（ADR-0154） | 対象/保存 ID | ref/tree | 自身が復元点。再帰 snapshot 禁止 | 単独要求は一件、auto 子処理は親 report に束縛 |
 | `delete_snapshot`, `prune_snapshots` | 必須（delete は現状欠落） | delete は対象確認、prune は cap policy の承認 | ID/ref/cap | 残存 ref | snapshot 再作成しない（保持上限が無効になる） | 単独一件 / auto は親に削除 ID を含める |
@@ -271,13 +326,19 @@ T=実行時 trust、P=plan/承認、F=対象別 preflight、V=実状態 verify�
 | editor save/overwrite・create/rename/trash/gitignore | FS capability の対象制限（Git owner trust の代用ではない） | 保存は直接意思、overwrite/trash は明示確認 | containment/.git 禁止、file/buffer revision、衝突 | 保存 bytes/移動先 | buffer/Trash。自動 Git snapshot 免除 | 通常保存は oplog 免除（ADR-0120）、他 FS も Git oplog 外の明示例外。typed FS report/通知 |
 
 例外は enum/契約として明示し、`destructive: bool` 一つから全 gate を推論しない。
-index/FS の例外でも admission・失敗通知・対象固定は免除しない。
+index の modal/snapshot 例外、FS の明示例外でも admission・失敗通知・対象固定は免除しない。
+index-only の oplog 免除は r1 から撤回する。AGENTS.md の Git write 記録原則を優先し、
+例外化したい場合は別 ADR/規則変更の合意が必要。slice 1 は staging 実装も記録 UX も変えない。
 config/draft の保存、worktree port 割当、conflict autosave はそれぞれ所属 service の metadata write。
 worktree steps/port 割当は親 lifecycle report に帰属し、独立した未記録の Git mutation にしない。
 terminal は自由な外部 shell であり Kagi の承認済み mutation API ではない。terminal-start 記録は
 host の起動監査として残し、その中の任意コマンドを本契約が保護すると主張しない。
 
-現状の追加注意: `Backend::run` の `CreateBranchWithCheckout` arm の `?` は末尾記録を迂回し得る。
+現状の追加注意: `fetch_remote`/`fetch_remote_branch` の facade は `require_trust` を呼ばない。
+#502 の public mutation gate 棚卸しに含めるべき既存差分。ただし実行は Git CLI へ委譲されるため、
+OS 所有者を変更した実害再現と facade の gate 欠落は別の主張。untrusted test seam で refusal と refs 不変を検証する。
+`Backend::run` の `CreateBranchWithCheckout` arm の `?` は末尾記録を迂回し得る
+（独立 bug [#522](https://github.com/TomiXRM/kagi/issues/522)、本設計の合意待ちにしない）。
 また `blocking_ops` の verify は run の記録後に実行される。共通化時は family の実行結果を
 内側で捕捉し、verify/partial も含めて外側 recorder に一度到達させる。receipt wrapper を
 既存 run の外に足して二重記録する方式にはしない。
@@ -287,9 +348,9 @@ host の起動監査として残し、その中の任意コマンドを本契約
 | 現行要素 | 再利用するもの | 新設 / 撤去するもの |
 |---|---|---|
 | `Backend` / `ops/*` | plan/preflight/execute triples、安全判定、実 verify、recording helper | family report/receipt を既存実行入口へ追加。生 executor の外部 caller を移して公開縮小 |
-| `git::RepoSession`（ADR-0107） | foreground read handle (`Rc<Backend>`) | application `WorktreeSession` の subordinate resource にする。session map で保持し tab return の再openをなくす。`Rc` を job に送らない |
+| `git::RepoSession`（ADR-0107） | foreground read handle (`Rc<Backend>`) | slice 1 では変更しない、`Rc` を job に送らない。後続 session map slice で subordinate resource にする |
 | `RepoWorker` | 将来の worker 候補と既存テスト | 初回は配線しない。production caller ゼロを「全 mutation 配線済み」と書き換えない |
-| `finish_op_on_main` / `reject_if_busy` | 既存 panic/stale/busy の regression intent と klog 契約 | 移行 family は app admission/apply + 共通 GUI bridge へ。旧 helper は未移行 family だけ、最後に削除 |
+| `finish_op_on_main` / `reject_if_busy` | 既存 panic/stale/busy の regression intent と klog 契約 | slice 1 の remove は `KagiApp::dispatch_job` へ。reject は busy/leases の両方を見る。旧 helper は他 family に残す |
 | `blocking_ops.rs` | 同期実行 core、family 別 verify、対象 path 引数 | Settings/i18n/modal 型依存を除去。policy は引数、verify は Backend、表示整形は adapter。32 caller は #314 の歴史値で今回の再計測値ではない |
 | `record_op` / `record_op_persist` | toast/footer/panel の表示 | migrated family は receipt 表示。Refused の隠れ append も通さない。全移行後 persist フラグと UI writer を削除 |
 | `WriteOrigin` / `write_repo_for` | #476 の panel と editor の区別 | GUI が Target を作る一箇所へ接続。dispatch 後の repo_path 再読禁止 |
@@ -313,7 +374,7 @@ module 境界は Cargo では強制できないので、実証 PR で `ci` の u
 
 ```rust,ignore
 // family ごとの owned request。Backend::open は job 内の execution factory。
-fn prepare_remove(session: &mut Sessions, approved: Approved<RemovePlan>)
+fn prepare_remove(session: &mut Sessions, approved: Approved<RemovePlan>, legacy: LegacyBusy)
     -> Result<RemoveJob, AdmissionError>;
 // app の job は GPUI を知らず、Send な値だけを保持する。
 impl RemoveJob {
@@ -323,9 +384,12 @@ fn apply(sessions: &mut Sessions, completion: Completion<RemoveOutcome>)
     -> Vec<Delivery>; // 所属・lease・重複配送判定。append はしない
 ```
 
-GUI host の **共通 bridge 一箇所**だけが job を background spawn して mailbox に送り、
-main-thread で `apply` する。task の join observer は window の `WeakEntity<KagiApp>` に所有させない。
+slice 1 は **`KagiApp::dispatch_job` 一箇所**だけが background spawn と main-thread 復帰を担当する。
+既存 `cx.spawn` の KagiApp update 内で、表示 stale guard に関係なく `apply` を先に呼ぶ。
+Sessions は KagiApp の一フィールドであり、別 global/mailbox/actor を設けない。
 spawn 拒否・未実行 job drop も OperationId 付き terminal event にして lease を解放する。
+Entity 自体が破棄された場合は update できないが、job 内の記録は update の到達を条件としない。
+通常の window close/Quit は §2.2 の lease guard で保留する。強制終了を跨ぐ runtime drain は保証外。
 CLI は同じ job を inline 実行して同じ report を使う。テストは手動 job runner と mailbox で順序を制御する。
 初回から汎用 executor trait/万能 closure registry は作らない。閉じた family job enum/owned struct で十分か実証する。
 
@@ -363,7 +427,7 @@ M = primary session の実機確認（raw Enter/Esc/ボタン、応答性、対�
 | pull/push/branch FF/force-lease: `operations/{pull_push,force_lease,branch}.rs` | app network → run | 同期 confirm、network 結果の文字列だけの変換 | async（network）。G offline remote、E/M、Unknown |
 | stash push/apply/pop/drop: `operations/stash.rs` | app stash → run | sync apply/pop、drop の UI Refused writer | async（worktree 全体）。G/E/M、stash OID/競合後続 |
 | discard: `operations/discard.rs`、editor tree menu | app discard → run | target/record/verify glue | async（file I/O）。G/E/M、Trash と混同しない |
-| history undo/redo: `operations/history.rs::confirm_history` | app history → `run_history_move` | UI preflight/stack 更新の所属判定 | async 推奨（ref-only でも I/O）。G/E/M、index/WT 不変 |
+| history undo/redo: `operations/history.rs::confirm_history` | app history → `run_history_move` | UI preflight/stack 更新の所属判定 | sync 維持（移管後に計測）。G/E/M、index/WT 不変。#493 と scheduling 変更を混ぜない |
 | worktree create/open: `operations/worktree.rs`、`blocking_ops::create_worktree_blocking` | app worktree → run | steps/ports/trust の UI orchestration | async（command steps）。G/E/M、config SHA・失敗後作成物 |
 | worktree remove: `confirm_remove_worktree` | app worktree → 専用 recorded run | UI persist/busy/on_done と main-thread trust write | async 維持。初回 G/E/M（§8） |
 | worktree lock/unlock/prune/repair: 同ファイル confirm 群 | 同じ app family → 専用 backend boundary | sync UI executor/record | 記録所有を先に移し、当初 sync 可（短い admin 操作）。遅延測定で async。G/E/M |
@@ -388,14 +452,21 @@ headless は同じ core の同期 consumer にし、既存 `[kagi]` 契約を保
 古い mutation confirm を温存しない。
 
 横展開の各 PR はこの表の一行（必要ならその一部）について、実 caller の移行と旧入口の削除を
-同じ diff で示す。全 family が終わるまでは legacy と新 admission の接続が必要:
-**初回は新 remove が既存 busy latch も共通 bridge 経由で占有し、legacy 実行中の新 dispatch も拒否する**。
-残存 legacy は保守的に全 repo を塞ぐ。新旧別 mutex にして並行 mutation を許さない。
-per-RepoId の並行許可は全 write 入口（staging/auto-fetch/FS を含む）の協調が揃った後に有効化する。
-現行 `do_stage_all`/`create_snapshot_now` は busy gate を通らず、fetch は別 in-flight を持つ。
-したがって既存ラッチを立てるだけでは十分ではない。初回実証の前提として共通 admission bridge に
-これらの入口を接続し、進行中 fetch/editor save も把握する（実行本体の移設は不要）。
-それが小さな slice に収まらなければ admission の先行 PR を切る。未配線のまま remove の排他完成を宣言しない。
+同じ diff で示す。slice 1 は **保守的な二重化**で既存 gate を通る legacy と共存する:
+
+- `dispatch_job` が lease 確立と同じ main-thread turn で既存 `busy_op` も立てる。
+- `reject_if_busy` と新 admission の判断入力は `busy_op.is_some() || !leases.is_empty()`。
+  app は `LegacyBusy` という値を受け、GPUI/KagiApp フィールドを直接読まない。
+- completion は OperationId を照合して自身の lease を解除し、bridge が対応する busy mirror を解除する。
+  duplicate/stale completion が別 operation の busy を消すことはない。
+- **staging/snapshot/fetch/editor save の先行接続を slice 1a の前提から外す**。
+
+slice 1a に残る既知の穴: `do_stage_all` 等の staging と `create_snapshot_now` は busy を通らず、
+fetch は別 in-flight、editor save は pane 側 job を持つ。fetch が既に走っている場合の逆方向など、
+既存 gate 外の競合を 1a は新たに防がない。**横展開前の slice 1b** で admission のみ接続する。
+従って **remove を含む全 mutation の排他完成を宣言しない**。既存の安全 preflight/backup を弱めず、
+新 bridge で既存 gate 内の相互排他・結果所属・記録を実証する。
+全 write の admission 移行完了後にのみ per-RepoId の独立 repo 並行許可を有効化する。
 
 ## 8. 最初の縦断実証: worktree remove
 
@@ -407,23 +478,156 @@ per-RepoId の並行許可は全 write 入口（staging/auto-fetch/FS を含む�
 
 ### 8.1 最小 cut
 
-| 変更点（後続実証 PR のみ） | 完了条件 |
+| slice 1a — 記録・配送・寿命・協調入口の実証 | 完了条件 |
 |---|---|
-| identity / operation registry の最小 slice | 管理元 repo、対象 worktree、origin tab、input revision、lease を window なしで保持 |
-| 専用 remove execution boundary | open failure/trust/config grant/preflight/既存 execute/verify/record を一箇所へ。`DiscardOutcome` の backup/partial を再利用 |
+| identity / operation registry の最小 slice | 管理元 repo、対象 worktree、input revision、lease を window なしで保持。admin fingerprint を承認に束縛。GUI origin は既存 `(repo_path, switch_generation)`、TabId/session incarnation は導入しない |
+| 専用 remove execution boundary | open failure/trust/config grant/preflight/既存 execute/verify/record を一箇所へ。外側所有の RemoveProgress と永続 Unknown を追加 |
 | report/receipt | append 成否を結果へ。管理元 repo + 削除対象 worktree を区別して記録。path 削除後も照会可能 |
 | GUI adapter | ボタン/Enter → 同一 approval/bridge。UI の remove 用 writer と個別 busy/世代 guard を削除 |
-| legacy interoperability | §7 の互換 admission を共通 bridge で検証。staging/snapshot/fetch/editor save の bypass を先行解消。新規 family の UI がラッチを手でコピーしない |
+| legacy interoperability | §7 の lease + busy mirror を共通 bridge で検証。既存 bypass は残存を明記し先行解消しない。新規 family の UI がラッチを手でコピーしない |
+| host lifetime | 実行中 lease がある間 window close/Quit を共通入口で保留。最後の tab close は Welcome で継続 |
 
-**含めない**: worker 配線、全 snapshot/cache の移管、全 modal の書換え、CLI/MCP の remove tool 新設。
+**1a に含めない**: worker 配線、全 snapshot/cache の移管、TabId/session incarnation、
+window より長寿命の registry/global host/mailbox、複数キー一括 admission、
+editor save 等の admission 接続（1b）、全 modal の書換え、CLI/MCP の remove tool 新設。
+
+| slice 1b — 横展開前提の admission 接続（executor は移さない） | 完了条件 |
+|---|---|
+| editor save（最優先） | pane の dispatch 前に共通 write lease を取得。remove backup→delete 間の save は Busy、save が先行中なら remove が Busy。保存済み bytes を失わない |
+| staging | single/batch、panel/editor の入口を同じ admission へ。既存同期実行中も lease を保持 |
+| create_snapshot_now | capture dispatch 前から完了まで lease。既存 snapshot 本体/記録契約を維持 |
+| fetch | manual/auto/branch 各 dispatch と既存 in-flight を lease に接続。先行 fetch と後続 remove も逆方向も Busy |
+
+app の `write_lease(path)` は単なる busy 問い合わせではなく、identity 解決と Busy/NeedsReconcile 判定を伴う
+**予約の取得**。GUI 共通 bridge が既存 busy mirror と同じ turn で確立し、owned guard を job 完了/停止確認まで保持する。
+check→spawn の間に別 writer が入る TOCTOU を作らず、既に走る writer も追跡する。
+pane は host から予約された job を受け取ってから保存を dispatch する。未知停止時は guard の通常 Drop で解放しない。
+独立 repo の並行許可や executor 移管は 1b に含めない。1a だけで「排他を実証した」と呼ばず、横展開 gate は 1a+1b。
+
 同じ remove request/policy を window 無しの consumer で実行し、GUI と同じ report を得ることを示す。
 CLI/MCP の既存 operation resolver/receipt 消費は #509/#505 の後続 slice で本物の両 consumer を移す。
 この一 family の成功だけで #484 全体を close しない。
+
+#### 副作用の段階・unwind を跨ぐ owner（第2レビュー R2/R3）
+
+`RemoveProgress` は **Backend execution boundary が catch_unwind の外側で所有**する。
+既存 executor と pre_remove runner に限定的な `&mut RemoveProgress` を渡し、
+app/GUI ではなく Git/transport 層が各副作用の前後に更新する。返却 `DiscardOutcome` だけに依存しない。
+これは in-memory の実行証跡であり、crash journal/任意 command rollback ではない。
+
+```rust,ignore
+struct RemoveProgress {
+    stage: RemoveStage,
+    backups: Vec<(PathBuf, CommitId)>, // full blob OID、取得直後に外側へ保存
+    branch_tip: Option<CommitId>,
+    // step の開始/終了/停止証拠、config grant、verify の観測も保持
+}
+enum RemoveStage {
+    NotStarted, PreRemove { step: usize }, BackupCaptured,
+    DeletionStarted, AdminPruned, BranchDeleted, Done,
+}
+```
+
+段階順は上記 enum。optional branch delete は飛ばせる。不可逆副作用の**直前**に開始情報を更新し、
+完了済み stage は成功を観測してから進める。例えば prune 呼出前は DeletionStarted + prune開始、
+成功後だけ AdminPruned。branch tip は削除前に保存する。NotStarted のまま config grant してはならず、
+grant の開始/成否も progress に保持し、それ以後の失敗を未変更扱いしない。
+
+| stage / 証跡 | 観測済み副作用・保存値 | 失敗 / 再試行の安全性 |
+|---|---|---|
+| NotStarted | 凍結 target・plan fingerprint、副作用未開始 | open/trust/preflight 拒否は Failed/Refused。再試行も新 plan/承認が必要 |
+| PreRemove { step } / config grant 証跡 | grant の成否、step index/kind、開始・終了、判明している exit/停止状態 | 途中 Err/停止済み timeout は Partial、停止不明は Unknown。副作用を繰り返し得るため自動再試行不可 |
+| BackupCaptured | 取得ごとに path/full blob OID を外側へ保存、branch name/full tip 捕捉 | panic でも取得済み材料は残る。先行 step があり自動再試行不可 |
+| DeletionStarted | 削除直前の stage、観測した消失状態 | Err は Partial、内部 unwind は Unknown。自動再試行不可 |
+| AdminPruned | admin prune 成功、次の branch 削除開始情報 | 先行副作用を保持。自動再試行不可 |
+| BranchDeleted | optional branch 削除成功、削除前 full tip | 復旧は別 plan。自動再試行不可 |
+| Done / verify 証跡 | 登録/path/branch の観測結果または検証 error | verify 失敗は Partial/Unknown、成功観測だけ Verified。再試行不要/自動再試行不可 |
+
+任意 command の全外部効果を列挙できるとは主張しない。step 開始・終了・停止証拠と
+「外部効果未確認/再実行リスク」を report に保持し、timeout 後の自動再試行を禁止する。
+既知の partial copy 等は停止済みだが、child だけ kill/reap した timeout は process-tree 停止確認済みにしない。
+
+永続化は §5.2 の単一対応表に従う。receipt は **progress 由来の after/evidence を含め実際に append した entry**。
+append 失敗でも attempted entry と証跡を返し、過去 tail で代用しない。
+
+保持した裸の ODB blob/OID は ref-backed snapshot ではなく、GC 後の到達可能性を保証しない
+（ADR-0154 が既に記す制限、第1自動レビュー指摘）。slice 1 は既存 backup の記録消失を閉じる範囲。
+**GC 後も復元可能という保証は未達**と明記する。専用 recovery refs/snapshot と retention は別の安全設計として
+PM に切り分けを求め、今回の復元 test を GC 耐性の証拠にはしない。
+
+#### window なしで使う唯一の公開 API 列（B8）
+
+以下は仮シグネチャだが、この呼出列を integration test と GUI で共有することを実証条件とする。
+Approved/PlanToken は外部で直接構築できず、`PlanState::Ready` は発行済み token の観測面。
+state をテスト側で書き換えて承認を迂回する seam は作らない。
+
+```rust,ignore
+let mut sessions = Sessions::new();
+// plan_remove は read-only の PlanJob を返す。GUI は背景、G は inline。
+let plan_job = plan_remove(&mut sessions, request, policy.clone())?;
+apply_plan(&mut sessions, plan_job.run());
+let token = match sessions.plan_state(request_id) {
+    PlanState::Ready { token, .. } => token.clone(),
+    _ => return, // GUI は実行不可、test は必要な state を assert
+};
+let approved = approve(&mut sessions, token, policy)?;
+let job = prepare_remove(&mut sessions, approved, LegacyBusy(false))?;
+let completion = job.run();
+let deliveries = apply(&mut sessions, completion);
+```
+
+`plan_remove → Ready{token} → approve → prepare_remove → run → apply` が共通列。
+公開 API の実装で input revision/policy/owner を照合し、一度 dispatch した token の再消費を拒否する。
+GUI は Ready 表示と承認 UX を既存 remove modal に接続し、approve 後の処理を
+`KagiApp::dispatch_job(approved, cx)` に渡す。この bridge だけが LegacyBusy 値の取得、
+prepare/remove lease と busy mirror の同時確立、spawn、apply、Delivery の表示 guard を行う。
+G は `LegacyBusy(true)` も渡して拒否を試せるが、Approved の constructor には触れない。
+read-only plan job が返すエラーも PlanState に反映し、旧 Ready を使えないことを試す。
+
+#### PR 分割・規模の目安（C5）
+
+推奨は **2 PR（1a / 1b）**。1a は最小 app skeleton + remove boundary/report + G + GUI bridge + E/実機、
+window close/Quit guard・fingerprint・progress/JSONL Unknown を一つの縦断実証にする。skeleton-only は先行 merge しない。
+1a は production 550〜850 行追加、test 400〜650 行追加、旧 glue 100〜160 行削除、約 12〜18 ファイル。
+1b は writer admission 接続だけで production 150〜300 行追加、test 150〜250 行追加、約 6〜10 ファイル。
+未実装の概算で LOC 目標ではない。両 PR の G/E/M と gate が通るまで横展開しない。
+receipt API の全 caller 整合で広がる場合は既存 append API を保ち実 entry を返す sibling を追加し、
+既存 append はそこへ委譲する。writer の二重実装はしない。全 run consumer の API 変更は #505 へ分離。
+さらに分割が必要な具体的依存が判明した場合は PM と合意し、黙って土台 PR を増やさない。
+
+`src/ui/operations/worktree.rs` は remove の open/replan/confirm を共通 API へ接続し、
+confirm 内の trust write・busy 操作・background open/execute・on_done persist を削除対象とする。
+既存 remove 表示/klog は adapter に維持。他の create/open/lock/unlock/prune/repair と
+`worktree_wip.rs` の `WriteOrigin`、commit/amend/discard の #476 経路は触らない。
 
 ### 8.2 テスト設計（今回は実行しない）
 
 各 test は tempdir の main A / linked L / 独立 B と専用 log dir。sleep に依存せず、
 preflight 前・mutation 後/配送前の barrier または手動 job runner で順序を固定する。
+
+#### integration test から使える fault seam（B7）
+
+`#[cfg(test)]` の lib 内 seam は `tests/` から見えないため使わない。
+`RemoveJob` が private な `fault: Option<RemoveFaultPoint>` を持ち、通常 prepare は必ず `None`。
+承認済み job に対する公開 `with_fault_for_test(point)`（doc-hidden、release でも利用可）を一つ設ける。
+有限 enum だけを受け、任意 closure/対象変更/安全 gate のスキップは許さない。
+GUI/CLI/MCP はこのメソッドを呼ばず、設定/env/tool 引数への配線もしない。
+
+| fault / 検証対象 | 具体的な注入位置と手段 |
+|---|---|
+| `PanicBeforeMutation` | execution boundary の捕捉領域内、config grant/pre_remove/削除の前。未変更 Failed として一度記録 |
+| `PanicAfterDeletionStarted` | **executor 内部**、backup 捕捉後・削除開始後・正常 return 前に注入。外側 RemoveProgress から Unknown/recovery を作り一度記録。正常 return 後だけの注入では代用不可 |
+| partial remove / pre_remove | `FailAfterBackupBeforeDelete` / `FailAfterDirectoryDelete` を既存 primitive の phase に渡す。pre_remove は実 copy step 成功→次 step の実エラーで副作用の残存を確認。公開 API の None 経路は挙動不変 |
+| `PreRemoveTerminationUnknown` | step 開始後の runner 結果を有限の停止不明値にする契約 test 用 seam。process-tree kill が動いたという証拠には使わない。実プロセス所有の検証は #507 |
+| append failure | ENV_LOCK + 専用 `KAGI_LOG_DIR`。readonly dir を使う場合は権限を必ず復元。権限を迂回できる実行環境もあるため、**標準の決定的 fixture は log file path をディレクトリにして append を失敗させる**（EISDIR 等、具体 errno の一致は要求しない） |
+| open failure | 専用 fixture の管理元 `.git` を plan 後/job.run 前に一時 rename。RAII cleanup で戻す。実ユーザー repo は触らない |
+
+panic を catch する owner は recorder より内側の execution boundary 一つ。
+**記録後**に panic を注入して outer catch が再appendするテストは作らない。
+実際の executor 内 unwind は副作用領域に入っていれば未変更と断定せず Unknown。
+取得済み材料を外側 evidence に残す。未取得分は `evidence unavailable` と明示し、成功 outcome を捏造しない。
+barrier が不要な配送 test は `completion = job.run()` 後に手動で切替/close→apply とし、
+GUI E2E では foreground 更新を同一 turn にまとめ、必要な slow pre_remove fixture で実行中も確認する。
 
 | test | 操作 / fault | assert（実状態と配送） |
 |---|---|---|
@@ -431,16 +635,21 @@ preflight 前・mutation 後/配送前の barrier または手動 job runner で
 | refused | dirty/locked/main/対象 missing、trust 拒否 | path/refs 不変、typed refusal/failed stage、実行受理済み試行は記録一件 |
 | revision | plan A→入力変更→replan failure、旧完了後着 | Enter/ボタン両方不可。再plan成功後の最新対象だけ実行 |
 | preflight drift | plan 後に L dirty/lock/config SHA/登録 identity 変更 | 不承認の hook/削除が走らない。旧 plan の内容で別 worktree を消さない |
+| same-locator ABA（R4 / 1a） | plan 後に同名同path・同OID同config の L を再作成 | admin fingerprint 不一致で Refused。新しい L は削除されず pre_remove も走らない |
 | open failure | plan 後に管理元を fixture 内で一時的に利用不能にする | Backend がなくても failed report/receipt。一度。B の表示は不変 |
 | tab switch | A で開始、B に切替してから completion を送る | A/L の結果記録一件、B の modal/footer/selection 不変、A session stale |
 | close / Welcome | 実行中の owner tab を閉じる / 最後の tab を閉じる | 実行・記録は完了、閉じた Entity 更新なし、host に対象付き通知、pin 解放 |
-| background close / reselect | A 実行中に B close、A 再選択 | A generation/selection/進行を再初期化せず A に完了が届く（#488） |
-| duplicate / concurrency | double confirm、重複 completion、sibling mutation、legacy mutation | 同じ token の実行は一度、lease owner のみ解放。新旧相互排他 |
+| window close（R1 / 1a） | job を barrier で止め native/menu close、完了後に再要求 | 実行中は操作中 modal で保留し host/lease 維持。完了後は close 可。Dock reopen 時に旧 in-flight 無し |
+| Quit（R1 / 1a） | 同じ停止点で menu/shortcut Quit、完了後に再要求 | cx.quit に進まず保留、完了後に終了可。最終 tab close の test と独立 |
+| editor save / ほかの bypass（R5 / 1b） | remove backup→delete で save 要求、save 先行中の remove。staging/snapshot/fetch も両順序 | 競合は Busy、予約前の write 無し、保存済み bytes 消失無し。未知停止/NeedsReconcile も拒否 |
+| background close / reselect | A 実行中に B close、A 再選択 | slice 1 は A の operation 終端化/記録が必ず届く。既存 generation 変更なら footer は落として対象付き通知。selection/reset の完全修正は #488 |
+| duplicate / concurrency | double confirm、重複 completion、gate を通る sibling/legacy mutation | 同じ token の実行は一度、lease owner のみ解放。busy/leases の両方向拒否。gate 外の既知 bypass は合格対象に含めない |
 | partial | backup 後、削除/admin prune/branch delete の途中に fault | partial の backup full OID を receipt と JSONL に保持。fixture bytes を ODB から復元して一致 |
-| panic | mutation 前/後の捕捉可能な unwind を注入 | before は Failed、after は Unknown/partial evidence。busy が固着せず再実行を勧めない。停止未確認 timeout は別テストで lease 保持 |
+| panic / reconcile | 上記 enum の副作用前/削除開始後の executor 内 unwind | JSONL を再parseし backup/full tip/Unknown/verification を抽出、fixture 内容を復元。停止確認済み read→ack で解除、read 失敗/旧 ack は解除不可 |
+| pre_remove failure / termination | 実 copy 成功→次stepエラー、timeout 結果の有限 fault fixture | 削除されなかったことを未実行と判定しない。既知 step と再実行リスクを JSONL に保存。停止不明は read+ack でも解除しない。実 process-tree 管理は #507 |
 | append failure | log writer を失敗させる | mutation 成功と記録失敗を同時に返す。過去 tail を返さず、retry で削除を再実行しない |
 | receipt race | append 後/応答前に別 repo・同 repo 同 op の entry を追加 | 応答 entry は最初の実行そのもの。global tail とは異なっても正しい |
-| read supersede | mutation 前 read→mutation 完了→新 read→旧 read 後着 | 旧 snapshot が fresh を上書きせず、loading は自身の request だけ終端化 |
+| invalidation | completion→Delivery を active/inactive/Welcome に配送 | active owner は既存 reload、inactive は stale mark→再選択で reload、削除対象は無条件 reload しない。read supersede の全面改修は #489 |
 
 既存 `tests/{worktree,git2_owner_trust,oplog_nonrun_ops}_test.rs` と
 `tests/gui_e2e_runner.rs` の worktree/recovery scenario は残す。既存 assertions を弱めない。
@@ -449,9 +658,11 @@ E は real modal/focus tree を描いた後の raw Enter、ボタン、tab close
 M は確認対象 worktree 表示、長い pre_remove 中の応答性、完了/拒否/部分成功通知を実アプリで確認しスクリーンショットを残す。
 native runner は scenario PASS だけでなく **正常な終了 status** を確認する（既知 teardown 問題を成功扱いしない）。
 
-**横展開 gate**: G/E/M を通過し、remove の UI writer/旧 executor glue が消え、window 無しでも
-progress/owner が検証できること。別 family を足す際に UI 側で busy/世代 guard を再作成する必要が
-あれば境界は未成立として設計へ戻る。
+**横展開 gate は 1a+1b の G/E/M 通過**。1a は記録・配送・寿命・協調入口間 admission の合格、
+1b は競合 writer の admission 接続の合格。remove UI writer/旧 executor glue が消え、window 無しの
+progress/owner、window close/Quit 保留、保存競合を検証できること。1a 単独で排他完成とは呼ばない。
+#488/read 所有や他 family の移管は残り、#484 全体は close しない。別 family が UI に busy/世代 guard を
+再実装する必要があれば境界未成立として設計へ戻る。
 
 ## 9. ADR と既存 Issue の扱い
 
@@ -462,7 +673,7 @@ progress/owner が検証できること。別 family を足す際に UI 側で b
 | ADR-0104 enforced pipeline | Backend に安全 gate を置く、旧 bypass を消す | 「全 mutation が run 済み」は現状と不一致。専用 run/例外表・verify 所有を family ごとに追記 |
 | ADR-0107 | read Backend handle の再利用 | `RepoSession` は application session ではない。単一 active slot→map 配下への寿命変更時に追記 |
 | ADR-0121 | feature-pane Entity、seed/event、境界安定後の crate 分離 | bin に残した進行/記録 glue の app/backend 移管だけ追記。pane 分離は巻き戻さない |
-| ADR-0149 + recovery | mutation-owned recording、actor/worktree/full recovery | receipt、open failure、non-run 残存・Refused writer の移行。#501/#505 実証で追記 |
+| ADR-0149 + recovery | mutation-owned recording、actor/worktree/full recovery | receipt、open failure、永続 Unknown と後方互換・progress の復元材料。#501/#505 実証で追記 |
 | ADR-0120 / ADR-0154 | editor 保存の Git pipeline 例外、snapshot の明示/自動区別 | 本文の FS/index/metadata 例外を正式化する際に整合を取る。暗黙に既存 UX を変えない |
 
 本書は ADR ではなく、#484 の議論用設計。合意後に PM が Issue の Plan に要約する。
@@ -473,9 +684,9 @@ progress/owner が検証できること。別 family を足す際に UI 側で b
 |---|---|
 | common-dir 単位の初期排他 | linked worktree の並行性より安全・簡潔さを優先。per-worktree 緩和は後続 |
 | app root module + backend 共通契約 | 先に crate を作らず、MCP が job を必要とするときに抽出。安全/request 契約の共有は先行可能 |
-| GUI close 後の host-owned 通知 | 他 repo の modal に混ぜず Welcome/owner 通知へ。process quit の待機 UX は実証で確認 |
+| tab close 後の通知 | KagiApp で Welcome/owner 通知、1a で window close/Quit 保留。window 外 registry は後続 |
 | sync/index/FS の例外 | 記録所有移管と scheduling/UX 変更を分離。全 mutation に modal を強制しない |
-| 初回の成果範囲 | remove + 最小 operation registry + receipt + legacy admission bridge。全 session 移管や worker を抱き合わせない |
+| 初回の成果範囲 | 1a: remove/最小 registry/receipt/lifetime/fingerprint、1b: writer admission のみ。TabId/session incarnation、全 session 移管や worker は含めない |
 
 ## 10. 読解根拠・関連入力
 

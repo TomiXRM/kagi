@@ -1,22 +1,10 @@
 use super::*;
 pub use kagi_git::backend::stash::{StashAction, StashFaultPoint};
 use kagi_git::backend::stash::{StashPlan, StashReport};
-use kagi_git::{Actor, Backend};
+use kagi_git::Backend;
 use std::path::Path;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StashPolicy {
-    pub actor: Actor,
-    pub auto_snapshot: bool,
-}
-impl Default for StashPolicy {
-    fn default() -> Self {
-        Self {
-            actor: Actor::Human,
-            auto_snapshot: true,
-        }
-    }
-}
+pub use kagi_git::backend::ExecutionPolicy as StashPolicy;
 #[derive(Clone, Debug)]
 pub struct StashRequest {
     pub owner: Attachment,

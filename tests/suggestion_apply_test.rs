@@ -135,8 +135,10 @@ fn stale_range_after_plan_makes_execute_refuse() {
     let err = backend
         .run(&op, &plan)
         .expect_err("stale range must refuse");
+    // #502 refuses at the shared preflight, retaining the concrete blocker.
+    assert!(matches!(&err, kagi_git::GitError::Preflight(_)));
     assert!(
-        err.to_string().contains("stale range"),
+        err.to_string().contains("src/lib.rs") && err.to_string().contains("changed since"),
         "refusal names the stale range, got: {err}"
     );
 

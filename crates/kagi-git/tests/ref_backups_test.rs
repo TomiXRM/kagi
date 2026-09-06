@@ -230,6 +230,14 @@ fn shared_ref_survives_until_its_last_entry_is_retired() {
     let mut other = first.clone();
     other.op = "shared-recovery-receipt".into();
     append_oplog(&other).unwrap();
+    // Valid JSON whitespace must not hide a surviving reference from cleanup.
+    let log_path = f.log.join("operations.jsonl");
+    let content = std::fs::read_to_string(&log_path).unwrap();
+    std::fs::write(
+        &log_path,
+        content.replace("\"backup_refs\":[", "\"backup_refs\": ["),
+    )
+    .unwrap();
     let other = read_oplog_tail(1).remove(0);
     let backend = f.backend();
     let plan = backend.plan_forget_oplog_entry(&first).unwrap();
@@ -370,4 +378,29 @@ fn retiring_latest_entry_does_not_reuse_its_sequence_id() {
     assert!(report.recording.entry().id > entry.id);
     let later = f.discard(b"next entry\n");
     assert!(later.id > report.recording.entry().id);
+}
+
+#[test]
+fn busy_log_lock_preserves_entry_and_refs_without_blocking_cleanup() {
+    let f = Fixture::new();
+    let entry = f.discard(b"preserve while locked\n");
+    let backend = f.backend();
+    let plan = backend.plan_forget_oplog_entry(&entry).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(f.log.join("operations.jsonl.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let report = backend.execute_forget_oplog_entry(&plan);
+    assert!(report.result.is_err());
+    assert!(matches!(report.recording, Recording::Failed { .. }));
+    assert_eq!(read_oplog_tail(100).len(), 1);
+    assert_eq!(
+        backend.read_backup(&entry.backup_refs[0]).unwrap(),
+        b"preserve while locked\n"
+    );
+    drop(lock);
+    backend.execute_forget_oplog_entry(&plan).result.unwrap();
+    assert!(backend.read_backup(&entry.backup_refs[0]).is_err());
 }

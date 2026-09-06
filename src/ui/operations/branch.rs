@@ -130,7 +130,7 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
@@ -153,9 +153,10 @@ impl KagiApp {
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
         // in one place (run() calls preflight_check as its first line — the
         // separate preflight_check call above was redundant).
-        let op = kagi_git::Operation::CreateBranch {
+        let op = kagi_git::Operation::CreateBranchWithCheckout {
             name: modal.input.clone(),
             at: modal.at.clone(),
+            checkout_after: modal.checkout_after,
         };
         if let Err(e) = repo.run(&op, &plan) {
             let err_msg = i18n::op_failed(i18n::Op::CreateBranch, e);
@@ -181,7 +182,7 @@ impl KagiApp {
         );
 
         // Verify: confirm the branch now exists.
-        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
+        let repo2 = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -199,95 +200,19 @@ impl KagiApp {
             );
         }
 
-        // Record branch creation success first. If checkout_after is on, the
-        // checkout below records its own second operation entry.
-        let create_after = StateSummary {
-            head: plan.current.head.clone(),
-            dirty: plan.current.dirty.clone(),
-        };
+        // The combined Backend operation already performed optional checkout and
+        // persisted one receipt. Keep the established presentation/log lines.
         self.record_op(
             "create-branch",
             plan.current.clone(),
             OpOutcome::Success {
-                after: create_after.clone(),
+                after: plan.predicted.clone(),
             },
             &repo_path,
             cx,
         );
-
         if modal.checkout_after {
-            let checkout_plan = match repo2.plan_checkout(&modal.input) {
-                Ok(plan) => plan,
-                Err(e) => {
-                    let err_msg = i18n::op_plan_failed(i18n::Op::Checkout, e);
-                    self.record_op(
-                        "checkout",
-                        create_after,
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
-                    if let Some(m) = self.create_branch_modal_mut() {
-                        m.error = Some(SharedString::from(err_msg));
-                    }
-                    return;
-                }
-            };
-            if !checkout_plan.blockers.is_empty() {
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: checkout_plan
-                            .blockers
-                            .iter()
-                            .map(|b| b.message_en())
-                            .collect(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(
-                        "Branch created, but checkout was refused by the checkout plan.",
-                    ));
-                }
-                return;
-            }
-            // ADR-0104 Phase 2: route through Backend::run so preflight is
-            // enforced in one place (the separate preflight_check + execute
-            // above collapses into run()).
-            let checkout_op = kagi_git::Operation::Checkout {
-                branch: modal.input.clone(),
-            };
-            if let Err(e) = repo2.run(&checkout_op, &checkout_plan) {
-                let err_msg = i18n::op_failed(i18n::Op::Checkout, e);
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
             klog!("executed: checkout {}", modal.input);
-            self.record_op(
-                "checkout",
-                checkout_plan.current.clone(),
-                OpOutcome::Success {
-                    after: checkout_plan.predicted.clone(),
-                },
-                &repo_path,
-                cx,
-            );
         }
 
         // Reload display data (new branch badge should appear).
@@ -704,7 +629,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_target = target.clone();
         let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&bg_path)
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             repo.plan_merge_branch(&bg_target)
                 .map_err(|e| format!("{e}"))
@@ -815,7 +740,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let (bg_source, bg_target) = (source.clone(), target.clone());
         let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&bg_path)
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             repo.plan_merge_into_branch(&bg_source, &bg_target)
                 .map_err(|e| format!("{e}"))
@@ -1307,8 +1232,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_branch = branch_name.clone();
         let task = cx.background_spawn(async move {
-            let repo =
-                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
+                .map_err(|e| format!("repo open error: {e}"))?;
             repo.plan_delete_branch(&bg_branch)
                 .map_err(|e| e.to_string())
         });
@@ -1347,113 +1272,10 @@ impl KagiApp {
         self.clear_delete_branch_modal();
     }
 
-    /// Confirm delete-branch: preflight → execute → oplog → reload.
-    pub fn confirm_delete_branch(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.delete_branch_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-
-        if !modal.plan.blockers.is_empty() {
-            eprintln!(
-                "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
-                modal.plan.blockers.len()
-            );
-            self.record_op(
-                "delete-branch",
-                modal.plan.current.clone(),
-                kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
-                self.record_op(
-                    "delete-branch",
-                    modal.plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_delete_branch_modal(DeleteBranchModal {
-                    branch_name: modal.branch_name.clone(),
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-                return;
-            }
-        };
-
-        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
-        // in one place (run() calls preflight_check as its first line — the
-        // separate preflight_check call above was redundant).
-        let del_op = kagi_git::Operation::DeleteBranch {
-            name: modal.branch_name.clone(),
-        };
-        match repo.run(&del_op, &modal.plan) {
-            Ok(_) => {
-                klog!("executed: delete-branch {}", modal.branch_name);
-                self.clear_delete_branch_modal();
-                let after = kagi_git::ops::StateSummary {
-                    head: modal.plan.current.head.clone(),
-                    dirty: format!("branch '{}' deleted", modal.branch_name),
-                };
-                self.record_op(
-                    "delete-branch",
-                    modal.plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "delete-branch: '{}' deleted (restore: {})",
-                    modal.branch_name,
-                    modal
-                        .plan
-                        .recovery
-                        .as_ref()
-                        .and_then(|r| r.commands.first())
-                        .map(String::as_str)
-                        .unwrap_or("git branch …")
-                )));
-                self.reload(cx);
-            }
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::Delete, e);
-                self.record_op(
-                    "delete-branch",
-                    modal.plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_delete_branch_modal(DeleteBranchModal {
-                    branch_name: modal.branch_name.clone(),
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        }
-    }
-
     /// W15-ASYNCOPS: UI-path delete-branch — background thread + start/finish
     /// toasts (ref delete is lightweight, but kept on the background path for a
-    /// uniform busy/disabled experience). Headless keeps `confirm_delete_branch`.
+    /// uniform busy/disabled experience). #493: the single delete-branch entry —
+    /// the modal button and the root Enter dispatch both land here.
     pub fn start_delete_branch(&mut self, cx: &mut Context<Self>) {
         let modal = match self.delete_branch_modal().cloned() {
             Some(m) => m,

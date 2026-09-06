@@ -10,14 +10,17 @@ use super::{
     resolution::ResolutionBuffer, resolve_head, snapshot, staging, status, AmendMode, AmendOutcome,
     BranchRenameValidation, CommitId, CommitPreview, DiscardOutcome, FetchOutcome, FileDiff,
     FileDiffStat, FileHistory, FileHistoryRequest, FileSnapshotContent, FileStatus, GitError, Head,
-    MergeKind, OperationPlan, PullOutcome, PushOutcome, RawEcosystem, RepoSnapshot,
-    StashPopOutcome, UndoOutcome, WorkingTreeStatus,
+    MergeKind, OperationPlan, PullOutcome, PushOutcome, RawEcosystem, RepoSnapshot, UndoOutcome,
+    WorkingTreeStatus,
 };
 
+mod absorb;
 pub mod backups;
+mod policy;
 pub mod recording;
 pub mod remove;
 mod run;
+pub use policy::ExecutionPolicy;
 pub mod stash;
 pub use recording::oplog_outcome_from;
 
@@ -29,14 +32,7 @@ pub struct Backend {
     /// trust store covers it. Reads ignore this; [`Backend::run`] refuses every
     /// mutating op while `Untrusted`.
     trust: crate::trust::RepoTrust,
-    /// Who is driving writes through this backend (ADR-0149 / #329). Recorded
-    /// on every oplog entry `run` writes. Defaults to [`Actor::Human`]; the
-    /// future MCP/CLI front-ends set `Mcp`/`Cli` via [`Backend::set_actor`].
-    actor: crate::oplog::Actor,
-    /// Whether `run` takes an automatic savepoint snapshot before executing a
-    /// destructive op (ADR-0154 / #335). Default `true`; the UI sets it from
-    /// the `auto_snapshot` setting via [`Backend::set_auto_snapshot`].
-    auto_snapshot: bool,
+    policy: ExecutionPolicy,
 }
 
 impl Backend {
@@ -78,8 +74,7 @@ impl Backend {
             repo,
             path,
             trust,
-            actor: crate::oplog::Actor::Human,
-            auto_snapshot: true,
+            policy: ExecutionPolicy::default(),
         })
     }
 
@@ -108,8 +103,7 @@ impl Backend {
             repo,
             path,
             trust,
-            actor: crate::oplog::Actor::Human,
-            auto_snapshot: true,
+            policy: ExecutionPolicy::default(),
         })
     }
 
@@ -138,7 +132,7 @@ impl Backend {
     /// [`GitError::Untrusted`] `run` produces. Read-only inspection methods are
     /// intentionally NOT guarded (inspection stays allowed on an untrusted repo).
     fn require_trust(&self) -> Result<(), GitError> {
-        if !self.trust.is_trusted() {
+        if !self.trust.is_trusted() || !crate::trust::evaluate(&self.path).is_trusted() {
             return Err(GitError::Untrusted(self.path.display().to_string()));
         }
         Ok(())
@@ -148,13 +142,13 @@ impl Backend {
     /// (ADR-0149). The GUI leaves the default [`Actor::Human`]; MCP/CLI callers
     /// set `Mcp`/`Cli` so the log shows who initiated each write.
     pub fn set_actor(&mut self, actor: crate::oplog::Actor) {
-        self.actor = actor;
+        self.policy.actor = actor;
     }
 
     /// Enable/disable the automatic pre-destructive savepoint snapshot
     /// (ADR-0154). The UI wires this from the `auto_snapshot` setting.
     pub fn set_auto_snapshot(&mut self, on: bool) {
-        self.auto_snapshot = on;
+        self.policy.auto_snapshot = on;
     }
 
     // ── Snapshots (working-tree savepoints, `refs/kagi/snapshots/`, ADR-0154).
@@ -180,6 +174,7 @@ impl Backend {
 
     /// Explicitly delete one snapshot.
     pub fn delete_snapshot(&self, id: &str) -> Result<(), GitError> {
+        self.require_trust()?;
         ops::delete_snapshot(&self.repo, id)
     }
 
@@ -191,7 +186,7 @@ impl Backend {
     /// Execute a restore (savepoint → checkout → verify). Returns the savepoint
     /// id. Prefer `run(&Operation::RestoreSnapshot, plan)` so the oplog records
     /// it; this is the raw executor `run` dispatches to.
-    pub fn execute_restore_snapshot(&self, id: &str) -> Result<String, GitError> {
+    pub(crate) fn execute_restore_snapshot(&self, id: &str) -> Result<String, GitError> {
         ops::execute_restore_snapshot(&self.repo, id)
     }
 
@@ -797,27 +792,11 @@ impl Backend {
         }
     }
 
-    /// The single enforced entry point for every mutating operation.
-    ///
-    /// Implements the product's central safety invariant
-    /// (`plan → confirm → preflight → execute → verify` — ADR-0104):
-    /// **every** caller that mutates the repository MUST go through `run`,
-    /// so the preflight check (HEAD / stash-count unchanged since the plan
-    /// was built) cannot be bypassed. As of ADR-0149 `run` ALSO writes the
-    /// oplog entry synchronously (one per op, `actor` from the backend), so
-    /// every write path is recorded; the UI's `record_op` handles only the
-    /// toast/footer/history-panel and no longer touches the oplog.
-    ///
-    /// `plan` must be a plan previously built via `plan(op)` and confirmed by
-    /// the user (the confirm modal is the UI's responsibility). Operations
-    /// whose plan also captures a stash count (StashApply/Pop/Drop) additionally
-    /// pass through `preflight_check_stash` so a concurrent stash push between
-    /// plan and execute cannot shift indices.
-    ///
-    /// Replaces the older `execute(op)` shortcut which dispatched straight to
-    /// `execute_*` without any preflight. `execute(op)` is retained below as a
-    /// deprecated back-compat shim that synthesizes a fresh plan (so at least
-    /// the preflight runs) — new code and all UI/headless paths must use `run`.
+    /// Execute a confirmed Operation plan through mandatory owner trust,
+    /// preflight, family execution checks and one recording boundary (ADR-0178).
+    /// Dedicated non-Operation and index/metadata boundaries are documented in
+    /// the same ADR. Prefer `run_recorded` when the caller needs its exact receipt.
+    /// Approval belongs to the adapter; a display plan is not an approval token.
     pub fn run(
         &mut self,
         op: &Operation,
@@ -832,7 +811,7 @@ impl Backend {
         staging::plan_commit(&self.repo, message)
     }
 
-    pub fn execute_commit(&self, message: &str) -> Result<CommitId, GitError> {
+    pub(crate) fn execute_commit(&self, message: &str) -> Result<CommitId, GitError> {
         staging::execute_commit(&self.repo, message)
     }
 
@@ -961,7 +940,7 @@ impl Backend {
         conflicts::stage_conflict_resolution(&self.repo, session, buffer)
     }
 
-    pub fn execute_merge_commit(&self, message: &str) -> Result<CommitId, GitError> {
+    pub(crate) fn execute_merge_commit(&self, message: &str) -> Result<CommitId, GitError> {
         conflicts::execute_merge_commit(&self.repo, message)
     }
 
@@ -1030,7 +1009,7 @@ impl Backend {
         ops::preflight_check(&self.repo, plan)
     }
 
-    pub fn execute_checkout(&self, branch: &str) -> Result<(), GitError> {
+    pub(crate) fn execute_checkout(&self, branch: &str) -> Result<(), GitError> {
         ops::execute_checkout(&self.repo, branch)
     }
 
@@ -1038,7 +1017,7 @@ impl Backend {
         ops::plan_checkout_commit(&self.repo, id)
     }
 
-    pub fn execute_checkout_commit(&self, id: &CommitId) -> Result<(), GitError> {
+    pub(crate) fn execute_checkout_commit(&self, id: &CommitId) -> Result<(), GitError> {
         ops::execute_checkout_commit(&self.repo, id)
     }
 
@@ -1046,7 +1025,7 @@ impl Backend {
         ops::plan_create_branch(&self.repo, name, at)
     }
 
-    pub fn execute_create_branch(&self, name: &str, at: &CommitId) -> Result<(), GitError> {
+    pub(crate) fn execute_create_branch(&self, name: &str, at: &CommitId) -> Result<(), GitError> {
         ops::execute_create_branch(&self.repo, name, at)
     }
 
@@ -1054,7 +1033,7 @@ impl Backend {
         ops::plan_create_tag(&self.repo, name, at)
     }
 
-    pub fn execute_create_tag(&self, name: &str, at: &CommitId) -> Result<(), GitError> {
+    pub(crate) fn execute_create_tag(&self, name: &str, at: &CommitId) -> Result<(), GitError> {
         ops::execute_create_tag(&self.repo, name, at)
     }
 
@@ -1062,7 +1041,7 @@ impl Backend {
         ops::plan_push_tag(&self.repo, name)
     }
 
-    pub fn execute_push_tag(&self, remote: &str, name: &str) -> Result<(), GitError> {
+    pub(crate) fn execute_push_tag(&self, remote: &str, name: &str) -> Result<(), GitError> {
         ops::execute_push_tag(&self.path, remote, name)
     }
 
@@ -1097,7 +1076,7 @@ impl Backend {
         ops::plan_open_worktree_for_branch(&self.repo, branch, path)
     }
 
-    pub fn execute_create_worktree(
+    pub(crate) fn execute_create_worktree(
         &self,
         branch: &str,
         path: impl AsRef<Path>,
@@ -1106,7 +1085,7 @@ impl Backend {
         ops::execute_create_worktree(&self.repo, branch, path, start)
     }
 
-    pub fn execute_open_worktree_for_branch(
+    pub(crate) fn execute_open_worktree_for_branch(
         &self,
         branch: &str,
         path: impl AsRef<Path>,
@@ -1154,16 +1133,6 @@ impl Backend {
         ops::plan_remove_worktree(&self.repo, name, delete_branch)
     }
 
-    pub fn execute_remove_worktree(
-        &self,
-        plan: &OperationPlan,
-        name: &str,
-        delete_branch: bool,
-    ) -> Result<DiscardOutcome, GitError> {
-        self.require_trust()?;
-        ops::execute_remove_worktree(&self.repo, plan, name, delete_branch)
-    }
-
     pub fn plan_lock_worktree(
         &self,
         name: &str,
@@ -1208,7 +1177,7 @@ impl Backend {
         ops::plan_stash_push(&mut self.repo, message, include_untracked)
     }
 
-    pub fn execute_stash_push(
+    pub(crate) fn execute_stash_push(
         &mut self,
         message: Option<&str>,
         include_untracked: bool,
@@ -1220,7 +1189,7 @@ impl Backend {
         ops::plan_stash_apply(&mut self.repo, index)
     }
 
-    pub fn execute_stash_apply(&mut self, index: usize) -> Result<(), GitError> {
+    pub(crate) fn execute_stash_apply(&mut self, index: usize) -> Result<(), GitError> {
         ops::execute_stash_apply(&mut self.repo, index)
     }
 
@@ -1228,15 +1197,11 @@ impl Backend {
         ops::plan_stash_pop(&mut self.repo, index)
     }
 
-    pub fn execute_stash_pop(&mut self, index: usize) -> Result<StashPopOutcome, GitError> {
-        ops::execute_stash_pop(&mut self.repo, index)
-    }
-
     pub fn plan_stash_drop(&mut self, index: usize) -> Result<OperationPlan, GitError> {
         ops::plan_stash_drop(&mut self.repo, index)
     }
 
-    pub fn execute_stash_drop(&mut self, index: usize) -> Result<String, GitError> {
+    pub(crate) fn execute_stash_drop(&mut self, index: usize) -> Result<String, GitError> {
         self.require_trust()?;
         ops::execute_stash_drop(&mut self.repo, index)
     }
@@ -1253,7 +1218,7 @@ impl Backend {
         ops::plan_cherry_pick(&self.repo, id)
     }
 
-    pub fn execute_cherry_pick(&self, id: &CommitId) -> Result<CommitId, GitError> {
+    pub(crate) fn execute_cherry_pick(&self, id: &CommitId) -> Result<CommitId, GitError> {
         ops::execute_cherry_pick(&self.repo, id)
     }
 
@@ -1261,7 +1226,7 @@ impl Backend {
         ops::plan_merge_branch(&self.repo, target)
     }
 
-    pub fn execute_merge_branch(&self, target: &str) -> Result<CommitId, GitError> {
+    pub(crate) fn execute_merge_branch(&self, target: &str) -> Result<CommitId, GitError> {
         ops::execute_merge_branch(&self.repo, target)
     }
 
@@ -1297,7 +1262,7 @@ impl Backend {
         ops::plan_merge_into_branch(&self.repo, source, target)
     }
 
-    pub fn execute_merge_into_branch(
+    pub(crate) fn execute_merge_into_branch(
         &self,
         source: &str,
         target: &str,
@@ -1305,7 +1270,10 @@ impl Backend {
         ops::execute_merge_into_branch(&self.repo, source, target)
     }
 
-    pub fn execute_merge_into_conflict(&self, target: &str) -> Result<Vec<String>, GitError> {
+    pub(crate) fn execute_merge_into_conflict(
+        &self,
+        target: &str,
+    ) -> Result<Vec<String>, GitError> {
         ops::execute_merge_into_conflict(&self.repo, target)
     }
 
@@ -1317,7 +1285,7 @@ impl Backend {
         ops::plan_checkout_tracking_branch(&self.repo, remote_branch, local_branch)
     }
 
-    pub fn execute_checkout_tracking_branch(
+    pub(crate) fn execute_checkout_tracking_branch(
         &self,
         remote_branch: &str,
         local_branch: &str,
@@ -1333,7 +1301,7 @@ impl Backend {
         ops::plan_switch_to_latest(&self.repo, branch_name, remote_branch)
     }
 
-    pub fn execute_switch_to_latest(
+    pub(crate) fn execute_switch_to_latest(
         &self,
         plan: &OperationPlan,
         branch_name: &str,
@@ -1346,7 +1314,7 @@ impl Backend {
         ops::plan_revert(&self.repo, id)
     }
 
-    pub fn execute_revert(&self, id: &CommitId) -> Result<CommitId, GitError> {
+    pub(crate) fn execute_revert(&self, id: &CommitId) -> Result<CommitId, GitError> {
         ops::execute_revert(&self.repo, id)
     }
 
@@ -1354,7 +1322,7 @@ impl Backend {
         ops::plan_pull(&self.repo)
     }
 
-    pub fn execute_pull(&self) -> Result<PullOutcome, GitError> {
+    pub(crate) fn execute_pull(&self) -> Result<PullOutcome, GitError> {
         ops::execute_pull(&self.repo, &self.path)
     }
 
@@ -1445,7 +1413,7 @@ impl Backend {
         ops::plan_push(&self.repo)
     }
 
-    pub fn execute_push(&self) -> Result<PushOutcome, GitError> {
+    pub(crate) fn execute_push(&self) -> Result<PushOutcome, GitError> {
         ops::execute_push(&self.repo, &self.path)
     }
 
@@ -1453,7 +1421,7 @@ impl Backend {
         ops::plan_pull_branch_ff(&self.repo, branch_name)
     }
 
-    pub fn execute_pull_branch_ff(
+    pub(crate) fn execute_pull_branch_ff(
         &self,
         plan: &OperationPlan,
         branch_name: &str,
@@ -1469,7 +1437,7 @@ impl Backend {
         ops::plan_push_branch(&self.repo, branch_name, set_upstream)
     }
 
-    pub fn execute_push_branch(
+    pub(crate) fn execute_push_branch(
         &self,
         plan: &OperationPlan,
         branch_name: &str,
@@ -1486,7 +1454,7 @@ impl Backend {
         ops::plan_set_upstream(&self.repo, branch_name, upstream)
     }
 
-    pub fn execute_set_upstream(
+    pub(crate) fn execute_set_upstream(
         &self,
         plan: &OperationPlan,
         branch_name: &str,
@@ -1503,7 +1471,7 @@ impl Backend {
         ops::plan_rename_branch(&self.repo, old_name, new_name)
     }
 
-    pub fn execute_rename_branch(
+    pub(crate) fn execute_rename_branch(
         &self,
         plan: &OperationPlan,
         old_name: &str,
@@ -1526,7 +1494,7 @@ impl Backend {
         ops::plan_undo_commit(&self.repo)
     }
 
-    pub fn execute_undo_commit(&self) -> Result<UndoOutcome, GitError> {
+    pub(crate) fn execute_undo_commit(&self) -> Result<UndoOutcome, GitError> {
         ops::execute_undo_commit(&self.repo)
     }
 
@@ -1557,13 +1525,19 @@ impl Backend {
     }
 
     /// Execute an undo: safe ref move of `branch` from `after` to `before`.
-    pub fn execute_undo(&self, entry: &HistoryEntry) -> Result<ops::HistoryMoveOutcome, GitError> {
+    pub(crate) fn execute_undo(
+        &self,
+        entry: &HistoryEntry,
+    ) -> Result<ops::HistoryMoveOutcome, GitError> {
         self.require_trust()?;
         ops::execute_undo(&self.repo, &entry.branch, &entry.before, &entry.after)
     }
 
     /// Execute a redo: safe ref move of `branch` from `before` to `after`.
-    pub fn execute_redo(&self, entry: &HistoryEntry) -> Result<ops::HistoryMoveOutcome, GitError> {
+    pub(crate) fn execute_redo(
+        &self,
+        entry: &HistoryEntry,
+    ) -> Result<ops::HistoryMoveOutcome, GitError> {
         self.require_trust()?;
         ops::execute_redo(&self.repo, &entry.branch, &entry.before, &entry.after)
     }
@@ -1584,7 +1558,7 @@ impl Backend {
         ops::plan_amend(&self.repo, mode, message)
     }
 
-    pub fn execute_amend(
+    pub(crate) fn execute_amend(
         &self,
         mode: AmendMode,
         message: Option<&str>,
@@ -1599,40 +1573,15 @@ impl Backend {
         ops::plan_absorb(&self.repo, window)
     }
 
-    /// Execute absorb and record the run in the oplog. Absorb is not part of the
-    /// `Operation` enum (its plan carries the whole distribution table), so —
-    /// unlike ops routed through [`Backend::run`] — it appends its own oplog
-    /// entry here so every caller records exactly one entry.
-    pub fn execute_absorb(
-        &self,
-        plan: &kagi_domain::absorb::AbsorbPlan,
-    ) -> Result<kagi_domain::absorb::AbsorbOutcome, GitError> {
-        let result = ops::execute_absorb(&self.repo, plan);
-        let outcome = match &result {
-            Ok(_) => {
-                let head = crate::resolve_head(&self.repo)
-                    .map(|h| h.display())
-                    .unwrap_or_default();
-                let dirty = crate::status::working_tree_status(&self.repo)
-                    .map(|s| ops::status_summary_display(&s))
-                    .unwrap_or_default();
-                crate::oplog::OpOutcome::Success {
-                    after: ops::StateSummary { head, dirty },
-                }
-            }
-            Err(e) => crate::oplog::OpOutcome::Failed {
-                error: e.to_string(),
-            },
-        };
-        self.record_run_oplog("absorb", &plan.current, outcome);
-        result
-    }
-
     pub fn plan_delete_branch(&self, name: &str) -> Result<OperationPlan, GitError> {
         ops::plan_delete_branch(&self.repo, name)
     }
 
-    pub fn execute_delete_branch(&self, plan: &OperationPlan, name: &str) -> Result<(), GitError> {
+    pub(crate) fn execute_delete_branch(
+        &self,
+        plan: &OperationPlan,
+        name: &str,
+    ) -> Result<(), GitError> {
         ops::execute_delete_branch(&self.repo, plan, name)
     }
 
@@ -1643,7 +1592,7 @@ impl Backend {
         ops::plan_delete_remote_branch(&self.repo, remote_branch)
     }
 
-    pub fn execute_delete_remote_branch(&self, remote_branch: &str) -> Result<(), GitError> {
+    pub(crate) fn execute_delete_remote_branch(&self, remote_branch: &str) -> Result<(), GitError> {
         ops::execute_delete_remote_branch(&self.path, remote_branch)
     }
 
@@ -1651,7 +1600,7 @@ impl Backend {
         ops::plan_reset_current_to_head(&self.repo, target)
     }
 
-    pub fn execute_reset_current_to_head(&self, target: &CommitId) -> Result<(), GitError> {
+    pub(crate) fn execute_reset_current_to_head(&self, target: &CommitId) -> Result<(), GitError> {
         ops::execute_reset_current_to_head(&self.repo, target)
     }
 
@@ -1660,7 +1609,10 @@ impl Backend {
     }
 
     /// `plan` supplies the lease value — see `ops::execute_force_with_lease_push`.
-    pub fn execute_force_with_lease_push(&self, plan: &OperationPlan) -> Result<(), GitError> {
+    pub(crate) fn execute_force_with_lease_push(
+        &self,
+        plan: &OperationPlan,
+    ) -> Result<(), GitError> {
         ops::execute_force_with_lease_push(&self.repo, &self.path, plan)
     }
 
@@ -1668,7 +1620,10 @@ impl Backend {
         ops::plan_rebase_current_onto(&self.repo, onto)
     }
 
-    pub fn execute_rebase_current_onto(&self, onto: &str) -> Result<ops::RebaseOutcome, GitError> {
+    pub(crate) fn execute_rebase_current_onto(
+        &self,
+        onto: &str,
+    ) -> Result<ops::RebaseOutcome, GitError> {
         ops::execute_rebase_current_onto(&self.repo, &self.path, onto)
     }
 
@@ -1766,7 +1721,7 @@ impl Backend {
         ops::is_submodule_path(&self.repo, rel)
     }
 
-    pub fn execute_discard(
+    pub(crate) fn execute_discard(
         &self,
         plan: &OperationPlan,
         paths: &[String],
@@ -1792,7 +1747,7 @@ impl Backend {
         ops::plan_apply_suggestion(&self.repo, s, expected)
     }
 
-    pub fn execute_apply_suggestion(
+    pub(crate) fn execute_apply_suggestion(
         &self,
         plan: &OperationPlan,
         s: &kagi_domain::suggestion::Suggestion,

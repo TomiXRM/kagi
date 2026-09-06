@@ -14,18 +14,17 @@ use crate::ui::{BranchPlanKind, BranchPlanModal, CheckoutPlanTarget};
 /// Open a [`kagi_git::Backend`] with the `auto_snapshot` setting applied
 /// (ADR-0154 / #335). Every blocking op opens through here so the automatic
 /// pre-destructive savepoint honours the user's toggle (default on).
-fn open_backend(repo_path: &std::path::Path) -> Result<kagi_git::Backend, kagi_git::GitError> {
-    let mut b = kagi_git::Backend::open(repo_path)?;
-    b.set_auto_snapshot(Settings::load().auto_snapshot());
-    Ok(b)
+pub(crate) fn open_backend(
+    repo_path: &std::path::Path,
+) -> Result<kagi_git::Backend, kagi_git::GitError> {
+    kagi_git::Backend::open_with_policy(repo_path, execution_policy())
 }
 
-// W3-NOTIFY: blocking cores for pull / push
-//
-// Everything that may take seconds (repo open → preflight → execute →
-// verify snapshot) lives here, free of `&mut KagiApp`, so the UI path can
-// run it via `cx.background_spawn` while the headless path calls it inline.
-// ──────────────────────────────────────────────────────────────
+pub(crate) fn execution_policy() -> kagi_git::backend::ExecutionPolicy {
+    kagi_git::backend::ExecutionPolicy::human(Settings::load().auto_snapshot())
+}
+
+// Background and headless hosts share these operation cores.
 
 /// Blocking part of pull. Returns (human summary, after-state) or an error
 /// message suitable for the oplog / modal.

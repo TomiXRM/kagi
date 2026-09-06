@@ -41,7 +41,7 @@ impl KagiApp {
             return;
         };
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&repo_path)
+            crate::ui::blocking_ops::open_backend(&repo_path)
                 .map_err(|e| e.to_string())
                 .and_then(|backend| backend.history_from_reflog().map_err(|e| e.to_string()))
         });
@@ -387,170 +387,11 @@ impl KagiApp {
         self.clear_amend_modal();
     }
 
-    /// First stage of the two-stage confirm: arm the action.  If already armed
-    /// this is the final stage and executes the amend (ADR-0023 history-rewrite).
-    pub fn confirm_amend(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.amend_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        // #476 slice 3: amend the PANEL's repository (see `start_amend`).
-        let repo_path = match self.commit_panel_repo_path(cx) {
-            Some(p) => p,
-            None => return,
-        };
-
-        // Defence: never execute with blockers present.
-        if !modal.plan.blockers.is_empty() {
-            klog!("refused: amend plan has blockers, not executing");
-            self.record_op(
-                "amend",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-
-        // ── Two-stage confirm: first click only arms ─────────
-        if !modal.confirm_armed {
-            self.set_amend_modal(AmendPlanModal {
-                confirm_armed: true,
-                ..modal
-            });
-            klog!("amend: armed (second confirm required — history rewrite)");
-            return;
-        }
-
-        // ── Armed: proceed to preflight → execute ────────────
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
-                self.record_op(
-                    "amend",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_amend_modal(AmendPlanModal {
-                    error: Some(SharedString::from(err_msg)),
-                    ..modal
-                });
-                return;
-            }
-        };
-        if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = i18n::op_failed(i18n::Op::Preflight, e);
-            self.record_op(
-                "amend",
-                modal.plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-                cx,
-            );
-            self.set_amend_modal(AmendPlanModal {
-                error: Some(SharedString::from(err_msg)),
-                ..modal
-            });
-            return;
-        }
-
-        // ADR-0040: record the OLD HEAD SHA in the oplog BEFORE execution.
-        // `record_op` writes the before-state; the success record below captures
-        // the new HEAD so the旧→新 transition is fully logged.
-        let msg_opt = if modal.message.trim().is_empty() {
-            None
-        } else {
-            Some(modal.message.as_str())
-        };
-        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-        let amend_op = kagi_git::Operation::Amend {
-            mode: modal.mode,
-            message: msg_opt.map(|s| s.to_string()),
-        };
-        match repo.run(&amend_op, &modal.plan) {
-            Ok(kagi_git::OperationOutcome::Amend(outcome)) => {
-                eprintln!(
-                    "[kagi] executed: amend {} -> {}",
-                    outcome.old.short(),
-                    outcome.new.short()
-                );
-                self.clear_amend_modal();
-                let after = StateSummary {
-                    head: format!(
-                        "branch @ {} (was {})",
-                        outcome.new.short(),
-                        outcome.old.short()
-                    ),
-                    dirty: "amended".to_string(),
-                };
-                self.record_op(
-                    "amend",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                // T-UNDOREDO-001: undo of an amend moves the branch from the new
-                // commit back to the pre-amend commit (still in the reflog).
-                // #476 slice 3: only when the amend ran in the TAB's repository.
-                if let (false, Some((branch, _))) = (
-                    self.undo_skipped_for_foreign("amend", &repo_path),
-                    self.head_branch_and_sha(),
-                ) {
-                    self.record_history(
-                        kagi_git::OperationKind::Amend,
-                        &branch,
-                        outcome.old.clone(),
-                        outcome.new.clone(),
-                        format!("amend {} → {}", outcome.old.short(), outcome.new.short()),
-                    );
-                }
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "amend: {} → {} (restore: git reset --hard {})",
-                    outcome.old.short(),
-                    outcome.new.short(),
-                    outcome.old.short()
-                )));
-                self.refresh_worktree_wip_row(&repo_path);
-                self.reload(cx);
-            }
-            Ok(_) => {
-                // Amend only yields OperationOutcome::Amend.
-                klog!("amend: unexpected outcome variant");
-            }
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::Amend, e);
-                self.record_op(
-                    "amend",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_amend_modal(AmendPlanModal {
-                    error: Some(SharedString::from(err_msg)),
-                    ..modal
-                });
-            }
-        }
-    }
-
     /// W15-ASYNCOPS: UI-path amend. The two-stage confirm (armed state) stays on
     /// the main thread; only the final armed execute (history rewrite — tree
-    /// build + commit replace) runs on a background thread. Headless keeps
-    /// `confirm_amend` (sync).
+    /// build + commit replace) runs on a background thread.
+    /// #493: the single amend entry — the modal button and the root Enter
+    /// dispatch both land here.
     pub fn start_amend(&mut self, cx: &mut Context<Self>) {
         let modal = match self.amend_modal().cloned() {
             Some(m) => m,
@@ -581,7 +422,7 @@ impl KagiApp {
             return;
         }
 
-        // First click only arms (main thread) — matches confirm_amend exactly.
+        // First click only arms (main thread); Enter cannot skip the stage.
         if !modal.confirm_armed {
             self.set_amend_modal(AmendPlanModal {
                 confirm_armed: true,
@@ -608,7 +449,7 @@ impl KagiApp {
         // #476 slice 3: the tab's undo stack only learns about an amend that
         // rewrote the TAB's branch — `head_branch_and_sha` reads the tab's HEAD,
         // so a worktree amend recorded here would point Cmd+Z at the wrong
-        // branch. (This is the entry `confirm_amend`, the sync twin, records.)
+        // branch.
         let skip_undo = self.undo_skipped_for_foreign("amend", &repo_path);
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();

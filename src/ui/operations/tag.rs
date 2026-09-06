@@ -92,7 +92,7 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
@@ -273,7 +273,7 @@ impl KagiApp {
         let (name, remote) = (modal.name.clone(), modal.remote.clone());
         let task = cx.background_spawn(async move {
             let run = || -> Result<kagi_git::StateSummary, String> {
-                let mut repo = kagi_git::Backend::open(&bg_path)
+                let mut repo = crate::ui::blocking_ops::open_backend(&bg_path)
                     .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
                 let op = kagi_git::Operation::PushTag {
                     name: name.clone(),

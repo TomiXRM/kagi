@@ -4,6 +4,7 @@
 - Issue: #523
 - Related: [DESIGN §5.3 / §8.1](../rearch/app-layer/DESIGN.md),
   [ADR-0175](0175-app-remove-boundary.md),
+  [ADR-0178](0178-backend-execution-policy.md),
   [ADR-0046](0046-discard-changes.md),
   [ADR-0154](0154-working-tree-snapshots.md)
 

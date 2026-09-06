@@ -274,7 +274,9 @@ impl KagiApp {
         // hidden too, but the Enter-to-confirm path shares this method).
         if !plan.blockers.is_empty() {
             klog!("refused: pr-merge plan has blockers, not executing");
-            self.record_op_persist(
+            // A blocked plan never reaches the transport, so the UI stays the
+            // recorder for Refused — `record_op` persists that outcome (#501).
+            self.record_op(
                 "pr-merge",
                 plan.current.clone(),
                 OpOutcome::Refused {
@@ -288,8 +290,6 @@ impl KagiApp {
         }
         let (number, method, delete_branch) = (modal.number, modal.method, modal.delete_branch);
         let head_sha = modal.head_sha.clone();
-        let before = plan.current.clone();
-        let predicted = plan.predicted.clone();
         self.clear_pr_merge_modal();
         self.busy_op = Some("pr-merge");
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
@@ -301,27 +301,44 @@ impl KagiApp {
 
         let rp = repo_path.clone();
         let task = cx.background_spawn(async move {
-            kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha)
+            kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha, &plan)
         });
-        self.finish_op_on_main(cx, task, move |app, result, cx| {
-            match result {
-                Ok(out) => {
+        // #501: the transport already appended the receipt. The settle half
+        // delivers a failed append even when the tab moved; everything in
+        // `on_done` is presentation only.
+        let notice_repo = repo_path.clone();
+        self.finish_op_on_main_settled(
+            cx,
+            task,
+            move |app, report: &kagi_git::github::PrMergeReport, _cx| {
+                app.notice_recording_failure("pr-merge", &report.recording, &notice_repo);
+            },
+            move |app, report, cx| {
+                // The recorded outcome decides what happened, not the raw `gh`
+                // exit: a non-zero exit whose server re-read says "merged" is a
+                // merge, and must not be presented as a failure (#501).
+                let outcome = report.recording.entry().outcome.clone();
+                let merged = matches!(
+                    outcome,
+                    OpOutcome::Success { .. } | OpOutcome::Partial { .. }
+                );
+                let detail = match &report.result {
+                    Ok(out) => out.clone(),
+                    Err(e) => e.to_string(),
+                };
+                if merged {
                     klog!("executed: pr-merge #{}", number);
-                    app.record_op_persist(
-                        "pr-merge",
-                        before.clone(),
-                        OpOutcome::Success {
-                            after: predicted.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
+                } else {
+                    klog!("pr-merge failed: {}", detail);
+                }
+                app.present_recorded("pr-merge", &report.recording, &repo_path, cx);
+                if merged {
                     app.push_toast(
                         ToastKind::Info,
-                        SharedString::from(if out.is_empty() {
+                        SharedString::from(if detail.is_empty() {
                             format!("{} #{}", Msg::PrModeMergeDone.t(), number)
                         } else {
-                            out
+                            detail
                         }),
                         cx,
                     );
@@ -330,22 +347,10 @@ impl KagiApp {
                     app.pr_mode_close_tab_for(number, cx);
                     app.refresh_github_prs(cx);
                     app.fetch_async(true, cx);
+                } else {
+                    app.push_toast(ToastKind::Error, SharedString::from(detail), cx);
                 }
-                Err(e) => {
-                    let error = e.to_string();
-                    klog!("pr-merge failed: {}", error);
-                    app.record_op_persist(
-                        "pr-merge",
-                        before.clone(),
-                        OpOutcome::Failed {
-                            error: error.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
-                    app.push_toast(ToastKind::Error, SharedString::from(error), cx);
-                }
-            }
-        });
+            },
+        );
     }
 }

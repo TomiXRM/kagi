@@ -78,15 +78,12 @@ fn create_branch_with_checkout_records_partial_after_checkout_failure() {
     std::env::set_var("KAGI_LOG_DIR", logdir.path());
 
     build_repo(repo.path());
-    let original = {
-        let backend = Backend::open(repo.path()).expect("open");
-        head_commit_id(&backend)
-    };
     std::fs::write(repo.path().join("base.txt"), "second\n").unwrap();
     git(repo.path(), &["add", "base.txt"]);
     git(repo.path(), &["commit", "-qm", "c2"]);
 
     let mut backend = Backend::open(repo.path()).expect("open");
+    let original = head_commit_id(&backend);
     let op = Operation::CreateBranchWithCheckout {
         name: "recovery-branch".to_string(),
         at: original.clone(),
@@ -99,10 +96,10 @@ fn create_branch_with_checkout_records_partial_after_checkout_failure() {
         plan.blockers
     );
 
-    // Make the safe checkout fail by modifying a path the target branch would
-    // rewrite. `run` preflights HEAD, not this post-plan worktree change, so
-    // branch creation remains observable before checkout refuses the change.
-    std::fs::write(repo.path().join("base.txt"), "dirty\n").unwrap();
+    // #502 now refuses post-plan dirty blockers before branch creation. A
+    // clean tree plus an index lock still reaches the #522 partial boundary:
+    // the ref is created, but checkout cannot acquire its index write lock.
+    std::fs::write(repo.path().join(".git/index.lock"), "held by fixture\n").unwrap();
     assert!(
         backend.run(&op, &plan).is_err(),
         "checkout must fail safely"
@@ -124,7 +121,7 @@ fn create_branch_with_checkout_records_partial_after_checkout_failure() {
     );
     assert_eq!(
         std::fs::read_to_string(repo.path().join("base.txt")).unwrap(),
-        "dirty\n",
+        "second\n",
         "failed safe checkout preserves working-tree content"
     );
 

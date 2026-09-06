@@ -442,9 +442,9 @@ M = primary session の実機確認（raw Enter/Esc/ボタン、応答性、対�
 | worktree lock/unlock/prune/repair: 同ファイル confirm 群 | 同じ app family → 専用 backend boundary | sync UI executor/record | 記録所有を先に移し、当初 sync 可（短い admin 操作）。遅延測定で async。G/E/M |
 | conflict save/DF/stage/continue/abort/skip: `operations/conflict.rs`、`conflict_view.rs` | app conflict → backend conflict boundary | UI writer、global pending index、独立 busy 判定 | 所有移管時は sync を維持可。save/続行の重い I/O は別 slice で async。G/E/M、編集 revision |
 | cleanup: `branch_cleanup::confirm_branch_cleanup` | app cleanup → 既存 backend executor/recorder | finish glue（recorder 再実装はしない） | async 維持。G/E/M、remote/local partial |
-| PR merge: `github::start_pr_merge` | app PR → `git::github::merge_pr` recorded transport | on_done 内 persist | async。offline transport G/E + M、remote head binding |
+| PR merge: `github::start_pr_merge` | app PR → `git::github::merge_pr` recorded transport | on_done 内 persist（**撤去済み** ADR-0177） | async。offline transport G/E + M、remote head binding |
 | PR queue: `github_merge::enqueue_pr/dequeue_pr`（API-only） | 同じ PR transport family | raw 公開 mutation の gate opt-in | 同期 core、将来 GUI は async。G、UI 新設は対象外 |
-| SSH stash drop/pull: `operations/{stash,pull_push}.rs` → `remote/mod.rs` | app remote → typed remote execution boundary | UI/policy copies、pull の記録欠落経路 | async。offline G/E、認証付き M は別許可。未対応 gate は unsupported を明示 |
+| SSH stash drop/pull: `operations/{stash,pull_push}.rs` → `remote/mod.rs` | app remote → typed remote execution boundary | UI/policy copies、pull の記録欠落経路（**閉塞済み** ADR-0177） | async。offline G/E、認証付き M は別許可。未対応 gate は unsupported を明示 |
 | staging: `do_stage/unstage_*` (`commit.rs`)、editor events | app index service → backend index-only | panel/tab path 取得の重複、同期別入口 | 小単位は sync 維持可。batch は async。G/E/M、file identity |
 | fetch/auto-fetch: `commands.rs`、`remote_branch.rs::fetch_remote_branch_async` | app fetch → backend fetch boundary | busy を通らない dispatch、個別 refresh guard | async 維持。G/E/M、ticker admission |
 | snapshot create/prune/delete/restore: `commands::create_snapshot_now`、Backend public API | app snapshot → backend snapshot boundary/run | create の latch 漏れ、別 recorder | async（tree capture）。G/E/M、API-only は G、restore savepoint |

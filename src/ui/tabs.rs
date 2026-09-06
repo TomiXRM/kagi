@@ -392,15 +392,14 @@ impl KagiApp {
         self.last_working_status = None;
         // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose
         // loop below (MainDiffItem), like the other registered panes.
-        self.clear_plan_modal();
-        self.clear_pull_modal();
-        self.clear_pop_modal();
-        self.clear_push_modal();
-        self.clear_create_branch_modal();
-        self.clear_stash_push_modal();
-        self.clear_stash_apply_modal();
-        self.clear_cherry_pick_modal();
-        self.clear_delete_branch_modal();
+        // #492: a confirmation is bound to the repo it was planned against —
+        // its plan, paths, stash indices and OIDs all came from that repo, while
+        // the confirm methods read `self.repo_path` at Enter time. Dropping the
+        // whole repo-scoped slot (rather than the nine variants this list used
+        // to name) means no destructive confirmation opened in A can be applied
+        // to B. `ActiveModal::is_repo_scoped` is exhaustive, so a new variant
+        // must declare its scope.
+        self.drop_repo_scoped_modal();
         // ADR-0121 B1/B2: registered workspace items (FileHistory / Ecosystem /
         // EditorWorkspace / CommitPanel / Inspector) drop their own per-repo
         // state via the dispose hook — the per-pane rationale lives on each
@@ -610,15 +609,14 @@ impl KagiApp {
         self.wip_diffstat = None;
         self.active_view.status_summary = blank.active_view.status_summary;
         self.active_view.toolbar_state = blank.active_view.toolbar_state;
-        self.clear_plan_modal();
-        self.clear_pull_modal();
-        self.clear_pop_modal();
-        self.clear_push_modal();
-        self.clear_create_branch_modal();
-        self.clear_stash_push_modal();
-        self.clear_stash_apply_modal();
-        self.clear_cherry_pick_modal();
-        self.clear_delete_branch_modal();
+        // #492: a confirmation is bound to the repo it was planned against —
+        // its plan, paths, stash indices and OIDs all came from that repo, while
+        // the confirm methods read `self.repo_path` at Enter time. Dropping the
+        // whole repo-scoped slot (rather than the nine variants this list used
+        // to name) means no destructive confirmation opened in A can be applied
+        // to B. `ActiveModal::is_repo_scoped` is exhaustive, so a new variant
+        // must declare its scope.
+        self.drop_repo_scoped_modal();
         self.commit_panel_open = false;
         // ADR-0118: dropping the single `commit_panel` entity also drops its
         // `commit_input` / template inputs / draft state (all entity-owned).

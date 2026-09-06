@@ -124,7 +124,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   Clippy do not compile the runner or enable `gpui/test-support`. On macOS use:
 
   ```sh
-  CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target KAGI_GUI_E2E=1 \
+  KAGI_GUI_E2E=1 \
     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
   ```
 
@@ -164,16 +164,17 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 - Run only one cargo command at a time per tree. Wait for tests to finish
   before starting Clippy, check or another build.
-- Agent worktrees share the primary target: prefix every cargo command with
-  `CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target` on this machine
-  (use the primary checkout's absolute target path elsewhere). Cargo's build
-  lock serializes competing worktrees; wait for it instead of using a new target.
-- For Claude Code's `.claude/worktrees/*`, the primary checkout may provide an
-  untracked `.claude/worktrees/.cargo/config.toml` containing
-  `[build]` and `target-dir = "../../target"`. Cargo resolves that path relative
-  to `.claude/worktrees/`, yielding the primary target. This local file is not
-  part of the repository; do not create a target per worktree.
-- Once a week, when no build is running, prune artifacts older than seven days:
-  `CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target cargo sweep --time 7`
-  (requires cargo-sweep). Do not routinely clean the shared target; clean-build
-  benchmarks need an idle build window and destroy reusable build artifacts.
+- Every worktree uses Cargo's default, worktree-local `target/` directory. Do not
+  set `CARGO_TARGET_DIR` or Cargo's `build.target-dir` to a shared path.
+- Do not create or use `.claude/worktrees/.cargo/config.toml` to redirect a
+  worktree to `../../target`; its artifacts must remain isolated from the primary
+  checkout and other worktrees.
+- This isolation is required by the 2026-09-07 slice 1a result: Codex Design and
+  PM independently reproduced workspace crate artifacts (`kagi-domain`,
+  `kagi-git`, and `kagi`) colliding in a shared target. Cargo then reused a stale
+  rlib as Fresh and reported E0432 for a newly added module. Since #520, each
+  clean worktree build uses roughly 3–4 GB, so the disk cost is intentional.
+- Once a week, when no build is running in that tree, prune artifacts older than
+  seven days in every worktree: `cargo sweep --time 7` (requires cargo-sweep).
+  Do not routinely clean a worktree target; clean-build benchmarks need an idle
+  build window and destroy reusable build artifacts.

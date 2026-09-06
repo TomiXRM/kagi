@@ -589,7 +589,9 @@ pub enum EditorPendingIntent {
     /// Switch repository tabs after discarding the whole editor workspace.
     SwitchRepo(std::path::PathBuf),
     /// Close a repository tab after discarding the whole editor workspace.
-    CloseRepoTab(std::path::PathBuf),
+    /// #482 stage 1: the tab to close is named by its session, so a guard the
+    /// user resolves later can never close a tab reopened on the same path.
+    CloseRepoTab(crate::app::SessionId),
     /// Enter a remote read-only repo after discarding the local editor workspace.
     EnterRemoteView {
         host: kagi_domain::remote::RemoteHost,

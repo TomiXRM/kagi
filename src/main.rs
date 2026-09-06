@@ -274,6 +274,7 @@ fn main() {
 
     // W4-TABS / ADR-0027: the CLI argument becomes the initial tab.
     app_state.tabs.push(ui::tabs::RepoTab {
+        session: app_state.app_sessions.attach(repo_path.clone()),
         path: repo_path.clone(),
         name: info.name.clone(),
         remote: None,

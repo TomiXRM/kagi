@@ -64,6 +64,7 @@ pub fn plan_remove(
     policy: RemovePolicy,
 ) -> PlanJob {
     sessions.invalidate_plan();
+    sessions.plan_owner = Some(request.owner.session);
     sessions.state = PlanState::Planning {
         request: sessions.revision,
     };

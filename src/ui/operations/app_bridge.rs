@@ -143,9 +143,7 @@ impl KagiApp {
             format!("{}: {}", entry.repo, footer),
             cx,
         );
-        if self.repo_path.as_ref() == Some(&owner.path)
-            && self.switch_generation == owner.generation
-        {
+        if self.active_session() == Some(owner.session) {
             self.status_footer = if success && !recording_failed {
                 FooterStatus::Success(footer.clone().into())
             } else if partial {
@@ -280,16 +278,26 @@ impl KagiApp {
     }
     fn deliver_app_result(&mut self, delivery: Delivery, cx: &mut Context<Self>) {
         match delivery {
-            Delivery::RemovedTarget(path) => {
-                self.tab_cache.remove(&path);
+            Delivery::RemovedTarget(target) => {
+                self.tab_cache.remove(&target.path);
                 // #528: the worktree no longer exists, so neither should its
                 // tab. `close_tab` keeps the existing dirty guard and only
                 // re-activates a neighbour when this tab was the active one.
-                self.close_tab_by_path(&path, cx);
+                // #482: found by `WorktreeId`, so a tab opened on the same path
+                // after the plan is never the one that closes — and every tab
+                // aliasing that worktree closes, not an arbitrary one.
+                for session in self.app_sessions.sessions_for(&target.worktree) {
+                    self.close_tab_by_session(session, cx);
+                }
             }
-            Delivery::Invalidate(path) => {
-                self.tab_cache.remove(&path);
-                if self.repo_path.as_ref() == Some(&path) {
+            Delivery::Invalidate(target) => {
+                self.tab_cache.remove(&target.path);
+                let active = self.active_session();
+                if active.is_some_and(|active| {
+                    self.app_sessions
+                        .sessions_for(&target.worktree)
+                        .contains(&active)
+                }) {
                     self.reload(cx);
                 }
             }
@@ -357,9 +365,7 @@ impl KagiApp {
                     text.clone(),
                     cx,
                 );
-                if self.repo_path.as_ref() == Some(&attachment.path)
-                    && self.switch_generation == attachment.generation
-                {
+                if self.active_session() == Some(attachment.session) {
                     klog!("footer: {}", footer);
                     self.status_footer = if success {
                         FooterStatus::Success(footer.into())

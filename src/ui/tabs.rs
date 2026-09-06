@@ -32,6 +32,10 @@ use super::{EditorPendingIntent, FooterStatus, KagiApp, ToastKind};
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepoTab {
+    /// #482 stage 1: the application-layer session this tab is attached to.
+    /// Issued once per open by `Sessions::attach`, so a closed-and-reopened path
+    /// is a different owner even when it lands on the same strip index.
+    pub session: crate::app::SessionId,
     /// Absolute path to the repository working tree root. For a **remote** tab
     /// (ADR-0089 Phase 2b) this is a synthetic identity key (`<host>:<root>`),
     /// not a local path — `remote` is `Some` in that case.
@@ -108,7 +112,18 @@ impl KagiApp {
         // Remember it for the Welcome screen's "Recent" list.
         record_recent_repo(&path);
 
+        // #482: `attach` unifies by the *resolved* `WorktreeId`, so two locators
+        // for one worktree (`/repo` and `/repo/.git`, a symlink) come back as the
+        // session an existing tab already holds. Path comparison above cannot
+        // see that, so switch to that tab rather than opening a second one.
+        let session = self.app_sessions.attach(path.clone());
+        if let Some(idx) = self.tabs.iter().position(|t| t.session == session) {
+            self.switch_repo(idx, cx);
+            return true;
+        }
+
         let tab = RepoTab {
+            session,
             path: path.clone(),
             name: info.name.clone(),
             remote: None,
@@ -119,6 +134,24 @@ impl KagiApp {
         let new_idx = self.tabs.len() - 1;
         self.switch_repo(new_idx, cx);
         true
+    }
+
+    /// The application-layer session on screen (#482 stage 1). `None` on the
+    /// Welcome screen. This is the **only** owner test for app-family plans and
+    /// deliveries: `(repo_path, switch_generation)` cannot tell a reopened tab
+    /// from the one that was closed, and a session can.
+    pub fn active_session(&self) -> Option<crate::app::SessionId> {
+        self.tabs.get(self.active_tab).map(|tab| tab.session)
+    }
+
+    /// The user is leaving the tab that is on screen (#482). The tab stays open
+    /// and keeps its incarnation, but the visit ends: a pending stash follow-up
+    /// proposal is discarded and a completion landing afterwards cannot create a
+    /// new one. Returning re-observes the real conflict state instead.
+    fn depart_active_tab(&mut self) {
+        if let Some(session) = self.active_session() {
+            self.app_sessions.depart(session);
+        }
     }
 
     /// Identity of the repository currently on screen, in tab-path terms:
@@ -157,6 +190,7 @@ impl KagiApp {
             self.open_editor_dirty_guard(EditorPendingIntent::SwitchRepo(tab.path.clone()), cx);
             return;
         }
+        self.depart_active_tab();
         self.active_tab = index;
         self.error = None;
 
@@ -243,7 +277,13 @@ impl KagiApp {
         self.ensure_startup_repo_io(cx);
 
         // Background (re)load to refresh / fill the cache.
-        self.load_repo_async(tab.path.clone(), tab.name.clone(), generation, cx);
+        self.load_repo_async(
+            tab.session,
+            tab.path.clone(),
+            tab.name.clone(),
+            generation,
+            cx,
+        );
     }
 
     /// Show a **remote** repository (already snapshotted over SSH) in the main
@@ -290,6 +330,7 @@ impl KagiApp {
 
         // No local path: every `self.repo_path.as_ref()?` operation no-ops, and
         // `arm_watcher` returns early.
+        self.depart_active_tab();
         self.repo_path = None;
         self.repo_session = None;
         self.reset_per_repo_ui();
@@ -306,11 +347,17 @@ impl KagiApp {
         // Reuse an existing tab for the same remote repo, else open a new one.
         let idx = match self.tabs.iter().position(|t| t.path == key) {
             Some(i) => {
+                // Same tab slot, fresh session: this snapshot replaces the old
+                // read-only view, so nothing the old incarnation owned survives.
+                self.tabs[i].session = self
+                    .app_sessions
+                    .reattach(self.tabs[i].session, key.clone());
                 self.tabs[i].remote = Some(rv.clone());
                 i
             }
             None => {
                 self.tabs.push(RepoTab {
+                    session: self.app_sessions.attach(key.clone()),
                     path: key.clone(),
                     name: name.clone(),
                     remote: Some(rv.clone()),
@@ -432,6 +479,7 @@ impl KagiApp {
     /// `[kagi] tab-load: <name> rows=N`.
     fn load_repo_async(
         &mut self,
+        session: crate::app::SessionId,
         path: PathBuf,
         name: String,
         generation: u64,
@@ -464,7 +512,7 @@ impl KagiApp {
                     Ok(view) => {
                         let rows = view.rows.len();
                         app.tab_cache.insert(path.clone(), view.clone());
-                        app.app_sessions.read_applied(&path);
+                        app.app_sessions.read_applied(session);
                         app.apply_tab_view(view);
                         app.refresh_wip_diffstat();
                         app.loading_tab = None;
@@ -527,13 +575,16 @@ impl KagiApp {
         if decision == crate::app::TabClose::Nothing {
             return;
         }
-        let closed_path = self.tabs[index].path.clone();
         if self.editor_workspace_any_dirty(cx) {
-            self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closed_path), cx);
+            let session = self.tabs[index].session;
+            self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(session), cx);
             return;
         }
-        self.app_sessions.clear_stash_conflict(&closed_path);
         let closed = self.tabs.remove(index);
+        // #482 stage 1: detaching the session drops everything that belonged to
+        // this display — conflict/follow-up payloads and the plan slot if it
+        // owned one — while in-flight executions keep running (ADR-0175).
+        self.app_sessions.detach(closed.session);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
         // W6-TABSPEED / ADR-0030: evict the closed repo's cached view state.
@@ -576,8 +627,15 @@ impl KagiApp {
         }
     }
 
-    pub(crate) fn close_tab_by_path(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if let Some(index) = self.tabs.iter().position(|t| t.path == path) {
+    /// #482 stage 1: close the tab that owns `session`. Routed by session rather
+    /// than by path so a completion can never close a *different* tab that has
+    /// since been opened on the same path.
+    pub(crate) fn close_tab_by_session(
+        &mut self,
+        session: crate::app::SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(index) = self.tabs.iter().position(|t| t.session == session) {
             self.close_tab(index, cx);
         }
     }
@@ -1167,6 +1225,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         match kagi_git::open_repository(&path) {
             Ok(info) => {
                 app.tabs.push(RepoTab {
+                    session: app.app_sessions.attach(path.clone()),
                     path: path.clone(),
                     name: info.name.clone(),
                     remote: None,

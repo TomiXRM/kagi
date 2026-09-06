@@ -245,6 +245,8 @@ pub struct DiscardBackup {
     pub path: String,
     /// ODB blob SHA (40-hex) holding the pre-discard working-tree content.
     pub blob: String,
+    /// GC reachability root; recover bytes with `git cat-file blob <reference>`.
+    pub reference: String,
 }
 
 /// Outcome of a discard: the backup blobs written before discarding.
@@ -277,6 +279,15 @@ impl DiscardOutcome {
     /// succeed. The backups are still valid recovery handles.
     pub fn is_partial(&self) -> bool {
         self.error.is_some()
+    }
+
+    /// Render recovery refs separately from the legacy path/blob summary.
+    pub fn backup_refs_summary(&self) -> String {
+        self.backups
+            .iter()
+            .map(|backup| format!("{}={}", backup.path, backup.reference))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Render the path/blob backup list as a single oplog-friendly summary line.

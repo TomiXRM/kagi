@@ -563,10 +563,11 @@ grant の開始/成否も progress に保持し、それ以後の失敗を未変
 永続化は §5.2 の単一対応表に従う。receipt は **progress 由来の after/evidence を含め実際に append した entry**。
 append 失敗でも attempted entry と証跡を返し、過去 tail で代用しない。
 
-保持した裸の ODB blob/OID は ref-backed snapshot ではなく、GC 後の到達可能性を保証しない
-（ADR-0154 が既に記す制限、第1自動レビュー指摘）。slice 1 は既存 backup の記録消失を閉じる範囲。
-**GC 後も復元可能という保証は未達**と明記する。専用 recovery refs/snapshot と retention は別の安全設計として
-PM に切り分けを求め、今回の復元 test を GC 耐性の証拠にはしない。
+slice 1 の元の裸 ODB backup は GC 後の到達可能性を保証しない。#523 /
+[ADR-0179](../../adr/0179-ref-backed-discard-remove-backups.md) で新規 discard/remove の
+file backup を専用 ref で保持し、receipt に ref 名を記録する。既定の寿命は oplog entry と同じ
+（自動期限なし）。明示 entry 削除の確認・preflight 後にだけ対応 ref を掃除し、失敗時は保持側へ倒す。
+旧ログの naked OID を遡及的に GC-safe とせず、GC 耐性は専用の G fixture で実証する。
 
 #### window なしで使う唯一の公開 API 列（B8）
 

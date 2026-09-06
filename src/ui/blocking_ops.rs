@@ -24,6 +24,9 @@ pub(crate) fn execution_policy() -> kagi_git::backend::ExecutionPolicy {
     kagi_git::backend::ExecutionPolicy::human(Settings::load().auto_snapshot())
 }
 
+mod discard;
+pub(crate) use discard::{discard_blocking, DiscardReport};
+
 // Background and headless hosts share these operation cores.
 
 /// Blocking part of pull. Returns (human summary, after-state) or an error
@@ -440,92 +443,6 @@ pub(crate) fn commit_blocking(
         }
     };
     Ok((new_id.short().to_string(), after))
-}
-
-/// Blocking part of discard (W17-DISCARD, ADR-0046). Backup-then-discard scales
-/// with the working-tree content written, so it runs on the background path.
-/// The returned `after` carries the path→blob backup list (the recovery handle)
-/// into the oplog entry.
-///
-/// The third tuple element is `Some(error)` when the discard was only PARTIALLY
-/// applied (issue #281): the working tree was mutated but not every target was
-/// discarded. The caller must record the oplog entry with the after-state (which
-/// carries the backup blob SHAs) and reload, NOT report success.
-pub(crate) fn discard_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    paths: &[String],
-) -> Result<(String, StateSummary, Option<String>), String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    // run() returns OperationOutcome::Discard(DiscardOutcome) which carries the
-    // backup-blob list (recovery handle) into the oplog.
-    let op = kagi_git::Operation::Discard {
-        paths: paths.to_vec(),
-    };
-    let outcome = match repo.run(&op, plan) {
-        Ok(kagi_git::OperationOutcome::Discard(d)) => d,
-        Ok(_) => return Err("discard: unexpected outcome variant".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Discard, e)),
-    };
-    let summary = outcome.oplog_summary();
-    klog!("executed: {}", summary);
-
-    // Verify: re-read status; targets must have left the unstaged set.
-    // #282: compare against `outcome.backups[].path` — the repo-relative paths the
-    // git layer actually acted on — not the raw UI strings, so both sides of the
-    // comparison went through the same normalization.
-    let mut leftover: Vec<String> = Vec::new();
-    match repo.working_tree_status() {
-        Ok(status) => {
-            let still: std::collections::HashSet<String> = status
-                .unstaged
-                .iter()
-                .map(|f| f.path.to_string_lossy().replace('\\', "/"))
-                .collect();
-            leftover = outcome
-                .backups
-                .iter()
-                .map(|b| b.path.clone())
-                .filter(|p| still.contains(p))
-                .collect();
-            if leftover.is_empty() {
-                eprintln!(
-                    "[kagi] verified: {} target(s) left the unstaged set",
-                    paths.len()
-                );
-            } else {
-                klog!("verify: {} target(s) still unstaged", leftover.len());
-            }
-        }
-        Err(e) => klog!("verify: status error: {}", e),
-    }
-
-    // #281: a leftover target means the discard was only partially applied — it
-    // must NOT be reported as a plain success.
-    let partial = outcome.error.clone().or_else(|| {
-        (!leftover.is_empty()).then(|| {
-            format!(
-                "discard verify failed: {} target(s) not discarded: {}",
-                leftover.len(),
-                leftover.join(", ")
-            )
-        })
-    });
-
-    // The after-state carries the recovery handle (path→blob list) into the oplog,
-    // partial or not.
-    let after = StateSummary {
-        head: plan.current.head.clone(),
-        dirty: summary,
-    };
-    let human = if outcome.backups.len() == 1 {
-        format!("{} discarded", outcome.backups[0].path)
-    } else {
-        format!("{} files discarded", outcome.backups.len())
-    };
-    Ok((human, after, partial))
 }
 
 /// Blocking part of amend (history rewrite: tree-build + commit-replace).

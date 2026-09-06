@@ -100,6 +100,10 @@ impl KagiApp {
         let name = report.action.name();
         let success = matches!(entry.outcome, OpOutcome::Success { .. });
         let partial = matches!(entry.outcome, OpOutcome::Partial { .. });
+        // A stash conflict already has a full-screen recovery surface. Showing
+        // the same Partial as an AppNotice would keep the one modal slot occupied
+        // throughout Conflict Mode and strand the post-continue drop prompt.
+        let conflict_partial = partial && !report.evidence.conflicts.is_empty();
         let summary = oplog_panel::outcome_summary(&entry.outcome);
         if report.evidence.stop == Some(kagi_git::backend::stash::StashStopReason::Abandoned)
             && name != "stash-apply"
@@ -107,7 +111,7 @@ impl KagiApp {
             klog!("async: {} started", name);
         }
         if name != "stash-apply" && !report.evidence.plan_blocked {
-            if success || (partial && !report.evidence.conflicts.is_empty()) {
+            if success || conflict_partial {
                 klog!("async: {} finished", name);
             } else {
                 klog!("async: {} failed — {}", name, summary);
@@ -150,7 +154,7 @@ impl KagiApp {
                 FooterStatus::Failed(footer.clone().into())
             };
         }
-        if !success {
+        if !success && !conflict_partial {
             let mut notice = modals::AppNotice::from(format!("{}: {}", entry.repo, footer));
             if report.evidence.unknown {
                 notice.inspect = Some(id);

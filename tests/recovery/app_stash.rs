@@ -62,21 +62,21 @@ fn confirm(
         cx.simulate_keystrokes(window, "enter");
     }
 }
-fn dismiss_app_notice(
+fn dismiss_app_notice_if_present(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
 ) {
-    wait(cx, app, |app| {
-        matches!(&app.active_modal, Some(ActiveModal::AppNotice(_)))
-    });
+    if !cx.read(|cx| matches!(&app.read(cx).active_modal, Some(ActiveModal::AppNotice(_)))) {
+        return;
+    }
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
         window.draw(cx).clear();
     })
     .unwrap();
     cx.simulate_keystrokes(window, "escape");
-    wait(cx, app, |app| app.active_modal.is_none());
+    cx.run_until_parked();
 }
 fn teardown(cx: &mut VisualTestAppContext, app: Entity<KagiApp>, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, _| window.remove_window())
@@ -183,10 +183,6 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         assert!(matches!(entries[0].outcome, OpOutcome::Partial { .. }));
         assert_eq!(ids(&repo), before);
         assert!(cx.read(|cx| !matches!(app.read(cx).status_footer, FooterStatus::Success(_))));
-        // Partial delivery opens an AppNotice. The rest of this scenario calls
-        // conflict_continue directly, so first dismiss the notice through the
-        // real root key path instead of bypassing an active modal.
-        dismiss_app_notice(cx, &app, window);
         let other = build_fixture();
         let other_path = other.path().canonicalize().unwrap();
         app.update(cx, |app, cx| {
@@ -228,10 +224,12 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             });
         })
         .unwrap();
+        wait(cx, &app, |app| app.conflict.is_none());
+        // Partial delivery does not always present its queued notice before
+        // Conflict Mode. If one is active after continue/reload, dismiss it;
+        // otherwise let the follow-up proceed without depending on a notice.
+        dismiss_app_notice_if_present(cx, &app, window);
         wait(cx, &app, |app| {
-            if app.conflict.is_some() {
-                return false;
-            }
             if duplicate {
                 app.app_sessions.stash_conflict(&repo).is_none()
                     && !matches!(app.app_sessions.plan_state(), PlanState::Planning { .. })

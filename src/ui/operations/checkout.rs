@@ -119,10 +119,6 @@ impl KagiApp {
         }
     }
 
-    /// Confirm the plan: run preflight, execute checkout, then reload.
-    ///
-    /// On preflight or execute failure the modal remains open and shows the
-    /// error text + recovery guidance.  The app never crashes.
     /// Stash the working tree ahead of an Enter-checkout. Returns `true`
     /// when the tree is clean afterwards; on Refused/Failed the plan modal
     /// shows the error and the checkout is aborted.
@@ -320,27 +316,13 @@ impl KagiApp {
             return;
         }
         // Ignore Enter while any overlay / panel / text input is active.
-        if self.plan_modal().is_some()
-            || self.pull_modal().is_some()
-            || self.push_modal().is_some()
-            || self.branch_plan_modal().is_some()
-            || self.set_upstream_modal().is_some()
-            || self.rename_branch_modal().is_some()
-            || self.merge_modal().is_some()
-            || self.tracking_checkout_modal().is_some()
-            || self.history_modal().is_some()
-            || self.amend_modal().is_some()
-            || self.pop_modal().is_some()
-            || self.create_branch_modal().is_some()
-            || self.create_worktree_modal().is_some()
-            || self.stash_push_modal().is_some()
-            || self.stash_apply_modal().is_some()
-            || self.cherry_pick_modal().is_some()
-            || self.delete_branch_modal().is_some()
-            || self.discard_modal().is_some()
-            || self.commit_menu.is_some()
-            || self.commit_panel_open
-        {
+        // #492: `has_active_modal` covers EVERY `ActiveModal` variant. The
+        // hand-written accessor list this replaces named 18 of them, so a
+        // reset-current / force-with-lease / rebase / create-tag /
+        // delete-remote-branch confirmation could not stop Enter from checking
+        // out the commit selected behind it. `confirm_active_modal` consumes
+        // Enter first now; this stays as the second line of defence.
+        if self.has_active_modal() || self.commit_menu.is_some() || self.commit_panel_open {
             return;
         }
         if window.has_focused_input(cx) {

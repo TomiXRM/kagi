@@ -3191,84 +3191,26 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Enter while a modal is open: confirm/approve the active modal (highest
-    /// priority first). Returns `true` if a modal was open — the caller consumes
-    /// Enter and does NOT fall through to commit checkout. Each confirm method
-    /// self-guards on blockers, so a blocked plan stays open. View-only/multi-
-    /// choice overlays (update, menu/settings) are consumed but not actioned.
-    /// (User request: Enter approves a modal, Esc cancels it.)
+    /// Enter while a modal is open: confirm/approve the active modal. Returns
+    /// `true` if a modal was open — the caller consumes Enter and does NOT fall
+    /// through to commit checkout. Each confirm method self-guards on blockers
+    /// and on its own two-stage arming, so Enter can neither execute a blocked
+    /// plan nor skip a stage. View-only/multi-choice overlays (update,
+    /// menu/settings) are consumed but not actioned.
+    ///
+    /// #492: the `match` over [`ActiveModal`] is **exhaustive** — a new variant
+    /// fails to compile until Enter and Esc handle it. The old hand-written
+    /// accessor chain silently skipped five variants (create-tag,
+    /// delete-remote-branch, reset-current, force-with-lease-push,
+    /// rebase-onto), and Enter over those modals checked out the commit
+    /// selected behind them.
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.app_notice().is_some() {
-            self.confirm_app_notice(cx);
-        } else if self.trust_repo_modal().is_some() {
-            self.confirm_trust_repo(cx);
-        } else if self.editor_fs_prompt_modal().is_some() {
-            self.confirm_editor_fs_prompt(cx);
-        } else if self.editor_delete_confirm_modal().is_some() {
-            self.confirm_editor_delete(cx);
-        } else if self.editor_dirty_guard_modal().is_some() {
-            self.confirm_editor_dirty_guard(cx);
-        } else if self.discard_modal().is_some() {
-            self.start_discard(cx);
-        } else if self.conflict_continue_modal().is_some() {
-            self.confirm_conflict_continue(cx);
-        } else if self.history_modal().is_some() {
-            self.confirm_history(cx);
-        } else if self.amend_modal().is_some() {
-            self.start_amend(cx);
-        } else if self.push_tag_modal().is_some() {
-            self.start_push_tag(cx);
-        } else if self.cherry_pick_modal().is_some() {
-            self.start_cherry_pick(cx);
-        } else if self.revert_modal().is_some() {
-            self.start_revert(cx);
-        } else if self.pr_merge_modal().is_some() {
-            self.start_pr_merge(cx);
-        } else if self.stash_apply_modal().is_some() {
-            self.confirm_stash_apply(cx);
-        } else if self.stash_drop_modal().is_some() {
-            self.start_stash_drop(cx);
-        } else if self.stash_push_modal().is_some() {
-            self.confirm_stash_push(cx);
-        } else if self.unlock_worktree_modal().is_some() {
-            self.confirm_unlock_worktree(cx);
-        } else if self.remove_worktree_modal().is_some() {
-            self.confirm_remove_worktree(cx);
-        } else if self.lock_worktree_modal().is_some() {
-            self.confirm_lock_worktree(cx);
-        } else if self.prune_worktrees_modal().is_some() {
-            self.confirm_prune_worktrees(cx);
-        } else if self.repair_worktrees_modal().is_some() {
-            self.confirm_repair_worktrees(cx);
-        } else if self.create_worktree_modal().is_some() {
-            self.start_create_worktree(cx);
-        } else if self.create_branch_modal().is_some() {
-            self.confirm_create_branch(cx);
-        } else if self.rename_branch_modal().is_some() {
-            self.start_rename_branch(cx);
-        } else if self.set_upstream_modal().is_some() {
-            self.start_set_upstream(cx);
-        } else if self.tracking_checkout_modal().is_some() {
-            self.start_tracking_checkout(cx);
-        } else if self.switch_to_latest_modal().is_some() {
-            self.start_switch_to_latest(cx);
-        } else if self.merge_modal().is_some() {
-            self.start_merge(cx);
-        } else if self.branch_plan_modal().is_some() {
-            self.start_branch_plan(cx);
-        } else if self.branch_cleanup_modal().is_some() {
-            self.confirm_branch_cleanup(cx);
-        } else if self.delete_branch_modal().is_some() {
-            self.start_delete_branch(cx);
-        } else if self.pop_modal().is_some() {
-            self.start_pop(cx);
-        } else if self.push_modal().is_some() {
-            self.start_push(cx);
-        } else if self.pull_modal().is_some() {
-            self.start_pull(cx);
-        } else if self.plan_modal().is_some() {
-            self.start_checkout(cx);
-        } else if self.smart_commit.modal.is_some() {
+        if self.active_modal.is_some() {
+            self.confirm_open_modal(cx);
+            cx.notify();
+            return true;
+        }
+        if self.smart_commit.modal.is_some() {
             self.confirm_smart_consent(cx);
         } else if self
             .commit_panel
@@ -3287,86 +3229,70 @@ impl KagiApp {
         true
     }
 
-    /// Esc while a modal is open: cancel/close the active modal (same priority
-    /// order as `confirm_active_modal`). Returns `true` if a modal was open.
+    /// Confirm whichever [`ActiveModal`] owns the slot. Split out of
+    /// `confirm_active_modal` so the exhaustive match is one screen; the caller
+    /// has already established that `active_modal` is `Some`.
+    ///
+    /// Write modals dispatch to their `start_*` entry (#493) — the same one the
+    /// modal's own button uses.
+    fn confirm_open_modal(&mut self, cx: &mut Context<Self>) {
+        use modals::ActiveModal as M;
+        let Some(modal) = self.active_modal.as_ref() else {
+            return;
+        };
+        match modal {
+            M::AppNotice(_) => self.confirm_app_notice(cx),
+            M::Checkout(_) => self.start_checkout(cx),
+            M::Pull(_) => self.start_pull(cx),
+            M::Amend(_) => self.start_amend(cx),
+            M::Pop(_) => self.start_pop(cx),
+            M::StashDrop(_) => self.start_stash_drop(cx),
+            M::PushTag(_) => self.start_push_tag(cx),
+            M::PrMerge(_) => self.start_pr_merge(cx),
+            M::Push(_) => self.start_push(cx),
+            M::BranchPlan(_) => self.start_branch_plan(cx),
+            M::SetUpstream(_) => self.start_set_upstream(cx),
+            M::RenameBranch(_) => self.start_rename_branch(cx),
+            M::Merge(_) => self.start_merge(cx),
+            M::TrackingCheckout(_) => self.start_tracking_checkout(cx),
+            M::SwitchToLatest(_) => self.start_switch_to_latest(cx),
+            M::CreateBranch(_) => self.confirm_create_branch(cx),
+            M::CreateTag(_) => self.confirm_create_tag(cx),
+            M::CreateWorktree(_) => self.start_create_worktree(cx),
+            M::UnlockWorktree(_) => self.confirm_unlock_worktree(cx),
+            M::RemoveWorktree(_) => self.confirm_remove_worktree(cx),
+            M::LockWorktree(_) => self.confirm_lock_worktree(cx),
+            M::PruneWorktrees(_) => self.confirm_prune_worktrees(cx),
+            M::RepairWorktrees(_) => self.confirm_repair_worktrees(cx),
+            M::StashPush(_) => self.confirm_stash_push(cx),
+            M::StashApply(_) => self.confirm_stash_apply(cx),
+            M::CherryPick(_) => self.start_cherry_pick(cx),
+            M::Revert(_) => self.start_revert(cx),
+            M::History(_) => self.confirm_history(cx),
+            M::DeleteBranch(_) => self.start_delete_branch(cx),
+            M::DeleteRemoteBranch(_) => self.start_delete_remote_branch(cx),
+            M::ResetCurrent(_) => self.start_reset_current(cx),
+            M::ForceLeasePush(_) => self.start_force_lease_push(cx),
+            M::RebaseCurrentOnto(_) => self.start_rebase(cx),
+            M::BranchCleanup(_) => self.confirm_branch_cleanup(cx),
+            M::Discard(_) => self.start_discard(cx),
+            M::ConflictContinue(_) => self.confirm_conflict_continue(cx),
+            M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
+            M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
+            M::EditorDeleteConfirm(_) => self.confirm_editor_delete(cx),
+            M::TrustRepo(_) => self.confirm_trust_repo(cx),
+        }
+    }
+
+    /// Esc while a modal is open: cancel/close the active modal. Returns `true`
+    /// if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.app_notice().is_some() {
-            // Keep a non-mutating reconciliation available after Escape.
-            if let Some(notice) = self
-                .app_notice()
-                .filter(|n| n.inspect.is_some() || n.acknowledge.is_some())
-                .cloned()
-            {
-                self.app_notices.push_back(notice);
-            }
-            self.clear_app_notice();
-        } else if self.trust_repo_modal().is_some() {
-            self.cancel_trust_repo_modal();
-        } else if self.editor_fs_prompt_modal().is_some() {
-            self.cancel_editor_fs_prompt();
-        } else if self.editor_delete_confirm_modal().is_some() {
-            self.cancel_editor_delete_confirm();
-        } else if self.editor_dirty_guard_modal().is_some() {
-            self.cancel_editor_dirty_guard();
-        } else if self.discard_modal().is_some() {
-            self.cancel_discard_modal();
-        } else if self.conflict_continue_modal().is_some() {
-            self.cancel_conflict_continue();
-        } else if self.history_modal().is_some() {
-            self.clear_history_modal();
-        } else if self.amend_modal().is_some() {
-            self.cancel_amend_modal();
-        } else if self.push_tag_modal().is_some() {
-            self.cancel_push_tag_modal();
-        } else if self.pr_merge_modal().is_some() {
-            self.cancel_pr_merge_modal();
-        } else if self.cherry_pick_modal().is_some() {
-            self.cancel_cherry_pick_modal();
-        } else if self.revert_modal().is_some() {
-            self.cancel_revert_modal();
-        } else if self.stash_apply_modal().is_some() {
-            self.cancel_stash_apply_modal();
-        } else if self.stash_push_modal().is_some() {
-            self.cancel_stash_push_modal();
-        } else if self.unlock_worktree_modal().is_some() {
-            self.cancel_unlock_worktree_modal();
-        } else if self.remove_worktree_modal().is_some() {
-            self.cancel_remove_worktree_modal();
-        } else if self.lock_worktree_modal().is_some() {
-            self.cancel_lock_worktree_modal();
-        } else if self.prune_worktrees_modal().is_some() {
-            self.cancel_prune_worktrees_modal();
-        } else if self.repair_worktrees_modal().is_some() {
-            self.cancel_repair_worktrees_modal();
-        } else if self.create_worktree_modal().is_some() {
-            self.cancel_create_worktree_modal();
-        } else if self.create_branch_modal().is_some() {
-            self.cancel_create_branch_modal();
-        } else if self.rename_branch_modal().is_some() {
-            self.cancel_rename_branch_modal();
-        } else if self.set_upstream_modal().is_some() {
-            self.cancel_set_upstream_modal();
-        } else if self.tracking_checkout_modal().is_some() {
-            self.cancel_tracking_checkout_modal();
-        } else if self.switch_to_latest_modal().is_some() {
-            self.cancel_switch_to_latest_modal();
-        } else if self.merge_modal().is_some() {
-            self.cancel_merge_modal();
-        } else if self.branch_plan_modal().is_some() {
-            self.cancel_branch_plan_modal();
-        } else if self.branch_cleanup_modal().is_some() {
-            self.cancel_branch_cleanup_modal();
-        } else if self.delete_branch_modal().is_some() {
-            self.cancel_delete_branch_modal();
-        } else if self.pop_modal().is_some() {
-            self.cancel_pop_modal();
-        } else if self.push_modal().is_some() {
-            self.cancel_push_modal();
-        } else if self.pull_modal().is_some() {
-            self.cancel_pull_modal();
-        } else if self.plan_modal().is_some() {
-            self.cancel_modal();
-        } else if self.smart_commit.modal.is_some() {
+        if self.active_modal.is_some() {
+            self.cancel_open_modal();
+            cx.notify();
+            return true;
+        }
+        if self.smart_commit.modal.is_some() {
             self.cancel_smart_modal(cx);
         } else if self
             .commit_panel
@@ -3383,6 +3309,68 @@ impl KagiApp {
         }
         cx.notify();
         true
+    }
+
+    /// Cancel whichever [`ActiveModal`] owns the slot (#492 — exhaustive, so a
+    /// new variant cannot ship without an Esc path). The caller has already
+    /// established that `active_modal` is `Some`.
+    fn cancel_open_modal(&mut self) {
+        use modals::ActiveModal as M;
+        let Some(modal) = self.active_modal.as_ref() else {
+            return;
+        };
+        match modal {
+            M::AppNotice(_) => {
+                // Keep a non-mutating reconciliation available after Escape.
+                if let Some(notice) = self
+                    .app_notice()
+                    .filter(|n| n.inspect.is_some() || n.acknowledge.is_some())
+                    .cloned()
+                {
+                    self.app_notices.push_back(notice);
+                }
+                self.clear_app_notice();
+            }
+            M::Checkout(_) => self.cancel_modal(),
+            M::Pull(_) => self.cancel_pull_modal(),
+            M::Amend(_) => self.cancel_amend_modal(),
+            M::Pop(_) => self.cancel_pop_modal(),
+            M::StashDrop(_) => self.cancel_stash_drop_modal(),
+            M::PushTag(_) => self.cancel_push_tag_modal(),
+            M::PrMerge(_) => self.cancel_pr_merge_modal(),
+            M::Push(_) => self.cancel_push_modal(),
+            M::BranchPlan(_) => self.cancel_branch_plan_modal(),
+            M::SetUpstream(_) => self.cancel_set_upstream_modal(),
+            M::RenameBranch(_) => self.cancel_rename_branch_modal(),
+            M::Merge(_) => self.cancel_merge_modal(),
+            M::TrackingCheckout(_) => self.cancel_tracking_checkout_modal(),
+            M::SwitchToLatest(_) => self.cancel_switch_to_latest_modal(),
+            M::CreateBranch(_) => self.cancel_create_branch_modal(),
+            M::CreateTag(_) => self.cancel_create_tag_modal(),
+            M::CreateWorktree(_) => self.cancel_create_worktree_modal(),
+            M::UnlockWorktree(_) => self.cancel_unlock_worktree_modal(),
+            M::RemoveWorktree(_) => self.cancel_remove_worktree_modal(),
+            M::LockWorktree(_) => self.cancel_lock_worktree_modal(),
+            M::PruneWorktrees(_) => self.cancel_prune_worktrees_modal(),
+            M::RepairWorktrees(_) => self.cancel_repair_worktrees_modal(),
+            M::StashPush(_) => self.cancel_stash_push_modal(),
+            M::StashApply(_) => self.cancel_stash_apply_modal(),
+            M::CherryPick(_) => self.cancel_cherry_pick_modal(),
+            M::Revert(_) => self.cancel_revert_modal(),
+            M::History(_) => self.clear_history_modal(),
+            M::DeleteBranch(_) => self.cancel_delete_branch_modal(),
+            M::DeleteRemoteBranch(_) => self.cancel_delete_remote_branch_modal(),
+            M::ResetCurrent(_) => self.cancel_reset_current_modal(),
+            M::ForceLeasePush(_) => self.cancel_force_lease_push_modal(),
+            M::RebaseCurrentOnto(_) => self.cancel_rebase_modal(),
+            M::BranchCleanup(_) => self.cancel_branch_cleanup_modal(),
+            M::Discard(_) => self.cancel_discard_modal(),
+            M::ConflictContinue(_) => self.cancel_conflict_continue(),
+            M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
+            M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),
+            M::EditorDeleteConfirm(_) => self.cancel_editor_delete_confirm(),
+            M::TrustRepo(_) => self.cancel_trust_repo_modal(),
+        }
     }
 
     /// Move the commit selection up/down by `delta` rows (arrow keys).

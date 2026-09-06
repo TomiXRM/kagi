@@ -212,7 +212,7 @@ pub fn prepare_remove(
         return Err(AdmissionError::NeedsReconcile);
     }
     let id = OperationId(next_id());
-    sessions.leases.insert(approved.plan.common_dir.clone(), id);
+    sessions.reserve_lease(approved.plan.common_dir.clone(), id)?;
     sessions.operations.insert(
         id,
         InFlight {
@@ -239,8 +239,8 @@ pub fn apply(sessions: &mut Sessions, completion: RemoveCompletion) -> Vec<Deliv
     };
     sessions.settled.insert(completion.id);
     let stopped = !completion.report.progress.termination_unknown;
-    if stopped && sessions.leases.get(&owner.plan.common_dir) == Some(&completion.id) {
-        sessions.leases.remove(&owner.plan.common_dir);
+    if stopped {
+        sessions.release_lease(&owner.plan.common_dir, completion.id);
     }
     if matches!(
         completion.report.recording.entry().outcome,

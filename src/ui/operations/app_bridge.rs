@@ -3,6 +3,40 @@ use crate::app::{self, Approved, Delivery, LegacyBusy};
 use crate::ui::*;
 
 impl KagiApp {
+    /// Reserve and mirror in the same UI turn, before any writer dispatch.
+    pub(crate) fn reserve_write(
+        &mut self,
+        path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) -> Option<app::WriteGuard> {
+        self.refresh_write_busy();
+        match self
+            .app_sessions
+            .write_lease(path, LegacyBusy(self.busy_op.is_some()))
+        {
+            Ok(guard) => {
+                self.busy_op = Some("app-writer");
+                Some(guard)
+            }
+            Err(error) => {
+                let message = if error == app::AdmissionError::Busy {
+                    Msg::OpInProgress.t().to_string()
+                } else {
+                    error.to_string()
+                };
+                self.status_footer = FooterStatus::Failed(message.clone().into());
+                self.push_toast(ToastKind::Error, message.clone(), cx);
+                self.app_notices.push_back(message.into());
+                cx.notify();
+                None
+            }
+        }
+    }
+    pub(crate) fn refresh_write_busy(&mut self) {
+        if self.busy_op == Some("app-writer") && !self.app_sessions.has_leases() {
+            self.busy_op = None;
+        }
+    }
     pub(crate) fn dispatch_job(&mut self, approved: Approved, cx: &mut Context<Self>) {
         let job = match app::prepare_remove(
             &mut self.app_sessions,
@@ -167,6 +201,7 @@ impl KagiApp {
         }
     }
     pub(crate) fn poll_app_jobs(&mut self, cx: &mut Context<Self>) {
+        self.refresh_write_busy();
         for delivery in self.app_sessions.drain_abandoned() {
             self.deliver_app_result(delivery, cx);
         }

@@ -506,10 +506,10 @@ editor save 等の admission 接続（1b）、全 modal の書換え、CLI/MCP �
 
 | slice 1b — 横展開前提の admission 接続（executor は移さない） | 完了条件 |
 |---|---|
-| editor save（最優先） | pane の dispatch 前に共通 write lease を取得。remove backup→delete 間の save は Busy、save が先行中なら remove が Busy。保存済み bytes を失わない |
-| staging | single/batch、panel/editor の入口を同じ admission へ。既存同期実行中も lease を保持 |
-| create_snapshot_now | capture dispatch 前から完了まで lease。既存 snapshot 本体/記録契約を維持 |
-| fetch | manual/auto/branch 各 dispatch と既存 in-flight を lease に接続。先行 fetch と後続 remove も逆方向も Busy |
+| editor save（最優先、1b 実装済み・PM 検証待ち） | pane の dispatch 前に共通 write lease を取得。remove backup→delete 間の save は Busy、save が先行中なら remove が Busy。保存済み bytes を失わない |
+| staging（1b 実装済み・PM 検証待ち） | single/batch、panel/editor の入口を同じ admission へ。既存同期実行中も lease を保持 |
+| create_snapshot_now（1b 実装済み・PM 検証待ち） | capture dispatch 前から完了まで lease。既存 snapshot 本体/記録契約を維持 |
+| fetch（1b 実装済み・PM 検証待ち） | manual/auto/branch 各 dispatch と既存 in-flight を lease に接続。先行 fetch と後続 remove も逆方向も Busy |
 
 app の `write_lease(path)` は単なる busy 問い合わせではなく、identity 解決と Busy/NeedsReconcile 判定を伴う
 **予約の取得**。GUI 共通 bridge が既存 busy mirror と同じ turn で確立し、owned guard を job 完了/停止確認まで保持する。

@@ -105,6 +105,7 @@ impl KagiApp {
     /// Reject a state-changing op if another is in flight (#283 stage 1).
     /// Returns true (and sets the footer) when the caller must bail out.
     pub(crate) fn reject_if_busy(&mut self, cx: &mut Context<Self>) -> bool {
+        self.refresh_write_busy();
         if op_may_start(self.busy_op) && !self.app_sessions.has_leases() {
             return false;
         }

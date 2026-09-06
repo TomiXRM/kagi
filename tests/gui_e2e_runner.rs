@@ -56,6 +56,10 @@ mod recovery_operations;
 mod app_remove;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/app_writer_admission.rs"]
+mod app_writer_admission;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
 
@@ -379,6 +383,7 @@ mod macos {
         crate::recovery_operations::scenario_cleanup_open_failure(&mut cx);
         crate::recovery_operations::scenario_cleanup_partial_presentation(&mut cx);
         crate::app_remove::scenario_remove_public_boundary(&mut cx);
+        crate::app_writer_admission::scenario_editor_save_during_remove(&mut cx);
         crate::recovery_layout::scenario_commit_row_layout(&mut cx);
         let history_fixture = build_fixture();
         let history_before = repo_fingerprint(history_fixture.path());

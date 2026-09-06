@@ -212,6 +212,8 @@ pub enum GitError {
     /// A recorded attempt failed before execution. Display preserves the
     /// underlying error; callers can retain their preflight-specific UI label.
     Preflight(Box<GitError>),
+    /// CLI timeout/reap uncertainty: admission must not release on this error.
+    TerminationUnknown(String),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -240,7 +242,9 @@ impl std::fmt::Display for GitError {
                 p
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
-            GitError::Other(msg) => write!(f, "git error: {}", msg),
+            GitError::Other(msg) | GitError::TerminationUnknown(msg) => {
+                write!(f, "git error: {}", msg)
+            }
         }
     }
 }

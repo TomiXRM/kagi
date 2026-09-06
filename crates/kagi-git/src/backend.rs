@@ -37,6 +37,15 @@ pub struct Backend {
 }
 
 impl Backend {
+    /// Canonical common-directory identity for application write admission.
+    pub fn write_repo_id(path: &std::path::Path) -> Result<kagi_domain::remove::RepoId, GitError> {
+        let backend = Self::open(path)?;
+        backend.require_trust()?;
+        std::fs::canonicalize(backend.repo.commondir())
+            .map(kagi_domain::remove::RepoId)
+            .map_err(|error| GitError::Other(error.to_string()))
+    }
+
     /// Open the repository at `path`.
     pub fn open(path: &Path) -> Result<Self, GitError> {
         let path_str = path.display().to_string();

@@ -380,7 +380,9 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
             };
             editor.update(cx, |view, cx| {
                 view.right_tab = RightPaneTab::History;
-                view.history_loading = false;
+                // No `history_loading = false` needed since #489: the loading
+                // state belongs to an in-flight request, and this harness
+                // seeds `history` directly without ever issuing one.
                 view.history = Some(history.clone());
                 view.selected_history_commit = Some(format!("{:040x}", 2));
                 cx.notify();

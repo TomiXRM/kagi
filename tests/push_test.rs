@@ -14,13 +14,16 @@
 //! | 6 | `test_push_no_force_in_args`         | execute_push never passes --force / --force-with-lease |
 //! | 7 | `test_push_local_unchanged_on_error` | local repo HEAD/WT untouched after push failure |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_push;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_push, plan_push};
+use kagi_git::plan_push;
 
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -366,7 +369,7 @@ fn test_push_no_force_in_args() {
 
     // Find the execute_push function section only (up to build_push_preview).
     let push_section_start = src
-        .find("pub fn execute_push")
+        .find("pub(crate) fn execute_push")
         .expect("execute_push not found");
     let push_section = &src[push_section_start..];
 

@@ -427,14 +427,21 @@ mod tests {
     /// which is what keeps a worktree panel's message out of the open tab's.
     #[test]
     fn draft_key_includes_the_repo_path() {
-        let a = draft_file_path(Path::new("/repo"), "main").expect("path a");
-        let b = draft_file_path(Path::new("/repo/../wt"), "main").expect("path b");
+        // Other tests may change the environment-derived drafts directory;
+        // this test exercises only the repository/branch key in the filename.
+        let key = |repo, branch| {
+            draft_file_path(Path::new(repo), branch)
+                .expect("draft path")
+                .file_name()
+                .expect("draft filename")
+                .to_owned()
+        };
+        let a = key("/repo", "main");
+        let b = key("/repo/../wt", "main");
         assert_ne!(a, b, "same branch, different repos must not share a draft");
-        // …and the branch still separates two drafts within one repository.
-        let c = draft_file_path(Path::new("/repo"), "feat").expect("path c");
+        let c = key("/repo", "feat");
         assert_ne!(a, c);
-        // Same inputs → same file (the load side must find what save wrote).
-        assert_eq!(a, draft_file_path(Path::new("/repo"), "main").unwrap());
+        assert_eq!(a, key("/repo", "main"));
     }
 
     // ── JSON round-trip / escaping ─────────────────────────────

@@ -13,13 +13,16 @@
 //! | 7 | `test_plan_undo_commit_detached_blocker` | detached HEAD → plan returns blocker |
 //! | 8 | `test_undo_commit_no_upstream_allowed` | local branch without upstream → undo is allowed |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_undo_commit;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_undo_commit, plan_undo_commit, working_tree_status};
+use kagi_git::{plan_undo_commit, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

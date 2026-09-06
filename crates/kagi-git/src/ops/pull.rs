@@ -295,7 +295,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 ///
 /// Returns [`GitError::Other`] on any failure.  The repo is **never** left in a
 /// partial state: conflicts are detected before any write occurs.
-pub fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, GitError> {
+pub(crate) fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, GitError> {
     // ── 1. Resolve current branch + upstream ─────────────────
     let head_ref = repo
         .head()
@@ -728,7 +728,7 @@ pub fn plan_pull_branch_ff(
     })
 }
 
-pub fn execute_pull_branch_ff(
+pub(crate) fn execute_pull_branch_ff(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,

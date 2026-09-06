@@ -1,12 +1,15 @@
 //! `plan_push_tag` / `execute_push_tag` — publishing a local tag (ADR-0140).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_push_tag;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::ops::{execute_push_tag, plan_push_tag};
+use kagi_git::ops::plan_push_tag;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

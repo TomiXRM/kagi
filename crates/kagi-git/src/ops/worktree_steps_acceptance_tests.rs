@@ -14,12 +14,12 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Mutex;
 
-use kagi_domain::plan_note::PlanNote;
-use kagi_domain::worktree_steps::{escape_control_bytes, WorktreeStep};
-use kagi_git::ops::{
+use crate::ops::{
     is_worktree_config_trusted, load_worktree_config, post_create_note, pre_remove_note,
     run_post_create, trust_worktree_config, StepEnv,
 };
+use kagi_domain::plan_note::PlanNote;
+use kagi_domain::worktree_steps::{escape_control_bytes, WorktreeStep};
 
 // The trust store (`KAGI_LOG_DIR`) and the headless markers are process-global,
 // so every env-touching test serializes on this and saves/restores what it set.
@@ -33,19 +33,6 @@ fn clear_headless() {
     }
 }
 
-fn git(dir: &Path, args: &[&str]) {
-    let st = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "t")
-        .env("GIT_AUTHOR_EMAIL", "t@t")
-        .env("GIT_COMMITTER_NAME", "t")
-        .env("GIT_COMMITTER_EMAIL", "t@t")
-        .status()
-        .expect("git");
-    assert!(st.success(), "git {:?} failed", args);
-}
-
 /// Write `.kagi/worktree.toml` under `root` with the given body.
 fn write_config(root: &Path, body: &str) {
     let dir = root.join(".kagi");
@@ -57,6 +44,9 @@ fn write_config(root: &Path, body: &str) {
 
 #[test]
 fn copy_and_symlink_run_without_trust_and_never_overwrite() {
+    if !isolated("copy_and_symlink_run_without_trust_and_never_overwrite") {
+        return;
+    }
     let main = tempfile::tempdir().unwrap();
     let wt = tempfile::tempdir().unwrap();
     std::fs::write(main.path().join(".env.example"), "SRC").unwrap();
@@ -111,6 +101,9 @@ fn copy_and_symlink_run_without_trust_and_never_overwrite() {
 
 #[test]
 fn command_trust_sha_and_headless_gating() {
+    if !isolated("command_trust_sha_and_headless_gating") {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -178,69 +171,13 @@ fn command_trust_sha_and_headless_gating() {
 
 // ── pre_remove failure keeps the worktree ──
 
-#[test]
-fn pre_remove_failure_keeps_the_worktree() {
-    let _guard = ENV_LOCK.lock().unwrap();
-    let store = tempfile::tempdir().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", store.path());
-    clear_headless();
-
-    let td = tempfile::tempdir().unwrap();
-    let main = td.path().join("main");
-    std::fs::create_dir_all(&main).unwrap();
-    git(&main, &["init", "-q", "-b", "master"]);
-    std::fs::write(main.join("a.txt"), "a\n").unwrap();
-    git(&main, &["add", "."]);
-    git(&main, &["commit", "-qm", "base"]);
-
-    let wt = td.path().join("wt");
-    git(
-        &main,
-        &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feat"],
-    );
-    // A pre_remove command that FAILS (`false` exits 1). Committed so the
-    // worktree stays clean (an untracked file would block removal on its own).
-    write_config(&wt, "[[pre_remove]]\ntype = \"command\"\nrun = \"false\"\n");
-    git(&wt, &["add", "."]);
-    git(&wt, &["commit", "-qm", "config"]);
-
-    let backend = kagi_git::Backend::open(&main).expect("open main");
-    let plan = backend.plan_remove_worktree("wt", false).expect("plan");
-
-    // Untrusted → removal aborts, worktree survives.
-    let err = kagi_git::ops::execute_remove_worktree(
-        &git2::Repository::open(&main).unwrap(),
-        &plan,
-        "wt",
-        false,
-    )
-    .expect_err("untrusted pre_remove command must abort the removal");
-    assert!(format!("{err:?}").to_lowercase().contains("trust"));
-    assert!(wt.exists(), "worktree must survive an aborted removal");
-
-    // Trust it → the command now runs, fails (exit 1), still aborts.
-    let cfg = load_worktree_config(&wt).unwrap().unwrap();
-    trust_worktree_config(&cfg).unwrap();
-    let err = kagi_git::ops::execute_remove_worktree(
-        &git2::Repository::open(&main).unwrap(),
-        &plan,
-        "wt",
-        false,
-    )
-    .expect_err("a failing pre_remove command must abort the removal");
-    assert!(format!("{err:?}").contains("exited with status"));
-    assert!(
-        wt.exists(),
-        "worktree must survive when the pre_remove command fails"
-    );
-
-    std::env::remove_var("KAGI_LOG_DIR");
-}
-
 // ── plan lists steps per type + control bytes neutralized ──
 
 #[test]
 fn plan_lists_steps_per_type_and_neutralizes_control_bytes() {
+    if !isolated("plan_lists_steps_per_type_and_neutralizes_control_bytes") {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -281,4 +218,28 @@ fn plan_lists_steps_per_type_and_neutralizes_control_bytes() {
     assert_eq!(escape_control_bytes("a\tb"), "a\\x09b");
 
     std::env::remove_var("KAGI_LOG_DIR");
+}
+
+// These acceptance cases mutate process-wide headless/trust variables. Their
+// own test process prevents interference with unrelated Backend worker tests.
+fn isolated(name: &str) -> bool {
+    if std::env::var("KAGI_STEP_ACCEPTANCE_CHILD").ok().as_deref() == Some(name) {
+        return true;
+    }
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("ops::worktree_steps::acceptance_tests::{name}"),
+            "--nocapture",
+        ])
+        .env("KAGI_STEP_ACCEPTANCE_CHILD", name)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
 }

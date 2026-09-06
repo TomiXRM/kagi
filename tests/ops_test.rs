@@ -6,6 +6,12 @@
 //! each test.  This project's own repository and any other existing repository
 //! are **never** touched.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_checkout, execute_checkout_commit, execute_cherry_pick, execute_create_branch,
+    execute_create_tag, execute_stash_apply, execute_stash_push,
+};
 use std::path::Path;
 use std::process::Command;
 
@@ -14,9 +20,7 @@ use tempfile::TempDir;
 
 use kagi_git::{
     ops::{
-        execute_checkout, execute_checkout_commit, execute_cherry_pick, execute_create_branch,
-        execute_create_tag, execute_stash_apply, execute_stash_push, plan_checkout,
-        plan_checkout_commit, plan_cherry_pick, plan_create_branch,
+        plan_checkout, plan_checkout_commit, plan_cherry_pick, plan_create_branch,
         plan_create_branch_with_checkout, plan_create_tag, plan_stash_apply, plan_stash_push,
         preflight_check, preflight_check_stash,
     },
@@ -1732,7 +1736,7 @@ fn test_cherry_pick_plan_does_not_change_repo() {
 // new files.  Same ref-ordering pitfall as the pull FF/merge paths.
 #[test]
 fn test_cherry_pick_updates_modified_existing_file() {
-    use kagi_git::{execute_cherry_pick, CommitId};
+    use kagi_git::CommitId;
     let tmp = tempfile::TempDir::new().unwrap();
     let dir = tmp.path();
     git(dir, &["init", "-q", "-b", "main", "."]);

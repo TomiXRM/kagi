@@ -320,7 +320,7 @@ pub fn plan_merge_branch(
 /// Fast-forward execution checks out the target tree before moving the branch
 /// ref. Non-fast-forward execution creates the merge commit without moving any
 /// ref, checks out the merge tree, then advances the current branch.
-pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId, GitError> {
+pub(crate) fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId, GitError> {
     // #299: refuse if a merge/rebase/cherry-pick/revert is in progress — never
     // stack a second operation (which could drop a pending MERGE_HEAD).
     if let Some(op) = super::in_progress_op(repo) {
@@ -491,7 +491,7 @@ pub fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId,
 /// restore it (git2's `merge` does not write `ORIG_HEAD` itself). No force /
 /// `reset --hard` / `clean` is used; the checkout is the default git merge
 /// checkout. Returns the conflicted file paths from the index conflict iterator.
-pub fn execute_merge_into_conflict(
+pub(crate) fn execute_merge_into_conflict(
     repo: &Repository,
     target: &str,
 ) -> Result<Vec<String>, GitError> {
@@ -560,3 +560,7 @@ pub fn execute_merge_into_conflict(
     let conflict_files = conflict_paths_from_index(&mut index)?;
     Ok(conflict_files)
 }
+
+#[cfg(test)]
+#[path = "merge_executor_tests.rs"]
+mod executor_tests;

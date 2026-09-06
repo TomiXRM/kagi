@@ -13,6 +13,9 @@
 //!
 //! All repos live in `TempDir`s (no network, no writes to real repos).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_merge_branch;
 use std::path::Path;
 use std::process::Command;
 
@@ -130,9 +133,8 @@ fn merge_fast_forward_execute_updates_worktree() {
         "an ahead branch fast-forwards"
     );
 
-    let merged =
-        kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
-            .expect("execute FF merge");
+    let merged = execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
+        .expect("execute FF merge");
 
     // The ref advanced to exactly the feature tip (and is the returned oid).
     assert_eq!(merged.0, feature_tip, "FF lands the ref on the target tip");
@@ -224,9 +226,8 @@ fn merge_bulk_clean_execute_lands_all_files_and_bounds_preview() {
         plan.preview_files.len()
     );
 
-    let merged =
-        kagi_git::ops::execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
-            .expect("execute merge");
+    let merged = execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
+        .expect("execute merge");
 
     // Two-parent merge, current branch advanced, target untouched.
     assert_eq!(rev_parse(dir, "main"), merged.0);

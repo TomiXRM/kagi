@@ -121,7 +121,7 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
 /// Run `git rebase <onto>`. A conflict (non-zero exit, repo left in
 /// `RepositoryState::Rebase*`) is reported as [`RebaseOutcome::Conflicted`],
 /// not an `Err` — see the module doc.
-pub fn execute_rebase_current_onto(
+pub(crate) fn execute_rebase_current_onto(
     repo: &Repository,
     repo_path: &Path,
     onto: &str,

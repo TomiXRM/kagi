@@ -1,9 +1,10 @@
 //! #534: abort restores ORIG_HEAD, but reconstructs rebase output onto HEAD.
+
+#[path = "../../../tests/support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{execute_conflict_abort, execute_conflict_continue};
 use git2::{Repository, RepositoryState};
-use kagi_git::{
-    detect_conflict_session, execute_conflict_abort, execute_conflict_continue, ConflictOp,
-    ResolutionBuffer,
-};
+use kagi_git::{detect_conflict_session, ConflictOp, ResolutionBuffer};
 use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::{Mutex, MutexGuard};

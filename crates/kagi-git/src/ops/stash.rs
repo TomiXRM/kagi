@@ -174,7 +174,7 @@ pub fn plan_stash_push(
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn execute_stash_push(
+pub(crate) fn execute_stash_push(
     repo: &mut Repository,
     message: Option<&str>,
     include_untracked: bool,
@@ -339,14 +339,14 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
 /// Uses `repo.stash_apply(index, None)`.
 ///
 /// **This function does NOT remove the stash entry** — the stash is preserved
-/// after apply.  For apply + drop, use [`execute_stash_pop`] instead.
+/// after apply.  For apply + drop, use [`execute_stash_pop_recorded`] instead.
 /// The stash entry at `index` is preserved after this call.
 ///
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure (including apply
 /// conflicts — in that case the stash entry remains intact).
-pub fn execute_stash_apply(repo: &mut Repository, index: usize) -> Result<(), GitError> {
+pub(crate) fn execute_stash_apply(repo: &mut Repository, index: usize) -> Result<(), GitError> {
     repo.stash_apply(index, None)
         .map_err(|e| GitError::Other(format!("stash apply failed: {}", e.message())))?;
     Ok(())
@@ -557,11 +557,6 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
-pub fn execute_stash_pop(repo: &mut Repository, index: usize) -> Result<StashPopOutcome, GitError> {
-    let identity = stash_identity(repo, Some(index))?;
-    execute_stash_pop_recorded(repo, index, &identity, &mut Default::default(), None)
-}
-
 pub(crate) fn execute_stash_pop_recorded(
     repo: &mut Repository,
     index: usize,
@@ -642,7 +637,7 @@ fn applied_conflict_files(repo: &mut Repository) -> Result<Vec<String>, GitError
 /// because a conflicted `stash_apply` still returns `Ok`).
 ///
 /// This function is therefore intentionally `fn` (private to this module), not `pub fn`.
-/// The only caller is [`execute_stash_pop`].
+/// The only caller is [`execute_stash_pop_recorded`].
 fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitError> {
     repo.stash_drop(index)
         .map_err(|e| GitError::Other(format!("stash drop (pop phase) failed: {}", e.message())))
@@ -772,7 +767,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
 /// Does **not** touch the working tree. Returns the dropped stash commit OID
 /// (as a hex string) so the caller can record it in the oplog as the recovery
 /// handle (`git stash store <oid>`).
-pub fn execute_stash_drop(repo: &mut Repository, index: usize) -> Result<String, GitError> {
+pub(crate) fn execute_stash_drop(repo: &mut Repository, index: usize) -> Result<String, GitError> {
     // Capture the OID before dropping so the oplog keeps a recovery handle.
     let oid = collect_stash_entries_with_oid(repo)?
         .into_iter()

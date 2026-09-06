@@ -1,5 +1,11 @@
 //! Branch context menu operation backend tests (T-BCM-030/061/073).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_checkout_tracking_branch, execute_conflict_abort, execute_merge_branch,
+    execute_merge_into_conflict, execute_switch_to_latest,
+};
 use std::path::Path;
 use std::process::Command;
 
@@ -7,13 +13,10 @@ use git2::{BranchType, Repository};
 use tempfile::TempDir;
 
 use kagi_git::ops::{
-    default_tracking_branch_name, execute_checkout_tracking_branch, execute_merge_into_conflict,
-    execute_switch_to_latest, plan_checkout_tracking_branch, plan_merge_branch,
+    default_tracking_branch_name, plan_checkout_tracking_branch, plan_merge_branch,
     plan_switch_to_latest, MergeKind,
 };
-use kagi_git::{
-    detect_conflict_session, execute_conflict_abort, plan_conflict_abort, ResolutionBuffer,
-};
+use kagi_git::{detect_conflict_session, plan_conflict_abort, ResolutionBuffer};
 
 fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -611,7 +614,7 @@ fn merge_fast_forward_refuses_to_overwrite_dirty_file() {
     let head_before = git_rev_parse(dir, "HEAD");
     write_file(dir, "base.txt", "base\nUNSAVED USER WORK\n");
 
-    let result = kagi_git::execute_merge_branch(&repo, "feature");
+    let result = execute_merge_branch(&repo, "feature");
     assert!(
         result.is_err(),
         "safe-mode FF merge must refuse to overwrite a dirty file"
@@ -649,7 +652,7 @@ fn merge_commit_refuses_to_overwrite_dirty_file() {
     let head_before = git_rev_parse(dir, "HEAD");
     write_file(dir, "base.txt", "base\nUNSAVED USER WORK\n");
 
-    let result = kagi_git::execute_merge_branch(&repo, "feature");
+    let result = execute_merge_branch(&repo, "feature");
     assert!(
         result.is_err(),
         "safe-mode merge must refuse to overwrite a dirty file"
@@ -774,25 +777,19 @@ fn switch_to_latest_refuses_to_overwrite_dirty_file() {
     );
 }
 
-/// `execute_merge_into_conflict` again, from the other side: the deliberate
-/// conflict merge must leave a dirty file it does NOT touch alone. A force-mode
-/// checkout there would reset `base.txt` to the committed content.
+/// Backend rejects dirty conflict entry before mutation. The primitive safe
+/// checkout oracle remains in kagi-git's private merge_executor_tests module.
 #[test]
-fn merge_into_conflict_keeps_unrelated_dirty_file() {
+fn merge_boundary_refuses_dirty_worktree_without_mutation() {
     let (tmp, repo) = conflicting_merge_repo();
     let dir = tmp.path();
-
     write_file(dir, "base.txt", "UNSAVED USER WORK\n");
-
-    let files = execute_merge_into_conflict(&repo, "feature").expect("merge into conflict");
-    assert!(
-        files.iter().any(|f| f == "same.txt"),
-        "expected same.txt conflicted, got {:?}",
-        files
-    );
+    let before = git_rev_parse(dir, "HEAD");
+    assert!(execute_merge_into_conflict(&repo, "feature").is_err());
+    assert_eq!(git_rev_parse(dir, "HEAD"), before);
+    assert!(!dir.join(".git/MERGE_HEAD").exists());
     assert_eq!(
         std::fs::read_to_string(dir.join("base.txt")).unwrap(),
-        "UNSAVED USER WORK\n",
-        "safe-mode merge checkout must not discard uncommitted work"
+        "UNSAVED USER WORK\n"
     );
 }

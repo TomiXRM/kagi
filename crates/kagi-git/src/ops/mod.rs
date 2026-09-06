@@ -47,7 +47,7 @@
 //! - [`plan_stash_apply`]       — generate an [`OperationPlan`] for stash apply
 //! - [`execute_stash_apply`]    — apply a stash entry (apply only, no pop/drop)
 //! - [`plan_stash_pop`]         — generate an [`OperationPlan`] for stash pop (ADR-0009)
-//! - [`execute_stash_pop`]      — apply then drop only on a conflict-free apply (issue #280)
+//! - [`execute_stash_pop_recorded`]      — apply then drop only on a conflict-free apply (issue #280)
 //! - [`preflight_check_stash`]  — verify HEAD + stash count unchanged since planning
 //! - [`plan_cherry_pick`]       — generate an [`OperationPlan`] for cherry-pick (in-memory, no WT touch)
 //! - [`execute_cherry_pick`]    — apply a cherry-pick commit (in-memory → commit → checkout_head safe)
@@ -138,7 +138,7 @@ pub use checkout::*;
 pub use cherry_revert::*;
 pub use dir_file_conflict::*;
 pub use discard::*;
-pub use fetch::*;
+pub(crate) use fetch::*;
 pub use force_lease::*;
 pub use history::*;
 pub use merge::*;

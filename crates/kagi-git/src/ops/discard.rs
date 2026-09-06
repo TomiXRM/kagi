@@ -250,7 +250,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 /// been mutated at that point, so the backup blob SHAs are the user's only route
 /// back to their content and must never be dropped. Only failures *before* any
 /// mutation (blockers, preflight, backup) return `Err`.
-pub fn execute_discard(
+pub(crate) fn execute_discard(
     repo: &Repository,
     plan: &OperationPlan,
     paths: &[String],

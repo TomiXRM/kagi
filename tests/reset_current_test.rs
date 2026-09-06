@@ -4,6 +4,9 @@
 //! All write operations are confined to `TempDir` repositories created
 //! within each test.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_reset_current_to_head;
 use std::path::Path;
 use std::process::Command;
 
@@ -11,10 +14,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{PlanNote, ResetNote};
-use kagi_git::{
-    ops::{execute_reset_current_to_head, plan_reset_current_to_head},
-    CommitId,
-};
+use kagi_git::{ops::plan_reset_current_to_head, CommitId};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")

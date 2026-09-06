@@ -462,7 +462,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any failure.
-pub fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
+pub(crate) fn execute_cherry_pick(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
     // ── 1. Resolve target commit ──────────────────────────────
     let target_oid = git2::Oid::from_str(&id.0)
         .or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
@@ -862,7 +862,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 /// The ref-order rule is deliberately preserved: create the commit object,
 /// safe-checkout the new tree while HEAD still points at the old baseline, then
 /// move the current branch ref to the new commit.
-pub fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
+pub(crate) fn execute_revert(repo: &Repository, id: &CommitId) -> Result<CommitId, GitError> {
     let target_oid = if id.0.len() == 40 {
         git2::Oid::from_str(&id.0).or_else(|_| repo.revparse_single(&id.0).map(|obj| obj.id()))
     } else {

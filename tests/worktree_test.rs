@@ -1,5 +1,12 @@
 //! Worktree creation pipeline tests (T-CM-023/T-CM-024).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_create_worktree, execute_lock_worktree, execute_open_worktree_for_branch,
+    execute_prune_worktrees, execute_repair_worktrees, execute_unlock_worktree,
+};
+use backend_ops::{execute_remove_worktree, plan_remove_worktree};
 use std::path::Path;
 use std::process::Command;
 
@@ -9,8 +16,8 @@ use tempfile::TempDir;
 use kagi_domain::plan_note::{CommonNote, PlanNote, WorktreeNote};
 use kagi_git::{
     ops::{
-        execute_create_worktree, execute_open_worktree_for_branch, plan_create_worktree,
-        plan_open_worktree_for_branch, preflight_check, validate_worktree_path,
+        plan_create_worktree, plan_open_worktree_for_branch, preflight_check,
+        validate_worktree_path,
     },
     CommitId,
 };
@@ -213,7 +220,7 @@ fn unlock_plan_surfaces_lock_reason_and_execute_unlocks() {
         plan.warnings
     );
 
-    kagi_git::ops::execute_unlock_worktree(&repo, &plan, "wt-locked").expect("execute");
+    execute_unlock_worktree(&repo, &plan, "wt-locked").expect("execute");
     let wt = repo.find_worktree("wt-locked").expect("worktree");
     assert!(matches!(
         wt.is_locked(),
@@ -255,7 +262,7 @@ fn unlock_unlocked_worktree_is_blocked() {
         plan.blockers
     );
     // Execute (simulating a stale confirm) must refuse too.
-    assert!(kagi_git::ops::execute_unlock_worktree(&repo, &plan, "wt-free").is_err());
+    assert!(execute_unlock_worktree(&repo, &plan, "wt-free").is_err());
 }
 
 #[test]
@@ -606,11 +613,7 @@ fn worktreeinclude_refuses_symlinked_parent_dir() {
 // issue #340 — worktree lifecycle: remove / lock / prune / repair
 // ────────────────────────────────────────────────────────────
 
-use kagi_git::ops::{
-    execute_lock_worktree, execute_prune_worktrees, execute_remove_worktree,
-    execute_repair_worktrees, plan_lock_worktree, plan_prune_worktrees, plan_remove_worktree,
-    plan_repair_worktrees,
-};
+use kagi_git::ops::{plan_lock_worktree, plan_prune_worktrees, plan_repair_worktrees};
 
 /// Worktree-only remove leaves the branch (§6). `delete_branch=false`.
 #[test]

@@ -51,7 +51,7 @@ The application owns approval/admission; it cannot grant trust with a boolean.
 | `run_recorded_remove` | ADR-0175 approval; management + target T; admin identity/config/dirty preflight; explicit observed verification | Target backups and full branch OID, not management auto snapshot; one receipt, Partial/Unknown retained. |
 | `run_history_move` | Confirmed history plan; T; branch/from/to OID; ref-move verification | Ref-only: full from/to + reflog, no worktree snapshot; existing Backend recorder. |
 | `execute_lock/unlock/prune/repair_worktrees` | Confirmed plan; T; lifecycle preflight/verification | Administrative metadata, no worktree snapshot; existing lifecycle record boundary. |
-| conflict continue/save/abort/skip, stash-conflict abort, stage resolution, directory/file resolution | Existing explicit plan/edit intent; T; existing conflict/session/path/buffer checks | Existing conflict ODB/ORIG_HEAD safeguards and recorder. Full conflict-family approval generation binding remains #484 work. |
+| conflict continue/save/abort/skip, stash-conflict abort, stage resolution, immediate/frozen-plan directory/file resolution | Existing explicit plan/edit intent; T; existing conflict/session/path/buffer checks | Existing conflict ODB/ORIG_HEAD safeguards and recorder. Full conflict-family approval generation binding remains #484 work. |
 | `execute_delete_merged_branches` | Confirmed target list; T; per-ref checks and partial result | Deleted OIDs; existing Backend recorder. |
 | `execute_absorb` | Confirmed AbsorbPlan; T; `preflight_absorb`; mandatory `verify_absorb` before success | Common optional destructive savepoint, before rewrite and after preflight. Exactly one Backend record; executor failure after a ref write starts, or verification failure after mutation, is Partial with observed state, original/rebuilt full OIDs and ref/index progress. |
 | `stage_file(s)` / `unstage_file(s)` | Explicit index request; T; path/index conditions in staging | Worktree/refs unchanged: no auto snapshot; one record is the target contract; the existing unlogged implementation remains a staging-family migration gap, not a permanent exception. Admission remains ADR-0175. |
@@ -75,15 +75,42 @@ is dispatched. The existing HEAD/stash
 identity checks remain mandatory. Family plans and domain data are not proof of
 user approval; adapters still own explicit approval and one-shot tokens.
 
-Unused external `Backend::execute_*` facades become crate-private: application
-consumers must use run or a documented dedicated boundary. Low-level `ops::*`
-functions and their crate-root re-exports (including `execute_absorb`) remain
-public and can bypass the Backend trust/snapshot/verify/record boundary. PM
-explicitly approved preserving this existing exposure for this PR on 2026-09-07.
-This is a temporary migration exception, **not closure of all public mutation
-APIs** and not permission for new callers to bypass Backend. Caller migration
-and crate-private visibility remain a separate #484 follow-up, to be tracked by
-the PM. The inventory above describes Backend contracts, not those raw exports.
+The #566 caller migration closes the temporary raw-executor exception approved
+for #563. All 61 inventoried operation/conflict/staging/snapshot/fetch executors
+are crate-private, removed, or test-only; their root/ops exports cannot widen
+visibility. `run_post_create` is internal and the unused `run_pre_remove` wrapper
+is removed. [The inventory](../rearch/app-layer/raw-executor-inventory.md) lists
+the former APIs and migration routes. No raw execution caller is left public.
+
+External fixtures now use `Backend::run` or the existing dedicated boundaries.
+Their shared test adapter selects Human/snapshots-OFF but cannot turn off trust,
+preflight, verification or recording. Supplied plans are not silently rebuilt.
+The adapter refreshes the old fixture handle's cached index after the separate
+Backend handle returns; this is a disk read, including after refusal.
+Remove fixtures freeze `RemovePlan` when planning and use `run_recorded_remove`.
+`execute_planned_dir_file_resolution` adds a dedicated owner-trust boundary for
+a reviewed D/F plan; the immediate UI method delegates to it. Its existing
+preflight, savepoint and record owner stay together in the family executor.
+
+Low-level unapproved-config and safe-checkout assertions now live inside the
+executor crate. They do not justify public bypasses. Tests that modify global
+headless/trust variables run in an isolated child test process. CLI, MCP and
+GUI already used Backend for these executors, so their routing is unchanged.
+
+Explicit grant APIs remain public: `ops::trust_worktree_config_at` is called by
+`src/ui/operations/worktree.rs` after config-SHA approval; `trust_worktree_config`
+is used by grant fixtures (`tests/app_remove_test.rs`). Like `trust::trust_repo`,
+these change approval state rather than admitting a Git operation, and must be
+usable before that trust exists. They are not ordinary mutation opt-in switches.
+Staging/conflict/snapshot recording gaps in the table remain #484 family work;
+visibility closure does not claim those unrelated contracts are complete.
+
+Migration exposed merge-finalize inheriting the ordinary NothingStaged blocker:
+a merge resolved to HEAD's tree still needs its second parent. The merge plan
+now omits only that blocker while repository state is Merge. Empty-message and
+unresolved-conflict blockers remain; outside an active merge, an empty staged
+tree remains blocked. Dirty merge entry still uses the stricter Backend plan;
+the primitive's safe checkout guarantee is separately tested inside the crate.
 No new feature may add a public raw executor instead of extending an existing
 boundary; its requirements must have a deliberate row here.
 
@@ -113,3 +140,9 @@ verification and returns this invocation’s Partial recording receipt.
 GUI execution is prohibited for this work; button/Enter parity is established
 by their shared execution factory and existing adapter routing, not a new claim
 of manual GUI evidence.
+
+#566 also adds compile-fail checks for the root, ops, conflicts, staging and step
+runner access paths, a frozen D/F owner-trust/drift fixture, and no-diff merge
+finalization coverage. The two-parent oracle is preserved; unresolved conflicts
+and ordinary empty commits remain refused. All migrated fixtures exercise the
+public boundary, except explicit low-level tests compiled inside kagi-git.

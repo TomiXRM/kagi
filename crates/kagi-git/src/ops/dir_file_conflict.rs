@@ -131,7 +131,7 @@ pub fn preflight_dir_file_resolution(
 /// capturing worktree + index (`add -A`) so every removed blob (including the
 /// untracked directory-side children) stays referenced and gc-safe. Its id is
 /// the recovery handle recorded in the oplog.
-pub fn execute_dir_file_resolution(
+pub(crate) fn execute_dir_file_resolution(
     repo: &Repository,
     repo_path: &Path,
     plan: &DirFilePlan,

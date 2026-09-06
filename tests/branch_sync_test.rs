@@ -1,5 +1,10 @@
 //! Branch context menu sync/manage operation tests.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_pull_branch_ff, execute_push_branch, execute_rename_branch, execute_set_upstream,
+};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -7,7 +12,6 @@ use git2::{BranchType, Repository};
 use tempfile::TempDir;
 
 use kagi_git::{
-    execute_pull_branch_ff, execute_push_branch, execute_rename_branch, execute_set_upstream,
     plan_pull_branch_ff, plan_push_branch, plan_rename_branch, plan_set_upstream,
     validate_branch_rename, BranchRenameValidation, PullOutcome,
 };

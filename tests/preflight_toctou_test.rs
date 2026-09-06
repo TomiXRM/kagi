@@ -4,13 +4,16 @@
 //! target is untouched. The "HEAD didn't move" part is what the old
 //! HEAD-only preflight missed.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_discard;
 use std::path::Path;
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_discard, plan_discard};
+use kagi_git::plan_discard;
 
 fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git")
@@ -144,7 +147,10 @@ fn execute_discard_rejects_paths_outside_its_plan() {
     // Replay the plan-for-A against path B: must be refused before any write.
     let err = execute_discard(&repo, &plan, &["other.txt".into()])
         .expect_err("a plan for tracked.txt must refuse a discard of other.txt");
-    assert!(format!("{err}").contains("other.txt"), "{err}");
+    assert!(
+        format!("{err}").contains("plan safety requirements differ"),
+        "{err}"
+    );
     assert_eq!(
         read(d, "other.txt"),
         "edit B\n",

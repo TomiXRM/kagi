@@ -11,7 +11,7 @@
 //!   targets, build the distribution table ([`AbsorbPlan`]).
 //! - [`preflight_absorb`] — refuse if HEAD moved, a target is no longer mutable,
 //!   or a merge commit sits in the rebuild range.
-//! - [`execute_absorb`] — rebuild the affected slice of history **in memory**
+//! - [`execute_absorb_with_progress`] — rebuild the affected slice of history **in memory**
 //!   (git2 `apply_to_tree` per commit), then move the branch ref last. The
 //!   working tree is never touched, so kept hunks simply remain uncommitted.
 //! - [`verify_absorb`] — confirm the branch tip is the rebuilt commit.
@@ -481,12 +481,6 @@ pub fn preflight_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<(), GitE
         depth += 1;
     }
     Ok(())
-}
-
-/// Rebuild the affected slice of history in memory, folding each absorbed hunk
-/// into its target commit, then move the branch ref. Returns the outcome.
-pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutcome, GitError> {
-    execute_absorb_with_progress(repo, plan, &mut AbsorbProgress::default())
 }
 
 /// Evidence survives fallible ref/index writes; owned by the Backend boundary.

@@ -7,16 +7,16 @@
 //!
 //! All write operations are confined to `TempDir` repositories.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{execute_stash_apply, execute_stash_drop, execute_stash_pop, execute_stash_push};
 use std::path::Path;
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{
-    execute_stash_apply, execute_stash_drop, execute_stash_pop, execute_stash_push,
-    plan_stash_drop, plan_stash_pop, preflight_check_stash, snapshot, StashPopOutcome,
-};
+use kagi_git::{plan_stash_drop, plan_stash_pop, preflight_check_stash, snapshot, StashPopOutcome};
 
 // ────────────────────────────────────────────────────────────
 // Helpers

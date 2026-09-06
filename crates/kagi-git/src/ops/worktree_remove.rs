@@ -101,7 +101,8 @@ pub fn plan_remove_worktree(
 /// [`DiscardOutcome::error`] set (issue #413, mirroring `execute_discard`) — the
 /// backup blob SHAs are the user's only handle on any raced-in uncommitted
 /// content, so they must never be dropped by a bare `Err`.
-pub fn execute_remove_worktree(
+#[cfg(test)]
+pub(crate) fn execute_remove_worktree(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,
@@ -453,5 +454,87 @@ mod tests {
             .find_blob(oid)
             .expect("backup blob SHA must resolve in the main ODB (issue #413)");
         assert_eq!(blob.content(), b"raced work\n");
+    }
+    #[test]
+    fn pre_remove_failure_keeps_the_worktree() {
+        if std::env::var_os("KAGI_REMOVE_EXECUTOR_UNIT_CHILD").is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ops::worktree_remove::tests::pre_remove_failure_keeps_the_worktree",
+                    "--nocapture",
+                ])
+                .env("KAGI_REMOVE_EXECUTOR_UNIT_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use crate::ops::{load_worktree_config, trust_worktree_config};
+        fn write_config(root: &Path, body: &str) {
+            std::fs::create_dir_all(root.join(".kagi")).unwrap();
+            std::fs::write(root.join(".kagi/worktree.toml"), body).unwrap();
+        }
+        let store = tempfile::tempdir().unwrap();
+        std::env::set_var("KAGI_LOG_DIR", store.path());
+        for key in ["KAGI_OPEN_REPO", "KAGI_MENU_DUMP", "KAGI_SELECT_FIRST"] {
+            std::env::remove_var(key);
+        }
+
+        let td = tempfile::tempdir().unwrap();
+        let main = td.path().join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "master"]);
+        std::fs::write(main.join("a.txt"), "a\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-qm", "base"]);
+
+        let wt = td.path().join("wt");
+        git(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feat"],
+        );
+        // A pre_remove command that FAILS (`false` exits 1). Committed so the
+        // worktree stays clean (an untracked file would block removal on its own).
+        write_config(&wt, "[[pre_remove]]\ntype = \"command\"\nrun = \"false\"\n");
+        git(&wt, &["add", "."]);
+        git(&wt, &["commit", "-qm", "config"]);
+
+        let backend = crate::Backend::open(&main).expect("open main");
+        let plan = backend.plan_remove_worktree("wt", false).expect("plan");
+
+        // Untrusted → removal aborts, worktree survives.
+        let err = crate::ops::execute_remove_worktree(
+            &git2::Repository::open(&main).unwrap(),
+            &plan,
+            "wt",
+            false,
+        )
+        .expect_err("untrusted pre_remove command must abort the removal");
+        assert!(format!("{err:?}").to_lowercase().contains("trust"));
+        assert!(wt.exists(), "worktree must survive an aborted removal");
+
+        // Trust it → the command now runs, fails (exit 1), still aborts.
+        let cfg = load_worktree_config(&wt).unwrap().unwrap();
+        trust_worktree_config(&cfg).unwrap();
+        let err = crate::ops::execute_remove_worktree(
+            &git2::Repository::open(&main).unwrap(),
+            &plan,
+            "wt",
+            false,
+        )
+        .expect_err("a failing pre_remove command must abort the removal");
+        assert!(format!("{err:?}").contains("exited with status"));
+        assert!(
+            wt.exists(),
+            "worktree must survive when the pre_remove command fails"
+        );
+
+        std::env::remove_var("KAGI_LOG_DIR");
     }
 }

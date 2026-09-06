@@ -1115,7 +1115,7 @@ pub fn plan_conflict_continue(
 ///
 /// **Preconditions** (caller must check the plan first): no blockers.  This
 /// function re-checks marker residue defensively but trusts resolution presence.
-pub fn execute_conflict_continue(
+pub(crate) fn execute_conflict_continue(
     repo: &Repository,
     repo_path: &Path,
     session: &ConflictSession,
@@ -1244,7 +1244,7 @@ fn fresh_index_has_conflicts(repo: &Repository) -> bool {
 /// to refs and creates no commit.
 ///
 /// Defensively refuses if conflict markers remain in the buffer.
-pub fn stage_conflict_resolution(
+pub(crate) fn stage_conflict_resolution(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -1543,7 +1543,7 @@ fn create_merge_commit(
 /// - the file has no resolution draft in the buffer,
 /// - the resolved text still contains conflict markers (marker-residue block),
 /// - any working-tree write / index operation fails.
-pub fn execute_conflict_save(
+pub(crate) fn execute_conflict_save(
     repo: &Repository,
     buffer: &ResolutionBuffer,
     path: &Path,
@@ -1705,7 +1705,7 @@ fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &
 /// index still has unmerged entries (a defensive re-check of the gate).
 ///
 /// Returns the new merge commit's [`CommitId`].
-pub fn execute_merge_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
+pub(crate) fn execute_merge_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
     if message.trim().is_empty() {
         return Err(GitError::Other(
             "merge commit message must not be empty".to_string(),
@@ -1789,7 +1789,7 @@ pub fn plan_conflict_abort(
 /// The `buffer` is flushed to the autosave directory first so a partial
 /// resolution is never lost (ADR-0057); its path is returned for the oplog
 /// entry the caller writes.
-pub fn execute_conflict_abort(
+pub(crate) fn execute_conflict_abort(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -1974,7 +1974,7 @@ pub fn execute_conflict_abort(
 ///
 /// The stash entry is left untouched (dropping it, if wanted, is a separate,
 /// explicit stash-drop op).
-pub fn execute_stash_conflict_abort(
+pub(crate) fn execute_stash_conflict_abort(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -2393,7 +2393,7 @@ pub fn plan_conflict_skip(
 /// `rebase-apply/` / `sequencer/` wholesale, so "skip one step" silently threw
 /// away every remaining pick and left HEAD detached mid-sequence.  Only real
 /// git's sequencer can advance one step; libgit2 exposes no such API.
-pub fn execute_conflict_skip(
+pub(crate) fn execute_conflict_skip(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,

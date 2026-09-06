@@ -266,9 +266,40 @@ impl KagiApp {
     }
 
     /// The read model on screen. The empty one on the Welcome screen, and while
-    /// a tab's first read is still in flight (`loading_tab` is what says so).
+    /// a tab's first read is still in flight ([`KagiApp::loading_tab`] is what
+    /// says so).
     pub fn view(&self) -> &TabViewState {
         self.reads.get(self.active_session())
+    }
+
+    /// End a session and everything that belonged to its display.
+    ///
+    /// #482 stage 1 drops the conflict/follow-up payloads and the plan slot if
+    /// this session owned one, while in-flight executions keep running
+    /// (ADR-0175); stage 2 adds the read model, which has the same lifetime —
+    /// releasing one without the other is exactly how the remote re-snapshot
+    /// leaked a full rows/details set per refresh.
+    pub(crate) fn release_session(&mut self, session: crate::app::SessionId) {
+        self.app_sessions.detach(session);
+        self.reads.forget(session);
+    }
+
+    /// `Some(label)` while the tab on screen is waiting for its **first** read —
+    /// the `Loading <name>…` placeholder the main pane shows instead of an empty
+    /// graph.
+    ///
+    /// Derived from the owner's request slot, never stored (#482 stage 2 review,
+    /// item 2). As a field it was set by the tab switch and cleared by the load
+    /// that switch started, so a reload during that first load — a perfectly
+    /// legal Cmd+R — refused the first read and then had nothing that cleared
+    /// the placeholder: it stayed forever. Whichever read settles, success or
+    /// failure, empties the slot, so the placeholder cannot outlive the request
+    /// that put it there.
+    pub fn loading_tab(&self) -> Option<SharedString> {
+        let session = self.active_session()?;
+        let waiting = self.reads.is_loading(session) && !self.reads.has_read(session);
+        let name = &self.tabs.get(self.active_tab)?.name;
+        waiting.then(|| SharedString::from(super::i18n::loading_fmt(name)))
     }
 
     /// In-place update of the read model on screen — a status-only WIP refresh,
@@ -304,8 +335,17 @@ impl KagiApp {
         self.publish_tab_view(session, view);
     }
 
+    /// Amend the owner's read model **without** superseding a read in flight —
+    /// commit-graph paging, which refines what is on screen rather than
+    /// observing the repository afresh. A pending full reload still lands and
+    /// still does its conflict re-detection and status baseline update.
+    pub fn amend_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
+        self.reads.amend(session, view);
+        self.on_view_published(session);
+    }
+
     /// Publish a freshly-built read model for `session` (bootstrap, remote
-    /// snapshot, load-more) — supersedes anything in flight for that owner.
+    /// snapshot) — supersedes anything in flight for that owner.
     pub fn publish_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
         self.reads.publish(session, view);
         self.on_view_published(session);

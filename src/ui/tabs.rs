@@ -206,7 +206,6 @@ impl KagiApp {
             // and never left it, so there is nothing to copy back. A restored
             // session has no read for it (the SSH snapshot was never persisted)
             // and simply shows the empty view until the user reconnects.
-            self.loading_tab = None;
             self.on_view_switched();
             self.save_session();
             self.log_tabs();
@@ -248,11 +247,10 @@ impl KagiApp {
             if cached { "yes" } else { "no" }
         );
 
-        if cached {
-            self.loading_tab = None;
-        } else {
-            // First open: show a loading placeholder while we snapshot.
-            self.loading_tab = Some(SharedString::from(i18n::loading_fmt(&tab.name)));
+        if !cached {
+            // First open: the `Loading <name>…` placeholder is derived from the
+            // read this switch is about to start (`loading_tab()`), so only the
+            // footer is set here.
             self.status_footer =
                 FooterStatus::Busy(SharedString::from(i18n::loading_fmt(&tab.name)));
         }
@@ -344,13 +342,17 @@ impl KagiApp {
         // tab (and therefore its session) exists — the read belongs to an owner,
         // not to the screen.
         let view = super::build_tab_view(&snap, &name);
-        self.loading_tab = None;
 
         // Reuse an existing tab for the same remote repo, else open a new one.
         let idx = match self.tabs.iter().position(|t| t.path == key) {
             Some(i) => {
                 // Same tab slot, fresh session: this snapshot replaces the old
-                // read-only view, so nothing the old incarnation owned survives.
+                // read-only view, so nothing the old incarnation owned survives
+                // — including its read. Without this the rows/details of every
+                // previous refresh stayed keyed under a `SessionId` no tab
+                // names any more, and `close_tab` only ever released the
+                // current one (#482 stage 2 review, item 4).
+                self.reads.forget(self.tabs[i].session);
                 self.tabs[i].session = self
                     .app_sessions
                     .reattach(self.tabs[i].session, key.clone());
@@ -522,7 +524,6 @@ impl KagiApp {
                             return; // background owner: data only, no display.
                         }
                         app.refresh_wip_diffstat();
-                        app.loading_tab = None;
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =
                                 FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
@@ -536,7 +537,6 @@ impl KagiApp {
                         if !app.reads.fail(key) || app.active_session() != Some(session) {
                             return;
                         }
-                        app.loading_tab = None;
                         let msg = format!("Error: {err}");
                         klog!("tab-load: {} error: {}", name, err);
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg));
@@ -593,15 +593,9 @@ impl KagiApp {
             return;
         }
         let closed = self.tabs.remove(index);
-        // #482 stage 1: detaching the session drops everything that belonged to
-        // this display — conflict/follow-up payloads and the plan slot if it
-        // owned one — while in-flight executions keep running (ADR-0175).
-        self.app_sessions.detach(closed.session);
+        self.release_session(closed.session);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
-        // #482 stage 2: the read model belonged to this session — release it
-        // with the session rather than evicting a path-keyed cache entry.
-        self.reads.forget(closed.session);
 
         match decision {
             crate::app::TabClose::Nothing => unreachable!("filtered above"),

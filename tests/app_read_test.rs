@@ -6,7 +6,7 @@
 //! rows — load-more renumbering, the selected OID agreeing with the detail at
 //! that row, and A→B→A costing no copy of those vectors — are checked against
 //! what the app really publishes.
-use kagi::app::{read_counters, Reads, SessionId, Sessions};
+use kagi::app::{admit, LegacyBusy, Reads, SessionId, Sessions};
 use kagi::ui::{build_tab_view, TabViewState};
 use kagi_git::{Backend, CommitId};
 use std::path::{Path, PathBuf};
@@ -216,11 +216,11 @@ fn switching_between_two_repositories_and_back_copies_nothing() {
     reads.publish(b, view_of(&repo_b, "beta", 100));
 
     let rows_a = reads.get(Some(a)).rows.as_ptr();
-    let (_, copies_before, _) = read_counters();
+    let copies_before = reads.counters().copies;
 
     let _ = reads.get(Some(b)); // → B
     let back = reads.get(Some(a)); // → A
-    let (_, copies_after, _) = read_counters();
+    let copies_after = reads.counters().copies;
 
     assert_eq!(back.rows.as_ptr(), rows_a, "the row vector was reallocated");
     assert_eq!(back.rows.len(), 3);
@@ -256,8 +256,14 @@ fn a_failed_read_can_be_re_requested() {
 /// A mutation admitted against this worktree invalidates every read that
 /// observed the repository before it, without blanking the display: the last
 /// good rows stay on screen until the reload that follows lands.
+///
+/// Through the **real** admission path — `Sessions::write_lease` wrapped in
+/// `admit`, exactly what `KagiApp::reserve_write` and `dispatch_job` call. The
+/// first version of this test poked `Reads::invalidate` directly and therefore
+/// could not see that nothing was wired to admission at all (stage-2 review,
+/// item 1).
 #[test]
-fn an_admitted_mutation_refuses_the_read_that_predates_it() {
+fn an_admitted_write_refuses_the_read_that_predates_it() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let repo = fixture(&root, "alpha", 2);
@@ -266,8 +272,12 @@ fn an_admitted_mutation_refuses_the_read_that_predates_it() {
     let mut reads: Reads<TabViewState> = Reads::new();
     reads.publish(owner, view_of(&repo, "alpha", 100));
 
+    // A read is in flight when the user starts a write.
     let in_flight = reads.begin(owner);
-    reads.invalidate(owner); // e.g. Delivery::Invalidate for this worktree
+    let guard = admit(&mut reads, sessions.write_lease(&repo, LegacyBusy(false)))
+        .expect("the lease is free");
+
+    assert!(!reads.is_fresh(in_flight), "admission did not invalidate");
     assert!(!reads.accept(in_flight, view_of(&repo, "alpha", 100)));
     assert_eq!(
         reads.get(Some(owner)).rows.len(),
@@ -275,8 +285,76 @@ fn an_admitted_mutation_refuses_the_read_that_predates_it() {
         "the last good read stayed on screen",
     );
 
+    // The writer commits; the reload that follows is a fresh observation.
+    std::fs::write(repo.join("f.txt"), "written\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "alpha written"]);
+    guard.complete();
+
     let after = reads.begin(owner);
     assert!(reads.accept(after, view_of(&repo, "alpha", 100)));
+    assert_eq!(reads.get(Some(owner)).rows.len(), 3);
+}
+
+/// A refused admission (the global busy lease is taken) invalidates nothing —
+/// a write that never started cannot have changed what a reader observed.
+#[test]
+fn a_refused_write_leaves_the_read_in_flight_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let repo = fixture(&root, "alpha", 2);
+    let mut sessions = Sessions::new();
+    let owner = attach(&mut sessions, &repo);
+    let mut reads: Reads<TabViewState> = Reads::new();
+
+    let held = sessions
+        .write_lease(&repo, LegacyBusy(false))
+        .expect("the first lease is free");
+    let in_flight = reads.begin(owner);
+    assert!(
+        admit(&mut reads, sessions.write_lease(&repo, LegacyBusy(false))).is_err(),
+        "a second lease must be refused",
+    );
+    assert!(
+        reads.is_fresh(in_flight),
+        "a refused write invalidated a read"
+    );
+    assert!(reads.accept(in_flight, view_of(&repo, "alpha", 100)));
+    assert_eq!(reads.get(Some(owner)).rows.len(), 2);
+    held.complete();
+}
+
+/// Paging refines the read on screen; it is not a fresh observation. A full
+/// reload in flight — the watcher's, started by an external change — still
+/// lands, because it is the one carrying the conflict re-detection and the
+/// working-tree baseline that paging cannot reproduce (stage-2 review, item 3).
+#[test]
+fn load_more_does_not_supersede_a_pending_full_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let repo = fixture(&root, "alpha", 6);
+    let mut sessions = Sessions::new();
+    let owner = attach(&mut sessions, &repo);
+    let mut reads: Reads<TabViewState> = Reads::new();
+    reads.publish(owner, view_of(&repo, "alpha", 2));
+
+    // The watcher's full reload starts, and reads the repository...
+    let reload = reads.begin(owner);
+    let reloaded = view_of(&repo, "alpha", 2);
+    // ...while the user clicks "Load more", which lands first.
+    reads.amend(owner, view_of(&repo, "alpha", 6));
+    assert_eq!(
+        reads.get(Some(owner)).rows.len(),
+        6,
+        "paging showed its page"
+    );
+    assert!(reads.is_loading(owner), "paging cancelled the reload");
+
+    assert!(
+        reads.accept(reload, reloaded),
+        "the pending full reload was refused by paging",
+    );
+    assert_eq!(reads.get(Some(owner)).rows.len(), 2, "the reload landed");
 }
 
 /// A status-only refresh (the FS watcher's working-tree path) edits the owner's

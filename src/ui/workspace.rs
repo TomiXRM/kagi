@@ -2,7 +2,7 @@
 //!
 //! The single place that decides **what each layout slot shows**. Before this
 //! module, the precedence between the scattered gate fields (`file_history`,
-//! `ecosystem`, `loading_tab`, `main_diff`, `commit_panel_open`,
+//! `ecosystem`, `main_diff`, `commit_panel_open`,
 //! `inspector_visible`, `sidebar.visible`, …) was implicit in the if/else
 //! ordering inside `render_body`. Adding a new pane content meant finding the
 //! right branch by archaeology.
@@ -639,7 +639,7 @@ pub struct WorkspaceInputs {
     pub branch_cleanup_open: bool,
     /// `pr_mode.is_some()` (GitHub Phase 1c).
     pub pr_mode: bool,
-    /// `loading_tab.is_some()`.
+    /// `loading_tab().is_some()`.
     pub loading: bool,
     /// `main_diff.is_some()`.
     pub diff_open: bool,

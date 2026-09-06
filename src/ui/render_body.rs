@@ -452,7 +452,7 @@ impl KagiApp {
             ecosystem_open: workspace::EcosystemItem.is_open(self),
             branch_cleanup_open: workspace::BranchCleanupItem.is_open(self),
             pr_mode: workspace::PrModeItem.is_open(self),
-            loading: self.loading_tab.is_some(),
+            loading: self.loading_tab().is_some(),
             diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,
             commit_panel_present: commit_panel.is_some(),
@@ -516,7 +516,7 @@ impl KagiApp {
             None => match layout.center {
                 // W6-TABSPEED loading placeholder.
                 workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
-                    self.loading_tab.clone().unwrap_or_default(),
+                    self.loading_tab().unwrap_or_default(),
                 )),
                 _ => body_row.child(commit_list_col),
             },

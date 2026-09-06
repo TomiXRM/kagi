@@ -155,6 +155,12 @@ impl KagiApp {
         // was in flight) writes nothing and produces no display side effect at
         // all — the epoch/generation pair this used to compare is gone.
         let view = build_tab_view(&snap, &repo_name);
+        // Whether this reload is the read that *first* fills the tab — i.e. it
+        // superseded the load the tab switch started. The placeholder clears
+        // itself (`loading_tab()` is derived), but the `Loading …` footer that
+        // switch set is stateful and has to be settled here, or a Cmd+R during
+        // the first load leaves the status bar Busy forever.
+        let first_read = !self.reads.has_read(session);
         if !self.accept_tab_view(key, view) {
             return;
         }
@@ -283,6 +289,11 @@ impl KagiApp {
         // ADR-0128 follow-up: Branch Cleanup classification is re-armed by
         // `render` off `scans_stale`, which `accept_tab_view` set above.
 
+        if first_read && matches!(self.status_footer, FooterStatus::Busy(_)) {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from(super::i18n::Msg::Ready.t()));
+        }
+
         if external {
             klog!("refreshed (external change)");
             self.status_footer =
@@ -303,10 +314,18 @@ impl KagiApp {
     /// Triggered by the "load more" row at the bottom of the commit list, which
     /// only appears once the graph holds at least `commit_limit` commits (i.e.
     /// the walk may have been truncated). Unlike [`reload`], this is a
-    /// view-only refresh: it republishes this owner's read model at the new
-    /// limit but leaves selection, scroll position, open panels and modals
-    /// untouched. Existing rows keep their indices because the additional
-    /// commits are older and append at the bottom of the topological order.
+    /// view-only refresh: it **amends** this owner's read model at the new limit
+    /// but leaves selection, scroll position, open panels and modals untouched.
+    /// Existing rows keep their indices because the additional commits are older
+    /// and append at the bottom of the topological order.
+    ///
+    /// Amends rather than publishes (#482 stage 2 review, item 3): paging is a
+    /// refinement of what is already on screen, not a fresh observation of the
+    /// repository, so it must not supersede a full reload in flight. A watcher
+    /// reload started by an external merge conflict carries the Conflict Mode
+    /// re-detection, the modal sweep and the working-tree baseline that paging
+    /// has no way to reproduce — rejecting it would leave the old semantic state
+    /// standing until something else refreshed.
     pub fn load_more_commits(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -337,7 +356,7 @@ impl KagiApp {
             .unwrap_or_else(|| repo_path.display().to_string());
 
         let view = build_tab_view(&snap, &repo_name);
-        self.publish_tab_view(session, view);
+        self.amend_tab_view(session, view);
         klog!(
             "load more: limit={} rows={}",
             self.commit_limit,

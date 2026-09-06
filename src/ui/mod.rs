@@ -1285,9 +1285,6 @@ pub struct KagiApp {
     /// stale background load (an earlier switch that lost a rapid-fire race)
     /// can detect a mismatch and discard its result before applying.
     pub switch_generation: u64,
-    /// When `Some(name)`, the main pane shows a `Loading <name>…` placeholder
-    /// (uncached first open) until the background load completes.
-    pub loading_tab: Option<SharedString>,
     // ── W11-AVATAR: GitHub avatar images (ADR-0037) ──────────────
     /// Resolved-avatar cache (memory images + per-repo fetch guard), grouped
     /// into one cohesive sub-struct (ADR-0118 Phase 5.2).
@@ -1581,7 +1578,6 @@ impl KagiApp {
             platform_menu_open: None,
             // W6-TABSPEED
             switch_generation: 0,
-            loading_tab: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI

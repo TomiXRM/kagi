@@ -10,10 +10,10 @@
 //! copied and what was freed, which is the property the design promises.
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::VisualTestAppContext;
-use kagi::app::read_counters;
 use kagi::ui::KagiApp;
 use kagi_git::CommitId;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// `main` with three commits plus a `side` branch two commits ahead, so soloing
 /// `main` really hides rows instead of being a no-op.
@@ -33,6 +33,14 @@ fn build_branching_fixture(root: &Path, name: &str) -> PathBuf {
     }
     git(&repo, &["checkout", "-q", "main"]);
     repo.canonicalize().unwrap()
+}
+
+/// What the app's read store published, deep-copied and freed so far.
+fn counters(
+    cx: &mut VisualTestAppContext,
+    kagi: &gpui::Entity<KagiApp>,
+) -> kagi::app::ReadCounters {
+    kagi.update(cx, |app, _| app.reads.counters())
 }
 
 /// Address of the owner's row vector. Taken through a borrow and never held: a
@@ -96,7 +104,7 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
     // Measured *before* parking: `switch_repo` always kicks off a background
     // revalidate, and that revalidate is a genuinely new read. What must cost
     // nothing is the swap itself.
-    let (builds_0, copies_0, drops_0) = read_counters();
+    let before_switch = counters(cx, &kagi);
     kagi.update(cx, |app, cx| {
         app.switch_repo(0, cx); // → A
         assert_eq!(app.active_session(), Some(session_a));
@@ -118,21 +126,28 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
         assert_eq!(rows_ptr(app, session_a), a_rows, "A→B→A rebuilt A's rows");
         assert!(app.view().rows[0].summary.contains("alpha"));
     });
-    let (builds_1, copies_1, drops_1) = read_counters();
-    assert_eq!(builds_1, builds_0, "a tab switch published a read");
-    assert_eq!(copies_1, copies_0, "a tab switch deep-copied a read model");
-    assert_eq!(drops_1, drops_0, "a tab switch freed a read model");
+    let after_switch = counters(cx, &kagi);
+    assert_eq!(
+        after_switch, before_switch,
+        "a tab switch published, copied or freed a read model",
+    );
     cx.run_until_parked();
 
     // The revalidate that the round trip armed is a new read for A, and it
     // replaced (and freed) exactly one older one.
-    let (builds_2, copies_2, drops_2) = read_counters();
-    assert!(builds_2 > builds_1, "the revalidate published nothing");
-    assert_eq!(
-        copies_2, copies_1,
-        "the revalidate deep-copied a read model"
+    let after_revalidate = counters(cx, &kagi);
+    assert!(
+        after_revalidate.builds > after_switch.builds,
+        "the revalidate published nothing",
     );
-    assert!(drops_2 > drops_1, "the superseded read was not freed");
+    assert_eq!(
+        after_revalidate.copies, after_switch.copies,
+        "the revalidate deep-copied a read model",
+    );
+    assert!(
+        after_revalidate.drops > after_switch.drops,
+        "the superseded read was not freed",
+    );
     kagi.update(cx, |app, _| {
         assert_eq!(app.active_session(), Some(session_a));
         assert_eq!(app.view().rows.len(), 5);
@@ -187,7 +202,7 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
     let (copies_3, _) = kagi.update(cx, |app, cx| {
         let target = app.view().branch_targets["main"].clone();
         let full = app.view().rows.len();
-        let copies = read_counters().1;
+        let copies = app.reads.counters().copies;
         app.toggle_branch_solo("main".into(), target.clone(), cx);
         assert!(
             app.view().rows.len() < full,
@@ -202,13 +217,13 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
         (copies, full)
     });
     assert_eq!(
-        read_counters().1,
+        counters(cx, &kagi).copies,
         copies_3,
         "an in-place solo toggle deep-copied the read model",
     );
 
     // ── close: the last reference to each owner's read is released ────────
-    let drops_before_close = read_counters().2;
+    let drops_before_close = counters(cx, &kagi).drops;
     kagi.update(cx, |app, cx| {
         app.close_tab(1, cx); // background B
         assert!(app.reads.share(session_b).is_none(), "B's read outlived B");
@@ -218,11 +233,178 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
         assert!(app.view().rows.is_empty(), "Welcome shows the empty read");
     });
     assert_eq!(
-        read_counters().2,
+        counters(cx, &kagi).drops,
         drops_before_close + 2,
         "closing two tabs did not free both read models",
     );
 
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] read_owner_switch: OK");
+}
+
+/// `main` and `side` that both changed the same line, so merging `side` leaves a
+/// real index conflict for the watcher path to re-detect.
+fn build_conflict_fixture(root: &Path, name: &str) -> PathBuf {
+    let repo = root.join(name);
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("f.txt"), "base\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+    git(&repo, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(repo.join("f.txt"), "side\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "side edit"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    std::fs::write(repo.join("f.txt"), "main\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "main edit"]);
+    repo.canonicalize().unwrap()
+}
+
+/// `git` that is allowed to fail — a conflicting merge exits non-zero *because*
+/// it worked.
+fn git_expect_conflict(repo: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "poc")
+        .env("GIT_AUTHOR_EMAIL", "poc@example.com")
+        .env("GIT_COMMITTER_NAME", "poc")
+        .env("GIT_COMMITTER_EMAIL", "poc@example.com")
+        .status()
+        .expect("spawn git");
+    assert!(!status.success(), "{args:?} was supposed to conflict");
+}
+
+/// The three orderings the stage-2 review found unguarded: a reload arriving
+/// during the very first load, paging landing on top of a pending full reload,
+/// and a remote re-snapshot replacing an incarnation. Each is a *sequence*, not
+/// a state, so each is driven on the real root rather than asserted at the store.
+pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_conflict_fixture(&root, "alpha");
+    let repo_b = build_branching_fixture(&root, "beta");
+
+    let (kagi, window) = mount(cx, &repo_a);
+    cx.run_until_parked();
+
+    // ── item 2: Cmd+R during the first Loading of a not-yet-arrived tab ────
+    //
+    // As a stored field the placeholder was set by the switch and cleared by the
+    // load that switch started; the reload refused that load and cleared
+    // nothing, so `Loading …` stayed on screen forever. (The failing direction
+    // — the replacing reload itself errors — is covered in `src/app/read.rs`,
+    // where a broken repository can be simulated without a window.)
+    let session_b = kagi.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        let session = app.active_session().expect("B is on screen");
+        assert!(
+            app.loading_tab().is_some(),
+            "B's first read is in flight — the placeholder must be up",
+        );
+        // A perfectly legal manual refresh, before the first read lands.
+        app.reload_checked(cx).expect("Cmd+R during the first load");
+        assert!(
+            app.loading_tab().is_none(),
+            "the replacing reload must settle the placeholder",
+        );
+        assert!(!app.view().rows.is_empty(), "the reload filled the tab");
+        assert!(
+            !matches!(app.status_footer, kagi::ui::FooterStatus::Busy(_)),
+            "the Loading footer outlived the read that set it",
+        );
+        session
+    });
+    cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        // The superseded first load has now landed and was refused; it must not
+        // have put the placeholder back.
+        assert!(app.loading_tab().is_none(), "a stale read revived Loading");
+        assert!(!app.view().rows.is_empty());
+        assert_eq!(app.active_session(), Some(session_b));
+    });
+
+    // ── item 3: Load more must not supersede a pending full reload ─────────
+    //
+    // The reload is the read that carries Conflict Mode re-detection and the
+    // working-tree baseline; paging only has rows. If paging bumped the
+    // revision, the conflict would go unnoticed until something else refreshed.
+    kagi.update(cx, |app, cx| {
+        app.switch_repo(0, cx); // → A
+    });
+    cx.run_until_parked();
+    git_expect_conflict(&repo_a, &["merge", "side"]);
+    kagi.update(cx, |app, cx| {
+        assert!(
+            app.last_working_status
+                .as_ref()
+                .is_some_and(|s| s.conflicted.is_empty()),
+            "the baseline should predate the conflict",
+        );
+        app.reload_external(cx); // the watcher's full reload starts
+        app.commit_limit = 1;
+        app.load_more_commits(cx); // and paging lands first
+    });
+    cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        assert!(
+            app.view().status_summary.conflict_count > 0,
+            "the full reload was refused by paging — the conflict went unseen",
+        );
+        assert!(
+            app.last_working_status
+                .as_ref()
+                .is_some_and(|s| !s.conflicted.is_empty()),
+            "the reload's working-tree baseline never landed",
+        );
+        assert_rows_consistent(app, "after conflict reload + paging");
+    });
+    git(&repo_a, &["merge", "--abort"]);
+
+    // ── item 4: every remote re-snapshot releases the incarnation it replaces ─
+    //
+    // `reattach` issues a new `SessionId`; without releasing the old one, each
+    // refresh left a full rows/details set keyed under an id no tab names, and
+    // `close_tab` only ever reached the current one.
+    let host = kagi_domain::remote::RemoteHost::parse("example.test").expect("host");
+    let remote_root = "/srv/beta".to_string();
+    let snapshot = || {
+        let mut backend = kagi_git::Backend::open(&repo_b).expect("open");
+        backend.snapshot(10_000).expect("snapshot")
+    };
+    kagi.update(cx, |app, cx| {
+        app.enter_remote_view(host.clone(), remote_root.clone(), snapshot(), cx);
+    });
+    cx.run_until_parked();
+    for round in 1..=2 {
+        let drops_before = counters(cx, &kagi).drops;
+        kagi.update(cx, |app, cx| {
+            app.enter_remote_view(host.clone(), remote_root.clone(), snapshot(), cx);
+        });
+        assert_eq!(
+            counters(cx, &kagi).drops,
+            drops_before + 1,
+            "remote refresh {round} leaked the previous incarnation's read",
+        );
+    }
+    cx.run_until_parked();
+
+    let drops_before_close = counters(cx, &kagi).drops;
+    let remote_tab = kagi.update(cx, |app, _| {
+        app.tabs
+            .iter()
+            .position(|t| t.remote.is_some())
+            .expect("the remote tab is open")
+    });
+    kagi.update(cx, |app, cx| app.close_tab(remote_tab, cx));
+    assert_eq!(
+        counters(cx, &kagi).drops,
+        drops_before_close + 1,
+        "closing the remote tab did not release its read",
+    );
+
+    unmount(cx, kagi, window);
+    eprintln!("[gui-e2e] read_owner_ordering: OK");
 }

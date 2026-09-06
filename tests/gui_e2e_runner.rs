@@ -594,6 +594,10 @@ mod macos {
                 "read_owner_switch",
                 Box::new(crate::read_owner::scenario_read_owner_switch),
             ),
+            (
+                "read_owner_ordering",
+                Box::new(crate::read_owner::scenario_read_owner_ordering),
+            ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
                 "graph_copy",

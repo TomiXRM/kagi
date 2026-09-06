@@ -28,12 +28,11 @@
 //! and *freshness* of the read model, the UI owns its shape.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use kagi_domain::load_request::RequestSlot;
 
-use super::SessionId;
+use super::{AdmissionError, SessionId};
 
 /// Identity of one read: the owner that asked, and the revision of that owner's
 /// read state the request belongs to. Carried by the in-flight job and checked
@@ -50,24 +49,18 @@ impl ReadKey {
     }
 }
 
-// ── Instrumentation (#482 stage 2 E scenario) ─────────────────────────────
-// Three process-wide counters, read by the GUI E2E scenario to prove the
-// no-deep-clone claim rather than assert it in prose. Relaxed atomics on paths
-// that already allocate a snapshot: not a hot-path cost.
-static BUILDS: AtomicU64 = AtomicU64::new(0);
-static COPIES: AtomicU64 = AtomicU64::new(0);
-static DROPS: AtomicU64 = AtomicU64::new(0);
-
-/// `(published reads, copy-on-write deep copies, read models freed)`.
+/// Instrumentation for the #482 stage 2 E scenario: what this store published,
+/// deep-copied and freed. Per store, not process-wide — a global would make two
+/// tests in one binary see each other's writes, and every consumer already has
+/// the store in hand.
 ///
 /// `copies` is the number that must stay at zero while the view only ever
 /// borrows: a `get_mut` at refcount 1 mutates the shared allocation in place.
-pub fn read_counters() -> (u64, u64, u64) {
-    (
-        BUILDS.load(Ordering::Relaxed),
-        COPIES.load(Ordering::Relaxed),
-        DROPS.load(Ordering::Relaxed),
-    )
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadCounters {
+    pub builds: u64,
+    pub copies: u64,
+    pub drops: u64,
 }
 
 /// One owner's read state: the value, its in-flight request, and the revision
@@ -92,6 +85,7 @@ impl<V> Default for Entry<V> {
 /// which completions may write into it.
 pub struct Reads<V> {
     entries: HashMap<SessionId, Entry<V>>,
+    counters: ReadCounters,
     /// Returned by [`Reads::get`] when nothing is attached (Welcome) or the
     /// owner's first read has not landed yet. Never mutated.
     empty: Arc<V>,
@@ -111,8 +105,28 @@ impl<V: Default> Reads<V> {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            counters: ReadCounters::default(),
             empty: Arc::new(V::default()),
             sink: Arc::new(V::default()),
+        }
+    }
+
+    /// What this store published, deep-copied and freed. See [`ReadCounters`].
+    pub fn counters(&self) -> ReadCounters {
+        self.counters
+    }
+
+    /// Store `value` for `session`, counting the read model it replaces.
+    fn store(&mut self, session: SessionId, value: V) {
+        self.counters.builds += 1;
+        let replaced = self
+            .entries
+            .entry(session)
+            .or_default()
+            .value
+            .replace(Arc::new(value));
+        if replaced.is_some_and(|old| Arc::strong_count(&old) == 1) {
+            self.counters.drops += 1;
         }
     }
 
@@ -168,10 +182,7 @@ impl<V: Default> Reads<V> {
         if !entry.slot.accept(&key) {
             return false;
         }
-        BUILDS.fetch_add(1, Ordering::Relaxed);
-        if let Some(old) = entry.value.replace(Arc::new(value)) {
-            count_release(&old);
-        }
+        self.store(key.session, value);
         true
     }
 
@@ -190,6 +201,25 @@ impl<V: Default> Reads<V> {
         self.accept(key, value);
     }
 
+    /// Whether this owner has a read at all — i.e. whether there is anything to
+    /// show but the empty model. `false` before the first read lands and after
+    /// one fails, which is what tells a first load from a refresh.
+    pub fn has_read(&self, session: SessionId) -> bool {
+        self.entries
+            .get(&session)
+            .is_some_and(|entry| entry.value.is_some())
+    }
+
+    /// Replace the owner's value **without touching its request state**: a
+    /// refinement of the read already on screen (commit-graph paging), not a new
+    /// observation of the repository. A full read still in flight therefore
+    /// still lands — paging must not supersede a reload, whose snapshot also
+    /// carries the conflict re-detection and the working-tree baseline that
+    /// paging has no way to produce (#482 stage 2 review, item 3).
+    pub fn amend(&mut self, session: SessionId, value: V) {
+        self.store(session, value);
+    }
+
     /// A mutation was admitted (or its plan invalidated) against this owner:
     /// every read that observed the pre-mutation repository is now stale. The
     /// value stays — showing the last good read beats showing nothing — but no
@@ -198,6 +228,19 @@ impl<V: Default> Reads<V> {
         let entry = self.entries.entry(session).or_default();
         entry.revision += 1;
         entry.slot.clear();
+    }
+
+    /// Every open owner's reads are stale. Used at write **admission**: the
+    /// lease is one global reservation across all repositories (DESIGN §2.1
+    /// "conservative global busy"), so the set that a write may have invalidated
+    /// is every session that is open.
+    /// ponytail: narrow this to the target worktree and its siblings when
+    /// admission becomes per-`RepoId`; over-invalidating only costs a re-read.
+    pub fn invalidate_all(&mut self) {
+        let sessions: Vec<SessionId> = self.entries.keys().copied().collect();
+        for session in sessions {
+            self.invalidate(session);
+        }
     }
 
     /// The read model on screen for `session`, or the empty one when nothing is
@@ -227,10 +270,12 @@ impl<V: Default> Reads<V> {
                 .get_or_insert_with(|| Arc::new(V::default())),
             None => &mut self.sink,
         };
-        if Arc::strong_count(value) > 1 {
-            COPIES.fetch_add(1, Ordering::Relaxed);
+        let copied = Arc::strong_count(value) > 1;
+        let value = Arc::make_mut(value);
+        if copied {
+            self.counters.copies += 1;
         }
-        Arc::make_mut(value)
+        value
     }
 
     /// A shared handle on one owner's read model. The single-owner rule holds
@@ -254,28 +299,38 @@ impl<V: Default> Reads<V> {
     /// execution — this drops the *read*, nothing else (ADR-0175).
     pub fn forget(&mut self, session: SessionId) {
         if let Some(entry) = self.entries.remove(&session) {
-            if let Some(value) = entry.value {
-                count_release(&value);
+            if entry
+                .value
+                .is_some_and(|value| Arc::strong_count(&value) == 1)
+            {
+                self.counters.drops += 1;
             }
         }
     }
 }
 
-/// Count a read model whose last reference is about to go away.
-fn count_release<V>(value: &Arc<V>) {
-    if Arc::strong_count(value) == 1 {
-        DROPS.fetch_add(1, Ordering::Relaxed);
+/// Admission and read invalidation are one step.
+///
+/// Every write that is admitted makes every read that predates it suspect: the
+/// reader observed a repository the writer is about to change. Routing both UI
+/// admission points (`reserve_write`, `dispatch_job`) through here means neither
+/// can be added to without the invalidation — the coupling ADR-0183 claims and
+/// the first review found was only wired to *completion* (#482 stage 2 review,
+/// item 1).
+pub fn admit<T, V: Default>(
+    reads: &mut Reads<V>,
+    admitted: Result<T, AdmissionError>,
+) -> Result<T, AdmissionError> {
+    if admitted.is_ok() {
+        reads.invalidate_all();
     }
+    admitted
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::Sessions;
-
-    /// The counters are process-wide, so the three tests that assert a *delta*
-    /// must not run concurrently with each other.
-    static COUNTERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn two_sessions() -> (Sessions, SessionId, SessionId) {
         let mut sessions = Sessions::new();
@@ -367,6 +422,144 @@ mod tests {
         assert!(!reads.is_loading(a));
     }
 
+    /// Item 2 of the stage-2 review, at store level: the placeholder predicate
+    /// is `is_loading && !has_read`. A reload started *during* the first load
+    /// refuses that first read — and must then settle the slot itself, or the
+    /// predicate stays true forever.
+    #[test]
+    fn a_reload_during_the_first_load_still_settles_the_placeholder() {
+        let (_s, a, _b) = two_sessions();
+        let mut reads: Reads<String> = Reads::new();
+        let first = reads.begin(a);
+        assert!(
+            reads.is_loading(a) && !reads.has_read(a),
+            "placeholder shown"
+        );
+
+        let reload = reads.begin(a); // Cmd+R before the first read arrives
+        assert!(
+            !reads.accept(first, "first".into()),
+            "the first read is stale"
+        );
+        assert!(
+            reads.is_loading(a) && !reads.has_read(a),
+            "still waiting on the reload",
+        );
+
+        assert!(reads.accept(reload, "reloaded".into()));
+        assert!(
+            !reads.is_loading(a) && reads.has_read(a),
+            "a successful reload must clear the placeholder",
+        );
+        assert_eq!(reads.get(Some(a)), "reloaded");
+    }
+
+    /// The same transition the other way: the reload that replaced the first
+    /// load *fails*. The placeholder still has to go — the error belongs in the
+    /// footer, not behind a spinner that never stops.
+    #[test]
+    fn a_failing_reload_during_the_first_load_also_settles_the_placeholder() {
+        let (_s, a, _b) = two_sessions();
+        let mut reads: Reads<String> = Reads::new();
+        let first = reads.begin(a);
+        let reload = reads.begin(a);
+        assert!(!reads.accept(first, "first".into()));
+        assert!(reads.fail(reload));
+        assert!(
+            !reads.is_loading(a) && !reads.has_read(a),
+            "a failed reload must clear the placeholder",
+        );
+        assert!(reads.begin(a).session() == a, "and stay re-requestable");
+    }
+
+    /// Item 3: paging refines what is on screen; it is not a fresh observation
+    /// of the repository. A full reload in flight must still land, because it
+    /// carries semantic processing (conflict re-detection, the working-tree
+    /// baseline) that paging cannot reproduce.
+    #[test]
+    fn paging_does_not_supersede_a_pending_full_reload() {
+        let (_s, a, _b) = two_sessions();
+        let mut reads: Reads<String> = Reads::new();
+        reads.publish(a, "page 1".into());
+
+        let reload = reads.begin(a); // watcher reload, still in flight
+        reads.amend(a, "page 1+2".into()); // Load more lands first
+        assert_eq!(reads.get(Some(a)), "page 1+2");
+        assert!(reads.is_loading(a), "paging cancelled the reload");
+        assert!(
+            reads.accept(reload, "reloaded".into()),
+            "the pending full reload was refused by paging",
+        );
+        assert_eq!(reads.get(Some(a)), "reloaded");
+    }
+
+    /// Item 1: admission and invalidation are one step. `admit` is what both UI
+    /// admission points call, so a read that predates an admitted write is
+    /// refused whatever the writer family.
+    #[test]
+    fn an_admitted_write_invalidates_every_open_owner() {
+        let (_s, a, b) = two_sessions();
+        let mut reads: Reads<String> = Reads::new();
+        reads.publish(a, "A".into());
+        reads.publish(b, "B".into());
+        let in_flight_a = reads.begin(a);
+        let in_flight_b = reads.begin(b);
+
+        let admitted: Result<(), AdmissionError> = admit(&mut reads, Ok(()));
+        assert!(admitted.is_ok());
+        assert!(!reads.is_fresh(in_flight_a));
+        assert!(!reads.is_fresh(in_flight_b));
+        assert!(!reads.accept(in_flight_a, "observed the old tree".into()));
+        assert!(!reads.accept(in_flight_b, "observed the old tree".into()));
+        assert_eq!(reads.get(Some(a)), "A", "the last good read is kept");
+        assert_eq!(reads.get(Some(b)), "B");
+    }
+
+    /// A refused admission changes nothing: no read is invalidated by a write
+    /// that never started.
+    #[test]
+    fn a_refused_admission_invalidates_nothing() {
+        let (_s, a, _b) = two_sessions();
+        let mut reads: Reads<String> = Reads::new();
+        let in_flight = reads.begin(a);
+        let refused: Result<(), AdmissionError> = admit(&mut reads, Err(AdmissionError::Busy));
+        assert!(refused.is_err());
+        assert!(reads.is_fresh(in_flight));
+        assert!(reads.accept(in_flight, "landed".into()));
+    }
+
+    /// Item 4: a remote re-snapshot reattaches the same tab under a new
+    /// incarnation. Releasing the old owner's read is what stops every refresh
+    /// from leaving a full rows/details set keyed under an id no tab names.
+    #[test]
+    fn reattach_releases_the_previous_incarnation_s_read() {
+        let mut sessions = Sessions::new();
+        let mut reads: Reads<String> = Reads::new();
+        let mut session = sessions.attach("/nonexistent/remote".into());
+        reads.publish(session, "snapshot 0".into());
+
+        for round in 1..=3 {
+            let drops_before = reads.counters().drops;
+            let previous = session;
+            reads.forget(previous); // what `enter_remote_view` must do
+            session = sessions.reattach(previous, "/nonexistent/remote".into());
+            let drops_after = reads.counters().drops;
+            assert_ne!(session, previous, "a re-snapshot is a new incarnation");
+            assert_eq!(drops_after, drops_before + 1, "round {round} leaked a read");
+            assert!(reads.share(previous).is_none());
+            reads.publish(session, format!("snapshot {round}"));
+        }
+
+        let before_close = reads.counters().drops;
+        sessions.detach(session);
+        reads.forget(session);
+        assert_eq!(
+            reads.counters().drops,
+            before_close + 1,
+            "close leaked the last read"
+        );
+    }
+
     #[test]
     fn a_failed_read_settles_and_can_be_re_requested() {
         let (_s, a, _b) = two_sessions();
@@ -395,14 +588,13 @@ mod tests {
 
     #[test]
     fn in_place_update_does_not_copy() {
-        let _guard = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
         let (_s, a, _b) = two_sessions();
         let mut reads: Reads<String> = Reads::new();
         reads.publish(a, "A".into());
         let before = reads.get(Some(a)) as *const String;
-        let (_, copies_before, _) = read_counters();
+        let copies_before = reads.counters().copies;
         reads.get_mut(Some(a)).push('!');
-        let (_, copies_after, _) = read_counters();
+        let copies_after = reads.counters().copies;
         assert_eq!(reads.get(Some(a)), "A!");
         assert_eq!(reads.get(Some(a)) as *const String, before);
         assert_eq!(copies_before, copies_after, "no copy-on-write deep copy");
@@ -412,27 +604,25 @@ mod tests {
     /// measures what the no-clone claim depends on.
     #[test]
     fn a_held_share_is_what_would_copy() {
-        let _guard = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
         let (_s, a, _b) = two_sessions();
         let mut reads: Reads<String> = Reads::new();
         reads.publish(a, "A".into());
         let held = reads.share(a).expect("published");
-        let (_, before, _) = read_counters();
+        let before = reads.counters().copies;
         reads.get_mut(Some(a)).push('!');
-        let (_, after, _) = read_counters();
+        let after = reads.counters().copies;
         assert_eq!(after, before + 1);
         assert_eq!(&*held, "A", "the old allocation is untouched");
     }
 
     #[test]
     fn forget_releases_the_owner_s_read() {
-        let _guard = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
         let (_s, a, _b) = two_sessions();
         let mut reads: Reads<String> = Reads::new();
         reads.publish(a, "A".into());
-        let (_, _, drops_before) = read_counters();
+        let drops_before = reads.counters().drops;
         reads.forget(a);
-        let (_, _, drops_after) = read_counters();
+        let drops_after = reads.counters().drops;
         assert_eq!(drops_after, drops_before + 1, "last reference released");
         assert_eq!(reads.get(Some(a)), "");
         assert!(reads.share(a).is_none());

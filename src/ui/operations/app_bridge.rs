@@ -171,10 +171,11 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
         self.refresh_write_busy();
-        match self
-            .app_sessions
-            .write_lease(path, LegacyBusy(self.busy_op.is_some()))
-        {
+        match app::admit(
+            &mut self.reads,
+            self.app_sessions
+                .write_lease(path, LegacyBusy(self.busy_op.is_some())),
+        ) {
             Ok(guard) => {
                 self.busy_op = Some("app-writer");
                 Some(guard)
@@ -211,10 +212,13 @@ impl KagiApp {
             ),
             app::Planned::RemoteStash { .. } => ("remote-stash-drop", Msg::BusyStashDrop),
         };
-        let job = match app::prepare(
-            &mut self.app_sessions,
-            approved,
-            LegacyBusy(self.busy_op.is_some()),
+        let job = match app::admit(
+            &mut self.reads,
+            app::prepare(
+                &mut self.app_sessions,
+                approved,
+                LegacyBusy(self.busy_op.is_some()),
+            ),
         ) {
             Ok(job) => job,
             Err(error) => {

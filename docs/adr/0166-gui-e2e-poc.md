@@ -32,14 +32,45 @@ wiring described in the historical PoC below.
   per-crate `opt-level = 3` overrides remain intact. Dependency-level LLDB
   inspection requires a temporary `--config 'profile.dev.package."*".debug=2'`;
   package profile overrides [do not support environment variables](https://doc.rust-lang.org/cargo/reference/config.html#profilenamepackagename).
-- Build hygiene lives in `AGENTS.md` / its `CLAUDE.md` symlink: shared target,
-  serial cargo commands and weekly age-based sweeping. Machine configuration
-  and sweep installation are local administration, not part of this change.
+- Build hygiene lives in `AGENTS.md` / its `CLAUDE.md` symlink: a dedicated
+  target directory per worktree, serial cargo commands within that worktree,
+  and weekly age-based sweeping. Machine configuration and sweep installation
+  are local administration, not part of this change.
 
 Deferred: consolidating integration tests could reduce linking/scanning, but
 the current root tests have eight separate `ENV_LOCK` statics. A single test
 process needs a shared environment lock first; that is a separate PR after
 measuring this feature/profile change.
+
+## Update 2026-09-07 — E2E tiers and hitbox diagnostics
+
+Tier A and Tier B prove different things and must remain separate.
+
+- **Tier A — `gui_e2e_runner`** mounts the real root with
+  `VisualTestAppContext`, injects registered actions or input, and makes
+  deterministic assertions about application state, clipboard contents,
+  repository refs, and persisted records. It is an opt-in macOS evidence lane;
+  it does not validate a user-visible, foreground application, AppKit focus,
+  IME, or a system pointer path.
+- **Tier B — `scripts/pidclick.swift`** drives a separately launched Kagi
+  process using `CGEventPostToPid`, with coordinates relative to a selected
+  native window. It exercises live event routing, hover priming, context menus,
+  and visible output. It needs the isolation launch flags and macOS
+  Accessibility/Screen Recording permissions described in the canonical
+  verification skill. It does not verify IME or the user's foreground-input
+  behavior, and its coordinate interaction is not a deterministic assertion API
+  or a replacement for Tier A's state and persistence checks.
+
+The locked GPUI revision (`90b3aa0`) has no public last-frame hitbox
+enumeration. `Window::insert_hitbox` returns an individual `Hitbox`, but the
+last frame's [hitbox collection](https://github.com/zed-industries/zed/blob/90b3aa0b3bd3b453775b11a386907c7ac9acd997/crates/gpui/src/window.rs#L831-L850)
+is crate-private. `VisualTestAppContext` has no public counterpart to
+[`VisualTestContext::debug_bounds`](https://github.com/zed-industries/zed/blob/90b3aa0b3bd3b453775b11a386907c7ac9acd997/crates/gpui/src/app/test_context.rs#L860-L863), and
+`Window::debug_a11y_tree_json()` reports accessibility data rather than
+hitboxes. Therefore the runner cannot truthfully provide a generic
+`id -> window-relative bounds` dump on failure without an upstream GPUI API or
+a maintained dependency fork. Keep scenario-specific, intentionally recorded
+bounds as narrow seams; do not present them as a complete hitbox list.
 
 ## 何を実証したか
 
@@ -201,7 +232,7 @@ mount するには意図的な seam が要る = これは issue の論点 #1 そ
 ### 実行
 
 ```
-KAGI_GUI_E2E=1 CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target \
+KAGI_GUI_E2E=1 CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
 

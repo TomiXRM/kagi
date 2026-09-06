@@ -3,7 +3,11 @@ use crate::app::{self, PlanState, Planned, StashAction, StashPolicy, StashReques
 use crate::ui::*;
 impl KagiApp {
     pub(crate) fn present_stash_followup(&mut self, cx: &mut Context<Self>) {
-        if self.has_active_modal() {
+        // `conflict_continue` notifies before its authoritative reload settles.
+        // Do not consume the one-shot payload while the old ConflictView is still
+        // mounted: that would start a plan whose modal is immediately cleared by
+        // `apply_reload_data`, leaving nothing for the post-reload retry to show.
+        if self.conflict.is_some() || self.has_active_modal() {
             return;
         }
         let Some(owner) = self.repo_path.clone() else {

@@ -248,9 +248,37 @@ fn inspect(rows: &Rows, dimensions: (f32, f32), label: &str) -> Vec<Bounds<Pixel
 
 /// Call from the existing macOS main-thread runner after e2e::init_app.
 /// 4 viewports × 4 zooms × 2 locales × 11 inputs × Card/Table, followed by
-/// fresh-window geometry checks and selected/unselected transitions.
+/// redraw-idempotence checks and selected/unselected transitions.
+///
+/// One window per viewport, opened once and reused for all 704 cells (#549).
+/// It used to mount a fresh native window per cell, twice: 1,408 live
+/// `NSWindow`s that `unmount` could not close fast enough, which took down the
+/// WindowServer. The pair of mounts existed because `MacWindow::resize`
+/// schedules work on the native main queue that `VisualTestAppContext` does not
+/// drain — so a viewport still gets its own window, it just gets one.
 pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
     let restore = GlobalSettings::capture();
+    let seed = Rc::new(vec![entry("A", 1), entry("B", 2), entry("Z", 3)]);
+    let windows: Vec<((f32, f32), gpui::Entity<Rows>, AnyWindowHandle)> = SIZES
+        .iter()
+        .map(|&dimensions| {
+            let rows = cx.new(|_| Rows {
+                entries: seed.clone(),
+                layout: CommitRowLayout::Card,
+                selected: 1,
+                rows: std::array::from_fn(|_| ScrollHandle::new()),
+                natural: Rc::default(),
+                list: UniformListScrollHandle::new(),
+            });
+            let root = rows.clone();
+            let win = crate::macos::open_offscreen(
+                cx,
+                size(px(dimensions.0), px(dimensions.1)),
+                move |_, _| root,
+            );
+            (dimensions, rows, win.into())
+        })
+        .collect();
     for locale in ["en", "ja"] {
         std::env::set_var("KAGI_LANG", locale);
         i18n::init_lang();
@@ -265,61 +293,51 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
                 for (name, text) in inputs() {
                     let entries = Rc::new(vec![entry("A", 1), entry(&text, 2), entry("Z", 3)]);
                     let original = entries.as_ref().clone();
-                    for dimensions in SIZES {
+                    for (dimensions, rows, win) in &windows {
+                        let dimensions = *dimensions;
                         let label = format!("{layout:?}/{name}/{locale}/{zoom}/{dimensions:?}");
-                        let mut previous = None;
-                        // MacWindow::resize schedules work on the native main
-                        // queue, which VisualTestAppContext does not drain.
-                        // Fresh native windows verify each actual viewport;
-                        // these are NOT claimed as in-place resize coverage.
-                        for _ in 0..2 {
-                            let rows = cx.new(|_| Rows {
-                                entries: entries.clone(),
-                                layout,
-                                selected: 1,
-                                rows: std::array::from_fn(|_| ScrollHandle::new()),
-                                natural: Rc::default(),
-                                list: UniformListScrollHandle::new(),
-                            });
-                            let root = rows.clone();
-                            let win = cx
-                                .open_offscreen_window(
-                                    size(px(dimensions.0), px(dimensions.1)),
-                                    move |_, _| root,
-                                )
-                                .expect("open row matrix window");
-                            draw(cx, win.into(), dimensions);
-                            let bounds = cx.read(|cx| inspect(rows.read(cx), dimensions, &label));
-                            if let Some(previous) = previous.replace(bounds.clone()) {
-                                assert_eq!(
-                                    previous, bounds,
-                                    "{label}: fresh mount changed geometry"
-                                );
-                            }
-                            rows.update(cx, |rows, cx| {
-                                rows.selected = 0;
-                                cx.notify();
-                            });
-                            draw(cx, win.into(), dimensions);
-                            assert_eq!(
-                                bounds,
-                                cx.read(|cx| inspect(rows.read(cx), dimensions, &label)),
-                                "{label}: selection must not reflow the list"
-                            );
-                            assert_eq!(
-                                entries.as_ref(),
-                                &original,
-                                "{label}: rendering changed raw commit strings"
-                            );
-                            unmount(cx, rows, win.into());
-                        }
+                        rows.update(cx, |rows, cx| {
+                            rows.entries = entries.clone();
+                            rows.layout = layout;
+                            rows.selected = 1;
+                            cx.notify();
+                        });
+                        draw(cx, *win, dimensions);
+                        let bounds = cx.read(|cx| inspect(rows.read(cx), dimensions, &label));
+                        // Was "a fresh mount reproduces this geometry"; with one
+                        // window per viewport the same oracle is that redrawing
+                        // unchanged state is a fixed point.
+                        draw(cx, *win, dimensions);
+                        assert_eq!(
+                            bounds,
+                            cx.read(|cx| inspect(rows.read(cx), dimensions, &label)),
+                            "{label}: redrawing the same state changed geometry"
+                        );
+                        rows.update(cx, |rows, cx| {
+                            rows.selected = 0;
+                            cx.notify();
+                        });
+                        draw(cx, *win, dimensions);
+                        assert_eq!(
+                            bounds,
+                            cx.read(|cx| inspect(rows.read(cx), dimensions, &label)),
+                            "{label}: selection must not reflow the list"
+                        );
+                        assert_eq!(
+                            entries.as_ref(),
+                            &original,
+                            "{label}: rendering changed raw commit strings"
+                        );
                     }
                 }
             }
         }
     }
+    for (_, rows, win) in windows {
+        unmount(cx, rows, win);
+    }
     drop(restore);
-    eprintln!("[gui-e2e] PASS commit_row_layout 704 matrix cells plus fresh-mount/selection checks; native resize unavailable in VisualTestAppContext");
+    eprintln!("[gui-e2e] PASS commit_row_layout 704 matrix cells plus redraw/selection checks over 4 reused windows; native resize unavailable in VisualTestAppContext");
 }
 
 struct GlobalSettings {
@@ -361,12 +379,11 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
         let app = e2e::app_state(repo_path).expect("fixture app state");
         let captured: Rc<RefCell<Option<gpui::Entity<KagiApp>>>> = Rc::default();
         let output = captured.clone();
-        let win = cx
-            .open_offscreen_window(
-                size(px(dimensions.0), px(dimensions.1)),
-                move |window, cx| e2e::mount_root(app, window, cx, &output),
-            )
-            .expect("mount actual KagiApp");
+        let win = crate::macos::open_offscreen(
+            cx,
+            size(px(dimensions.0), px(dimensions.1)),
+            move |window, cx| e2e::mount_root(app, window, cx, &output),
+        );
         let app = captured.borrow().clone().expect("captured KagiApp");
         app.update(cx, |app, cx| app.open_editor_workspace(cx));
         cx.run_until_parked();
@@ -380,7 +397,9 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
             };
             editor.update(cx, |view, cx| {
                 view.right_tab = RightPaneTab::History;
-                view.history_loading = false;
+                // No `history_loading = false` needed since #489: the loading
+                // state belongs to an in-flight request, and this harness
+                // seeds `history` directly without ever issuing one.
                 view.history = Some(history.clone());
                 view.selected_history_commit = Some(format!("{:040x}", 2));
                 cx.notify();
@@ -490,11 +509,10 @@ pub fn scenario_footer_status_line(cx: &mut VisualTestAppContext, repo_path: &Pa
         let app_state = e2e::app_state(repo_path).expect("fixture app state");
         let captured: Rc<RefCell<Option<gpui::Entity<KagiApp>>>> = Rc::default();
         let output = captured.clone();
-        let win = cx
-            .open_offscreen_window(size(px(width), px(HEIGHT)), move |window, cx| {
+        let win =
+            crate::macos::open_offscreen(cx, size(px(width), px(HEIGHT)), move |window, cx| {
                 e2e::mount_root(app_state, window, cx, &output)
-            })
-            .expect("mount actual KagiApp");
+            });
         let app = captured.borrow().clone().expect("captured KagiApp");
         cx.run_until_parked();
         for (name, text) in &messages {

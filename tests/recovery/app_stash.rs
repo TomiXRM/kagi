@@ -62,23 +62,6 @@ fn confirm(
         cx.simulate_keystrokes(window, "enter");
     }
 }
-#[allow(dead_code)] // #546 keeps the disabled follow-up scenario buildable.
-fn dismiss_app_notice_if_present(
-    cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
-    window: AnyWindowHandle,
-) {
-    if !cx.read(|cx| matches!(&app.read(cx).active_modal, Some(ActiveModal::AppNotice(_)))) {
-        return;
-    }
-    cx.update_window(window, |_, window, cx| {
-        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
-        window.draw(cx).clear();
-    })
-    .unwrap();
-    cx.simulate_keystrokes(window, "escape");
-    cx.run_until_parked();
-}
 pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     for button in [false, true] {
         for action in [
@@ -151,7 +134,6 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     }
 }
 
-#[allow(dead_code)] // #546: excluded from PR 1's E run after four driver failures.
 pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
     for duplicate in [false, true] {
         let fixture = build_fixture();
@@ -176,6 +158,9 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Partial { .. }));
         assert_eq!(ids(&repo), before);
+        assert!(
+            cx.read(|cx| !matches!(&app.read(cx).active_modal, Some(ActiveModal::AppNotice(_))))
+        );
         assert!(cx.read(|cx| !matches!(app.read(cx).status_footer, FooterStatus::Success(_))));
         let other = build_fixture();
         let other_path = other.path().canonicalize().unwrap();
@@ -219,10 +204,6 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
         wait(cx, &app, |app| app.conflict.is_none());
-        // Partial delivery does not always present its queued notice before
-        // Conflict Mode. If one is active after continue/reload, dismiss it;
-        // otherwise let the follow-up proceed without depending on a notice.
-        dismiss_app_notice_if_present(cx, &app, window);
         wait(cx, &app, |app| {
             if duplicate {
                 app.app_sessions.stash_conflict(&repo).is_none()
@@ -245,6 +226,55 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
         eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID prompt/cancel (duplicate={duplicate})");
     }
+}
+
+pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    stash_three(&repo);
+    std::fs::write(repo.join("README.md"), "ours\n").unwrap();
+    git(&repo, &["commit", "-qam", "ours"]);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_pop_modal(1, cx));
+    wait(cx, &app, |app| {
+        matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+    });
+    confirm(cx, &app, window, false);
+    wait(cx, &app, |app| {
+        app.busy_op.is_none() && app.conflict.is_some()
+    });
+
+    // Continue and close in the same host turn, before its async reload can
+    // present the one-shot drop follow-up.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.conflict.as_ref().unwrap().update(cx, |view, _| {
+                view.mode
+                    .as_mut()
+                    .unwrap()
+                    .buffer
+                    .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
+                    .unwrap();
+            });
+            app.conflict_continue(window, cx);
+            app.close_tab(0, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo.clone(), cx));
+    });
+    wait(cx, &app, |app| {
+        app.repo_path.as_ref() == Some(&repo) && app.conflict.is_none()
+    });
+    app.update(cx, |app, _| {
+        assert!(app.app_sessions.stash_conflict(&repo).is_none());
+        assert!(app.app_sessions.take_stash_followup(&repo).is_none());
+        assert!(app.stash_drop_modal().is_none());
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS app-stash continue → close → reopen has no drop prompt");
 }
 
 pub fn scenario_stash_replan_error(cx: &mut VisualTestAppContext) {

@@ -79,7 +79,10 @@ mod macos {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
+    use gpui::{
+        point, px, size, AnyWindowHandle, App, Bounds, Entity, Pixels, Render, Size,
+        VisualTestAppContext, Window as GpuiWindow, WindowBounds, WindowHandle, WindowOptions,
+    };
     use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
         commands::CreateSnapshot, commit_list, e2e, editor_tree_menu::EditorTreeAction, graph_wip,
@@ -314,6 +317,72 @@ mod macos {
         String::from_utf8_lossy(&out.stdout).to_string()
     }
 
+    /// How many `NSWindow`s a scenario may keep alive at once (#549).
+    ///
+    /// Eight is generous: no scenario legitimately needs more than the four
+    /// viewports of the layout matrix. The point is that the *next* runaway
+    /// loop fails on window five, not on window 1,408.
+    pub(crate) const MAX_LIVE_WINDOWS: usize = 8;
+
+    thread_local! {
+        /// Name of the scenario currently running, so the budget panic can say
+        /// which loop leaked. Set by `run`, read only by `open_offscreen`.
+        static CURRENT_SCENARIO: std::cell::Cell<&'static str> =
+            const { std::cell::Cell::new("<startup>") };
+    }
+
+    pub(crate) fn set_current_scenario(name: &'static str) {
+        CURRENT_SCENARIO.with(|cell| cell.set(name));
+    }
+
+    /// Open an off-screen scenario window **hidden**, under a live-window
+    /// budget (#549).
+    ///
+    /// Two problems, one helper. First, gpui's own
+    /// `VisualTestAppContext::open_offscreen_window` hardcodes `show: true`
+    /// (`gpui/src/app/visual_test_context.rs:114`) and macOS clamps the
+    /// (-10000, -10000) origin back onto a real display, so every mount stacks
+    /// a black window on the developer's screen. With `show: false` AppKit
+    /// never sends `orderFront:` (`gpui_macos/src/window.rs:1082`), so the
+    /// window never joins the on-screen list. `KAGI_GUI_E2E_VISIBLE=1` puts
+    /// them back for human triage.
+    ///
+    /// Second, hidden windows are still real `NSWindow`s. A full run once
+    /// opened 1,408 of them at once and the WindowServer watchdog killed the
+    /// user's login session, so this asserts the live count before opening.
+    ///
+    /// Visibility changes nothing else: under `test-support`
+    /// `App::flush_effects` draws every dirty window itself
+    /// (`gpui/src/app.rs:1566`) rather than waiting for the display link, so
+    /// layout, hitboxes, action dispatch and the `simulate_*` helpers are
+    /// unaffected.
+    pub(crate) fn open_offscreen<V: Render + 'static>(
+        cx: &mut VisualTestAppContext,
+        window_size: Size<Pixels>,
+        build_root: impl FnOnce(&mut GpuiWindow, &mut App) -> Entity<V>,
+    ) -> WindowHandle<V> {
+        let live = cx.update(|app| app.windows().len());
+        assert!(
+            live < MAX_LIVE_WINDOWS,
+            "[gui-e2e] window budget exceeded in scenario {}: {live} live NSWindows, \
+             limit {MAX_LIVE_WINDOWS} (#549). Reuse one window per viewport and mutate \
+             its root entity instead of mounting a fresh one per cell, and `unmount` \
+             every window you open.",
+            CURRENT_SCENARIO.with(|cell| cell.get()),
+        );
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(-10000.0), px(-10000.0)),
+                size: window_size,
+            })),
+            focus: false,
+            show: std::env::var_os("KAGI_GUI_E2E_VISIBLE").is_some(),
+            ..Default::default()
+        };
+        cx.update(|app| app.open_window(options, build_root))
+            .expect("open hidden offscreen window")
+    }
+
     /// Mount the real `KagiApp` offscreen against `repo_path`, settle the first
     /// frame, and hand back the captured entity + window handle. Mirrors the
     /// PoC mount (ADR-0166) so every scenario builds the root identically.
@@ -324,11 +393,9 @@ mod macos {
         let app_state = e2e::app_state(repo_path).expect("build app_state");
         let cell: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::new(RefCell::new(None));
         let build_cell = cell.clone();
-        let window = cx
-            .open_offscreen_window(size(px(1440.0), px(900.0)), move |window, cx| {
-                e2e::mount_root(app_state, window, cx, &build_cell)
-            })
-            .expect("open_offscreen_window");
+        let window = open_offscreen(cx, size(px(1440.0), px(900.0)), move |window, cx| {
+            e2e::mount_root(app_state, window, cx, &build_cell)
+        });
         let kagi = cell.borrow().clone().expect("kagi entity captured");
         cx.run_until_parked();
         (kagi, window.into())
@@ -347,6 +414,16 @@ mod macos {
         drop(entity);
         cx.update(|_| {});
         cx.run_until_parked();
+        // Dropping the gpui `Window` does NOT close the `NSWindow`:
+        // `impl Drop for MacWindow` (`gpui_macos/src/window.rs:1169-1192`)
+        // *spawns* `window.close()` on the platform foreground executor and
+        // detaches it. `VisualTestPlatform` delegates `open_window` straight to
+        // the real `MacPlatform` (`gpui/src/platform/visual_test.rs:122-128`),
+        // so that executor is `MacDispatcher` → `DispatchQueue::main()`
+        // (`gpui_macos/src/dispatcher.rs:55-60`), not the `TestDispatcher` that
+        // `run_until_parked` drains. Pump the main run loop or the window stays
+        // alive — which is how a full run piled up 1,408 of them (#549).
+        drain_native_events();
     }
 
     /// `git rev-parse HEAD` + porcelain status, for the no-mutation assertion.
@@ -414,8 +491,6 @@ mod macos {
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();
         cx.update(e2e::init_app);
-        // #546 stays compiled but disabled until its follow-up presentation
-        // path has a deterministic driver.
         let mut scenarios: Vec<(&str, Box<dyn FnMut(&mut VisualTestAppContext)>)> = vec![
             (
                 "stash_drop_persists",
@@ -456,6 +531,14 @@ mod macos {
             (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
+            ),
+            (
+                "stash_conflict_followup",
+                Box::new(crate::app_stash::scenario_stash_conflict_followup),
+            ),
+            (
+                "stash_conflict_close_reopen",
+                Box::new(crate::app_stash::scenario_stash_conflict_close_reopen),
             ),
             (
                 "stash_replan_error",
@@ -520,6 +603,7 @@ mod macos {
                 .as_ref()
                 .is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
             {
+                set_current_scenario(name);
                 scenario(&mut cx);
                 executed += 1;
             } else {

@@ -127,7 +127,7 @@ impl KagiApp {
             Some(p) => p,
             None => return false,
         };
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {

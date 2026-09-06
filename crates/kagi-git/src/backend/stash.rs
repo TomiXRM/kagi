@@ -166,15 +166,19 @@ impl Backend {
         fault: Option<StashFaultPoint>,
         mut event: impl FnMut(StashEvent),
     ) -> StashReport {
-        let mut backend = match Self::open(&plan.repo) {
+        let mut backend = match Self::open_with_policy(
+            &plan.repo,
+            ExecutionPolicy {
+                actor,
+                auto_snapshot,
+            },
+        ) {
             Ok(backend) => backend,
             Err(e) => {
                 event(StashEvent::Started);
                 return stash_failure(plan, actor, &e.to_string(), StashStopReason::OpenFailed);
             }
         };
-        backend.set_actor(actor);
-        backend.set_auto_snapshot(auto_snapshot);
         if matches!(fault, Some(StashFaultPoint::Untrusted)) {
             backend.trust = crate::trust::RepoTrust::Untrusted;
         }

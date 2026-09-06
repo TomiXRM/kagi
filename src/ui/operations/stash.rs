@@ -100,10 +100,7 @@ impl KagiApp {
         self.begin_stash_plan(StashAction::Drop { index }, cx);
     }
     pub(crate) fn stash_policy(&self) -> StashPolicy {
-        StashPolicy {
-            actor: kagi_git::Actor::Human,
-            auto_snapshot: settings::Settings::load().auto_snapshot(),
-        }
+        crate::ui::blocking_ops::execution_policy()
     }
     fn begin_stash_plan(&mut self, action: StashAction, cx: &mut Context<Self>) {
         self.begin_stash_plan_with_oid(action, None, cx);

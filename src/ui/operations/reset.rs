@@ -157,8 +157,8 @@ fn reset_current_blocking(
     plan: &kagi_git::ops::OperationPlan,
     target: &CommitId,
 ) -> Result<kagi_git::ops::StateSummary, String> {
-    let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
+        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ResetCurrentToHead {
         target: target.clone(),
     };

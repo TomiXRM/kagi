@@ -13,7 +13,7 @@
 //! confirmation (PM-locked §5). Blockers are still hard-refused.
 
 use kagi_domain::commit::CommitId;
-use kagi_git::{Actor, Backend, Operation, OperationPlan};
+use kagi_git::{Backend, Operation, OperationPlan};
 use serde_json::{json, Value};
 
 use crate::{Server, StoredPlan};
@@ -44,7 +44,8 @@ pub const CONFIRM_DESTRUCTIVE: bool = true;
 pub const CONFIRM_NETWORK: bool = false;
 
 fn open(server: &Server) -> Result<Backend, String> {
-    Backend::discover(server.repo()).map_err(|e| e.to_string())
+    Backend::discover_with_policy(server.repo(), kagi_git::backend::ExecutionPolicy::mcp())
+        .map_err(|e| e.to_string())
 }
 
 /// Parse the `args` string array from a tool-call argument object.
@@ -182,7 +183,6 @@ pub fn confirm(server: &mut Server, args: &Value) -> ToolResult {
 
     // The one true write path: preflight → execute → verify → oplog all happen
     // inside `Backend::run`. Actor=mcp tags every entry this server writes.
-    backend.set_actor(Actor::Mcp);
     let outcome = backend.run(&op, &fresh).map_err(|e| e.to_string())?;
 
     // The oplog entry `run` just appended (newest-first tail of one).

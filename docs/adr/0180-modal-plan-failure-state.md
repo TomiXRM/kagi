@@ -1,4 +1,4 @@
-# ADR-0177: modal の plan/replan 失敗を明示状態にする
+# ADR-0180: modal の plan/replan 失敗を明示状態にする
 
 状態: 採用（#510）
 日付: 2026-09-07

@@ -51,6 +51,10 @@ fn main() {
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/layout.rs"]
+mod recovery_layout;
+
+#[cfg(target_os = "macos")]
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -64,6 +68,47 @@ mod macos {
         commands::CreateSnapshot, commit_list, e2e, graph_wip, oplog_panel, settings::CopyTarget,
         theme, BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
     };
+
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+        fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+    }
+
+    /// The offscreen runner has no AppKit event loop to drain native windows.
+    /// MacWindow::drop queues close/autorelease; drain while GPUI is still alive
+    /// so native frame callbacks release their captured InputState entities.
+    struct NativeAutoreleasePool(*mut std::ffi::c_void);
+
+    impl NativeAutoreleasePool {
+        fn new() -> Self {
+            Self(unsafe { objc_autoreleasePoolPush() })
+        }
+    }
+
+    impl Drop for NativeAutoreleasePool {
+        fn drop(&mut self) {
+            // Created and drained on this runner's macOS main thread.
+            unsafe { objc_autoreleasePoolPop(self.0) };
+        }
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+        fn CFRunLoopRunInMode(
+            mode: *const std::ffi::c_void,
+            seconds: f64,
+            return_after_source: u8,
+        ) -> i32;
+    }
+
+    fn drain_native_events() {
+        // MacWindow closes on MacPlatform's native executor, not TestDispatcher.
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, 0);
+        }
+    }
 
     /// `git` with a deterministic identity + no user-config bleed-through.
     pub(super) fn git(dir: &Path, args: &[&str]) {
@@ -241,12 +286,18 @@ mod macos {
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
+        let native_pool = NativeAutoreleasePool::new();
         cx.update(e2e::init_app);
         crate::recovery_operations::scenario_stash_drop_persists(&mut cx);
         crate::recovery_operations::scenario_history_persists(&mut cx);
         crate::recovery_operations::scenario_cleanup_stale_tab(&mut cx);
         crate::recovery_operations::scenario_preflight_presentation(&mut cx);
         crate::recovery_operations::scenario_cleanup_open_failure(&mut cx);
+        crate::recovery_layout::scenario_commit_row_layout(&mut cx);
+        let history_fixture = build_fixture();
+        let history_before = repo_fingerprint(history_fixture.path());
+        crate::recovery_layout::scenario_editor_history_layout(&mut cx, history_fixture.path());
+        assert_eq!(history_before, repo_fingerprint(history_fixture.path()));
 
         scenario_bottom_panel(&mut cx);
         scenario_graph_copy(&mut cx, log_dir.path());
@@ -256,6 +307,11 @@ mod macos {
         scenario_agent_provenance(&mut cx);
         scenario_wip_head_connector(&mut cx);
         scenario_worktree_wip_inline(&mut cx);
+        cx.run_until_parked();
+        drain_native_events();
+        drop(native_pool);
+        cx.update(|_| {});
+        cx.run_until_parked();
 
         eprintln!("[gui-e2e] PASS all scenarios");
         0

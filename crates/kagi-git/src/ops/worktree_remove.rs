@@ -250,35 +250,7 @@ pub(crate) fn execute_remove_worktree_progress(
     if delete_branch {
         if let Some(ref b) = branch {
             if fault == Some(Fault::MoveBranchBeforeDelete) {
-                let expected = progress.branch_tip.as_ref().ok_or_else(|| {
-                    GitError::Other("test fault needs a captured branch tip".into())
-                })?;
-                let oid = git2::Oid::from_str(&expected.0).map_err(|e| {
-                    GitError::Other(format!("test fault invalid captured branch tip: {e}"))
-                })?;
-                let commit = repo.find_commit(oid).map_err(|e| {
-                    GitError::Other(format!("test fault cannot find captured tip: {e}"))
-                })?;
-                let signature = super::build_signature(repo)?;
-                let advanced = repo
-                    .commit(
-                        None,
-                        &signature,
-                        &signature,
-                        "test: advance branch before delete",
-                        &commit
-                            .tree()
-                            .map_err(|e| GitError::Other(e.message().to_string()))?,
-                        &[&commit],
-                    )
-                    .map_err(|e| GitError::Other(e.message().to_string()))?;
-                repo.reference(
-                    &format!("refs/heads/{b}"),
-                    advanced,
-                    true,
-                    "test: move branch before delete",
-                )
-                .map_err(|e| GitError::Other(e.message().to_string()))?;
+                advance_branch_before_delete_for_test(repo, b, progress.branch_tip.as_ref())?;
             }
             let expected = progress.branch_tip.as_ref().map(|tip| tip.0.as_str());
             let mut branch_ref = match repo.find_branch(b, git2::BranchType::Local) {
@@ -335,6 +307,43 @@ pub(crate) fn execute_remove_worktree_progress(
         .observations
         .push("verified: admin entry absent".into());
     Ok(DiscardOutcome::complete(backups))
+}
+
+/// Advances `branch` only for the finite `MoveBranchBeforeDelete` test fault.
+#[doc(hidden)]
+fn advance_branch_before_delete_for_test(
+    repo: &Repository,
+    branch: &str,
+    expected: Option<&crate::CommitId>,
+) -> Result<(), GitError> {
+    let expected =
+        expected.ok_or_else(|| GitError::Other("test fault needs a captured branch tip".into()))?;
+    let oid = git2::Oid::from_str(&expected.0)
+        .map_err(|e| GitError::Other(format!("test fault invalid captured branch tip: {e}")))?;
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| GitError::Other(format!("test fault cannot find captured tip: {e}")))?;
+    let signature = super::build_signature(repo)?;
+    let advanced = repo
+        .commit(
+            None,
+            &signature,
+            &signature,
+            "test: advance branch before delete",
+            &commit
+                .tree()
+                .map_err(|e| GitError::Other(e.message().to_string()))?,
+            &[&commit],
+        )
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    repo.reference(
+        &format!("refs/heads/{branch}"),
+        advanced,
+        true,
+        "test: move branch before delete",
+    )
+    .map_err(|e| GitError::Other(e.message().to_string()))?;
+    Ok(())
 }
 
 /// Write every uncommitted file in the worktree at `wt_path` into the MAIN

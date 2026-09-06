@@ -249,7 +249,7 @@ def selftest() -> int:
                     f"(false positive):\n{sample}"
                 )
                 failed = True
-        for path, expected_exclusion in (gate.path_samples if isinstance(gate, Rule) else ()):
+        for path, expected_exclusion in gate.path_samples if isinstance(gate, Rule) else ():
             actual = is_excluded(Path(path), gate.excludes)
             if actual != expected_exclusion:
                 print(

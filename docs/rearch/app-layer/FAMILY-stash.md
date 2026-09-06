@@ -1,12 +1,12 @@
 # #484 family 2: stash push / apply / pop / drop
 
-状態: **PR 1 local 4 op は #541、GUI follow-up は #550 で merge 済み・PR 2 remote は r4 設計案**。
+状態: **PR 1 local 4 op は #541、GUI follow-up は #550/#557 で merge 済み・PR 2 remote は r5 設計案**。
 実装境界と残る競合窓は [ADR-0176](../../adr/0176-app-stash-local-boundary.md)。
-以下は採用済み設計 r3 と、PR 2 の未解決点を具体化した **r4** の契約。
+以下は採用済み設計 r3 と、PR 2 の未解決点・aufheben 裁定を具体化した **r5** の契約。
 PM Round 1 の (1)〜(5)/A〜E、
 omp-plan 第 2 レビュー R1〜R4 と PM Round 2 の全件採用裁定を反映。
 追加 D と C の完了範囲は §7 の調整案を PM 採用済み。
-r4 の読解基準は `origin/dev@8990dff7`。2026-09-07。
+r5 の読解基準は `origin/dev@4913d5e0`。2026-09-07。
 コード変更・cargo・G/E/M 実行は本 docs PR に含めない。
 [DESIGN](DESIGN.md) §5.2/§7/§8 の次 family を具体化するノートであり、
 DESIGN 冒頭の古い実装状況（1b 未実装）を現在の状況として引用しない。
@@ -278,15 +278,15 @@ drop の実 stdout（full OID を含む）を receipt に保持し、UI の pred
 app は typed transport capability を呼ぶだけ。remote pull や一般 SSH backend trait の導入は
 しない。receipt 型は GPUI 非依存の共通 backend 契約を利用し、host が actor を固定する。
 
-omp-plan の未解決点に対する r4 の裁定は次のとおり。
+omp-plan の未解決点と aufheben に対する r5 の裁定は次のとおり。
 
 | # | 決定 | 理由 |
 |---|---|---|
 | 1 接続 identity | `ssh -G` で security-relevant effective config を凍結し、PR 2 の write は direct SSH profile に限定する | alias clone では向き先変更を防げず、Proxy/ControlMaster の実経路を agentless MVP で再現・停止証明できないため |
 | 2 remote key | 凍結接続 + remote physical common-dir を `RemoteRepoId` とし、main/linked root を同一 key にする | 選択 root を key にすると同じ ref/index writer を別 root 経由で同時実行できるため |
-| 3 stop-unknown | common-dir 内の operation marker と valid `done` を停止証明にし、同 scope の read→ack だけで解除する | local ssh child の終了・再接続だけでは remote worker の停止も mutation 有無も証明しないため |
-| 4 verify | 一個の remote worker が preflight/drop/post-read を実施し、versioned fixed frame を outcome matrix で分類する | 複数 SSH job の間で drift 窓を増やさず、stdout の OID と実際の前後 state を同じ証拠へ束縛するため |
-| 5 実 SSH M | direct Linux host の main/linked fixture、alias drift、実 timeout→Unknown→marker reconcile まで必須とする | fake は argv/異常応答を決定的に網羅できるが、OpenSSH の process/切断挙動と host 上の path identity は証明できないため |
+| 3 stop-unknown | single foreground script と repo 外の user-owned completion token を使い、valid token + state read→ack だけで解除する | read は現在値であって旧 writer の終了を証明せず、一方 repo 内 marker / detached worker は一回の command には footprint と複雑性が重いため |
+| 4 verify | 一個の remote foreground script が preflight/drop/post-read を実施し、versioned fixed frame を outcome matrix で分類する | 複数 SSH job の間で drift 窓を増やさず、stdout の OID と実際の前後 state を同じ証拠へ束縛するため |
+| 5 実 SSH M | localhost sshd を第一候補に main/linked fixture と切断時の生存 process を確認し、alias drift と timeout→Unknown→reconcile は fake で決定的に行う | fake は process/切断挙動と host 上の path identity を証明できず、実機だけでは drift/timeout の timing が不安定なため |
 
 ### 5.1 SSH 接続 identity の凍結
 
@@ -295,7 +295,7 @@ plan はユーザーが選んだ alias に `ssh -G -- <alias>` 相当の read pr
 `hostname`、`user`、`port`、`hostkeyalias`、`identityfile` / `certificatefile` の順序付き列、
 `userknownhostsfile` / `globalknownhostsfile` の順序付き列と内容 digest、`hostkeyalgorithms`。
 元 alias とこの構造体の fingerprint を plan evidence に保持する。実行直前にも alias を
-`ssh -G` で再解決し、fingerprint が違えば marker 作成前の Refused / replan とする。
+`ssh -G` で再解決し、fingerprint が違えば remote script 起動前の Refused / replan とする。
 
 PR 2 の write transport は **direct SSH だけ**を受け入れる。effective config の
 `proxyjump` / `proxycommand` が `none` 以外、`controlmaster` が `no` 以外、
@@ -341,39 +341,50 @@ path canonicalize で代用しない。
 `/srv/repo/.git/worktrees/w1` を参照）は、どちらも physical `/srv/repo/.git` を
 common-dir として返すため、同じ接続では同じ
 `RemoteRepoId` になる。別 hostname/user/port/host-key identity なら path が同じでも別 key。
-plan と worker 内 preflight の両方で root→common-dir を解決し、凍結値と違えば mutation 前に
+plan と script 内 preflight の両方で root→common-dir を解決し、凍結値と違えば mutation 前に
 Refused。取得不能時に root 別 key へ縮退せず、別 linked root から Busy / NeedsReconcile を
 迂回できない。`host:root` は表示 label に限り local canonical path として扱わない。
 
-### 5.3 operation marker と停止不明の回復
+### 5.3 single foreground script と停止不明の回復
 
 承認・lease 取得後、transport は app の `OperationId` に束縛した推測困難な 128-bit
-`RemoteJobId` を生成し、`<common-dir>/kagi/remote-ops/v1/<remote-id>/` を mode 0700 で作る。
-既存 path、symlink、owner/権限が
-期待と違う場合は Git mutation 前に拒否する。bootstrap は stdin/stdout/stderr を marker 内の
-file へ切り替えた detached worker を一度だけ起動し、remote 側の受理 id を返す。worker は
-SSH channel の切断後も同じ id で完了を記録できる。凍結 connection と common-dir を使い、
-`started` を atomic rename で確定してから preflight→drop→post-observation を一回だけ行い、
-終了状態を `done.tmp` から `done` へ rename する。marker を作れない remote では PR 2 の
-Drop を許可しない。自動再送はしない。
+`RemoteJobId` を生成する。remote は **一個の foreground `sh -c`** だけを実行し、detached
+process / daemon / resident helper を作らない。repo と common-dir には Kagi の directory、
+marker、lock、oplog を一切書かない。
 
-SSH の local spawn 前失敗と remote が job を未受理と証明する応答は Failed。remote の
-`started` 後は、正常な `done` を読めるまで writer の停止を証明しない。SSH timeout、EOF、
-`wait_with_output` error、local child reap、単なる再接続、`started` だけの marker は Unknown
-で lease を保持する。現在の `RemoteError::Spawn` 名から phase を推測せず、typed transport
-phase（LocalSpawn / Submitted / Started / Done）を report に残す。
+channel loss 後の停止証明だけは repo 外の user-owned runtime area を使う。path は remote の
+`${XDG_RUNTIME_DIR:-$HOME/.cache}/kagi/remote-ops/<remote-job-id>`。script は risky region 前に
+runtime root を physical absolute path に解決して job evidence に凍結し、repo/worktree/common-dir
+配下でないことを確認する。`kagi/remote-ops` が当該 user 所有・mode 0700・非 symlink であり、
+job-owned temp を作れることを確認し、満たせなければ drop 前に Refused とする。
+preflight→drop→post-observation の後、
+operation id、remote job id、`RemoteRepoId` digest、protocol version、result frame digest を含む
+completion token を temp file へ書いて atomic rename する。これは script の
+最後の remote filesystem action で、その後は同じ fixed frame と終端行を stdout に出して終了する。
+自動再送はしない。
 
-read-reconcile は同じ凍結 connection と `RemoteRepoId` で `done` を読むだけで mutation を
-再実行しない。valid `done` の operation id、remote job id、scope、protocol version、result digest が元 job と
-一致して初めて「remote writer は終了済み」とする。その後に現在 state を read し、receipt と
-照合した recovery summary を表示する。ユーザーの ack token は operation id、scope、done
-digest、観測 revision に束縛し、exact lease だけを解除する。marker 不在/途中/malformed、
-別接続・別 common-dir、観測失敗では ack を発行しない。worker 自体が marker 完了前に失われた
-場合はその app session 内で安全に解除できず、手動調査が必要になることを既知制約として表示する。
-terminal receipt の apply または read→ack 後だけ marker を best-effort cleanup する。cleanup
-失敗を stash mutation の失敗や再実行理由にせず、残存 marker は operation id で監査できる。
+正常な fixed frame + 終端行と SSH process の正常終了を受け取った場合は、その組を writer の
+停止証明として通常分類する。local spawn / handshake が remote command 未開始と証明できる
+失敗は Failed。remote script 開始後の timeout、EOF、`wait_with_output` error、local child reap、
+単なる再接続は **すべて Unknown + lease 保持**。現在の `RemoteError::Spawn` 名だけから phase を
+推測せず、typed transport phase（LocalSpawn / ScriptStarted / TerminalResponse）を report に残す。
 
-### 5.4 一回の worker と verify 判定
+再接続時の state read は before/expected-after/other の recovery summary を作るだけで、単独では
+ack token を発行しない。before と同一でも旧 script が drop 前で生存し得るし、expected-after
+でも外部 Git が同じ state を先に作った attribution race があるため、read は停止証明ではない。
+同じ凍結 connection / `RemoteRepoId` で completion token を読み、operation id、remote job id、
+scope、version、result digest が元 job と一致した場合だけ writer 終了済みとする。その token と
+成功した state read を合わせた recovery summary に対し、operation id、scope、token digest、
+観測 revision に束縛した ack token を発行し、exact lease だけを解除する。
+
+completion token が不在/途中/malformed、不一致、読取不能、runtime area を失った場合は、state が
+before/expected-after のどちらでもその app session 内では Unknown lease を安全に解除できない。
+UI は「remote operation の終了確認待ち。再送しない」と手動調査が必要なことを表示する。
+terminal receipt の apply または read→ack 後だけ token を best-effort cleanup し、cleanup 失敗を
+stash mutation の失敗や再実行理由にしない。repo 内 marker 方式と detached worker は、実 M で
+この契約では回復不能な具体例が見つかった場合にだけ再検討する将来案とする。
+
+### 5.4 一回の script と verify 判定
 
 plan は remote HEAD、ordered full stash OID 列（順序・重複を保持）、選択 index と OID、
 common-dir、index fingerprint、worktree-state fingerprint を危険確認へ凍結する。
@@ -382,22 +393,22 @@ index は `git rev-parse --git-path index` が示す bytes（不存在 sentinel 
 fingerprint 化する。これは ignored file と同一 fingerprint に戻る ABA を証明せず、外部 Git
 との排他も保証しない。
 
-remote worker 一個が common-dir 再確認、HEAD/list/index/worktree の preflight、
+remote foreground script 一個が common-dir 再確認、HEAD/list/index/worktree の preflight、
 `git stash drop "stash@{index}"`、直後の同じ観測を順に行う。check と drop を別 SSH job に
-分けない。stdout は worker が捕捉し、C locale の実出力から得た full OID を plan OID と照合する。
-応答/marker は magic/version と固定個数の NUL 区切り field（phase、exit、selected/stdout OID、
+分けない。stdout は script が捕捉し、C locale の実出力から得た full OID を plan OID と照合する。
+応答/completion token は同じ magic/version と固定個数の NUL 区切り field（phase、exit、selected/stdout OID、
 before/after HEAD/list/index/worktree fingerprint、error class）だけを受理する。値は enum・整数・
 full hex OID/fingerprint に限定し、欠落、余分、short OID、不正 hex/UTF-8、version 違いを
 成功として解釈しない。生 stderr は長さ制限した診断 evidence であり判定 field ではない。
 
-| worker / 観測 | outcome と lease |
+| script / 観測 | outcome と lease |
 |---|---|
-| marker 作成前、または `started` が無く未受理を証明 | Failed。mutation 無し、lease 解放 |
-| preflight mismatch、drop 未実行、valid `done` | Refused。再plan、lease 解放 |
+| remote script 未開始を transport が証明 | Failed。mutation 無し、lease 解放 |
+| preflight mismatch、drop 未実行、正常な terminal response | Refused。再plan、lease 解放 |
 | exit 0、stdout OID=承認 OID、after list=before から選択 occurrence 一件だけ除去、HEAD/index/worktree 不変 | Success / Verified。receipt 一件、lease 解放 |
-| non-zero、before と同じ post state を valid `done` が証明 | Failed。mutation 無し、lease 解放 |
-| drop/参照変化を観測したが stdout/list/HEAD/index/worktree の verify が不一致または不足 | Partial（既知副作用を保持）。停止済みなら lease 解放、recovery を表示 |
-| `started` 後に valid `done` が無い、または mutation 有無を分類できない | Unknown。lease 保持、§5.3 の read→ack のみ |
+| non-zero、before と同じ post state を terminal response / valid token が証明 | Failed。mutation 無し、lease 解放 |
+| drop/参照変化を観測したが stdout/list/HEAD/index/worktree の verify が不一致または不足 | Partial（既知副作用を保持）。terminal response / valid token で停止済みなら lease 解放、recovery を表示 |
+| script 開始後に terminal response も valid completion token も無い、または mutation 有無を分類できない | Unknown。lease 保持、§5.3 の token + read→ack のみ |
 
 同じ OID が複数 occurrence に存在しても、before の index と ordered list によって削除位置を
 束縛し、after はその位置一件だけを除いた列と比較する。最後の preflight と Git の ref update
@@ -407,7 +418,7 @@ full hex OID/fingerprint に限定し、欠落、余分、short OID、不正 hex
 ### 5.5 UI と保持範囲
 
 pure な effective-config/frame parser、`RemoteConnectionId` / `RemoteRepoId` / response 型は
-`kagi-domain::remote`、`ssh` spawn・known_hosts snapshot・remote marker I/O は新しい
+`kagi-domain::remote`、`ssh` spawn・known_hosts snapshot・runtime completion-token I/O は新しい
 `src/remote/stash.rs` に置く。`src/app/stash.rs` は有限な `StashJob::Remote` が持つ typed job の
 run/report だけを調停し、`std::process` / `std::fs` / shell 文字列へ触れない。fake は remote
 adapter の有限 test transport/fault enum とし、production が任意 callback を受ける port には
@@ -440,10 +451,10 @@ UI state を直接 Ready に書き換える seam は不可。完了前/配送前
 | Busy 両方向 | stash と remove/editor save/staging/snapshot/fetch を両順序で予約。bytes 不変、再入拒否、正しい owner だけ解放。停止不明では保持 |
 | failure | open failure、preflight 拒否、mutation 前/内部 panic、verify failure、abandon。Partial/Unknown の evidence を JSONL 再parseで確認 |
 | append failure | log file の位置を directory にして決定的に失敗。変更済み+attempted entry+error、過去 tail 無し、二重実行なし |
-| remote direct config | typed fake で `ssh -G` の全採用 field と凍結 argv。ProxyJump/ProxyCommand/ControlMaster/agent-only/未展開 token、config drift は marker/drop 無し。通常 key と CA known-host path、malformed config を網羅 |
-| remote identity | main/linked root の physical common-dir は同じ key、別接続は別 key。同 key の実行中は Busy、Unknown の ack 前は NeedsReconcile。古い Git、common-dir/symlink解決不能、worker 再解決 drift は drop 無し |
-| remote worker | ordered OID の中間 occurrence、stdout OID、HEAD/list/index/worktree の fixed frame を照合。欠落/余分/version違い/short OID、preflight drift、non-zero unchanged、known mutation+verify failure を §5.4 の全 outcome へ写す |
-| remote recovery | local spawn 前 Failed、Submitted/Started 後 timeout、done marker 不在/途中/不一致、valid done の read→ack、replayed/wrong-scope ack。Unknown は同 key lease を保持し、自動再送・二重記録しない |
+| remote direct config | typed fake で `ssh -G` の全採用 field と凍結 argv。ProxyJump/ProxyCommand/ControlMaster/agent-only/未展開 token、config drift は script/drop 無し。通常 key と CA known-host path、malformed config を網羅 |
+| remote identity | main/linked root の physical common-dir は同じ key、別接続は別 key。同 key の実行中は Busy、Unknown の ack 前は NeedsReconcile。古い Git、common-dir/symlink解決不能、script 再解決 drift は drop 無し |
+| remote script | ordered OID の中間 occurrence、stdout OID、HEAD/list/index/worktree の fixed frame を照合。欠落/余分/version違い/short OID、preflight drift、non-zero unchanged、known mutation+verify failure を §5.4 の全 outcome へ写す |
+| remote recovery | local spawn 前 Failed。slow shim が drop 前で待つ間の timeout は before 同一 read でも ack 不可。completion token 不在/途中/不一致/読取不能、valid token + state read→ack、replayed/wrong-scope ack。Unknown は同 key lease を保持し、自動再送・二重記録しない |
 
 fault は正常値 None、有限 enum の doc-hidden test API（integration test から到達可）だけ。
 任意 callback で gate を迂回できる形にしない。#531 の強化後の uv fault gate を適用する。
@@ -469,15 +480,16 @@ GUI の conflict continue 後の follow-up 提示は #550 で修正され、filt
 window なしの G は owner/full OID payload から一意な新規 Drop plan が Ready になるまでを保証する。
 実装時の専用 target/実行分担は PM 指定に従う。本 docs PR では cargo は一切実行しない。
 
-M は PM: direct SSH の Linux host（Git 2.31 以上。基準 fixture は Git 2.43）に main + linked
-worktree と stash 3 件を作る。中間 index の成功、取消、実行前 stash drift、alias の HostName
-変更による Refused、main で保持した lease が linked root を Busy にすること、EN/JA の
-Success/Refused/Unknown/NeedsReconcile と remote refresh を実機確認し画像・marker を残す。
-送信後切断は専用 host の `git` shim を stash drop の時だけ実 Git の前で sentinel/release file
-待ちにし、他の probe は実 Git へ透過する。worker の `started` を別 control session で確認後、
-Kagi transport の whole-command timeout を発生させる。Unknown・自動再送無し・同 key Busy を
-確認してから release し、remote worker の valid `done`、read→ack、正しい一回の Drop/receipt、
-lease 解放まで確認する。成功/失敗 toast だけ、fake だけ、local child reap だけでは M 完了としない。
+M は PM: **このマシンの localhost sshd を第一候補**とし、remote 側 Git 2.31 以上で main +
+linked worktree と stash 3 件を作る。中間 index の成功、取消、main/linked が同じ physical
+common-dir/key になること、remote refresh と repo/common-dir に Kagi の痕跡が無いことを
+実機確認する。OpenSSH の channel loss 後も remote process が生存し得ることは、stash drop の
+時だけ実 Git の前で sentinel/release file を待つ専用 `git` shim（他 probe は透過）で確認する。
+before と同一の read が停止証明にならず Unknown / 同 key Busy のままであることを確認してから
+release し、repo 外 completion token、state read→ack、正しい一回の Drop/receipt、lease 解放まで
+確認する。alias drift と timeout→Unknown→reconcile の outcome は timing を成否条件にしない
+typed fake G を必須証明とし、localhost M では補助的に観測する。成功/失敗 toast だけ、fake
+だけ、local child reap だけでは M 完了としない。
 M の host-key 経路は既知の通常 key 一組を必須とする。`@cert-authority`、malformed known_hosts、
 Proxy/ControlMaster、agent-only の拒否は typed fake G の責務で、PM 環境への CA 構築は要求しない。
 local の大きい stash の応答性、Enter 連打、危険確認、conflict 解決→取消/Drop、owner 切替/close、
@@ -487,7 +499,7 @@ local の大きい stash の応答性、Enter 連打、危険確認、conflict �
 
 ## 7. 規模・分割とレビュー事項
 
-`src/ui/operations/stash.rs` は r4 基準 tree で **460 行**（`wc -l`、コメント/空行込み）。
+`src/ui/operations/stash.rs` は r5 基準 tree で **460 行**（`wc -l`、コメント/空行込み）。
 PR 1 で local glue は移管済みで、残る remote branch は 416〜455 行付近。
 PR 2 後も open/replan/render intent と表示 mapper に絞り、現状規模を大きく増やさない。
 以下の PR 2 数値は実測 after ではなく計画用概算。800 LOC/file・80 LOC/function を超える場合は
@@ -496,7 +508,7 @@ backend の stash boundary、app の stash job、UI adapter、tests の機能境
 | PR | 内容 | 概算 |
 |---|---|---|
 | 1 local | enum/共通 report/receipt sibling + local 4 op + conflict follow-up payload + G/E + ADR | production 450〜750 行追加、旧 glue 350〜500 行削除、tests 450〜700 行追加、約 12〜18 files |
-| 2 remote | typed scope/direct SSH freeze/recorded worker+reconcile + remote drop UI adapter + G/E/M | production 400〜700 行追加、旧 glue 60〜100 行削除、tests 400〜700 行追加、約 10〜16 files |
+| 2 remote | typed scope/direct SSH freeze/single script+token reconcile + remote drop UI adapter + G/E/M | production 350〜650 行追加、旧 glue 60〜100 行削除、tests 400〜700 行追加、約 10〜16 files |
 
 **PR 1 に含めないもの**: remote drop の plan/executor/記録/表示経路の移管・変更、
 remote 用のファイル移動、`Local/Remote` lease key 和の導入。remote の既存経路は残し、
@@ -507,7 +519,7 @@ remote 用のファイル移動、`Local/Remote` lease key 和の導入。remote
 同期実行 confirm / blocking core 呼出しをゼロにする。`rg -n` の全ヒットと各 caller の
 所属を PR 本文に載せ、remote 分岐の残存だけを明示する。単に関数を別ファイルへ移動して
 「ゼロ」としない。実行しない薄い confirm intent の名前と、同期 executor 本体も区別する。
-現行 remote 分岐（r4 基準 tree の stash.rs:416/419/422/442）には
+現行 remote 分岐（r5 基準 tree の stash.rs:416/419/422/442）には
 remote_stash_drop / finish_op_on_main / record_op 呼出しが残るため、
 「remote を変更しない」と「PR 1 でファイル全体のヒットゼロ」は両立しない。
 **PR 2 の完了条件**は、remote も移管した後に同ファイル全体で上記旧 glue のヒットゼロを

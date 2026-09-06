@@ -63,6 +63,7 @@ percent-encoding = "2"
 # Auto-update (ADR-0082): SHA-256 verification of downloaded release assets, and
 # tempfiles for the download staging area (also used by tests).
 sha2 = "0.10"
+getrandom = "0.3"
 tempfile = "3"
 # Typed settings persistence (issue #13 P4, ADR-0091): a real JSON parser for
 # settings.json replaces the hand-rolled string scanner and preserves unknown

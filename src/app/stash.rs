@@ -22,6 +22,11 @@ pub struct StashRequest {
     pub owner: Attachment,
     pub action: StashAction,
 }
+#[derive(Clone, Debug)]
+pub struct RemoteStashRequest {
+    pub owner: crate::remote::stash::RemoteAttachment,
+    pub index: usize,
+}
 pub struct StashPlanJob {
     revision: RequestId,
     request: StashRequest,
@@ -109,7 +114,80 @@ pub fn plan_stash_followup(
     job.expected_oid = Some(oid);
     job
 }
-pub struct StashJob {
+pub struct RemoteStashPlanJob {
+    revision: RequestId,
+    request: RemoteStashRequest,
+    policy: StashPolicy,
+    fixture: Option<crate::remote::stash::RemotePlanFixture>,
+}
+impl RemoteStashPlanJob {
+    pub fn run(self) -> PlanCompletion {
+        let result = if let Some(fixture) = self.fixture {
+            crate::remote::stash::plan_remote_stash_drop_for_test(
+                self.request.owner.clone(),
+                self.request.index,
+                fixture,
+            )
+        } else {
+            crate::remote::stash::plan_remote_stash_drop(
+                self.request.owner.clone(),
+                self.request.index,
+            )
+        };
+        let state = match result {
+            Ok(plan) => PlanState::Ready {
+                token: PlanToken {
+                    revision: self.revision,
+                },
+                prepared: Planned::RemoteStash {
+                    plan,
+                    request: self.request,
+                    policy: self.policy,
+                },
+            },
+            Err(error) => PlanState::Error {
+                error: error.to_string(),
+                open_failed: false,
+                recording: None,
+            },
+        };
+        PlanCompletion {
+            revision: self.revision,
+            state,
+            error_job: None,
+        }
+    }
+}
+pub fn plan_remote_stash(
+    sessions: &mut Sessions,
+    request: RemoteStashRequest,
+    policy: StashPolicy,
+) -> RemoteStashPlanJob {
+    sessions.invalidate_plan();
+    sessions.state = PlanState::Planning {
+        request: sessions.revision,
+    };
+    RemoteStashPlanJob {
+        revision: sessions.revision,
+        request,
+        policy,
+        fixture: None,
+    }
+}
+
+#[doc(hidden)]
+pub fn plan_remote_stash_for_test(
+    sessions: &mut Sessions,
+    request: RemoteStashRequest,
+    policy: StashPolicy,
+    fixture: crate::remote::stash::RemotePlanFixture,
+) -> RemoteStashPlanJob {
+    let mut job = plan_remote_stash(sessions, request, policy);
+    job.fixture = Some(fixture);
+    job
+}
+
+pub struct LocalStashJob {
     id: OperationId,
     plan: StashPlan,
     policy: StashPolicy,
@@ -117,20 +195,9 @@ pub struct StashJob {
     abandoned: std::sync::mpsc::Sender<Completion>,
     ran: bool,
 }
-impl StashJob {
-    pub fn id(&self) -> OperationId {
-        self.id
-    }
-    #[doc(hidden)]
-    pub fn with_fault_for_test(mut self, fault: StashFaultPoint) -> Self {
-        self.fault = Some(fault);
-        self
-    }
-    pub fn run(self) -> StashCompletion {
-        self.run_with_events(|_| {})
-    }
-    pub fn run_with_events(
-        mut self,
+impl LocalStashJob {
+    fn run_with_events(
+        &mut self,
         event: impl FnMut(kagi_git::backend::stash::StashEvent),
     ) -> StashCompletion {
         // Mark consumed before execution: unwinding after finalize must not record abandonment.
@@ -144,11 +211,11 @@ impl StashJob {
         );
         StashCompletion {
             id: self.id,
-            report,
+            report: StashExecutionReport::Local(report),
         }
     }
 }
-impl Drop for StashJob {
+impl Drop for LocalStashJob {
     fn drop(&mut self) {
         if !self.ran {
             let report = kagi_git::backend::stash::stash_failure(
@@ -159,7 +226,7 @@ impl Drop for StashJob {
             );
             let _ = self.abandoned.send(Completion::Stash(StashCompletion {
                 id: self.id,
-                report,
+                report: StashExecutionReport::Local(report),
             }));
         }
     }
@@ -167,11 +234,117 @@ impl Drop for StashJob {
 #[derive(Clone, Debug)]
 pub struct StashCompletion {
     pub(crate) id: OperationId,
-    pub(crate) report: StashReport,
+    pub(crate) report: StashExecutionReport,
+}
+#[derive(Clone, Debug)]
+pub enum StashExecutionReport {
+    Local(StashReport),
+    Remote(crate::remote::stash::RemoteStashReport),
 }
 impl StashCompletion {
     pub fn report(&self) -> &StashReport {
-        &self.report
+        match &self.report {
+            StashExecutionReport::Local(report) => report,
+            StashExecutionReport::Remote(_) => {
+                panic!("remote stash completion has a remote report")
+            }
+        }
+    }
+    pub fn remote_report(&self) -> Option<&crate::remote::stash::RemoteStashReport> {
+        match &self.report {
+            StashExecutionReport::Remote(report) => Some(report),
+            StashExecutionReport::Local(_) => None,
+        }
+    }
+}
+pub enum StashJob {
+    Local(LocalStashJob),
+    Remote {
+        id: OperationId,
+        plan: crate::remote::stash::RemoteStashPlan,
+        policy: StashPolicy,
+        fault: crate::remote::stash::RemoteStashFault,
+        abandoned: std::sync::mpsc::Sender<Completion>,
+        ran: bool,
+    },
+}
+impl StashJob {
+    pub fn id(&self) -> OperationId {
+        match self {
+            Self::Local(job) => job.id,
+            Self::Remote { id, .. } => *id,
+        }
+    }
+    #[doc(hidden)]
+    pub fn with_fault_for_test(mut self, fault: StashFaultPoint) -> Self {
+        if let Self::Local(job) = &mut self {
+            job.fault = Some(fault);
+        }
+        self
+    }
+    #[doc(hidden)]
+    pub fn with_remote_fault_for_test(
+        mut self,
+        fault: crate::remote::stash::RemoteStashFault,
+    ) -> Self {
+        if let Self::Remote { fault: current, .. } = &mut self {
+            *current = fault;
+        }
+        self
+    }
+    pub fn run(self) -> StashCompletion {
+        self.run_with_events(|_| {})
+    }
+    pub fn run_with_events(
+        mut self,
+        event: impl FnMut(kagi_git::backend::stash::StashEvent),
+    ) -> StashCompletion {
+        match &mut self {
+            Self::Local(job) => job.run_with_events(event),
+            Self::Remote {
+                id,
+                plan,
+                policy,
+                fault,
+                abandoned: _,
+                ran,
+            } => {
+                *ran = true;
+                let report =
+                    crate::remote::stash::run_remote_stash_drop(plan, id.0, policy.actor, *fault);
+                StashCompletion {
+                    id: *id,
+                    report: StashExecutionReport::Remote(report),
+                }
+            }
+        }
+    }
+}
+impl Drop for StashJob {
+    fn drop(&mut self) {
+        let Self::Remote {
+            id,
+            plan,
+            policy,
+            fault: _,
+            abandoned,
+            ran,
+        } = self
+        else {
+            return;
+        };
+        if !*ran {
+            let report = crate::remote::stash::run_remote_stash_drop(
+                plan,
+                id.0,
+                policy.actor,
+                crate::remote::stash::RemoteStashFault::LocalSpawn,
+            );
+            let _ = abandoned.send(Completion::Stash(StashCompletion {
+                id: *id,
+                report: StashExecutionReport::Remote(report),
+            }));
+        }
     }
 }
 pub fn prepare_stash(
@@ -179,21 +352,32 @@ pub fn prepare_stash(
     approved: Approved,
     legacy: LegacyBusy,
 ) -> Result<StashJob, AdmissionError> {
-    if !matches!(approved.prepared, Planned::Stash { .. }) {
+    if !matches!(
+        approved.prepared,
+        Planned::Stash { .. } | Planned::RemoteStash { .. }
+    ) {
         return Err(AdmissionError::StaleApproval);
     }
     let id = reserve(s, &approved, legacy)?;
-    let Planned::Stash { plan, policy, .. } = approved.prepared else {
-        unreachable!()
-    };
-    Ok(StashJob {
-        id,
-        plan,
-        policy,
-        fault: None,
-        abandoned: s.abandoned_tx.clone(),
-        ran: false,
-    })
+    match approved.prepared {
+        Planned::Stash { plan, policy, .. } => Ok(StashJob::Local(LocalStashJob {
+            id,
+            plan,
+            policy,
+            fault: None,
+            abandoned: s.abandoned_tx.clone(),
+            ran: false,
+        })),
+        Planned::RemoteStash { plan, policy, .. } => Ok(StashJob::Remote {
+            id,
+            plan,
+            policy,
+            fault: crate::remote::stash::RemoteStashFault::None,
+            abandoned: s.abandoned_tx.clone(),
+            ran: false,
+        }),
+        _ => unreachable!(),
+    }
 }
 #[derive(Clone, Debug)]
 pub struct StashConflict {

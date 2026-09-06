@@ -35,6 +35,8 @@ use kagi_domain::status::FileStatus;
 
 use kagi_git::{FileDiff, Head, RepoSnapshot};
 
+pub mod stash;
+
 /// Whole-command backstop timeout. ssh's own `ConnectTimeout`
 /// ([`SSH_CONNECT_TIMEOUT_SECS`]) bounds the handshake; this bounds the entire
 /// invocation (a hung remote command, a stalled transfer) so the UI never waits

@@ -211,6 +211,7 @@ impl KagiApp {
                     _ => Msg::BusyStash,
                 },
             ),
+            app::Planned::RemoteStash { .. } => ("remote-stash-drop", Msg::BusyStashDrop),
         };
         let job = match app::prepare(
             &mut self.app_sessions,
@@ -236,11 +237,14 @@ impl KagiApp {
             "stash-apply" => self.clear_stash_apply_modal(),
             "stash-pop" => self.clear_pop_modal(),
             "stash-drop" => self.clear_stash_drop_modal(),
+            "remote-stash-drop" => self.clear_stash_drop_modal(),
             _ => unreachable!(),
         }
         self.status_footer = FooterStatus::Busy(SharedString::from(label.t()));
         if name == "remove-worktree" {
             klog!("async: remove-worktree started");
+        } else if name == "remote-stash-drop" {
+            klog!("async: remote stash-drop started");
         }
         let task = cx.background_spawn(async move {
             let started = std::time::Instant::now();
@@ -300,6 +304,7 @@ impl KagiApp {
                         self.deliver_stash_result(id, attachment, report, cx);
                         return;
                     }
+                    app::FamilyEvidence::RemoteStash(_) => return,
                 };
                 let entry = report.recording.entry().clone();
                 let summary = oplog_panel::outcome_summary(&entry.outcome);
@@ -380,6 +385,77 @@ impl KagiApp {
                     );
                 }
             }
+            Delivery::RemoteCompleted {
+                id,
+                attachment,
+                report,
+            } => {
+                let app::FamilyEvidence::RemoteStash(report) = report.evidence else {
+                    return;
+                };
+                self.deliver_remote_stash_result(id, attachment, report, cx);
+            }
+        }
+    }
+    fn deliver_remote_stash_result(
+        &mut self,
+        id: app::OperationId,
+        owner: crate::remote::stash::RemoteAttachment,
+        report: crate::remote::stash::RemoteStashReport,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = report.recording.entry().clone();
+        let summary = if matches!(entry.outcome, OpOutcome::Unknown { .. }) {
+            Msg::RemoteOpAwaitingCompletion.t().to_string()
+        } else {
+            oplog_panel::outcome_summary(&entry.outcome)
+        };
+        let success = matches!(entry.outcome, OpOutcome::Success { .. });
+        if success {
+            klog!("async: remote stash-drop finished");
+        } else {
+            klog!("async: remote stash-drop failed — {}", summary);
+        }
+        if let Some(panel) = &self.op_log {
+            panel.update(cx, |panel, cx| {
+                panel.push(entry.clone());
+                cx.notify();
+            });
+        }
+        self.push_toast(
+            if success {
+                ToastKind::Success
+            } else {
+                ToastKind::Error
+            },
+            format!("{}: stash-drop: {}", entry.repo, summary),
+            cx,
+        );
+        let active = self.remote_view.as_ref().is_some_and(|view| {
+            view.host == owner.host
+                && view.root == owner.root
+                && self.switch_generation == owner.generation
+        });
+        if active {
+            self.status_footer = if success {
+                FooterStatus::Success(format!("stash-drop: {summary}").into())
+            } else {
+                FooterStatus::Failed(format!("stash-drop: {summary}").into())
+            };
+            if success {
+                self.refresh_remote_view(cx);
+            }
+        }
+        if !success {
+            let mut notice = modals::AppNotice::from(format!("{}: {summary}", entry.repo));
+            if matches!(entry.outcome, OpOutcome::Unknown { .. }) {
+                notice.inspect = Some(id);
+            }
+            self.app_notices.push_back(notice);
+        }
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
+            self.app_notices
+                .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
         }
     }
     pub(crate) fn hold_host_close(&mut self, cx: &mut Context<Self>) -> bool {

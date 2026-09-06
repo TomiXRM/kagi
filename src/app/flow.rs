@@ -14,18 +14,25 @@ pub enum Planned {
         request: StashRequest,
         policy: StashPolicy,
     },
+    RemoteStash {
+        plan: crate::remote::stash::RemoteStashPlan,
+        request: RemoteStashRequest,
+        policy: StashPolicy,
+    },
 }
 impl Planned {
-    pub fn owner(&self) -> &Attachment {
+    pub fn owner(&self) -> OwnerAttachment {
         match self {
-            Self::Remove { request, .. } => &request.owner,
-            Self::Stash { request, .. } => &request.owner,
+            Self::Remove { request, .. } => OwnerAttachment::Local(request.owner.clone()),
+            Self::Stash { request, .. } => OwnerAttachment::Local(request.owner.clone()),
+            Self::RemoteStash { request, .. } => OwnerAttachment::Remote(request.owner.clone()),
         }
     }
-    pub fn common_dir(&self) -> &RepoId {
+    pub fn scope(&self) -> WriteScope {
         match self {
-            Self::Remove { plan, .. } => &plan.common_dir,
-            Self::Stash { plan, .. } => &plan.common_dir,
+            Self::Remove { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
+            Self::Stash { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
+            Self::RemoteStash { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
         }
     }
 }
@@ -144,6 +151,7 @@ pub fn approve(
     let planned_policy = match prepared {
         Planned::Remove { policy, .. } => Policy::Remove(policy.clone()),
         Planned::Stash { policy, .. } => Policy::Stash(policy.clone()),
+        Planned::RemoteStash { policy, .. } => Policy::Stash(policy.clone()),
     };
     if current.revision != token.revision || planned_policy != policy.into() {
         return Err(AdmissionError::StaleApproval);
@@ -166,17 +174,20 @@ pub(crate) fn reserve(
     if legacy.0 || s.has_leases() {
         return Err(AdmissionError::Busy);
     }
-    let repo = approved.prepared.common_dir();
-    if s.reconcile.values().any(|(p, _)| p.common_dir() == repo) {
+    let scope = approved.prepared.scope();
+    if s.reconcile
+        .values()
+        .any(|entry| entry.plan.scope() == scope)
+    {
         return Err(AdmissionError::NeedsReconcile);
     }
     let id = OperationId(next_id());
-    s.reserve_lease(repo.clone(), id)?;
+    s.reserve_lease(scope, id)?;
     s.operations.insert(
         id,
         InFlight {
             plan: approved.prepared.clone(),
-            attachment: approved.prepared.owner().clone(),
+            attachment: approved.prepared.owner(),
         },
     );
     s.invalidate_plan();
@@ -201,6 +212,7 @@ impl From<StashCompletion> for Completion {
 pub enum FamilyEvidence {
     Remove(kagi_git::backend::remove::RemoveReport),
     Stash(kagi_git::backend::stash::StashReport),
+    RemoteStash(crate::remote::stash::RemoteStashReport),
 }
 #[derive(Clone, Debug)]
 pub struct ExecutionReport {
@@ -234,10 +246,11 @@ pub fn prepare(
     match &approved.prepared {
         Planned::Remove { .. } => prepare_remove(s, approved, legacy).map(Job::Remove),
         Planned::Stash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
+        Planned::RemoteStash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
     }
 }
 pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Delivery> {
-    let (id, report, stopped) = match completion.into() {
+    let (id, report, stopped, remote_recovery) = match completion.into() {
         Completion::Remove(c) => {
             let stopped = !c.report.progress.termination_unknown;
             (
@@ -247,16 +260,33 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                     evidence: FamilyEvidence::Remove(c.report),
                 },
                 stopped,
+                None,
             )
         }
-        Completion::Stash(c) => (
-            c.id,
-            ExecutionReport {
-                recording: c.report.recording.clone(),
-                evidence: FamilyEvidence::Stash(c.report),
-            },
-            true,
-        ),
+        Completion::Stash(c) => match c.report {
+            StashExecutionReport::Local(report) => (
+                c.id,
+                ExecutionReport {
+                    recording: report.recording.clone(),
+                    evidence: FamilyEvidence::Stash(report),
+                },
+                true,
+                None,
+            ),
+            StashExecutionReport::Remote(report) => {
+                let stopped = report.evidence.stopped;
+                let recovery = Some(report.evidence.clone());
+                (
+                    c.id,
+                    ExecutionReport {
+                        recording: report.recording.clone(),
+                        evidence: FamilyEvidence::RemoteStash(report),
+                    },
+                    stopped,
+                    recovery,
+                )
+            }
+        },
     };
     if s.settled.contains(&id) {
         return vec![];
@@ -266,13 +296,20 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     };
     s.settled.insert(id);
     if stopped {
-        s.release_lease(owner.plan.common_dir(), id);
+        s.release_lease(&owner.plan.scope(), id);
     }
     if matches!(
         report.recording.entry().outcome,
         kagi_git::OpOutcome::Unknown { .. }
     ) {
-        s.reconcile.insert(id, (owner.plan.clone(), stopped));
+        s.reconcile.insert(
+            id,
+            ReconcileEntry {
+                plan: owner.plan.clone(),
+                stopped,
+                remote: remote_recovery,
+            },
+        );
     }
     let mut deliveries = vec![];
     match (&owner.plan, &report.evidence) {
@@ -308,12 +345,20 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             s.stale.insert(plan.repo.clone());
             deliveries.push(Delivery::Invalidate(plan.repo.clone()));
         }
+        (Planned::RemoteStash { .. }, FamilyEvidence::RemoteStash(_)) => {}
         _ => unreachable!("completion family is fixed by its owned job"),
     }
-    deliveries.push(Delivery::Completed {
-        id,
-        attachment: owner.attachment,
-        report: Box::new(report),
+    deliveries.push(match owner.attachment {
+        OwnerAttachment::Local(attachment) => Delivery::Completed {
+            id,
+            attachment,
+            report: Box::new(report),
+        },
+        OwnerAttachment::Remote(attachment) => Delivery::RemoteCompleted {
+            id,
+            attachment,
+            report: Box::new(report),
+        },
     });
     deliveries
 }

@@ -39,7 +39,9 @@ KAGI_NO_RESTORE=1 ./target/debug/kagi /tmp/kagi-vfx-a/repo 2> /tmp/kagi-live.log
   `KAGI_NO_RESTORE=1` だけでは不十分で、**`window_size` はユーザーの `~/.kagi/settings.json` に書かれる**(2026-09-05 実測)。
   recent_repos / session_repos は `KAGI_NO_RESTORE=1` で汚れないことも実測済み。
 - `KAGI_NO_SINGLE_INSTANCE=1` — ユーザーの kagi が起動中なら**必須**(付けないとそちらへ forward される)。
-  ただし付けると下のソケット制御は使えない。`pgrep -l kagi` を先に確認して選ぶ。
+  ただし付けると下のソケット制御は使えない。これは通常 GUI の起動ルーティング指定であり、
+  headless フックではないため、trusted な worktree `command` step はこれだけでは抑止されない。
+  `pgrep -l kagi` を先に確認して選ぶ。
 - 検証は stderr の `[kagi] …` klog 契約行を tail して行う。
 
 ## 実操作(クリックの代替): single-instance ソケット

@@ -82,13 +82,12 @@ impl Fixture {
         }
     }
     fn approved(&self, sessions: &mut Sessions) -> Approved {
+        let session = sessions.attach(self.repo.clone());
+        let owner = sessions.attachment(session).expect("attached");
         let job = plan_remove(
             sessions,
             RemoveRequest {
-                owner: Attachment {
-                    path: self.repo.clone(),
-                    generation: 1,
-                },
+                owner,
                 name: "linked".into(),
                 delete_branch: true,
             },
@@ -387,3 +386,35 @@ fn untrusted_fetch_facades_refuse_before_cli_or_ref_changes() {
 
 #[path = "support/isolated.rs"]
 mod test_support;
+/// #482 stage 1 G: closing the owning tab is not evidence that the writer
+/// stopped. `detach` drops the display, never the reservation, so every real
+/// writer stays refused while the reserved operation is still in flight — and a
+/// tab reopened on the same path gets no privilege the closed one lacked.
+#[test]
+fn detach_never_releases_a_reservation_or_admits_the_reopened_tab() {
+    let _log = TestLog::new();
+    for writer in WRITERS {
+        let f = Fixture::new();
+        let mut sessions = Sessions::new();
+        let owner = sessions.attach(f.repo.clone());
+        let job = f.job(&mut sessions);
+        let original = std::fs::read(f.linked.join("file")).unwrap();
+
+        // The tab goes away while the reserved operation is still in flight.
+        sessions.detach(owner);
+        let reopened = sessions.attach(f.repo.clone());
+        assert_ne!(reopened, owner, "a reopened path is a new owner");
+        assert!(sessions.has_leases(), "tab close is not execution cancel");
+        assert!(!sessions.may_close_host());
+
+        match sessions.write_lease(&f.linked, LegacyBusy(false)) {
+            Err(error) => assert_eq!(error, AdmissionError::Busy),
+            Ok(guard) => {
+                write(&f, writer, guard);
+                panic!("{writer:?} bypassed a reservation whose tab was closed");
+            }
+        }
+        assert_eq!(std::fs::read(f.linked.join("file")).unwrap(), original);
+        drop(job);
+    }
+}

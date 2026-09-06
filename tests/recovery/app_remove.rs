@@ -31,15 +31,24 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         // Removing it must close that tab without re-initializing the session
         // the operation is attached to (a re-init would strand this very
         // completion behind a stale `switch_generation`).
-        let generation = app.update(cx, |app, cx| {
+        let (generation, owner, target_tab) = app.update(cx, |app, cx| {
             assert!(app.open_repository(linked.clone(), cx));
             app.switch_repo(0, cx);
-            app.switch_generation
+            (
+                app.switch_generation,
+                app.active_session().unwrap(),
+                app.tabs[1].session,
+            )
         });
+        assert_ne!(owner, target_tab, "#482: each tab is its own session");
         cx.run_until_parked();
-        app.update(cx, |app, cx| {
+        // #482 stage 1 E: what the surviving tab is showing must outlive the
+        // background close that the completion triggers.
+        let selected_before = app.update(cx, |app, cx| {
+            app.select(1);
             app.open_remove_worktree_modal("remove-target".into(), true, cx);
             cx.notify();
+            app.selected
         });
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -92,6 +101,23 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
             assert_eq!(
                 app.switch_generation, generation,
                 "#488: closing a background tab must not re-initialize the session"
+            );
+            // #482 stage 1: the owner survives a background close untouched, so
+            // the completion above landed on the session that approved it, and
+            // the tab that went away is the one the plan froze.
+            assert_eq!(
+                app.active_session(),
+                Some(owner),
+                "#488/#562: a background close must not re-attach the live tab"
+            );
+            assert!(app.app_sessions.is_attached(owner));
+            assert!(
+                !app.app_sessions.is_attached(target_tab),
+                "the removed worktree's session is detached with its tab"
+            );
+            assert_eq!(
+                app.selected, selected_before,
+                "a background close never touches the surviving tab's selection"
             );
         });
         let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)

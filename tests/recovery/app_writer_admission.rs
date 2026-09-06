@@ -1,51 +1,13 @@
-//! Real editor event → host reservation while a linked remove is in pre_remove.
-use crate::macos::{build_fixture, git, mount};
+//! Deterministic editor → host admission wiring; real remove contention is G/M.
+use crate::macos::{build_fixture, mount};
 use gpui::{Focusable, VisualTestAppContext};
-use kagi::ui::i18n::Msg;
-use std::path::PathBuf;
+use kagi::app::LegacyBusy;
+use kagi::ui::{i18n::Msg, FooterStatus};
 use std::time::{Duration, Instant};
 
-struct ReleaseOnDrop(PathBuf);
-impl Drop for ReleaseOnDrop {
-    fn drop(&mut self) {
-        let _ = std::fs::write(&self.0, b"release");
-    }
-}
-
-pub fn scenario_editor_save_during_remove(cx: &mut VisualTestAppContext) {
+pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
-    let controls = tempfile::tempdir().unwrap();
-    let control = controls.path().canonicalize().unwrap();
-    let entered = control.join("entered");
-    let release = control.join("release");
-    let script = control.join("slow-pre-remove.sh");
-    // Bounded externally by the test deadline; Drop always releases the child
-    // even when an assertion fails. No shell quoting is needed in argv paths.
-    std::fs::write(
-        &script,
-        "printf ready > \"$1\"\nwhile [ ! -e \"$2\" ]; do sleep 0.02; done\n",
-    )
-    .unwrap();
-    let linked = control.join("linked");
-    git(
-        &repo,
-        &["worktree", "add", "-qb", "linked", linked.to_str().unwrap()],
-    );
-    std::fs::create_dir(linked.join(".kagi")).unwrap();
-    std::fs::write(
-        linked.join(".kagi/worktree.toml"),
-        format!(
-            "[[pre_remove]]\ntype = \"command\"\nrun = \"/bin/sh {} {} {}\"\n",
-            script.display(),
-            entered.display(),
-            release.display(),
-        ),
-    )
-    .unwrap();
-    git(&linked, &["add", ".kagi/worktree.toml"]);
-    git(&linked, &["commit", "-qm", "slow remove fixture"]);
-    let _release_on_drop = ReleaseOnDrop(release.clone());
     let before = std::fs::read(repo.join("README.md")).unwrap();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.open_editor_workspace(cx));
@@ -62,6 +24,13 @@ pub fn scenario_editor_save_during_remove(cx: &mut VisualTestAppContext) {
         assert!(Instant::now() < deadline, "editor did not load");
         std::thread::sleep(Duration::from_millis(2));
     }
+    // Same Sessions API as the bridge; no child process or pending remove
+    // future for the real-platform dispatcher to wait on.
+    let guard = app.update(cx, |app, _| {
+        app.app_sessions
+            .write_lease(&repo, LegacyBusy(false))
+            .unwrap()
+    });
     cx.update_window(window, |_, window, cx| {
         let input = editor.read(cx).editor.clone().unwrap();
         window.focus(&input.read(cx).focus_handle(cx), cx);
@@ -71,35 +40,30 @@ pub fn scenario_editor_save_during_remove(cx: &mut VisualTestAppContext) {
     cx.simulate_keystrokes(window, "x");
     cx.run_until_parked();
     assert!(cx.read(|cx| editor.read(cx).dirty));
-    app.update(cx, |app, cx| {
-        app.open_remove_worktree_modal("linked".into(), true, cx)
+    let edited = cx.read(|cx| {
+        editor
+            .read(cx)
+            .editor
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .value()
+            .to_string()
     });
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).remove_worktree_modal().is_some()) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "remove plan did not arrive");
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    app.update(cx, |app, cx| app.confirm_remove_worktree(cx));
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while !entered.exists() {
-        // The real-platform dispatcher can wait for the entire remove job.
-        // Do not park while its child is waiting for this test's release file.
-        assert!(Instant::now() < deadline, "slow pre_remove was not entered");
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
-    // Entity update flushes the SaveRequested event synchronously. Admission
-    // refuses here, without polling the foreground future awaiting remove.
+    assert_ne!(edited.as_bytes(), before.as_slice());
+
+    // Exercise save_editor_file → SaveRequested → reserve_write, not a direct
+    // invocation of the pane executor or a manually raised Busy notification.
     app.update(cx, |app, cx| app.save_editor_file(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
     assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
     assert!(
         cx.read(|cx| editor.read(cx).dirty),
         "Busy must retain the buffer"
     );
+    assert!(cx.read(|cx| matches!(&app.read(cx).status_footer,
+        FooterStatus::Failed(message) if message.as_ref() == Msg::OpInProgress.t())));
     assert!(cx.read(|cx| app
         .read(cx)
         .toast_stack
@@ -109,14 +73,36 @@ pub fn scenario_editor_save_during_remove(cx: &mut VisualTestAppContext) {
         .toasts()
         .iter()
         .any(|toast| toast.message.as_ref() == Msg::OpInProgress.t())));
-    std::fs::write(&release, b"release").unwrap();
-    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| editor
+            .read(cx)
+            .editor
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .value()
+            .to_string()),
+        edited
+    );
+
+    guard.complete();
+    assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
+    app.update(cx, |app, cx| app.save_editor_file(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
-    while cx.read(|cx| app.read(cx).app_sessions.has_leases()) {
+    loop {
         cx.run_until_parked();
-        assert!(Instant::now() < deadline, "remove did not settle");
+        if cx.read(|cx| !editor.read(cx).dirty && !app.read(cx).app_sessions.has_leases()) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "admitted editor save did not settle"
+        );
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
-    eprintln!("[gui-e2e] PASS editor save during slow remove → Busy → bytes unchanged");
+    assert_eq!(
+        std::fs::read(repo.join("README.md")).unwrap(),
+        edited.as_bytes()
+    );
+    eprintln!("[gui-e2e] PASS editor admission → Busy preserves bytes/buffer → release → save writes edited bytes");
 }

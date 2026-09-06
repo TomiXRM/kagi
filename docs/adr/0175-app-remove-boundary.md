@@ -101,8 +101,11 @@ Implemented for review; the 1a+1b rollout gate remains a PM decision.
 - G exercises the public reservation API with real fixture save/stage/snapshot/
   fetch writers, both orderings with remove, saved bytes, canonical identity,
   read+ack, cross-thread completion and dropped/panicking/unknown guards.
-  E adds real editor SaveRequested during a slow linked pre_remove, asserting
-  Busy, retained dirty buffer and unchanged bytes in the same common repository.
+  E holds a lease through the real host's Sessions API, then drives editor
+  keystrokes and SaveRequested: Busy toast/footer, dirty buffer and unchanged
+  bytes, followed by release and successful re-save. This proves adapter wiring
+  without child-process scheduling; real remove contention is covered by G,
+  and slow pre_remove versus editor save is reserved for PM's manual M check.
   The agent builds E only; PM executes it and the workspace suite.
 
 This closes only the named GUI bypasses. Other writer families and independent

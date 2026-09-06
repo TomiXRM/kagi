@@ -1,5 +1,5 @@
 //! Real root/modal inputs; no executor or approval-state seams.
-use crate::macos::{build_fixture, git, mount};
+use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::app::{PlanState, StashAction};
 use kagi::ui::{e2e, modals::ActiveModal, FooterStatus, KagiApp};
@@ -78,14 +78,6 @@ fn dismiss_app_notice_if_present(
     cx.simulate_keystrokes(window, "escape");
     cx.run_until_parked();
 }
-fn teardown(cx: &mut VisualTestAppContext, app: Entity<KagiApp>, window: AnyWindowHandle) {
-    cx.update_window(window, |_, window, _| window.remove_window())
-        .unwrap();
-    drop(app);
-    cx.update(|_| {});
-    cx.run_until_parked();
-}
-
 pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     for button in [false, true] {
         for action in [
@@ -148,7 +140,7 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
                 }
             }
             assert!(cx.read(|cx| app.read(cx).app_sessions.may_close_host()));
-            teardown(cx, app, window);
+            unmount(cx, app, window);
             eprintln!(
                 "[gui-e2e] PASS app-stash {} {} → executor → one receipt",
                 action.name(),
@@ -248,7 +240,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         });
         cx.simulate_keystrokes(window, "escape");
         assert_eq!(ids(&repo), kept);
-        teardown(cx, app, window);
+        unmount(cx, app, window);
         eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID prompt/cancel (duplicate={duplicate})");
     }
 }
@@ -293,7 +285,7 @@ pub fn scenario_stash_replan_error(cx: &mut VisualTestAppContext) {
     );
     assert!(matches!(entries[0].outcome, OpOutcome::Failed { .. }));
     std::fs::rename(&moved, &repo).unwrap();
-    teardown(cx, app, window);
+    unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS app-stash replan error rejects Enter and old button coordinate");
 }
 
@@ -331,6 +323,6 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
     wait(cx, &app, |app| app.conflict.is_none());
     assert!(cx.read(|cx| app.read(cx).stash_drop_modal().is_none()));
     assert_eq!(ids(&repo), before);
-    teardown(cx, app, window);
+    unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS external stash conflict → continue → no drop prompt");
 }

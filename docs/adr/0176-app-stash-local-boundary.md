@@ -1,6 +1,6 @@
 # ADR-0176: local stash family の application boundary
 
-状態: 採用・PR 1 実装済み（#541）、owner lifetime 補強（#485）
+状態: 採用・PR 1 実装済み（#541）、owner lifetime 補強（#485）、remote Drop 拡張（PR 2）
 日付: 2026-09-07
 関連: #484、[FAMILY-stash](../rearch/app-layer/FAMILY-stash.md)、
 [ADR-0175](0175-app-remove-boundary.md)、[ADR-0149](0149-oplog-in-backend-run-and-schema.md)、
@@ -8,7 +8,7 @@
 
 ## 決定
 
-local push/apply/pop/drop は既存 `Sessions` の単一 plan slot と lease を使う。
+local push/apply/pop/drop と remote Drop は既存 `Sessions` の単一 plan slot と lease を使う。
 `Planned` / `Job` / `Completion` / `FamilyEvidence` は remove と stash の有限 enum。
 共通 `ExecutionReport` は実 receipt と family evidence を配送し、remove の progress、
 target_exists、停止不明を欠落させない。新 controller / worker / crate は設けない。
@@ -55,7 +55,10 @@ plan に blocker があるだけでは blocker gate 到達とみなさず、rece
 raw Enter / button は同じ confirm → approve → dispatch を通す。
 pop Enter に started/finished を追加する承認済み契約変更以外は既存 klog 列を保つ。
 local stash の UI record_op / finish_op_on_main / blocking core は撤去した。
-既存 remote 分岐の finish 1 箇所・record 2 箇所は PR 2 まで残し、双方向 admission のみ接続。
+PR 2 で remote 分岐の finish/record/direct transport 呼出しも撤去し、typed Remote job と
+`WriteScope::Remote(RemoteRepoId)` に移管した。remote の停止不明は completion token + read の
+ack まで同じ lease を保持する。local/remote とも共通 `ExecutionPolicy` を approval に束縛し、
+remote receipt も `recording::finalize` 以外から append しない。
 
 conflict 継続 payload は canonical worktree ごとに operation id、full OID、HEAD と
 index conflict sides の evidence を保持し、表示 guard より先に保存する。

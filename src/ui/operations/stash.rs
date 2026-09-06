@@ -1,4 +1,4 @@
-//! Local stash intent adapters; remote remains legacy until PR 2.
+//! Local and remote stash intent adapters.
 use crate::app::{self, PlanState, Planned, StashAction, StashPolicy, StashRequest};
 use crate::ui::*;
 impl KagiApp {
@@ -73,31 +73,86 @@ impl KagiApp {
         self.begin_stash_plan(StashAction::Pop { index }, cx);
     }
     pub fn open_stash_drop_modal(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.remote_view.is_some() {
-            let label = self
-                .active_view
-                .stashes
-                .iter()
-                .find(|s| s.index == index)
-                .map(|s| format!("stash@{{{}}}: {}", s.index, s.message))
-                .unwrap_or_else(|| format!("stash@{{{index}}}"));
-            let head = self.active_view.header.to_string();
-            let plan = kagi_git::plan_stash_drop_remote(&label, head);
-            klog!("plan: remote stash-drop index={index} blockers=0");
-            self.set_stash_drop_modal(StashDropModal {
-                plan: Some(std::sync::Arc::new(plan)),
-                error: None,
-                stash_index: index,
-            });
-            return;
-        }
-
         self.set_stash_drop_modal(StashDropModal {
             stash_index: index,
             plan: None,
             error: None,
         });
+        if self.remote_view.is_some() {
+            self.begin_remote_stash_plan(index, cx);
+            return;
+        }
         self.begin_stash_plan(StashAction::Drop { index }, cx);
+    }
+    fn begin_remote_stash_plan(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(remote) = self.remote_view.clone() else {
+            return;
+        };
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        let owner = crate::remote::stash::RemoteAttachment {
+            session,
+            host: remote.host,
+            root: remote.root,
+        };
+        let request = app::RemoteStashRequest {
+            owner: owner.clone(),
+            index,
+        };
+        let policy = self.stash_policy();
+        let job = app::plan_remote_stash(&mut self.app_sessions, request, policy);
+        let task = cx.background_spawn(async move { job.run() });
+        cx.spawn(async move |this, cx| {
+            let completion = task.await;
+            let _ = this.update(cx, |app, cx| {
+                let current = app.remote_view.as_ref().is_some_and(|view| {
+                    view.host == owner.host
+                        && view.root == owner.root
+                        && app.active_session() == Some(owner.session)
+                });
+                let current_completion = completion.is_current(&app.app_sessions);
+                if current
+                    && app
+                        .stash_drop_modal()
+                        .is_some_and(|m| m.stash_index == index)
+                {
+                    if app::apply_plan(&mut app.app_sessions, completion) {
+                        app.show_remote_stash_plan(index, cx);
+                    }
+                } else if current_completion {
+                    app.app_sessions.invalidate_plan();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn show_remote_stash_plan(&mut self, index: usize, cx: &mut Context<Self>) {
+        let (plan, error) = match self.app_sessions.plan_state() {
+            PlanState::Ready {
+                prepared: Planned::RemoteStash { plan, .. },
+                ..
+            } => {
+                klog!(
+                    "plan: remote stash-drop index={index} blockers={}",
+                    plan.preview.blockers.len()
+                );
+                (Some(plan.preview.clone()), None)
+            }
+            PlanState::Error { error, .. } => (None, Some(SharedString::from(error.clone()))),
+            _ => return,
+        };
+        if let Some(error) = &error {
+            self.status_footer = FooterStatus::Failed(error.clone());
+            self.push_toast(ToastKind::Error, error.clone(), cx);
+        }
+        self.set_stash_drop_modal(StashDropModal {
+            stash_index: index,
+            plan,
+            error,
+        });
     }
     pub(crate) fn stash_policy(&self) -> StashPolicy {
         crate::ui::blocking_ops::execution_policy()
@@ -282,26 +337,42 @@ impl KagiApp {
         }
     }
     fn confirm_stash(&mut self, cx: &mut Context<Self>) {
-        let PlanState::Ready {
-            token,
-            prepared: Planned::Stash {
-                request, policy, ..
-            },
-        } = self.app_sessions.plan_state()
-        else {
+        let PlanState::Ready { token, prepared } = self.app_sessions.plan_state() else {
             return;
         };
-        if self.active_session() != Some(request.owner.session)
-            || !self.stash_modal_matches(&request.action)
-        {
+        let valid = match prepared {
+            Planned::Stash { request, .. } => {
+                self.active_session() == Some(request.owner.session)
+                    && self.stash_modal_matches(&request.action)
+            }
+            Planned::RemoteStash { request, .. } => self.remote_view.as_ref().is_some_and(|view| {
+                view.host == request.owner.host
+                    && view.root == request.owner.root
+                    && self.active_session() == Some(request.owner.session)
+                    && self
+                        .stash_drop_modal()
+                        .is_some_and(|m| m.stash_index == request.index)
+            }),
+            _ => false,
+        };
+        if !valid {
             self.app_sessions.invalidate_plan();
             return;
         }
         let token = token.clone();
         let current = self.stash_policy();
-        if &current != policy {
-            let action = request.action.clone();
-            self.begin_stash_plan(action, cx);
+        let planned_policy = match prepared {
+            Planned::Stash { policy, .. } | Planned::RemoteStash { policy, .. } => policy,
+            _ => return,
+        };
+        if &current != planned_policy {
+            match prepared {
+                Planned::Stash { request, .. } => self.begin_stash_plan(request.action.clone(), cx),
+                Planned::RemoteStash { request, .. } => {
+                    self.begin_remote_stash_plan(request.index, cx)
+                }
+                _ => {}
+            }
             return;
         }
         match app::approve(&mut self.app_sessions, token, current) {
@@ -380,71 +451,6 @@ impl KagiApp {
     }
 
     pub fn start_stash_drop(&mut self, cx: &mut Context<Self>) {
-        if self.remote_view.is_none() {
-            self.confirm_stash(cx);
-            return;
-        }
-        let Some(modal) = self.stash_drop_modal().cloned() else {
-            return;
-        };
-        if self.reject_if_busy(cx) {
-            return;
-        }
-        if let Some(rv) = self.remote_view.clone() {
-            let stash_index = modal.stash_index;
-            let Some(plan) = modal.plan.clone() else {
-                return;
-            };
-            let before = plan.current.clone();
-            let oplog_path = std::path::PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
-            self.busy_op = Some("stash-drop");
-            self.clear_stash_drop_modal();
-            self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyStashDrop.t()));
-            klog!("async: remote stash-drop started");
-            let (host, root) = (rv.host.clone(), rv.root.clone());
-            let task = cx.background_spawn(async move {
-                crate::remote::remote_stash_drop(&host, &root, stash_index, &before)
-                    .map_err(|e| e.to_string())
-            });
-            self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-                Ok(summary) => {
-                    klog!("async: remote stash-drop finished");
-                    app.record_op(
-                        "stash-drop",
-                        plan.current.clone(),
-                        OpOutcome::Success {
-                            after: kagi_git::StateSummary {
-                                head: plan.current.head.clone(),
-                                dirty: "stash entry removed".to_string(),
-                            },
-                        },
-                        &oplog_path,
-                        cx,
-                    );
-                    app.status_footer =
-                        FooterStatus::Success(SharedString::from(format!("stash drop: {summary}")));
-                    // Re-snapshot the remote so the dropped entry and its
-                    // graph row disappear (indices shift; one drop at a time).
-                    app.refresh_remote_view(cx);
-                }
-                Err(err_msg) => {
-                    klog!("async: remote stash-drop failed — {err_msg}");
-                    app.record_op(
-                        "stash-drop",
-                        plan.current.clone(),
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &oplog_path,
-                        cx,
-                    );
-                    app.set_stash_drop_modal(StashDropModal {
-                        plan: Some(plan.clone()),
-                        error: Some(SharedString::from(err_msg)),
-                        stash_index,
-                    });
-                }
-            });
-        }
+        self.confirm_stash(cx);
     }
 }

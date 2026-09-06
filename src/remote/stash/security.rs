@@ -12,11 +12,13 @@ pub(super) struct FrozenFile {
     pub(super) digest: String,
 }
 
+type SnapshotResult = (Vec<KnownHostsIdentity>, Vec<String>, Vec<FrozenFile>);
+
 pub(super) fn snapshot_known_hosts(
     paths: &[String],
     dir: &Path,
     prefix: &str,
-) -> Result<(Vec<KnownHostsIdentity>, Vec<String>, Vec<FrozenFile>), RemotePlanError> {
+) -> Result<SnapshotResult, RemotePlanError> {
     let mut identities = Vec::new();
     let mut snapshots = Vec::new();
     let mut frozen = Vec::new();

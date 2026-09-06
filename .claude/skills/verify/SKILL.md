@@ -20,11 +20,11 @@ the Git states needed to exercise safety-sensitive flows.
 `gui-e2e` feature and `KAGI_GUI_E2E=1`; use an exclusive target directory:
 
 ```bash
-KAGI_GUI_E2E=1 CARGO_TARGET_DIR="$PWD/target" \
+KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 
 # Run only scenarios whose names contain either substring.
-KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph_copy' \
+KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph_copy' \
   CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
@@ -57,7 +57,18 @@ The current suite covers:
   editor writer admission; commit-row and editor-history layout;
 - bottom-panel toggle, graph copy, oplog expand/copy, snapshot creation, theme
   switching, agent provenance, and WIP-to-HEAD connectors;
-- linked-worktree WIP rows plus commit-panel commit, amend, and discard.
+- linked-worktree WIP rows plus commit-panel commit, amend, and discard;
+- modal and branch-menu Enter isolation from the selected commit checkout.
+
+App keybindings, command-registry keybindings, and native menus share their
+installation path with `run_app`; component initialization must precede that
+installation so app bindings keep the same precedence. For menu/Enter routing,
+PM can scope `KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough`.
+The menu scenario in `tests/recovery/operations.rs` selects a non-HEAD branch,
+opens its menu, and checks that Enter leaves the checkout modal absent and HEAD
+unchanged. The modal slot is the oracle for absence of `plan: checkout`, as in
+the existing modal scenario. Native foreground/input-focus behavior remains a
+separate Tier B check.
 
 The runner's screenshot capture is best-effort only; its assertions, clipboard
 checks, refs, and persisted oplog records are the oracle. It cannot run from the
@@ -202,7 +213,7 @@ For an environment-race fix, run the following three times consecutively with
 default test parallelism and record the results in the PR:
 
 ```bash
-CARGO_TARGET_DIR="$PWD/target" cargo test -j 8 --workspace
+KAGI_LOG_DIR="$(mktemp -d)" CARGO_TARGET_DIR="$PWD/target" cargo test -j 8 --workspace
 ```
 
 `-j 8` controls Cargo build jobs; it does not serialize Rust test threads. Do

@@ -513,6 +513,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "branch_menu_no_checkout_fallthrough",
+                Box::new(crate::recovery_operations::scenario_branch_menu_no_checkout_fallthrough),
+            ),
+            (
                 "push_failure_keeps_modal",
                 Box::new(crate::recovery_operations::scenario_push_failure_keeps_modal),
             ),

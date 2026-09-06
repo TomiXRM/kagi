@@ -16,7 +16,7 @@ crates/kagi-ui-core/src/theme.rs 1428
 crates/kagi-ui-editor/src/lib.rs 3428
 src/ui/branch_cleanup.rs 1062
 src/ui/branch_menu.rs 965
-src/ui/commands.rs 2233
+src/ui/commands.rs 2244
 src/ui/commit_list.rs 838
 src/ui/commit_panel_render.rs 1451
 src/ui/conflict_editor.rs 1328

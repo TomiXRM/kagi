@@ -244,6 +244,11 @@ impl Backend {
             plan.preview.current.clone(),
             outcome,
         );
+        entry.backup_refs = progress
+            .backups
+            .iter()
+            .map(|b| b.reference.clone())
+            .collect();
         entry.actor = actor;
         entry.worktree = Some(plan.target.display().to_string());
         RemoveReport {

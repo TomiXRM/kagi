@@ -473,3 +473,108 @@ fn test_file_diff_japanese_no_panic() {
         first_line_content
     );
 }
+
+#[test]
+fn binary_classification_survives_staging_and_commit() {
+    let tmp = TempDir::new().unwrap();
+    let repo = init_repo(&tmp);
+    let before = head_commit_id(&repo);
+    let path = Path::new("image[1].bin");
+    std::fs::write(tmp.path().join(path), b"\x89PNG\0binary\n").unwrap();
+
+    for diff in [
+        kagi_git::unstaged_file_diff(&repo, path).unwrap(),
+        kagi_git::compare_commit_to_workdir_file_diff(&repo, &before, path).unwrap(),
+    ] {
+        assert!(diff.is_binary, "unstaged binary was rendered as text");
+        assert!(diff.hunks.is_empty());
+        assert_eq!(diff.new_path.as_deref(), Some(path));
+    }
+    git(tmp.path(), &["add", "--", "image[1].bin"]);
+    let staged = kagi_git::staged_file_diff(&repo, path).unwrap();
+    assert!(staged.is_binary, "staged binary was rendered as text");
+    assert!(staged.hunks.is_empty());
+    git(tmp.path(), &["commit", "-m", "add binary"]);
+    let after = head_commit_id(&repo);
+    for diff in [
+        commit_file_diff(&repo, &after, path).unwrap(),
+        kagi_git::compare_file_diff(&repo, &before, &after, path).unwrap(),
+    ] {
+        assert!(diff.is_binary, "committed binary was rendered as text");
+        assert!(diff.hunks.is_empty());
+        assert_eq!(diff.change, ChangeKind::Added);
+    }
+}
+
+#[test]
+fn empty_file_is_not_binary_in_any_diff_source() {
+    let tmp = TempDir::new().unwrap();
+    let repo = init_repo(&tmp);
+    let before = head_commit_id(&repo);
+    let path = Path::new("empty.txt");
+    write_file(tmp.path(), "empty.txt", "");
+    for diff in [
+        kagi_git::unstaged_file_diff(&repo, path).unwrap(),
+        kagi_git::compare_commit_to_workdir_file_diff(&repo, &before, path).unwrap(),
+    ] {
+        assert!(!diff.is_binary, "empty text file was classified as binary");
+        assert!(diff.hunks.is_empty());
+        assert_eq!(diff.change, ChangeKind::Added);
+    }
+    git(tmp.path(), &["add", "empty.txt"]);
+    let diff = kagi_git::staged_file_diff(&repo, path).unwrap();
+    assert!(!diff.is_binary);
+    assert!(diff.hunks.is_empty());
+    git(tmp.path(), &["commit", "-m", "add empty file"]);
+    let after = head_commit_id(&repo);
+    for diff in [
+        commit_file_diff(&repo, &after, path).unwrap(),
+        kagi_git::compare_file_diff(&repo, &before, &after, path).unwrap(),
+    ] {
+        assert!(!diff.is_binary);
+        assert!(diff.hunks.is_empty());
+        assert_eq!(diff.change, ChangeKind::Added);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn mode_only_diff_is_not_binary() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new().unwrap();
+    let repo = init_repo(&tmp);
+    repo.config()
+        .unwrap()
+        .set_bool("core.filemode", true)
+        .unwrap();
+    let before = head_commit_id(&repo);
+    let path = Path::new("base.txt");
+    std::fs::set_permissions(
+        tmp.path().join(path),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    for diff in [
+        kagi_git::unstaged_file_diff(&repo, path).unwrap(),
+        kagi_git::compare_commit_to_workdir_file_diff(&repo, &before, path).unwrap(),
+    ] {
+        assert!(!diff.is_binary, "mode-only change was classified as binary");
+        assert!(diff.hunks.is_empty());
+        assert_eq!(diff.change, ChangeKind::Modified);
+    }
+    git(tmp.path(), &["add", "base.txt"]);
+    let diff = kagi_git::staged_file_diff(&repo, path).unwrap();
+    assert!(!diff.is_binary);
+    assert!(diff.hunks.is_empty());
+    git(tmp.path(), &["commit", "-m", "make executable"]);
+    let after = head_commit_id(&repo);
+    for diff in [
+        commit_file_diff(&repo, &after, path).unwrap(),
+        kagi_git::compare_file_diff(&repo, &before, &after, path).unwrap(),
+    ] {
+        assert!(!diff.is_binary);
+        assert!(diff.hunks.is_empty());
+        assert_eq!(diff.change, ChangeKind::Modified);
+    }
+}

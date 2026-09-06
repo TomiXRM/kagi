@@ -3,6 +3,18 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [Unreleased]
+
+### Fixed
+- Release checks require the complete blocking CI aggregate from the target
+  commit's newest workflow run and latest attempt, including the gate selftests.
+- Branch cleanup retains remote recovery OIDs when subsequent local deletion
+  fails, records partial completion, and opens the per-target operation details.
+
+### Changed (internal)
+- Commit, compare and staging diffs share one patch decoder and inspect binary
+  flags after libgit2 materializes content rather than guessing from empty hunks.
+
 ## [0.33.0] — 2026-09-06
 
 ### Added

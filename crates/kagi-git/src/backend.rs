@@ -1950,15 +1950,22 @@ impl Backend {
         let outcome = match &result {
             Ok(cleanup) => {
                 let summary = cleanup.oplog_summary();
-                if !cleanup.failed.is_empty() && cleanup.deleted.is_empty() {
-                    crate::oplog::OpOutcome::Failed { error: summary }
-                } else {
-                    // Partial deletion remains Success, with failures in the summary.
+                if cleanup.failed.is_empty() {
                     crate::oplog::OpOutcome::Success {
                         after: ops::StateSummary {
                             head: plan.current.head.clone(),
                             dirty: summary,
                         },
+                    }
+                } else if cleanup.deleted.is_empty() {
+                    crate::oplog::OpOutcome::Failed { error: summary }
+                } else {
+                    crate::oplog::OpOutcome::Partial {
+                        after: ops::StateSummary {
+                            head: plan.current.head.clone(),
+                            dirty: summary.clone(),
+                        },
+                        error: summary,
                     }
                 }
             }

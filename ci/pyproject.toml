@@ -30,6 +30,8 @@ check-plan-verbatim = "kagi_checks.cli:check_plan_verbatim"
 check-modal-lists = "kagi_checks.cli:check_modal_lists"
 check-shell-hygiene = "kagi_checks.cli:check_shell_hygiene"
 check-loc = "kagi_checks.cli:check_loc"
+check-blocking-ci = "kagi_checks.release_ci:check_blocking_ci"
+check-release-ci = "kagi_checks.release_ci:check_release_ci"
 
 [dependency-groups]
 dev = ["mypy>=1.14", "ruff>=0.9"]

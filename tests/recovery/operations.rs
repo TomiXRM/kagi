@@ -362,3 +362,111 @@ pub fn scenario_cleanup_open_failure(cx: &mut VisualTestAppContext) {
     }
     eprintln!("[gui-e2e] PASS cleanup_open_failure active/stale durable refusal without mutation");
 }
+
+pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "merged", "HEAD~1"]);
+    let oid = output(repo, &["rev-parse", "merged"]);
+    let moved = output(repo, &["rev-parse", "HEAD"]);
+    let remote = tempfile::TempDir::new().unwrap();
+    git(remote.path(), &["init", "--bare", "."]);
+    git(
+        repo,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(repo, &["push", "origin", "merged"]);
+    let before = repo_fingerprint(repo);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_branch_cleanup_plan(
+            vec![CleanupDeleteTarget {
+                name: "merged".into(),
+                local_tip: Some(CommitId(oid.clone())),
+                remote_tip: Some(CommitId(oid.clone())),
+                status: MergedBranchStatus::FullyMerged,
+            }],
+            cx,
+        );
+        assert!(app.branch_cleanup_modal().unwrap().plan.blockers.is_empty());
+    });
+    // The real remote commits its deletion before this hook makes the local
+    // target stale. Neither a mocked result nor a sleep controls the failure.
+    let hook = remote.path().join("hooks/post-receive");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    git(
+        remote.path(),
+        &[
+            "config",
+            "core.hooksPath",
+            hook.parent().unwrap().to_str().unwrap(),
+        ],
+    );
+    let local_git_dir = repo
+        .join(".git")
+        .display()
+        .to_string()
+        .replace('\'', "'\\''");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nexec git --git-dir='{local_git_dir}' update-ref refs/heads/merged {moved}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    assert!(output(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
+    assert_eq!(output(repo, &["rev-parse", "merged"]), moved);
+    assert_eq!(repo_fingerprint(repo), before);
+
+    let entries = records(repo, "branch-cleanup");
+    assert_eq!(entries.len(), 1);
+    let recovered = match &entries[0].outcome {
+        OpOutcome::Partial { after, .. } => after
+            .dirty
+            .split(|c: char| !c.is_ascii_hexdigit())
+            .find(|token| *token == oid)
+            .expect("durable remote recovery OID")
+            .to_string(),
+        other => panic!("expected partial durable cleanup: {other:?}"),
+    };
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.branch_cleanup_modal().is_none(),
+            "do not retry the deleted batch"
+        );
+        assert!(matches!(&app.status_footer, FooterStatus::Failed(_)));
+        assert!(app.bottom_panel_open);
+        assert_eq!(app.bottom_tab, kagi::ui::BottomTab::OperationLog);
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        assert_eq!(panel.expanded(), Some(0));
+        let entry = &panel.entries()[0];
+        let OpOutcome::Partial { error, .. } = &entry.outcome else {
+            panic!("partial cleanup must be presented as partial");
+        };
+        let details = kagi::ui::oplog_panel::detail_lines(entry).join("\n");
+        assert!(details.contains(&oid));
+        assert!(details.contains("merged"));
+        assert!(
+            details.contains(error),
+            "per-target failure must be visible"
+        );
+    });
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    std::fs::remove_file(hook).unwrap();
+    git(
+        repo,
+        &["push", "origin", &format!("{recovered}:refs/heads/merged")],
+    );
+    assert_eq!(output(remote.path(), &["rev-parse", "merged"]), oid);
+    assert_eq!(output(repo, &["rev-parse", "merged"]), moved);
+    cx.update_window(window, |_, window, _| window.remove_window())
+        .unwrap();
+    eprintln!("[gui-e2e] PASS cleanup_partial_presentation per-target details and remote recovery");
+}

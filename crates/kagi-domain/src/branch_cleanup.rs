@@ -114,8 +114,8 @@ pub struct CleanupDeleteTarget {
     pub status: MergedBranchStatus,
 }
 
-/// One successfully deleted branch. The tip OIDs are what the oplog records
-/// for recovery: `git branch <name> <local_tip>` / push `<remote_tip>` back.
+/// Successfully deleted halves of a branch. The tip OIDs are what the oplog
+/// records for recovery: `git branch <name> <local_tip>` / push `<remote_tip>` back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CleanupDeleted {
     /// Short branch name.
@@ -128,7 +128,9 @@ pub struct CleanupDeleted {
 
 /// Aggregate outcome of one execute run. Each branch's deletion is
 /// independent, so per-branch failures do not abort the run — they are
-/// collected in `failed` and surfaced via oplog + modal.
+/// collected in `failed` and surfaced via the oplog's result details.
+/// A branch can occur in both collections when its remote deletion succeeds
+/// but its local deletion fails; only deleted halves carry recovery OIDs.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CleanupOutcome {
     /// Branches that were deleted (locally, remotely, or both).

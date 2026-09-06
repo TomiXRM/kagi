@@ -33,9 +33,9 @@ pub enum OpOutcome {
         /// Repository state immediately after execution.
         after: StateSummary,
     },
-    /// Operation was only PARTIALLY applied: the working tree was mutated but
-    /// did not fully succeed (issue #281). The recovery handle (e.g. discard's
-    /// backup blob SHAs) lives in `after.dirty`.
+    /// Operation was only PARTIALLY applied: repository side effects completed,
+    /// but some requested changes failed. Recovery handles (e.g. backup blob
+    /// SHAs or deleted ref OIDs) live in `after.dirty`.
     Partial {
         /// Repository state immediately after the partial execution.
         after: StateSummary,

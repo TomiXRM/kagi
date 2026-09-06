@@ -319,12 +319,17 @@ impl KagiApp {
                     head: modal.plan.current.head.clone(),
                     dirty: outcome.oplog_summary(),
                 };
-                let outcome_kind = if !outcome.failed.is_empty() && outcome.deleted.is_empty() {
+                let outcome_kind = if outcome.failed.is_empty() {
+                    kagi_git::oplog::OpOutcome::Success { after }
+                } else if outcome.deleted.is_empty() {
                     kagi_git::oplog::OpOutcome::Failed {
                         error: after.dirty.clone(),
                     }
                 } else {
-                    kagi_git::oplog::OpOutcome::Success { after }
+                    kagi_git::oplog::OpOutcome::Partial {
+                        error: after.dirty.clone(),
+                        after,
+                    }
                 };
                 // The backend already persisted the full recovery OIDs. This
                 // callback is presentation-only and may be dropped on tab switch.
@@ -335,11 +340,24 @@ impl KagiApp {
                     &repo_path,
                     cx,
                 );
-                app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "branch-cleanup: {} deleted, {} failed",
-                    outcome.deleted.len(),
-                    outcome.failed.len()
-                )));
+                if outcome.failed.is_empty() {
+                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                        "branch-cleanup: {} deleted, {} failed",
+                        outcome.deleted.len(),
+                        outcome.failed.len()
+                    )));
+                } else {
+                    // Show completed halves and failures together, not a retry
+                    // of the original batch: some refs may already be deleted.
+                    app.bottom_panel_open = true;
+                    app.bottom_tab = BottomTab::OperationLog;
+                    if let Some(panel) = app.op_log.clone() {
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_expanded(0);
+                            cx.notify();
+                        });
+                    }
+                }
                 app.reload(cx);
             }
             Err(e) => {

@@ -38,13 +38,13 @@ use kagi_domain::plan_note::commit::{
     CommitLeftoverParts, CommitNote, CommitRecovery, CommitTitle,
 };
 use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use git2::{DiffOptions, Repository};
 
 use super::{
     checklist::checklist,
-    diff::{DiffLine, DiffLineKind, FileDiff, Hunk},
+    diff::{patch_hunks, patch_to_file_diff, FileDiff},
     log::CommitId,
     ops::{build_signature, OperationPlan, StateSummary},
     resolve_head,
@@ -676,169 +676,6 @@ pub fn execute_commit(repo: &Repository, message: &str) -> Result<CommitId, GitE
     };
 
     Ok(CommitId(new_oid.to_string()))
-}
-
-// ────────────────────────────────────────────────────────────
-// Internal helpers
-// ────────────────────────────────────────────────────────────
-
-/// Convert a [`git2::Diff`] to a [`FileDiff`] for the given `path`.
-///
-/// This is the common Patch→FileDiff conversion logic shared between
-/// `unstaged_file_diff` and `staged_file_diff`.
-///
-/// `is_staged` controls whether "new path not found" is treated as a fully
-/// untracked file (for unstaged diff) or as an empty diff (for staged diff).
-fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, GitError> {
-    let num_deltas = diff.deltas().count();
-
-    if num_deltas == 0 {
-        return Ok(FileDiff {
-            old_path: None,
-            new_path: Some(path.to_path_buf()),
-            change: ChangeKind::Modified,
-            hunks: vec![],
-            is_binary: false,
-        });
-    }
-
-    // Find the delta index matching `path`.
-    // #292: no match → return an empty diff for THIS path. The old
-    // `.unwrap_or(0)` silently fell back to delta 0, i.e. a *different* file's
-    // content — a git client showing the wrong file's diff.
-    let Some(delta_idx) = (0..num_deltas).find(|&i| {
-        let delta = diff.get_delta(i).unwrap();
-        let np = delta.new_file().path();
-        let op = delta.old_file().path();
-        np == Some(path) || op == Some(path)
-    }) else {
-        return Ok(FileDiff {
-            old_path: None,
-            new_path: Some(path.to_path_buf()),
-            change: ChangeKind::Modified,
-            hunks: vec![],
-            is_binary: false,
-        });
-    };
-
-    let delta = diff.get_delta(delta_idx).unwrap();
-
-    let old_path = delta.old_file().path().map(PathBuf::from);
-    let new_path = delta.new_file().path().map(PathBuf::from);
-
-    use git2::Delta;
-    let change = match delta.status() {
-        Delta::Added | Delta::Untracked => ChangeKind::Added,
-        Delta::Deleted => ChangeKind::Deleted,
-        Delta::Modified => ChangeKind::Modified,
-        Delta::Renamed => {
-            let from = old_path.clone().unwrap_or_default();
-            ChangeKind::Renamed { from }
-        }
-        Delta::Typechange => ChangeKind::TypeChange,
-        _ => ChangeKind::Modified,
-    };
-
-    // Binary check.
-    let is_binary_flag = delta.new_file().is_binary() || delta.old_file().is_binary();
-
-    // Get Patch for this delta.
-    let patch_opt = git2::Patch::from_diff(diff, delta_idx)
-        .map_err(|e| GitError::Other(format!("Patch::from_diff failed: {}", e.message())))?;
-
-    let patch = match patch_opt {
-        None => {
-            return Ok(FileDiff {
-                old_path,
-                new_path,
-                change,
-                hunks: vec![],
-                is_binary: true,
-            });
-        }
-        Some(p) => {
-            if is_binary_flag {
-                return Ok(FileDiff {
-                    old_path,
-                    new_path,
-                    change,
-                    hunks: vec![],
-                    is_binary: true,
-                });
-            }
-            p
-        }
-    };
-
-    let hunks = patch_hunks(&patch)?;
-
-    // Same lazy-BINARY-flag workaround as diff.rs's diff_to_file_diff (the
-    // two builders are near-duplicates — consolidate when one grows again):
-    // workdir/index deltas only get their BINARY flag after content
-    // callbacks, so an image lands here as "0 hunks, not binary" and painted
-    // an EMPTY pane. A content change with no text hunks is binary.
-    let is_binary = hunks.is_empty()
-        && (delta.old_file().size() > 0 || delta.new_file().size() > 0)
-        && delta.old_file().id() != delta.new_file().id();
-
-    Ok(FileDiff {
-        old_path,
-        new_path,
-        change,
-        hunks,
-        is_binary,
-    })
-}
-
-/// The hunk/line extraction shared by every `git2::Patch` → [`FileDiff`] path.
-fn patch_hunks(patch: &git2::Patch<'_>) -> Result<Vec<Hunk>, GitError> {
-    let num_hunks = patch.num_hunks();
-    let mut hunks = Vec::with_capacity(num_hunks);
-
-    for h_idx in 0..num_hunks {
-        let (diff_hunk, line_count) = patch.hunk(h_idx).map_err(|e| {
-            GitError::Other(format!("patch.hunk({}) failed: {}", h_idx, e.message()))
-        })?;
-
-        let old_range = (diff_hunk.old_start(), diff_hunk.old_lines());
-        let new_range = (diff_hunk.new_start(), diff_hunk.new_lines());
-
-        let mut lines = Vec::with_capacity(line_count);
-
-        for l_idx in 0..line_count {
-            let diff_line = patch.line_in_hunk(h_idx, l_idx).map_err(|e| {
-                GitError::Other(format!(
-                    "patch.line_in_hunk({},{}) failed: {}",
-                    h_idx,
-                    l_idx,
-                    e.message()
-                ))
-            })?;
-
-            let kind = match diff_line.origin() {
-                '+' | '>' => DiffLineKind::Added,
-                '-' | '<' => DiffLineKind::Removed,
-                _ => DiffLineKind::Context,
-            };
-
-            let content = String::from_utf8_lossy(diff_line.content()).into_owned();
-
-            lines.push(DiffLine {
-                kind,
-                content,
-                old_lineno: diff_line.old_lineno(),
-                new_lineno: diff_line.new_lineno(),
-            });
-        }
-
-        hunks.push(Hunk {
-            old_range,
-            new_range,
-            lines,
-        });
-    }
-
-    Ok(hunks)
 }
 
 // ────────────────────────────────────────────────────────────

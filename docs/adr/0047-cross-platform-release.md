@@ -59,6 +59,21 @@ taskbar エントリ**として現れる(minimize→そのエントリから復�
 - CI: `.github/workflows/release.yml`、タグ `v*` で macOS(arm64/x86_64)+ ubuntu の matrix →
   draft release に asset + SHA256SUMS
 
+### 追補 (2026-09-06, #483): release と blocking CI の結合
+
+- release は `actions/workflows/ci.yml` から workflow ID を取得し、対象 `GITHUB_SHA`
+  の run のみを選ぶ。同名の commit check、別 workflow、別 SHA は根拠にしない。
+- 選択方針は **最大 run_number の run、その run の最新 run_attempt**。
+  古い run の再実行は新しい run に優先しない。attempt 専用 jobs API を使い、
+  run ID / attempt / SHA が一致する `blocking-ci` 集約 job の success のみを受理する。
+  成功を返す直前にも最新 run/attempt を照会し、照会中の再実行を取りこぼさない。
+- 必須集合は ADR-0077 の `blocking-ci.needs` に一本化し、release 側に invariant 名を列挙しない。
+  advisory job の終了や workflow 全体の success は要求しない。
+- 未到着の run / 実行中の集約のみ最大30回、60秒間隔で待つ。完了 run に集約がない、
+  集約が skipped / cancelled / failure / 非 success、API エラーは即時拒否する。
+  最新 attempt に集約がない部分再実行も古い成功では代用せず、CI 全体を再実行する。
+- fixture 検証コマンドは ADR-0077 追補を参照。実 release / tag 操作なしで検証できる。
+
 ### Icon pipeline(ユーザー素材: assets/icon-512x512.png)
 
 - **Apple スタイルの角丸**を画像加工で適用する(ユーザー依頼)。macOS 標準ツールのみ:

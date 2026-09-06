@@ -1943,10 +1943,10 @@ impl KagiApp {
         self.record_op_impl(op, before, outcome, repo_path, cx, false);
     }
 
-    /// Like [`record_op`] but ALSO persists the oplog entry. For the operations
-    /// that do NOT go through `Backend::run` (conflict resolution, terminal
-    /// start, branch-cleanup batch, PR merge) — `run` cannot record those, so
-    /// the caller must. ADR-0149 §"non-run ops".
+    /// Like [`record_op`] but ALSO persists entries for operations whose
+    /// execution boundary does not yet record them (conflict resolution,
+    /// terminal start, PR merge). Backend-owned non-run operations such as
+    /// branch cleanup use presentation-only `record_op`. ADR-0149 §"non-run ops".
     fn record_op_persist(
         &mut self,
         op: &str,

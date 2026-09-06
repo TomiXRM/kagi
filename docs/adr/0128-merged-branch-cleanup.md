@@ -33,6 +33,17 @@
   prune は tracking-ref キャッシュの削除のみでローカルブランチ・object
   store には触れず、upstream 消失を `[gone]` として正しく伝播させるので
   squash ヒューリスティックの入力にもなる。
+- **2026-09-06 / #503: 部分成功も復元材料を保持する。** remote 削除成功後に
+  local の OID 検証・削除が失敗しても、同名の `CleanupDeleted.remote_tip`
+  と `CleanupOutcome.failed` を両方残す。削除済みの側だけ OID を記録し、
+  失敗した local 側を削除成功として扱わない。Backend は削除と失敗の混在を
+  `OpOutcome::Partial`、全成功を `Success`、副作用のない失敗を `Failed`
+  として一度だけ記録する。UI も同じ分類を表示し、失敗を含む結果は既存の
+  操作ログを開いて最新行を展開する。対象別の削除済み側・復元 OID・失敗理由を
+  確認でき、元のバッチを再実行する確認モーダルは開き直さない。
+  回帰テストは local bare remote の post-receive で local ref を移動させ、
+  remote 削除後の local 拒否、永続ログの Partial、記録 OID の push による
+  remote ref の実復元を検証する。
 
 ## 追記(2026-07-22, 実使用報告に基づく follow-up)
 

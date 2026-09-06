@@ -43,3 +43,16 @@
 
 - `cargo test --workspace` が green であることが完了条件の中核(goal)。CI がそれを門番する。
 - `make_fixture.sh` は `kagi-test-fixtures` に吸収され、手動 E2E 用途のみ残す。
+
+## 追補 (2026-09-06, #483): blocking CI の集約
+
+- `ci.yml` の `blocking-ci.needs` を必須 job 集合の唯一の定義とする。
+  invariant matrix 全体、gates の lint/type/selftest/fixture、macOS test を依存に持つ。
+  blocking job の追加はこの依存に追加し、matrix の leg 追加・改名は release に複製しない。
+- 集約 job は `if: always()` で実行し、`toJSON(needs)` の**全結果が success** の場合だけ成功する。
+  missing result / skipped / cancelled / failure は拒否する。matrix は全 leg の完了結果を
+  GitHub が依存結果へ集約するため、成功した一部の check 名だけでは通らない。
+- Linux / Windows / fmt-clippy の advisory job は依存集合に含めず、従来通り非 blocking。
+- 判定と GitHub API fixture は既存 `ci/` uv project に置く。オフライン回帰確認:
+  `uv run --frozen --project ci python -m unittest kagi_checks.test_release_ci -v`。
+  この fixture suite 自体も `gates-lint` で実行する。

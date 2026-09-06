@@ -355,6 +355,8 @@ pub fn plan_delete_merged_branches(
 /// Per-branch failures do **not** abort the run (each deletion is
 /// independent); they are collected in [`CleanupOutcome::failed`]. Only a
 /// global preflight failure (HEAD moved since planning) returns `Err`.
+/// A branch can appear in both `deleted` and `failed`: a completed remote
+/// deletion retains its recovery OID even when the later local deletion fails.
 pub fn execute_delete_merged_branches(
     repo: &Repository,
     repo_path: &Path,
@@ -483,7 +485,6 @@ pub fn execute_delete_merged_branches(
                 Ok(()) => deleted_local = true,
                 Err(msg) => {
                     failed.insert(t.name.clone(), msg);
-                    continue;
                 }
             }
         }

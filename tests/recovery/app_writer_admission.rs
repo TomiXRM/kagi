@@ -104,5 +104,13 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
         std::fs::read(repo.join("README.md")).unwrap(),
         edited.as_bytes()
     );
+    cx.update_window(window, |_, window, _| window.remove_window())
+        .expect("close editor admission window");
+    drop(editor);
+    drop(app);
+    // mount's captured handle and the focus closure's InputState clone have
+    // already gone out of scope. Drain entity-owned tasks before cx is dropped.
+    cx.update(|_| {});
+    cx.run_until_parked();
     eprintln!("[gui-e2e] PASS editor admission → Busy preserves bytes/buffer → release → save writes edited bytes");
 }

@@ -165,6 +165,10 @@ def check_modal_lists() -> int:
     return _run_rule(_rule("modal-lists"))
 
 
+def check_e2e_window_helper() -> int:
+    return _run_rule(_rule("e2e-window-helper"))
+
+
 def check_klog_raw() -> int:
     return _run_rule(_rule("klog-raw"))
 

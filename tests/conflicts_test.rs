@@ -26,7 +26,7 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 use kagi_git::{
     continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_skip,
     plan_conflict_abort, plan_conflict_continue, plan_conflict_skip, ConflictKind, ConflictOp,
-    LineOrigin, ResolutionBuffer, ResolutionChoice,
+    LineOrigin, ResolutionBuffer, ResolutionChoice, SkipProgress,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -1616,6 +1616,84 @@ fn abort_refuses_staged_non_conflicted_edit_during_cherry_pick() {
     assert!(
         dir.join(".git/CHERRY_PICK_HEAD").exists(),
         "the refusal must leave the cherry-pick state intact"
+    );
+
+    std::env::remove_var("KAGI_LOG_DIR");
+}
+
+/// #540 fixture: a rebase whose first TWO replayed commits both conflict on the
+/// same path, so skipping the first lands directly on the second conflict.
+fn rebase_two_conflicting_steps_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir);
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE ONE\n");
+    git(dir, &["commit", "-qam", "side step 1"]);
+    write_file(dir, "file.txt", "SIDE TWO\n");
+    git(dir, &["commit", "-qam", "side step 2"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git(dir, &["checkout", "-q", "side"]);
+    git_allow_fail(dir, &["rebase", "main"]);
+    tmp
+}
+
+/// #540: `git rebase --skip` that drops the current step and then stops at the
+/// NEXT conflicting commit exits **1**. That is "advanced to the next
+/// conflict", not a failure — before the fix the non-zero exit was returned as
+/// an `Err` and recorded as `rebase-skip failed` while the UI was already
+/// detecting the new conflict session.
+#[test]
+fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let log_tmp = TempDir::new().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log_tmp.path());
+
+    let tmp = rebase_two_conflicting_steps_repo();
+    let dir = tmp.path();
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("first rebase conflict");
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    let first = execute_conflict_skip(&repo, &session, &buffer).expect("skip must not error");
+    assert_eq!(first.progress, SkipProgress::Advanced);
+    assert!(
+        first.error.is_some(),
+        "git really did exit non-zero when it stopped at the next conflict"
+    );
+
+    // The next conflict session is there to be detected right away.
+    let repo2 = Repository::open(dir).unwrap();
+    let next = detect_conflict_session(&repo2).expect("second rebase conflict");
+    assert!(matches!(next.op, ConflictOp::Rebase { .. }));
+
+    // Skipping it too leaves nothing to replay: the rebase completes.
+    let buffer2 = ResolutionBuffer::from_repo(&repo2).unwrap();
+    let second = execute_conflict_skip(&repo2, &next, &buffer2).expect("skip must not error");
+    assert_eq!(second.progress, SkipProgress::Finished);
+    assert!(second.error.is_none(), "a finished sequence exits zero");
+
+    assert!(detect_conflict_session(&Repository::open(dir).unwrap()).is_none());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+        "MAIN\n",
+        "both conflicting picks were dropped"
+    );
+    assert_eq!(
+        git_output(dir, &["rev-parse", "HEAD"]),
+        git_output(dir, &["rev-parse", "main"]),
+        "side is now exactly main"
     );
 
     std::env::remove_var("KAGI_LOG_DIR");

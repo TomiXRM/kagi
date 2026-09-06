@@ -441,7 +441,7 @@ use kagi_git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, OperationPlan,
         StateSummary,
     },
-    CommitId, FileDiffStat, FileStatus, RepoSnapshot,
+    CommitId, FileDiffStat, FileStatus, RepoSnapshot, SkipProgress,
 };
 
 // ──────────────────────────────────────────────────────────────

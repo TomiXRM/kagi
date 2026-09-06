@@ -61,7 +61,7 @@ pub use conflicts::{
     plan_conflict_continue_route, plan_conflict_skip, resolve_selected_file, side_labels,
     stage_conflict_resolution, AbortOutcome, ConflictFile, ConflictKind, ConflictOp,
     ConflictSession, ConflictStatus, ContinueBlocker, ContinueOutcome, ContinueResult,
-    ContinueRoute, SaveOutcome, SideLabel, SideLabels, SkipOutcome,
+    ContinueRoute, SaveOutcome, SideLabel, SideLabels, SkipOutcome, SkipProgress,
 };
 #[allow(unused_imports)]
 pub use diff::{

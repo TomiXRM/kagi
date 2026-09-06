@@ -32,13 +32,16 @@ remote mutation（`github::merge_pr`、`remote::remote_pull`）は **自分の�
 | merged=false（未 merge が確定） | `Failed` |
 | 再読不能（gh 不在 / offline / 認証切れ） | `Unknown`（再送しない） |
 
-**SSH remote pull**: child の停止を証明できない限り Failed にしない。
+**SSH remote pull**: `Failed` は **allow-list 一致のときだけ**。既定は `Unknown`。
+誤った Unknown は lease を保持して確認を促すだけだが、誤った Failed は
+「`git pull` が走ったかもしれない host」への再実行を誘う（PM 裁定）。
 
 | 観測 | outcome |
 |---|---|
-| whole-command timeout、ssh の切断バナー（`Connection closed by` 等） | `Unknown`（remote の `git pull` が動作中かもしれない） |
 | 非ゼロ終了で `CONFLICT` / `Automatic merge failed` | `Partial`（host の worktree/index は変化済み） |
-| spawn 前失敗、明確な拒否応答（auth / host key / no tracking information） | `Failed` |
+| spawn 前失敗 | `Failed`（何も走っていない） |
+| 非ゼロ終了で `REFUSAL_MARKERS` に一致（ssh の auth / host key / 名前解決 / 接続拒否、git の `cannot change to` / `not a git repository` / `There is no tracking information` / `couldn't find remote ref`） | `Failed` |
+| **上記以外すべて** — whole-command timeout、切断バナー、未知の出力 | `Unknown`（remote の `git pull` が動作中かもしれない） |
 
 UI は生の exit ではなく**記録済み outcome** を見て提示する。`gh` が失敗しても
 再読が merged なら「executed」であり、失敗として見せない。
@@ -121,13 +124,18 @@ stash family の配送と同じ位置づけで、表示半分（`on_done`）だ�
 
 - `remote_pull_records_success_and_failure_at_the_transport` — Success の
   receipt、拒否応答の Failed、実際に conflict を起こした pull の Partial。
-- `a_remote_pull_that_loses_the_session_is_unknown_not_failed` — ssh の切断
-  バナーで Unknown。
+- `a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized` —
+  切断バナーと未知の出力の両方で Unknown、allow-list 一致でだけ Failed。
 
 ## 保証しないもの
 
 再読は `gh` の 1 往復であり、その往復自体が壊れれば `Unknown` になる。
 merged=true のときに `--delete-branch` が実際に成功したかは照会していない
 （`Partial` に倒す）。branch 削除の確認を足すなら transport 往復が一回増える。
-SSH 側の判定は ssh / git の出力文字列に依存する。marker に一致しない未知の
-切断メッセージは `Failed` に落ちる。exit code だけで確定できる契約は無い。
+SSH 側の判定は ssh / git の出力文字列に依存する。exit code だけで確定できる
+契約は無い。ただし**未知の出力は `Unknown` に落ちる**ので、marker の欠落が
+「実行済みかもしれない pull」を Failed に見せることはない。代償として、
+allow-list に載っていない確定的な拒否は `Unknown` として残り、read+ack を
+要求する。marker を足すことは安全側の緩和なので、実出力を確認したうえで
+`REFUSAL_MARKERS` に追記してよい。conflict 判定（`Partial`）も同じ文字列依存で、
+一致しなければ `Unknown` に落ちる。

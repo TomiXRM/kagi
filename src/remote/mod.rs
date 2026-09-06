@@ -469,18 +469,27 @@ pub struct RemotePullReport {
     pub recording: kagi_git::backend::recording::Recording,
 }
 
-/// ssh could not keep the session: the remote `git pull` was started and is
-/// **not proven stopped**, so its effect is unknown rather than failed (#501).
-const SSH_DISCONNECT_MARKERS: [&str; 4] = [
-    "Connection timed out",
-    "Operation timed out",
-    "Connection closed by",
-    "Connection reset by",
-];
-
 /// git left the remote worktree mid-merge. Conflict text goes to stdout, the
 /// "Automatic merge failed" summary too; scan both streams.
 const GIT_CONFLICT_MARKERS: [&str; 2] = ["CONFLICT", "Automatic merge failed"];
+
+/// The **allow-list** of outputs proving nothing ran — the only way a non-zero
+/// remote pull becomes `Failed` (PM ruling on #501). Everything else, an
+/// unrecognized message and a disconnect banner alike, defaults to `Unknown`:
+/// a false Unknown only holds the lease and asks the user to confirm, while a
+/// false Failed invites a retry against a host whose `git pull` may have run.
+const REFUSAL_MARKERS: [&str; 8] = [
+    // ssh refused outright — nothing reached the host.
+    "Permission denied",
+    "Host key verification failed",
+    "Could not resolve hostname",
+    "Connection refused",
+    // git declined before touching the worktree.
+    "cannot change to",
+    "not a git repository",
+    "There is no tracking information",
+    "couldn't find remote ref",
+];
 
 pub fn remote_pull(
     host: &RemoteHost,
@@ -515,15 +524,7 @@ pub fn remote_pull(
                 code: out.code,
                 stderr: out.stderr.clone(),
             };
-            let outcome = if SSH_DISCONNECT_MARKERS.iter().any(|m| text.contains(m)) {
-                OpOutcome::Unknown {
-                    after: after("remote pull not proven stopped".into()),
-                    evidence: format!(
-                        "ssh lost the session ({error}); the remote git pull may still be \
-                         running — do not retry until the host is checked"
-                    ),
-                }
-            } else if GIT_CONFLICT_MARKERS.iter().any(|m| text.contains(m)) {
+            let outcome = if GIT_CONFLICT_MARKERS.iter().any(|m| text.contains(m)) {
                 // The merge started and stopped mid-way: the host's worktree
                 // and index changed. Not a clean failure.
                 OpOutcome::Partial {
@@ -533,11 +534,21 @@ pub fn remote_pull(
                     )),
                     error: error.to_string(),
                 }
-            } else {
-                // An explicit refusal: ssh auth/host-key, or git declining
+            } else if REFUSAL_MARKERS.iter().any(|m| text.contains(m)) {
+                // A recognized refusal: ssh auth/host-key, or git declining
                 // before it touched anything ("no tracking information").
                 OpOutcome::Failed {
                     error: error.to_string(),
+                }
+            } else {
+                // Default (PM ruling): an output we cannot read as a refusal
+                // does not prove the remote `git pull` left the host alone.
+                OpOutcome::Unknown {
+                    after: after("remote pull not proven stopped".into()),
+                    evidence: format!(
+                        "{error}; the output matches no known refusal, so the remote git \
+                         pull may have run — do not retry until the host is checked"
+                    ),
                 }
             };
             (Err(error), outcome)

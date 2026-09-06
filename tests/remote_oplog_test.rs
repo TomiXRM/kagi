@@ -227,19 +227,17 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     assert!(!git(&repo, &["status", "--porcelain"]).is_empty());
 }
 
-/// #501: ssh losing the session does not prove the remote `git pull` stopped.
-#[test]
-fn a_remote_pull_that_loses_the_session_is_unknown_not_failed() {
-    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+/// Run a remote pull against an `ssh` stand-in that just prints `stderr_line`
+/// and exits non-zero, and return the single entry it recorded.
+fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome {
     let root = tempfile::tempdir().unwrap();
     let bin = root.path().join("bin");
     let logs = root.path().join("logs");
     std::fs::create_dir_all(&bin).unwrap();
-    // ssh's own disconnect banner, on the exit status ssh uses for it.
     let ssh = bin.join("ssh");
     std::fs::write(
         &ssh,
-        "#!/bin/sh\necho 'Connection closed by 10.0.0.1 port 22' >&2\nexit 255\n",
+        format!("#!/bin/sh\necho '{stderr_line}' >&2\nexit 255\n"),
     )
     .unwrap();
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -263,11 +261,34 @@ fn a_remote_pull_that_loses_the_session_is_unknown_not_failed() {
     assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 1);
-    let kagi_git::oplog::OpOutcome::Unknown { evidence, .. } = &entries[0].outcome else {
-        panic!(
-            "a lost session must be Unknown, got {:?}",
-            entries[0].outcome
-        );
-    };
-    assert!(evidence.contains("do not retry"), "{evidence}");
+    entries[0].outcome.clone()
+}
+
+/// #501 (PM ruling): `Failed` needs a recognized refusal. A lost session and an
+/// output nobody recognizes both default to `Unknown` — a false Unknown holds
+/// the lease and asks; a false Failed invites a retry against a host whose
+/// `git pull` may already have run.
+#[test]
+fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    for banner in [
+        // ssh's own disconnect banner.
+        "Connection closed by 10.0.0.1 port 22",
+        // Nothing in the allow-list: the default must still be Unknown.
+        "remote: something nobody has taught kagi to read",
+    ] {
+        let outcome = pull_outcome_for_ssh_output(banner);
+        let kagi_git::oplog::OpOutcome::Unknown { evidence, .. } = &outcome else {
+            panic!("{banner:?} must be Unknown, got {outcome:?}");
+        };
+        assert!(evidence.contains("do not retry"), "{evidence}");
+    }
+
+    // Only a recognized refusal proves nothing ran.
+    let outcome = pull_outcome_for_ssh_output("Permission denied (publickey).");
+    assert!(
+        matches!(outcome, kagi_git::oplog::OpOutcome::Failed { .. }),
+        "a recognized refusal must stay Failed, got {outcome:?}"
+    );
 }

@@ -5,6 +5,18 @@ Strangler migration from the v0.2.0 single-crate app to the v1.0 workspace
 green. This file is the running log: check off steps, record deviations, and
 note why any destructive change was made.
 
+## Current interpretation (2026-09-06)
+
+The numbered steps below retain dated history, including their historical
+LOC/test counts. ADR-0121's entity/feature-pane route is implemented; it does
+not imply `kagi-app`, `kagi-ui`, a universal worker dispatch path or zero-copy
+active-tab swapping exists. Do not resume S5 by mechanically creating crates.
+Settings, i18n and klog now live in `kagi-ui-core` with root re-exports.
+Current workspace/DAG/counts and explicit deferred ownership work are recorded
+in `docs/agent-loop/2026-09-astra-recovery/{AUDIT,METRICS}.md`.
+The recovery extends ADR-0149's mutation-owned logging for stash drop,
+history undo/redo and cleanup; guarded UI completion is presentation-only.
+
 ## Invariants held at every step
 - `cargo test --workspace` green.
 - Every v0.2.0 feature (`inventory.md` §2) and safety guarantee (`§3`) preserved.
@@ -28,11 +40,12 @@ note why any destructive change was made.
 - [x] **S4 — De-leak the UI** (ADR-0078). Done in 2 batches:
   - S4a (Codex): added `src/git/backend.rs` — a `Backend` handle owning git2::Repository with 98 delegating methods (git2-clean public API). Additive, green.
   - S4b (Codex): rewrote all ~82 `Repository::open` sites + every `plan_/execute_/git::` call across `src/ui/{mod,avatar_fetch,tabs,conflict_view,commit_panel,commands}.rs` onto `Backend`. **`grep -rE 'git2::|Repository::open' src/ui` = 0.** 635 tests green. CI grep gate added in `ci.yml`. (Crate-level enforcement — moving src/ui into a git2-free `kagi-ui` crate — lands with S6.)
-- [ ] **S5 — Introduce `kagi-app`.** `AppState`/`RepoSession`/`OperationController`; collapse active-vs-cache; `Selection` enum; `RepoMode`. *(Largest remaining structural item; deferred — best done with Codex + per-area review. The `Operation` enum from S3b and the `Backend` façade are its building blocks.)*
+- [ ] **S5 — Original `kagi-app` target, deferred.** `OperationController`, zero-copy active/cache ownership, `Selection` and `RepoMode` are not implemented. ADR-0121 chose entity/slot registration and stable feature-pane crates instead of this wholesale move. A later measured ownership batch must establish a concrete boundary and worker setting parity before reconsidering crate extraction.
 - [~] **S6 — Split the view.** Carve `ui/mod.rs` into per-feature modules; later collapse modals into `ActiveModal` + add view-models. Progress (`ui/mod.rs` 16,775 → 14,331 LOC):
   - [x] S6a (Codex): modal subsystem → `src/ui/modals.rs` (3,504 LOC; ~22 modal structs + ~24 render_*_modal fns).
   - [x] S6c (Claude): diff view-models + tree-sitter highlighter → `src/ui/diff_view.rs` (287 LOC).
-  - [ ] remaining: `render_commit_panel` (~1.1k LOC) → commit_panel.rs; KagiApp render methods → feature modules; `ActiveModal` enum; then move `src/ui` → `crates/kagi-ui` (no git2 dep) to make the invariant a compile error. *(Codex-suited; resumes when its quota resets.)*
+  - [x] Later slices: commit-panel rendering and KagiApp render methods moved into focused siblings; `ActiveModal` is structural (ADR-0093); UI-core and editor/file-history/ecosystem panes became crates (ADR-0121).
+  - [ ] Full `src/ui` → git2-free `kagi-ui` remains a target, not completed or the automatic next step. Root UI's direct-git prohibition remains enforced by the uv invariant gates.
 - [~] **S7 — Retire `KAGI_*`, add `ci.yml`, update README for v1.0.**
   - [x] `ci.yml` added: blocking `cargo test --workspace` (macOS) + UI-git2-free grep gate; advisory fmt/clippy + Linux test leg (pre-existing v0.2.0 lint debt).
   - [ ] retire `KAGI_*` headless harness (after S5/S6 make view-models testable); README v1.0 update.

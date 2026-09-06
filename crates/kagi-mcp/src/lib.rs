@@ -274,19 +274,47 @@ mod tests {
         resp["result"].clone()
     }
 
-    // #421: env-guarded because KAGI_LOG_DIR is process-global.
+    // Every test reading or writing the process-global oplog must hold this lock.
     static OPLOG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct OplogEnv {
+        previous: Option<std::ffi::OsString>,
+        _dir: tempfile::TempDir,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl OplogEnv {
+        fn new() -> Self {
+            // Drop restores the environment even after an assertion panics.
+            let guard = match OPLOG_ENV_LOCK.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("KAGI_LOG_DIR");
+            std::env::set_var("KAGI_LOG_DIR", dir.path());
+            Self {
+                previous,
+                _dir: dir,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for OplogEnv {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
+                None => std::env::remove_var("KAGI_LOG_DIR"),
+            }
+        }
+    }
 
     #[test]
     fn kagi_oplog_is_confined_to_the_bound_repo() {
         // A server bound to repo A must never surface repo B's operation log,
         // even though both live in the single global oplog file (#421).
-        let _guard = OPLOG_ENV_LOCK.lock().unwrap();
-        let base = tempfile::tempdir().unwrap();
-        let log_dir = base.path().join("logs");
-        std::fs::create_dir_all(&log_dir).unwrap();
-        let prev = std::env::var("KAGI_LOG_DIR").ok();
-        std::env::set_var("KAGI_LOG_DIR", log_dir.to_str().unwrap());
+        let _oplog = OplogEnv::new();
 
         let repo_a = temp_repo();
         let repo_b = temp_repo();
@@ -324,11 +352,6 @@ mod tests {
             !entries.iter().any(|e| e["op"] == "checkout-b"),
             "repo B's entry must NOT leak through A's server"
         );
-
-        match prev {
-            Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
-            None => std::env::remove_var("KAGI_LOG_DIR"),
-        }
     }
 
     #[test]
@@ -407,6 +430,7 @@ mod tests {
 
     #[test]
     fn read_tools_are_side_effect_free() {
+        let _oplog = OplogEnv::new();
         let dir = temp_repo();
         let mut s = Server::new(dir.path());
         let before = std::process::Command::new("git")
@@ -459,6 +483,7 @@ mod tests {
 
     #[test]
     fn confirm_executes_and_lands_in_oplog() {
+        let _oplog = OplogEnv::new();
         let dir = temp_repo();
         let mut s = Server::new(dir.path());
         let plan = call(

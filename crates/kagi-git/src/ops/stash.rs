@@ -662,23 +662,9 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
     let stash_count = stashes.len();
 
     let head_display = head.display();
-    let dirty_parts: Vec<String> = [
-        (!status.staged.is_empty()).then(|| format!("{} staged", status.staged.len())),
-        (!status.unstaged.is_empty()).then(|| format!("{} modified", status.unstaged.len())),
-        (!status.untracked.is_empty()).then(|| format!("{} untracked", status.untracked.len())),
-        (!status.conflicted.is_empty()).then(|| format!("{} conflicted", status.conflicted.len())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let dirty_display = if dirty_parts.is_empty() {
-        "clean".to_string()
-    } else {
-        dirty_parts.join(", ")
-    };
     let current = StateSummary {
         head: head_display.clone(),
-        dirty: dirty_display,
+        dirty: status_summary_display(&status),
     };
 
     let mut blockers: Vec<PlanNote> = Vec::new();
@@ -742,12 +728,17 @@ pub fn execute_stash_drop(repo: &mut Repository, index: usize) -> Result<String,
     let oid = collect_stash_entries_with_oid(repo)?
         .into_iter()
         .find(|(i, _, _)| *i == index)
-        .map(|(_, _, oid)| oid.to_string());
+        .map(|(_, _, oid)| oid.to_string())
+        .ok_or_else(|| {
+            GitError::Other(format!(
+                "stash@{{{index}}}: could not resolve its commit; not dropping"
+            ))
+        })?;
 
     repo.stash_drop(index)
         .map_err(|e| GitError::Other(format!("stash drop failed: {}", e.message())))?;
 
-    Ok(oid.unwrap_or_default())
+    Ok(oid)
 }
 
 // ────────────────────────────────────────────────────────────

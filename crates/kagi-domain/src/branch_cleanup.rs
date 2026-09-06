@@ -137,6 +137,34 @@ pub struct CleanupOutcome {
     pub failed: Vec<(String, String)>,
 }
 
+impl CleanupOutcome {
+    /// Describe deletions and failures, retaining full tip OIDs for recovery.
+    pub fn oplog_summary(&self) -> String {
+        use std::fmt::Write;
+
+        let mut summary = format!("deleted {} branch(es): ", self.deleted.len());
+        for (index, deleted) in self.deleted.iter().enumerate() {
+            if index > 0 {
+                summary.push_str("; ");
+            }
+            summary.push_str(&deleted.name);
+            if let Some(tip) = &deleted.local_tip {
+                let _ = write!(summary, " @{tip}");
+            }
+            if let Some(tip) = &deleted.remote_tip {
+                let _ = write!(summary, " origin@{tip}");
+            }
+        }
+        for (index, (name, reason)) in self.failed.iter().enumerate() {
+            if !self.deleted.is_empty() || index > 0 {
+                summary.push_str("; ");
+            }
+            let _ = write!(summary, "FAILED {name}: {reason}");
+        }
+        summary
+    }
+}
+
 impl BranchCleanupRow {
     /// The delete target for this row, or `None` for rows without a delete
     /// affordance (`MergedThenGrown` / stale-only) — so a caller physically

@@ -174,19 +174,22 @@ pub fn render_commit_row(
                     .truncate()
                     .child(model.subject.clone()),
             )
-            .child(fixed_col(
-                90.,
-                theme().text_sub,
-                false,
-                model.author.clone(),
-            ))
+            .child(
+                fixed_col(90., theme().text_sub, false, model.author.clone())
+                    .min_w(px(0.))
+                    .flex_shrink(1.),
+            )
             .child(fixed_col(
                 64.,
                 theme().text_muted,
                 false,
                 model.date_relative.clone(),
             ))
-            .child(fixed_col(72., theme().text_sub, false, model.stat.clone()))
+            .child(
+                fixed_col(72., theme().text_sub, false, model.stat.clone())
+                    .min_w(px(0.))
+                    .flex_shrink(1.),
+            )
             .child(fixed_col(
                 64.,
                 theme().text_muted,

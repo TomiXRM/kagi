@@ -244,29 +244,12 @@ impl KagiApp {
             }
         };
 
-        if let Err(e) = repo.preflight_check(&modal.plan) {
-            let err_msg = i18n::op_failed(i18n::Op::Preflight, e);
-            self.record_op(
-                &op_name,
-                modal.plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-                cx,
-            );
-            self.set_history_modal(HistoryPlanModal {
-                error: Some(SharedString::from(err_msg)),
-                ..modal
-            });
-            return;
-        }
-
-        let exec_res = if modal.is_undo {
-            repo.execute_undo(&modal.entry)
+        let direction = if modal.is_undo {
+            kagi_domain::plan_note::HistoryMoveDir::Undo
         } else {
-            repo.execute_redo(&modal.entry)
+            kagi_domain::plan_note::HistoryMoveDir::Redo
         };
+        let exec_res = repo.run_history_move(direction, &modal.plan, &modal.entry);
 
         match exec_res {
             Ok(outcome) => {
@@ -297,11 +280,15 @@ impl KagiApp {
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = format!(
-                    "{} failed: {}",
-                    if modal.is_undo { "Undo" } else { "Redo" },
-                    e
-                );
+                let err_msg = if e.is_preflight() {
+                    i18n::op_failed(i18n::Op::Preflight, e)
+                } else {
+                    format!(
+                        "{} failed: {}",
+                        if modal.is_undo { "Undo" } else { "Redo" },
+                        e
+                    )
+                };
                 self.record_op(
                     &op_name,
                     modal.plan.current.clone(),

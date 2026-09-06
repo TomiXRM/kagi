@@ -267,7 +267,7 @@ impl KagiApp {
             None => return,
         };
         if !modal.plan.blockers.is_empty() {
-            self.record_op_persist(
+            self.record_op(
                 "branch-cleanup",
                 modal.plan.current.clone(),
                 kagi_git::oplog::OpOutcome::Refused {
@@ -278,106 +278,86 @@ impl KagiApp {
             );
             return;
         }
-        if self.busy_op.is_some() {
+        if self.reject_if_busy(cx) {
             return;
         }
         self.busy_op = Some("branch-cleanup");
-
+        self.clear_branch_cleanup_modal();
         let bg_path = repo_path.clone();
         let plan = modal.plan.clone();
         let targets = modal.targets.clone();
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&bg_path)
-                .and_then(|b| b.execute_delete_merged_branches(&plan, &targets))
-        });
-
-        cx.spawn(async move |app, acx| {
-            let result = task.await;
-            let _ = app.update(acx, |app, cx| {
-                app.busy_op = None;
-                match result {
-                    Ok(outcome) => {
-                        klog!(
-                            "executed: branch-cleanup deleted={} failed={}",
-                            outcome.deleted.len(),
-                            outcome.failed.len()
-                        );
-                        app.clear_branch_cleanup_modal();
-                        // The oplog line carries every deleted tip OID — the
-                        // recovery contract (ADR-0128): restore with
-                        // `git branch <name> <oid>` / `git push origin <oid>:refs/heads/<name>`.
-                        let mut parts: Vec<String> = outcome
-                            .deleted
-                            .iter()
-                            .map(|d| {
-                                let mut s = d.name.clone();
-                                if let Some(l) = &d.local_tip {
-                                    s.push_str(&format!(" @{}", l.short()));
-                                }
-                                if let Some(r) = &d.remote_tip {
-                                    s.push_str(&format!(" origin@{}", r.short()));
-                                }
-                                s
-                            })
-                            .collect();
-                        for (name, reason) in &outcome.failed {
-                            parts.push(format!("FAILED {}: {}", name, reason));
-                        }
-                        let after = kagi_git::ops::StateSummary {
-                            head: modal.plan.current.head.clone(),
-                            dirty: format!(
-                                "deleted {} branch(es): {}",
-                                outcome.deleted.len(),
-                                parts.join("; ")
-                            ),
-                        };
-                        let outcome_kind = if outcome.failed.is_empty() {
-                            kagi_git::oplog::OpOutcome::Success { after }
-                        } else if outcome.deleted.is_empty() {
-                            kagi_git::oplog::OpOutcome::Failed {
-                                error: after.dirty.clone(),
-                            }
-                        } else {
-                            // Partial: record as success (the deletions are
-                            // real and recoverable) with the failures in-line.
-                            kagi_git::oplog::OpOutcome::Success { after }
-                        };
-                        app.record_op_persist(
-                            "branch-cleanup",
-                            modal.plan.current.clone(),
-                            outcome_kind,
-                            &repo_path,
-                            cx,
-                        );
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "branch-cleanup: {} deleted, {} failed",
-                            outcome.deleted.len(),
-                            outcome.failed.len()
-                        )));
-                        app.reload(cx);
+            let backend = match kagi_git::Backend::open(&bg_path) {
+                Ok(backend) => backend,
+                Err(error) => {
+                    // No backend exists to record this failed attempt. Persist
+                    // before returning across the tab-owned completion guard.
+                    let entry = kagi_git::oplog::OpLogEntry::new(
+                        "branch-cleanup",
+                        bg_path.display().to_string(),
+                        plan.current.clone(),
+                        kagi_git::oplog::OpOutcome::Failed {
+                            error: format!("branch-cleanup failed: {error}"),
+                        },
+                    );
+                    if let Err(e) = kagi_git::oplog::append_oplog(&entry) {
+                        klog!("oplog: write failed (non-fatal): {}", e);
                     }
-                    Err(e) => {
-                        // Global refusal (HEAD moved / repo open failure) —
-                        // nothing was deleted.
-                        let err_msg = i18n::op_failed(i18n::Op::Cleanup, e);
-                        app.record_op_persist(
-                            "branch-cleanup",
-                            modal.plan.current.clone(),
-                            kagi_git::oplog::OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        if let Some(m) = self_modal_with_error(&modal, &err_msg) {
-                            app.set_branch_cleanup_modal(m);
-                        }
-                    }
+                    return Err(error);
                 }
-                cx.notify();
-            });
-        })
-        .detach();
+            };
+            backend.execute_delete_merged_branches(&plan, &targets)
+        });
+        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
+            Ok(outcome) => {
+                klog!(
+                    "executed: branch-cleanup deleted={} failed={}",
+                    outcome.deleted.len(),
+                    outcome.failed.len()
+                );
+                let after = kagi_git::ops::StateSummary {
+                    head: modal.plan.current.head.clone(),
+                    dirty: outcome.oplog_summary(),
+                };
+                let outcome_kind = if !outcome.failed.is_empty() && outcome.deleted.is_empty() {
+                    kagi_git::oplog::OpOutcome::Failed {
+                        error: after.dirty.clone(),
+                    }
+                } else {
+                    kagi_git::oplog::OpOutcome::Success { after }
+                };
+                // The backend already persisted the full recovery OIDs. This
+                // callback is presentation-only and may be dropped on tab switch.
+                app.record_op(
+                    "branch-cleanup",
+                    modal.plan.current.clone(),
+                    outcome_kind,
+                    &repo_path,
+                    cx,
+                );
+                app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    "branch-cleanup: {} deleted, {} failed",
+                    outcome.deleted.len(),
+                    outcome.failed.len()
+                )));
+                app.reload(cx);
+            }
+            Err(e) => {
+                let err_msg = i18n::op_failed(i18n::Op::Cleanup, e);
+                app.record_op(
+                    "branch-cleanup",
+                    modal.plan.current.clone(),
+                    kagi_git::oplog::OpOutcome::Failed {
+                        error: err_msg.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                if let Some(m) = self_modal_with_error(&modal, &err_msg) {
+                    app.set_branch_cleanup_modal(m);
+                }
+            }
+        });
     }
 }
 

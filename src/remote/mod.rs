@@ -421,13 +421,33 @@ pub fn remote_stash_drop(
     host: &RemoteHost,
     repo: &str,
     index: usize,
+    before: &kagi_git::StateSummary,
 ) -> Result<String, RemoteError> {
     let stash_ref = format!("stash@{{{index}}}");
-    let stdout = run_checked(
+    let result = run_checked(
         host,
         &["git", "-C", repo, "stash", "drop", stash_ref.as_str()],
-    )?;
-    Ok(stdout.trim().to_string())
+    )
+    .map(|stdout| stdout.trim().to_string());
+    let outcome = match &result {
+        Ok(summary) => kagi_git::oplog::OpOutcome::Success {
+            after: kagi_git::StateSummary {
+                head: before.head.clone(),
+                // Git's output includes the full dropped commit OID.
+                dirty: summary.clone(),
+            },
+        },
+        Err(error) => kagi_git::oplog::OpOutcome::Failed {
+            error: error.to_string(),
+        },
+    };
+    let scope = format!("{}:{repo}", host.label());
+    let entry =
+        kagi_git::oplog::OpLogEntry::new("stash-drop", scope.clone(), before.clone(), outcome)
+            .with_worktree(Some(scope));
+    // Persist before returning across the UI lifecycle boundary.
+    let _ = kagi_git::oplog::append_oplog(&entry);
+    result
 }
 
 /// Pull the current branch of the remote repository over SSH (ADR-0089 Phase 3).

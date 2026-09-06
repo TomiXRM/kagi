@@ -48,6 +48,14 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/operations.rs"]
+mod recovery_operations;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/layout.rs"]
+mod recovery_layout;
+
+#[cfg(target_os = "macos")]
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -63,8 +71,49 @@ mod macos {
         ToggleBottomPanel,
     };
 
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+        fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+    }
+
+    /// The offscreen runner has no AppKit event loop to drain native windows.
+    /// MacWindow::drop queues close/autorelease; drain while GPUI is still alive
+    /// so native frame callbacks release their captured InputState entities.
+    struct NativeAutoreleasePool(*mut std::ffi::c_void);
+
+    impl NativeAutoreleasePool {
+        fn new() -> Self {
+            Self(unsafe { objc_autoreleasePoolPush() })
+        }
+    }
+
+    impl Drop for NativeAutoreleasePool {
+        fn drop(&mut self) {
+            // Created and drained on this runner's macOS main thread.
+            unsafe { objc_autoreleasePoolPop(self.0) };
+        }
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+        fn CFRunLoopRunInMode(
+            mode: *const std::ffi::c_void,
+            seconds: f64,
+            return_after_source: u8,
+        ) -> i32;
+    }
+
+    fn drain_native_events() {
+        // MacWindow closes on MacPlatform's native executor, not TestDispatcher.
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, 0);
+        }
+    }
+
     /// `git` with a deterministic identity + no user-config bleed-through.
-    fn git(dir: &Path, args: &[&str]) {
+    pub(super) fn git(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
             .current_dir(dir)
             .args(args)
@@ -80,7 +129,7 @@ mod macos {
     }
 
     /// A throwaway repo with two commits on `main`.
-    fn build_fixture() -> tempfile::TempDir {
+    pub(super) fn build_fixture() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"]);
@@ -252,7 +301,7 @@ mod macos {
     /// Mount the real `KagiApp` offscreen against `repo_path`, settle the first
     /// frame, and hand back the captured entity + window handle. Mirrors the
     /// PoC mount (ADR-0166) so every scenario builds the root identically.
-    fn mount(
+    pub(super) fn mount(
         cx: &mut VisualTestAppContext,
         repo_path: &Path,
     ) -> (Entity<KagiApp>, AnyWindowHandle) {
@@ -270,7 +319,7 @@ mod macos {
     }
 
     /// `git rev-parse HEAD` + porcelain status, for the no-mutation assertion.
-    fn repo_fingerprint(dir: &Path) -> (String, String) {
+    pub(super) fn repo_fingerprint(dir: &Path) -> (String, String) {
         let head = Command::new("git")
             .current_dir(dir)
             .args(["rev-parse", "HEAD"])
@@ -317,7 +366,18 @@ mod macos {
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
+        let native_pool = NativeAutoreleasePool::new();
         cx.update(e2e::init_app);
+        crate::recovery_operations::scenario_stash_drop_persists(&mut cx);
+        crate::recovery_operations::scenario_history_persists(&mut cx);
+        crate::recovery_operations::scenario_cleanup_stale_tab(&mut cx);
+        crate::recovery_operations::scenario_preflight_presentation(&mut cx);
+        crate::recovery_operations::scenario_cleanup_open_failure(&mut cx);
+        crate::recovery_layout::scenario_commit_row_layout(&mut cx);
+        let history_fixture = build_fixture();
+        let history_before = repo_fingerprint(history_fixture.path());
+        crate::recovery_layout::scenario_editor_history_layout(&mut cx, history_fixture.path());
+        assert_eq!(history_before, repo_fingerprint(history_fixture.path()));
 
         scenario_bottom_panel(&mut cx);
         scenario_graph_copy(&mut cx, log_dir.path());
@@ -329,6 +389,11 @@ mod macos {
         scenario_worktree_wip_inline(&mut cx);
         scenario_worktree_panel_commit(&mut cx);
         scenario_worktree_panel_amend_discard(&mut cx);
+        cx.run_until_parked();
+        drain_native_events();
+        drop(native_pool);
+        cx.update(|_| {});
+        cx.run_until_parked();
 
         eprintln!("[gui-e2e] PASS all scenarios");
         0
@@ -996,9 +1061,9 @@ mod macos {
     /// second worktree are untouched; the newest oplog entry (in-memory panel
     /// AND the persisted log `Backend::run` writes) is `commit` against the
     /// WORKTREE's path; the open tab's graph gained the new commit (shared refs
-    /// + the post-commit re-snapshot); the committed worktree's WIP row is gone
+    /// and the post-commit re-snapshot); the committed worktree's WIP row is gone
     /// while the surviving rows keep their own lanes (the `WipTarget` keying);
-    /// and amend / discard-all are still refused with both trees unchanged.
+    /// and the tab's Undo does not point at the worktree's new commit.
     fn scenario_worktree_panel_commit(cx: &mut VisualTestAppContext) {
         let (_fixture, repo_path, wt_a, wt_b) = build_two_worktree_fixture();
         let repo_fp = repo_fingerprint(&repo_path);

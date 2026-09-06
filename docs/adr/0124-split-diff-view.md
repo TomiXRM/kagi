@@ -33,9 +33,28 @@ unified と side-by-side(横並べ 2 カラム)の両方を提供する(ユー�
    `render_diff_list` のヘッダ(全埋め込み先に共通で出る)。
    トグル時に `[kagi] diff-mode: split|unified`、起動時に
    `[kagi] diff_split: <bool>` を klog。
-4. ペアリングは表示中 diff の再 render ごとに O(rows) の index Vec を
-   1 本作るだけ(内容は共有)。`ListState` の行数はモードで変わり、既存の
-   count-sync が reset(先頭へ)する。
+4. **派生レイアウトは不変の行所有権で再利用する**(2026-09-06 recovery)。
+   `split_projection(&Arc<Vec<DiffRow>>)` がペア列と moved-row 集合を一緒に
+   保持する。旧来の title + row count キーは同名・同サイズの別内容を
+   区別できず、ペア列も毎 frame 再構築していたため置き換えた。
+   選択範囲のキーとは分離し、選択・コピーの挙動は変えない。
+   `ListState` のモード切替時の count-sync/reset は従来どおり。
+
+### 派生 cache の所有・上限
+
+- 既存の単一 cache を置換する。キーは元の行 Arc への Weak。内容を複製・
+  強参照せず、アドレス再利用や `Arc::make_mut` 後の古い派生を防ぐ。
+- FIFO 8 entries を維持し、capacity ベースの保守的な派生 allocation 予算
+  8 MiB を追加する。死んだ source は除去し、予算を超える1件は返すだけで
+  保持しない。描画中の所有分と元の行データはこの保持予算の対象外。
+- PR Conflicts は毎 render 行 Arc を作っていた唯一の既知の生成元だった。
+  同じ cutover で、読み込んだ1ファイルの preview を PrTab が所有する。
+  raw marker text と派生行を二重保持しない。選択・入力変更で置換し、
+  言語・テーマ変更は copy-on-write で更新して古い描画 snapshot を保つ。
+- 実測: 32768行の warm 101 render でペア再構築101回から0回、中央値
+  885042nsから42ns。cold は依然 O(rows)。数値・試行条件と小さい時間の
+  解釈上の注意は `docs/agent-loop/2026-09-astra-recovery/METRICS.md` を参照。
+  新しい依存 crate は不要。
 
 ## 非目標
 

@@ -565,21 +565,21 @@ pub(crate) fn stash_drop_blocking(
     plan: &OperationPlan,
     stash_index: usize,
 ) -> Result<(String, StateSummary), String> {
-    // StashDrop is not yet an Operation variant (drop is admin-only and goes
-    // through execute_stash_drop directly); we run preflight_check_stash inline
-    // here with the same two-axis guard (HEAD + stash count) that run() uses
-    // for StashPop/StashApply. When StashDrop joins Operation, this becomes a
-    // plain run() call.
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    repo.preflight_check_stash(plan, plan.stash_count_at_plan())
-        .map_err(|e| i18n::op_failed(i18n::Op::Preflight, e))?;
+    use i18n::Op::{Drop, Preflight};
 
-    let dropped_oid = repo
-        .execute_stash_drop(stash_index)
-        .map_err(|e| i18n::op_failed(i18n::Op::Drop, e))?;
-    eprintln!(
-        "[kagi] executed: stash-drop index={} oid={}",
-        stash_index, dropped_oid
+    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    // run owns preflight and durable recovery recording, even if the UI tab
+    // disappears before the completion callback can present the result.
+    let outcome = repo
+        .run(&kagi_git::Operation::StashDrop { index: stash_index }, plan)
+        .map_err(|e| i18n::op_failed(if e.is_preflight() { Preflight } else { Drop }, e))?;
+    let kagi_git::OperationOutcome::StashDrop { oid: dropped_oid } = outcome else {
+        return Err("unexpected stash-drop outcome".to_string());
+    };
+    klog!(
+        "executed: stash-drop index={} oid={}",
+        stash_index,
+        dropped_oid
     );
 
     let after = StateSummary {

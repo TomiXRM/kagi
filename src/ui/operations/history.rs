@@ -328,31 +328,35 @@ impl KagiApp {
             }
             None => String::new(),
         };
-        self.open_amend_modal_with_message(mode, message);
+        self.open_amend_modal_with_message(mode, message, cx);
     }
 
-    /// Build an amend plan from an explicit `message` (no `Context` needed).
-    /// Used by the headless `KAGI_AMEND` path and by [`open_amend_modal`].
-    pub fn open_amend_modal_with_message(&mut self, mode: AmendMode, message: String) {
-        let _repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
+    /// Build an amend plan from an explicit `message`.
+    ///
+    /// #476 slice 3: plans against `commit_panel_repo_path` — the PANEL's
+    /// repository, so an amend dispatched from a linked worktree's panel
+    /// rewrites that worktree's HEAD, not the tab's. (`with_commit_panel_repo`
+    /// still borrows ADR-0107's per-tab `RepoSession` for the tab's own panel.)
+    pub fn open_amend_modal_with_message(
+        &mut self,
+        mode: AmendMode,
+        message: String,
+        cx: &gpui::App,
+    ) {
+        let msg_opt = if message.trim().is_empty() {
+            None
+        } else {
+            Some(message.as_str())
         };
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_amend(mode, msg_opt)) {
+            Some(p) => p,
             None => {
                 self.status_footer =
                     FooterStatus::Failed(SharedString::from("amend: repo session unavailable"));
                 return;
             }
         };
-        let msg_opt = if message.trim().is_empty() {
-            None
-        } else {
-            Some(message.as_str())
-        };
-        match repo.plan_amend(mode, msg_opt) {
+        match planned {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: amend mode={:?} blockers={} warnings={} destructive={}",
@@ -390,7 +394,8 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let repo_path = match self.repo_path.clone() {
+        // #476 slice 3: amend the PANEL's repository (see `start_amend`).
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
@@ -497,7 +502,11 @@ impl KagiApp {
                 );
                 // T-UNDOREDO-001: undo of an amend moves the branch from the new
                 // commit back to the pre-amend commit (still in the reflog).
-                if let Some((branch, _)) = self.head_branch_and_sha() {
+                // #476 slice 3: only when the amend ran in the TAB's repository.
+                if let (false, Some((branch, _))) = (
+                    self.undo_skipped_for_foreign("amend", &repo_path),
+                    self.head_branch_and_sha(),
+                ) {
                     self.record_history(
                         kagi_git::OperationKind::Amend,
                         &branch,
@@ -512,6 +521,7 @@ impl KagiApp {
                     outcome.new.short(),
                     outcome.old.short()
                 )));
+                self.refresh_worktree_wip_row(&repo_path);
                 self.reload(cx);
             }
             Ok(_) => {
@@ -546,7 +556,12 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let repo_path = match self.repo_path.clone() {
+        // #476 slice 3: amend the PANEL's repository — a linked worktree's, when
+        // the panel shows one. Bound once, like `start_commit`: the background
+        // `amend_blocking` (whose `Backend::run` writes the persisted oplog
+        // against this path), `record_op`, the undo rule and the WIP-row
+        // refresh all follow from it.
+        let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
@@ -590,6 +605,11 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let mode = modal.mode;
         let message = modal.message.clone();
+        // #476 slice 3: the tab's undo stack only learns about an amend that
+        // rewrote the TAB's branch — `head_branch_and_sha` reads the tab's HEAD,
+        // so a worktree amend recorded here would point Cmd+Z at the wrong
+        // branch. (This is the entry `confirm_amend`, the sync twin, records.)
+        let skip_undo = self.undo_skipped_for_foreign("amend", &repo_path);
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_msg = message.clone();
@@ -605,12 +625,25 @@ impl KagiApp {
                     &repo_path,
                     cx,
                 );
+                if let (false, Some((branch, _))) = (skip_undo, app.head_branch_and_sha()) {
+                    app.record_history(
+                        kagi_git::OperationKind::Amend,
+                        &branch,
+                        old.clone(),
+                        new.clone(),
+                        format!("amend {} → {}", old.short(), new.short()),
+                    );
+                }
                 app.status_footer = FooterStatus::Success(SharedString::from(format!(
                     "amend: {} → {} (restore: git reset --hard {})",
                     old.short(),
                     new.short(),
                     old.short()
                 )));
+                // #476: the worktree's WIP row goes clean in place, then
+                // `reload` re-snapshots the OPEN tab, which shares the ODB and
+                // refs and so must show the rewritten commit.
+                app.refresh_worktree_wip_row(&repo_path);
                 app.reload(cx);
             }
             Err(err_msg) => {

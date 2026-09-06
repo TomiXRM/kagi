@@ -191,3 +191,39 @@ Final post-hook AST collection again found113 fields,64 impls across51 files,
 442 cx.notify sites and50 >800-line Rust files (41 source-only). The native
 runner is927→992 LOC; the complete unchanged membership and changed lengths
 are in AUDIT.md. Manifests, lock and LOC ratchet remain byte-identical.
+
+## PR #481 integration verification
+
+This is a later, user-requested merge of main
+`b3bf0e4b49f13657412364ccebbe887a8b3860ec` into dev
+`8401c16f89204a97af0b26a1db9ff76f625275df`, not a rerun of the original
+performance audit. Incoming main includes #479/#480 and their existing LOC
+baseline changes; conflict resolution did not raise any ceiling.
+
+The native runner retains both parents' scenarios and runs main's two worktree
+scenarios before dev's native teardown. No assertion or scenario was removed.
+`KAGI_GUI_E2E=1 KAGI_NO_RESTORE=1 KAGI_NO_SINGLE_INSTANCE=1 LEAK_BACKTRACE=""`
+with `cargo test -p kagi --test gui_e2e_runner -- --nocapture` exited0 in
+**327.51s**, including normal teardown and `PASS all scenarios`.
+
+The first GUI-enabled workspace command exceeded the temporary measurement
+wrapper's900s limit. Its log eventually reached `PASS all scenarios`, but its
+lost exit status is not accepted as a successful suite. Native verification
+above and the normal workspace suite below were therefore completed separately:
+
+| Command | Exit | Seconds |
+|---|---:|---:|
+| `cargo fmt --all -- --check` |0|1.036|
+| `cargo build --workspace` |0|52.611|
+| `cargo test --workspace` (`KAGI_GUI_E2E` unset; native run separately) |0|366.494|
+| `uv run --project ci check-all` |0|0.389|
+| `cargo clippy --workspace --all-targets` |0|72.297|
+
+Workspace totals: **1868 passed /0 failed /30 existing ignores**,95 result
+summaries. Clippy initially found two documentation-list warnings in incoming
+runner comments. Correcting the accidental `+` list marker and its stale
+refusal description changed no executable code. Final fmt/check/clippy rerun
+exited0 in43.17s (artifact://230); only the13 previously located diagnostics
+remain. Logs/JSON: `/tmp/kagi-astra-recovery-evidence/merge-main-481-suite-*`;
+native result: `merge-main-481-native.json`. Original recovery timings and
+counts above still describe its earlier checkpoint, not this merged tree.

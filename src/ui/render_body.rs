@@ -11,6 +11,19 @@ use super::render_helpers::*;
 use super::workspace::WorkspaceItem;
 use super::*;
 
+/// One WIP row's render parameters: its [`graph_wip::WipTarget`] key (#476 —
+/// what its connector lane is looked up by), lane colour index, chip label,
+/// change count, diffstat, click action, and whether to draw the worktree glyph.
+type WipRowParams = (
+    graph_wip::WipTarget,
+    usize,
+    SharedString,
+    usize,
+    Option<WipDiffStat>,
+    WipRowClick,
+    bool,
+);
+
 impl KagiApp {
     /// Body slot — the main content area: sidebar | divider | commit list | optional panel.
     ///
@@ -90,18 +103,13 @@ impl KagiApp {
                 .unwrap_or(false);
             let worktrees = &self.active_view.worktrees;
             let cur_idx = worktrees.iter().position(|w| w.is_current);
-            // NOTE (#472): this list must stay row-for-row identical to
-            // `graph_wip::wip_targets`, which derives the same WIP rows from
-            // the snapshot — `active_view.wip_lanes` is matched to it by
-            // position.
-            let mut params: Vec<(
-                usize, // lane colour index
-                SharedString,
-                usize,
-                Option<WipDiffStat>,
-                WipRowClick,
-                bool, // is_worktree → 🌲 vs ✏️
-            )> = Vec::new();
+            // NOTE (#472/#476): each row carries the same `WipTarget` key
+            // `graph_wip::wip_targets` derives from the snapshot, and looks its
+            // connector lane up by that key. The two lists no longer have to
+            // agree row-for-row — a worktree that has been committed (and so is
+            // clean) simply drops out here and finds no lane, instead of
+            // shifting every row below it onto the wrong lane and colour.
+            let mut params: Vec<WipRowParams> = Vec::new();
 
             // Open-repo row: ALWAYS driven by the live working-tree status (kept
             // fresh by the watcher), independent of whether a worktree entry was
@@ -121,6 +129,7 @@ impl KagiApp {
                     })
                     .unwrap_or_else(|| "WIP".to_string());
                 params.push((
+                    graph_wip::WipTarget::Current,
                     color_idx,
                     SharedString::from(label),
                     live_total,
@@ -144,6 +153,7 @@ impl KagiApp {
                 let label =
                     SharedString::from(wt.branch.clone().unwrap_or_else(|| wt.name.clone()));
                 params.push((
+                    graph_wip::WipTarget::Worktree(idx),
                     idx,
                     label,
                     wip.total(),
@@ -160,14 +170,15 @@ impl KagiApp {
             // #472: each row gets its own connector lane plus the lanes of the
             // rows above it, whose connectors pass straight through — the same
             // accumulation the stash rows do with `passing_lanes`.
-            let wip_lanes = self.active_view.wip_lanes.clone();
+            let row_targets: Vec<graph_wip::WipTarget> = params.iter().map(|p| p.0).collect();
+            let wip_lanes = graph_wip::lanes_for_rows(&self.active_view.wip_lanes, &row_targets);
             let graph_scroll_x = self.graph_scroll_x;
             let mut passing: Vec<(usize, usize)> = Vec::new();
             let mut rows: Vec<gpui::AnyElement> = Vec::with_capacity(params.len());
-            for (i, (color_idx, label, count, ds, click, is_worktree)) in
+            for (i, (_, color_idx, label, count, ds, click, is_worktree)) in
                 params.into_iter().enumerate()
             {
-                let lane = wip_lanes.get(i).copied().flatten();
+                let lane = wip_lanes[i];
                 rows.push(self.render_wip_row(
                     color_idx,
                     label,

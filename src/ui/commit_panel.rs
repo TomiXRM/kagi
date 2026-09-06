@@ -462,10 +462,9 @@ pub struct CommitPanelView {
     /// issue #473: `Some((worktree label, lane colour index))` when this panel
     /// shows a **linked worktree** rather than the open tab's repository. It
     /// names the worktree in the header, in the WIP row's own colour. #476
-    /// slice 1: stage/unstage write into that worktree, so their controls are
-    /// live; commit / amend / Discard all still resolve the tab's repository,
-    /// so those are hidden here (and refused by
-    /// `KagiApp::refuse_foreign_panel_write`). Set by `open_commit_panel_at`.
+    /// slices 1–3: every write op — stage/unstage, commit, amend, discard —
+    /// resolves this panel's `repo_path`, so all of its controls are live and
+    /// the destructive confirms name this label. Set by `open_commit_panel_at`.
     pub foreign: Option<(SharedString, usize)>,
 }
 
@@ -682,13 +681,20 @@ impl CommitPanelView {
                     acx.background_executor()
                         .timer(std::time::Duration::from_millis(250))
                         .await;
-                    let branch = weak_app
+                    let tab_branch = weak_app
                         .read_with(acx, |app, _| app.active_view.status_summary.branch.clone())
                         .unwrap_or_default();
                     let _ = this.update(acx, |view, _cx| {
                         if view.draft_save_gen != gen {
                             return;
                         }
+                        // #476: key the draft by the PANEL's repo path (already
+                        // captured above) AND its branch — a worktree panel is
+                        // on the worktree's branch, not the tab's.
+                        let branch = crate::ui::worktree_wip::draft_branch(
+                            view.foreign.as_ref().map(|(l, _)| l.as_ref()),
+                            &tab_branch,
+                        );
                         let msg = view.last_draft_value.clone();
                         if msg.trim().is_empty() {
                             let _ = kagi_git::clear_draft(&repo_path, &branch);

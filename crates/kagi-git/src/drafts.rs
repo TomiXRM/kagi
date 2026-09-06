@@ -421,6 +421,22 @@ mod tests {
         );
     }
 
+    /// #476: a commit panel pointed at a linked worktree saves its draft under
+    /// that worktree's path. The key is `sha1(repo_path \0 branch)`, so the
+    /// same branch name in two repositories can never share a draft file —
+    /// which is what keeps a worktree panel's message out of the open tab's.
+    #[test]
+    fn draft_key_includes_the_repo_path() {
+        let a = draft_file_path(Path::new("/repo"), "main").expect("path a");
+        let b = draft_file_path(Path::new("/repo/../wt"), "main").expect("path b");
+        assert_ne!(a, b, "same branch, different repos must not share a draft");
+        // …and the branch still separates two drafts within one repository.
+        let c = draft_file_path(Path::new("/repo"), "feat").expect("path c");
+        assert_ne!(a, c);
+        // Same inputs → same file (the load side must find what save wrote).
+        assert_eq!(a, draft_file_path(Path::new("/repo"), "main").unwrap());
+    }
+
     // ── JSON round-trip / escaping ─────────────────────────────
 
     #[test]

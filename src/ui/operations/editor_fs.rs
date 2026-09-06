@@ -395,7 +395,12 @@ impl KagiApp {
             EditorTreeAction::History(path) => self.open_file_history(path, None, cx),
             EditorTreeAction::Stage(path) => self.do_stage_file_by_path(path, cx),
             EditorTreeAction::Unstage(path) => self.do_unstage_file_by_path(path, cx),
-            EditorTreeAction::Discard(path) => self.open_discard_modal_for_path(path, cx),
+            // #476 slice 3: the tree lists the TAB's files (like `Stage` /
+            // `Unstage` above, which resolve `self.repo_path`), so its discard
+            // must too — never a commit panel that happens to show a worktree.
+            EditorTreeAction::Discard(path) => {
+                self.open_discard_modal_for_path(path, worktree_wip::WriteOrigin::EditorTree, cx)
+            }
             EditorTreeAction::AddGitignore(path) => self.add_editor_gitignore(&path, cx),
             EditorTreeAction::NewFile(base) => {
                 self.open_editor_fs_prompt(EditorFsPromptKind::NewFile, base, String::new(), cx)

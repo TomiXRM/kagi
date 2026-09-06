@@ -56,10 +56,6 @@ fn render_cp_file_row(
     indent: f32,
     stat: Option<&kagi_git::FileDiffStat>,
     convention: bool,
-    // #476: false on a linked-worktree panel — Stage/Unstage now write into
-    // the panel's own repository, but Discard still resolves the tab's, so
-    // only the file context menu (which is Discard) stays hidden there.
-    can_discard: bool,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::Stateful<gpui::Div> {
     let (row_id, btn_id, conflict_id) = match (staged, tree) {
@@ -164,7 +160,9 @@ fn render_cp_file_row(
                 .child(SharedString::from("Conflict")),
         );
     }
-    if !staged && can_discard {
+    // #476 slice 3: offered on a linked worktree's panel too — Discard resolves
+    // the panel's own repository now, and its confirm names that worktree.
+    if !staged {
         // W17-DISCARD / ADR-0083: right-click opens the file context menu
         // (Discard lives there). Tracked rows are restored from the index;
         // untracked rows are deleted (after an ODB backup).
@@ -335,7 +333,6 @@ fn cp_unstaged_file_element(
             0.0,
             panel.unstaged_stat(&f.path),
             is_convention(&f.path),
-            view.foreign.is_none(),
             cx,
         )
         .into_any_element(),
@@ -372,7 +369,6 @@ fn cp_staged_file_element(
             0.0,
             panel.staged_stat(&f.path),
             is_convention(&f.path),
-            view.foreign.is_none(),
             cx,
         )
         .into_any_element(),
@@ -493,7 +489,6 @@ pub(crate) fn render_unstaged_tree_row(
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.unstaged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
-                    view.foreign.is_none(),
                     cx,
                 )
                 .into_any_element(),
@@ -559,7 +554,6 @@ pub(crate) fn render_staged_tree_row(
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.staged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
-                    view.foreign.is_none(),
                     cx,
                 )
                 .into_any_element(),
@@ -815,14 +809,11 @@ impl CommitPanelView {
         let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
         let staged_scroll_handle = self.staged_scroll_handle.clone();
 
-        // #476: a panel showing a LINKED WORKTREE stages into that worktree, so
-        // Stage all / Unstage all / the per-row buttons are live here. Commit,
-        // amend and Discard all still resolve their repository from the open
-        // tab, so those stay hidden and the footer says so.
-        // (`KagiApp::refuse_foreign_panel_write` is the real guard; this is the
-        // UI half.) Slices 2–3 convert the rest.
+        // #476 slice 3: every commit-panel write — stage, commit, amend,
+        // discard — now resolves the PANEL's repository, so nothing is hidden
+        // on a linked worktree's panel any more. `foreign` is left as what it
+        // always was underneath: the header chip's label + lane colour.
         let foreign = self.foreign.clone();
-        let writable = foreign.is_none();
         let tree_view = panel.tree_view;
         let unstaged_count = panel.unstaged.len();
         let staged_count = panel.staged.len();
@@ -934,7 +925,7 @@ impl CommitPanelView {
                 )
             })
             // W17-DISCARD: "Discard all" — disabled (muted, no handler) at 0 targets.
-            .when(writable && unstaged_count > 0, |el| {
+            .when(unstaged_count > 0, |el| {
                 let discard_all_click = cx.listener(
                     |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
                         view.defer_open_discard_all(window, cx);
@@ -1174,6 +1165,8 @@ impl CommitPanelView {
                 .gap_1()
                 .child(suggest_btn)
                 .child(coauthor_btn)
+                // #476 slice 3: amend resolves the panel's repository, so it is
+                // offered on a worktree panel too — the confirm names it.
                 .child(amend_btn);
 
             div()
@@ -1416,58 +1409,43 @@ impl CommitPanelView {
                             }),
                     ),
             )
-            // #476: a worktree panel replaces the whole commit footer with one
-            // line — staging is live (see "Stage all"), but commit still
-            // resolves the open tab's repository, so it needs the worktree open.
-            .when(!writable, |el| {
-                el.child(
-                    div()
-                        .flex_shrink_0()
-                        .px_3()
-                        .py_2()
-                        .bg(rgb(theme().surface))
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(Msg::WorktreePanelReadOnly.t())),
-                )
-            })
             // Commit footer: subject + body, icon actions, commit button.
-            .when(writable, |el| {
-                el.child(
-                    div()
-                        .flex_shrink_0()
-                        .flex()
-                        .flex_col()
-                        .px_3()
-                        .py_2()
-                        .gap_2()
-                        .bg(rgb(theme().surface))
-                        // Subject + body (the icon actions live inside the body box)
-                        .child(msg_inputs)
-                        // Transient smart-commit status. Its own full-width line:
-                        // inside the right-aligned icon group it pushed the icons
-                        // sideways as the text appeared (user report).
-                        .when_some(smart.status.clone(), |el, status| {
-                            el.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_muted))
-                                    .child(SharedString::from(status)),
-                            )
-                        })
-                        // Unstaged warning
-                        .when(has_unstaged_warning, |el| {
-                            el.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme().color_warning))
-                                    .child(SharedString::from(i18n::unstaged_not_included(
-                                        unstaged_count,
-                                    ))),
-                            )
-                        })
-                        .child(commit_btn),
-                )
-            })
+            // #476 slices 2–3: shown on a worktree panel too — every control in
+            // it writes into that worktree.
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .px_3()
+                    .py_2()
+                    .gap_2()
+                    .bg(rgb(theme().surface))
+                    // Subject + body (the icon actions live inside the body box)
+                    .child(msg_inputs)
+                    // Transient smart-commit status. Its own full-width line:
+                    // inside the right-aligned icon group it pushed the icons
+                    // sideways as the text appeared (user report).
+                    .when_some(smart.status.clone(), |el, status| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .child(SharedString::from(status)),
+                        )
+                    })
+                    // Unstaged warning
+                    .when(has_unstaged_warning, |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(theme().color_warning))
+                                .child(SharedString::from(i18n::unstaged_not_included(
+                                    unstaged_count,
+                                ))),
+                        )
+                    })
+                    .child(commit_btn),
+            )
     }
 }

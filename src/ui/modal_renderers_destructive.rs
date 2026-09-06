@@ -19,6 +19,7 @@ use super::modal_shell::{
 };
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
+use super::worktree_wip;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
@@ -57,6 +58,11 @@ pub(crate) fn render_amend_modal(
     // #454: scroll handle for the folded-file `uniform_list` (owned by
     // `KagiApp` so the position survives re-renders while the modal is open).
     list_scroll: gpui::UniformListScrollHandle,
+    // #476 slice 3: the commit panel's worktree chip label when the amend will
+    // rewrite a LINKED WORKTREE's history. A history rewrite must never be
+    // ambiguous about which repository it rewrites, and the panel header behind
+    // the modal's backdrop is not an answer.
+    worktree: Option<SharedString>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let armed = modal.confirm_armed;
@@ -102,7 +108,10 @@ pub(crate) fn render_amend_modal(
                 .flex_1()
                 .min_w(gpui::px(0.))
                 .child(render_modal_title_row(
-                    SharedString::from(plan_title_text(&plan.title)),
+                    SharedString::from(worktree_wip::worktree_modal_title(
+                        &plan_title_text(&plan.title),
+                        worktree.as_deref(),
+                    )),
                     Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
                 )),
         );
@@ -345,6 +354,9 @@ pub(crate) fn render_discard_modal(
     // #454: scroll handle for the target-file `uniform_list` ("Discard all" is
     // the biggest list in the app, so it is virtualized like amend's).
     list_scroll: gpui::UniformListScrollHandle,
+    // #476 slice 3: the commit panel's worktree chip label when the discard
+    // will destroy a LINKED WORKTREE's working-tree content.
+    worktree: Option<SharedString>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let plan = modal.plan.clone();
@@ -379,11 +391,20 @@ pub(crate) fn render_discard_modal(
         }
     });
 
-    let title = if modal.is_all {
-        format!("Discard all changes ({})", target_count)
-    } else {
-        plan_title_text(&plan.title)
+    // #476 slice 3: only a commit-panel discard follows the panel — an Editor
+    // Workspace discard runs in the tab, so naming a worktree would be a lie.
+    let worktree = match modal.origin {
+        worktree_wip::WriteOrigin::CommitPanel => worktree,
+        worktree_wip::WriteOrigin::EditorTree => None,
     };
+    let title = worktree_wip::worktree_modal_title(
+        &if modal.is_all {
+            format!("Discard all changes ({})", target_count)
+        } else {
+            plan_title_text(&plan.title)
+        },
+        worktree.as_deref(),
+    );
 
     // ── Target file list (virtualized + scrollable) ─────────
     // #454: "Discard all changes (487)" is the biggest list in the app, so this

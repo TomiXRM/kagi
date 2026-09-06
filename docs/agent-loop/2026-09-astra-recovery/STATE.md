@@ -1,5 +1,8 @@
 # Recovery state
 
+The recovery checkpoint below predates PR #481 publication. The latest
+user-requested integration is recorded in the final section.
+
 - Objective: execute the original `request.md` in `/Users/tomixrm/Dev/sandbox/git-client`; complete 2–5 independently verified local commits, not a wholesale rewrite. Preserve the safety pipeline, tests and LOC ratchet. No push, release, tags, authentication-dependent operations or writes to real repositories for testing.
 - Start HEAD: `5f7a4c80618d270010a1360a4c4a062c75147be5`.
 - Original branch: `main`; original status: `?? request.md`. Remote default is `main`; `master` does not exist. Treat user's `master` as the actual default branch.
@@ -24,3 +27,12 @@
 ## Handoff contract
 
 Read AGENTS.md, this file, current status, last 20 commits, and uncommitted diff. Do not repeat unchanged audits. Update this file before delegation or context handoff. Main owns integration, all validation, GUI execution and local commits; no simultaneous writers in one worktree.
+
+## PR #481 — main into dev integration
+
+- User explicitly requested conflict resolution and a merge into `dev`, not a merge of the PR into `main`.
+- Input parents: published dev `8401c16f89204a97af0b26a1db9ff76f625275df` and main `b3bf0e4b49f13657412364ccebbe887a8b3860ec` (#479/#480 worktree writes).
+- The sole content conflict was `tests/gui_e2e_runner.rs`: keep main's worktree commit/amend/discard scenarios before dev's native teardown. All recovery scenarios and leak assertions remain. Two incoming documentation lines were corrected to avoid Markdown-list lint and describe the actual Undo assertion.
+- Verification: native runner exited0 in327.51s, including both incoming worktree scenarios and all recovery/legacy scenarios. Separate full workspace:1868 passed/0 failed/30 existing ignores; fmt/build/CI/clippy succeeded. Final clippy retains only the13 previously located warnings.
+- The initial combined command hit its measurement wrapper's900s timeout; it is not counted as a successful workspace run. Both independent reruns completed, without changing tests, assertions or the checked-in runner's timeout policy.
+- Delivery uses a normal merge commit with the two input parents above and an ordinary push to `dev`. The exact merge SHA and current PR state are in the terminal handoff/PR #481. Original recovery metrics remain historical; no new performance measurement or broad refactor was made.

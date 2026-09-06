@@ -239,9 +239,10 @@ pub enum Msg {
     MenuOpenWorktreeInNewTab,
     /// Branch menu: open the worktree this branch is checked out in (#473).
     MenuOpenWorktreeDir,
-    /// Commit-panel footer note on a panel pointed at another worktree: #476
-    /// slice 1 stages there, but commit still resolves the open tab's repo.
-    WorktreePanelReadOnly,
+    /// Connector in a destructive modal's title when the op runs in a linked
+    /// worktree rather than the open tab: "Discard all changes (3) — in
+    /// worktree wt-a" (#476 slice 3, `worktree_wip::worktree_modal_title`).
+    InWorktree,
     /// Default lock reason kagi records for a manual lock (issue #340).
     WorktreeLockDefaultReason,
     BusyMerge,
@@ -1074,8 +1075,8 @@ impl Msg {
             (Ja, MenuOpenWorktreeInNewTab) => "新しいタブで開く",
             (En, MenuOpenWorktreeDir) => "Open worktree",
             (Ja, MenuOpenWorktreeDir) => "worktree を開く",
-            (En, WorktreePanelReadOnly) => "Commit from the worktree (open it)",
-            (Ja, WorktreePanelReadOnly) => "commit は worktree を開いて",
+            (En, InWorktree) => "in worktree",
+            (Ja, InWorktree) => "対象 worktree",
             (En, WorktreeLockDefaultReason) => "locked in kagi",
             (Ja, WorktreeLockDefaultReason) => "locked in kagi",
             (En, BusyMerge) => "merge in progress…",

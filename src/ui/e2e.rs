@@ -124,6 +124,85 @@ pub fn push_failed_op(app: &KagiApp, op: &str, error: String, cx: &mut App) {
     });
 }
 
+/// Issue #473/#476: put a **linked worktree's** commit panel up, exactly as
+/// clicking its WIP row does — minus the two `gpui_component::InputState`s.
+///
+/// The runner cannot afford those: `InputState::new` registers an App-level
+/// observer that holds a strong handle to itself, so the entity outlives the
+/// window and gpui's end-of-run leak detector fails the whole run. Everything
+/// slice 1–2 is about (the panel's `repo_path` + `foreign` marking, and the
+/// write ops resolving through them) is set up by `attach_commit_panel_at`;
+/// with no inputs, the commit message is read from `state.commit_msg` — the
+/// same fallback the headless `KAGI_COMMIT_MSG` path uses.
+pub fn open_worktree_panel_no_inputs(
+    app: &mut KagiApp,
+    path: std::path::PathBuf,
+    label: &str,
+    color_idx: usize,
+    cx: &mut gpui::Context<KagiApp>,
+) {
+    app.attach_commit_panel_at(path, Some((label.to_string().into(), color_idx)), cx);
+}
+
+/// Set the commit panel's message without touching an `InputState` (see
+/// [`open_worktree_panel_no_inputs`]) — the `state.commit_msg` fallback.
+pub fn set_commit_message(app: &KagiApp, msg: &str, cx: &mut App) {
+    if let Some(panel) = app.commit_panel.clone() {
+        panel.update(cx, |v, _| v.state.commit_msg = msg.to_string());
+    }
+}
+
+/// `(op, repo)` of an op-log entry — the runner cannot name `OpLogEntry`, but
+/// it can pass one out of `OpLogPanel::entries()` (as `entry_clipboard_text`
+/// already does). #476: the oplog's `repo` must be the repository the write
+/// actually went into.
+pub fn entry_op_and_repo(entry: &kagi_git::oplog::OpLogEntry) -> (String, String) {
+    (entry.op.clone(), entry.repo.clone())
+}
+
+/// `(op, repo)` of the newest **persisted** oplog entry (`$KAGI_LOG_DIR`), the
+/// one `Backend::run` writes. `None` when the log is empty.
+pub fn latest_persisted_op() -> Option<(String, String)> {
+    kagi_git::oplog::read_oplog_tail(1)
+        .first()
+        .map(entry_op_and_repo)
+}
+
+/// The after-state's `dirty` line of an op-log entry, or `None` for an outcome
+/// that carries no after-state (`Failed` / `Refused`).
+///
+/// #476 slice 3: for a discard this is `discarded N file(s); backup: <path>=<blob>`
+/// — the ODB backup SHAs that are the user's only handle on the overwritten
+/// content (ADR-0083).
+pub fn entry_after_dirty(entry: &kagi_git::oplog::OpLogEntry) -> Option<String> {
+    match &entry.outcome {
+        kagi_git::oplog::OpOutcome::Success { after }
+        | kagi_git::oplog::OpOutcome::Partial { after, .. } => Some(after.dirty.clone()),
+        _ => None,
+    }
+}
+
+/// The entry the tab's Cmd+Z would apply next, as `(branch, after SHA,
+/// summary)` — `None` when there is nothing to undo.
+///
+/// `record` pushes at the cursor and advances past it, so a newly-recorded
+/// entry IS this one: checking the undo head is enough to catch a foreign op
+/// that leaked onto the stack.
+///
+/// #476 slice 3: `operation_history` is per tab and `head_branch_and_sha`
+/// reads the TAB's HEAD, so an op that ran in a linked worktree would land
+/// here as *the tab's branch* pointed at *the worktree's* commit — Cmd+Z would
+/// then move the tab's branch onto a commit from another working tree. The
+/// invariant the runner asserts is therefore about the SHAs: no entry may
+/// reference a commit a worktree write produced. (Equality against a snapshot
+/// would not do: `reload` legitimately seeds this stack from the tab's own
+/// branch reflog whenever it is empty — ADR-0084.)
+pub fn undo_head(app: &KagiApp) -> Option<(String, String, String)> {
+    app.operation_history
+        .peek_undo()
+        .map(|e| (e.branch.clone(), e.after.0.clone(), e.summary.clone()))
+}
+
 /// Mount the real root offscreen: build the [`KagiApp`] entity (captured into
 /// `out` so the runner can read observable state) and wrap it in
 /// `gpui_component::Root` exactly like `open_main_window`. Returned as the

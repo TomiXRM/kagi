@@ -6,14 +6,31 @@
 > in `docs/adr/` (0072+). Implementation (Phase 3) follows this doc; if a change is
 > needed, **update this doc / the ADR first, then the code**.
 
+## Current implementation note (2026-09-06)
+
+The diagram below is the original target, not the current crate inventory or
+an instruction to create missing crates. ADR-0121 selected entity ownership
+and stabilized feature-pane extraction instead of a wholesale `kagi-app` move.
+Cargo metadata currently resolves 11 packages: root `kagi`, `xtask`,
+`gpui-terminal`, `kagi-domain`, `kagi-git`, `kagi-mcp`, `kagi-ui-core`,
+`kagi-ui-editor`, `kagi-ui-file-history`, `kagi-ui-ecosystem`, and `kagi-web`.
+Neither `kagi-app` nor `kagi-ui` exists. Root UI still coordinates sessions,
+tasks and caches; the worker is not its universal dispatch path. Do not wire
+it blindly: auto-snapshot/trust/preflight settings require parity first.
+Current source inventories and measured ownership are in
+`docs/agent-loop/2026-09-astra-recovery/AUDIT.md`; migration status is below
+`docs/rearch/migration/README.md`. Old counts in the target sections are dated
+design context, not current measurements.
+
 ## 0. The one invariant
 
 > **The UI layer must never open a `git2::Repository` or call `git2::` directly.**
 
-Today this is violated ~80× in `ui/mod.rs`. v1.0 makes it a **compile error**: `git2`
-is not a dependency of the `kagi-ui` crate. All Git work flows through the
-`plan → confirm → preflight → execute → verify → log` pipeline. This is the
-product thesis (safety-first, predict-before-act) expressed as a type boundary.
+The original snapshot had roughly 80 direct violations. Current `src/ui` is
+git2-free through the Backend facade and the `uv run --project ci check-all`
+gate. Feature UI crates enforce additional manifest boundaries; a full
+git2-free `kagi-ui` crate remains an unimplemented target. The safety pipeline
+is still `plan → confirm → preflight → execute → verify → log`.
 
 ## 1. Crate topology (the dependency DAG)
 

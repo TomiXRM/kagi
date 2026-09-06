@@ -189,7 +189,6 @@ impl Theme {
         hsla(h, s, l, 1.0)
     }
 }
-
 // ──────────────────────────────────────────────────────────────────────────
 // Active-theme atomic + accessors
 // ──────────────────────────────────────────────────────────────────────────
@@ -685,6 +684,49 @@ fn to_hsla(rgb_u32: u32) -> Hsla {
     Hsla::from(rgb(rgb_u32))
 }
 
+/// WCAG relative luminance for an `0xRRGGBB` colour.
+fn relative_luminance(c: u32) -> f64 {
+    let channel = |value: u32| {
+        let value = value as f64 / 255.0;
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel((c >> 16) & 0xff)
+        + 0.7152 * channel((c >> 8) & 0xff)
+        + 0.0722 * channel(c & 0xff)
+}
+
+fn contrast_ratio(a: u32, b: u32) -> f64 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Label colour for a filled primary button.
+///
+/// Most themes originally used their base background as the label, which
+/// preserves their intended dark/light appearance. Flower Road's soft pink is
+/// too close to its ivory base for a commit button, so retain that choice only
+/// when it meets WCAG AA. Its dark ink is then preferred; pure black/white is
+/// the final fallback and always gives one accessible option.
+fn primary_button_foreground(theme: &Theme) -> u32 {
+    const MIN_CONTRAST: f64 = 4.5;
+
+    if contrast_ratio(theme.color_branch, theme.bg_base) >= MIN_CONTRAST {
+        theme.bg_base
+    } else if contrast_ratio(theme.color_branch, theme.text_main) >= MIN_CONTRAST {
+        theme.text_main
+    } else if contrast_ratio(theme.color_branch, 0x000000)
+        >= contrast_ratio(theme.color_branch, 0xffffff)
+    {
+        0x000000
+    } else {
+        0xffffff
+    }
+}
+
 /// Push kagi's active [`theme()`] palette into `gpui_component`'s global
 /// `ThemeColor` so every adopted gpui-component widget (Input, Tooltip,
 /// Scrollbar, Checkbox, …) renders with kagi's colours.
@@ -754,7 +796,8 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
 
     // ── Primary / accent (Checkbox checked, focus ring, links) ──
     gc.colors.primary = to_hsla(k.color_branch);
-    gc.colors.primary_foreground = to_hsla(k.bg_base);
+    let primary_foreground = primary_button_foreground(k);
+    gc.colors.primary_foreground = to_hsla(primary_foreground);
     gc.colors.primary_hover = to_hsla(k.color_branch);
     gc.colors.primary_active = to_hsla(k.color_branch);
     gc.colors.ring = to_hsla(k.color_branch);
@@ -788,9 +831,11 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.button_foreground = to_hsla(k.text_main);
     gc.colors.button_hover = to_hsla(k.selected);
     gc.colors.button_active = to_hsla(k.surface);
-    // Primary (Branch here): kagi's branch accent, as before the bump.
+    // Primary (including the Commit button): kagi's branch accent. Preserve
+    // the established label colour when it is legible; otherwise use the
+    // theme's accessible primary-button foreground.
     gc.colors.button_primary = to_hsla(k.color_branch);
-    gc.colors.button_primary_foreground = to_hsla(k.bg_base);
+    gc.colors.button_primary_foreground = to_hsla(primary_foreground);
     gc.colors.button_primary_hover = to_hsla(k.color_branch);
     gc.colors.button_primary_active = to_hsla(k.color_branch);
     gc.colors.button_secondary = to_hsla(k.surface);
@@ -983,33 +1028,29 @@ pub fn highlight_theme(k: &Theme) -> std::sync::Arc<gpui_component::highlighter:
 // themes are sorted alphabetically by display name so the picker stays tidy as
 // themes are added.
 pub static THEMES: &[Theme] = &[
-    CATPPUCCIN_MOCHA,
-    crate::theme_apple::APPLE_DARK,
-    crate::theme_apple::APPLE_LIGHT,
-    CATPPUCCIN_LATTE,
-    DRACULA,
+    crate::theme_catppuccin_mocha::CATPPUCCIN_MOCHA,
+    crate::theme_apple_dark::APPLE_DARK,
+    crate::theme_apple_light::APPLE_LIGHT,
+    crate::theme_catppuccin_latte::CATPPUCCIN_LATTE,
+    crate::theme_dracula::DRACULA,
     crate::theme_flower_road::FLOWER_ROAD,
-    IBM_PC,
-    MONOKAI,
-    ONE_DARK,
-    ONE_LIGHT,
-    PINKY_BOO,
-    TOKYO_NIGHT,
+    crate::theme_flower_road_bloom::FLOWER_ROAD_BLOOM,
+    crate::theme_flower_road_vivid::FLOWER_ROAD_VIVID,
+    crate::theme_ibm_pc::IBM_PC,
+    crate::theme_monokai::MONOKAI,
+    crate::theme_one_dark::ONE_DARK,
+    crate::theme_one_light::ONE_LIGHT,
+    crate::theme_pinky_boo::PINKY_BOO,
+    crate::theme_tokyo_night::TOKYO_NIGHT,
 ];
-
-// ── Catppuccin Mocha (default) ───────────────────────────────────────────
-//
-// Byte-exact port of the previous hard-coded constants (mod.rs etc.).  The
-// lane HSL values reproduce the previous `graph_view::lane_color` palette;
-// avatar sat/light reproduce `avatar::avatar_color` (0.70 / 0.60); terminal
-// values reproduce `terminal.rs`.
+// ── Shared swimlane palettes ──────────────────────────────────────────────
 /// Lane colour palette for **dark-background** themes.
 ///
 /// `oklch(0.77 0.174 H)` gamut-mapped to sRGB then stored as HSL. Lightness and
 /// chroma are fixed so every lane reads at equal brightness/vividness; only hue
 /// rotates, ordered so adjacent lane indices are maximally distinct (Gitru
 /// swimlane philosophy, see ADR-0104).
-const LANE_PALETTE_DARK: [(f32, f32, f32); 8] = [
+pub(crate) const LANE_PALETTE_DARK: [(f32, f32, f32); 8] = [
     (0.937, 1.0, 0.749),   // pink   #ff7fb0
     (0.268, 0.546, 0.558), // green  #81cc51
     (0.619, 1.0, 0.770),   // blue   #8aabff
@@ -1025,7 +1066,7 @@ const LANE_PALETTE_DARK: [(f32, f32, f32); 8] = [
 // The gold lightness (0.318) happens to sit near `FRAC_1_PI`; it is a colour
 // component, not a maths constant, so silence the false positive.
 #[allow(clippy::approx_constant)]
-const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
+pub(crate) const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
     (0.935, 0.542, 0.519), // rose   #c74276
     (0.250, 1.0, 0.281),   // green  #478f00
     (0.634, 0.692, 0.603), // blue   #546fe0
@@ -1035,847 +1076,6 @@ const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
     (0.117, 1.0, 0.318),   // gold   #a27100
     (0.550, 1.0, 0.389),   // blue2  #008bc6
 ];
-
-const CATPPUCCIN_MOCHA: Theme = Theme {
-    slug: "catppuccin",
-    name: "Catppuccin Mocha",
-    dark: true,
-
-    bg_base: 0x1e1e2e,
-    bg_row_alt: 0x1a1a2a,
-    surface: 0x313244,
-    selected: 0x45475a,
-    panel: 0x181825,
-    sidebar: 0x11111b,
-    modal: 0x313244,
-    modal_overlay: 0x000000,
-
-    text_main: 0xcdd6f4,
-    text_sub: 0xa6adc8,
-    text_muted: 0x585b70,
-    text_label: 0x6c7086,
-
-    color_head: 0xf38ba8,
-    color_branch: 0x89b4fa,
-    selection_tint: 0x89b4fa,
-    color_remote: 0xa6e3a1,
-    color_tag: 0xfab387,
-
-    color_success: 0xa6e3a1,
-    color_warning: 0xf9e2af,
-    color_blocker: 0xf38ba8,
-    color_blocker_muted: 0x8f5360,
-
-    diff_added_bg: 0x1c3a2a,
-    diff_removed_bg: 0x3a1c1c,
-    diff_hunk: 0x89b4fa,
-
-    change_added: 0xa6e3a1,
-    change_modified: 0xf9e2af,
-    change_deleted: 0xf38ba8,
-    change_renamed: 0x89b4fa,
-    change_typechange: 0x585b70,
-    change_dir: 0x6c7086,
-
-    accent: 0xcba6f7, // mauve
-
-    lane_hsl: LANE_PALETTE_DARK,
-
-    avatar_sat: 0.70,
-    avatar_light: 0.60,
-
-    term_bg: (0x1e, 0x1e, 0x2e),
-    term_fg: (0xcd, 0xd6, 0xf4),
-    term_cursor: (0xf5, 0xc2, 0xe7),
-    term_black: (0x45, 0x47, 0x5a),
-    term_red: (0xf3, 0x8b, 0xa8),
-    term_green: (0xa6, 0xe3, 0xa1),
-    term_yellow: (0xf9, 0xe2, 0xaf),
-    term_blue: (0x89, 0xb4, 0xfa),
-    term_magenta: (0xcb, 0xa6, 0xf7),
-    term_cyan: (0x89, 0xdc, 0xeb),
-    term_white: (0xba, 0xc2, 0xde),
-    term_bright_black: (0x58, 0x5b, 0x70),
-    term_bright_red: (0xf3, 0x8b, 0xa8),
-    term_bright_green: (0xa6, 0xe3, 0xa1),
-    term_bright_yellow: (0xf9, 0xe2, 0xaf),
-    term_bright_blue: (0x89, 0xb4, 0xfa),
-    term_bright_magenta: (0xcb, 0xa6, 0xf7),
-    term_bright_cyan: (0x89, 0xdc, 0xeb),
-    term_bright_white: (0xcd, 0xd6, 0xf4),
-    term_selection: (0x58, 0x5b, 0x70, 0x99),
-
-    // Code colours: Catppuccin Mocha, roles per the project's own style guide
-    // ("Language Defaults"). Named palette entries in comments so the mapping
-    // stays auditable against upstream.
-    syntax: SyntaxPalette {
-        keyword: 0xcba6f7,     // Mauve
-        string: 0xa6e3a1,      // Green
-        comment: 0x9399b2,     // Overlay 2
-        type_name: 0xf9e2af,   // Yellow
-        function: 0x89b4fa,    // Blue
-        number: 0xfab387,      // Peach
-        operator: 0x89dceb,    // Sky
-        punctuation: 0x9399b2, // Overlay 2
-        variable: 0xeba0ac,    // Maroon
-        attribute: 0xf9e2af,   // Yellow
-    },
-};
-
-// ── One Dark (Atom One Dark) ──────────────────────────────────────────────
-//
-// Atom / VS Code "One Dark" palette: bg #282c34, fg #abb2bf, red #e06c75,
-// green #98c379, yellow #e5c07b, blue #61afef, purple #c678dd, cyan #56b6c2.
-const ONE_DARK: Theme = Theme {
-    slug: "one-dark",
-    name: "One Dark",
-    dark: true,
-
-    bg_base: 0x282c34,
-    bg_row_alt: 0x24272e,
-    surface: 0x3a3f4b,
-    selected: 0x4b5263,
-    panel: 0x21252b,
-    sidebar: 0x1c1f24,
-    modal: 0x3a3f4b,
-    modal_overlay: 0x000000,
-
-    text_main: 0xabb2bf,
-    text_sub: 0x9099a8,
-    text_muted: 0x5c6370,
-    text_label: 0x6b7280,
-
-    color_head: 0xe06c75,   // red
-    color_branch: 0x61afef, // blue
-    selection_tint: 0x61afef,
-    color_remote: 0x98c379, // green
-    color_tag: 0xe5c07b,    // yellow
-
-    color_success: 0x98c379,
-    color_warning: 0xe5c07b,
-    color_blocker: 0xe06c75,
-    color_blocker_muted: 0x8a4f55,
-
-    diff_added_bg: 0x26392b,
-    diff_removed_bg: 0x3a2526,
-    diff_hunk: 0x61afef,
-
-    change_added: 0x98c379,
-    change_modified: 0xe5c07b,
-    change_deleted: 0xe06c75,
-    change_renamed: 0x61afef,
-    change_typechange: 0x5c6370,
-    change_dir: 0x6b7280,
-
-    accent: 0xc678dd, // purple
-
-    lane_hsl: LANE_PALETTE_DARK,
-
-    avatar_sat: 0.55,
-    avatar_light: 0.62,
-
-    term_bg: (0x28, 0x2c, 0x34),
-    term_fg: (0xab, 0xb2, 0xbf),
-    term_cursor: (0x52, 0x8b, 0xff),
-    term_black: (0x3f, 0x44, 0x51),
-    term_red: (0xe0, 0x6c, 0x75),
-    term_green: (0x98, 0xc3, 0x79),
-    term_yellow: (0xe5, 0xc0, 0x7b),
-    term_blue: (0x61, 0xaf, 0xef),
-    term_magenta: (0xc6, 0x78, 0xdd),
-    term_cyan: (0x56, 0xb6, 0xc2),
-    term_white: (0xab, 0xb2, 0xbf),
-    term_bright_black: (0x5c, 0x63, 0x70),
-    term_bright_red: (0xe0, 0x6c, 0x75),
-    term_bright_green: (0x98, 0xc3, 0x79),
-    term_bright_yellow: (0xe5, 0xc0, 0x7b),
-    term_bright_blue: (0x61, 0xaf, 0xef),
-    term_bright_magenta: (0xc6, 0x78, 0xdd),
-    term_bright_cyan: (0x56, 0xb6, 0xc2),
-    term_bright_white: (0xff, 0xff, 0xff),
-    term_selection: (0x3e, 0x44, 0x51, 0xcc),
-
-    // Code colours: Atom One Dark (via One Dark Pro). Punctuation is plain.
-    syntax: SyntaxPalette {
-        keyword: 0xc678dd, // purple
-        string: 0x98c379,  // green
-        comment: 0x7f848e,
-        type_name: 0xe5c07b,   // yellow
-        function: 0x61afef,    // blue
-        number: 0xd19a66,      // orange
-        operator: 0x56b6c2,    // cyan
-        punctuation: 0xabb2bf, // Foreground — flat by design
-        variable: 0xe06c75,    // red
-        attribute: 0x61afef,
-    },
-};
-
-// ── One Light (Atom One Light) ────────────────────────────────────────────
-//
-// Atom / VS Code "One Light" palette: bg #fafafa, fg #383a42, red #e45649,
-// green #50a14f, yellow/amber #c18401, blue #4078f2, purple #a626a4,
-// cyan #0184bc.
-const ONE_LIGHT: Theme = Theme {
-    slug: "one-light",
-    name: "One Light",
-    dark: false,
-
-    bg_base: 0xfafafa,
-    bg_row_alt: 0xf0f0f1,
-    surface: 0xeaeaeb,
-    selected: 0xd4e2fb,
-    panel: 0xf0f0f0,
-    sidebar: 0xeaeaeb,
-    modal: 0xffffff,
-    modal_overlay: 0x383a42,
-
-    text_main: 0x383a42,
-    text_sub: 0x4f525e,
-    text_muted: 0x9d9d9f,
-    text_label: 0x7a7c85,
-
-    color_head: 0xe45649,   // red
-    color_branch: 0x4078f2, // blue
-    selection_tint: 0x4078f2,
-    color_remote: 0x50a14f, // green
-    color_tag: 0xc18401,    // amber
-
-    color_success: 0x50a14f,
-    color_warning: 0xb07a00,
-    color_blocker: 0xe45649,
-    color_blocker_muted: 0xc88a83,
-
-    diff_added_bg: 0xddf3df,
-    diff_removed_bg: 0xfbdedb,
-    diff_hunk: 0x4078f2,
-
-    change_added: 0x50a14f,
-    change_modified: 0xb07a00,
-    change_deleted: 0xe45649,
-    change_renamed: 0x4078f2,
-    change_typechange: 0x9d9d9f,
-    change_dir: 0x7a7c85,
-
-    accent: 0xa626a4, // purple
-
-    lane_hsl: LANE_PALETTE_LIGHT,
-
-    avatar_sat: 0.50,
-    avatar_light: 0.48,
-
-    term_bg: (0xfa, 0xfa, 0xfa),
-    term_fg: (0x38, 0x3a, 0x42),
-    term_cursor: (0x52, 0x6f, 0xff),
-    term_black: (0x38, 0x3a, 0x42),
-    term_red: (0xe4, 0x56, 0x49),
-    term_green: (0x50, 0xa1, 0x4f),
-    term_yellow: (0xc1, 0x84, 0x01),
-    term_blue: (0x40, 0x78, 0xf2),
-    term_magenta: (0xa6, 0x26, 0xa4),
-    term_cyan: (0x01, 0x84, 0xbc),
-    term_white: (0xa0, 0xa1, 0xa7),
-    term_bright_black: (0x69, 0x6c, 0x77),
-    term_bright_red: (0xe4, 0x56, 0x49),
-    term_bright_green: (0x50, 0xa1, 0x4f),
-    term_bright_yellow: (0xc1, 0x84, 0x01),
-    term_bright_blue: (0x40, 0x78, 0xf2),
-    term_bright_magenta: (0xa6, 0x26, 0xa4),
-    term_bright_cyan: (0x01, 0x84, 0xbc),
-    term_bright_white: (0x38, 0x3a, 0x42),
-    term_selection: (0xc6, 0xd8, 0xf7, 0xcc),
-
-    // Code colours: Atom One Light.
-    syntax: SyntaxPalette {
-        keyword: 0xa626a4,
-        string: 0x50a14f,
-        comment: 0xa0a1a7,
-        type_name: 0xc18401,
-        function: 0x4078f2,
-        number: 0x986801,
-        operator: 0x0184bc,
-        punctuation: 0x383a42, // Foreground — flat by design
-        variable: 0xe45649,
-        attribute: 0x986801,
-    },
-};
-
-// ── Monokai (= tomixrm Warm Hybrid, dark variant) ─────────────────────────
-//
-// Extracted from `docs/research/reference/tomixrm-warm-hybrid.json` (MIT):
-// editor.background #2f2b31, editor.foreground #c8c8c8, cursor #ff9940,
-// terminal.ansi* colours, plus tokenColors (keyword #ff668c, string #f4cd62,
-// function #a4d671, type #7bdae7, parameter #fe9b69).  Accent is the warm
-// orange #ff9940 (cursor) requested by the ticket.
-//
-// ── Vivid/contrast boost (T011) ──────────────────────────────────────────
-// Backgrounds darkened ~7–9 steps to push contrast ratio up; accents
-// saturated toward the reference tokenColor values.  WCAG target:
-//   text_main (#f0ece8) vs bg_base (#28242a) ≈ 13:1  (≥ 7 ✓)
-//   text_muted (#918d94) vs bg_base (#28242a) ≈ 3.5:1 (≥ 3 ✓)
-//
-// Key before → after pairs:
-//   bg_base      #2f2b31 → #28242a   (darker, more contrast)
-//   bg_row_alt   #2a272c → #221e24
-//   panel        #272328 → #1f1b21
-//   sidebar      #231f25 → #1a161c
-//   surface      #403b44 → #3a3540   (delta to selected preserved)
-//   selected     #4d4751 → #4a4454
-//   text_main    #c8c8c8 → #f0ece8   (warmer white, ~13:1 vs bg_base)
-//   text_sub     #a6a2a8 → #b8b4bc
-//   text_muted   #807c82 → #918d94
-//   color_head   #ff6b90 → #ff3d6f   (vivid pink, ref #ff668c)
-//   color_remote #9ed06c → #a8e05a   (vivid green, ref #a4d671)
-//   color_tag    #ff9940 → #ff8c1a   (punchier orange)
-//   color_warning #e8c15d → #f4cd62  (match ref string yellow)
-//   accent       #b39af5 → #b08fff   (vivid purple)
-//   accent_alt   #7dd7e6 → #7be8f5   (vivid cyan, ref #7bdae7)
-//   lane_hsl sat +0.05–0.10, lightness bumped for darker bg
-//   term bright side: brighter/more saturated
-const MONOKAI: Theme = Theme {
-    slug: "monokai",
-    name: "Monokai (Warm Hybrid)",
-    dark: true,
-
-    bg_base: 0x28242a,
-    bg_row_alt: 0x221e24,
-    surface: 0x3a3540,
-    selected: 0x4a4454,
-    panel: 0x1f1b21,
-    sidebar: 0x1a161c,
-    modal: 0x3a3540,
-    modal_overlay: 0x000000,
-
-    text_main: 0xf0ece8,
-    text_sub: 0xb8b4bc,
-    text_muted: 0x918d94,
-    text_label: 0xa09ca3,
-
-    color_head: 0xff3d6f,   // vivid pink (ref keyword #ff668c, boosted)
-    color_branch: 0x5a9fff, // vivid blue
-    selection_tint: 0x5a9fff,
-    color_remote: 0xa8e05a, // vivid green (ref function #a4d671)
-    color_tag: 0xff8c1a,    // punchy warm orange
-
-    color_success: 0xa8e05a,
-    color_warning: 0xf4cd62, // matches ref string yellow #f4cd62
-    color_blocker: 0xff3d6f,
-    color_blocker_muted: 0x8f4a5e,
-
-    diff_added_bg: 0x253520,
-    diff_removed_bg: 0x35202c,
-    diff_hunk: 0x5a9fff,
-
-    change_added: 0xa8e05a,
-    change_modified: 0xf4cd62,
-    change_deleted: 0xff3d6f,
-    change_renamed: 0x5a9fff,
-    change_typechange: 0x918d94,
-    change_dir: 0xa09ca3,
-
-    accent: 0xb08fff, // vivid purple (ref #af9cf4, boosted)
-
-    lane_hsl: LANE_PALETTE_DARK,
-
-    avatar_sat: 0.68,
-    avatar_light: 0.62,
-
-    term_bg: (0x28, 0x24, 0x2a),
-    term_fg: (0xf0, 0xec, 0xe8),
-    term_cursor: (0xff, 0x8c, 0x1a),
-    term_black: (0x3a, 0x35, 0x40),
-    term_red: (0xff, 0x3d, 0x6f),
-    term_green: (0xa8, 0xe0, 0x5a),
-    term_yellow: (0xf4, 0xcd, 0x62),
-    term_blue: (0x5a, 0x9f, 0xff),
-    term_magenta: (0xb0, 0x8f, 0xff),
-    term_cyan: (0x7b, 0xe8, 0xf5),
-    term_white: (0xff, 0xfd, 0xf8),
-    term_bright_black: (0x91, 0x8d, 0x94),
-    term_bright_red: (0xff, 0x70, 0x96),
-    term_bright_green: (0xbf, 0xed, 0x78),
-    term_bright_yellow: (0xf8, 0xdf, 0x80),
-    term_bright_blue: (0x80, 0xb8, 0xff),
-    term_bright_magenta: (0xcc, 0xb4, 0xff),
-    term_bright_cyan: (0xa0, 0xf0, 0xff),
-    term_bright_white: (0xff, 0xff, 0xff),
-    term_selection: (0x5a, 0x53, 0x62, 0xb3),
-
-    // Code colours: classic Monokai as shipped in VS Code's built-in
-    // theme-monokai. Operators share the keyword rule; punctuation is plain.
-    syntax: SyntaxPalette {
-        keyword: 0xf92672,
-        string: 0xe6db74,
-        comment: 0x88846f, // VS Code port (the original .tmTheme is #75715e)
-        type_name: 0x66d9ef,
-        function: 0xa6e22e,
-        number: 0xae81ff,
-        operator: 0xf92672,    // same rule as keyword upstream
-        punctuation: 0xf8f8f2, // Foreground — flat by design
-        variable: 0xf8f8f2,
-        attribute: 0xa6e22e,
-    },
-};
-
-// ── Tokyo Night ───────────────────────────────────────────────────────────
-//
-// The popular "Tokyo Night" palette (enkia): bg #1a1b26, fg #c0caf5, blue
-// #7aa2f7, cyan #7dcfff, green #9ece6a, red #f7768e, yellow #e0af68, magenta
-// #bb9af7, comment #565f89, selection #283457.
-const TOKYO_NIGHT: Theme = Theme {
-    slug: "tokyo-night",
-    name: "Tokyo Night",
-    dark: true,
-
-    bg_base: 0x1a1b26,
-    bg_row_alt: 0x16161e,
-    surface: 0x292e42,
-    selected: 0x283457,
-    panel: 0x16161e,
-    sidebar: 0x13131a,
-    modal: 0x24283b,
-    modal_overlay: 0x000000,
-
-    text_main: 0xc0caf5,
-    text_sub: 0xa9b1d6,
-    text_muted: 0x565f89,
-    text_label: 0x9aa5ce,
-
-    color_head: 0xf7768e,
-    color_branch: 0x7aa2f7,
-    selection_tint: 0x7aa2f7,
-    color_remote: 0x9ece6a,
-    color_tag: 0xe0af68,
-
-    color_success: 0x9ece6a,
-    color_warning: 0xe0af68,
-    color_blocker: 0xf7768e,
-    color_blocker_muted: 0x7a4250,
-
-    diff_added_bg: 0x1f3328,
-    diff_removed_bg: 0x3a1f28,
-    diff_hunk: 0x7aa2f7,
-
-    change_added: 0x9ece6a,
-    change_modified: 0xe0af68,
-    change_deleted: 0xf7768e,
-    change_renamed: 0x7aa2f7,
-    change_typechange: 0x565f89,
-    change_dir: 0x7dcfff,
-
-    accent: 0xbb9af7, // magenta
-
-    lane_hsl: LANE_PALETTE_DARK,
-
-    avatar_sat: 0.65,
-    avatar_light: 0.65,
-
-    term_bg: (0x1a, 0x1b, 0x26),
-    term_fg: (0xc0, 0xca, 0xf5),
-    term_cursor: (0xc0, 0xca, 0xf5),
-    term_black: (0x15, 0x16, 0x1e),
-    term_red: (0xf7, 0x76, 0x8e),
-    term_green: (0x9e, 0xce, 0x6a),
-    term_yellow: (0xe0, 0xaf, 0x68),
-    term_blue: (0x7a, 0xa2, 0xf7),
-    term_magenta: (0xbb, 0x9a, 0xf7),
-    term_cyan: (0x7d, 0xcf, 0xff),
-    term_white: (0xa9, 0xb1, 0xd6),
-    term_bright_black: (0x41, 0x48, 0x68),
-    term_bright_red: (0xf7, 0x76, 0x8e),
-    term_bright_green: (0x9e, 0xce, 0x6a),
-    term_bright_yellow: (0xe0, 0xaf, 0x68),
-    term_bright_blue: (0x7a, 0xa2, 0xf7),
-    term_bright_magenta: (0xbb, 0x9a, 0xf7),
-    term_bright_cyan: (0x7d, 0xcf, 0xff),
-    term_bright_white: (0xc0, 0xca, 0xf5),
-    term_selection: (0x28, 0x34, 0x57, 0xb3),
-
-    // Code colours: Tokyo Night (main dark variant). Upstream deliberately
-    // shares one rule for operators and punctuation.
-    syntax: SyntaxPalette {
-        keyword: 0xbb9af7, // purple
-        string: 0x9ece6a,  // green
-        comment: 0x51597d,
-        type_name: 0x0db9d7, // cyan
-        function: 0x7aa2f7,  // blue
-        number: 0xff9e64,    // orange
-        operator: 0x89ddff,
-        punctuation: 0x89ddff, // shares the operator rule upstream
-        variable: 0xc0caf5,
-        attribute: 0x7aa2f7,
-    },
-};
-
-// ── IBM PC ────────────────────────────────────────────────────────────────
-//
-// Classic IBM PC / DOS look: black background with the 16-colour CGA palette
-// (bright blue #5555ff, green #55ff55, cyan #55ffff, red #ff5555, magenta
-// #ff55ff, yellow #ffff55, white #ffffff), and the iconic blue selection bar.
-const IBM_PC: Theme = Theme {
-    slug: "ibm-pc",
-    name: "IBM PC",
-    dark: true,
-
-    bg_base: 0x000000,
-    bg_row_alt: 0x0a0a0a,
-    surface: 0x222222,
-    selected: 0x0000aa, // the classic DOS blue highlight bar
-    panel: 0x000000,
-    sidebar: 0x000000,
-    modal: 0x0000aa, // DOS blue dialog
-    modal_overlay: 0x000000,
-
-    text_main: 0xffffff,
-    text_sub: 0xaaaaaa,
-    text_muted: 0x555555,
-    text_label: 0x55ffff,
-
-    color_head: 0xff5555,
-    color_branch: 0x5555ff,
-    selection_tint: 0x5555ff,
-    color_remote: 0x55ff55,
-    color_tag: 0xffff55,
-
-    color_success: 0x55ff55,
-    color_warning: 0xffff55,
-    color_blocker: 0xff5555,
-    color_blocker_muted: 0xaa0000,
-
-    diff_added_bg: 0x003300,
-    diff_removed_bg: 0x330000,
-    diff_hunk: 0x55ffff,
-
-    change_added: 0x55ff55,
-    change_modified: 0xffff55,
-    change_deleted: 0xff5555,
-    change_renamed: 0x55ffff,
-    change_typechange: 0x555555,
-    change_dir: 0x5555ff,
-
-    accent: 0xff55ff, // bright magenta
-
-    lane_hsl: LANE_PALETTE_DARK,
-
-    avatar_sat: 1.0,
-    avatar_light: 0.60,
-
-    // Exact CGA 16-colour palette.
-    term_bg: (0x00, 0x00, 0x00),
-    term_fg: (0xaa, 0xaa, 0xaa),
-    term_cursor: (0xff, 0xff, 0xff),
-    term_black: (0x00, 0x00, 0x00),
-    term_red: (0xaa, 0x00, 0x00),
-    term_green: (0x00, 0xaa, 0x00),
-    term_yellow: (0xaa, 0x55, 0x00), // brown
-    term_blue: (0x00, 0x00, 0xaa),
-    term_magenta: (0xaa, 0x00, 0xaa),
-    term_cyan: (0x00, 0xaa, 0xaa),
-    term_white: (0xaa, 0xaa, 0xaa),
-    term_bright_black: (0x55, 0x55, 0x55),
-    term_bright_red: (0xff, 0x55, 0x55),
-    term_bright_green: (0x55, 0xff, 0x55),
-    term_bright_yellow: (0xff, 0xff, 0x55),
-    term_bright_blue: (0x55, 0x55, 0xff),
-    term_bright_magenta: (0xff, 0x55, 0xff),
-    term_bright_cyan: (0x55, 0xff, 0xff),
-    term_bright_white: (0xff, 0xff, 0xff),
-    term_selection: (0x00, 0x00, 0xaa, 0xb3),
-
-    // Code colours: CONSTRUCTED, not ported — no IBM PC syntax theme exists.
-    // Every value is an exact entry from the standard CGA/EGA 16-colour
-    // hardware palette (Turbo-Pascal-flavoured); only the token->colour
-    // assignment is ours, so it is free to be reshuffled to taste.
-    syntax: SyntaxPalette {
-        keyword: 0xffff55,     // bright yellow
-        string: 0x55ffff,      // bright cyan
-        comment: 0x555555,     // dark gray
-        type_name: 0x55ff55,   // bright green
-        function: 0xff55ff,    // bright magenta
-        number: 0xff5555,      // bright red
-        operator: 0xffffff,    // white
-        punctuation: 0xaaaaaa, // light gray (foreground)
-        variable: 0xaaaaaa,    // light gray
-        attribute: 0xaa5500,   // brown
-    },
-};
-
-// ── Pinky Boo ───────────────────────────────────────────────────────────────
-//
-// Light theme ported from the "Pinky Boo" VS Code theme
-// (github.com/kissa1001/pinky-boo-vscode-theme): editor bg #fbfbfb, soft signature
-// pink #ffafeb (status bar / list selection), hot-pink accent #ff398d, neutral
-// grey text #5a5a5a, with the theme's exact ANSI terminal palette.
-const PINKY_BOO: Theme = Theme {
-    slug: "pinky-boo",
-    name: "Pinky Boo",
-    dark: false,
-
-    bg_base: 0xfbfbfb,
-    bg_row_alt: 0xf3f3f3,
-    surface: 0xf6eef5,
-    selected: 0xffafeb,
-    panel: 0xf3f3f3,
-    sidebar: 0xefefef,
-    modal: 0xffffff,
-    modal_overlay: 0x5a5a5a,
-
-    text_main: 0x5a5a5a,
-    text_sub: 0x6e6e6e,
-    text_muted: 0xa0a0a0,
-    text_label: 0x909090,
-
-    color_head: 0xff398d,   // hot pink
-    color_branch: 0x47b0e6, // blue
-    selection_tint: 0x47b0e6,
-    color_remote: 0x587c0c, // olive green
-    color_tag: 0xd56700,    // orange
-
-    color_success: 0x587c0c,
-    color_warning: 0x895503,
-    color_blocker: 0xad0707,
-    color_blocker_muted: 0xd99a9a,
-
-    diff_added_bg: 0xe8f0d0,
-    diff_removed_bg: 0xfde0e0,
-    diff_hunk: 0x47b0e6,
-
-    change_added: 0x587c0c,
-    change_modified: 0x895503,
-    change_deleted: 0xad0707,
-    change_renamed: 0x47b0e6,
-    change_typechange: 0xa0a0a0,
-    change_dir: 0x909090,
-
-    accent: 0xff398d, // hot pink
-
-    lane_hsl: LANE_PALETTE_LIGHT,
-
-    avatar_sat: 0.50,
-    avatar_light: 0.50,
-
-    term_bg: (0xfb, 0xfb, 0xfb),
-    term_fg: (0x7d, 0x7d, 0x7d),
-    term_cursor: (0xf8, 0xae, 0xf0),
-    term_black: (0x74, 0x72, 0x73),
-    term_red: (0xcd, 0x31, 0x31),
-    term_green: (0x00, 0xbc, 0x00),
-    term_yellow: (0xf0, 0xe4, 0x3b),
-    term_blue: (0x7f, 0xb8, 0xf5),
-    term_magenta: (0xff, 0x13, 0xb9),
-    term_cyan: (0x05, 0x98, 0xbc),
-    term_white: (0xff, 0xaf, 0xeb),
-    term_bright_black: (0xb3, 0xb3, 0xb3),
-    term_bright_red: (0xe2, 0x55, 0x55),
-    term_bright_green: (0x14, 0xce, 0x14),
-    term_bright_yellow: (0xeb, 0xc1, 0x3f),
-    term_bright_blue: (0x7f, 0xb3, 0xec),
-    term_bright_magenta: (0xff, 0x71, 0xe2),
-    term_bright_cyan: (0x05, 0x98, 0xbc),
-    term_bright_white: (0xa5, 0xa5, 0xa5),
-    term_selection: (0xc9, 0xc9, 0xc9, 0x40),
-
-    // Code colours: Pinky Boo (kissa1001/pinky-boo-vscode-theme, a light
-    // One-Dark-Pro derivative). Its `keyword.operator` catch-all is the plain
-    // foreground; per-language sub-scopes vary, which we don't model.
-    //
-    // Darkened from upstream, hue and saturation preserved. Pinky Boo inherits
-    // several token colours unchanged from its DARK ancestor (One Dark's
-    // string `#98c379`, function `#47b0e6`), which on this theme's near-white
-    // `#fbfbfb` background wash out to the point of illegibility — string
-    // measured 1.9:1 contrast, i.e. barely visible (user report: "text goes
-    // white"). Each value here is the upstream hue taken down to >= 4.0:1.
-    syntax: SyntaxPalette {
-        keyword: 0x138a82,     // upstream 0x1bc5b9 (2.1:1)
-        string: 0x5c873d,      // upstream 0x98c379 (1.9:1)
-        comment: 0x7f848e,     // left as-is: comments are meant to recede
-        type_name: 0xc45f00,   // upstream 0xd56700 (3.5:1)
-        function: 0x1983b9,    // upstream 0x47b0e6 (2.4:1)
-        number: 0xac6e34,      // upstream 0xd19a66 (2.4:1)
-        operator: 0x5a5a5a,    // Foreground — flat by design
-        punctuation: 0x5a5a5a, // Foreground
-        variable: 0xf30067,    // upstream 0xff398d (3.3:1)
-        attribute: 0xac6e34,   // upstream 0xd19a66 (2.4:1)
-    },
-};
-
-// ── Catppuccin Latte ─────────────────────────────────────────────────────────
-//
-// Official light flavour of Catppuccin (catppuccin.com): Base #eff1f5, Text
-// #4c4f69, Mauve accent #8839ef. Token/terminal mapping mirrors the Mocha port
-// above, swapped to the Latte palette.
-const CATPPUCCIN_LATTE: Theme = Theme {
-    slug: "catppuccin-latte",
-    name: "Catppuccin Latte",
-    dark: false,
-
-    bg_base: 0xeff1f5,    // base
-    bg_row_alt: 0xe6e9ef, // mantle
-    surface: 0xccd0da,    // surface0
-    selected: 0xbcc0cc,   // surface1
-    panel: 0xe6e9ef,      // mantle
-    sidebar: 0xdce0e8,    // crust
-    modal: 0xccd0da,      // surface0
-    modal_overlay: 0x4c4f69,
-
-    text_main: 0x4c4f69,  // text
-    text_sub: 0x6c6f85,   // subtext0
-    text_muted: 0xacb0be, // surface2
-    text_label: 0x9ca0b0, // overlay0
-
-    color_head: 0xd20f39,   // red
-    color_branch: 0x1e66f5, // blue
-    selection_tint: 0x1e66f5,
-    color_remote: 0x40a02b, // green
-    color_tag: 0xfe640b,    // peach
-
-    color_success: 0x40a02b,
-    color_warning: 0xdf8e1d,
-    color_blocker: 0xd20f39,
-    color_blocker_muted: 0xd98a9a,
-
-    diff_added_bg: 0xdcf0d8,
-    diff_removed_bg: 0xfbdde1,
-    diff_hunk: 0x1e66f5,
-
-    change_added: 0x40a02b,
-    change_modified: 0xdf8e1d,
-    change_deleted: 0xd20f39,
-    change_renamed: 0x1e66f5,
-    change_typechange: 0xacb0be,
-    change_dir: 0x9ca0b0,
-
-    accent: 0x8839ef, // mauve
-
-    lane_hsl: LANE_PALETTE_LIGHT,
-
-    avatar_sat: 0.55,
-    avatar_light: 0.50,
-
-    term_bg: (0xef, 0xf1, 0xf5),
-    term_fg: (0x4c, 0x4f, 0x69),
-    term_cursor: (0xea, 0x76, 0xcb),
-    term_black: (0xbc, 0xc0, 0xcc),
-    term_red: (0xd2, 0x0f, 0x39),
-    term_green: (0x40, 0xa0, 0x2b),
-    term_yellow: (0xdf, 0x8e, 0x1d),
-    term_blue: (0x1e, 0x66, 0xf5),
-    term_magenta: (0x88, 0x39, 0xef),
-    term_cyan: (0x04, 0xa5, 0xe5),
-    term_white: (0x5c, 0x5f, 0x77),
-    term_bright_black: (0xac, 0xb0, 0xbe),
-    term_bright_red: (0xd2, 0x0f, 0x39),
-    term_bright_green: (0x40, 0xa0, 0x2b),
-    term_bright_yellow: (0xdf, 0x8e, 0x1d),
-    term_bright_blue: (0x1e, 0x66, 0xf5),
-    term_bright_magenta: (0x88, 0x39, 0xef),
-    term_bright_cyan: (0x04, 0xa5, 0xe5),
-    term_bright_white: (0x4c, 0x4f, 0x69),
-    term_selection: (0xac, 0xb0, 0xbe, 0x99),
-
-    // Code colours: Catppuccin Latte — same role mapping as Mocha.
-    syntax: SyntaxPalette {
-        keyword: 0x8839ef,     // Mauve
-        string: 0x40a02b,      // Green
-        comment: 0x7c7f93,     // Overlay 2
-        type_name: 0xdf8e1d,   // Yellow
-        function: 0x1e66f5,    // Blue
-        number: 0xfe640b,      // Peach
-        operator: 0x04a5e5,    // Sky
-        punctuation: 0x7c7f93, // Overlay 2
-        variable: 0xe64553,    // Maroon
-        attribute: 0xdf8e1d,   // Yellow
-    },
-};
-
-// ── Dracula ──────────────────────────────────────────────────────────────────
-//
-// Official Dracula palette (draculatheme.com): Background #282a36, Foreground
-// #f8f8f2, Purple accent #bd93f9, with the project's canonical ANSI terminal
-// palette.
-const DRACULA: Theme = Theme {
-    slug: "dracula",
-    name: "Dracula",
-    dark: true,
-
-    bg_base: 0x282a36,
-    bg_row_alt: 0x21222c,
-    surface: 0x343746,
-    selected: 0x44475a,
-    panel: 0x21222c,
-    sidebar: 0x191a21,
-    modal: 0x343746,
-    modal_overlay: 0x000000,
-
-    text_main: 0xf8f8f2,
-    text_sub: 0xc8c8d4,
-    text_muted: 0x6272a4,
-    text_label: 0x7e84ad,
-
-    color_head: 0xff79c6,   // pink
-    color_branch: 0xbd93f9, // purple
-    selection_tint: 0xbd93f9,
-    color_remote: 0x50fa7b, // green
-    color_tag: 0xffb86c,    // orange
-
-    color_success: 0x50fa7b,
-    color_warning: 0xf1fa8c,
-    color_blocker: 0xff5555,
-    color_blocker_muted: 0x9a4d4d,
-
-    diff_added_bg: 0x1d3b2b,
-    diff_removed_bg: 0x3a1e22,
-    diff_hunk: 0x8be9fd,
-
-    change_added: 0x50fa7b,
-    change_modified: 0xf1fa8c,
-    change_deleted: 0xff5555,
-    change_renamed: 0x8be9fd,
-    change_typechange: 0x6272a4,
-    change_dir: 0x7e84ad,
-
-    accent: 0xbd93f9, // purple
-
-    lane_hsl: LANE_PALETTE_DARK,
-
-    avatar_sat: 0.70,
-    avatar_light: 0.65,
-
-    term_bg: (0x28, 0x2a, 0x36),
-    term_fg: (0xf8, 0xf8, 0xf2),
-    term_cursor: (0xf8, 0xf8, 0xf2),
-    term_black: (0x21, 0x22, 0x2c),
-    term_red: (0xff, 0x55, 0x55),
-    term_green: (0x50, 0xfa, 0x7b),
-    term_yellow: (0xf1, 0xfa, 0x8c),
-    term_blue: (0xbd, 0x93, 0xf9),
-    term_magenta: (0xff, 0x79, 0xc6),
-    term_cyan: (0x8b, 0xe9, 0xfd),
-    term_white: (0xf8, 0xf8, 0xf2),
-    term_bright_black: (0x62, 0x72, 0xa4),
-    term_bright_red: (0xff, 0x6e, 0x6e),
-    term_bright_green: (0x69, 0xff, 0x94),
-    term_bright_yellow: (0xff, 0xff, 0xa5),
-    term_bright_blue: (0xd6, 0xac, 0xff),
-    term_bright_magenta: (0xff, 0x92, 0xdf),
-    term_bright_cyan: (0xa4, 0xff, 0xff),
-    term_bright_white: (0xff, 0xff, 0xff),
-    term_selection: (0x44, 0x47, 0x5a, 0x99),
-
-    // Code colours: Dracula (official spec / VS Code theme). Punctuation and
-    // plain variables are the foreground by design; operators reuse Pink.
-    syntax: SyntaxPalette {
-        keyword: 0xff79c6,     // Pink
-        string: 0xf1fa8c,      // Yellow
-        comment: 0x6272a4,     // Comment blue
-        type_name: 0x8be9fd,   // Cyan
-        function: 0x50fa7b,    // Green
-        number: 0xbd93f9,      // Purple
-        operator: 0xff79c6,    // Pink (no separate operator rule)
-        punctuation: 0xf8f8f2, // Foreground — flat by design
-        variable: 0xf8f8f2,    // Foreground
-        attribute: 0x50fa7b,   // Green
-    },
-};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Tests
@@ -2148,23 +1348,6 @@ mod tests {
     /// upstream palettes routinely put them at 2.5:1.
     #[test]
     fn syntax_colours_are_legible_on_their_background() {
-        /// WCAG relative luminance.
-        fn luminance(c: u32) -> f64 {
-            let ch = |v: u32| {
-                let v = v as f64 / 255.0;
-                if v <= 0.03928 {
-                    v / 12.92
-                } else {
-                    ((v + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * ch((c >> 16) & 0xff) + 0.7152 * ch((c >> 8) & 0xff) + 0.0722 * ch(c & 0xff)
-        }
-        fn contrast(a: u32, b: u32) -> f64 {
-            let (la, lb) = (luminance(a), luminance(b));
-            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-        }
-
         // Deliberately below WCAG AA (4.5) — several *officially published*
         // palettes (notably Catppuccin) sit in the 3s by design, and matching
         // upstream matters more than beating a threshold they never targeted.
@@ -2195,7 +1378,7 @@ mod tests {
                 ("variable", s.variable),
                 ("attribute", s.attribute),
             ] {
-                let c = contrast(colour, t.bg_base);
+                let c = contrast_ratio(colour, t.bg_base);
                 assert!(
                     c >= MIN,
                     "{}: syntax.{} {:#08x} is {:.1}:1 on bg {:#08x} — illegible",
@@ -2206,6 +1389,20 @@ mod tests {
                     t.bg_base
                 );
             }
+        }
+    }
+
+    #[test]
+    fn primary_button_labels_meet_wcag_aa() {
+        for t in THEMES {
+            let foreground = primary_button_foreground(t);
+            let contrast = contrast_ratio(t.color_branch, foreground);
+            assert!(
+                contrast >= 4.5,
+                "{}: primary button label {foreground:#08x} is only {contrast:.2}:1 on {:#08x}",
+                t.slug,
+                t.color_branch,
+            );
         }
     }
 
@@ -2225,7 +1422,7 @@ mod tests {
         let light = THEMES.iter().filter(|t| !t.dark).count();
         // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark
         assert_eq!(dark, 7);
-        // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road
-        assert_eq!(light, 5);
+        // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road ×3
+        assert_eq!(light, 7);
     }
 }

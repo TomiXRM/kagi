@@ -1,6 +1,6 @@
 # ADR-0176: local stash family の application boundary
 
-状態: 採用・PR 1 実装（E 実行 / M / workspace 全体は PM の検証待ち）
+状態: 採用・PR 1 実装済み（#541）、owner lifetime 補強（#485）
 日付: 2026-09-07
 関連: #484、[FAMILY-stash](../rearch/app-layer/FAMILY-stash.md)、
 [ADR-0175](0175-app-remove-boundary.md)、[ADR-0149](0149-oplog-in-backend-run-and-schema.md)、
@@ -61,15 +61,20 @@ conflict 継続 payload は canonical worktree ごとに operation id、full OID
 index conflict sides の evidence を保持し、表示 guard より先に保存する。
 別 linked worktree に流用しない。再検出時に同じ conflict sides の連続性を確認できなければ
 破棄する（解決済み paths の減少は許す）。abort/終了/置換で clear。
-continue 成功時だけ一回 follow-up に移し、reload 後に一意 OID を新 plan に束縛する。
+continue 成功時だけ pending とし、空 conflict の観測時に active conflict map から
+owner 別の one-shot follow-up slot へ移す。pending conflict 自体は空観測を跨がない。
+reload 後に一意 OID を新 plan に束縛する。
 候補 0 / 複数 / 読取間 drift なら prompt を出さない。新確認の取消は stash を保持する。
+tab close は同じ owner の active conflict と未提示 follow-up の両方を破棄する。
+close が continue 後の reload より先でも後でも、再open に提案を持ち越さない。
 外部 Git / 再起動後など出所不明の conflict に自動 drop は提案しない。
 
 ## 保証しないもの・検証
 
 app lease は外部 Git を排他しない。最終照合と index 指定 libgit2 drop の間の競合窓、
 観測値が完全に同一に戻る ABA、OID の GC 後保持は保証しない。
-conflict payload は in-memory。永続 session は #485、CLI/MCP tail 撤去は #505。
+conflict/follow-up payload は in-memory で、tab close と再起動を跨いで永続化しない。
+CLI/MCP tail 撤去は #505。
 保証するのはアプリ内 close/Quit 入口の保留のみ。Dock/OS Quit は GPUI の veto API がなく保証外。
 
 G は同じ公開 plan/approve/prepare/run/apply 列を window なしで駆動する。
@@ -77,5 +82,8 @@ E は実 modal / focus / current-window bounds で 4 op の両入力と conflict
 window remove と entity drop で後始末する。E は PM 実行の全 PASS と exit 0 が必要。
 ただし GUI の conflict continue 後の follow-up 提示は E 未検証で、#546 で追跡する。
 payload から一意な新規 Drop plan が Ready になるまでの application 列は G で検証する。
+G は pending→空観測の one-shot 移管と、continue→close（reload 前後）→再open で
+prompt が残らないことも検証する。E は実 KagiApp の continue と同一 turn の tab close、
+再open 後に payload/modal が無いことを検証する。
 旧 stash conflict/pop/oplog の実 mutation assertions は保持し、preflight outcome assertion のみ
 承認済み Refused に変更。remove 24 件・1b admission 8 件は既存 assertion を変更しない。

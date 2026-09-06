@@ -204,14 +204,21 @@ pub struct StashConflict {
 }
 impl Sessions {
     pub fn observe_stash_conflict(&mut self, owner: &Path, identity: &[String]) {
-        if self.stash_conflicts.get(owner).is_some_and(|payload| {
-            (payload.pending && !identity.is_empty())
-                || (!payload.pending
-                    && (identity.is_empty()
-                        || !identity
-                            .iter()
-                            .all(|entry| payload.identity.contains(entry))))
-        }) {
+        let Some(payload) = self.stash_conflicts.get(owner) else {
+            return;
+        };
+        if payload.pending && identity.is_empty() {
+            let payload = self
+                .stash_conflicts
+                .remove(owner)
+                .expect("stash conflict was observed above");
+            self.stash_followups.insert(owner.to_path_buf(), payload);
+        } else if payload.pending
+            || identity.is_empty()
+            || !identity
+                .iter()
+                .all(|entry| payload.identity.contains(entry))
+        {
             self.clear_stash_conflict(owner);
         }
     }
@@ -220,6 +227,7 @@ impl Sessions {
     }
     pub fn clear_stash_conflict(&mut self, owner: &Path) {
         self.stash_conflicts.remove(owner);
+        self.stash_followups.remove(owner);
     }
     pub fn continue_stash_conflict(&mut self, owner: &Path) {
         if let Some(payload) = self.stash_conflicts.get_mut(owner) {
@@ -227,10 +235,6 @@ impl Sessions {
         }
     }
     pub fn take_stash_followup(&mut self, owner: &Path) -> Option<StashConflict> {
-        if self.stash_conflicts.get(owner)?.pending {
-            self.stash_conflicts.remove(owner)
-        } else {
-            None
-        }
+        self.stash_followups.remove(owner)
     }
 }

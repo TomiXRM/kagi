@@ -533,6 +533,10 @@ mod macos {
                 Box::new(crate::app_stash::scenario_stash_conflict_followup),
             ),
             (
+                "stash_conflict_close_reopen",
+                Box::new(crate::app_stash::scenario_stash_conflict_close_reopen),
+            ),
+            (
                 "stash_replan_error",
                 Box::new(crate::app_stash::scenario_stash_replan_error),
             ),

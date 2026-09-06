@@ -144,6 +144,7 @@ impl Backend {
                 ));
             }
             if fresh.title != plan.title
+                || ops::plan_worktree_config_sha(&fresh) != ops::plan_worktree_config_sha(plan)
                 || fresh.destructive != plan.destructive
                 || fresh.worktree_digest.is_some() != plan.worktree_digest.is_some()
             {

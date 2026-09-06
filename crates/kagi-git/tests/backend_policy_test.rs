@@ -325,3 +325,165 @@ fn post_plan_dirty_checkout_refuses_before_creating_branch() {
     assert!(backend.list_snapshots().unwrap().is_empty());
     std::env::remove_var("KAGI_LOG_DIR");
 }
+
+#[test]
+fn absorb_index_write_failure_records_partial_actual_head_and_recovery_oid() {
+    let _guard = ENV.lock().unwrap();
+    let log = tempfile::tempdir().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", log.path());
+    let tmp = fixture();
+    std::fs::write(tmp.path().join("a.txt"), "alpha\nBETA\ngamma\n").unwrap();
+    let backend = Backend::open_with_policy(tmp.path(), ExecutionPolicy::human(false)).unwrap();
+    let plan = backend.plan_absorb(10).unwrap();
+    assert!(!plan.is_noop());
+    let old_head = backend.head_commit_id().unwrap().0;
+    let old_index = std::fs::read(tmp.path().join(".git/index")).unwrap();
+    let old_worktree = std::fs::read(tmp.path().join("a.txt")).unwrap();
+    std::fs::write(tmp.path().join(".git/index.lock"), b"fixture lock").unwrap();
+    let error = backend.execute_absorb(&plan).unwrap_err();
+    assert!(error.to_string().contains("index.write failed"), "{error}");
+    let actual_head = backend.head_commit_id().unwrap().0;
+    assert_ne!(
+        actual_head, old_head,
+        "executor advanced the ref before failing"
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join(".git/index")).unwrap(),
+        old_index
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join("a.txt")).unwrap(),
+        old_worktree
+    );
+    assert!(backend.list_snapshots().unwrap().is_empty());
+    let entries = kagi_git::oplog::read_oplog_tail(100);
+    assert_eq!(entries.len(), 1);
+    let kagi_git::oplog::OpOutcome::Partial { after, error } = &entries[0].outcome else {
+        panic!(
+            "post-ref-update failure must be Partial: {:?}",
+            entries[0].outcome
+        )
+    };
+    assert_eq!(after.head, backend.current_state().unwrap().head);
+    assert!(error.contains("index.write failed"));
+    assert!(after.dirty.contains(&format!("before={old_head}")));
+    assert!(after.dirty.contains(&format!("rebuilt={actual_head}")));
+    assert!(after.dirty.contains("ref_updated=true"));
+    assert!(after
+        .dirty
+        .contains("index_write_started=true; index_written=false"));
+    assert_eq!(git(tmp.path(), &["rev-parse", &old_head]), old_head);
+    std::env::remove_var("KAGI_LOG_DIR");
+}
+
+#[test]
+fn create_branch_checkbox_plan_matches_combined_operation_and_executes_once() {
+    let _guard = ENV.lock().unwrap();
+    for checkout_after in [false, true] {
+        let log = tempfile::tempdir().unwrap();
+        std::env::set_var("KAGI_LOG_DIR", log.path());
+        let tmp = fixture();
+        let mut backend =
+            Backend::open_with_policy(tmp.path(), ExecutionPolicy::human(false)).unwrap();
+        let at = CommitId(git(tmp.path(), &["rev-parse", "base"]));
+        // The same planner used by the GUI checkbox, with the combined adapter
+        // request (a plain CreateBranch incorrectly changes the fresh title).
+        let plan = backend
+            .plan_create_branch_with_checkout("created", &at, checkout_after)
+            .unwrap();
+        let op = Operation::CreateBranchWithCheckout {
+            name: "created".into(),
+            at: at.clone(),
+            checkout_after,
+        };
+        assert_eq!(plan.title, backend.plan(&op).unwrap().title);
+        backend.run(&op, &plan).unwrap();
+        assert_eq!(git(tmp.path(), &["rev-parse", "created"]), at.0);
+        assert_eq!(
+            git(tmp.path(), &["branch", "--show-current"]),
+            if checkout_after { "created" } else { "topic" }
+        );
+        assert_eq!(tmp.path().join("c.txt").exists(), checkout_after);
+        let entries = kagi_git::oplog::read_oplog_tail(100);
+        assert_eq!(entries.len(), 1, "no second checkout operation");
+        assert_eq!(entries[0].op, "create-branch");
+        assert!(matches!(
+            entries[0].outcome,
+            kagi_git::oplog::OpOutcome::Success { .. }
+        ));
+    }
+    std::env::remove_var("KAGI_LOG_DIR");
+}
+
+#[test]
+fn worktree_config_identity_changes_are_refused_before_creation_or_copy() {
+    let _guard = ENV.lock().unwrap();
+    let config = "[[post_create]]\ntype='copy'\nfrom='a.txt'\nto='copied.txt'\n";
+    for open_existing in [false, true] {
+        for (before, after) in [
+            (None, Some(config)),
+            (Some(config), None),
+            (
+                Some(config),
+                Some("# changed\n[[post_create]]\ntype='copy'\nfrom='a.txt'\nto='other.txt'\n"),
+            ),
+        ] {
+            let log = tempfile::tempdir().unwrap();
+            std::env::set_var("KAGI_LOG_DIR", log.path());
+            let tmp = fixture();
+            // Keep config drift independent of worktree/index drift: this test
+            // must fail because of required config identity, not a dirty gate.
+            std::fs::write(tmp.path().join(".git/info/exclude"), ".kagi/\n").unwrap();
+            std::fs::create_dir(tmp.path().join(".kagi")).unwrap();
+            let config_path = tmp.path().join(".kagi/worktree.toml");
+            if let Some(content) = before {
+                std::fs::write(&config_path, content).unwrap();
+            }
+            let destination = tempfile::tempdir().unwrap();
+            let linked = destination.path().join("linked");
+            let mut backend =
+                Backend::open_with_policy(tmp.path(), ExecutionPolicy::human(false)).unwrap();
+            let op = if open_existing {
+                Operation::OpenWorktreeForBranch {
+                    branch: "base".into(),
+                    path: linked.display().to_string(),
+                }
+            } else {
+                Operation::CreateWorktree {
+                    branch: "created".into(),
+                    path: linked.display().to_string(),
+                    start: backend.head_commit_id().unwrap(),
+                }
+            };
+            let plan = backend.plan(&op).unwrap();
+            assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+            assert_eq!(
+                kagi_git::ops::plan_worktree_config_sha(&plan).is_some(),
+                before.is_some()
+            );
+            let unchanged_before = unchanged(tmp.path());
+            match after {
+                Some(content) => std::fs::write(&config_path, content).unwrap(),
+                None => std::fs::remove_file(&config_path).unwrap(),
+            }
+            assert_eq!(unchanged(tmp.path()), unchanged_before);
+            let error = backend.run(&op, &plan).unwrap_err();
+            assert!(matches!(error, GitError::Preflight(_)), "{error}");
+            assert!(
+                error
+                    .to_string()
+                    .contains("plan safety requirements differ"),
+                "{error}"
+            );
+            assert!(!linked.exists(), "no unreviewed post_create step ran");
+            assert_eq!(unchanged(tmp.path()), unchanged_before);
+            let entries = kagi_git::oplog::read_oplog_tail(100);
+            assert_eq!(entries.len(), 1);
+            assert!(matches!(
+                entries[0].outcome,
+                kagi_git::oplog::OpOutcome::Failed { .. }
+            ));
+        }
+    }
+    std::env::remove_var("KAGI_LOG_DIR");
+}

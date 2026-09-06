@@ -18,29 +18,35 @@ impl Backend {
         Result<kagi_domain::absorb::AbsorbOutcome, GitError>,
         recording::Recording,
     ) {
-        let mut executed = false;
-        let mut after = plan.current.clone();
+        let mut progress = ops::AbsorbProgress::default();
         let result: Result<_, GitError> = (|| {
             self.require_trust()?;
             ops::preflight_absorb(&self.repo, plan)?;
             self.auto_savepoint("absorb");
-            let outcome = ops::execute_absorb(&self.repo, plan)?;
-            executed = true;
+            let outcome = ops::execute_absorb_with_progress(&self.repo, plan, &mut progress)?;
             #[cfg(test)]
             let outcome = verification_fixture(outcome, plan);
             ops::verify_absorb(&self.repo, &outcome)?;
-            after = self.current_state()?;
+            self.current_state()?;
             Ok(outcome)
         })();
+        let mut after = self.current_state().unwrap_or_else(|_| ops::StateSummary {
+            head: "unknown after absorb".into(),
+            dirty: "could not read state after mutation".into(),
+        });
+        if progress.ref_update_started {
+            after.dirty.push_str(&format!(
+                "; recovery: before={}; rebuilt={}; ref_update_started={}; ref_updated={}; index_write_started={}; index_written={}",
+                progress.original_head.as_deref().unwrap_or("unobserved"),
+                progress.rebuilt_head.as_deref().unwrap_or("unobserved"),
+                progress.ref_update_started, progress.ref_updated,
+                progress.index_write_started, progress.index_written,
+            ));
+        }
         let outcome = match &result {
-            Ok(_) => crate::oplog::OpOutcome::Success {
-                after: after.clone(),
-            },
-            Err(error) if executed => crate::oplog::OpOutcome::Partial {
-                after: self.current_state().unwrap_or_else(|_| ops::StateSummary {
-                    head: "unknown after absorb".into(),
-                    dirty: "could not read state after mutation".into(),
-                }),
+            Ok(_) => crate::oplog::OpOutcome::Success { after },
+            Err(error) if progress.ref_update_started => crate::oplog::OpOutcome::Partial {
+                after,
                 error: error.to_string(),
             },
             Err(error) => crate::oplog::OpOutcome::Failed {

@@ -153,9 +153,10 @@ impl KagiApp {
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
         // in one place (run() calls preflight_check as its first line — the
         // separate preflight_check call above was redundant).
-        let op = kagi_git::Operation::CreateBranch {
+        let op = kagi_git::Operation::CreateBranchWithCheckout {
             name: modal.input.clone(),
             at: modal.at.clone(),
+            checkout_after: modal.checkout_after,
         };
         if let Err(e) = repo.run(&op, &plan) {
             let err_msg = i18n::op_failed(i18n::Op::CreateBranch, e);
@@ -181,7 +182,7 @@ impl KagiApp {
         );
 
         // Verify: confirm the branch now exists.
-        let mut repo2 = match crate::ui::blocking_ops::open_backend(&repo_path) {
+        let repo2 = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -199,95 +200,19 @@ impl KagiApp {
             );
         }
 
-        // Record branch creation success first. If checkout_after is on, the
-        // checkout below records its own second operation entry.
-        let create_after = StateSummary {
-            head: plan.current.head.clone(),
-            dirty: plan.current.dirty.clone(),
-        };
+        // The combined Backend operation already performed optional checkout and
+        // persisted one receipt. Keep the established presentation/log lines.
         self.record_op(
             "create-branch",
             plan.current.clone(),
             OpOutcome::Success {
-                after: create_after.clone(),
+                after: plan.predicted.clone(),
             },
             &repo_path,
             cx,
         );
-
         if modal.checkout_after {
-            let checkout_plan = match repo2.plan_checkout(&modal.input) {
-                Ok(plan) => plan,
-                Err(e) => {
-                    let err_msg = i18n::op_plan_failed(i18n::Op::Checkout, e);
-                    self.record_op(
-                        "checkout",
-                        create_after,
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
-                    if let Some(m) = self.create_branch_modal_mut() {
-                        m.error = Some(SharedString::from(err_msg));
-                    }
-                    return;
-                }
-            };
-            if !checkout_plan.blockers.is_empty() {
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: checkout_plan
-                            .blockers
-                            .iter()
-                            .map(|b| b.message_en())
-                            .collect(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(
-                        "Branch created, but checkout was refused by the checkout plan.",
-                    ));
-                }
-                return;
-            }
-            // ADR-0104 Phase 2: route through Backend::run so preflight is
-            // enforced in one place (the separate preflight_check + execute
-            // above collapses into run()).
-            let checkout_op = kagi_git::Operation::Checkout {
-                branch: modal.input.clone(),
-            };
-            if let Err(e) = repo2.run(&checkout_op, &checkout_plan) {
-                let err_msg = i18n::op_failed(i18n::Op::Checkout, e);
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
             klog!("executed: checkout {}", modal.input);
-            self.record_op(
-                "checkout",
-                checkout_plan.current.clone(),
-                OpOutcome::Success {
-                    after: checkout_plan.predicted.clone(),
-                },
-                &repo_path,
-                cx,
-            );
         }
 
         // Reload display data (new branch badge should appear).

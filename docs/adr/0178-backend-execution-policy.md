@@ -33,7 +33,7 @@ stash binds policy at plan/approval as in ADR-0176. Migrating all legacy modal
 approvals to the application token is still family work under #484. This change
 does not claim those old modal types already bind a policy revision.
 
-## Public mutation inventory
+## Backend mutation inventory and approved remaining public primitives
 
 T = owner trust at execution; F = backend preflight; V = verification owned by
 the family, not an optional UI callback; S = recovery; R = existing record owner.
@@ -53,7 +53,7 @@ The application owns approval/admission; it cannot grant trust with a boolean.
 | `execute_lock/unlock/prune/repair_worktrees` | Confirmed plan; T; lifecycle preflight/verification | Administrative metadata, no worktree snapshot; existing lifecycle record boundary. |
 | conflict continue/save/abort/skip, stash-conflict abort, stage resolution, directory/file resolution | Existing explicit plan/edit intent; T; existing conflict/session/path/buffer checks | Existing conflict ODB/ORIG_HEAD safeguards and recorder. Full conflict-family approval generation binding remains #484 work. |
 | `execute_delete_merged_branches` | Confirmed target list; T; per-ref checks and partial result | Deleted OIDs; existing Backend recorder. |
-| `execute_absorb` | Confirmed AbsorbPlan; T; `preflight_absorb`; mandatory `verify_absorb` before success | Common optional destructive savepoint, before rewrite and after preflight. Exactly one Backend record; verification failure after mutation is Partial. |
+| `execute_absorb` | Confirmed AbsorbPlan; T; `preflight_absorb`; mandatory `verify_absorb` before success | Common optional destructive savepoint, before rewrite and after preflight. Exactly one Backend record; executor failure after a ref write starts, or verification failure after mutation, is Partial with observed state, original/rebuilt full OIDs and ref/index progress. |
 | `stage_file(s)` / `unstage_file(s)` | Explicit index request; T; path/index conditions in staging | Worktree/refs unchanged: no auto snapshot; one record is the target contract; the existing unlogged implementation remains a staging-family migration gap, not a permanent exception. Admission remains ADR-0175. |
 | `fetch_remote` / `fetch_remote_branch` | Explicit request or auto-fetch policy; T; remote/refspec checks | No worktree snapshot; existing fetch recording/admission. Process termination uncertainty remains a distinct result. |
 | `create_snapshot` / `prune_snapshots` / `delete_snapshot` | Explicit capture/ID/cap request; T (including deletion); snapshot ref operations | No recursive snapshot. Existing manual GUI recorder remains; automatic children belong to parent execution. This does not migrate metadata recording into a second writer. |
@@ -67,20 +67,31 @@ recording and completion migrations are outside this change.
 
 Run rejects blockers before savepoint or mutation. It re-derives the operation's
 family plan requirements so callers cannot omit a required worktree digest or
-clear the destructive flag to bypass its safeguards. The existing HEAD/stash
+clear the destructive flag to bypass its safeguards. Config identity comparison
+includes absence/presence and SHA changes, before any worktree creation or
+post-create copy/symlink step. The branch checkbox adapter uses the combined
+CreateBranchWithCheckout request matching its approved plan; no second checkout
+is dispatched. The existing HEAD/stash
 identity checks remain mandatory. Family plans and domain data are not proof of
 user approval; adapters still own explicit approval and one-shot tokens.
 
 Unused external `Backend::execute_*` facades become crate-private: application
 consumers must use run or a documented dedicated boundary. Low-level `ops::*`
-functions taking an already-open git2 repository remain primitive APIs used by
-Git-internal composition and fixtures, not an alternative authorization facade.
+functions and their crate-root re-exports (including `execute_absorb`) remain
+public and can bypass the Backend trust/snapshot/verify/record boundary. PM
+explicitly approved preserving this existing exposure for this PR on 2026-09-07.
+This is a temporary migration exception, **not closure of all public mutation
+APIs** and not permission for new callers to bypass Backend. Caller migration
+and crate-private visibility remain a separate #484 follow-up, to be tracked by
+the PM. The inventory above describes Backend contracts, not those raw exports.
 No new feature may add a public raw executor instead of extending an existing
 boundary; its requirements must have a deliberate row here.
 
 Absorb refuses untrusted and stale plans before making a savepoint. Success
 requires the actual HEAD to equal the rebuilt tip; errors still reach its one
-recording boundary. Snapshot deletion now rejects untrusted handles before any
+recording boundary. Executor progress is captured before ref writes and across
+fallible index writes: auto-snapshot OFF plus index.lock still records Partial
+with the observed HEAD and the full original OID for recovery. Snapshot deletion now rejects untrusted handles before any
 ref/index/worktree change. Optional automatic savepoint failure remains
 best-effort under ADR-0154; required restore/discard recovery is unchanged.
 
@@ -93,6 +104,10 @@ with ref/index/worktree equality; absorb tip verification and stale refusal;
 and omitted plan safety requirements refused before any savepoint. Additional G
 coverage keeps restore recovery enabled with optional snapshots OFF, changes
 policy on one worker, and refuses dirty checkout before creating a branch.
+Additional review G cases use a real index.lock to prove post-ref-update Partial,
+exercise the GUI checkbox planner against the combined operation (ON/OFF, one
+record), and refuse None→Some / Some→None / changed worktree config identities
+for both create and open, without changing refs/index or creating the target.
 The private, test-only absorb fault proves a mismatched reported tip fails
 verification and returns this invocation’s Partial recording receipt.
 GUI execution is prohibited for this work; button/Enter parity is established

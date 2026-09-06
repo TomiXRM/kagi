@@ -2,7 +2,7 @@
 use crate::macos::{build_fixture, git, mount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::app::{PlanState, StashAction};
-use kagi::ui::{e2e, FooterStatus, KagiApp};
+use kagi::ui::{e2e, modals::ActiveModal, FooterStatus, KagiApp};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -61,6 +61,22 @@ fn confirm(
     } else {
         cx.simulate_keystrokes(window, "enter");
     }
+}
+fn dismiss_app_notice(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    wait(cx, app, |app| {
+        matches!(&app.active_modal, Some(ActiveModal::AppNotice(_)))
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "escape");
+    wait(cx, app, |app| app.active_modal.is_none());
 }
 fn teardown(cx: &mut VisualTestAppContext, app: Entity<KagiApp>, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, _| window.remove_window())
@@ -167,7 +183,10 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         assert!(matches!(entries[0].outcome, OpOutcome::Partial { .. }));
         assert_eq!(ids(&repo), before);
         assert!(cx.read(|cx| !matches!(app.read(cx).status_footer, FooterStatus::Success(_))));
-        cx.simulate_keystrokes(window, "escape");
+        // Partial delivery opens an AppNotice. The rest of this scenario calls
+        // conflict_continue directly, so first dismiss the notice through the
+        // real root key path instead of bypassing an active modal.
+        dismiss_app_notice(cx, &app, window);
         let other = build_fixture();
         let other_path = other.path().canonicalize().unwrap();
         app.update(cx, |app, cx| {

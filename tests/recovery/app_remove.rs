@@ -1,5 +1,5 @@
 //! Raw Enter and actual confirmation-button clicks through the real root.
-use crate::macos::{build_fixture, git, mount};
+use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{Entity, VisualTestAppContext};
 use kagi::ui::KagiApp;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
@@ -84,6 +84,7 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
         assert_eq!(entries[0].worktree.as_deref(), linked.to_str());
         assert!(cx.read(|cx| app.read(cx).app_sessions.may_close_host()));
+        unmount(cx, app, window);
         eprintln!(
             "[gui-e2e] PASS app-remove {} → executor → one receipt",
             if button { "button" } else { "raw Enter" }

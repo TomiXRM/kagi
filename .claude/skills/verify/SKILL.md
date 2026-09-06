@@ -31,7 +31,9 @@ DEST は /tmp 配下のみ許可。既存パスには上書き拒否。
 ## GUI 起動(ユーザーセッションを汚さない)
 
 ```bash
-KAGI_NO_RESTORE=1 ./target/debug/kagi /tmp/kagi-vfx-a/repo 2> /tmp/kagi-live.log &
+KAGI_NO_RESTORE=1 KAGI_LOG_DIR="$(mktemp -d)" KAGI_NO_SINGLE_INSTANCE=1 KAGI_NO_ACTIVATE=1 \
+  ./target/debug/kagi /tmp/kagi-vfx-a/repo 2> /tmp/kagi-live.log &
+PID=$!
 ```
 
 - `KAGI_NO_RESTORE=1` — settings.json のセッション保存/復元を無効化(必須。付けないと fixture タブがユーザーのセッションに保存される)。
@@ -42,6 +44,7 @@ KAGI_NO_RESTORE=1 ./target/debug/kagi /tmp/kagi-vfx-a/repo 2> /tmp/kagi-live.log
   ただし付けると下のソケット制御は使えない。これは通常 GUI の起動ルーティング指定であり、
   headless フックではないため、trusted な worktree `command` step はこれだけでは抑止されない。
   `pgrep -l kagi` を先に確認して選ぶ。
+- `KAGI_NO_ACTIVATE=1` — この明示的な起動時の `activate(true)` を抑止し、ユーザーの前面アプリやキー入力を奪わない。headless フックではない。single-instance の focus 転送には適用されないので、検証では `KAGI_NO_SINGLE_INSTANCE=1` と併用する。
 - 検証は stderr の `[kagi] …` klog 契約行を tail して行う。
 
 ## 実操作(クリックの代替): single-instance ソケット
@@ -91,16 +94,23 @@ KAGI_COMPARE_WT / KAGI_BOTTOM_PANEL / KAGI_TERMINAL / KAGI_MENU_DUMP / KAGI_PULL
   runner(`VisualTestAppContext`)側では**撮れない** — ウィンドウがオフスクリーンに開かれるため
   `screencapture` から見えず、`activate(true)` を足しても前面のアプリが撮れる。
   runner 内の `capture_screenshot` は pinned gpui に `render_to_image` の Mac 実装が無いので skip される。
-- **クリックは Terminal.app プロキシ経由**(Terminal に Accessibility 付与済み、SSH 直は不可)。
-  常駐プロキシ: `.command` ファイルに `tail -f /tmp/kagi-proxy-queue | while read s; do zsh $s > $s.out 2>&1; touch $s.done; done`
+- **cliclick の代替は `scripts/pidclick.swift`**。`CGEventPostToPid` で指定 PID と window ID だけへ配送するため、ユーザーのポインタ、前面アプリ、キーボード focus を奪わない。責任プロセス（このマシンでは Terminal.app プロキシ）には Accessibility の TCC 許可が必要。
+  ```bash
+  swiftc scripts/pidclick.swift -o /tmp/pidclick
+  /tmp/pidclick windows --pid "$PID"
+  /tmp/pidclick --pid "$PID" --window-id "$WID" move 120 80
+  /tmp/pidclick --pid "$PID" --window-id "$WID" click 120 80
+  /tmp/pidclick --pid "$PID" --window-id "$WID" rclick 120 80
+  /tmp/pidclick --pid "$PID" --window-id "$WID" key 53
+  /tmp/pidclick --pid "$PID" --window-id "$WID" type 'filter text'
+  ```
+  `windows` 出力の第 1 列から対象ウィンドウの ID を選び、`WID` に設定する。
+  座標はウィンドウ左上からの logical point。`click` / `rclick` は hover 用 `mouseMoved` を先に送る。
+  `type` は現在のキーボードレイアウトから virtual keycode を得るため、レイアウト依存である。IME、dead key、複数 keycode が必要な文字、改行・Tab を含む文字列には対応しない。未対応文字列はイベントを送る前に失敗する。
+- Terminal.app プロキシを使う場合は、`.command` ファイルに `tail -f /tmp/kagi-proxy-queue | while read s; do zsh $s > $s.out 2>&1; touch $s.done; done`
   を書いて `open -a Terminal` で起動 → SSH 側からスクリプトパスをキューに echo して結果ファイルを待つ。
-- **癖: 1 プロキシスクリプト内で cliclick を複数回起動すると最初の 1 発しか効かない** — 1 スクリプト = 1 cliclick 起動に分割する。
-  ただし **1 回の cliclick 起動内のチェーンは OK**: `cliclick m:X,Y w:300 c:.`(移動→待ち→現在位置クリック)。
-- **gpui のボタンは「teleport+クリック同時」では反応しない**(タブ行は反応する)。ホバーが先に必要:
-  `cliclick m:X,Y` で載せてから(hover 状態をスクショで確認可)、`cliclick c:.` で踏む。上のチェーン形が確実。
 - diff を起動時に自動で開く: `KAGI_SELECT_FIRST=1 KAGI_OPEN_FIRST_FILE=1`(headless モードになり single-instance は無効)。
-- 座標系: cliclick = ポイント(1920×1080)、スクショ = 物理 px(3840×2160、スケール 2)。
-  較正は `cliclick m:X,Y` → `screencapture -C` でカーソル位置を目視。
+- スクショは物理 px、pidclick は window-relative logical point なので、Retina の倍率を混同しない。
 - ウィンドウ前面化は TCC 不要の裏技: **引数なし `kagi` を起動すると single-instance の focus 転送**で
   実行中インスタンスが `cx.activate(true)` する。
 - Solo の操作: サイドバーの branch 行を**右クリック**(`branch-menu: open local <name>` が出る)→

@@ -210,8 +210,16 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
         wait(cx, &app, |app| {
-            app.conflict.is_none()
-                && !matches!(app.app_sessions.plan_state(), PlanState::Planning { .. })
+            if app.conflict.is_some() {
+                return false;
+            }
+            if duplicate {
+                app.app_sessions.stash_conflict(&repo).is_none()
+                    && !matches!(app.app_sessions.plan_state(), PlanState::Planning { .. })
+            } else {
+                app.stash_drop_modal().is_some()
+                    && matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+            }
         });
         cx.read(|cx| {
             let app = app.read(cx);

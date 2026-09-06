@@ -394,6 +394,10 @@ impl KagiApp {
         if !self.app_sessions.has_leases() && self.busy_op == Some("remove-worktree") {
             self.busy_op = None;
         }
+        // The reload-time attempt may be deferred by an active modal. Retry
+        // before queued notices are presented so the fresh drop confirmation
+        // is not stranded after its conflict has been continued.
+        self.present_stash_followup(cx);
     }
     pub(crate) fn confirm_app_notice(&mut self, cx: &mut Context<Self>) {
         let Some(notice) = self.app_notice().cloned() else {

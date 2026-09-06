@@ -450,6 +450,8 @@ impl KagiApp {
                 );
                 self.clear_conflict_continue_modal();
                 self.reload(cx);
+                self.conflict_detected_for = None;
+                self.detect_conflict_mode(cx);
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
@@ -623,6 +625,8 @@ impl KagiApp {
                     cx,
                 );
                 self.reload(cx);
+                self.conflict_detected_for = None;
+                self.detect_conflict_mode(cx);
             }
             Err(e) => {
                 let err_msg = format!("{}", e);

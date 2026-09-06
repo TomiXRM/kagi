@@ -209,6 +209,32 @@ fn abort_second_stop_after_multiple_replayed_commits_restores_original_topic() {
 }
 
 #[test]
+fn continue_redetects_each_following_rebase_stop_without_snapshot_reload() {
+    let fixture = Fixture::new(12, 8, &[3, 4, 3]);
+    for expected in [(1, 3), (2, 4), (3, 3)] {
+        let repo = fixture.repo();
+        let session = detect_conflict_session(&repo).expect("fresh conflict detection");
+        assert!(matches!(
+            session.op,
+            ConflictOp::Rebase { step, total: 3, .. } if step == expected.0
+        ));
+        assert_eq!(session.files.len(), expected.1);
+        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        for file in &session.files {
+            buffer
+                .set_manual_text(&file.path, "continue resolution\n")
+                .unwrap();
+        }
+        execute_conflict_continue(&repo, repo.workdir().unwrap(), &session, &buffer)
+            .expect("continue to next rebase stop");
+    }
+    assert!(
+        detect_conflict_session(&fixture.repo()).is_none(),
+        "fresh detection clears after the final real continue"
+    );
+}
+
+#[test]
 fn abort_refuses_only_real_staged_or_unstaged_nonconflict_edits() {
     for staged in [false, true] {
         let fixture = Fixture::new(12, 8, &[3]);

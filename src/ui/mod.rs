@@ -62,6 +62,7 @@ pub mod main_diff_pane;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
 mod modal_copy;
+pub mod modal_plan;
 mod modal_renderers;
 mod modal_renderers_commit;
 mod modal_renderers_create;

@@ -41,7 +41,7 @@ impl KagiApp {
             path_state: None, // lazy (render)
             path_touched: false,
             allow_existing_branch,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_create_worktree();
@@ -105,7 +105,7 @@ impl KagiApp {
         } else {
             repo.plan_create_worktree(&branch, &path, &at)
         };
-        match plan_result {
+        match &plan_result {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
@@ -119,13 +119,15 @@ impl KagiApp {
                 // `WorktreePathErrorKeyed`) and localize automatically via
                 // `plan_note_text()` — no separate localized-blocker
                 // computation needed.
-                if let Some(modal) = self.create_worktree_modal_mut() {
-                    modal.plan = Some(std::sync::Arc::new(plan));
-                }
             }
             Err(e) => {
                 klog!("plan: create-worktree error: {}", e);
             }
+        }
+        // #510: a failed replan replaces the plan instead of leaving it behind.
+        let outcome = plan_outcome(i18n::Op::CreateWorktree, plan_result);
+        if let Some(modal) = self.create_worktree_modal_mut() {
+            modal.plan.replan(outcome);
         }
     }
 
@@ -146,9 +148,10 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // #510: `Pending` and `Failed` both yield None, so a failed replan
+        // refuses Enter and the button alike.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         if !plan.blockers.is_empty() {
             klog!("refused: create-worktree plan has blockers, not executing");

@@ -549,6 +549,10 @@ mod macos {
                 Box::new(crate::app_stash::scenario_stash_replan_error),
             ),
             (
+                "create_branch_replan_error",
+                Box::new(crate::recovery_operations::scenario_create_branch_replan_error),
+            ),
+            (
                 "external_stash_conflict_has_no_drop_prompt",
                 Box::new(crate::app_stash::scenario_external_stash_conflict_has_no_drop_prompt),
             ),

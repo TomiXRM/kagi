@@ -49,6 +49,7 @@ impl KagiApp {
             }
             Err(e) => {
                 klog!("plan: error: {}", e);
+                self.report_plan_failure(i18n::Op::Checkout, e);
             }
         }
     }
@@ -115,6 +116,7 @@ impl KagiApp {
             }
             Err(e) => {
                 klog!("checkout-commit plan: error: {}", e);
+                self.report_plan_failure(i18n::Op::Checkout, e);
             }
         }
     }

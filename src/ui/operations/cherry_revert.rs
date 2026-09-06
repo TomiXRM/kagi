@@ -51,6 +51,7 @@ impl KagiApp {
             }
             Err(e) => {
                 klog!("cherry-pick plan: error: {}", e);
+                self.report_plan_failure(i18n::Op::CherryPick, e);
             }
         }
     }
@@ -184,6 +185,7 @@ impl KagiApp {
             }
             Err(e) => {
                 klog!("revert plan: error: {}", e);
+                self.report_plan_failure(i18n::Op::Revert, e);
             }
         }
     }

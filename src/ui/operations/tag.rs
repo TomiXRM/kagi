@@ -17,7 +17,7 @@ impl KagiApp {
             start_title,
             input: String::new(),
             input_state: None,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_create_tag();
@@ -41,7 +41,8 @@ impl KagiApp {
                 return;
             }
         };
-        match repo.plan_create_tag(&name, &at) {
+        let result = repo.plan_create_tag(&name, &at);
+        match &result {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-tag '{}' blockers={} warnings={}",
@@ -49,13 +50,15 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                if let Some(modal) = self.create_tag_modal_mut() {
-                    modal.plan = Some(std::sync::Arc::new(plan));
-                }
             }
             Err(e) => {
                 klog!("plan: create-tag error: {}", e);
             }
+        }
+        // #510: a failed replan replaces the plan instead of leaving it behind.
+        let outcome = plan_outcome(i18n::Op::CreateTag, result);
+        if let Some(modal) = self.create_tag_modal_mut() {
+            modal.plan.replan(outcome);
         }
     }
 
@@ -68,9 +71,10 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // #510: `Pending` and `Failed` both yield None, so a failed replan
+        // refuses Enter and the button alike.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         if !plan.blockers.is_empty() {
             klog!("refused: create-tag plan has blockers, not executing");

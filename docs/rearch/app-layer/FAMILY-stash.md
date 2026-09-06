@@ -1,9 +1,12 @@
 # #484 family 2: stash push / apply / pop / drop
 
-状態: **設計レビュー案・未実装**。読解基準は `origin/dev` の `4ad4ad28`
+状態: **設計レビュー r2・未実装**。PM Round 1 の (1)〜(5)/A〜E を反映。
+追加 D と C の完了範囲の整合は §7 の提案について PM 確認待ち。omp-plan 第 2 レビュー待ち。
+読解基準は `origin/dev` の `4ad4ad28`
 （#530 merge）。2026-09-07。コード変更・cargo・G/E/M 実行は本 PR に含めない。
-PM 報告では 1a/1b の G/E は通過、M は PM 待ち。**M と横展開許可、および
-[#531](https://github.com/TomiXRM/kagi/issues/531) の follow-up 完了前に実装を始めない。**
+PM 報告では 1a/1b の G/E は通過、M は PM 待ち。**1b の M 通過と PM の横展開許可、
+および [#531](https://github.com/TomiXRM/kagi/issues/531) のマージ後の `dev` への
+rebase を実装開始条件とする。それまでは実装しない。**
 [DESIGN](DESIGN.md) §5.2/§7/§8 の次 family を具体化するノートであり、
 DESIGN 冒頭の古い実装状況（1b 未実装）を現在の状況として引用しない。
 
@@ -105,11 +108,11 @@ ack でも解除しない。close/Quit 保留の保証はアプリ内入口だ�
 | 案 | 影響 / 判断 |
 |---|---|
 | `run` 自体を report 戻り値へ変更 | 全 operation、CLI/MCP、既存 test の同時変更が必要。family 単位を超えるため不採用 |
-| `run_recorded(op, plan)` sibling | **採用**。旧 `run` は同一内部 pipeline の result を返す互換 facade。後続 CLI/MCP も sibling を使えるが今回 caller は変えない |
+| `run_recorded(op, plan)` sibling | **採用**。旧 `run` は同一内部 pipeline の receipt を捨てて result を返す互換 facade。後続 CLI/MCP も sibling を使えるが今回 caller は変えない |
 | 旧 `run` を呼んでから append | 禁止。二重 writer、verify 後の別 entry、global tail 読みで receipt を偽装することになる |
 
 現在の `record_run_oplog` は append error を捨て、`run` は trust/preflight/一部拒否と
-末尾で記録する。この各出口を **共通の一回限りの finalize** に合流させ、
+末尾で記録する。この各出口を **唯一の記録実装である共通の一回限りの finalize** に合流させ、
 `append_oplog_receipt` が返した path/採番済み entry をそのまま保持する。
 非 stash arm の既存 result/outcome（#524 の partial_after を含む）は変更しない。
 stash だけ既存 executor dispatch → 実 verify → outcome 組立 → finalize にする。
@@ -132,6 +135,9 @@ crash durability、裸 OID の GC 後保持を今回の receipt で保証した�
 現行 `run` の apply/pop/drop preflight は HEAD と stash count の照合。
 **同じ件数で index の内容が置き換わる場合には不十分**なので、承認済み full OID と
 ordered stash list fingerprint を stash plan に保持し、実行直前に再照合する。
+この判定は **`kagi-git` の `preflight_check_stash` の拡張**に置く。既存の HEAD/count
+照合は残し、full OID/fingerprint を追加条件として要求する。app は凍結 plan を渡すだけで、
+Git の照合・安全判定を持たない。既存 caller の移行も同じ Backend 判定に集約する。
 相違時に index を再解釈して別 entry を実行せず、Refused と再planにする。
 push は HEAD/status、message/include_untracked と対象状態を束縛する。
 Git gate は fresh-open の trust と既存 preflight を維持。Drop の auto-snapshot 免除を維持する。
@@ -160,8 +166,8 @@ auto-snapshot が生じた場合も開始証跡/復元材料を落とさない�
 | 現行実入口（4ad4ad28） | app API | 撤去する glue / 残す表示 |
 |---|---|---|
 | `open_stash_push_modal` / `replan_stash_push` / `confirm_stash_push`（既に async） | `plan_stash(Push)` → 共通承認/prepare/run/apply | debounce 入力 flush は維持し即 revision 無効化。独自 busy/spawn、blocking core、finish_op_on_main、record_op を撤去 |
-| `open_stash_apply_modal` / `confirm_stash_apply`（Enter・ボタンとも sync） | `plan_stash(Apply)` → 同じ列 | UI 同期 open/run/verify、record_op を撤去。stash 保持、失敗 modal、conflict 表示を維持 |
-| `open_pop_modal` / `confirm_pop`（Enter sync）/ `start_pop`（button async） | `plan_stash(Pop)` → 同じ列 | sync executor 二重入口、独自 busy/finish/record_op を撤去。`pop_outcome_for` の意味を report/表示 mapper に移す |
+| `open_stash_apply_modal` / `confirm_stash_apply`（plan も UI 同期 open、確認は Enter・ボタンとも sync） | modal を `Planning` で開く → 背景 `plan_stash(Apply)` → Ready/Error → 同じ承認列 | UI 同期 plan/open/run/verify、record_op を撤去。stash 保持、失敗 modal、conflict 表示を維持 |
+| `open_pop_modal` / `confirm_pop`（plan は UI 同期 open、Enter sync）/ `start_pop`（button async） | modal を `Planning` で開く → 背景 `plan_stash(Pop)` → Ready/Error → 同じ承認列 | sync plan/executor 二重入口、独自 busy/finish/record_op を撤去。`pop_outcome_for` の意味を report/表示 mapper に移す |
 | local `open_stash_drop_modal` / `start_stash_drop` | `plan_stash(Drop)` → 同じ列 | Refused UI writer、busy/finish/record_op を撤去。danger modal、preflight の既存ローカライズ、full OID を維持 |
 | remote `open_stash_drop_modal` / `start_stash_drop` 内分岐 | `plan_stash(RemoteDrop)` → 同じ列、transport job | remote 独自 busy/finish/record_op を撤去。remote refresh と対象付き失敗表示を維持 |
 
@@ -172,6 +178,8 @@ stash apply のフィールド/consumer ではない。この family で追加�
 modal は既存 4 variant と accessor/render routing を再利用し、Enter/cancel/button の
 網羅性を確認する。blockers と error を区別し、replan error では旧 plan の Enter/ボタンを
 両方禁止。runtime refusal は具体的理由を通知し、plan blockers だったかのようなログにしない。
+apply/pop の `Planning` 中は確認不可で cancel は可能。plan open 失敗も同じ modal の
+Error と通知に反映し、旧 Ready を復活させない。cancel/置換後の遅着 plan は §2.1 に従い破棄する。
 
 conflicted pop/apply → reload → `ConflictOp::StashConflict` の検出を保持する。
 continue は解決を stage するだけ（commit しない）、abort は stash を保持する。
@@ -183,7 +191,9 @@ OID 不在/owner 不一致では他の stash を代用しない。conflict execu
 
 ### 4.1 klog 契約（prefix `[kagi] `、下表はその後の本文）
 
-文言・分岐内の順序を維持する。既存の raw eprintln 契約行を移動する場合も
+既存行の文言・分岐内の順序を維持する。ただし **PM (3) の明示承認により pop Enter に
+async wrapper 行を追加**し、ボタンと統一する（削除・改名・並べ替えではない）。
+既存の raw eprintln 契約行を移動する場合も
 `klog!` 経由にするだけで文言を直さない。backend は typed event を発行し、adapter が
 順に既存文字列へ写す。実行ログをすべて配送完了後へ遅延させない。
 
@@ -194,8 +204,7 @@ OID 不在/owner 不一致では他の stash を代用しない。conflict execu
 | apply plan | `plan: stash-apply index={} blockers={} warnings={}` |
 | apply 成功 | `executed: stash-apply index={}` → `verified: working tree dirty (stash applied)` または `verify: working tree NOT dirty after stash-apply` → `verified: stash count={} (entry preserved)` または `verify: stash count={} (expected >= {})` |
 | pop plan | `plan: stash-pop index={} blockers={} warnings={}` |
-| pop button 成功 | `async: stash-pop started` → `executed: stash-pop index={}` → conflict の時だけ `executed: stash-pop index={} — conflicts in {} file(s), stash kept` → `async: stash-pop finished` |
-| pop Enter 成功 | 上記の `executed` 行（同じ順序）、既存 async wrapper 行はない |
+| pop Enter / button 成功 | `async: stash-pop started` → `executed: stash-pop index={}` → conflict の時だけ `executed: stash-pop index={} — conflicts in {} file(s), stash kept` → `async: stash-pop finished`。Enter の started/finished は今回の契約変更で追加 |
 | drop local | `plan: stash-drop index={} blockers={}` → `async: stash-drop started` → `executed: stash-drop index={} oid={}` → `async: stash-drop finished` |
 | drop remote | `plan: remote stash-drop index={index} blockers=0` → `async: remote stash-drop started` → `async: remote stash-drop finished` |
 | blockers | `refused: stash-push plan has blockers, not executing` / `refused: stash-apply plan has blockers, not executing` / `refused: pop plan has blockers, not executing` / `refused: drop plan has blockers, not executing`。実行行なし |
@@ -208,11 +217,14 @@ push の status 読み失敗では現在 verify 行を省略して timing に進
 可視化しても、成功 verify 行を追加して偽らない。reload 共通ログは既存 reload 側のまま。
 pop/drop の plan error は現状 footer で、上表に架空の契約行を追加していない。
 
-**同期撤去とログ互換は別軸**。推奨は adapter の有限な log profile だけで従来の
-pop Enter の wrapper 行の有無を保つ（apply は両入口とも wrapper 無し）。すべて同じ
-async dispatch/lease/記録を通り、profile は安全処理を分岐させない。同期 confirm 本体は残さない。
-PM が Enter に button の wrapper 行を追加する方を選ぶ場合は、明示的な契約変更として
-既存 harness と同時レビューする。本案は無断でそのログ変更を行わない。
+**log profile は作らない（PM (3) 採用）**。pop Enter/ボタンは同じ async dispatch と
+ログ列に統一し、失敗時も started → failed、finished は出さない。同期 confirm 本体は撤去する。
+apply は既存の両入口共通のログ列を維持する。
+実装 PR で `rg -n 'stash-pop|stash_pop|confirm_pop|start_pop' tests src/headless.rs` 等により
+stash-pop の契約を参照するテスト/harness と assertion を列挙し、間接 helper/全出力比較も
+確認する。**wrapper 行の不在を assert するテストが無いことを PR 本文に証拠付きで示す**。
+存在した場合は勝手に削除・更新せず PM に報告して判断を受ける。本 docs PR はその調査の
+完了を主張しない。E では双方の成功/競合/失敗の順序と、一度だけ実行されることを確認する。
 
 ## 5. remote/SSH drop
 
@@ -221,6 +233,7 @@ UI に writer がある前提で再実装しない。`remote_stash_drop_recorded
 run_checked/記録処理を集約し、旧関数は result の互換 facade にする。
 drop の実 stdout（full OID を含む）を receipt に保持し、UI の predicted summary で置換しない。
 
+**この節の transport 変更と Local/Remote 和の導入は PR 2 のみ**。
 local Backend を開けないので Target/lease key は `Local(RepoId)` と
 `Remote(RemoteScope)` の有限和にする。RemoteScope は凍結した SSH 接続指定と remote root、
 取得できる remote common-dir を持つ。`host:root` 表示文字列を local canonical path と
@@ -289,15 +302,28 @@ backend の stash boundary、app の stash job、UI adapter、tests の機能境
 | 1 local | enum/共通 report/receipt sibling + local 4 op + conflict follow-up payload + G/E + ADR | production 450〜750 行追加、旧 glue 350〜500 行削除、tests 450〜700 行追加、約 12〜18 files |
 | 2 remote | typed scope/recorded transport + remote drop UI adapter + G/E/M | production 180〜320 行追加、旧 glue 60〜100 行削除、tests 200〜350 行追加、約 6〜10 files |
 
-PR 1 中の remote legacy 経路も `LegacyBusy` と共通 lease の両方向排他を維持する。
-remote scope が必要になる前から汎用 transport framework を作らない。PR 2 後に stash の
-UI writer/finish glue がゼロであることを確認する。他 family の helper は削除しない。
-共有 skeleton 変更で #531 を巻き戻さないよう、実装開始時にその merge 後 dev へ更新する。
+**PR 1 に含めないもの**: remote drop の plan/executor/記録/表示経路の移管・変更、
+remote 用のファイル移動、`Local/Remote` lease key 和の導入。remote の既存経路は残し、
+`LegacyBusy` と共通 lease の両方向排他のみ維持する。remote scope は PR 2 で追加する。
 
-PM/omp-plan に確認したいのは (1) finite enum/単一 slot、(2) sibling による既存 run 互換、
-(3) log-only profile による旧 Enter trace 保持、(4) conflict follow-up の OID 引継ぎを含む
-2 PR 分割、(5) remote 停止不明の保留制約。合意後の実装 ADR で実際の採用範囲だけを記録し、
-ADR-0149/0175 と remote ADR-0097 の該当部分を相互参照する。
+**PR 1 の完了条件（追加 C/D の整合案・PM 確認待ち）**:
+`src/ui/operations/stash.rs` の **local 4 op 経路**から `finish_op_on_main` / `record_op` /
+同期実行 confirm / blocking core 呼出しをゼロにする。`rg -n` の全ヒットと各 caller の
+所属を PR 本文に載せ、remote 分岐の残存だけを明示する。単に関数を別ファイルへ移動して
+「ゼロ」としない。実行しない薄い confirm intent の名前と、同期 executor 本体も区別する。
+現行 remote 分岐（基準 tree の stash.rs:503/506/526）には finish/record 呼出しが残るため、
+「remote を変更しない」と「PR 1 でファイル全体のヒットゼロ」は両立しない。
+**PR 2 の完了条件**は、remote も移管した後に同ファイル全体で上記旧 glue のヒットゼロを
+同じ方法で示すこと。これは D のスコープ調整提案であり、PM 承認済みとは扱わない。
+他 family の helper は削除しない。実装開始は 1b の M 通過・横展開許可・#531 merge 後 dev
+への rebase 後だけとし、共有 skeleton 変更で #531 を巻き戻さない。
+
+PM Round 1 で (1) finite enum/単一 slot、(2) run 互換 sibling/唯一の finalize、
+(4) owner+full OID と 2 PR 分割、(5) remote 停止不明の保留は採用となった。
+(3) は r1 の log profile 案を撤回し、Enter とボタンのログ統一を採用した。
+追加 A/B/C/E は本文に反映、D は上記スコープの PM 確認待ち。omp-plan 第 2 レビューは未受領。
+実装 ADR で実際の採用範囲だけを記録し、ADR-0149/0175 と remote ADR-0097 の該当部分を
+相互参照する。
 
 読解根拠: [ADR-0087](../../adr/0087-stash-sidebar-actions-and-drop.md)、
 [ADR-0097](../../adr/0097-remote-stash-drop.md)、

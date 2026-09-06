@@ -88,7 +88,7 @@ impl KagiApp {
         // Built before the column so the closures don't conflict-borrow `self`:
         // gather plain params first (cloning out of `self.active_view`), then map
         // to elements via `render_wip_row`.
-        let wip_rows: Vec<gpui::AnyElement> = {
+        let (wip_rows, wip_passing_lanes) = {
             // Count every dirty kind so the row's "N changes" matches the
             // `is_dirty` gate above — otherwise an untracked-only (or
             // conflict-only) tree renders the row with a misleading "0 changes".
@@ -198,7 +198,7 @@ impl KagiApp {
                     passing.push((l, color_idx));
                 }
             }
-            rows
+            (rows, passing)
         };
 
         // T030: column header row (fixed, above WIP and commit list).
@@ -364,8 +364,13 @@ impl KagiApp {
             );
 
         // ADR-0088: stash graph rows, shown below the WIP row.
-        let stash_graph_row_els =
-            self.render_stash_graph_rows(badge_col_w, graph_col_w, self.graph_scroll_x, cx);
+        let stash_graph_row_els = self.render_stash_graph_rows(
+            badge_col_w,
+            graph_col_w,
+            self.graph_scroll_x,
+            &wip_passing_lanes,
+            cx,
+        );
 
         let commit_list_col = div()
             .flex_1()

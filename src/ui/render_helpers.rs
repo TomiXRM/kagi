@@ -91,7 +91,12 @@ pub(crate) fn render_rows(
             let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
                 if theme::graph_lane_compact() && !is_selected {
                     let c = theme().lane_color(row.node_color);
-                    let (na, ha) = if theme().dark {
+                    let (na, ha) = if theme().slug == "flower-road" {
+                        // These lanes are already pastel: the usual light-theme
+                        // wash fades them into the ivory. Strengthen only the
+                        // band, leaving lane strokes and ref badges unchanged.
+                        (0.35, 0.42)
+                    } else if theme().dark {
                         (0.18, 0.24)
                     } else {
                         (0.11, 0.15)

@@ -38,6 +38,14 @@ stash は「どのコミットから生えたか(=作成時の HEAD)」が分か
    - `graph_canvas` に `stash_lanes` を渡し、その**レーンのノード/エッジを黄色**で塗る。
    - 左クリック = Pop、右クリック = stash メニュー(ADR-0087 と同じ)。
 
+## WIP connector continuity (2026-09-06)
+
+Stash rows also pass through every WIP-to-HEAD connector from the WIP rows
+actually rendered above them. Reuse their accumulated `(lane, colour)` pairs
+and WIP dashed-edge sentinel; do not infer connectors from a potentially stale
+snapshot map. Each stash row carries these full-height passes alongside its
+own solid stash edges, so inserting one or more stashes cannot break a WIP line.
+
 ## Consequences
 
 - 「stash がどこから生えたか」がグラフ上で一目で分かる。base が HEAD 以外の古いコミットでも

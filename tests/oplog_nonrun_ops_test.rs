@@ -229,7 +229,7 @@ fn stash_drop_records_recoverable_oid_without_worktree_snapshot() {
 }
 
 #[test]
-fn stash_drop_refuses_shifted_stash_list_and_records_failure() {
+fn stash_drop_refuses_shifted_stash_list_and_records_refusal() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
@@ -254,7 +254,7 @@ fn stash_drop_refuses_shifted_stash_list_and_records_failure() {
     assert_eq!(repo_state(dir), before);
     let records = fixture.records(1, Actor::Human);
     assert_eq!(records[0].op, "stash-drop");
-    assert!(matches!(records[0].outcome, OpOutcome::Failed { .. }));
+    assert!(matches!(records[0].outcome, OpOutcome::Refused { .. }));
 }
 
 #[test]

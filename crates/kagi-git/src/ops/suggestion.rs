@@ -103,6 +103,7 @@ pub fn plan_apply_suggestion(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         // The fine-grained stale guard lives in execute (line-range compare);
         // only HEAD needs the generic preflight digest here.
         worktree_digest: None,

@@ -1,6 +1,8 @@
 //! Recorded remove boundary. Owns progress across executor unwind, never a UI callback.
+use super::recording::finalize as record;
+pub use super::recording::Recording;
 use super::*;
-use crate::oplog::{append_oplog_receipt, Actor, OpLogEntry, OpOutcome};
+use crate::oplog::{Actor, OpLogEntry, OpOutcome};
 use kagi_domain::remove::{RemoveFaultPoint, RemoveProgress};
 use kagi_domain::remove::{RepoId, WorktreeId};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -27,26 +29,6 @@ pub struct RemovePlan {
     name: String,
     delete_branch: bool,
     fingerprint: Option<Fingerprint>,
-}
-
-#[derive(Clone, Debug)]
-pub enum Recording {
-    Appended {
-        path: PathBuf,
-        entry: OpLogEntry,
-    },
-    Failed {
-        attempted: OpLogEntry,
-        error: String,
-    },
-}
-impl Recording {
-    pub fn entry(&self) -> &OpLogEntry {
-        match self {
-            Self::Appended { entry, .. } => entry,
-            Self::Failed { attempted, .. } => attempted,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -287,16 +269,6 @@ impl Backend {
             recording: record(entry),
             progress: Default::default(),
         }
-    }
-}
-
-fn record(entry: OpLogEntry) -> Recording {
-    match append_oplog_receipt(&entry) {
-        Ok((path, entry)) => Recording::Appended { path, entry },
-        Err(error) => Recording::Failed {
-            attempted: entry,
-            error: error.to_string(),
-        },
     }
 }
 

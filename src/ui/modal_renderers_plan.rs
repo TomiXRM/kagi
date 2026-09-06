@@ -107,8 +107,11 @@ pub(crate) fn render_conflict_continue_modal(
 
 /// Stash-pop confirmation overlay (T-HT-007).
 pub(crate) fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let Some(plan) = modal.plan else {
+        return render_stash_planning(modal.error, cx);
+    };
     render_plan_modal_wrapper_styled(
-        modal.plan,
+        plan,
         modal.error,
         "Pop",
         None,
@@ -126,8 +129,11 @@ pub(crate) fn render_stash_drop_modal(
     modal: StashDropModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let Some(plan) = modal.plan else {
+        return render_stash_planning(modal.error, cx);
+    };
     render_plan_modal_wrapper_styled(
-        modal.plan,
+        plan,
         modal.error,
         "Drop",
         None,
@@ -136,6 +142,25 @@ pub(crate) fn render_stash_drop_modal(
         |this, cx| this.start_stash_drop(cx),
         cx,
     )
+}
+
+pub(crate) fn render_stash_planning(
+    error: Option<SharedString>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    use gpui_component::button::{Button, ButtonVariants};
+    let card = super::modal_shell::modal_card(super::modal_shell::MODAL_W_MD)
+        .child(error.unwrap_or_else(|| Msg::EditorWorkspaceLoading.t().into()))
+        .child(
+            Button::new("stash-planning-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.cancel_active_modal(cx);
+                    cx.notify();
+                })),
+        );
+    super::modal_renderers::modal_overlay(card).into_any_element()
 }
 
 /// PR-merge confirmation overlay (GitHub Phase 2). Same plan wrapper as every

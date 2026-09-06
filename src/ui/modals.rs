@@ -92,7 +92,7 @@ pub struct AmendPlanModal {
 /// State for an in-progress stash-pop confirmation (T-HT-007).
 #[derive(Clone)]
 pub struct PopPlanModal {
-    pub plan: std::sync::Arc<OperationPlan>,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
     pub error: Option<SharedString>,
     /// Stash index the plan was built for.
     pub stash_index: usize,
@@ -139,7 +139,7 @@ pub struct TrustRepoModal {
 /// State for a stash-drop confirmation.
 #[derive(Clone, Debug)]
 pub struct StashDropModal {
-    pub plan: std::sync::Arc<OperationPlan>,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
     pub error: Option<SharedString>,
     /// Stash index the plan was built for.
     pub stash_index: usize,
@@ -354,7 +354,7 @@ pub struct StashApplyModal {
     /// The stash index to apply.
     pub index: usize,
     /// The computed plan.
-    pub plan: std::sync::Arc<OperationPlan>,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
 }

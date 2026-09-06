@@ -247,7 +247,7 @@ impl KagiApp {
         let pop_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if pop_on {
                 // Pop the newest stash (index 0) — plan with conflict prediction.
-                this.open_pop_modal(0);
+                this.open_pop_modal(0, cx);
             } else {
                 this.status_footer = FooterStatus::Idle(SharedString::from(Msg::PopEmpty.t()));
             }

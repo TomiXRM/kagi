@@ -100,7 +100,7 @@ impl KagiApp {
     pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         let modal = match self.create_branch_modal().cloned() {
             Some(m) => m,
             None => return,
@@ -470,7 +470,7 @@ impl KagiApp {
     }
 
     pub fn start_set_upstream(&mut self, cx: &mut Context<Self>) {
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
@@ -605,7 +605,7 @@ impl KagiApp {
     }
 
     pub fn start_rename_branch(&mut self, cx: &mut Context<Self>) {
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;

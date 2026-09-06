@@ -199,6 +199,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         // #295: pin the classification so execute refuses if a target became
         // conflicted or moved tracked→untracked between plan and execute.
         worktree_digest: Some(status.digest()),

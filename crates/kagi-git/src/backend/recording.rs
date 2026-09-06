@@ -2,6 +2,45 @@ use kagi_domain::history::HistoryEntry;
 use kagi_domain::plan_note::HistoryMoveDir;
 
 use super::{ops, Backend, GitError, OperationOutcome, OperationPlan};
+use crate::oplog::{append_oplog_receipt, OpLogEntry};
+use std::path::PathBuf;
+
+#[derive(Clone, Debug)]
+pub enum Recording {
+    Appended {
+        path: PathBuf,
+        entry: OpLogEntry,
+    },
+    Failed {
+        attempted: OpLogEntry,
+        error: String,
+    },
+}
+impl Recording {
+    pub fn entry(&self) -> &OpLogEntry {
+        match self {
+            Self::Appended { entry, .. } => entry,
+            Self::Failed { attempted, .. } => attempted,
+        }
+    }
+}
+
+pub struct RunReport {
+    pub result: Result<OperationOutcome, GitError>,
+    pub recording: Recording,
+    pub stash: Option<super::stash::StashEvidence>,
+}
+
+/// Single append implementation, shared with factories that fail before open.
+pub(crate) fn finalize(entry: OpLogEntry) -> Recording {
+    match append_oplog_receipt(&entry) {
+        Ok((path, entry)) => Recording::Appended { path, entry },
+        Err(error) => Recording::Failed {
+            attempted: entry,
+            error: error.to_string(),
+        },
+    }
+}
 
 /// Map a `Backend::run` dispatch result into the oplog [`OpOutcome`] (ADR-0149).
 ///
@@ -60,12 +99,12 @@ impl Backend {
         op: &str,
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
-    ) {
+    ) -> Recording {
         let repo = self.path.display().to_string();
         let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
             .with_actor(self.actor)
             .with_worktree(Some(repo));
-        let _ = crate::oplog::append_oplog(&entry);
+        finalize(entry)
     }
 
     /// Preflight, move the recorded branch ref, then persist one entry per attempt.

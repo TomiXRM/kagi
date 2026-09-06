@@ -50,7 +50,8 @@ pub fn plan_stash_push(
     let status = working_tree_status(repo)?;
 
     // ── 2. Count existing stashes ────────────────────────────
-    let stash_count = count_stashes(repo)?;
+    let identity = stash_identity(repo, None)?;
+    let stash_count = identity.oids.len();
 
     // ── 3. Build current StateSummary ────────────────────────
     let head_display = head.display();
@@ -144,7 +145,8 @@ pub fn plan_stash_push(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
-        worktree_digest: None,
+        stash_identity: Some(identity),
+        worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
@@ -224,7 +226,12 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
     let status = working_tree_status(repo)?;
 
     // ── 2. Collect stash entries ─────────────────────────────
-    let stashes = collect_stash_entries(repo)?;
+    let entries = collect_stash_entries_with_oid(repo)?;
+    let identity = identity_from_entries(&entries, index);
+    let stashes: Vec<_> = entries
+        .iter()
+        .map(|(i, message, _)| (*i, message.clone()))
+        .collect();
     let stash_count = stashes.len();
 
     // ── 3. Build current StateSummary ────────────────────────
@@ -313,6 +320,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        stash_identity: Some(identity),
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
@@ -389,6 +397,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 
     // ── 2. Collect stash entries with OIDs for conflict prediction ───────────
     let stashes_with_oid = collect_stash_entries_with_oid(repo)?;
+    let identity = identity_from_entries(&stashes_with_oid, index);
     let stash_count = stashes_with_oid.len();
     let stashes: Vec<(usize, String)> = stashes_with_oid
         .iter()
@@ -512,6 +521,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        stash_identity: Some(identity),
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
@@ -548,17 +558,53 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
 pub fn execute_stash_pop(repo: &mut Repository, index: usize) -> Result<StashPopOutcome, GitError> {
+    let identity = stash_identity(repo, Some(index))?;
+    execute_stash_pop_recorded(repo, index, &identity, &mut Default::default(), None)
+}
+
+pub(crate) fn execute_stash_pop_recorded(
+    repo: &mut Repository,
+    index: usize,
+    identity: &kagi_domain::plan::StashIdentity,
+    evidence: &mut crate::backend::stash::StashEvidence,
+    fault: Option<crate::backend::stash::StashFaultPoint>,
+) -> Result<StashPopOutcome, GitError> {
     // Step 1: Apply the stash.
     repo.stash_apply(index, None)
         .map_err(|e| GitError::Other(format!("stash apply (pop phase) failed: {}", e.message())))?;
+    evidence.applied = true;
+    evidence.after = Some(StateSummary {
+        head: resolve_head(repo)?.display(),
+        dirty: "changes restored (stash kept)".into(),
+    });
 
     // Step 2: Did the apply write conflicts into the index? (issue #280)
     let conflicts = applied_conflict_files(repo)?;
+    evidence.conflicts = conflicts.clone();
     if !conflicts.is_empty() {
         return Ok(StashPopOutcome::ConflictedStashKept { files: conflicts });
     }
 
     // Step 3: Drop ONLY after a clean apply.
+    if matches!(
+        fault,
+        Some(crate::backend::stash::StashFaultPoint::ListChangeBeforeDrop)
+    ) {
+        if let Some(other) = identity
+            .oids
+            .iter()
+            .find(|oid| Some(*oid) != identity.oids.first())
+        {
+            repo.reference(
+                "refs/stash",
+                git2::Oid::from_str(other).map_err(|e| GitError::Other(e.to_string()))?,
+                true,
+                "fixture concurrent stash update",
+            )
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        }
+    }
+    verify_stash_identity(repo, identity)?;
     stash_drop_internal(repo, index)?;
 
     Ok(StashPopOutcome::Applied)
@@ -647,6 +693,7 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
             branch: String::new(),
         },
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -659,6 +706,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
     let stashes = collect_stash_entries_with_oid(repo)?;
+    let identity = identity_from_entries(&stashes, index);
     let stash_count = stashes.len();
 
     let head_display = head.display();
@@ -710,6 +758,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: stash_count,
+        stash_identity: Some(identity),
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -816,7 +865,7 @@ fn predict_stash_pop_conflict(
 }
 
 /// The in-memory three-way merge `git_stash_apply` would perform.
-fn stash_apply_dry_run(
+pub(crate) fn stash_apply_dry_run(
     repo: &Repository,
     head_oid: git2::Oid,
     stash_oid: git2::Oid,
@@ -885,6 +934,42 @@ pub fn preflight_check_stash(
             current_count,
         )));
     }
+    if let Some(expected) = &plan.stash_identity {
+        verify_stash_identity(repo, expected)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn stash_identity(
+    repo: &mut Repository,
+    selected: Option<usize>,
+) -> Result<kagi_domain::plan::StashIdentity, GitError> {
+    let mut oids = Vec::new();
+    repo.stash_foreach(|_, _, oid| {
+        oids.push(oid.to_string());
+        true
+    })
+    .map_err(|e| GitError::Other(e.to_string()))?;
+    Ok(kagi_domain::plan::StashIdentity { oids, selected })
+}
+
+fn identity_from_entries(
+    entries: &[(usize, String, git2::Oid)],
+    selected: usize,
+) -> kagi_domain::plan::StashIdentity {
+    kagi_domain::plan::StashIdentity {
+        oids: entries.iter().map(|(_, _, oid)| oid.to_string()).collect(),
+        selected: Some(selected),
+    }
+}
+
+pub(crate) fn verify_stash_identity(
+    repo: &mut Repository,
+    expected: &kagi_domain::plan::StashIdentity,
+) -> Result<(), GitError> {
+    if stash_identity(repo, expected.selected)? != *expected {
+        return Err(GitError::Other("Stash list changed since planning: full OID/order mismatch. Please re-plan before proceeding.".into()));
+    }
     Ok(())
 }
 
@@ -901,17 +986,6 @@ fn count_stashes(repo: &mut Repository) -> Result<usize, GitError> {
     })
     .map_err(|e| GitError::Other(e.message().to_string()))?;
     Ok(count)
-}
-
-/// Collect `(index, message)` pairs for all stash entries.
-fn collect_stash_entries(repo: &mut Repository) -> Result<Vec<(usize, String)>, GitError> {
-    let mut entries: Vec<(usize, String)> = Vec::new();
-    repo.stash_foreach(|index, message, _oid| {
-        entries.push((index, message.to_owned()));
-        true
-    })
-    .map_err(|e| GitError::Other(e.message().to_string()))?;
-    Ok(entries)
 }
 
 /// Collect `(index, message, oid)` triples for all stash entries.

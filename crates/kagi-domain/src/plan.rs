@@ -339,14 +339,18 @@ use crate::head::Head;
 use crate::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle};
 use crate::status::FileStatus;
 
-/// A complete plan describing what an operation will do, including
-/// any blockers that prevent execution and warnings that should be surfaced.
-///
-/// If `blockers` is non-empty the UI **must not** offer the Execute button.
-///
-/// ADR-0129: `title`/`warnings`/`blockers`/`recovery` are structured values
-/// localized by the display layer; `disposition` carries the semantic state
-/// the UI used to infer by parsing display strings.
+/// A stash locator bound to an ordered, duplicate-preserving full-OID list.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StashIdentity {
+    /// Ordered full OIDs, including repeated reflog entries.
+    pub oids: Vec<String>,
+    pub selected: Option<usize>,
+}
+
+/// A complete plan describing an operation, its blockers and warnings.
+/// If blockers are non-empty the UI must not offer Execute.
+/// ADR-0129: the display layer localizes structured title/notes/recovery;
+/// disposition carries semantic state rather than parsed display strings.
 #[derive(Debug, Clone)]
 pub struct OperationPlan {
     /// The plan modal's title (one, required).
@@ -375,6 +379,7 @@ pub struct OperationPlan {
     /// `preflight_check_stash` to detect concurrent stash modifications.
     /// For non-stash operations this is always `0`.
     pub stash_count_at_plan: usize,
+    pub stash_identity: Option<StashIdentity>,
     /// Working-tree classification digest at plan time (#295). `Some` for the
     /// operations whose blockers depend on the working tree (discard, merge,
     /// stash apply/pop); `None` where only HEAD matters. `preflight_check`
@@ -454,6 +459,9 @@ impl OperationPlan {
             }
         }
         self.stash_count_at_plan.hash(&mut h);
+        if let Some(identity) = &self.stash_identity {
+            identity.hash(&mut h);
+        }
         self.worktree_digest.map(|d| d.0).hash(&mut h);
         self.destructive.hash(&mut h);
         format!("{:016x}", h.finish())

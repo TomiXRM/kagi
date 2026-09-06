@@ -49,6 +49,7 @@ pub mod remote_snapshot;
 pub mod remove;
 pub mod resolution;
 pub mod ruleset;
+pub mod stash;
 pub mod status;
 pub mod suggestion;
 pub mod text_safety;

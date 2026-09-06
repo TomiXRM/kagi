@@ -137,7 +137,7 @@ impl KagiApp {
     pub fn start_create_worktree(&mut self, cx: &mut Context<Self>) {
         // Rebuild from the latest input so a fast type-then-click can't execute
         // a stale plan.
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
@@ -368,7 +368,10 @@ impl KagiApp {
     fn show_remove_plan(&mut self) {
         use crate::app::PlanState;
         match self.app_sessions.plan_state() {
-            PlanState::Ready { plan, request, .. } => {
+            PlanState::Ready {
+                prepared: crate::app::Planned::Remove { plan, request, .. },
+                ..
+            } => {
                 let name = request.name.clone();
                 let delete_branch = request.delete_branch;
                 let preview = plan.preview.clone();
@@ -406,7 +409,11 @@ impl KagiApp {
         if self.reject_if_busy(cx) {
             return;
         }
-        let PlanState::Ready { token, request, .. } = self.app_sessions.plan_state() else {
+        let PlanState::Ready {
+            token,
+            prepared: crate::app::Planned::Remove { request, .. },
+        } = self.app_sessions.plan_state()
+        else {
             return;
         };
         if self.repo_path.as_ref() != Some(&request.owner.path)

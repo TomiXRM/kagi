@@ -87,8 +87,18 @@ pub fn scenario_stash_drop_persists(cx: &mut VisualTestAppContext) {
             cx.run_until_parked();
         }
         app.update(cx, |app, cx| {
-            app.open_stash_drop_modal(0);
-            assert!(app.stash_drop_modal().unwrap().plan.blockers.is_empty());
+            app.open_stash_drop_modal(0, cx);
+        });
+        cx.run_until_parked();
+        app.update(cx, |app, cx| {
+            assert!(app
+                .stash_drop_modal()
+                .unwrap()
+                .plan
+                .as_ref()
+                .unwrap()
+                .blockers
+                .is_empty());
             app.start_stash_drop(cx);
             if switch_away {
                 app.switch_repo(1, cx);
@@ -224,9 +234,17 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
         std::fs::write(repo.join("README.md"), "first stash\n").unwrap();
         git(repo, &["stash", "push", "-q", "-m", "first"]);
         let (app, window) = mount(cx, repo);
-        let plan = app.update(cx, |app, _| {
-            app.open_stash_drop_modal(0);
-            app.stash_drop_modal().unwrap().plan.clone()
+        app.update(cx, |app, cx| {
+            app.open_stash_drop_modal(0, cx);
+        });
+        cx.run_until_parked();
+        let plan = cx.read(|cx| {
+            app.read(cx)
+                .stash_drop_modal()
+                .unwrap()
+                .plan
+                .clone()
+                .unwrap()
         });
         std::fs::write(repo.join("README.md"), "second stash\n").unwrap();
         git(repo, &["stash", "push", "-q", "-m", "second"]);
@@ -237,20 +255,21 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
             .unwrap_err();
         let expected = i18n::op_failed(Op::Preflight, error);
         cx.run_until_parked();
-        // The existing root Enter router omits stash-drop. Exercise the same
-        // handler as its confirmation button, without changing that old route.
+        // Local stash now shares the root Enter/button approval boundary.
         app.update(cx, |app, cx| app.start_stash_drop(cx));
         wait_idle(cx, &app);
         cx.read(|cx| {
-            assert_eq!(
-                app.read(cx).stash_drop_modal().unwrap().error.as_deref(),
-                Some(expected.as_str())
+            let app = app.read(cx);
+            assert!(
+                kagi::ui::e2e::app_notice_message(app)
+                    .is_some_and(|message| message.ends_with(&expected)),
+                "localized preflight refusal must reach the shared error modal"
             );
         });
         assert_eq!(output(repo, &["stash", "list"]), before);
         let entries = records(repo, "stash-drop");
         assert_eq!(entries.len(), 1);
-        assert!(matches!(entries[0].outcome, OpOutcome::Failed { .. }));
+        assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
         cx.update_window(window, |_, window, _| window.remove_window())
             .unwrap();
 

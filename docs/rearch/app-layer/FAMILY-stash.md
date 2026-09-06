@@ -1,8 +1,10 @@
 # #484 family 2: stash push / apply / pop / drop
 
-状態: **設計レビュー r3・未実装**。PM Round 1 の (1)〜(5)/A〜E、
+状態: **PR 1 local 4 op 実装済み・PR 2 remote 未実装**。PR 1 の E 実行/M/workspace 全体は PM 検証待ち。
+実装境界と残る競合窓は [ADR-0176](../../adr/0176-app-stash-local-boundary.md)。
+以下は採用済み設計 r3 の経緯・契約（実装前の記述を含む）。PM Round 1 の (1)〜(5)/A〜E、
 omp-plan 第 2 レビュー R1〜R4 と PM Round 2 の全件採用裁定を反映。
-追加 D と C の完了範囲は §7 の調整案を PM 採用済み。r3 の反映確認待ち。
+追加 D と C の完了範囲は §7 の調整案を PM 採用済み。PR 1 は #533 merge `6ee0147` を取り込み済み。
 読解基準は `origin/dev` の `4ad4ad28`
 （#530 merge）。2026-09-07。コード変更・cargo・G/E/M 実行は本 PR に含めない。
 PM 報告では 1a/1b の G/E と **1b の M は通過済み**。
@@ -206,6 +208,8 @@ Error と通知に反映し、旧 Ready を復活させない。cancel/置換後
 
 conflicted pop/apply → reload → `ConflictOp::StashConflict` の検出を保持する。
 continue は解決を stage するだけ（commit しない）、abort は stash を保持する。
+既存 conflict の観測を別 Drop の conflict evidence に流用せず、payload の生成・置換は
+当該 Apply/Pop が新たに生成した stash-kept conflict に限定する。
 continue 後の opt-in drop prompt は reload の modal clear 後に開く。
 現状 `pending_stash_drop = Some(0)` は深い index の pop と一致しない既知の欠落。
 この接続では完了 report の **canonical worktree + 元 operation id + full OID** を、
@@ -344,6 +348,8 @@ PASS 行だけでなく **runner exit 0・leak detector 通過**を必要条件�
 既存 `tests/stash_conflict_test.rs`、`tests/stash_pop_test.rs`、
 `tests/oplog_nonrun_ops_test.rs` と E `scenario_stash_drop_persists` の assertions を弱めない。
 run wrapper の非 stash 互換も既存 backend run/partial tests で検証する。
+GUI の conflict continue 後の follow-up 提示は PR 1 の E では未検証であり、#546 で追跡する。
+window なしの G は owner/full OID payload から一意な新規 Drop plan が Ready になるまでを保証する。
 実装時の専用 target/実行分担は PM 指定に従う。本 docs PR では cargo は一切実行しない。
 
 M は PM: 大きい stash の応答性、Enter 連打、危険確認、EN/JA、conflict 解決→取消/Drop、

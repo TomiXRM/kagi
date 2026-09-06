@@ -48,9 +48,20 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         if button {
             let bounds = kagi::ui::e2e::confirm_bounds(window.window_id())
                 .expect("real confirm button laid out");
+            cx.update_window(window, |_, native_window, _| {
+                eprintln!(
+                    "[gui-e2e] app-remove button window={:?} bounds={:?} viewport={:?} window_bounds={:?}",
+                    window.window_id(),
+                    bounds,
+                    native_window.viewport_size(),
+                    native_window.bounds(),
+                );
+            })
+            .unwrap();
             // GPUI's button hit testing needs the hover position established
             // before mouse-down; simulate_click only sends down/up events.
             cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
+            cx.run_until_parked();
             cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
             assert!(
                 cx.read(|cx| app.read(cx).remove_worktree_modal().is_none()),

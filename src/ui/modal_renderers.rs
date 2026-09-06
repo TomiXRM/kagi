@@ -676,19 +676,26 @@ fn render_plan_modal_card_styled(
             .on_click(confirm_handler);
         #[cfg(feature = "gui-e2e")]
         let button = {
-            div().relative().child(button).child(
-                gpui::canvas(
-                    move |bounds, window, _| {
-                        crate::ui::e2e::record_confirm_bounds(
-                            window.window_handle().window_id(),
-                            bounds,
-                        );
-                    },
-                    |_, _, _, _| {},
+            // Keep the measurement layer behind the real button and anchor it
+            // to the wrapper, independent of absolute static-position layout.
+            div()
+                .relative()
+                .child(
+                    gpui::canvas(
+                        move |bounds, window, _| {
+                            crate::ui::e2e::record_confirm_bounds(
+                                window.window_handle().window_id(),
+                                bounds,
+                            );
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
                 )
-                .absolute()
-                .size_full(),
-            )
+                .child(button)
         };
         button_row = button_row.child(button);
     }

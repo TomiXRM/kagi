@@ -77,6 +77,14 @@ Gitru は (a) 色をレーン構造体に載せ採番カウンタで決めてレ
   通過レーンと視覚的に近接しうる。データモデル上は不正ではない。将来微調整の余地。
 - 既定 Stable のため出荷時の見た目は不変。Gitru 風の細さは設定 `graph_lane_compact=true` で有効化。
 
+## Flower Road background visibility (2026-09-06)
+
+Flower Road uses pastel lane colours. The standard light-theme band opacity
+(11%, 15% on hover) made its GRAPH-column backgrounds nearly indistinguishable
+from the ivory rows. Use 35% / 42% for this theme's background bands only.
+Keep the lane palette, ref badges, other themes, and selected-row override
+unchanged. The band remains inset and clipped to the GRAPH column.
+
 ## Verification
 
 - `cargo test -p kagi-domain`（99 件）緑。新規: 安定色の枝内一貫性、別枝で別色、`Compact` の

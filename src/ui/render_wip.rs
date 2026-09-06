@@ -18,6 +18,7 @@ impl KagiApp {
         badge_col_w: f32,
         graph_col_w: f32,
         graph_scroll_x: f32,
+        wip_pass_lanes: &[(usize, usize)],
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
         let visible_lanes = graph_view::lanes_for_width(graph_col_w);
@@ -48,6 +49,18 @@ impl KagiApp {
                         color: lane,
                     })
                     .collect();
+                // WIP rows sit above ALL stash rows. Carry their connectors
+                // through each one, preserving the dashed marker and colour.
+                edges.extend(
+                    wip_pass_lanes
+                        .iter()
+                        .map(|&(lane, color)| crate::graph::GraphEdge {
+                            from_lane: lane,
+                            to_lane: lane,
+                            kind: crate::graph::EdgeKind::Pass,
+                            color: graph_wip::wip_color(color),
+                        }),
+                );
                 if sr.connected {
                     // This stash's own line leaves its node downward; below this
                     // row it becomes a pass-through for subsequent rows.

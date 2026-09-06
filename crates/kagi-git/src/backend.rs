@@ -792,7 +792,7 @@ impl Backend {
     }
 
     /// Execute a confirmed Operation plan through mandatory owner trust,
-    /// preflight, family execution checks and one recording boundary (ADR-0177).
+    /// preflight, family execution checks and one recording boundary (ADR-0178).
     /// Dedicated non-Operation and index/metadata boundaries are documented in
     /// the same ADR. Prefer `run_recorded` when the caller needs its exact receipt.
     /// Approval belongs to the adapter; a display plan is not an approval token.

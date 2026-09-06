@@ -1,4 +1,4 @@
-# ADR-0177: Backend execution policy and public mutation contracts
+# ADR-0178: Backend execution policy and public mutation contracts
 
 - Status: Implemented for review
 - Issues: #494, #502

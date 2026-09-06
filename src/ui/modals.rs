@@ -669,7 +669,24 @@ pub struct BranchCleanupModal {
     pub error: Option<SharedString>,
 }
 
+#[derive(Clone)]
+pub struct AppNotice {
+    pub message: String,
+    pub inspect: Option<crate::app::OperationId>,
+    pub acknowledge: Option<crate::app::ReconcileRead>,
+}
+impl From<String> for AppNotice {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            inspect: None,
+            acknowledge: None,
+        }
+    }
+}
+
 pub enum ActiveModal {
+    AppNotice(AppNotice),
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
     Amend(AmendPlanModal),

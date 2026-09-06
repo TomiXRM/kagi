@@ -358,6 +358,7 @@ impl KagiApp {
     /// commit panel).  Shared by `switch_repo` (W6-TABSPEED instant-apply path)
     /// so a cached swap never leaks the previous tab's UI.
     fn reset_per_repo_ui(&mut self) {
+        self.app_sessions.invalidate_plan();
         self.selected = None;
         // GitHub PRs are per repo; drop them so the sidebar never shows the
         // previous tab's list. The ticker refetches for the new repo.
@@ -446,6 +447,7 @@ impl KagiApp {
                     Ok(view) => {
                         let rows = view.rows.len();
                         app.tab_cache.insert(path.clone(), view.clone());
+                        app.app_sessions.read_applied(&path);
                         app.apply_tab_view(view);
                         app.refresh_wip_diffstat();
                         app.loading_tab = None;

@@ -15,6 +15,7 @@ use super::{
 };
 
 mod recording;
+pub mod remove;
 pub use recording::oplog_outcome_from;
 
 pub struct Backend {

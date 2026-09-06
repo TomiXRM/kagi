@@ -4,6 +4,11 @@
 読解基準: `origin/dev` = `85b0159a6d9455632db1c6cf758459d1b6e9558d`。
 この PR は文書だけ。コード・ビルド・実測は含まない。
 
+実装状況（#484 slice 1a）: `src/app` の最小承認/lease/配送、remove の Backend 記録境界、
+admin fingerprint、unwind 外の progress、永続 Unknown/receipt、GUI bridge と
+window close・アプリの Quit command の保留を実装。検証結果は実装 PR に記載。
+M は PM 確認待ち、1b は未実装であり横展開 gate は未通過。
+
 進め方は **設計レビュー → 1 family の縦断実証 → 横展開**。
 目的はフロントエンドを交換しても安全契約と操作の所属が変わらないこと。
 巨大な `KagiApp` を巨大な controller に移すことや、新 crate の作成自体は成果に数えない。
@@ -174,6 +179,10 @@ GUI の Enter/ボタン/command は同じ approve/dispatch に入る。`ActiveMo
 CLI/MCP も token を実行開始前に消費する。失敗後も同じ token で再実行せず、新規 plan を取得する。
 
 ## 4. 非同期配送 — 捨ててよいのは表示だけ
+
+**1a 実装の保証範囲（PM 承認）:** 保証するのはアプリ内 close/Quit 入口の保留のみ。
+native window close は同じ入口へ接続するが、GPUI に veto API がない Dock/OS Quit は
+保証外。window 外の registry や OS 終了を跨ぐ drain は今回導入しない。
 
 | 境界 / 宛先 | 契約 |
 |---|---|
@@ -477,6 +486,10 @@ fetch は別 in-flight、editor save は pane 側 job を持つ。fetch が既�
 | worktree remove | 管理 repo と対象 worktree の分離、長い job、backup/partial、close race、既存 UI writer | **採用案**。local fixture と既存 containment/steps テストがある |
 
 ### 8.1 最小 cut
+
+**1a 実装の終了条件:** 保証するのはアプリ内 close/Quit 入口の保留のみ
+（native window close も共通 guard へ接続）。GPUI に veto API がない Dock/OS Quit は
+保証外であり、下表の host lifetime はこの範囲に限る（PM 承認、ADR-0175）。
 
 | slice 1a — 記録・配送・寿命・協調入口の実証 | 完了条件 |
 |---|---|

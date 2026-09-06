@@ -1244,6 +1244,8 @@ pub struct KagiApp {
     /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
     /// and new plan modals are refused so operations never overlap.
     pub busy_op: Option<&'static str>,
+    pub app_sessions: crate::app::Sessions,
+    pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
@@ -1568,6 +1570,8 @@ impl KagiApp {
             pr_mode: None,
             pr_menu: None,
             busy_op: None,
+            app_sessions: crate::app::Sessions::new(),
+            app_notices: std::collections::VecDeque::new(),
             modal_replan_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
@@ -1973,7 +1977,10 @@ impl KagiApp {
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
                 true,
             ),
-            OpOutcome::Partial { error, .. } => (
+            OpOutcome::Unknown {
+                evidence: error, ..
+            }
+            | OpOutcome::Partial { error, .. } => (
                 SharedString::from(format!("{}: partially applied — {}", op, error)),
                 false,
             ),
@@ -3189,7 +3196,9 @@ impl KagiApp {
     /// choice overlays (update, menu/settings) are consumed but not actioned.
     /// (User request: Enter approves a modal, Esc cancels it.)
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.trust_repo_modal().is_some() {
+        if self.app_notice().is_some() {
+            self.confirm_app_notice(cx);
+        } else if self.trust_repo_modal().is_some() {
             self.confirm_trust_repo(cx);
         } else if self.editor_fs_prompt_modal().is_some() {
             self.confirm_editor_fs_prompt(cx);
@@ -3277,7 +3286,17 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal (same priority
     /// order as `confirm_active_modal`). Returns `true` if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.trust_repo_modal().is_some() {
+        if self.app_notice().is_some() {
+            // Keep a non-mutating reconciliation available after Escape.
+            if let Some(notice) = self
+                .app_notice()
+                .filter(|n| n.inspect.is_some() || n.acknowledge.is_some())
+                .cloned()
+            {
+                self.app_notices.push_back(notice);
+            }
+            self.clear_app_notice();
+        } else if self.trust_repo_modal().is_some() {
             self.cancel_trust_repo_modal();
         } else if self.editor_fs_prompt_modal().is_some() {
             self.cancel_editor_fs_prompt();

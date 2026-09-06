@@ -6,6 +6,9 @@
 //! remote branch / tag / stash information as a [`RepoSnapshot`], and
 //! computing the file-level diff for a single commit.
 //! Network transports (https/ssh) are not used in the MVP.
+//!
+//! [`backend::remove`] owns the recorded worktree-removal execution boundary,
+//! including panic classification and the exact persisted oplog receipt.
 
 pub mod authoring;
 pub mod backend;

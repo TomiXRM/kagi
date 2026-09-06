@@ -128,6 +128,7 @@ mod tag;
 mod worktree;
 mod worktree_lifecycle;
 mod worktree_paths;
+mod worktree_remove;
 mod worktree_steps;
 
 pub use absorb::*;
@@ -157,6 +158,7 @@ pub use tag::*;
 pub use worktree::*;
 pub use worktree_lifecycle::*;
 pub(crate) use worktree_paths::*;
+pub use worktree_remove::*;
 pub use worktree_steps::*;
 
 // ────────────────────────────────────────────────────────────

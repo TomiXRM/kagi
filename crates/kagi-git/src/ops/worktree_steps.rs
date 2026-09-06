@@ -275,7 +275,25 @@ pub fn run_pre_remove(
     env: &StepEnv,
     trusted: bool,
 ) -> Result<(), GitError> {
-    for step in steps {
+    run_pre_remove_progress(steps, env, trusted, &mut Default::default(), None)
+}
+
+pub(crate) fn run_pre_remove_progress(
+    steps: &[WorktreeStep],
+    env: &StepEnv,
+    trusted: bool,
+    progress: &mut kagi_domain::remove::RemoveProgress,
+    fault: Option<kagi_domain::remove::RemoveFaultPoint>,
+) -> Result<(), GitError> {
+    for (index, step) in steps.iter().enumerate() {
+        progress.stage = kagi_domain::remove::RemoveStage::PreRemove { step: index };
+        progress
+            .observations
+            .push(format!("step {index} started: {step:?}"));
+        if fault == Some(kagi_domain::remove::RemoveFaultPoint::PreRemoveTerminationUnknown) {
+            progress.termination_unknown = true;
+            return Err(GitError::Other("pre_remove termination unknown".into()));
+        }
         match step {
             WorktreeStep::Copy { from, to } => do_copy(env, from, to)?,
             WorktreeStep::Symlink { from, to } => do_symlink(env, from, to)?,
@@ -292,9 +310,12 @@ pub fn run_pre_remove(
                          removal (trust .kagi/worktree.toml first): {run}"
                     )));
                 }
-                do_command(env, run)?;
+                do_command_progress(env, run, progress)?;
             }
         }
+        progress
+            .observations
+            .push(format!("step {index} completed"));
     }
     Ok(())
 }
@@ -408,6 +429,14 @@ fn symlink_impl(_target: &Path, _link: &Path) -> Result<(), GitError> {
 /// process PATH already carries the login-shell PATH (see `shell_env.rs`), so
 /// tools like `npm` resolve.
 fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
+    do_command_progress(env, run, &mut Default::default())
+}
+
+fn do_command_progress(
+    env: &StepEnv,
+    run: &str,
+    progress: &mut kagi_domain::remove::RemoveProgress,
+) -> Result<(), GitError> {
     use std::io::Read;
     use std::process::{Command, Stdio};
 
@@ -431,6 +460,7 @@ fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| GitError::Other(format!("failed to start '{program}': {e}")))?;
+    progress.termination_unknown = true;
 
     // Drain stdout and stderr on dedicated threads so a command that emits more
     // than one pipe buffer (~64 KiB — e.g. `npm ci`) can never deadlock in
@@ -468,6 +498,7 @@ fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
             output_tail(&stdout, &stderr)
         )));
     };
+    progress.termination_unknown = false;
     if status.success() {
         Ok(())
     } else {

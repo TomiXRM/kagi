@@ -1396,7 +1396,11 @@ impl KagiApp {
                 self.ensure_analyze_ignore_input(window, cx);
                 cx.notify();
             }
-            "app.quit" => cx.quit(),
+            "app.quit" => {
+                if !self.hold_host_close(cx) {
+                    cx.quit();
+                }
+            }
 
             // ── File ────────────────────────────────────────────────
             "file.newTab" | "file.openRepository" => self.pick_repository(window, cx),
@@ -1525,7 +1529,11 @@ impl KagiApp {
             // ── Window ──────────────────────────────────────────────
             "window.minimize" => window.minimize_window(),
             "window.zoom" => window.zoom_window(),
-            "window.close" => window.remove_window(),
+            "window.close" => {
+                if !self.hold_host_close(cx) {
+                    window.remove_window();
+                }
+            }
 
             // ── Help ────────────────────────────────────────────────
             "help.shortcuts" => self.open_shortcuts_overlay(),

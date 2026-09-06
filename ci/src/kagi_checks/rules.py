@@ -122,6 +122,32 @@ RUST_SOURCES = (
 
 RULES: tuple[Rule, ...] = (
     Rule(
+        name="app-layering",
+        summary="application layer has no UI or direct I/O dependencies (#484)",
+        pattern=r"\b(?:gpui|git2|settings|i18n)\s*::|\bstd\s*::\s*(?:fs|process|net)\b",
+        globs=("src/app/**/*.rs",),
+        message="src/app must use typed backend capabilities, not UI or direct I/O",
+        samples=(
+            "gpui::Context",
+            "std::fs::read(path)",
+            "std::process::Command",
+            "settings::load()",
+            "git2::Repository",
+            "i18n::Msg",
+        ),
+        samples_ok=("Backend::open(path)",),
+    ),
+    Rule(
+        name="fault-test-only",
+        summary="remove fault injection is called only from tests (#484 N1)",
+        pattern=r"(?<!fn )\bwith_fault_for_test\s*(?:\(|::)",
+        globs=("**/*.rs",),
+        excludes=("tests/",),
+        message="with_fault_for_test callers must live under tests/",
+        samples=("job.with_fault_for_test(point)", "RemoveJob::with_fault_for_test(job, point)"),
+        samples_ok=("pub fn with_fault_for_test(mut self, point: Fault) -> Self { self }",),
+    ),
+    Rule(
         name="ui-git2",
         summary="src/ui never uses git2 directly (ADR-0072 / ADR-0078)",
         pattern=r"git2::|Repository::open",

@@ -126,6 +126,7 @@ impl KagiApp {
         external: bool,
         cx: &mut Context<Self>,
     ) {
+        self.app_sessions.read_applied(&repo_path);
         let ReloadData {
             snap,
             wip_diffstat,

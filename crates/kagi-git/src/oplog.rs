@@ -28,6 +28,11 @@ use super::{ops::StateSummary, GitError};
 /// The result of a git operation.
 #[derive(Debug, Clone)]
 pub enum OpOutcome {
+    /// Side effects or process termination cannot be fully established.
+    Unknown {
+        after: StateSummary,
+        evidence: String,
+    },
     /// Operation completed without error.
     Success {
         /// Repository state immediately after execution.
@@ -213,6 +218,13 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
                 "{{\"kind\":\"Partial\",\"after\":{},\"error\":{}}}",
                 state_summary_to_json(after),
                 escape_json_string(error)
+            )
+        }
+        OpOutcome::Unknown { after, evidence } => {
+            format!(
+                "{{\"kind\":\"Unknown\",\"after\":{},\"evidence\":{}}}",
+                state_summary_to_json(after),
+                escape_json_string(evidence)
             )
         }
         OpOutcome::Failed { error } => {
@@ -545,6 +557,16 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
                 error,
             }
         }
+        "Unknown" => {
+            let after_obj = extract_object_field(&outcome_obj, "after")?;
+            OpOutcome::Unknown {
+                after: StateSummary {
+                    head: extract_str_field(&after_obj, "head")?,
+                    dirty: extract_str_field(&after_obj, "dirty")?,
+                },
+                evidence: extract_str_field(&outcome_obj, "evidence")?,
+            }
+        }
         "Failed" => {
             let error = extract_str_field(&outcome_obj, "error").unwrap_or_default();
             OpOutcome::Failed { error }
@@ -668,6 +690,11 @@ fn read_all_oplog_entries() -> Vec<OpLogEntry> {
 ///
 /// Returns the path of the file that was written to on success.
 pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
+    append_oplog_receipt(entry).map(|(path, _)| path)
+}
+
+/// Returns the exact assigned entry, never a tail read after the append.
+pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry), GitError> {
     use std::io::Write;
 
     let path = log_file_path().ok_or_else(|| {
@@ -717,7 +744,7 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
         GitError::Other(format!("oplog: write failed for {}: {}", path.display(), e))
     })?;
 
-    Ok(path)
+    Ok((path, entry))
 }
 
 // ────────────────────────────────────────────────────────────

@@ -106,7 +106,7 @@ fn render_row(
     let outcome_color = match &entry.outcome {
         OpOutcome::Success { .. } => theme().color_success,
         OpOutcome::Partial { .. } | OpOutcome::Refused { .. } => theme().color_warning,
-        OpOutcome::Failed { .. } => theme().color_blocker,
+        OpOutcome::Unknown { .. } | OpOutcome::Failed { .. } => theme().color_blocker,
     };
     let outcome_label = SharedString::from(oplog_panel::outcome_summary(&entry.outcome));
     let time_label = SharedString::from(format_hms(entry.timestamp));

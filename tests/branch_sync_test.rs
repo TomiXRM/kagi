@@ -110,6 +110,9 @@ fn setup() -> Repos {
 
 #[test]
 fn non_current_pull_ff_updates_ref_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     git(&r.other, &["checkout", "-q", "feature/x"]);
     write_file(&r.other, "remote.txt", "remote\n");
@@ -140,6 +143,9 @@ fn non_current_pull_ff_updates_ref_only() {
 
 #[test]
 fn non_current_push_uses_branch_upstream() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     git(&r.local, &["checkout", "-q", "feature/x"]);
     write_file(&r.local, "local.txt", "local\n");
@@ -159,6 +165,9 @@ fn non_current_push_uses_branch_upstream() {
 
 #[test]
 fn set_upstream_is_config_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     git(&r.local, &["checkout", "-q", "-b", "topic/no-upstream"]);
     git(&r.local, &["checkout", "-q", "main"]);
@@ -179,6 +188,9 @@ fn set_upstream_is_config_only() {
 
 #[test]
 fn rename_current_branch_carries_tracking_config() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_rename_branch(&repo, "main", "trunk").expect("plan");
@@ -197,6 +209,9 @@ fn rename_current_branch_carries_tracking_config() {
 
 #[test]
 fn branch_rename_validation_is_pure() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let existing = vec!["main".to_string(), "feature/x".to_string()];
     assert_eq!(
         validate_branch_rename("main", "topic/new", &existing),
@@ -215,3 +230,6 @@ fn branch_rename_validation_is_pure() {
         BranchRenameValidation::Invalid(_)
     ));
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

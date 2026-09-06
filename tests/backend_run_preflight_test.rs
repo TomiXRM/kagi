@@ -90,6 +90,9 @@ fn head_commit(backend: &Backend) -> CommitId {
 /// here, so only the stash arm of the preflight can catch this.
 #[test]
 fn run_rejects_stale_stash_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     build_repo(d);
@@ -143,6 +146,9 @@ fn run_rejects_stale_stash_plan() {
 
 #[test]
 fn run_rejects_stale_create_branch_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     build_repo(d);
@@ -176,6 +182,9 @@ fn run_rejects_stale_create_branch_plan() {
 
 #[test]
 fn run_rejects_stale_reset_current_to_head_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     build_repo(d);
@@ -250,6 +259,9 @@ fn remote_has_branch(remote: &Path, name: &str) -> bool {
 
 #[test]
 fn run_rejects_stale_delete_remote_branch_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (remote, local) = setup_with_remote(&tmp);
 
@@ -284,3 +296,6 @@ fn run_rejects_stale_delete_remote_branch_plan() {
     );
     assert_eq!(head_sha(&local), after, "HEAD must be untouched");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

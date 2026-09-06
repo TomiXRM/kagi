@@ -85,6 +85,9 @@ fn init(tmp: &TempDir) -> &Path {
 
 #[test]
 fn mines_churn_and_loc_then_ranks_hotspots() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -128,6 +131,9 @@ fn mines_churn_and_loc_then_ranks_hotspots() {
 
 #[test]
 fn backend_facade_matches_free_function() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
     write(dir, "a.txt", "one\ntwo\n");
@@ -147,6 +153,9 @@ fn backend_facade_matches_free_function() {
 
 #[test]
 fn mine_captures_distinct_authors_for_ownership() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use kagi_git::ownership;
 
     let tmp = TempDir::new().unwrap();
@@ -182,6 +191,9 @@ fn mine_captures_distinct_authors_for_ownership() {
 
 #[test]
 fn empty_repo_is_not_an_error() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
     // No commits yet → git log exits non-zero; ensure we surface it as Err, not
@@ -193,3 +205,6 @@ fn empty_repo_is_not_an_error() {
     });
     assert!(res.is_err());
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

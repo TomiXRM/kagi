@@ -57,6 +57,9 @@ fn write_config(root: &Path, body: &str) {
 
 #[test]
 fn copy_and_symlink_run_without_trust_and_never_overwrite() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let main = tempfile::tempdir().unwrap();
     let wt = tempfile::tempdir().unwrap();
     std::fs::write(main.path().join(".env.example"), "SRC").unwrap();
@@ -111,6 +114,9 @@ fn copy_and_symlink_run_without_trust_and_never_overwrite() {
 
 #[test]
 fn command_trust_sha_and_headless_gating() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -180,6 +186,9 @@ fn command_trust_sha_and_headless_gating() {
 
 #[test]
 fn pre_remove_failure_keeps_the_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -241,6 +250,9 @@ fn pre_remove_failure_keeps_the_worktree() {
 
 #[test]
 fn plan_lists_steps_per_type_and_neutralizes_control_bytes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let store = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", store.path());
@@ -282,3 +294,6 @@ fn plan_lists_steps_per_type_and_neutralizes_control_bytes() {
 
     std::env::remove_var("KAGI_LOG_DIR");
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

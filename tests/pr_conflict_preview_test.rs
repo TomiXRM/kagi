@@ -64,6 +64,9 @@ fn setup() -> (TempDir, PathBuf) {
 
 #[test]
 fn a_clean_merge_reports_no_conflicts() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "new.txt", "added by the pr\n");
     git(&p, &["add", "-A"]);
@@ -76,6 +79,9 @@ fn a_clean_merge_reports_no_conflicts() {
 
 #[test]
 fn both_modified_reports_the_file_and_the_marker_text() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "shared.txt", "one\nPR VERSION\nthree\n");
     git(&p, &["commit", "-qam", "pr edits"]);
@@ -108,6 +114,9 @@ fn both_modified_reports_the_file_and_the_marker_text() {
 /// uses — otherwise the tab can only show a wall of text.
 #[test]
 fn the_marker_text_parses_into_hunks() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "shared.txt", "one\nPR\nthree\n");
     git(&p, &["commit", "-qam", "pr"]);
@@ -136,6 +145,9 @@ fn the_marker_text_parses_into_hunks() {
 
 #[test]
 fn delete_versus_modify_is_reported_without_text() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "shared.txt", "one\nPR\nthree\n");
     git(&p, &["commit", "-qam", "pr edits"]);
@@ -156,6 +168,9 @@ fn delete_versus_modify_is_reported_without_text() {
 
 #[test]
 fn both_added_is_reported() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "same.txt", "pr's version\n");
     git(&p, &["add", "-A"]);
@@ -179,6 +194,9 @@ fn both_added_is_reported() {
 /// The whole reason this is safe to open: it is a question, not a state change.
 #[test]
 fn previewing_changes_nothing_at_all() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "shared.txt", "one\nPR\nthree\n");
     git(&p, &["commit", "-qam", "pr"]);
@@ -228,6 +246,9 @@ fn previewing_changes_nothing_at_all() {
 /// This pins both halves so the difference stays visible.
 #[test]
 fn the_base_tip_and_the_merge_base_give_different_answers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "shared.txt", "one\nPR\nthree\n");
     git(&p, &["commit", "-qam", "pr"]);
@@ -263,6 +284,9 @@ fn the_base_tip_and_the_merge_base_give_different_answers() {
 /// `slice::from_raw_parts`.
 #[test]
 fn a_binary_conflict_does_not_abort() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     // Two different byte sequences, both with an embedded NUL so git calls
     // them binary.
@@ -291,6 +315,9 @@ fn a_binary_conflict_does_not_abort() {
 /// first version impossible to judge from.
 #[test]
 fn the_marker_text_carries_the_unconflicted_context() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     // A file with a lot of quiet context and one clash in the middle.
     let base_body = "keep 1\nkeep 2\nkeep 3\nMIDDLE-base\nkeep 4\nkeep 5\n";
@@ -327,3 +354,6 @@ fn the_marker_text_carries_the_unconflicted_context() {
         );
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

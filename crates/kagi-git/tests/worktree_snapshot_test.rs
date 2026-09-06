@@ -20,6 +20,9 @@ fn git(dir: &Path, args: &[&str]) {
 
 #[test]
 fn snapshot_from_a_linked_worktree_marks_it_current_with_its_own_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let td = tempfile::tempdir().unwrap();
     let main = td.path().join("main");
     std::fs::create_dir_all(&main).unwrap();
@@ -72,3 +75,6 @@ fn snapshot_from_a_linked_worktree_marks_it_current_with_its_own_branch() {
         snap.head
     );
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

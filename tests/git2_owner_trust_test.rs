@@ -56,6 +56,9 @@ fn head_commit(backend: &Backend) -> CommitId {
 /// trust confirmation, after which the same op proceeds.
 #[test]
 fn untrusted_repo_refuses_write_then_proceeds_once_trusted() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     build_repo(d);
@@ -112,6 +115,9 @@ fn untrusted_repo_refuses_write_then_proceeds_once_trusted() {
 /// to satisfy the call signatures.
 #[test]
 fn untrusted_repo_refuses_direct_execute_paths() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     build_repo(d);
@@ -233,3 +239,6 @@ fn branch_exists(dir: &Path, name: &str) -> bool {
         .status
         .success()
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

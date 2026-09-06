@@ -61,6 +61,9 @@ fn repo() -> TempDir {
 /// refuse — "restore from index" must not become "delete from disk".
 #[test]
 fn discard_refuses_when_a_target_became_untracked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let t = repo();
     let d = t.path();
     write(d, "tracked.txt", "PRECIOUS EDIT\n");
@@ -89,6 +92,9 @@ fn discard_refuses_when_a_target_became_untracked() {
 /// force-overwrite a half-done resolution.
 #[test]
 fn discard_refuses_when_a_target_became_conflicted() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let t = repo();
     let d = t.path();
     // Branch b changes tracked.txt one way…
@@ -133,6 +139,9 @@ fn discard_refuses_when_a_target_became_conflicted() {
 /// cover, so a plan for A can never be replayed to touch B.
 #[test]
 fn execute_discard_rejects_paths_outside_its_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let t = repo();
     let d = t.path();
     write(d, "tracked.txt", "edit A\n");
@@ -154,3 +163,6 @@ fn execute_discard_rejects_paths_outside_its_plan() {
     // Sanity: the planned path itself still works.
     execute_discard(&repo, &plan, &["tracked.txt".into()]).expect("planned path discards fine");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

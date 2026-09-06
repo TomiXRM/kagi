@@ -178,6 +178,9 @@ fn build_fixture(tmp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, Repo
 
 #[test]
 fn test_snapshot_unborn_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-b", "main", "."]);
@@ -209,6 +212,9 @@ fn test_snapshot_unborn_repo() {
 
 #[test]
 fn test_snapshot_head_attached_main() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_remote, _repo_dir, mut repo) = build_fixture(&tmp);
     let snap = snapshot(&mut repo, 10_000).expect("snapshot failed");
@@ -226,6 +232,9 @@ fn test_snapshot_head_attached_main() {
 
 #[test]
 fn test_snapshot_branch_ahead_behind() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_remote, _repo_dir, mut repo) = build_fixture(&tmp);
     let snap = snapshot(&mut repo, 10_000).expect("snapshot failed");
@@ -271,6 +280,9 @@ fn test_snapshot_branch_ahead_behind() {
 
 #[test]
 fn test_snapshot_remote_branches_no_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_remote, _repo_dir, mut repo) = build_fixture(&tmp);
     let snap = snapshot(&mut repo, 10_000).expect("snapshot failed");
@@ -327,6 +339,9 @@ fn test_snapshot_remote_branches_no_head() {
 
 #[test]
 fn test_snapshot_annotated_tag_peeled() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_remote, _repo_dir, mut repo) = build_fixture(&tmp);
     let snap = snapshot(&mut repo, 10_000).expect("snapshot failed");
@@ -368,6 +383,9 @@ fn test_snapshot_annotated_tag_peeled() {
 
 #[test]
 fn test_snapshot_stash() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_remote, _repo_dir, mut repo) = build_fixture(&tmp);
     let snap = snapshot(&mut repo, 10_000).expect("snapshot failed");
@@ -394,6 +412,9 @@ fn test_snapshot_stash() {
 
 #[test]
 fn test_snapshot_feature_one_in_sync() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_remote, _repo_dir, mut repo) = build_fixture(&tmp);
     let snap = snapshot(&mut repo, 10_000).expect("snapshot failed");
@@ -425,6 +446,9 @@ fn test_snapshot_feature_one_in_sync() {
 
 #[test]
 fn test_snapshot_commits_count() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_remote, _repo_dir, mut repo) = build_fixture(&tmp);
     let snap = snapshot(&mut repo, 10_000).expect("snapshot failed");
@@ -442,3 +466,6 @@ fn test_snapshot_commits_count() {
         snap.commits.iter().map(|c| &c.summary).collect::<Vec<_>>()
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

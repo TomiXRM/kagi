@@ -113,6 +113,9 @@ fn any_contains(v: &[kagi_git::ops::PlanNote], needle: &str) -> bool {
 
 #[test]
 fn marker_text_file_blocks() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     let body = b"fn main() {\n<<<<<<< HEAD\nlet a = 1;\n=======\nlet a = 2;\n>>>>>>> other\n}\n";
@@ -129,6 +132,9 @@ fn marker_text_file_blocks() {
 
 #[test]
 fn clean_text_no_block() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     write(&d, "clean.rs", b"fn main() {\n    let a = 1;\n}\n");
@@ -144,6 +150,9 @@ fn clean_text_no_block() {
 
 #[test]
 fn binary_with_marker_bytes_skipped() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // A binary BLOB (NUL bytes) that *also* contains the marker byte sequence
     // must be skipped (binary files are not scanned for markers).
     let tmp = TempDir::new().unwrap();
@@ -164,6 +173,9 @@ fn binary_with_marker_bytes_skipped() {
 
 #[test]
 fn marker_only_in_unstaged_not_flagged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Marker exists in the WT but the staged version is clean → no blocker.
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
@@ -182,6 +194,9 @@ fn marker_only_in_unstaged_not_flagged() {
 
 #[test]
 fn large_blob_prefix_only_scanned() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // A marker far beyond the 1 MiB scan window is NOT detected (prefix-only
     // scan). We place > 1 MiB of clean text, then a marker at the very end.
     let tmp = TempDir::new().unwrap();
@@ -209,6 +224,9 @@ fn large_blob_prefix_only_scanned() {
 
 #[test]
 fn env_dotfile_warns() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     write(&d, ".env", b"API_KEY=plainvalue\n");
@@ -224,6 +242,9 @@ fn env_dotfile_warns() {
 
 #[test]
 fn env_example_excluded() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     write(&d, ".env.example", b"API_KEY=changeme\n");
@@ -239,6 +260,9 @@ fn env_example_excluded() {
 
 #[test]
 fn private_key_content_warns() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     // Ordinary-looking name so only the *content* rule can fire.
@@ -259,6 +283,9 @@ fn private_key_content_warns() {
 
 #[test]
 fn ordinary_code_no_secret_warn() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     write(
@@ -278,6 +305,9 @@ fn ordinary_code_no_secret_warn() {
 
 #[test]
 fn pem_key_name_warns() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     write(
@@ -328,6 +358,9 @@ fn binary_blob(len: usize) -> Vec<u8> {
 
 #[test]
 fn large_binary_warns() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_threshold(Some("1024"), || {
         let tmp = TempDir::new().unwrap();
         let (d, repo) = init_repo(&tmp);
@@ -345,6 +378,9 @@ fn large_binary_warns() {
 
 #[test]
 fn small_binary_no_warn() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_threshold(Some("1048576"), || {
         let tmp = TempDir::new().unwrap();
         let (d, repo) = init_repo(&tmp);
@@ -362,6 +398,9 @@ fn small_binary_no_warn() {
 
 #[test]
 fn large_text_no_warn() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     with_threshold(Some("1024"), || {
         let tmp = TempDir::new().unwrap();
         let (d, repo) = init_repo(&tmp);
@@ -384,6 +423,9 @@ fn large_text_no_warn() {
 
 #[test]
 fn env_threshold_override() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Same binary: warns under a tiny threshold, silent under a huge one.
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
@@ -411,6 +453,9 @@ fn env_threshold_override() {
 
 #[test]
 fn plan_commit_surfaces_marker_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     write(
@@ -430,6 +475,9 @@ fn plan_commit_surfaces_marker_blocker() {
 
 #[test]
 fn plan_commit_surfaces_secret_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = init_repo(&tmp);
     write(&d, ".env", b"TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx\n");
@@ -444,3 +492,6 @@ fn plan_commit_surfaces_secret_warning() {
         plan.warnings
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -285,15 +285,30 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
 ///    and CI to avoid writing to `$HOME`).
 /// 2. `$HOME/.kagi/operations.jsonl` — default production path.
 ///
-/// Returns `None` if neither `$KAGI_LOG_DIR` nor `$HOME` can be determined.
-fn log_file_path() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("KAGI_LOG_DIR") {
-        if !dir.is_empty() {
-            return Some(PathBuf::from(dir).join("operations.jsonl"));
-        }
+///
+/// Test binaries always carry `CARGO_MANIFEST_DIR`; they must explicitly set
+/// `KAGI_LOG_DIR` so a failed fixture cannot write into a developer's home.
+fn log_file_path() -> Result<Option<PathBuf>, GitError> {
+    let log_dir = std::env::var_os("KAGI_LOG_DIR");
+    let home = dirs_home();
+    let test_runtime = std::env::var_os("CARGO_MANIFEST_DIR").is_some();
+    log_file_path_from_env(log_dir.as_deref(), home.as_deref(), test_runtime)
+}
+
+fn log_file_path_from_env(
+    log_dir: Option<&std::ffi::OsStr>,
+    home: Option<&Path>,
+    test_runtime: bool,
+) -> Result<Option<PathBuf>, GitError> {
+    if let Some(dir) = log_dir.filter(|dir| !dir.is_empty()) {
+        return Ok(Some(PathBuf::from(dir).join("operations.jsonl")));
     }
-    // Fall back to $HOME/.kagi/operations.jsonl.
-    dirs_home().map(|home| home.join(".kagi").join("operations.jsonl"))
+    if test_runtime {
+        return Err(GitError::Other("tests must set KAGI_LOG_DIR".to_string()));
+    }
+    Ok(home
+        .filter(|home| !home.as_os_str().is_empty())
+        .map(|home| home.join(".kagi").join("operations.jsonl")))
 }
 
 /// Minimal home-directory resolution without adding a crate dependency.
@@ -663,8 +678,8 @@ fn normalize_repo_path(path: &Path) -> PathBuf {
 /// id/parent. Returns an empty `Vec` if the file is missing/unreadable.
 fn read_all_oplog_entries() -> Vec<OpLogEntry> {
     let path = match log_file_path() {
-        Some(p) => p,
-        None => return Vec::new(),
+        Ok(Some(path)) => path,
+        Ok(None) | Err(_) => return Vec::new(),
     };
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -697,7 +712,7 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
 pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry), GitError> {
     use std::io::Write;
 
-    let path = log_file_path().ok_or_else(|| {
+    let path = log_file_path()?.ok_or_else(|| {
         GitError::Other("could not determine oplog path (no HOME or KAGI_LOG_DIR)".to_string())
     })?;
 

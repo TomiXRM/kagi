@@ -63,6 +63,9 @@ fn build_repo(dir: &Path) {
 
 #[test]
 fn snapshot_survives_gc_and_restores() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = TempDir::new().unwrap();
     let d = repo.path();
     build_repo(d);
@@ -142,6 +145,9 @@ fn snapshot_survives_gc_and_restores() {
 
 #[test]
 fn snapshot_ref_not_in_branch_list() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = TempDir::new().unwrap();
     let d = repo.path();
     build_repo(d);
@@ -176,6 +182,9 @@ fn snapshot_ref_not_in_branch_list() {
 
 #[test]
 fn snapshot_not_a_push_target() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let remote = tmp.path().join("remote.git");
     let local = tmp.path().join("local");
@@ -216,6 +225,9 @@ fn snapshot_not_a_push_target() {
 
 #[test]
 fn restore_goes_through_plan_and_oplog() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -278,6 +290,9 @@ fn restore_goes_through_plan_and_oplog() {
 
 #[test]
 fn cap_eviction_removes_oldest() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = TempDir::new().unwrap();
     let d = repo.path();
     build_repo(d);
@@ -326,3 +341,6 @@ fn cap_eviction_removes_oldest() {
     let removed_none = backend.prune_snapshots(5).expect("prune");
     assert!(removed_none.is_empty(), "no eviction when under the cap");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

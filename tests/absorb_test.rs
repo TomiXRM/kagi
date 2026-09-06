@@ -20,6 +20,9 @@ use std::process::Command;
 use kagi_domain::absorb::{HunkDisposition, KeepReason};
 use kagi_git::{execute_absorb, plan_absorb, preflight_absorb, Backend};
 
+#[path = "support/isolated.rs"]
+mod test_support;
+
 const WINDOW: usize = 10;
 
 // ── helpers ──────────────────────────────────────────────────
@@ -54,6 +57,11 @@ fn show(dir: &Path, rev: &str, name: &str) -> String {
         .current_dir(dir)
         .output()
         .expect("git show failed");
+    assert!(
+        out.status.success(),
+        "git show {rev}:{name} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -63,6 +71,26 @@ fn status_porcelain(dir: &Path) -> String {
         .current_dir(dir)
         .output()
         .expect("git status failed");
+    assert!(
+        out.status.success(),
+        "git status --porcelain failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn git_output(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git command failed");
+    assert!(
+        out.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -78,6 +106,9 @@ fn init_repo(dir: &Path) {
 
 #[test]
 fn test_absorb_single_hunk_to_correct_ancestor() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -122,6 +153,9 @@ fn test_absorb_single_hunk_to_correct_ancestor() {
 
 #[test]
 fn test_absorb_pushed_commit_never_target() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -150,7 +184,7 @@ fn test_absorb_pushed_commit_never_target() {
     let b_oid = rev(dir, "HEAD");
 
     // Edit a line owned by the PUSHED commit A, and a line owned by unpushed B.
-    write(dir, "a.txt", "alpha\nBETA\ngamma\n");
+    write(dir, "a.txt", "alpha\nBETA!\ngamma\n");
     write(dir, "b.txt", "ONE\ntwo\n");
 
     let repo = git2::Repository::open(dir).unwrap();
@@ -177,16 +211,34 @@ fn test_absorb_pushed_commit_never_target() {
     execute_absorb(&repo, &plan).unwrap();
 
     // A's edit stays uncommitted; B's edit was folded in.
-    assert!(
-        status_porcelain(dir).contains("a.txt"),
-        "pushed-commit edit must remain in the working tree"
+    let status = status_porcelain(dir);
+    assert_eq!(
+        read(dir, "a.txt"),
+        "alpha\nBETA!\ngamma\n",
+        "the immutable hunk must remain in the working tree"
     );
-    assert!(!status_porcelain(dir).contains("b.txt"));
+    assert_eq!(
+        show(dir, "HEAD", "a.txt"),
+        "alpha\nbeta\ngamma\n",
+        "the rebuilt history must not absorb the immutable hunk"
+    );
+    assert!(
+        status.contains("a.txt"),
+        "pushed-commit edit must remain in the working tree; status={status:?}; \
+         worktree={:?}; head={:?}; index={:?}",
+        read(dir, "a.txt"),
+        show(dir, "HEAD", "a.txt"),
+        git_output(dir, &["ls-files", "--stage", "--", "a.txt"]),
+    );
+    assert!(!status.contains("b.txt"));
     assert_eq!(show(dir, "HEAD", "b.txt"), "ONE\ntwo\n");
 }
 
 #[test]
 fn test_absorb_ambiguous_hunk_stays() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -230,6 +282,9 @@ fn test_absorb_ambiguous_hunk_stays() {
 
 #[test]
 fn test_absorb_recorded_in_oplog() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -238,17 +293,12 @@ fn test_absorb_recorded_in_oplog() {
     git(dir, &["commit", "-qm", "add a.txt"]);
     write(dir, "a.txt", "alpha\nBETA\ngamma\n");
 
-    // Isolate the oplog to this test's temp dir.
-    let logdir = tempfile::tempdir().unwrap();
-    std::env::set_var("KAGI_LOG_DIR", logdir.path());
-
     let backend = Backend::open(dir).unwrap();
     let plan = backend.plan_absorb(WINDOW).unwrap();
     let outcome = backend.execute_absorb(&plan).unwrap();
     assert_eq!(outcome.absorbed_hunks, 1);
 
     let tail = kagi_git::read_oplog_tail(10);
-    std::env::remove_var("KAGI_LOG_DIR");
     let entry = tail
         .iter()
         .find(|e| e.op == "absorb")
@@ -258,6 +308,9 @@ fn test_absorb_recorded_in_oplog() {
 
 #[test]
 fn test_absorb_preflight_head_moved() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -282,6 +335,9 @@ fn test_absorb_preflight_head_moved() {
 
 #[test]
 fn test_absorb_protected_branch_blocked() {
+    if !test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     // Default protected branch: main.
@@ -305,6 +361,9 @@ fn test_absorb_protected_branch_blocked() {
 
 #[test]
 fn test_absorb_worktree_changed_after_plan_refused() {
+    if !test_support::run_isolated() {
+        return;
+    }
     // #417: an edit made AFTER planning shifts every subsequent line number, so
     // the plan's hunk coordinates no longer match the tree. Absorb must refuse
     // rather than move the branch ref while silently failing to fold the hunk.
@@ -347,6 +406,9 @@ fn test_absorb_worktree_changed_after_plan_refused() {
 
 #[test]
 fn test_absorb_staged_after_plan_refused() {
+    if !test_support::run_isolated() {
+        return;
+    }
     // #417: content staged AFTER planning must also be refused — the executor's
     // index.read_tree would otherwise silently drop it from the index.
     let tmp = tempfile::tempdir().unwrap();
@@ -377,6 +439,9 @@ fn test_absorb_staged_after_plan_refused() {
 
 #[test]
 fn test_absorb_outcome_counts_match_reality() {
+    if !test_support::run_isolated() {
+        return;
+    }
     // #417: the outcome's counts are derived from what was ACTUALLY applied, not
     // copied from the plan's prediction. One absorbable hunk + one kept
     // pure-addition hunk → absorbed 1, kept 1, one target rewritten.

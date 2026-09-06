@@ -88,6 +88,9 @@ mod tests {
     use super::*;
     #[test]
     fn absorb_verification_failure_is_not_success_and_is_recorded_as_partial() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let tmp = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(tmp.path()).unwrap();
         let mut config = repo.config().unwrap();

@@ -34,6 +34,9 @@ fn host_from_env() -> Option<RemoteHost> {
 
 #[test]
 fn live_remote_read_path() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let Some(host) = host_from_env() else {
         eprintln!("skipping: set KAGI_REMOTE_TEST_HOST to run the live SSH test");
         return;
@@ -140,3 +143,6 @@ fn live_remote_read_path() {
 
     eprintln!("== all live remote checks passed ==");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

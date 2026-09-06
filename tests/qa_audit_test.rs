@@ -106,6 +106,9 @@ fn head_oid(repo: &Repository) -> git2::Oid {
 
 #[test]
 fn stash_push_clean_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_d, mut repo) = build_repo(&tmp);
     let plan = plan_stash_push(&mut repo, None, true).unwrap();
@@ -118,6 +121,9 @@ fn stash_push_clean_is_blocked() {
 
 #[test]
 fn stash_push_staged_only_succeeds() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The exact user repro shape: a staged change, then stash.
     let tmp = TempDir::new().unwrap();
     let (d, mut repo) = build_repo(&tmp);
@@ -136,6 +142,9 @@ fn stash_push_staged_only_succeeds() {
 
 #[test]
 fn stash_push_mixed_staged_and_unstaged_succeeds() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, mut repo) = build_repo(&tmp);
     write_file(&d, "README.md", "# test\nstaged\n");
@@ -154,6 +163,9 @@ fn stash_push_mixed_staged_and_unstaged_succeeds() {
 
 #[test]
 fn stash_push_many_untracked_warns_not_blocks() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, mut repo) = build_repo(&tmp);
     for i in 0..400 {
@@ -174,6 +186,9 @@ fn stash_push_many_untracked_warns_not_blocks() {
 
 #[test]
 fn stash_push_conflict_state_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, mut repo) = build_repo(&tmp);
     // Create a real merge conflict.
@@ -205,6 +220,9 @@ fn stash_push_conflict_state_is_blocked() {
 
 #[test]
 fn undo_with_staged_changes_preserves_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = build_repo(&tmp);
     // Stage an uncommitted change before undoing the last commit.
@@ -238,6 +256,9 @@ fn undo_with_staged_changes_preserves_working_tree() {
 
 #[test]
 fn stash_pop_on_dirty_tree_is_blocked_and_preserves_stash() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, mut repo) = build_repo(&tmp);
     // Create a stash, then dirty the tree again.
@@ -266,6 +287,9 @@ fn stash_pop_on_dirty_tree_is_blocked_and_preserves_stash() {
 
 #[test]
 fn checkout_commit_dirty_plan_warns_but_does_not_block() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (d, repo) = build_repo(&tmp);
     write_file(&d, "README.md", "# test\ndirty\n");
@@ -297,6 +321,9 @@ fn checkout_commit_dirty_plan_warns_but_does_not_block() {
 
 #[test]
 fn checkout_commit_overlapping_dirty_plan_blocks() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // W15-ASYNCOPS / BUG-2: the 'mixed' repro — an uncommitted edit to a file
     // that the target commit also modifies. The in-memory dry-run must promote
     // the dirty warning to a *blocker* so the plan matches what `execute` does
@@ -333,6 +360,9 @@ fn checkout_commit_overlapping_dirty_plan_blocks() {
 
 #[test]
 fn checkout_commit_overlapping_dirty_fails_without_data_loss() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The 'mixed' repro: an unstaged edit to a file that differs in the target
     // commit. Safe-mode checkout refuses; the edit must remain on disk.
     let tmp = TempDir::new().unwrap();
@@ -372,6 +402,9 @@ fn checkout_commit_overlapping_dirty_fails_without_data_loss() {
 
 #[test]
 fn amend_pushed_commit_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let bare = TempDir::new().unwrap();
     let (d, repo) = build_repo(&tmp);
@@ -397,3 +430,6 @@ fn amend_pushed_commit_is_blocked() {
         plan.blockers
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

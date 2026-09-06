@@ -73,6 +73,9 @@ fn input(lang: Lang, style: Style) -> GenInput {
 
 #[test]
 fn collect_staged_diff_is_empty_when_nothing_staged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     assert_eq!(collect_staged_diff(&repo), "");
@@ -81,6 +84,9 @@ fn collect_staged_diff_is_empty_when_nothing_staged() {
 
 #[test]
 fn collect_staged_diff_includes_staged_excludes_unstaged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -123,6 +129,9 @@ fn collect_staged_diff_includes_staged_excludes_unstaged() {
 
 #[test]
 fn collect_staged_diff_partial_stage_only_sees_staged_hunk() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -146,6 +155,9 @@ fn collect_staged_diff_partial_stage_only_sees_staged_hunk() {
 
 #[test]
 fn rule_based_from_real_staged_files_is_nonempty() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -165,6 +177,9 @@ fn rule_based_from_real_staged_files_is_nonempty() {
 
 #[test]
 fn ollama_offline_errs_and_rule_based_recovers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -205,3 +220,6 @@ fn ollama_offline_errs_and_rule_based_recovers() {
         None => std::env::remove_var("KAGI_OFFLINE"),
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

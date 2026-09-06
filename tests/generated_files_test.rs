@@ -66,6 +66,9 @@ fn flag_for(backend: &Backend, id: &CommitId, files: &[FileStatus], path: &str) 
 
 #[test]
 fn content_and_filename_rules_classify_generated() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -98,6 +101,9 @@ fn content_and_filename_rules_classify_generated() {
 
 #[test]
 fn gitattributes_linguist_generated_forces_generated() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -119,6 +125,9 @@ fn gitattributes_linguist_generated_forces_generated() {
 
 #[test]
 fn gitattributes_linguist_generated_false_overrides_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -144,6 +153,9 @@ fn gitattributes_linguist_generated_false_overrides_content() {
 
 #[test]
 fn gitattributes_minus_diff_folds() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -162,3 +174,6 @@ fn gitattributes_minus_diff_folds() {
         "-diff attribute must fold (classify as generated)"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

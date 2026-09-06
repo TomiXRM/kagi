@@ -184,6 +184,31 @@ pre-remove command keeps the worktree; it never proceeds with removal.
 | Conflict | Continue, then verify conflicts are re-detected immediately. |
 | Backend policy | Toggle auto-snapshot OFF/ON; reset and amend must use the same policy from button and Enter. Guarded rebase keeps its existing no-auto-snapshot rule; explicit restore still creates its mandatory savepoint. CLI/MCP default to snapshots ON independently of GUI settings. Confirm create-branch with checkout ON/OFF: ON switches to the new branch with one backend operation; OFF keeps HEAD. Absorb with an index-write failure must show Partial and its original full OID, never a plain Failed after HEAD advanced. Worktree config added/removed/changed after the plan must refuse before target creation. |
 
+### Parallel fixture isolation (#573)
+
+Git fixtures use `tests/support/isolated.rs`: each parent test starts only its
+own exact test in a child process with a fresh `KAGI_LOG_DIR`. The parent owns
+the TempDir until the child finishes. This preserves normal parallelism without
+changing the parent process's environment or sharing the user's oplog. Tests
+that specifically exercise environment overrides may change them inside that
+single-test child. Prefer explicit directory arguments for pure path tests.
+
+The oplog refuses its default home path when runtime `CARGO_MANIFEST_DIR` is
+present and `KAGI_LOG_DIR` is absent: `tests must set KAGI_LOG_DIR`. Do not remove
+the Cargo marker or disable recording to make a fixture pass. Use the child
+helper or pass an explicit storage directory through an existing API.
+
+For an environment-race fix, run the following three times consecutively with
+default test parallelism and record the results in the PR:
+
+```bash
+CARGO_TARGET_DIR="$PWD/target" cargo test -j 8 --workspace
+```
+
+`-j 8` controls Cargo build jobs; it does not serialize Rust test threads. Do
+not use `RUST_TEST_THREADS=1` to mask a race. GUI runner execution is a separate
+lane and is not part of this fixture check.
+
 ## Other runtime seams
 
 Use a real filesystem change to test the watcher and wait through its debounce:

@@ -96,6 +96,9 @@ fn build_repo(tmp: &TempDir) -> std::path::PathBuf {
 
 #[test]
 fn discard_does_not_touch_non_target_dirty_files() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
 
@@ -159,6 +162,9 @@ fn discard_does_not_touch_non_target_dirty_files() {
 // prune path rather than checkout_index).
 #[test]
 fn discard_untracked_target_does_not_delete_bystanders() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
 
@@ -205,6 +211,9 @@ fn discard_untracked_target_does_not_delete_bystanders() {
 
 #[test]
 fn discard_all_bulk_150_files_is_exact() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
 
@@ -320,6 +329,9 @@ fn discard_all_bulk_150_files_is_exact() {
 // SHA so an unstaged deletion's recovery handle is the well-known empty blob.
 #[test]
 fn discard_unstaged_deletion_backup_is_the_empty_blob() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     const EMPTY_BLOB: &str = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
 
     let tmp = TempDir::new().unwrap();
@@ -345,6 +357,9 @@ fn discard_unstaged_deletion_backup_is_the_empty_blob() {
 // so a path→blob swap would pass. Assert each blob's CONTENT is its own file's.
 #[test]
 fn discard_multi_file_blobs_correspond_by_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     write_file(&d, "alpha.txt", "alpha base\n");
@@ -385,6 +400,9 @@ fn discard_multi_file_blobs_correspond_by_content() {
 // file has nothing to discard → typed blocker, no working-tree change.
 #[test]
 fn discard_no_unstaged_changes_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     let repo = Repository::open(&d).unwrap();
@@ -411,6 +429,9 @@ fn discard_no_unstaged_changes_blocker() {
 // end-to-end (the audit flagged it as dead code across the suite).
 #[test]
 fn discard_absolute_path_input_reverts_target() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = build_repo(&tmp);
     write_file(&d, "tracked.txt", "DIRTY\n");
@@ -435,6 +456,9 @@ fn discard_absolute_path_input_reverts_target() {
 #[cfg(unix)]
 #[test]
 fn discard_exec_bit_only_restores_mode() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = TempDir::new().unwrap();
@@ -469,3 +493,6 @@ fn discard_exec_bit_only_restores_mode() {
         "discard must strip the exec bit back to the committed mode"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

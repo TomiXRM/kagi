@@ -69,6 +69,9 @@ fn init_repo(tmp: &TempDir) -> Repository {
 
 #[test]
 fn test_clean_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
 
@@ -91,6 +94,9 @@ fn test_clean_repo() {
 
 #[test]
 fn test_staged_added() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -129,6 +135,9 @@ fn test_staged_added() {
 
 #[test]
 fn test_unstaged_modified() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -163,6 +172,9 @@ fn test_unstaged_modified() {
 
 #[test]
 fn test_untracked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -191,6 +203,9 @@ fn test_untracked() {
 
 #[test]
 fn test_combination_staged_unstaged_untracked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -245,6 +260,9 @@ fn test_combination_staged_unstaged_untracked() {
 
 #[test]
 fn test_staged_deleted() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -290,6 +308,9 @@ fn test_staged_deleted() {
 
 #[test]
 fn test_worktree_files_tracked_untracked_ignored() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let _repo = init_repo(&tmp); // creates + commits base.txt
     let dir = tmp.path();
@@ -324,3 +345,6 @@ fn test_worktree_files_tracked_untracked_ignored() {
     sorted.sort();
     assert_eq!(files, sorted, "worktree_files must be sorted");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

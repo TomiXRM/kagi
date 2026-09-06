@@ -64,6 +64,9 @@ fn req(dir: &Path, path: &str, follow: bool, wip: bool, limit: usize) -> FileHis
 
 #[test]
 fn add_then_modify_twice_newest_first() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -106,6 +109,9 @@ fn add_then_modify_twice_newest_first() {
 
 #[test]
 fn insertions_deletions_parsed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -132,6 +138,9 @@ fn insertions_deletions_parsed() {
 
 #[test]
 fn rename_followed_with_before_after() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -158,6 +167,9 @@ fn rename_followed_with_before_after() {
 
 #[test]
 fn delete_entry_present() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -184,6 +196,9 @@ fn delete_entry_present() {
 
 #[test]
 fn binary_change_flags_is_binary() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -200,6 +215,9 @@ fn binary_change_flags_is_binary() {
 
 #[test]
 fn wip_entry_at_top() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -220,6 +238,9 @@ fn wip_entry_at_top() {
 
 #[test]
 fn no_wip_when_clean() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -234,6 +255,9 @@ fn no_wip_when_clean() {
 
 #[test]
 fn unicode_and_space_path() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -254,6 +278,9 @@ fn unicode_and_space_path() {
 
 #[test]
 fn limit_respected() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -270,6 +297,9 @@ fn limit_respected() {
 
 #[test]
 fn commit_summary_fields_populated() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = init_repo(&tmp);
 
@@ -295,3 +325,6 @@ fn commit_summary_fields_populated() {
     assert!(!c.short_hash.is_empty());
     assert!(c.author_date.starts_with("20"));
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

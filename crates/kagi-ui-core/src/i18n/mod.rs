@@ -405,6 +405,8 @@ pub enum Msg {
     EditorIncomingFirst,
     // ── W33-CONFLICT-DASHBOARD: Right-panel dashboard + escape hatch ──
     ConflictDashHeader,
+    ConflictRebaseApplying,
+    ConflictRebaseCommits,
     ConflictRoleCurrent,
     ConflictRoleIncoming,
     ConflictGitTermHint,
@@ -1336,6 +1338,10 @@ impl Msg {
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",
+            (En, ConflictRebaseApplying) => "Applying",
+            (Ja, ConflictRebaseApplying) => "適用中",
+            (En, ConflictRebaseCommits) => "commits",
+            (Ja, ConflictRebaseCommits) => "コミット",
             (En, ConflictRoleCurrent) => "Current",
             (Ja, ConflictRoleCurrent) => "現在の側",
             (En, ConflictRoleIncoming) => "Incoming",

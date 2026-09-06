@@ -1058,6 +1058,19 @@ fn dash_state(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyE
                 .text_color(rgb(theme().text_main))
                 .child(SharedString::from(Msg::ConflictDashHeader.t())),
         )
+        .children(match &mode.session.op {
+            kagi_git::ConflictOp::Rebase { step, total, .. } => Some(
+                div()
+                    .text_size(theme::scaled_px(11.))
+                    .text_color(rgb(theme().text_sub))
+                    .child(format!(
+                        "{} {step} / {total} {}",
+                        Msg::ConflictRebaseApplying.t(),
+                        Msg::ConflictRebaseCommits.t()
+                    )),
+            ),
+            _ => None,
+        })
         .child(
             div()
                 .flex()

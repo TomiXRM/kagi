@@ -26,6 +26,14 @@ Conflict Mode 中の Continue / Abort / Skip / Mark resolved / Save は **直接
 - `cleanup_state` + ORIG_HEAD 復帰(force/reset --hard/clean 不使用、ADR-0056/0057)。buffer は
   oplog 参照付きで退避(完全には消さない)
 
+### Rebase abort の比較基準 (#534)
+
+復元先は ORIG_HEAD のまま。非競合ファイルの手編集保護に使う適用結果は、
+`base = REBASE_HEAD の親`、`ours = 現在の HEAD` (移動先 + 適用済みコミット)、
+`theirs = REBASE_HEAD` で再構成する。移動先から入った正常な差分を手編集と誤判定しない。
+本当の staged / unstaged 編集は従来どおり abort を拒否する。
+復元後は rebase directory に加え、libgit2 が残す `REBASE_HEAD` も削除する。
+
 ### Skip
 - **rebase / cherry-pick / revert のみ**(merge では非表示)。sequencer の現 step をスキップ
 - W26 段階では未実装(UI は「terminal で `--skip`」案内)。本 ADR で正式 plan 化を予約

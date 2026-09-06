@@ -698,9 +698,15 @@ fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     .unwrap();
 }
 
-/// Paint-and-park until `predicate` holds. The live replan is debounced, and
-/// `sync_modal_inputs` only copies the real text input into the modal on a
-/// paint, so both have to run for the plan to settle.
+/// Paint, advance the test clock, and park until `predicate` holds.
+///
+/// Three things have to happen for a live replan to settle, and none implies
+/// the others: `sync_modal_inputs` copies the real text input into the modal
+/// only on a **paint**, that copy schedules the replan on a 250 ms
+/// **background timer**, and `VisualTestAppContext::run_until_parked` ticks the
+/// scheduler *without advancing the test clock* — only `advance_clock` fires a
+/// pending timer. `stash_replan_error` needs none of this because the stash plan
+/// is dispatched immediately rather than debounced.
 fn wait_painted(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -710,6 +716,7 @@ fn wait_painted(
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         paint(cx, window);
+        cx.advance_clock(Duration::from_millis(300));
         cx.run_until_parked();
         if cx.read(|cx| predicate(app.read(cx))) {
             return;

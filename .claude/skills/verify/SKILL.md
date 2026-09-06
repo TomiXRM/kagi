@@ -10,13 +10,15 @@ description: kagi の変更をランタイム検証する手順 — fixture repo
 通常の workspace テストは GUI runner をコンパイルしない。macOS で明示実行する:
 
 ```bash
-CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target KAGI_GUI_E2E=1 \
+KAGI_GUI_E2E=1 \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
 
 `gui-e2e` が `gpui/test-support` と recovery シナリオをコンパイル対象にする。
 環境変数は実行の許可であり、feature の代わりにはならない。
-他の cargo が動いていれば共有 target のロックを待つ（CLAUDE.md「Build hygiene」）。
+同じ worktree で他の cargo が動いていれば完了を待つ（CLAUDE.md「Build hygiene」）。
+各 worktree は既定の独立した `target/` を使い、`CARGO_TARGET_DIR` や
+`build.target-dir` で共有先へ向けない。
 
 ## Fixture repo
 

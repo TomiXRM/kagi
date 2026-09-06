@@ -61,10 +61,19 @@ pub fn oplog_outcome_from(
         },
         (Ok(OperationOutcome::Discard(d)), _) if d.is_partial() => {
             crate::oplog::OpOutcome::Partial {
-                after: predicted.clone(),
+                after: ops::StateSummary {
+                    head: predicted.head.clone(),
+                    dirty: d.oplog_summary(),
+                },
                 error: d.error.clone().unwrap_or_default(),
             }
         }
+        (Ok(OperationOutcome::Discard(d)), _) => crate::oplog::OpOutcome::Success {
+            after: ops::StateSummary {
+                head: predicted.head.clone(),
+                dirty: d.oplog_summary(),
+            },
+        },
         // #418: persist the restore's recovery handle (savepoint id) in `after`.
         (Ok(OperationOutcome::RestoreSnapshot { savepoint }), _) => {
             crate::oplog::OpOutcome::Success {
@@ -100,10 +109,21 @@ impl Backend {
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
     ) -> Recording {
+        self.record_run_oplog_with_backups(op, before, outcome, Vec::new())
+    }
+
+    pub(super) fn record_run_oplog_with_backups(
+        &self,
+        op: &str,
+        before: &ops::StateSummary,
+        outcome: crate::oplog::OpOutcome,
+        backup_refs: Vec<String>,
+    ) -> Recording {
         let repo = self.path.display().to_string();
-        let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
+        let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
             .with_actor(self.actor)
             .with_worktree(Some(repo));
+        entry.backup_refs = backup_refs;
         finalize(entry)
     }
 

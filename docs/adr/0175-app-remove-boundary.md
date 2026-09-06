@@ -22,7 +22,9 @@ for remove's fresh mutation handle (read RepoSession is unchanged).
 
 No worker, TabId, session incarnation, global registry or writer admission
 rollout is included. Slice 1b must connect editor save/staging/snapshot/fetch
-before family rollout. Bare ODB backups do not guarantee GC retention (#523).
+before family rollout. The original bare ODB backup limitation is addressed for new file backups by
+[ADR-0179](0179-ref-backed-discard-remove-backups.md) (#523): mandatory refs
+survive GC and are retained with their oplog entries.
 
 ## Concrete implementation and compatibility
 

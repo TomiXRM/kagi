@@ -218,3 +218,15 @@ Markdown links in this canonical skill (#544).
 Finish by exiting the launched application so it cannot retain a socket or test
 state. Fixtures and isolated log directories live below `/tmp`; remove them only
 when their evidence is no longer needed.
+
+### Ref-backed discard/remove recovery (#523)
+
+Use `crates/kagi-git/tests/ref_backups_test.rs` for G: disable optional snapshots,
+prune a disposable fixture with real Git GC, and recover the original bytes via
+receipt `backup_refs`. A sibling naked blob must disappear to prove actual GC.
+Check remove Success/Partial/Unknown and append failure. Explicit oplog retirement
+must delete only its unshared roots; the final retained entry controls lifetime.
+Default retention is indefinite, matching the oplog; snapshot pruning must not
+expire backup refs. For M, inspect the receipt's ref and export its bytes before
+choosing to retire that entry. Legacy naked-OID logs do not gain retroactive GC
+protection. Do not run the GUI runner for this Git-only check.

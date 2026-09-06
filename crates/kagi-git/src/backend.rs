@@ -14,6 +14,7 @@ use super::{
     StashPopOutcome, UndoOutcome, WorkingTreeStatus,
 };
 
+pub mod backups;
 pub mod recording;
 pub mod remove;
 mod run;

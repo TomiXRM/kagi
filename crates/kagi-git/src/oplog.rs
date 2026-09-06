@@ -21,6 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{ops::StateSummary, GitError};
 
+pub mod retention;
+
 // ────────────────────────────────────────────────────────────
 // Public types
 // ────────────────────────────────────────────────────────────
@@ -121,6 +123,8 @@ pub struct OpLogEntry {
     pub before: StateSummary,
     /// Outcome of the operation.
     pub outcome: OpOutcome,
+    /// Mandatory recovery roots, retained for the lifetime of this entry (#523).
+    pub backup_refs: Vec<String>,
 }
 
 impl OpLogEntry {
@@ -150,6 +154,7 @@ impl OpLogEntry {
             worktree: None,
             before,
             outcome,
+            backup_refs: Vec::new(),
         }
     }
 
@@ -254,7 +259,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
     };
 
     format!(
-        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{}}}",
+        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{},\"backup_refs\":[{}]}}",
         entry.id,
         parent_json,
         entry.timestamp,
@@ -264,6 +269,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
         worktree_json,
         state_summary_to_json(&entry.before),
         outcome_json,
+        entry.backup_refs.iter().map(|r| escape_json_string(r)).collect::<Vec<_>>().join(","),
     )
 }
 
@@ -439,12 +445,14 @@ fn extract_object_field(json: &str, key: &str) -> Option<String> {
 ///
 /// Returns only the string elements; other element types are skipped.
 fn extract_string_array(json: &str, key: &str) -> Vec<String> {
-    let needle = format!("\"{}\":[", key);
+    let needle = format!("\"{}\":", key);
     let pos = match json.find(needle.as_str()) {
         Some(p) => p,
         None => return Vec::new(),
     };
-    let after = &json[pos + needle.len()..];
+    let Some(after) = json[pos + needle.len()..].trim_start().strip_prefix('[') else {
+        return Vec::new();
+    };
 
     // Scan elements until the closing ']'.
     let mut result = Vec::new();
@@ -588,6 +596,7 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
         worktree,
         before,
         outcome,
+        backup_refs: extract_string_array(line, "backup_refs"),
     })
 }
 
@@ -712,11 +721,12 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
         })?;
     }
 
+    let mut lock = retention::lock(&path)?;
+
     // ADR-0149: assign the sequence id/parent from the current tail so ids are
     // monotonic and each entry chains to the previous one. Placeholder id/parent
     // on `entry` (from `OpLogEntry::new`) are overwritten here.
-    // ponytail: single-user oplog — no cross-process locking on the read→write
-    // window; add a lock if concurrent writers ever appear.
+    // Append and explicit retirement share the stable sidecar lock.
     let mut entry = entry.clone();
     let last = read_oplog_tail(1);
     match last.first() {
@@ -730,6 +740,7 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
         }
     }
 
+    entry.id = retention::reserve_id(&mut lock, entry.id)?;
     let line = format!("{}\n", entry_to_json(&entry));
 
     let mut file = std::fs::OpenOptions::new()

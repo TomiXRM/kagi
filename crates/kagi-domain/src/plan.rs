@@ -245,6 +245,8 @@ pub struct DiscardBackup {
     pub path: String,
     /// ODB blob SHA (40-hex) holding the pre-discard working-tree content.
     pub blob: String,
+    /// GC reachability root; recover bytes with `git cat-file blob <reference>`.
+    pub reference: String,
 }
 
 /// Outcome of a discard: the backup blobs written before discarding.
@@ -289,9 +291,14 @@ impl DiscardOutcome {
             .map(|b| format!("{}={}", b.path, b.blob))
             .collect();
         let base = format!(
-            "discarded {} file(s); backup: {}",
+            "discarded {} file(s); backup: {}; recovery refs: {}",
             self.backups.len(),
-            pairs.join(", ")
+            pairs.join(", "),
+            self.backups
+                .iter()
+                .map(|b| format!("{}={}", b.path, b.reference))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         match &self.error {
             None => base,

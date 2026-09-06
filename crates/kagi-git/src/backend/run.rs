@@ -65,7 +65,18 @@ impl Backend {
         } else {
             oplog_outcome_from(&result, &plan.predicted, partial_after)
         };
-        let recording = self.record_run_oplog(op.oplog_name(), &plan.current, outcome);
+        let backup_refs = match &result {
+            Ok(OperationOutcome::Discard(d)) => {
+                d.backups.iter().map(|b| b.reference.clone()).collect()
+            }
+            _ => Vec::new(),
+        };
+        let recording = self.record_run_oplog_with_backups(
+            op.oplog_name(),
+            &plan.current,
+            outcome,
+            backup_refs,
+        );
         recording::RunReport {
             result,
             recording,

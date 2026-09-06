@@ -1,0 +1,195 @@
+//! Explicit entry retirement. No age/cap sweep: backups live as long as receipts.
+use super::{entry_to_json, log_file_path, parse_oplog_line, OpLogEntry};
+use crate::{ops::backup, GitError};
+use git2::{Oid, Repository};
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, Write};
+use std::path::PathBuf;
+
+/// Frozen preview for explicit confirmation; execution checks log and ref drift.
+/// Constructed only by Backend, never by callers supplying cleanup ref names.
+#[derive(Debug)]
+pub struct ForgetOplogPlan {
+    pub(super) path: PathBuf,
+    common_dir: PathBuf,
+    before: String,
+    retained: String,
+    entry: OpLogEntry,
+    refs: Vec<(String, Oid)>,
+}
+impl ForgetOplogPlan {
+    pub fn entry(&self) -> &OpLogEntry {
+        &self.entry
+    }
+    /// Roots whose recovery lifetime ends with this entry (shared roots remain).
+    pub fn backup_refs(&self) -> impl Iterator<Item = &str> {
+        self.refs.iter().map(|(name, _)| name.as_str())
+    }
+}
+
+pub(super) fn io(error: impl std::fmt::Display) -> GitError {
+    GitError::Other(format!("oplog retention: {error}"))
+}
+
+/// Stable sidecar lock survives atomic log replacement. Append shares it.
+/// Fail closed if another writer owns it; do not block a GUI thread on a lock.
+pub(super) fn lock(path: &std::path::Path) -> Result<File, GitError> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.with_extension("jsonl.lock"))
+        .map_err(io)?;
+    file.try_lock().map_err(io)?;
+    Ok(file)
+}
+
+pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogPlan, GitError> {
+    let path = log_file_path().ok_or_else(|| io("missing log path"))?;
+    let _lock = lock(&path)?;
+    let before = std::fs::read_to_string(&path).map_err(io)?;
+    let owner = Repository::discover(&entry.repo).map_err(io)?;
+    let common_dir = std::fs::canonicalize(repo.commondir()).map_err(io)?;
+    if std::fs::canonicalize(owner.commondir()).map_err(io)? != common_dir {
+        return Err(io("entry belongs to another repository"));
+    }
+    let (retained, remaining) = without_entry(&before, entry)?;
+    let mut refs = Vec::new();
+    for name in &entry.backup_refs {
+        backup::validate_reference(name)?;
+        if remaining
+            .iter()
+            .any(|other| other.backup_refs.contains(name))
+            || refs.iter().any(|(saved, _)| saved == name)
+        {
+            continue;
+        }
+        let reference = repo.find_reference(name).map_err(io)?;
+        let oid = reference
+            .target()
+            .ok_or_else(|| io("backup ref is symbolic"))?;
+        repo.find_blob(oid).map_err(io)?;
+        refs.push((name.clone(), oid));
+    }
+    Ok(ForgetOplogPlan {
+        path,
+        common_dir,
+        before,
+        retained,
+        entry: entry.clone(),
+        refs,
+    })
+}
+
+fn without_entry(content: &str, entry: &OpLogEntry) -> Result<(String, Vec<OpLogEntry>), GitError> {
+    let mut retained = String::new();
+    let mut remaining = Vec::new();
+    let mut found = 0;
+    for line in content.split_inclusive('\n') {
+        if line.trim().is_empty() {
+            retained.push_str(line);
+            continue;
+        }
+        // Never treat an unreadable line as proof that a ref is unreferenced.
+        let value: serde_json::Value = serde_json::from_str(line).map_err(io)?;
+        if value.get("backup_refs").is_some_and(|v| {
+            v.as_array()
+                .is_none_or(|a| a.iter().any(|r| !r.is_string()))
+        }) {
+            return Err(io("invalid backup_refs in log; preserving all roots"));
+        }
+        let parsed = parse_oplog_line(line)
+            .ok_or_else(|| io("unreadable log entry; preserving all roots"))?;
+        if entry_to_json(&parsed) == entry_to_json(entry) {
+            found += 1;
+        } else {
+            retained.push_str(line);
+            remaining.push(parsed);
+        }
+    }
+    if found != 1 {
+        return Err(io("entry is missing or ambiguous; re-plan"));
+    }
+    Ok((retained, remaining))
+}
+
+/// Log replacement precedes ref deletion. Any failure leaks recovery rather
+/// than leaving a retained receipt with missing bytes. `retired` marks Partial.
+pub(crate) fn execute(
+    repo: &Repository,
+    plan: &ForgetOplogPlan,
+    retired: &mut bool,
+) -> Result<(), GitError> {
+    if std::fs::canonicalize(repo.commondir()).map_err(io)? != plan.common_dir
+        || log_file_path().as_ref() != Some(&plan.path)
+    {
+        return Err(io("repository/log identity changed; re-plan"));
+    }
+    let mut lock = lock(&plan.path)?;
+    if std::fs::read_to_string(&plan.path).map_err(io)? != plan.before {
+        return Err(io("oplog changed after confirmation; re-plan"));
+    }
+    let mut transaction = repo.transaction().map_err(io)?;
+    for (name, oid) in &plan.refs {
+        transaction.lock_ref(name).map_err(io)?;
+        if repo.find_reference(name).map_err(io)?.target() != Some(*oid) {
+            return Err(io("backup reference changed after confirmation; re-plan"));
+        }
+        transaction.remove(name).map_err(io)?;
+    }
+    // Preserve sequence monotonicity even when retiring the newest/only entry.
+    let floor = plan
+        .before
+        .lines()
+        .filter_map(parse_oplog_line)
+        .map(|entry| entry.id)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    reserve_id(&mut lock, floor)?;
+    let parent = plan.path.parent().ok_or_else(|| io("log has no parent"))?;
+    let mut replacement = tempfile::NamedTempFile::new_in(parent).map_err(io)?;
+    replacement
+        .write_all(plan.retained.as_bytes())
+        .map_err(io)?;
+    replacement.as_file().sync_all().map_err(io)?;
+    replacement.persist(&plan.path).map_err(io)?;
+    *retired = true;
+    // Persist the directory entry before releasing a reachability root.
+    #[cfg(unix)]
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(io)?;
+    transaction.commit().map_err(io)?;
+    for (name, _) in &plan.refs {
+        match repo.find_reference(name) {
+            Err(error) if error.code() == git2::ErrorCode::NotFound => (),
+            _ => return Err(io("backup ref cleanup could not be verified")),
+        }
+    }
+    Ok(())
+}
+
+/// The stable lock file also holds the next sequence id. Reserve before append
+/// or retirement; failed writes may leave gaps, never reuse a retired identity.
+pub(super) fn reserve_id(lock: &mut File, floor: u64) -> Result<u64, GitError> {
+    lock.rewind().map_err(io)?;
+    let mut previous = String::new();
+    lock.read_to_string(&mut previous).map_err(io)?;
+    let next = if previous.trim().is_empty() {
+        0
+    } else {
+        previous.trim().parse::<u64>().map_err(io)?
+    };
+    let assigned = next.max(floor);
+    let following = assigned
+        .checked_add(1)
+        .ok_or_else(|| io("oplog sequence exhausted"))?;
+    lock.rewind().map_err(io)?;
+    let bytes = following.to_string();
+    lock.write_all(bytes.as_bytes()).map_err(io)?;
+    lock.set_len(bytes.len() as u64).map_err(io)?;
+    lock.sync_all().map_err(io)?;
+    Ok(assigned)
+}

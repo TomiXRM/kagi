@@ -374,6 +374,7 @@ fn odb_backup_worktree(
     for p in &status.untracked {
         push_rel(p, &mut rels);
     }
+    let backup_id = super::backup::operation_id();
     for rel in rels {
         let abs = wt_path.join(&rel);
         let is_symlink = std::fs::symlink_metadata(&abs)
@@ -390,13 +391,13 @@ fn odb_backup_worktree(
                 Err(_) => continue, // deletion / unreadable — nothing to back up
             }
         };
-        let oid = repo.blob(&content).map_err(|e| {
-            GitError::Other(format!("ODB backup failed for '{}': {}", rel, e.message()))
-        })?;
-        backups.push(DiscardBackup {
-            path: rel,
-            blob: oid.to_string(),
-        });
+        backups.push(super::backup::write_blob(
+            repo,
+            &backup_id,
+            backups.len(),
+            rel,
+            &content,
+        )?);
     }
     Ok(())
 }

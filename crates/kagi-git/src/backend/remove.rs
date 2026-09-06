@@ -239,6 +239,11 @@ impl Backend {
             plan.preview.current.clone(),
             outcome,
         );
+        entry.backup_refs = progress
+            .backups
+            .iter()
+            .map(|b| b.reference.clone())
+            .collect();
         entry.actor = actor;
         entry.worktree = Some(plan.target.display().to_string());
         RemoveReport {
@@ -309,14 +314,20 @@ fn recovery_after(progress: &RemoveProgress) -> ops::StateSummary {
             .map(|id| id.0.clone())
             .unwrap_or_else(|| "unobserved".into()),
         dirty: format!(
-            "stage={:?}; backup: {}; branch_tip={}",
+            "stage={:?}; backup: {}; branch_tip={}; recovery refs: {}",
             progress.stage,
             pairs.join(", "),
             progress
                 .branch_tip
                 .as_ref()
                 .map(|id| id.0.as_str())
-                .unwrap_or("unavailable")
+                .unwrap_or("unavailable"),
+            progress
+                .backups
+                .iter()
+                .map(|b| format!("{}={}", b.path, b.reference))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     }
 }

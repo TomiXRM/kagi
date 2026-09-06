@@ -43,10 +43,12 @@ needed, otherwise the runner's leak detector can retain them.
 Whitespace is trimmed and empty entries are ignored; only an unset value runs
 the full suite. An all-empty value or a filter with no enabled scenario match
 exits nonzero after reporting each scenario as filtered out.
-The pinned GPUI revision has no public API to hide an individual mounted native
-window; [`open_offscreen_window` keeps `show: true`](https://github.com/zed-industries/zed/blob/5a9b9558db01a6b906cec2fb70a797affdc58cdd/crates/gpui/src/app/visual_test_context.rs#L97-L120).
-The runner therefore keeps its existing mount behavior and relies on `unmount`
-to remove each window after its scenario.
+**Do not run the full suite by hand.** A full run once opened 1,408 real
+`NSWindow`s at once and the WindowServer watchdog killed the login session
+(#549); always scope it with `KAGI_GUI_E2E_ONLY=<substr>`. Windows now come from
+the runner's `macos::open_offscreen` helper, which panics past a budget of 8
+live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
+for triage.
 
 The current suite covers:
 
@@ -61,6 +63,13 @@ The runner's screenshot capture is best-effort only; its assertions, clipboard
 checks, refs, and persisted oplog records are the oracle. It cannot run from the
 Codex sandbox because the required macOS `hiservices` XPC path is unavailable;
 have the PM or a human run this lane.
+
+The locked GPUI revision does not expose the complete, last-rendered hitbox
+collection to `VisualTestAppContext`. Do not treat a scenario-specific recorded
+bound (for example, a measured button or footer) as a generic hitbox dump. A
+complete `id -> window-relative bounds` failure diagnostic needs a public GPUI
+API or a deliberately maintained dependency fork; until then, use Tier A's
+state assertions and Tier B's live-window inspection together.
 
 ## Tier B — real GUI driver
 

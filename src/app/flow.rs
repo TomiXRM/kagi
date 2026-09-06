@@ -293,6 +293,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             ) && !r.evidence.conflicts.is_empty()
             {
                 if let Some(oid) = &r.evidence.oid {
+                    s.clear_stash_conflict(&plan.repo);
                     s.stash_conflicts.insert(
                         plan.repo.clone(),
                         StashConflict {

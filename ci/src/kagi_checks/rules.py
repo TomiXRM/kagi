@@ -260,6 +260,36 @@ RULES: tuple[Rule, ...] = (
         samples_ok=("let short: String = p.chars().take(80).collect();",),
     ),
     Rule(
+        name="e2e-window-helper",
+        summary="GUI E2E windows all go through the budgeted open_offscreen helper",
+        # gpui's `open_offscreen_window` hardcodes `show: true` and counts
+        # nothing, so a nested loop can open thousands of real NSWindows — a
+        # full run once opened 1,408 and the WindowServer watchdog killed the
+        # user's session (#549). `macos::open_offscreen` sets `show: false`
+        # unless KAGI_GUI_E2E_VISIBLE=1 and panics past MAX_LIVE_WINDOWS.
+        #
+        # Matched with the leading dot, i.e. the *call*; prose naming the gpui
+        # method as `VisualTestAppContext::open_offscreen_window` is fine.
+        pattern=r"\.\s*open_offscreen_window\s*\(",
+        globs=("tests/**/*.rs",),
+        message=(
+            "tests must open GUI E2E windows through `macos::open_offscreen` "
+            "(hidden by default + live-window budget), never gpui's raw "
+            "`.open_offscreen_window(` — see #549."
+        ),
+        samples=(
+            "let win = cx.open_offscreen_window(size(px(640.), px(480.)), f).unwrap();",
+            # The rustfmt-wrapped form, which a line-based gate would miss.
+            "let win = cx\n"
+            "    .open_offscreen_window(size(px(w), px(h)), f)\n"
+            '    .expect("open row matrix window");',
+        ),
+        samples_ok=(
+            "let win = crate::macos::open_offscreen(cx, size(px(w), px(h)), f);",
+            "/// gpui's own `VisualTestAppContext::open_offscreen_window` hardcodes `show: true`.",
+        ),
+    ),
+    Rule(
         name="shell-hygiene",
         summary="gates and workflows never shell out to grep/find/awk/sed -i",
         # Invocations only (word followed by an argument), so prose and job

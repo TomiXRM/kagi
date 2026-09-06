@@ -1,7 +1,7 @@
 # #484 family 2: stash push / apply / pop / drop
 
 状態: **設計レビュー r2・未実装**。PM Round 1 の (1)〜(5)/A〜E を反映。
-追加 D と C の完了範囲の整合は §7 の提案について PM 確認待ち。omp-plan 第 2 レビュー待ち。
+追加 D と C の完了範囲は §7 の調整案を PM 採用済み。omp-plan 第 2 レビュー待ち。
 読解基準は `origin/dev` の `4ad4ad28`
 （#530 merge）。2026-09-07。コード変更・cargo・G/E/M 実行は本 PR に含めない。
 PM 報告では 1a/1b の G/E は通過、M は PM 待ち。**1b の M 通過と PM の横展開許可、
@@ -306,7 +306,7 @@ backend の stash boundary、app の stash job、UI adapter、tests の機能境
 remote 用のファイル移動、`Local/Remote` lease key 和の導入。remote の既存経路は残し、
 `LegacyBusy` と共通 lease の両方向排他のみ維持する。remote scope は PR 2 で追加する。
 
-**PR 1 の完了条件（追加 C/D の整合案・PM 確認待ち）**:
+**PR 1 の完了条件（追加 C/D の整合案・PM 採用済み）**:
 `src/ui/operations/stash.rs` の **local 4 op 経路**から `finish_op_on_main` / `record_op` /
 同期実行 confirm / blocking core 呼出しをゼロにする。`rg -n` の全ヒットと各 caller の
 所属を PR 本文に載せ、remote 分岐の残存だけを明示する。単に関数を別ファイルへ移動して
@@ -314,14 +314,15 @@ remote 用のファイル移動、`Local/Remote` lease key 和の導入。remote
 現行 remote 分岐（基準 tree の stash.rs:503/506/526）には finish/record 呼出しが残るため、
 「remote を変更しない」と「PR 1 でファイル全体のヒットゼロ」は両立しない。
 **PR 2 の完了条件**は、remote も移管した後に同ファイル全体で上記旧 glue のヒットゼロを
-同じ方法で示すこと。これは D のスコープ調整提案であり、PM 承認済みとは扱わない。
+同じ方法で示すこと。この D のスコープ調整は
+[PM の r2 裁定](https://github.com/TomiXRM/kagi/pull/532#issuecomment-5560797477)で採用された。
 他 family の helper は削除しない。実装開始は 1b の M 通過・横展開許可・#531 merge 後 dev
 への rebase 後だけとし、共有 skeleton 変更で #531 を巻き戻さない。
 
 PM Round 1 で (1) finite enum/単一 slot、(2) run 互換 sibling/唯一の finalize、
 (4) owner+full OID と 2 PR 分割、(5) remote 停止不明の保留は採用となった。
 (3) は r1 の log profile 案を撤回し、Enter とボタンのログ統一を採用した。
-追加 A/B/C/E は本文に反映、D は上記スコープの PM 確認待ち。omp-plan 第 2 レビューは未受領。
+追加 A〜E は本文に反映、D は上記スコープで PM 採用済み。omp-plan 第 2 レビューは未受領。
 実装 ADR で実際の採用範囲だけを記録し、ADR-0149/0175 と remote ADR-0097 の該当部分を
 相互参照する。
 

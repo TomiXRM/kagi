@@ -8,10 +8,15 @@ use std::time::{Duration, Instant};
 pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
     for button in [false, true] {
         let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
         let worktrees = tempfile::tempdir().unwrap();
-        let linked = worktrees.path().join("remove-target");
+        let linked = worktrees
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("remove-target");
         git(
-            fixture.path(),
+            &repo,
             &[
                 "worktree",
                 "add",
@@ -21,7 +26,7 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
                 linked.to_str().unwrap(),
             ],
         );
-        let (app, window) = mount(cx, fixture.path());
+        let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
             app.open_remove_worktree_modal("remove-target".into(), true, cx);
             cx.notify();
@@ -49,7 +54,7 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         }
         wait_idle(cx, &app);
         assert!(!linked.exists(), "input must reach real remove executor");
-        let entries: Vec<_> = read_oplog_tail_for_repo(fixture.path(), 100)
+        let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
             .into_iter()
             .filter(|e| e.op == "remove-worktree")
             .collect();

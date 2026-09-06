@@ -102,14 +102,16 @@ tab は開いたまま）。`Attachment` は plan 時の `visit` を運ぶ。
 - `switch_repo` と `enter_remote_view` は離れる tab に対して `Sessions::depart` を呼ぶ。
   #562 の同一 tab 再選択は early return するので depart しない。背景 close も呼ばない。
 - `close_tab` の `clear_stash_conflict(&path)` は `detach(session)` に置き換えた。
-- `switch_generation` は read load の世代 guard として残す（#489 / 段階2 の RequestSlot で置換）。
+- `switch_generation` は read load の世代 guard として残す（段階2 の `ReadKey` が
+  置換済み。以降は operation callback と remote 再 snapshot のみ）。
 - `#488`/`#562` の同一 tab 再選択 no-op と背景 close `Keep` は不変。背景 close は
   `RepoTab` を消すだけで active tab の `SessionId` を変えないので、選択・undo 履歴・
   進行中 operation の宛先はそのまま残る。
 
 ## 対象外（段階2 / 段階3）
 
-snapshot・`active_view` / `tab_cache`・read revision の単一 owner 化（段階2、#489）、
+snapshot・`active_view` / `tab_cache`・read revision の単一 owner 化は
+[ADR-0183](0183-session-owned-read-model.md)（段階2、#489）で実装した。
 selection/scroll/pane/menu などの `TabView` 移管と `reset_per_repo_ui` の撤去（段階3）。
 本 ADR は二重書込を追加せず、段階1 では snapshot 側に一切触れていない。
 

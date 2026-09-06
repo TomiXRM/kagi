@@ -68,6 +68,10 @@ mod app_writer_admission;
 mod recovery_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/read_owner.rs"]
+mod read_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
 
@@ -577,6 +581,10 @@ mod macos {
                     crate::recovery_layout::scenario_footer_status_line(cx, fixture.path());
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
+            ),
+            (
+                "read_owner_switch",
+                Box::new(crate::read_owner::scenario_read_owner_switch),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (

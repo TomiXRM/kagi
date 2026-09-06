@@ -1235,6 +1235,17 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     )]);
 }
 
+/// Install the application-wide command bindings and native menu definition.
+///
+/// Both the real application and the GUI E2E harness must use this after
+/// `gpui_component::init`: menu accelerators are derived from the live keymap,
+/// so omitting either registration makes a harness exercise a different app.
+pub(crate) fn setup_app(cx: &mut App) {
+    bind_app_keys(cx);
+    register_keybindings(cx);
+    cx.set_menus(build_menus());
+}
+
 pub fn register_keybindings(cx: &mut App) {
     // (id, action). The keystroke comes from the registry / settings; a
     // command with no effective keystroke is simply not bound.

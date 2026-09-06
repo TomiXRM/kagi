@@ -517,6 +517,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "branch_menu_no_checkout_fallthrough",
+                Box::new(crate::recovery_operations::scenario_branch_menu_no_checkout_fallthrough),
+            ),
+            (
                 "push_failure_keeps_modal",
                 Box::new(crate::recovery_operations::scenario_push_failure_keeps_modal),
             ),
@@ -539,6 +543,10 @@ mod macos {
             (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
+            ),
+            (
+                "stash_remote_drop",
+                Box::new(crate::app_stash::scenario_remote_stash_drop),
             ),
             (
                 "stash_conflict_followup",

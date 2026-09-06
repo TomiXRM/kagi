@@ -72,6 +72,19 @@ hitboxes. Therefore the runner cannot truthfully provide a generic
 a maintained dependency fork. Keep scenario-specific, intentionally recorded
 bounds as narrow seams; do not present them as a complete hitbox list.
 
+## Update 2026-09-07 — shared command initialization (#565)
+
+`run_app` and `e2e::init_app` call the same `commands::setup_app` after
+component initialization and theme synchronization. It installs app bindings,
+command-registry bindings, then native menus in that order, preserving the
+production keymap precedence and menu accelerator lookup. The harness no longer
+omits command-registry shortcuts or native menus. This does not establish
+foreground AppKit/input-focus behavior; that remains separate Tier B evidence.
+
+The #564 branch-menu scenario checks the selected-commit checkout fallback via
+both Enter and its registered action while a branch context menu is open. Its
+modal-state oracle follows `modal_no_fallthrough`; HEAD must remain unchanged.
+
 ## 何を実証したか
 
 `gpui` の `test-support` feature が解禁する **`VisualTestAppContext`**（macOS 専用、

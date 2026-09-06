@@ -3485,17 +3485,14 @@ pub fn run_app(app_state: KagiApp) {
         // render in kagi's colours rather than the system default.
         theme::sync_gpui_component_theme(cx);
 
-        commands::bind_app_keys(cx);
-
         // NOTE: a KeyBinding::new("enter", …) here never dispatched (the
         // Return key's key_char "\n" path); Enter is handled as a raw key
         // on the root element instead — see render().
-
-        // W5-MENU / ADR-0029: register the command-registry keystrokes and the
-        // native menu bar.  Keystrokes are passed into `set_menus` via the live
-        // keymap, so they render next to each menu item automatically.
-        commands::register_keybindings(cx);
-        cx.set_menus(commands::build_menus());
+        //
+        // W5-MENU / ADR-0029: install the same keymap and native menu setup
+        // used by the GUI E2E harness. Keystrokes are passed into `set_menus`
+        // via the live keymap, so they render next to each menu item automatically.
+        commands::setup_app(cx);
 
         open_main_window(app_state, cx);
         if std::env::var_os("KAGI_NO_ACTIVATE").as_deref() != Some(std::ffi::OsStr::new("1")) {

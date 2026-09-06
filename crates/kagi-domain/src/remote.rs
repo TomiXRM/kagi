@@ -24,6 +24,9 @@
 /// whole-command backstop timeout is enforced separately by the I/O layer.
 pub const SSH_CONNECT_TIMEOUT_SECS: u32 = 10;
 
+mod stash;
+pub use stash::*;
+
 /// Non-interactive, non-hanging ssh options applied to *every* invocation.
 ///
 /// `BatchMode=yes` mirrors `git/cli.rs`'s `GIT_TERMINAL_PROMPT=0`: Kagi never

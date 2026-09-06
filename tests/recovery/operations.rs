@@ -4,7 +4,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
-use kagi::ui::{modals::ActiveModal, FooterStatus, KagiApp};
+use kagi::ui::{modals::ActiveModal, CheckoutSelected, FooterStatus, KagiApp};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
 use kagi_git::{CommitId, OperationKind};
@@ -56,6 +56,21 @@ fn press_key(
 
 fn press_enter(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     press_key(cx, app, window, "enter");
+}
+
+fn dispatch_checkout_selected(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        let focus = app.read(cx).root_focus.clone().unwrap();
+        window.focus(&focus, cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.dispatch_action(window, CheckoutSelected);
 }
 
 fn records(repo: &Path, op: &str) -> Vec<OpLogEntry> {
@@ -625,6 +640,73 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS modal_no_fallthrough: 5 previously-unrouted modals consume Enter/Esc, repo-scoped confirm dropped on switch"
+    );
+}
+
+/// #564: a branch context-menu overlay is not a confirmation modal. Enter
+/// must neither open a checkout plan for the selected commit behind it nor
+/// move HEAD. The registered `CheckoutSelected` action is also dispatched
+/// directly because it bypasses raw-key confirmation routing and reaches
+/// `checkout_selected_commit` itself.
+pub fn scenario_branch_menu_no_checkout_fallthrough(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = output(repo, &["rev-parse", "HEAD"]);
+    git(repo, &["branch", "menu-target", "HEAD~1"]);
+    let (app, window) = mount(cx, repo);
+
+    app.update(cx, |app, _| app.select_headless(1));
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| app.read(cx).selected), Some(1));
+
+    // Positive control: with no overlay, the registered checkout action opens
+    // the expected plan for the selected non-HEAD commit. The no-plan oracle
+    // below applies only after the branch menu is opened.
+    dispatch_checkout_selected(cx, &app, window);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| matches!(app.read(cx).active_modal, Some(ActiveModal::Checkout(_)))));
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).active_modal.is_none()));
+
+    app.update(cx, |app, _| {
+        app.open_local_branch_menu(
+            "menu-target".to_string(),
+            gpui::point(gpui::px(0.0), gpui::px(0.0)),
+        );
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.branch_menu.is_some(), "branch menu must be open");
+        assert_eq!(app.selected, Some(1), "the menu must cover a non-HEAD row");
+    });
+
+    // The action path proves the fallback itself has the overlay guard.
+    dispatch_checkout_selected(cx, &app, window);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).active_modal.is_none()));
+
+    // The actual user path must have the same result.
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.branch_menu.is_some(), "Enter must leave the menu open");
+        assert!(
+            app.active_modal.is_none(),
+            "menu + Enter must not plan checkout for the selected commit"
+        );
+    });
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        head,
+        "menu + Enter must not move HEAD"
+    );
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS branch_menu_no_checkout_fallthrough: menu blocks selected-commit checkout"
     );
 }
 

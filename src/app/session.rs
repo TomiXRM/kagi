@@ -1,4 +1,5 @@
 use super::*;
+use kagi_domain::remote::RemoteRepoId;
 use kagi_domain::remove::{RepoId, WorktreeId};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -81,6 +82,26 @@ pub struct InvalidTarget {
     pub path: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub enum OwnerAttachment {
+    Local(Attachment),
+    Remote(crate::remote::stash::RemoteAttachment),
+}
+impl OwnerAttachment {
+    pub(crate) fn session(&self) -> SessionId {
+        match self {
+            Self::Local(owner) => owner.session,
+            Self::Remote(owner) => owner.session,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum WriteScope {
+    Local(RepoId),
+    Remote(RemoteRepoId),
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum AdmissionError {
     Busy,
@@ -100,7 +121,12 @@ pub struct LegacyBusy(pub bool);
 
 pub(crate) struct InFlight {
     pub plan: Planned,
-    pub attachment: Attachment,
+    pub attachment: OwnerAttachment,
+}
+pub(crate) struct ReconcileEntry {
+    pub plan: Planned,
+    pub stopped: bool,
+    pub remote: Option<crate::remote::stash::RemoteStashEvidence>,
 }
 pub struct Sessions {
     pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
@@ -115,9 +141,9 @@ pub struct Sessions {
     pub(crate) plan_owner: Option<SessionId>,
     pub(crate) revision: RequestId,
     pub(crate) operations: HashMap<OperationId, InFlight>,
-    pub(crate) leases: Arc<Mutex<HashMap<RepoId, OperationId>>>,
+    pub(crate) leases: Arc<Mutex<HashMap<WriteScope, OperationId>>>,
     pub(crate) stale: HashSet<WorktreeId>,
-    pub(crate) reconcile: HashMap<OperationId, (Planned, bool)>,
+    pub(crate) reconcile: HashMap<OperationId, ReconcileEntry>,
     pub(crate) settled: HashSet<OperationId>,
 }
 impl Default for Sessions {
@@ -309,34 +335,34 @@ impl Sessions {
         if self
             .reconcile
             .values()
-            .any(|(plan, _)| plan.common_dir() == &repo)
+            .any(|entry| entry.plan.scope() == WriteScope::Local(repo.clone()))
         {
             return Err(AdmissionError::NeedsReconcile);
         }
         let id = OperationId(next_id());
-        self.reserve_lease(repo.clone(), id)?;
+        self.reserve_lease(WriteScope::Local(repo.clone()), id)?;
         Ok(WriteGuard {
             leases: self.leases.clone(),
-            repo,
+            scope: WriteScope::Local(repo),
             id,
         })
     }
     pub(crate) fn reserve_lease(
         &self,
-        repo: RepoId,
+        scope: WriteScope,
         id: OperationId,
     ) -> Result<(), AdmissionError> {
         let mut leases = self.leases.lock().map_err(|_| AdmissionError::Busy)?;
         if !leases.is_empty() {
             return Err(AdmissionError::Busy);
         }
-        leases.insert(repo, id);
+        leases.insert(scope, id);
         Ok(())
     }
-    pub(crate) fn release_lease(&self, repo: &RepoId, id: OperationId) {
+    pub(crate) fn release_lease(&self, scope: &WriteScope, id: OperationId) {
         if let Ok(mut leases) = self.leases.lock() {
-            if leases.get(repo) == Some(&id) {
-                leases.remove(repo);
+            if leases.get(scope) == Some(&id) {
+                leases.remove(scope);
             }
         }
     }
@@ -368,15 +394,15 @@ impl Sessions {
 /// termination. Call `complete` only after the writer has definitely stopped.
 #[must_use = "hold the reservation until completion; dropping it retains the lease"]
 pub struct WriteGuard {
-    leases: Arc<Mutex<HashMap<RepoId, OperationId>>>,
-    repo: RepoId,
+    leases: Arc<Mutex<HashMap<WriteScope, OperationId>>>,
+    scope: WriteScope,
     id: OperationId,
 }
 impl WriteGuard {
     pub fn complete(self) {
         if let Ok(mut leases) = self.leases.lock() {
-            if leases.get(&self.repo) == Some(&self.id) {
-                leases.remove(&self.repo);
+            if leases.get(&self.scope) == Some(&self.id) {
+                leases.remove(&self.scope);
             }
         }
     }
@@ -403,47 +429,76 @@ pub enum Delivery {
         attachment: Attachment,
         report: Box<ExecutionReport>,
     },
+    RemoteCompleted {
+        id: OperationId,
+        attachment: crate::remote::stash::RemoteAttachment,
+        report: Box<ExecutionReport>,
+    },
 }
 
 #[derive(Clone)]
 pub struct ReconcileRead {
     id: OperationId,
     pub observation: String,
+    stop_proven: bool,
 }
 pub struct ReconcileJob {
     id: OperationId,
     plan: Planned,
+    remote: Option<crate::remote::stash::RemoteStashEvidence>,
 }
 impl ReconcileJob {
     pub fn run(self) -> Result<ReconcileRead, String> {
-        let observation = match &self.plan {
-            Planned::Remove { plan, .. } => kagi_git::Backend::read_remove_status(plan),
-            Planned::Stash { plan, .. } => kagi_git::Backend::read_stash_status(plan),
-        }
-        .map_err(|e| e.to_string())?;
+        let (observation, stop_proven) = match &self.plan {
+            Planned::Remove { plan, .. } => (
+                kagi_git::Backend::read_remove_status(plan).map_err(|e| e.to_string())?,
+                true,
+            ),
+            Planned::Stash { plan, .. } => (
+                kagi_git::Backend::read_stash_status(plan).map_err(|e| e.to_string())?,
+                true,
+            ),
+            Planned::RemoteStash { plan, .. } => {
+                let evidence = self
+                    .remote
+                    .as_ref()
+                    .ok_or("remote completion evidence is missing")?;
+                (
+                    crate::remote::stash::reconcile_remote_stash(plan, evidence, self.id.0)?,
+                    true,
+                )
+            }
+        };
         Ok(ReconcileRead {
             id: self.id,
             observation,
+            stop_proven,
         })
     }
 }
 pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileJob, String> {
-    let (plan, stopped) = sessions.reconcile.get(&id).ok_or("no reconcile request")?;
-    if !stopped {
+    let entry = sessions.reconcile.get(&id).ok_or("no reconcile request")?;
+    if !entry.stopped && entry.remote.is_none() {
         return Err("execution termination is unconfirmed".into());
     }
     Ok(ReconcileJob {
         id,
-        plan: plan.clone(),
+        plan: entry.plan.clone(),
+        remote: entry.remote.clone(),
     })
 }
 pub fn read_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileRead, String> {
     prepare_reconcile(sessions, id)?.run()
 }
 pub fn acknowledge(sessions: &mut Sessions, read: ReconcileRead) -> Result<(), AdmissionError> {
-    if !matches!(sessions.reconcile.get(&read.id), Some((_, true))) {
+    let Some(entry) = sessions.reconcile.get(&read.id) else {
+        return Err(AdmissionError::NeedsReconcile);
+    };
+    if !entry.stopped && !read.stop_proven {
         return Err(AdmissionError::NeedsReconcile);
     }
+    let scope = entry.plan.scope();
     sessions.reconcile.remove(&read.id);
+    sessions.release_lease(&scope, read.id);
     Ok(())
 }

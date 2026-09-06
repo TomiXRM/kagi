@@ -211,7 +211,7 @@ impl KagiApp {
         // instead would otherwise show no toggle at all (user report).
         // Cached after the first read — this touches the filesystem.
         if entity.read(cx).commit_template.is_none() {
-            if let Some(tpl) = kagi_git::Backend::open(&repo_path)
+            if let Some(tpl) = crate::ui::blocking_ops::open_backend(&repo_path)
                 .ok()
                 .and_then(|b| b.commit_template())
             {
@@ -536,7 +536,7 @@ impl KagiApp {
         cx.notify();
 
         let task = cx.background_spawn(async move {
-            let repo = match kagi_git::Backend::open(&repo_path) {
+            let repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
                 Ok(r) => r,
                 Err(_) => return None,
             };
@@ -1134,7 +1134,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.push_toast(

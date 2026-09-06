@@ -130,7 +130,7 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
@@ -181,7 +181,7 @@ impl KagiApp {
         );
 
         // Verify: confirm the branch now exists.
-        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
+        let mut repo2 = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -704,7 +704,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_target = target.clone();
         let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&bg_path)
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             repo.plan_merge_branch(&bg_target)
                 .map_err(|e| format!("{e}"))
@@ -815,7 +815,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let (bg_source, bg_target) = (source.clone(), target.clone());
         let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&bg_path)
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             repo.plan_merge_into_branch(&bg_source, &bg_target)
                 .map_err(|e| format!("{e}"))
@@ -1307,8 +1307,8 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_branch = branch_name.clone();
         let task = cx.background_spawn(async move {
-            let repo =
-                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
+                .map_err(|e| format!("repo open error: {e}"))?;
             repo.plan_delete_branch(&bg_branch)
                 .map_err(|e| e.to_string())
         });
@@ -1375,7 +1375,7 @@ impl KagiApp {
             return;
         }
 
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);

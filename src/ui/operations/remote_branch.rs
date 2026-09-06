@@ -170,7 +170,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_remote_branch = remote_branch.clone();
         let task = cx.background_spawn(async move {
-            let result = kagi_git::Backend::open(&bg_path);
+            let result = crate::ui::blocking_ops::open_backend(&bg_path);
             let open_failed = result.is_err();
             let result = result.and_then(|backend| backend.fetch_remote_branch(&bg_remote_branch));
             lease.complete_git(&result);

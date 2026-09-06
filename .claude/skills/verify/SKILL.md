@@ -173,6 +173,7 @@ pre-remove command keeps the worktree; it never proceeds with removal.
 | Stash | Exercise push, apply, pop, and drop against the three-entry fixture. |
 | Stash conflict | Pop a conflicting entry → resolve → Continue → confirm the suggested drop path. |
 | Conflict | Continue, then verify conflicts are re-detected immediately. |
+| Backend policy | Toggle auto-snapshot OFF/ON; reset and amend must use the same policy from button and Enter. Guarded rebase keeps its existing no-auto-snapshot rule; explicit restore still creates its mandatory savepoint. CLI/MCP default to snapshots ON independently of GUI settings. |
 
 ## Other runtime seams
 

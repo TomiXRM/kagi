@@ -143,7 +143,7 @@ pub fn approve(
     };
     let planned_policy = match prepared {
         Planned::Remove { policy, .. } => Policy::Remove(policy.clone()),
-        Planned::Stash { policy, .. } => Policy::Stash(policy.clone()),
+        Planned::Stash { policy, .. } => Policy::Stash(*policy),
     };
     if current.revision != token.revision || planned_policy != policy.into() {
         return Err(AdmissionError::StaleApproval);

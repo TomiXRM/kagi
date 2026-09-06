@@ -41,7 +41,7 @@ impl KagiApp {
             return;
         };
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&repo_path)
+            crate::ui::blocking_ops::open_backend(&repo_path)
                 .map_err(|e| e.to_string())
                 .and_then(|backend| backend.history_from_reflog().map_err(|e| e.to_string()))
         });
@@ -426,7 +426,7 @@ impl KagiApp {
         }
 
         // ── Armed: proceed to preflight → execute ────────────
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);

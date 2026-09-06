@@ -30,7 +30,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use kagi_domain::commit::CommitId;
-use kagi_git::{Actor, Backend, Operation, OperationPlan};
+use kagi_git::{Backend, Operation, OperationPlan};
 
 /// The subcommands that switch `kagi` into headless CLI mode.
 const SUBCOMMANDS: &[&str] = &["plan", "confirm", "status", "oplog"];
@@ -176,7 +176,8 @@ fn build_operation(backend: &Backend, op_name: &str, args: &[String]) -> Result<
 }
 
 fn open_backend(repo: &std::path::Path) -> Result<Backend, String> {
-    Backend::discover(repo).map_err(|e| format!("{}", e))
+    Backend::discover_with_policy(repo, kagi_git::backend::ExecutionPolicy::cli())
+        .map_err(|e| format!("{}", e))
 }
 
 // ── plan ────────────────────────────────────────────────────
@@ -276,7 +277,6 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
 
     // Execute through the one true write path: preflight → execute → verify →
     // oplog all happen inside `Backend::run` (#329). Actor=cli tags the log.
-    backend.set_actor(Actor::Cli);
     let outcome = backend.run(&op, &fresh).map_err(|e| format!("{}", e))?;
 
     // The oplog entry `run` just wrote (newest-first tail).

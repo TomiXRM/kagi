@@ -86,12 +86,11 @@ impl Backend {
         // safe.directory, so a foreign-owned repo opened via git2 reaches here
         // untrusted. Reads already ran; every *mutating* op stops here until the
         // user grants trust. Headless never grants trust, so it stays read-only.
-        if !self.trust.is_trusted() {
-            let e = GitError::Untrusted(self.path.display().to_string());
+        if let Err(e) = self.require_trust() {
             evidence.stop = Some(stash::StashStopReason::Untrusted);
             return Err(e);
         }
-        if stash::StashAction::from_operation(op).is_some() && !plan.blockers.is_empty() {
+        if !plan.blockers.is_empty() {
             evidence.plan_blocked = true;
             evidence.stop = Some(stash::StashStopReason::PlanBlocked);
             return Err(GitError::Other("plan has blockers".into()));
@@ -129,7 +128,32 @@ impl Backend {
             // HEAD in a way the preflight detects (it advances HEAD), so it is
             // also gated: a confirmed commit plan captures the pre-commit HEAD.
             _ => self.preflight_check(plan),
-        };
+        }
+        .and_then(|()| {
+            // A display plan is not authority to omit required safety fields. Derive
+            // the family requirements again before any snapshot or mutation (#502).
+            let fresh = self.plan(op)?;
+            if !fresh.blockers.is_empty() {
+                return Err(GitError::Other(
+                    fresh
+                        .blockers
+                        .iter()
+                        .map(|blocker| blocker.message_en())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ));
+            }
+            if fresh.title != plan.title
+                || fresh.destructive != plan.destructive
+                || fresh.worktree_digest.is_some() != plan.worktree_digest.is_some()
+            {
+                return Err(GitError::Other(
+                    "plan safety requirements differ; please re-plan".into(),
+                ));
+            }
+
+            Ok(())
+        });
         if let Err(e) = preflight {
             if stash::StashAction::from_operation(op).is_some() {
                 evidence.preflight_error = Some(e.to_string());
@@ -176,7 +200,7 @@ impl Backend {
         if matches!(fault, Some(stash::StashFaultPoint::BeforeMutation)) {
             panic!("stash fault before mutation");
         }
-        if self.auto_snapshot
+        if self.policy.auto_snapshot
             && plan.destructive
             && !matches!(
                 op,
@@ -186,23 +210,9 @@ impl Backend {
             if stash::StashAction::from_operation(op).is_some() {
                 evidence.started = true;
             }
-            match ops::create_snapshot(
-                &self.repo,
-                &format!("auto snapshot before {}", op.oplog_name()),
-            ) {
-                Ok(snapshot) => {
-                    if stash::StashAction::from_operation(op).is_some() {
-                        evidence.snapshot = Some(snapshot.commit);
-                    }
-                    let _ = ops::prune_snapshots(&self.repo, ops::DEFAULT_SNAPSHOT_CAP);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "kagi: auto-snapshot before {} failed: {}",
-                        op.oplog_name(),
-                        e
-                    );
-                }
+            let snapshot = self.auto_savepoint(op.oplog_name());
+            if stash::StashAction::from_operation(op).is_some() {
+                evidence.snapshot = snapshot;
             }
         }
 

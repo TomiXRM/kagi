@@ -102,7 +102,7 @@ impl Backend {
     ) -> Recording {
         let repo = self.path.display().to_string();
         let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
-            .with_actor(self.actor)
+            .with_actor(self.policy.actor)
             .with_worktree(Some(repo));
         finalize(entry)
     }
@@ -115,8 +115,11 @@ impl Backend {
         entry: &HistoryEntry,
     ) -> Result<ops::HistoryMoveOutcome, GitError> {
         let result = self
-            .preflight_check(plan)
-            .map_err(|e| GitError::Preflight(Box::new(e)))
+            .require_trust()
+            .and_then(|()| {
+                self.preflight_check(plan)
+                    .map_err(|e| GitError::Preflight(Box::new(e)))
+            })
             .and_then(|()| match dir {
                 HistoryMoveDir::Undo => self.execute_undo(entry),
                 HistoryMoveDir::Redo => self.execute_redo(entry),

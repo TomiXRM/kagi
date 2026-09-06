@@ -131,7 +131,7 @@ impl KagiApp {
             Some(p) => p,
             None => return false,
         };
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {
@@ -253,7 +253,7 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(_) => "checkout-commit",
         };
 
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
@@ -335,7 +335,7 @@ impl KagiApp {
         }
 
         // Verify: re-snapshot and confirm HEAD.
-        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
+        let mut repo2 = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);

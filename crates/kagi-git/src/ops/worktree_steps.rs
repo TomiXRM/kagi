@@ -16,15 +16,12 @@
 //!    child (issue #294). A `command` is **never** run untrusted, and **never**
 //!    run under the headless harness (assert).
 
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use sha2::{Digest, Sha256};
-
 use super::worktree_paths::{reject_escaping_relative, resolve_contained};
 use super::GitError;
 use kagi_domain::worktree_steps::{WorktreeStep, WorktreeSteps};
-
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 const COMMAND_TIMEOUT_SECS: u64 = 600; // `npm ci` can take minutes; kill past 10m.
 const CONFIG_REL_PATH: &str = ".kagi/worktree.toml";
 
@@ -286,6 +283,22 @@ pub(crate) fn run_pre_remove_progress(
     fault: Option<kagi_domain::remove::RemoveFaultPoint>,
 ) -> Result<(), GitError> {
     for (index, step) in steps.iter().enumerate() {
+        if let WorktreeStep::Command { run } = step {
+            if !command_execution_allowed() {
+                progress.policy_rejected = true;
+                return Err(GitError::Other(format!(
+                    "pre-remove command cannot run under the headless harness, so cleanup \
+                     cannot be verified — aborting removal: {run}"
+                )));
+            }
+            if !trusted {
+                progress.policy_rejected = true;
+                return Err(GitError::Other(format!(
+                    "pre-remove command is not trusted, so it will not run — aborting \
+                     removal (trust .kagi/worktree.toml first): {run}"
+                )));
+            }
+        }
         progress.stage = kagi_domain::remove::RemoveStage::PreRemove { step: index };
         progress
             .observations
@@ -297,21 +310,7 @@ pub(crate) fn run_pre_remove_progress(
         match step {
             WorktreeStep::Copy { from, to } => do_copy(env, from, to)?,
             WorktreeStep::Symlink { from, to } => do_symlink(env, from, to)?,
-            WorktreeStep::Command { run } => {
-                if !command_execution_allowed() {
-                    return Err(GitError::Other(format!(
-                        "pre-remove command cannot run under the headless harness, so cleanup \
-                         cannot be verified — aborting removal: {run}"
-                    )));
-                }
-                if !trusted {
-                    return Err(GitError::Other(format!(
-                        "pre-remove command is not trusted, so it will not run — aborting \
-                         removal (trust .kagi/worktree.toml first): {run}"
-                    )));
-                }
-                do_command_progress(env, run, progress)?;
-            }
+            WorktreeStep::Command { run } => do_command_progress(env, run, progress)?,
         }
         progress
             .observations

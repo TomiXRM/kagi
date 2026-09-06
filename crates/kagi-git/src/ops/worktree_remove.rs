@@ -165,6 +165,20 @@ pub(crate) fn execute_remove_worktree_progress(
         )));
     }
 
+    // Capture the ref before any pre-remove hook. The hook is allowed to take
+    // time, so deleting whichever commit the branch points at afterwards would
+    // turn a reviewed delete into a delete of a newly-pushed commit.
+    let branch: Option<String> = Repository::open(&wt_path).ok().and_then(|r| {
+        r.head()
+            .ok()
+            .and_then(|h| h.shorthand().ok().map(str::to_string))
+    });
+    progress.branch_tip = branch
+        .as_ref()
+        .and_then(|name| repo.find_branch(name, git2::BranchType::Local).ok())
+        .and_then(|branch| branch.get().target())
+        .map(|oid| crate::CommitId(oid.to_string()));
+
     // issue #341: run the typed pre_remove steps as a precondition of deletion.
     // A failed, untrusted, or headless-blocked command returns Err here — BEFORE
     // any destructive step — so the worktree survives (matches preflight ethos:
@@ -208,17 +222,6 @@ pub(crate) fn execute_remove_worktree_progress(
         })
     };
 
-    // Detect the branch before deleting the directory (needs the linked repo).
-    let branch: Option<String> = Repository::open(&wt_path).ok().and_then(|r| {
-        r.head()
-            .ok()
-            .and_then(|h| h.shorthand().ok().map(str::to_string))
-    });
-    progress.branch_tip = branch
-        .as_ref()
-        .and_then(|name| repo.find_branch(name, git2::BranchType::Local).ok())
-        .and_then(|branch| branch.get().target())
-        .map(|oid| crate::CommitId(oid.to_string()));
     if fault == Some(Fault::FailAfterBackupBeforeDelete) {
         return partial("injected failure after backup".into());
     }
@@ -246,21 +249,45 @@ pub(crate) fn execute_remove_worktree_progress(
 
     if delete_branch {
         if let Some(ref b) = branch {
-            // Ref-only, force=false: an unmerged branch errors instead of losing
-            // commits. The worktree is already gone, so surface it but succeed.
-            if let Ok(mut branch_ref) = repo.find_branch(b, git2::BranchType::Local) {
-                progress
-                    .observations
-                    .push(format!("branch {b} deletion started"));
-                if let Err(e) = branch_ref.delete() {
+            if fault == Some(Fault::MoveBranchBeforeDelete) {
+                advance_branch_before_delete_for_test(repo, b, progress.branch_tip.as_ref())?;
+            }
+            let expected = progress.branch_tip.as_ref().map(|tip| tip.0.as_str());
+            let mut branch_ref = match repo.find_branch(b, git2::BranchType::Local) {
+                Ok(branch_ref) => branch_ref,
+                Err(error) => {
+                    progress
+                        .observations
+                        .push(format!("branch {b} deletion skipped: {}", error.message()));
                     return partial(format!(
-                        "worktree removed, but branch '{}' delete failed: {}",
-                        b,
-                        e.message()
+                        "worktree removed, but branch '{b}' could not be checked before deletion: {}",
+                        error.message()
                     ));
                 }
-                progress.stage = Stage::BranchDeleted;
+            };
+            let actual = branch_ref.get().target().map(|oid| oid.to_string());
+            if expected.is_none() || actual.as_deref() != expected {
+                let before = expected.unwrap_or("unavailable");
+                let after = actual.as_deref().unwrap_or("unavailable");
+                progress
+                    .observations
+                    .push(format!("branch moved {before}→{after}, kept"));
+                return partial(format!(
+                    "worktree removed, but branch '{b}' moved {before}→{after}, kept"
+                ));
             }
+            // Delete only the same ref whose target just matched the captured tip.
+            progress
+                .observations
+                .push(format!("branch {b} deletion started"));
+            if let Err(e) = branch_ref.delete() {
+                return partial(format!(
+                    "worktree removed, but branch '{}' delete failed: {}",
+                    b,
+                    e.message()
+                ));
+            }
+            progress.stage = Stage::BranchDeleted;
         }
     }
 
@@ -280,6 +307,43 @@ pub(crate) fn execute_remove_worktree_progress(
         .observations
         .push("verified: admin entry absent".into());
     Ok(DiscardOutcome::complete(backups))
+}
+
+/// Advances `branch` only for the finite `MoveBranchBeforeDelete` test fault.
+#[doc(hidden)]
+fn advance_branch_before_delete_for_test(
+    repo: &Repository,
+    branch: &str,
+    expected: Option<&crate::CommitId>,
+) -> Result<(), GitError> {
+    let expected =
+        expected.ok_or_else(|| GitError::Other("test fault needs a captured branch tip".into()))?;
+    let oid = git2::Oid::from_str(&expected.0)
+        .map_err(|e| GitError::Other(format!("test fault invalid captured branch tip: {e}")))?;
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| GitError::Other(format!("test fault cannot find captured tip: {e}")))?;
+    let signature = super::build_signature(repo)?;
+    let advanced = repo
+        .commit(
+            None,
+            &signature,
+            &signature,
+            "test: advance branch before delete",
+            &commit
+                .tree()
+                .map_err(|e| GitError::Other(e.message().to_string()))?,
+            &[&commit],
+        )
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    repo.reference(
+        &format!("refs/heads/{branch}"),
+        advanced,
+        true,
+        "test: move branch before delete",
+    )
+    .map_err(|e| GitError::Other(e.message().to_string()))?;
+    Ok(())
 }
 
 /// Write every uncommitted file in the worktree at `wt_path` into the MAIN

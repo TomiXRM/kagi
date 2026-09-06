@@ -9,6 +9,25 @@ use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+struct EnvVarRestore {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+impl EnvVarRestore {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+impl Drop for EnvVarRestore {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
 struct Fixture {
     _guard: MutexGuard<'static, ()>,
     _dir: TempDir,
@@ -278,8 +297,8 @@ fn tab_switch_close_welcome_background_close_never_discards_completion() {
     }
 }
 #[test]
-fn window_close_is_held_until_completion() {
-    host_close_contract();
+fn window_close_may_close_host_predicate_tracks_remove_completion() {
+    may_close_host_predicate_tracks_remove_completion();
 }
 #[test]
 fn abandoned_job_records_and_releases_after_poll() {
@@ -332,17 +351,142 @@ fn reconcile_failed_read_and_replayed_ack_do_not_unlock() {
     assert!(acknowledge(&mut s, replay).is_err());
 }
 #[test]
-fn quit_is_held_until_completion() {
-    host_close_contract();
+fn quit_may_close_host_predicate_tracks_remove_completion() {
+    may_close_host_predicate_tracks_remove_completion();
 }
 
-fn host_close_contract() {
+fn may_close_host_predicate_tracks_remove_completion() {
     let f = Fixture::new(None);
     let mut s = Sessions::new();
     let job = f.job(&mut s);
     assert!(!s.may_close_host());
     apply(&mut s, job.run());
     assert!(s.may_close_host());
+}
+#[test]
+fn owner_trust_refusal_at_each_fresh_open_is_recorded_without_mutation() {
+    for fault in [Fault::UntrustedMain, Fault::UntrustedTarget] {
+        let f = Fixture::new(None);
+        let repo = git2::Repository::open(&f.repo).unwrap();
+        let branch_before = repo
+            .find_branch("linked", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .target()
+            .unwrap();
+        let source_before = std::fs::read(f.linked.join("source")).unwrap();
+        let mut s = Sessions::new();
+        let done = f.job(&mut s).with_fault_for_test(fault).run();
+        let OpOutcome::Refused { blockers } = outcome(&done) else {
+            panic!("fresh-open owner trust must refuse");
+        };
+        assert!(blockers.join("; ").contains("not trusted"));
+        assert!(
+            f.linked.exists(),
+            "untrusted repo must not mutate the worktree"
+        );
+        assert_eq!(
+            std::fs::read(f.linked.join("source")).unwrap(),
+            source_before
+        );
+        let repo = git2::Repository::open(&f.repo).unwrap();
+        assert_eq!(
+            repo.find_branch("linked", git2::BranchType::Local)
+                .unwrap()
+                .get()
+                .target(),
+            Some(branch_before)
+        );
+        assert!(repo.find_worktree("linked").is_ok());
+        assert_eq!(read_oplog_tail(10).len(), 1);
+    }
+}
+#[test]
+fn initial_pre_remove_policy_refusal_is_failed_without_started_evidence() {
+    let f = Fixture::new(Some("[[pre_remove]]\ntype = 'command'\nrun = 'true'\n"));
+    let cfg = kagi_git::ops::load_worktree_config(&f.linked)
+        .unwrap()
+        .unwrap();
+    kagi_git::ops::trust_worktree_config(&cfg).unwrap();
+    let mut s = Sessions::new();
+    let job = f.job(&mut s);
+    let _headless = EnvVarRestore::set("KAGI_OPEN_REPO", "headless-test");
+    let done = job.run();
+    assert!(matches!(outcome(&done), OpOutcome::Failed { .. }));
+    assert!(f.linked.exists());
+    assert_eq!(read_oplog_tail(10).len(), 1);
+    assert!(done
+        .report()
+        .progress
+        .observations
+        .iter()
+        .all(|observation| !observation.contains("step 0 started")));
+}
+#[test]
+fn policy_refusal_after_trust_grant_is_partial() {
+    let f = Fixture::new(Some("[[pre_remove]]\ntype = 'command'\nrun = 'true'\n"));
+    let mut s = Sessions::new();
+    let job = f.job(&mut s);
+    let _headless = EnvVarRestore::set("KAGI_OPEN_REPO", "headless-test");
+    let done = job.run();
+    assert!(matches!(outcome(&done), OpOutcome::Partial { .. }));
+    assert!(done.report().progress.config_granted);
+    assert!(f.linked.exists());
+}
+#[test]
+fn policy_refusal_after_copy_is_partial() {
+    let f = Fixture::new(Some(
+        "[[pre_remove]]\ntype = 'copy'\nfrom = 'source'\nto = 'copied'\n\
+         [[pre_remove]]\ntype = 'command'\nrun = 'true'\n",
+    ));
+    let cfg = kagi_git::ops::load_worktree_config(&f.linked)
+        .unwrap()
+        .unwrap();
+    kagi_git::ops::trust_worktree_config(&cfg).unwrap();
+    let mut s = Sessions::new();
+    let job = f.job(&mut s);
+    let _headless = EnvVarRestore::set("KAGI_OPEN_REPO", "headless-test");
+    let done = job.run();
+    assert!(matches!(outcome(&done), OpOutcome::Partial { .. }));
+    assert!(!done.report().progress.config_granted);
+    assert_eq!(
+        std::fs::read(f.linked.join("copied")).unwrap(),
+        b"recover these bytes\n"
+    );
+    assert!(f.linked.exists());
+}
+#[test]
+fn branch_moved_after_admin_prune_is_kept_and_receipt_is_partial() {
+    let f = Fixture::new(None);
+    let repo = git2::Repository::open(&f.repo).unwrap();
+    let captured = repo
+        .find_branch("linked", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .target()
+        .unwrap()
+        .to_string();
+    let mut s = Sessions::new();
+    let done = f
+        .job(&mut s)
+        .with_fault_for_test(Fault::MoveBranchBeforeDelete)
+        .run();
+    let OpOutcome::Partial { after, error } = outcome(&done) else {
+        panic!("a moved branch must be recorded as Partial");
+    };
+    let repo = git2::Repository::open(&f.repo).unwrap();
+    let advanced = repo
+        .find_branch("linked", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .target()
+        .unwrap()
+        .to_string();
+    assert_ne!(advanced, captured);
+    assert!(error.contains(&format!("branch moved {captured}→{advanced}, kept")));
+    assert!(after.dirty.contains(&format!("branch_tip={captured}")));
+    assert!(!f.linked.exists());
+    assert_eq!(read_oplog_tail(10).len(), 1);
 }
 #[test]
 fn partial_and_executor_panic_jsonl_preserve_bytes() {

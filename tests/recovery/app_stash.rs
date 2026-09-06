@@ -1,9 +1,13 @@
 //! Real root/modal inputs; no executor or approval-state seams.
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
-use kagi::app::{PlanState, StashAction};
-use kagi::ui::{e2e, modals::ActiveModal, FooterStatus, KagiApp};
-use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
+use kagi::app::{LegacyBusy, PlanState, StashAction};
+use kagi::remote::stash::{
+    remote_stash_e2e_refreshes, set_remote_stash_e2e_mode, RemoteStashE2eMode,
+};
+use kagi::ui::{e2e, i18n, modals::ActiveModal, FooterStatus, KagiApp, RemoteRepoView};
+use kagi_domain::remote::RemoteHost;
+use kagi_git::oplog::{read_oplog_tail, read_oplog_tail_for_repo, OpOutcome};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -132,6 +136,122 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
             );
         }
     }
+}
+
+pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
+    let host = RemoteHost {
+        user: Some("kagi-e2e".into()),
+        host: "e2e.invalid".into(),
+        port: Some(22),
+        identity_file: Some("/e2e/id".into()),
+    };
+    for button in [false, true] {
+        set_remote_stash_e2e_mode(Some(RemoteStashE2eMode::Success));
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        stash_three(&repo);
+        let before = read_oplog_tail(100).len();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| {
+            app.remote_view = Some(RemoteRepoView {
+                host: host.clone(),
+                root: "/srv/repo".into(),
+            });
+            app.open_stash_drop_modal(1, cx);
+        });
+        wait(cx, &app, |app| {
+            matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+                && app
+                    .stash_drop_modal()
+                    .is_some_and(|modal| modal.plan.is_some())
+        });
+        confirm(cx, &app, window, button);
+        wait(cx, &app, |app| {
+            !app.app_sessions.has_leases() && matches!(&app.status_footer, FooterStatus::Success(_))
+        });
+        let entries = read_oplog_tail(100);
+        assert_eq!(entries.len(), before + 1);
+        assert_eq!(entries[0].op, "stash-drop");
+        assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+        assert_eq!(remote_stash_e2e_refreshes(), 1);
+        unmount(cx, app, window);
+        set_remote_stash_e2e_mode(None);
+        eprintln!(
+            "[gui-e2e] PASS remote stash-drop {} → typed transport → refresh + one receipt",
+            if button { "button" } else { "raw Enter" }
+        );
+    }
+
+    for (lang, mode, expected_lease) in [
+        (i18n::Lang::En, RemoteStashE2eMode::Refused, false),
+        (i18n::Lang::Ja, RemoteStashE2eMode::Unknown, true),
+    ] {
+        i18n::set_lang(lang);
+        set_remote_stash_e2e_mode(Some(mode));
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        stash_three(&repo);
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| {
+            app.remote_view = Some(RemoteRepoView {
+                host: host.clone(),
+                root: "/srv/repo".into(),
+            });
+            app.open_stash_drop_modal(1, cx);
+        });
+        wait(cx, &app, |app| {
+            matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+        });
+        confirm(cx, &app, window, false);
+        wait(cx, &app, |app| {
+            app.app_sessions.has_leases() == expected_lease
+                && matches!(&app.status_footer, FooterStatus::Failed(_))
+        });
+        if mode == RemoteStashE2eMode::Unknown {
+            assert!(cx.read(|cx| matches!(
+                &app.read(cx).status_footer,
+                FooterStatus::Failed(message)
+                    if message.contains(i18n::Msg::RemoteOpAwaitingCompletion.t())
+            )));
+        }
+        unmount(cx, app, window);
+        set_remote_stash_e2e_mode(None);
+    }
+
+    set_remote_stash_e2e_mode(Some(RemoteStashE2eMode::Success));
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    stash_three(&repo);
+    let before = read_oplog_tail(100).len();
+    let (app, window) = mount(cx, &repo);
+    let guard = app.update(cx, |app, _| {
+        app.app_sessions
+            .write_lease(&repo, LegacyBusy(false))
+            .unwrap()
+    });
+    app.update(cx, |app, cx| {
+        app.remote_view = Some(RemoteRepoView {
+            host,
+            root: "/srv/repo".into(),
+        });
+        app.open_stash_drop_modal(1, cx);
+    });
+    wait(cx, &app, |app| {
+        matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+    });
+    confirm(cx, &app, window, false);
+    wait(cx, &app, |app| {
+        matches!(
+            &app.status_footer,
+            FooterStatus::Failed(message) if message.as_ref() == i18n::Msg::OpInProgress.t()
+        )
+    });
+    assert_eq!(read_oplog_tail(100).len(), before);
+    guard.complete();
+    unmount(cx, app, window);
+    set_remote_stash_e2e_mode(None);
+    i18n::set_lang(i18n::Lang::En);
+    eprintln!("[gui-e2e] PASS remote stash-drop Busy/Refused/Unknown EN/JA + Unknown lease hold");
 }
 
 pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {

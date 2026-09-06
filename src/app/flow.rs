@@ -15,7 +15,7 @@ pub enum Planned {
         policy: StashPolicy,
     },
     RemoteStash {
-        plan: crate::remote::stash::RemoteStashPlan,
+        plan: Box<crate::remote::stash::RemoteStashPlan>,
         request: RemoteStashRequest,
         policy: StashPolicy,
     },
@@ -171,7 +171,7 @@ pub(crate) fn reserve(
     if approved.revision != s.revision || !matches!(s.state, PlanState::Approved) {
         return Err(AdmissionError::StaleApproval);
     }
-    if legacy.0 || s.has_leases() {
+    if legacy.0 {
         return Err(AdmissionError::Busy);
     }
     let scope = approved.prepared.scope();
@@ -180,6 +180,9 @@ pub(crate) fn reserve(
         .any(|entry| entry.plan.scope() == scope)
     {
         return Err(AdmissionError::NeedsReconcile);
+    }
+    if s.has_leases() {
+        return Err(AdmissionError::Busy);
     }
     let id = OperationId(next_id());
     s.reserve_lease(scope, id)?;
@@ -195,17 +198,17 @@ pub(crate) fn reserve(
 }
 #[derive(Clone, Debug)]
 pub enum Completion {
-    Remove(RemoveCompletion),
-    Stash(StashCompletion),
+    Remove(Box<RemoveCompletion>),
+    Stash(Box<StashCompletion>),
 }
 impl From<RemoveCompletion> for Completion {
     fn from(c: RemoveCompletion) -> Self {
-        Self::Remove(c)
+        Self::Remove(Box::new(c))
     }
 }
 impl From<StashCompletion> for Completion {
     fn from(c: StashCompletion) -> Self {
-        Self::Stash(c)
+        Self::Stash(Box::new(c))
     }
 }
 #[derive(Clone, Debug)]
@@ -252,6 +255,7 @@ pub fn prepare(
 pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Delivery> {
     let (id, report, stopped, remote_recovery) = match completion.into() {
         Completion::Remove(c) => {
+            let c = *c;
             let stopped = !c.report.progress.termination_unknown;
             (
                 c.id,
@@ -268,7 +272,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                 c.id,
                 ExecutionReport {
                     recording: report.recording.clone(),
-                    evidence: FamilyEvidence::Stash(report),
+                    evidence: FamilyEvidence::Stash(*report),
                 },
                 true,
                 None,
@@ -280,7 +284,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                     c.id,
                     ExecutionReport {
                         recording: report.recording.clone(),
-                        evidence: FamilyEvidence::RemoteStash(report),
+                        evidence: FamilyEvidence::RemoteStash(*report),
                     },
                     stopped,
                     recovery,

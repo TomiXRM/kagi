@@ -57,7 +57,8 @@ pop Enter に started/finished を追加する承認済み契約変更以外は�
 local stash の UI record_op / finish_op_on_main / blocking core は撤去した。
 PR 2 で remote 分岐の finish/record/direct transport 呼出しも撤去し、typed Remote job と
 `WriteScope::Remote(RemoteRepoId)` に移管した。remote の停止不明は completion token + read の
-ack まで同じ lease を保持する。
+ack まで同じ lease を保持する。local/remote とも共通 `ExecutionPolicy` を approval に束縛し、
+remote receipt も `recording::finalize` 以外から append しない。
 
 conflict 継続 payload は canonical worktree ごとに operation id、full OID、HEAD と
 index conflict sides の evidence を保持し、表示 guard より先に保存する。

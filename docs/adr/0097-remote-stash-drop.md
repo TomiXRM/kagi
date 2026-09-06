@@ -27,7 +27,8 @@ remote stash drop も application 層の
    repo 外 completion token の atomic rename、fixed terminal frame を順に行う。
 3. **Application** (`src/app/stash.rs`): `StashJob::Local | Remote` の有限和だけを調停し、
    `std::process` / `std::fs` / shell を持たない。remote も approve 後に
-   `WriteScope::Remote(RemoteRepoId)` を予約し、receipt は transport report から一度だけ記録する。
+   `WriteScope::Remote(RemoteRepoId)` を予約する。job は共通 `ExecutionPolicy` を保持し、receipt は
+   transport が組み立てた entry を `recording::finalize` へ一度だけ渡して記録する。
 4. **UI** (`src/ui/operations/stash.rs`): remote modal も async plan と共通 confirm/dispatch を通す。
    UI は predicted outcome を記録せず、active attachment だけ footer/refresh を更新する。
 
@@ -50,6 +51,8 @@ remote stash drop も application 層の
   and should follow this same pattern when added.
 - 実 SSH の停止・token 回復は localhost sshd M で確認する。typed fake G は alias drift、
   fixed frame 全 outcome、slow writer 生存中の ack 不発を決定的に証明する。
+- filtered GUI E は finite typed transport で raw Enter / 実ボタン、危険確認、Busy / Refused /
+  Unknown の表示、active remote refresh、一件 receipt、Unknown lease 保持を検証する。
 
 ## Not done (follow-ups)
 - The remote stash menu still shows **Pop / Apply** (working-tree ops that no-op

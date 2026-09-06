@@ -220,7 +220,15 @@ impl KagiApp {
         ) {
             Ok(job) => job,
             Err(error) => {
-                self.app_notices.push_back(error.to_string().into());
+                let message = if error == app::AdmissionError::Busy {
+                    Msg::OpInProgress.t().to_string()
+                } else {
+                    error.to_string()
+                };
+                self.status_footer = FooterStatus::Failed(message.clone().into());
+                self.push_toast(ToastKind::Error, message.clone(), cx);
+                self.app_notices.push_back(message.into());
+                self.present_app_notice();
                 cx.notify();
                 return;
             }
@@ -447,7 +455,13 @@ impl KagiApp {
                 FooterStatus::Failed(format!("stash-drop: {summary}").into())
             };
             if success {
-                self.refresh_remote_view(cx);
+                #[cfg(feature = "gui-e2e")]
+                let intercepted = crate::remote::stash::note_remote_stash_e2e_refresh();
+                #[cfg(not(feature = "gui-e2e"))]
+                let intercepted = false;
+                if !intercepted {
+                    self.refresh_remote_view(cx);
+                }
             }
         }
         if !success {

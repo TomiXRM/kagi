@@ -128,7 +128,7 @@ impl RemoteStashPlanJob {
                     revision: self.revision,
                 },
                 prepared: Planned::RemoteStash {
-                    plan,
+                    plan: Box::new(plan),
                     request: self.request,
                     policy: self.policy,
                 },
@@ -199,7 +199,7 @@ impl LocalStashJob {
         );
         StashCompletion {
             id: self.id,
-            report: StashExecutionReport::Local(report),
+            report: StashExecutionReport::Local(Box::new(report)),
         }
     }
 }
@@ -212,10 +212,12 @@ impl Drop for LocalStashJob {
                 "job dropped before execution",
                 kagi_git::backend::stash::StashStopReason::Abandoned,
             );
-            let _ = self.abandoned.send(Completion::Stash(StashCompletion {
-                id: self.id,
-                report: StashExecutionReport::Local(report),
-            }));
+            let _ = self
+                .abandoned
+                .send(Completion::Stash(Box::new(StashCompletion {
+                    id: self.id,
+                    report: StashExecutionReport::Local(Box::new(report)),
+                })));
         }
     }
 }
@@ -226,8 +228,8 @@ pub struct StashCompletion {
 }
 #[derive(Clone, Debug)]
 pub enum StashExecutionReport {
-    Local(StashReport),
-    Remote(crate::remote::stash::RemoteStashReport),
+    Local(Box<StashReport>),
+    Remote(Box<crate::remote::stash::RemoteStashReport>),
 }
 impl StashCompletion {
     pub fn report(&self) -> &StashReport {
@@ -249,7 +251,7 @@ pub enum StashJob {
     Local(LocalStashJob),
     Remote {
         id: OperationId,
-        plan: crate::remote::stash::RemoteStashPlan,
+        plan: Box<crate::remote::stash::RemoteStashPlan>,
         policy: StashPolicy,
         fault: crate::remote::stash::RemoteStashFault,
         abandoned: std::sync::mpsc::Sender<Completion>,
@@ -298,12 +300,11 @@ impl StashJob {
                 ran,
             } => {
                 *ran = true;
-                let report = crate::remote::stash::run_remote_stash_drop(
-                    plan, id.0, *policy, *fault,
-                );
+                let report =
+                    crate::remote::stash::run_remote_stash_drop(plan, id.0, *policy, *fault);
                 StashCompletion {
                     id: *id,
-                    report: StashExecutionReport::Remote(report),
+                    report: StashExecutionReport::Remote(Box::new(report)),
                 }
             }
         }
@@ -329,10 +330,10 @@ impl Drop for StashJob {
                 *policy,
                 crate::remote::stash::RemoteStashFault::LocalSpawn,
             );
-            let _ = abandoned.send(Completion::Stash(StashCompletion {
+            let _ = abandoned.send(Completion::Stash(Box::new(StashCompletion {
                 id: *id,
-                report: StashExecutionReport::Remote(report),
-            }));
+                report: StashExecutionReport::Remote(Box::new(report)),
+            })));
         }
     }
 }

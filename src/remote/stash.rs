@@ -18,6 +18,15 @@ use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(feature = "gui-e2e")]
+mod e2e;
+mod scripts;
+#[cfg(feature = "gui-e2e")]
+pub use e2e::{
+    note_remote_stash_e2e_refresh, remote_stash_e2e_refreshes, set_remote_stash_e2e_mode,
+    RemoteStashE2eMode,
+};
+use scripts::{COMMON_DIR_SCRIPT, DROP_SCRIPT, READ_TOKEN_SCRIPT, STATE_SCRIPT};
 #[derive(Clone, Debug)]
 pub struct RemoteAttachment {
     pub host: RemoteHost,
@@ -46,9 +55,16 @@ pub struct RemoteStashEvidence {
     pub frame: Option<RemoteStashFrame>,
     pub outcome: RemoteDropOutcome,
     pub stopped: bool,
+    pub transport_phase: RemoteTransportPhase,
     pub remote_job_id: String,
     pub token_path: String,
     recovery: Option<RemoteRecoveryFixture>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteTransportPhase {
+    LocalSpawn,
+    ScriptStarted,
+    TerminalResponse,
 }
 #[derive(Clone, Debug)]
 struct RemoteRecoveryFixture {
@@ -62,6 +78,9 @@ pub struct RemoteStashReport {
     pub recording: Recording,
     pub evidence: RemoteStashEvidence,
 }
+type ExecutionEvidence = (Option<RemoteStashFrame>, RemoteTransportPhase, bool, String);
+type ExecutionFailure = (RemoteTransportPhase, bool, String);
+type ExecutionResult = Result<ExecutionEvidence, ExecutionFailure>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemotePlanError {
     Transport(String),
@@ -149,6 +168,10 @@ pub fn plan_remote_stash_drop(
     attachment: RemoteAttachment,
     index: usize,
 ) -> Result<RemoteStashPlan, RemotePlanError> {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(plan) = e2e::plan(attachment.clone(), index) {
+        return plan;
+    }
     if attachment.root.contains('\n') || attachment.root.contains('\0') {
         return Err(RemotePlanError::InvalidRepository(
             "remote root may not contain newline or NUL".into(),
@@ -292,7 +315,7 @@ fn run_frozen(
     script: &str,
     args: &[&str],
     timeout: Duration,
-) -> Result<(i32, Vec<u8>, String), RemoteError> {
+) -> Result<(i32, Vec<u8>, String), FrozenRunError> {
     let mut argv = connection.argv_prefix.clone();
     let mut remote = vec!["sh", "-c", script, "kagi"];
     remote.extend_from_slice(args);
@@ -304,15 +327,15 @@ fn run_frozen(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| RemoteError::Spawn(e.to_string()))?;
+        .map_err(|e| FrozenRunError::LocalSpawn(e.to_string()))?;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
     });
     let output = rx
         .recv_timeout(timeout)
-        .map_err(|_| RemoteError::Timeout)?
-        .map_err(|e| RemoteError::Spawn(e.to_string()))?;
+        .map_err(|_| FrozenRunError::Unconfirmed(RemoteError::Timeout.to_string()))?
+        .map_err(|e| FrozenRunError::Unconfirmed(e.to_string()))?;
     Ok((
         output.status.code().unwrap_or(-1),
         output.stdout,
@@ -320,14 +343,21 @@ fn run_frozen(
     ))
 }
 
-const COMMON_DIR_SCRIPT: &str = r#"set -eu
-root=$1
-cd -P -- "$root"
-root=$(pwd -P)
-test "$(git rev-parse --is-inside-work-tree)" = true
-common=$(git rev-parse --path-format=absolute --git-common-dir)
-cd -P -- "$common"
-printf 'KAGI-COMMON-DIR\0%s\0KAGI-END\n' "$(pwd -P)""#;
+#[derive(Debug)]
+enum FrozenRunError {
+    LocalSpawn(String),
+    Unconfirmed(String),
+}
+impl std::fmt::Display for FrozenRunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LocalSpawn(error) => write!(f, "ssh was not started: {error}"),
+            Self::Unconfirmed(error) => {
+                write!(f, "remote command termination is unconfirmed: {error}")
+            }
+        }
+    }
+}
 
 fn probe_common_dir(connection: &FrozenConnection, root: &str) -> Result<String, RemotePlanError> {
     let (code, bytes, stderr) = run_frozen(connection, COMMON_DIR_SCRIPT, &[root], COMMAND_TIMEOUT)
@@ -350,16 +380,6 @@ fn probe_common_dir(connection: &FrozenConnection, root: &str) -> Result<String,
     }
     Ok(common.into())
 }
-
-const STATE_SCRIPT: &str = r#"set -eu
-root=$1
-cd -P -- "$root"
-head=$(git rev-parse --verify HEAD)
-oids=$(git stash list --format=%H | paste -sd, -)
-index_path=$(git rev-parse --git-path index)
-if test -f "$index_path"; then index=$(git hash-object "$index_path"); else index=missing; fi
-worktree=$(git status --porcelain=v2 -z --untracked-files=all | git hash-object --stdin)
-printf 'KAGI-STATE\0%s\0%s\0%s\0%s\0KAGI-END\n' "$head" "$oids" "$index" "$worktree""#;
 
 fn read_state(
     connection: &FrozenConnection,
@@ -407,20 +427,31 @@ pub fn run_remote_stash_drop(
     policy: ExecutionPolicy,
     fault: RemoteStashFault,
 ) -> RemoteStashReport {
+    #[cfg(feature = "gui-e2e")]
+    let fault = if let Some(mode) = e2e::mode() {
+        match mode {
+            RemoteStashE2eMode::Success => RemoteStashFault::Success,
+            RemoteStashE2eMode::Refused => RemoteStashFault::ConfigDrift,
+            RemoteStashE2eMode::Unknown => RemoteStashFault::MissingToken,
+        }
+    } else {
+        fault
+    };
     let (remote_job_id, random_error) = match new_job_id() {
         Ok(id) => (id, None),
         Err(error) => (String::new(), Some(error)),
     };
     let token_path = format!("$XDG_RUNTIME_DIR/kagi/remote-ops/{remote_job_id}");
     let result = if let Some(error) = random_error {
-        Err((false, true, error))
+        Err((RemoteTransportPhase::LocalSpawn, true, error))
     } else {
         execute(plan, operation_id, &remote_job_id, fault)
     };
-    let (frame, script_started, stopped, diagnostic) = match result {
+    let (frame, transport_phase, stopped, diagnostic) = match result {
         Ok(value) => value,
-        Err((started, stopped, error)) => (None, started, stopped, error),
+        Err((phase, stopped, error)) => (None, phase, stopped, error),
     };
+    let script_started = transport_phase != RemoteTransportPhase::LocalSpawn;
     let outcome = classify_remote_drop(
         &plan.before,
         plan.index,
@@ -446,6 +477,7 @@ pub fn run_remote_stash_drop(
             frame,
             outcome,
             stopped,
+            transport_phase,
             remote_job_id,
             token_path,
             recovery,
@@ -458,19 +490,23 @@ fn execute(
     operation_id: u64,
     remote_job_id: &str,
     fault: RemoteStashFault,
-) -> Result<(Option<RemoteStashFrame>, bool, bool, String), (bool, bool, String)> {
+) -> ExecutionResult {
     if fault == RemoteStashFault::LocalSpawn {
-        return Err((false, true, "ssh was not started".into()));
+        return Err((
+            RemoteTransportPhase::LocalSpawn,
+            true,
+            "ssh was not started".into(),
+        ));
     }
     if fault != RemoteStashFault::None {
         return execute_fake(plan, fault);
     }
-    let current =
-        freeze_connection(&plan.connection.alias).map_err(|e| (false, true, e.to_string()))?;
+    let current = freeze_connection(&plan.connection.alias)
+        .map_err(|e| (RemoteTransportPhase::LocalSpawn, true, e.to_string()))?;
     if current.id != plan.connection.id {
         return Ok((
             Some(refusal_frame(plan)),
-            true,
+            RemoteTransportPhase::TerminalResponse,
             true,
             "SSH configuration changed after plan".into(),
         ));
@@ -494,21 +530,32 @@ fn execute(
     ];
     match run_frozen(&plan.connection, DROP_SCRIPT, &args, COMMAND_TIMEOUT) {
         Ok((_code, bytes, stderr)) => match parse_stash_frame(&bytes) {
-            Ok(frame) => Ok((Some(frame), true, true, stderr)),
-            Err(error) => Err((
+            Ok(frame) => Ok((
+                Some(frame),
+                RemoteTransportPhase::TerminalResponse,
                 true,
+                stderr,
+            )),
+            Err(error) => Err((
+                RemoteTransportPhase::ScriptStarted,
                 true,
                 format!("malformed terminal frame: {error:?}; {stderr}"),
             )),
         },
-        Err(error) => Err((true, false, error.to_string())),
+        Err(FrozenRunError::LocalSpawn(error)) => Err((
+            RemoteTransportPhase::LocalSpawn,
+            true,
+            format!("ssh was not started: {error}"),
+        )),
+        Err(FrozenRunError::Unconfirmed(error)) => Err((
+            RemoteTransportPhase::ScriptStarted,
+            false,
+            format!("remote command termination is unconfirmed: {error}"),
+        )),
     }
 }
 
-fn execute_fake(
-    plan: &RemoteStashPlan,
-    fault: RemoteStashFault,
-) -> Result<(Option<RemoteStashFrame>, bool, bool, String), (bool, bool, String)> {
+fn execute_fake(plan: &RemoteStashPlan, fault: RemoteStashFault) -> ExecutionResult {
     if matches!(
         fault,
         RemoteStashFault::TimeoutBeforeDrop
@@ -519,7 +566,7 @@ fn execute_fake(
             | RemoteStashFault::ValidTokenAfterTimeout
     ) {
         return Err((
-            true,
+            RemoteTransportPhase::ScriptStarted,
             false,
             "remote writer termination is unconfirmed".into(),
         ));
@@ -527,7 +574,7 @@ fn execute_fake(
     if fault == RemoteStashFault::ConfigDrift {
         return Ok((
             Some(refusal_frame(plan)),
-            true,
+            RemoteTransportPhase::TerminalResponse,
             true,
             "SSH configuration changed after plan".into(),
         ));
@@ -557,7 +604,7 @@ fn execute_fake(
             after,
             error_class: "fake".into(),
         }),
-        true,
+        RemoteTransportPhase::TerminalResponse,
         true,
         String::new(),
     ))
@@ -574,56 +621,6 @@ fn refusal_frame(plan: &RemoteStashPlan) -> RemoteStashFrame {
         error_class: "preflight".into(),
     }
 }
-
-const DROP_SCRIPT: &str = r#"set -eu
-root=$1; expected_common=$2; operation=$3; job=$4; index=$5; selected=$6
-expected_head=$7; expected_oids=$8; expected_index=$9; shift 9; expected_worktree=$1; scope_digest=$2
-cd -P -- "$root"
-common=$(git rev-parse --path-format=absolute --git-common-dir)
-cd -P -- "$common"; common=$(pwd -P); cd -P -- "$root"
-state() {
-  head=$(git rev-parse --verify HEAD)
-  oids=$(git stash list --format=%H | paste -sd, -)
-  index_path=$(git rev-parse --git-path index)
-  if test -f "$index_path"; then index_hash=$(git hash-object "$index_path"); else index_hash=missing; fi
-  worktree=$(git status --porcelain=v2 -z --untracked-files=all | git hash-object --stdin)
-}
-state
-before_head=$head; before_oids=$oids; before_index=$index_hash; before_worktree=$worktree
-refuse() {
-  printf 'KAGI-STASH-DROP\0%s\0preflight\0%s\0%s\0\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0preflight\0KAGI-STASH-END\n' \
-    1 1 "$selected" "$before_head" "$before_oids" "$before_index" "$before_worktree" \
-    "$before_head" "$before_oids" "$before_index" "$before_worktree"
-  exit 0
-}
-if test "$common" != "$expected_common" || test "$head" != "$expected_head" ||
-   test "$oids" != "$expected_oids" || test "$index_hash" != "$expected_index" ||
-   test "$worktree" != "$expected_worktree"; then
-  refuse
-fi
-runtime=${XDG_RUNTIME_DIR:-$HOME/.cache}
-mkdir -p -m 700 "$runtime/kagi/remote-ops" || refuse
-test ! -L "$runtime/kagi" && test ! -L "$runtime/kagi/remote-ops" || refuse
-runtime=$(cd -P -- "$runtime" && pwd -P) || refuse
-ops="$runtime/kagi/remote-ops"
-case "$ops/" in "$root/"*|"$common/"*) refuse;; esac
-owner=$(stat -f %u "$ops" 2>/dev/null || stat -c %u "$ops" 2>/dev/null) || refuse
-mode=$(stat -f %Lp "$ops" 2>/dev/null || stat -c %a "$ops" 2>/dev/null) || refuse
-test "$owner" = "$(id -u)" && test "$mode" = 700 || refuse
-drop_out=$(git stash drop "stash@{$index}" 2>&1) && exit_code=0 || exit_code=$?
-stdout_oid=${drop_out##*' ('}; stdout_oid=${stdout_oid%')'}
-state
-material=$(printf '%s\n' 1 complete "$exit_code" "$selected" "$stdout_oid" "$before_head" "$before_oids" "$before_index" \
-  "$before_worktree" "$head" "$oids" "$index_hash" "$worktree" git)
-digest=$(printf %s "$material" | git hash-object --stdin)
-token="$ops/$job"; tmp="$token.tmp"
-printf 'KAGI-STASH-TOKEN\0%s\0%s\0%s\0%s\0%s\0%s\0KAGI-TOKEN-END\n' \
-  1 "$operation" "$job" "$scope_digest" "$digest" "$material" >"$tmp"
-chmod 600 "$tmp"; mv "$tmp" "$token"
-printf 'KAGI-STASH-DROP\0%s\0complete\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0git\0KAGI-STASH-END\n' \
-  1 "$exit_code" "$selected" "$stdout_oid" "$before_head" "$before_oids" "$before_index" \
-  "$before_worktree" "$head" "$oids" "$index_hash" "$worktree"
-exit "$exit_code""#;
 
 fn outcome_to_oplog(
     outcome: RemoteDropOutcome,
@@ -680,12 +677,6 @@ fn new_job_id() -> Result<String, String> {
     getrandom::fill(&mut bytes).map_err(|error| format!("cannot create remote job id: {error}"))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
-
-const READ_TOKEN_SCRIPT: &str = r#"set -eu
-job=$1
-runtime=${XDG_RUNTIME_DIR:-$HOME/.cache}
-token="$runtime/kagi/remote-ops/$job"
-test -f "$token"; test ! -L "$token"; cat -- "$token""#;
 
 pub fn reconcile_remote_stash(
     plan: &RemoteStashPlan,

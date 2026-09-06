@@ -157,7 +157,7 @@ fn slow_before_state_with_live_writer_never_acknowledges() {
             "/srv/main",
             "/srv/repo/.git"
         ),
-        Err(_)
+        Err(AdmissionError::NeedsReconcile)
     ));
     assert!(
         sessions.has_leases(),
@@ -169,6 +169,7 @@ fn slow_before_state_with_live_writer_never_acknowledges() {
 fn only_matching_completion_token_plus_read_releases_unknown() {
     let _guard = ENV_LOCK.lock().unwrap();
     let faults = [
+        RemoteStashFault::MissingToken,
         RemoteStashFault::MalformedToken,
         RemoteStashFault::WrongScopeToken,
         RemoteStashFault::UnreadableToken,
@@ -187,7 +188,12 @@ fn only_matching_completion_token_plus_read_releases_unknown() {
     let mut sessions = Sessions::new();
     let (id, _) = run(&mut sessions, RemoteStashFault::ValidTokenAfterTimeout);
     let read = app::read_reconcile(&sessions, id).unwrap();
+    let replay = read.clone();
     app::acknowledge(&mut sessions, read).unwrap();
+    assert_eq!(
+        app::acknowledge(&mut sessions, replay),
+        Err(AdmissionError::NeedsReconcile)
+    );
     assert!(!sessions.has_leases());
 }
 

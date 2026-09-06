@@ -537,6 +537,10 @@ mod macos {
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
             ),
             (
+                "stash_remote_drop",
+                Box::new(crate::app_stash::scenario_remote_stash_drop),
+            ),
+            (
                 "stash_conflict_followup",
                 Box::new(crate::app_stash::scenario_stash_conflict_followup),
             ),

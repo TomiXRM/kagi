@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{modals::ActiveModal, FooterStatus, KagiApp};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
@@ -689,4 +689,134 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS push_failure_keeps_modal: failure reaches the modal and the oplog");
+}
+
+fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+    })
+    .unwrap();
+}
+
+/// Paint, advance the test clock, and park until `predicate` holds.
+///
+/// Three things have to happen for a live replan to settle, and none implies
+/// the others: `sync_modal_inputs` copies the real text input into the modal
+/// only on a **paint**, that copy schedules the replan on a 250 ms
+/// **background timer**, and `VisualTestAppContext::run_until_parked` ticks the
+/// scheduler *without advancing the test clock* — only `advance_clock` fires a
+/// pending timer. `stash_replan_error` needs none of this because the stash plan
+/// is dispatched immediately rather than debounced.
+fn wait_painted(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    predicate: impl Fn(&KagiApp) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        paint(cx, window);
+        cx.advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        if cx.read(|cx| predicate(app.read(cx))) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the modal plan did not settle");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// #510: a replan that fails becomes an explicit failure state instead of
+/// leaving the plan it was recomputing behind.
+///
+/// The oracle is the modal's plan slot plus the repository itself: after the
+/// repository moves out from under the open session, `confirm_create_branch`
+/// replans (it always does, ahead of the debounce), the replan fails, and the
+/// slot goes to `Failed` with no plan. Enter and the coordinate the confirm
+/// button occupied while the plan was `Ready` must then both be inert — since
+/// #559 they are the same `confirm_create_branch` entry, so proving one path
+/// refuses proves the dispatch, and proving the other refuses proves the state.
+pub fn scenario_create_branch_replan_error(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let (app, window) = mount(cx, &repo);
+
+    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    // The first paint creates the real branch-name input; the modal's own focus
+    // call happens while that frame is still being built, so it is not yet in the
+    // dispatch tree a keystroke resolves against. Focus the handle from the test
+    // and repaint before typing — same shape as `scenario_editor_save_admission`.
+    paint(cx, window);
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .and_then(|m| m.input_state.clone())
+        })
+        .expect("the first paint creates the branch-name input");
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "f e a t");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| input.read(cx).value().to_string()),
+        "feat",
+        "the keystrokes must land in the branch-name input, not the root"
+    );
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|m| m.plan.plan())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+    let bounds = kagi::ui::e2e::confirm_bounds(window.window_id())
+        .expect("a blocker-free plan renders the Create button");
+
+    let moved = repo.with_extension("moved");
+    std::fs::rename(&repo, &moved).unwrap();
+
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .create_branch_modal()
+            .expect("a plan failure keeps the modal open so the user can retry");
+        assert!(
+            modal.plan.plan().is_none(),
+            "the failed replan must drop the plan it was recomputing"
+        );
+        assert!(
+            modal.plan.error().is_some(),
+            "the failure must be explicit in the modal, not stderr only"
+        );
+    });
+
+    std::fs::rename(&moved, &repo).unwrap();
+    assert!(
+        output(&repo, &["branch", "--list", "feat"]).is_empty(),
+        "neither Enter nor the old button coordinate may execute the stale plan"
+    );
+
+    // Retry: the same modal, replanning against a repository that is back, must
+    // produce a confirmable plan and run it — a failure is recoverable, not terminal.
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        !output(&repo, &["branch", "--list", "feat"]).is_empty(),
+        "a retry after the failure must plan and execute normally"
+    );
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS create-branch replan error rejects Enter and the old button coordinate"
+    );
 }

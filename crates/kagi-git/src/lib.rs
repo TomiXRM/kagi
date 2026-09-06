@@ -30,6 +30,7 @@
 //! use kagi_git::ops::run_post_create;
 //! ```
 
+pub mod api;
 pub mod authoring;
 pub mod backend;
 pub mod blame;

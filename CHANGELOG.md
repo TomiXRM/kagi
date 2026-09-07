@@ -5,16 +5,32 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-09-08
+
+### Added
+
+- **Worktrees open straight from the commit graph.** A branch badge's tree glyph is its own click target that opens or switches to the worktree tab; main and detached worktrees are included, even for unreachable commits or several detached worktrees on one commit. (#591, #595, ADR-0185)
+- **Remote branches can be dragged onto a local branch to plan a merge.** The remote-tracking ref is used directly without creating a local branch or fetching automatically, and confirmation remains required. (#590)
+
+### Changed
+
+- Dropping a branch onto a branch checked out in another worktree opens that worktree and plans its HEAD merge there, preserving the source worktree. (#605)
+
 ### Fixed
-- Graph checkout actions use the actual branch name rather than the worktree-decorated label, fixing false branch-not-found refusals from double-click, commit context menu and selected-commit checkout.
-- Checkout refuses branches already checked out in another worktree at planning
-  and before writing, including occupancy changes after approval. Graph actions
-  can no longer partially rewrite the current worktree before HEAD switching is refused.
-- Dropping a branch onto a branch checked out in another worktree now opens that
-  worktree's tab and plans a normal HEAD merge. Confirmation, unsaved-editor
-  guards and destination preflight remain required; the original worktree stays
-  untouched. Remote sources use their fetched ref directly without creating a
-  local source branch or fetching automatically.
+
+- **Busy notifications name the operation again.** The snackbar shown while an operation runs says what it is doing in English and Japanese instead of an internal writer tag, and an unknown label can no longer leak one. (#607)
+- **The stash preflight refusal is a typed, localized note.** An approved stash that is no longer at its index reports which entry changed, in English and Japanese, instead of a raw English string. (#606)
+- **A commit message can no longer forge graph or Remote Browse rows.** `git log` records are NUL-framed, a byte Git commit objects cannot contain. (#508, ADR-0186)
+- **Recovery guidance and copied commands no longer recommend `git reset --hard`.** Amend keeps the working tree with a safe ref move, and pull undo uses revert. (#456)
+- A save completing after a file switch no longer marks another buffer clean; saves remain bound to their originating buffer and written bytes. (#486)
+- Stage and unstage failures now appear in the footer, notice, and operation log across their UI entry points. (#490)
+- Failed pull-request fetches no longer look like an empty list, preserving cached results for authentication, network, and malformed-response failures. (#506, ADR-0186)
+- Graph checkout strips display-only worktree markers and refuses a branch already occupied by another worktree before writing. (#603)
+
+### Internal
+
+- Added ADR-0185 (graph worktree navigation) and ADR-0186 (PR fetch outcome contract and safe log framing).
+- Codex GitHub reviews are requested in Japanese. (AGENTS.md)
 
 ## [0.34.0] — 2026-09-07
 

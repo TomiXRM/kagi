@@ -31,7 +31,8 @@ pub fn gh_available() -> bool {
     })
 }
 
-const FIELDS: &str = "number,title,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,\
+pub(crate) const FIELDS: &str =
+    "number,title,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,\
 statusCheckRollup,url,author,reviewRequests,body,mergeable";
 
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
@@ -46,60 +47,6 @@ pub fn current_login() -> Option<String> {
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
-}
-
-/// Open PRs for the repository at `workdir`, newest-updated first.
-///
-/// `Ok(vec![])` when the repo has no GitHub remote or `gh` is not authenticated
-/// for it — those are "nothing to show", not errors worth a toast. Only a
-/// spawn failure (gh missing mid-session) or unparseable output errors.
-pub fn list_open_prs(workdir: &Path) -> Result<Vec<PullRequest>, GitError> {
-    let out = crate::cli::gh_command()
-        .args([
-            "pr", "list", "--state", "open", "--limit", "100", "--json", FIELDS,
-        ])
-        .current_dir(workdir)
-        .output()
-        .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
-    if !out.status.success() {
-        // No remote / not a GitHub repo / not logged in: gh writes the reason
-        // to stderr and exits non-zero. Treat as empty.
-        return Ok(Vec::new());
-    }
-    parse_pr_list(&String::from_utf8_lossy(&out.stdout))
-}
-
-/// Recently **merged** PRs, keyed by their head branch by the caller.
-///
-/// A separate call from [`list_open_prs`] because Branch Cleanup asks the
-/// opposite question: its rows are branches that are already merged, so their
-/// pull requests are by definition *not* open and never appear in that list.
-///
-/// Only the fields the cleanup table shows are requested — number, title,
-/// author, head branch — so this stays one cheap call rather than the full
-/// `FIELDS` set with its per-PR check rollup.
-pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>, GitError> {
-    let limit = limit.to_string();
-    let out = crate::cli::gh_command()
-        .args([
-            "pr",
-            "list",
-            "--state",
-            "merged",
-            "--limit",
-            &limit,
-            "--json",
-            "number,title,headRefName,author",
-        ])
-        .current_dir(workdir)
-        .output()
-        .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
-    if !out.status.success() {
-        // Same contract as `list_open_prs`: no remote / not GitHub / logged
-        // out is "no data", not an error the user has to dismiss.
-        return Ok(Vec::new());
-    }
-    parse_pr_list(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// Parse `gh pr list --json <FIELDS>` output. Pure; unit-tested below.
@@ -590,6 +537,14 @@ fn merge_pr_transport(
         }))
     }
 }
+
+// #506 fetch contract (typed failures, classification, cache fold, the two
+// `gh pr list` calls) lives in `github_fetch`, re-exported here so the public
+// path stays `kagi_git::github::*`.
+pub use crate::github_fetch::{
+    apply_pr_fetch, classify_gh_failure, list_merged_prs, list_open_prs, PrFetchError,
+    PrFetchOutcome,
+};
 
 // #347 merge-lifecycle backend (version detection, mergeStateStatus + merge
 // queue, enqueue/dequeue) lives in `github_merge` and is re-exported here so

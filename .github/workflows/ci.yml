@@ -60,6 +60,8 @@ jobs:
           - ui-lateral
           # the ADR-0129 Verbatim escape hatch stays deleted
           - plan-verbatim
+          # recovery guidance must never recommend a hard reset (#456)
+          - recovery-safe-advice
           # modal file lists are not silently truncated (#454)
           - modal-lists
           # gates stay in one dialect (this file included)
@@ -68,6 +70,7 @@ jobs:
           - e2e-window-helper
           # canonical verification recipe references must remain real files (#544)
           - skill-refs
+          - busy-labels
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

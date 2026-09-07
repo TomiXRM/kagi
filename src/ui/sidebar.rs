@@ -1174,7 +1174,7 @@ fn build_local_branch_leaf(
                 cx.notify();
             },
         );
-        div()
+        let row = div()
             .id(SharedString::from(format!(
                 "sidebar-branch-{}",
                 branch_name
@@ -1247,7 +1247,8 @@ fn build_local_branch_leaf(
                     .hover(|s| s.text_color(rgb(theme().color_blocker)))
                     .child(SharedString::from("\u{00d7}")),
             )
-            .into_any()
+            .into_any();
+        super::e2e::measure_control(format!("sidebar-local-{branch_name}"), row)
     }
 }
 
@@ -1434,7 +1435,7 @@ fn build_worktree_row(
         let name_for_menu = name.to_string();
         let menu_handler = cx.listener(
             move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                this.open_worktree_menu(name_for_menu.clone(), locked, None, event.position);
+                this.open_worktree_menu(name_for_menu.clone(), locked, false, None, event.position);
                 cx.stop_propagation();
                 cx.notify();
             },

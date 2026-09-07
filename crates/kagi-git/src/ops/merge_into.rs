@@ -40,6 +40,28 @@ impl MergeIntoKind {
     }
 }
 
+/// Source lookup never materializes a local branch. Local names retain precedence.
+fn source_branch_oid(repo: &Repository, name: &str) -> Option<(git2::Oid, bool)> {
+    local_branch_oid(repo, name)
+        .map(|oid| (oid, false))
+        .or_else(|| {
+            repo.find_branch(name, BranchType::Remote)
+                .ok()
+                .and_then(|b| b.get().peel_to_commit().ok())
+                .map(|commit| (commit.id(), true))
+        })
+}
+
+/// The remote source approved by the user, checked again by Backend::run.
+pub(crate) fn remote_source_tip(plan: &OperationPlan) -> Option<(&str, &str)> {
+    plan.warnings.iter().find_map(|note| match note {
+        PlanNote::Merge(MergeNote::IntoRemoteSource { reference, tip }) => {
+            Some((reference.as_str(), tip.as_str()))
+        }
+        _ => None,
+    })
+}
+
 /// Resolve a local branch's tip, or `None` if it is not a local branch.
 fn local_branch_oid(repo: &Repository, name: &str) -> Option<git2::Oid> {
     repo.find_branch(name, BranchType::Local)
@@ -162,20 +184,26 @@ pub fn plan_merge_into_branch(
         equivalent_command: None,
     };
 
-    // ── 1. Both sides must be real, distinct local branches ──────────────
+    // ── 1. Source may be remote; destination resolves to a local branch ──────────────
     if source == target {
         blockers.push(PlanNote::Merge(MergeNote::TargetIsCurrent {
             target: target.to_string(),
         }));
         return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     }
-    let Some(source_oid) = local_branch_oid(repo, source) else {
+    let Some((source_oid, remote_source)) = source_branch_oid(repo, source) else {
         blockers.push(PlanNote::Common(CommonNote::BranchMissing {
             name: source.to_string(),
             in_repo: true,
         }));
         return Ok((blocked(blockers, warnings), MergeIntoKind::blocked()));
     };
+    if remote_source {
+        warnings.push(PlanNote::Merge(MergeNote::IntoRemoteSource {
+            reference: format!("refs/remotes/{source}"),
+            tip: source_oid.to_string(),
+        }));
+    }
     let Some(target_oid) = target_oid_opt else {
         blockers.push(PlanNote::Common(CommonNote::BranchMissing {
             name: target.to_string(),
@@ -333,7 +361,7 @@ pub(crate) fn execute_merge_into_branch(
         )));
     }
 
-    let source_oid = local_branch_oid(repo, source)
+    let (source_oid, _) = source_branch_oid(repo, source)
         .ok_or_else(|| GitError::Other(format!("branch '{source}' not found")))?;
 
     // A remote chip was dropped onto: materialise the local branch first, at

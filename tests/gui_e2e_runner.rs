@@ -60,6 +60,10 @@ mod app_remove;
 mod app_stash;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/busy_label.rs"]
+mod busy_label;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]
 mod app_writer_admission;
 
@@ -74,6 +78,10 @@ mod recovery_layout;
 #[cfg(target_os = "macos")]
 #[path = "recovery/read_owner.rs"]
 mod read_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/worktree_graph.rs"]
+mod worktree_graph;
 
 #[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
@@ -545,8 +553,16 @@ mod macos {
                 Box::new(crate::app_remove::scenario_remove_public_boundary),
             ),
             (
+                "fetch_busy_label",
+                Box::new(crate::busy_label::scenario_fetch_busy_label),
+            ),
+            (
                 "editor_save_admission",
                 Box::new(crate::app_writer_admission::scenario_editor_save_admission),
+            ),
+            (
+                "editor_save_buffer_identity",
+                Box::new(crate::app_writer_admission::scenario_editor_save_buffer_identity),
             ),
             (
                 "conflict_save_boundary",
@@ -614,6 +630,18 @@ mod macos {
                 "read_owner_ordering",
                 Box::new(crate::read_owner::scenario_read_owner_ordering),
             ),
+            (
+                "remote_source_merge_into",
+                Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
+            ),
+            (
+                "cross_worktree_merge",
+                Box::new(crate::worktree_graph::scenario_cross_worktree_merge),
+            ),
+            (
+                "stage_failure_notice",
+                Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
                 "graph_copy",
@@ -624,6 +652,10 @@ mod macos {
             ("theme_switch", Box::new(scenario_theme_switch)),
             ("agent_provenance", Box::new(scenario_agent_provenance)),
             ("wip_head_connector", Box::new(scenario_wip_head_connector)),
+            (
+                "graph_worktree_open",
+                Box::new(crate::worktree_graph::scenario_graph_worktree_open),
+            ),
             (
                 "worktree_wip_inline",
                 Box::new(scenario_worktree_wip_inline),

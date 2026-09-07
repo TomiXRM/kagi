@@ -5,11 +5,10 @@
 
 use std::collections::HashMap;
 
-use gpui::SharedString;
-
 use crate::graph::{layout, EdgeKind, GraphEdge};
+use gpui::SharedString;
 use kagi_git::{Commit, CommitId, Head, RepoSnapshot};
-use kagi_ui_core::settings::CopyTarget;
+use kagi_ui_core::{i18n, settings::CopyTarget};
 
 // ──────────────────────────────────────────────────────────────
 // Helpers
@@ -40,6 +39,20 @@ pub enum BadgeKind {
     Remote,
     /// Tag.
     Tag,
+    /// A registered detached worktree at this commit (issue #591). This is a
+    /// navigation target, not a Git ref or a drag-merge source.
+    Worktree,
+}
+
+/// Navigation metadata for a graph badge whose branch or detached HEAD is
+/// checked out in another worktree. Derived from the snapshot with the badge;
+/// it is not a second owner of worktree state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BadgeWorktree {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub locked: bool,
+    pub is_main: bool,
 }
 
 /// A single ref badge to be displayed on a commit row.
@@ -54,6 +67,9 @@ pub struct RefBadge {
     /// differ). Rendered as a ☁ mark + tooltip instead of a second chip —
     /// `[main][origin/main]` pairs used to eat the whole badge column.
     pub remotes: Vec<SharedString>,
+    /// One entry per actionable tree glyph; detached worktrees sharing a
+    /// commit are grouped here so none fall into badge overflow.
+    pub worktrees: Vec<BadgeWorktree>,
 }
 
 impl RefBadge {
@@ -62,7 +78,18 @@ impl RefBadge {
             kind,
             label: label.into(),
             remotes: Vec::new(),
+            worktrees: Vec::new(),
         }
+    }
+
+    fn with_worktree(mut self, worktree: &kagi_git::Worktree) -> Self {
+        self.worktrees.push(BadgeWorktree {
+            name: worktree.name.clone(),
+            path: worktree.path.clone(),
+            locked: worktree.locked,
+            is_main: worktree.is_main,
+        });
+        self
     }
 }
 
@@ -74,7 +101,7 @@ fn local_branch_name(badge: &RefBadge) -> Option<String> {
     match badge.kind {
         BadgeKind::HeadBranch => Some(badge.label.trim_end_matches(" ✓").trim_end().to_string()),
         BadgeKind::Branch => Some(badge.label.trim_start_matches("🌲 ").to_string()),
-        BadgeKind::Remote | BadgeKind::Tag => None,
+        BadgeKind::Remote | BadgeKind::Tag | BadgeKind::Worktree => None,
     }
 }
 
@@ -111,28 +138,22 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
         _ => None,
     };
 
-    // Branches checked out in a *linked* worktree. Tips of these (other than
-    // the current HEAD branch) get the 🌲 glyph so the graph shows, at a
-    // glance, which branches are live in a worktree (Model A+ multi-HEAD
-    // markers). The MAIN worktree's branch is deliberately excluded: seen from
-    // inside a linked worktree it is "checked out elsewhere" too, but tagging
-    // it 🌲 read as "master is a worktree branch" in every worktree tab
-    // (user report). Checkout protection for it is unaffected — that comes
-    // from `checked_out_worktree_path`, not this glyph.
-    let worktree_branches: std::collections::HashSet<&str> = snap
-        .worktrees
-        .iter()
-        .filter(|w| !w.is_main)
-        .filter_map(|w| w.branch.as_deref())
-        .collect();
-
     // Local branches.
     for b in &snap.branches {
         let is_head_branch = head_branch_name == Some(b.name.as_str());
-        let in_other_worktree = !is_head_branch && worktree_branches.contains(b.name.as_str());
+        // #591: 🌲 has one meaning — this branch is checked out in another
+        // worktree. That includes the main worktree when viewed from a linked
+        // one; the current worktree remains the ✓ branch.
+        let other_worktree = if is_head_branch {
+            None
+        } else {
+            snap.worktrees
+                .iter()
+                .find(|w| !w.is_current && w.branch.as_deref() == Some(b.name.as_str()))
+        };
         let label = if is_head_branch {
             SharedString::from(format!("{} ✓", b.name))
-        } else if in_other_worktree {
+        } else if other_worktree.is_some() {
             // 🌲 marks a branch checked out in another worktree (matches the
             // worktree's WIP row marker).
             SharedString::from(format!("🌲 {}", b.name))
@@ -144,9 +165,12 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
         } else {
             BadgeKind::Branch
         };
-        map.entry(b.target.clone())
-            .or_default()
-            .push(RefBadge::new(kind, label));
+        let badge = RefBadge::new(kind, label);
+        let badge = match other_worktree {
+            Some(worktree) => badge.with_worktree(worktree),
+            None => badge,
+        };
+        map.entry(b.target.clone()).or_default().push(badge);
     }
 
     // Detached HEAD: add a standalone HEAD badge.
@@ -155,6 +179,38 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
         map.entry(commit_id)
             .or_default()
             .insert(0, RefBadge::new(BadgeKind::HeadBranch, "HEAD"));
+    }
+
+    // Detached worktrees have no branch badge to carry the navigation target.
+    // Add a ref-like badge at their HEAD even when clean; the current detached
+    // worktree keeps the ordinary HEAD badge and does not link to itself.
+    for worktree in snap
+        .worktrees
+        .iter()
+        .filter(|w| !w.is_current && w.branch.is_none())
+    {
+        let Some(head) = &worktree.head else { continue };
+        let short = head.0.chars().take(8).collect::<String>();
+        let badges = map.entry(head.clone()).or_default();
+        if let Some(badge) = badges
+            .iter_mut()
+            .find(|badge| badge.kind == BadgeKind::Worktree)
+        {
+            badge.worktrees.push(BadgeWorktree {
+                name: worktree.name.clone(),
+                path: worktree.path.clone(),
+                locked: worktree.locked,
+                is_main: worktree.is_main,
+            });
+        } else {
+            badges.push(
+                RefBadge::new(
+                    BadgeKind::Worktree,
+                    format!("🌲 {}", i18n::graph_detached_worktree_label(&short)),
+                )
+                .with_worktree(worktree),
+            );
+        }
     }
 
     // Remote-tracking branches. A remote ref at the SAME commit as a local
@@ -237,6 +293,13 @@ pub fn badge_display(b: &RefBadge) -> (String, BadgeWhere) {
             },
         ),
         BadgeKind::Tag => (
+            b.label.to_string(),
+            BadgeWhere {
+                local: false,
+                remote: false,
+            },
+        ),
+        BadgeKind::Worktree => (
             b.label.to_string(),
             BadgeWhere {
                 local: false,
@@ -585,71 +648,8 @@ fn commit_to_row(
 pub use kagi_ui_core::time::{now_unix_secs, relative_time};
 
 #[cfg(test)]
-mod worktree_badge_tests {
-    use super::*;
-    use kagi_git::{Branch, Head, RepoSnapshot, Worktree};
-
-    fn snap(head_branch: &str) -> RepoSnapshot {
-        let tip = CommitId("a".repeat(40));
-        let branch = |name: &str| Branch {
-            name: name.into(),
-            target: tip.clone(),
-            upstream: None,
-        };
-        let wt = |branch: &str, is_main: bool, is_current: bool| Worktree {
-            name: if is_main { "main" } else { branch }.into(),
-            path: std::path::PathBuf::from(format!("/r/{}", branch)),
-            branch: Some(branch.into()),
-            is_current,
-            is_main,
-            wip: None,
-            head: None,
-            locked: false,
-            lock_reason: None,
-        };
-        RepoSnapshot {
-            head: Head::Attached {
-                branch: head_branch.into(),
-                target: "a".repeat(40),
-            },
-            commits: Vec::new(),
-            branches: vec![branch("master"), branch("feat"), branch("other")],
-            remote_branches: Vec::new(),
-            tags: Vec::new(),
-            status: Default::default(),
-            stashes: Vec::new(),
-            // master lives in the MAIN worktree, feat in a linked one.
-            worktrees: vec![
-                wt("master", true, head_branch == "master"),
-                wt("feat", false, head_branch == "feat"),
-            ],
-            cleanup_rows: Vec::new(),
-            last_fetch_secs: None,
-        }
-    }
-
-    fn labels(head: &str) -> Vec<String> {
-        let map = build_badge_map(&snap(head));
-        let mut v: Vec<String> = map
-            .values()
-            .flatten()
-            .map(|b| b.label.to_string())
-            .collect();
-        v.sort();
-        v
-    }
-
-    /// From the main tab, the linked worktree's branch is 🌲; from inside
-    /// the linked worktree, the MAIN branch is plain — it is checked out
-    /// "elsewhere", but 🌲 read as "master is a worktree branch" in every
-    /// worktree tab (user report).
-    #[test]
-    fn only_linked_worktree_branches_get_the_tree_glyph() {
-        // (sorted; the multibyte 🌲 sorts last)
-        assert_eq!(labels("master"), vec!["master ✓", "other", "🌲 feat"]);
-        assert_eq!(labels("feat"), vec!["feat ✓", "master", "other"]);
-    }
-}
+#[path = "commit_list/worktree_badge_tests.rs"]
+mod worktree_badge_tests;
 
 #[cfg(test)]
 mod remote_fold_tests {

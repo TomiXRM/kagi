@@ -21,7 +21,7 @@ fn output(repo: &Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap().trim().to_string()
 }
 
-fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+pub(super) fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         cx.run_until_parked();
@@ -36,7 +36,7 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     }
 }
 
-fn press_key(
+pub(super) fn press_key(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -58,7 +58,7 @@ fn press_enter(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
     press_key(cx, app, window, "enter");
 }
 
-fn dispatch_checkout_selected(
+pub(super) fn dispatch_checkout_selected(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -274,7 +274,11 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
             .unwrap()
             .preflight_check_stash(&plan, plan.stash_count_at_plan())
             .unwrap_err();
-        let expected = i18n::op_failed(Op::Preflight, error);
+        let detail = error
+            .blocker()
+            .map(i18n::plan_note_text)
+            .unwrap_or_else(|| error.to_string());
+        let expected = i18n::op_failed(Op::Preflight, detail);
         cx.run_until_parked();
         // Local stash now shares the root Enter/button approval boundary.
         app.update(cx, |app, cx| app.start_stash_drop(cx));
@@ -773,7 +777,7 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS push_failure_keeps_modal: failure reaches the modal and the oplog");
 }
 
-fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
         window.draw(cx).clear();
     })
@@ -1101,5 +1105,238 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
         );
         assert_eq!(output(repo, &["rev-parse", &entry.backup_refs[0]]), tip);
     });
+    unmount(cx, app, window);
+}
+
+/// #590: deliver actual drag events from a graph remote chip to a non-HEAD
+/// sidebar branch row, then confirm through the shared Enter entry point.
+pub fn scenario_remote_source_merge_into(cx: &mut VisualTestAppContext) {
+    use gpui::{Modifiers, MouseButton};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["config", "user.name", "Test"]);
+    git(dir, &["config", "user.email", "test@example.com"]);
+    std::fs::write(dir.join("base.txt"), "base\n").unwrap();
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+    git(dir, &["branch", "target"]);
+    let source = {
+        let repo = git2::Repository::open(dir).unwrap();
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        let mut tree = repo.treebuilder(Some(&base.tree().unwrap())).unwrap();
+        tree.insert("remote.txt", repo.blob(b"remote\n").unwrap(), 0o100644)
+            .unwrap();
+        let sig = repo.signature().unwrap();
+        let source = repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "remote source",
+                &repo.find_tree(tree.write().unwrap()).unwrap(),
+                &[&base],
+            )
+            .unwrap();
+        repo.reference("refs/remotes/origin/source", source, false, "fixture")
+            .unwrap();
+        source.to_string()
+    };
+    let before = repo_fingerprint(dir);
+    let index = std::fs::read(dir.join(".git/index")).unwrap();
+    let (app, window) = mount(cx, dir);
+    paint(cx, window);
+    let source_box =
+        kagi::ui::e2e::control_bounds(window.window_id(), "graph-remote-origin/source")
+            .expect("remote chip hitbox");
+    let target_box = kagi::ui::e2e::control_bounds(window.window_id(), "sidebar-local-target")
+        .expect("non-HEAD sidebar row hitbox");
+    cx.simulate_mouse_move(window, source_box.center(), None, Modifiers::none());
+    cx.simulate_mouse_down(
+        window,
+        source_box.center(),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.simulate_mouse_move(
+        window,
+        source_box.center() + gpui::point(gpui::px(12.), gpui::px(0.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.simulate_mouse_move(
+        window,
+        target_box.center(),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.simulate_mouse_up(
+        window,
+        target_box.center(),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    wait_idle(cx, &app);
+    cx.read(|cx| {
+        let modal = app.read(cx).merge_modal().expect("drop opens merge plan");
+        assert!(modal.off_branch);
+        assert_eq!(modal.target, "origin/source");
+        assert_eq!(modal.into_branch, "target");
+        assert!(modal.plan.blockers.is_empty());
+        assert!(modal
+            .plan
+            .warnings
+            .iter()
+            .any(|note| note.message_en().contains(&source)
+                && note.message_en().contains("last fetch")));
+    });
+    assert_eq!(repo_fingerprint(dir), before);
+    assert!(records(dir, "merge-into").is_empty());
+    assert_ne!(output(dir, &["rev-parse", "target"]), source);
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    assert_eq!(output(dir, &["rev-parse", "target"]), source);
+    assert_eq!(
+        output(dir, &["rev-parse", "refs/remotes/origin/source"]),
+        source
+    );
+    assert_eq!(repo_fingerprint(dir), before);
+    assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        output(dir, &["for-each-ref", "--format=%(refname)", "refs/heads"]),
+        "refs/heads/main\nrefs/heads/target"
+    );
+    let entries = records(dir, "merge-into");
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    unmount(cx, app, window);
+}
+
+/// #490: same real index.lock failure from panel indices, batch buttons and
+/// editor paths, including a linked panel while the main tab stays active.
+pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e;
+    let temp = tempfile::tempdir().unwrap();
+    let main = temp.path().join("main");
+    let linked = temp.path().join("linked");
+    std::fs::create_dir(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(main.join("f.txt"), "base\n").unwrap();
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-qm", "base"]);
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    for repo in [&main, &linked] {
+        std::fs::write(repo.join("f.txt"), "dirty\n").unwrap();
+    }
+    let (app, window) = mount(cx, &main);
+    for (repo, entry) in [
+        (&main, "editor"),
+        (&main, "panel"),
+        (&main, "batch"),
+        (&linked, "panel"),
+        (&linked, "batch"),
+    ] {
+        for stage in [true, false] {
+            if stage {
+                git(repo, &["reset", "-q", "--", "f.txt"]);
+            } else {
+                git(repo, &["add", "f.txt"]);
+            }
+            if cx.read(|cx| e2e::app_notice_message(app.read(cx)).is_some()) {
+                press_enter(cx, &app, window);
+            }
+            app.update(cx, |app, cx| {
+                e2e::open_worktree_panel_no_inputs(app, repo.clone(), "fixture", 0, cx);
+            });
+            cx.run_until_parked();
+            let before = (repo_fingerprint(&main), repo_fingerprint(&linked));
+            let git_dir =
+                std::path::PathBuf::from(output(repo, &["rev-parse", "--absolute-git-dir"]));
+            let index = std::fs::read(git_dir.join("index")).unwrap();
+            let lock = git_dir.join("index.lock");
+            std::fs::write(&lock, "fixture lock").unwrap();
+            let op = match (stage, entry) {
+                (true, "batch") => "stage-all",
+                (false, "batch") => "unstage-all",
+                (true, _) => "stage",
+                (false, _) => "unstage",
+            };
+            let count = records(repo, op).len();
+            app.update(cx, |app, cx| match (stage, entry) {
+                (true, "editor") => app.do_stage_file_by_path("f.txt".into(), cx),
+                (false, "editor") => app.do_unstage_file_by_path("f.txt".into(), cx),
+                (true, "batch") => app.do_stage_all(cx),
+                (false, "batch") => app.do_unstage_all(cx),
+                (true, _) => app.do_stage_file(0, cx),
+                (false, _) => app.do_unstage_file(0, cx),
+            });
+            wait_idle(cx, &app);
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let FooterStatus::Failed(footer) = &state.status_footer else {
+                    panic!("missing staging failure footer")
+                };
+                assert!(footer.contains("lock"), "{footer}");
+                assert!(footer.contains("f.txt"));
+                let owner = if entry == "editor" {
+                    state.repo_path.as_ref().expect("editor owner").clone()
+                } else {
+                    state
+                        .commit_panel
+                        .as_ref()
+                        .expect("panel")
+                        .read(cx)
+                        .repo_path
+                        .clone()
+                };
+                assert_eq!(
+                    std::fs::canonicalize(&owner).unwrap(),
+                    std::fs::canonicalize(repo).unwrap()
+                );
+                assert!(footer.contains(owner.to_str().unwrap()), "{footer}");
+                assert!(e2e::app_notice_message(state).unwrap().contains("lock"));
+                let panel = state.op_log.as_ref().unwrap().read(cx);
+                let attempted = panel.entries().front().unwrap();
+                assert!(matches!(attempted.outcome, OpOutcome::Failed { .. }));
+                assert_eq!(
+                    std::fs::canonicalize(&attempted.repo).unwrap(),
+                    std::fs::canonicalize(repo).unwrap()
+                );
+            });
+            assert_eq!(records(repo, op).len(), count + 1);
+            assert_eq!(std::fs::read(git_dir.join("index")).unwrap(), index);
+            std::fs::remove_file(lock).unwrap();
+            assert_eq!((repo_fingerprint(&main), repo_fingerprint(&linked)), before);
+        }
+    }
+    // Admission denial never reaches a mutation or opens a modal.
+    press_enter(cx, &app, window);
+    let guard = app.update(cx, |app, _| {
+        app.app_sessions
+            .write_lease(&main, kagi::app::LegacyBusy(false))
+            .unwrap()
+    });
+    let count = records(&main, "stage").len();
+    app.update(cx, |app, cx| app.do_stage_file_by_path("f.txt".into(), cx));
+    cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));
+    assert_eq!(records(&main, "stage").len(), count + 1);
+    assert!(records(&main, "stage")
+        .iter()
+        .any(|e| matches!(e.outcome, OpOutcome::Refused { .. })));
+    guard.complete();
     unmount(cx, app, window);
 }

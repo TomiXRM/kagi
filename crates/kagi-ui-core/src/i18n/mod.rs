@@ -36,6 +36,8 @@ use crate::settings::{read_setting, write_setting};
 // ──────────────────────────────────────────────────────────────────────────
 
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
+pub mod busy;
+pub use busy::busy_label;
 pub mod op;
 pub mod plan;
 pub use op::{op_failed, op_plan_failed, Op};
@@ -245,6 +247,8 @@ pub enum Msg {
     MenuOpenWorktreeInNewTab,
     /// Branch menu: open the worktree this branch is checked out in (#473).
     MenuOpenWorktreeDir,
+    /// Graph badge label for a detached worktree (#595).
+    GraphDetachedWorktree,
     /// Connector in a destructive modal's title when the op runs in a linked
     /// worktree rather than the open tab: "Discard all changes (3) — in
     /// worktree wt-a" (#476 slice 3, `worktree_wip::worktree_modal_title`).
@@ -252,6 +256,7 @@ pub enum Msg {
     /// Default lock reason kagi records for a manual lock (issue #340).
     WorktreeLockDefaultReason,
     BusyMerge,
+    MergeDestinationChanged,
 
     // ── Operation no-op toasts ──────────────────────────────────────
     // (Per-op "started" toasts were removed: the unified busy snackbar —
@@ -572,6 +577,20 @@ pub enum Msg {
     PrRefresh,
     /// PR mode: the PR fetch failed, shown instead of the empty inbox.
     PrFetchFailed,
+    /// #506: the shown list is the last successful fetch, not this one.
+    PrFetchStale,
+    /// #506: the fetch failed because `gh` is not authenticated.
+    PrFetchAuth,
+    /// #506: the fetch never reached GitHub (DNS/TLS/timeout/refused).
+    PrFetchNetwork,
+    /// #506: `gh` answered with something that did not parse.
+    PrFetchInvalid,
+    /// #506: the fetch failed for a reason kagi could not classify.
+    PrFetchUnknown,
+    /// #506: this repository has no GitHub remote — nothing to show.
+    PrGithubUnavailable,
+    /// #506: Branch Cleanup's PR column is last-known data.
+    CleanupPrEvidenceStale,
     /// PR mode: header of a grouped stack of dependent PRs.
     PrStack,
     /// PR mode: toast shown while that fetch runs.
@@ -1100,12 +1119,17 @@ impl Msg {
             (Ja, MenuOpenWorktreeInNewTab) => "新しいタブで開く",
             (En, MenuOpenWorktreeDir) => "Open worktree",
             (Ja, MenuOpenWorktreeDir) => "worktree を開く",
+            (En, GraphDetachedWorktree) => "detached",
+            // `detached` is a Git domain word and stays English (ADR-0048).
+            (Ja, GraphDetachedWorktree) => "detached",
             (En, InWorktree) => "in worktree",
             (Ja, InWorktree) => "対象 worktree",
             (En, WorktreeLockDefaultReason) => "locked in kagi",
             (Ja, WorktreeLockDefaultReason) => "locked in kagi",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
+            (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",
+            (Ja, MergeDestinationChanged) => "merge 先の worktree または branch が変わりました。更新してからもう一度操作してください。",
 
             // ── No-op toasts ─────────────────────────────────────────
             (En, AlreadyUpToDatePull) => "Already up to date — nothing to pull",
@@ -1596,6 +1620,20 @@ impl Msg {
             (Ja, PrStack) => "スタック",
             (En, PrFetchFailed) => "Couldn't reach GitHub — this is not an empty list.",
             (Ja, PrFetchFailed) => "GitHub に接続できませんでした(PR が 0 件なのではありません)。",
+            (En, PrFetchStale) => "Showing the last successful fetch — the newest one failed.",
+            (Ja, PrFetchStale) => "前回取得できた一覧を表示しています(最新の取得は失敗しました)。",
+            (En, PrFetchAuth) => "GitHub authentication failed — run `gh auth login`.",
+            (Ja, PrFetchAuth) => "GitHub の認証に失敗しました(`gh auth login` を実行してください)。",
+            (En, PrFetchNetwork) => "Couldn't reach GitHub — network or transport failure.",
+            (Ja, PrFetchNetwork) => "GitHub に接続できませんでした(ネットワーク/通信の失敗)。",
+            (En, PrFetchInvalid) => "GitHub returned a response kagi could not read.",
+            (Ja, PrFetchInvalid) => "GitHub の応答を解析できませんでした。",
+            (En, PrFetchUnknown) => "The GitHub fetch failed for an unknown reason.",
+            (Ja, PrFetchUnknown) => "GitHub の取得が不明な理由で失敗しました。",
+            (En, PrGithubUnavailable) => "No GitHub remote is configured for this repository.",
+            (Ja, PrGithubUnavailable) => "この repository に GitHub remote が設定されていません。",
+            (En, CleanupPrEvidenceStale) => "PR column may be out of date — the GitHub fetch failed.",
+            (Ja, CleanupPrEvidenceStale) => "PR 列は最新でない可能性があります(GitHub 取得に失敗)。",
             (En, PrRefresh) => "Refresh",
             (Ja, PrRefresh) => "更新",
             (En, PrRefreshing) => "Refreshing pull requests…",
@@ -2360,6 +2398,11 @@ pub fn worktree_path_error(e: &kagi_domain::plan::WorktreePathError) -> String {
     }
 }
 
+/// Localized graph label for a detached worktree HEAD.
+pub fn graph_detached_worktree_label(short_oid: &str) -> String {
+    format!("{} {}", Msg::GraphDetachedWorktree.t(), short_oid)
+}
+
 /// Japanese label for a command-registry id (issue #352, command palette).
 ///
 /// Returns `None` for ids whose English label is a domain word that stays
@@ -2493,8 +2536,16 @@ mod tests {
             wip_row_note(3),
             "// WIP — 3 changes (click to open commit panel)"
         );
+        assert_eq!(
+            graph_detached_worktree_label("abc12345"),
+            "detached abc12345"
+        );
         set_lang_no_persist(Lang::Ja);
         assert!(wip_row_note(2).contains("クリックで commit panel"));
+        assert_eq!(
+            graph_detached_worktree_label("abc12345"),
+            "detached abc12345"
+        );
         set_lang_no_persist(Lang::En);
     }
 

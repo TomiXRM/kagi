@@ -96,6 +96,17 @@ pub fn commits_between(
 }
 
 pub fn commit_log(repo: &Repository, limit: usize) -> Result<Vec<Commit>, GitError> {
+    commit_log_with_roots(repo, limit, &[])
+}
+
+/// Commit log with additional roots that have no ref of their own, notably
+/// detached linked-worktree HEADs. `limit` remains the ordinary-history
+/// budget; required roots beyond it are pinned into the result.
+pub(crate) fn commit_log_with_roots(
+    repo: &Repository,
+    limit: usize,
+    roots: &[CommitId],
+) -> Result<Vec<Commit>, GitError> {
     // NOTE: an unborn HEAD does NOT imply an empty repository — after
     // `git checkout --orphan` HEAD is unborn while other branches still hold
     // commits.  So there is deliberately no HEAD-based short-circuit here;
@@ -129,6 +140,18 @@ pub fn commit_log(repo: &Repository, limit: usize) -> Result<Vec<Commit>, GitErr
         }
     }
 
+    let mut root_oids = Vec::new();
+    for root in roots {
+        let oid = git2::Oid::from_str(&root.0)
+            .map_err(|e| GitError::Other(format!("invalid extra revwalk root: {}", e.message())))?;
+        walk.push(oid)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        if !root_oids.contains(&oid) {
+            root_oids.push(oid);
+        }
+        any_pushed = true;
+    }
+
     // Also push HEAD for detached-HEAD repositories.  Skip it when HEAD does
     // not resolve to a commit (unborn repo / orphan checkout): push_head()
     // would fail with a "reference not found" error in that state.
@@ -156,33 +179,46 @@ pub fn commit_log(repo: &Repository, limit: usize) -> Result<Vec<Commit>, GitErr
             Err(e) => return Err(GitError::Other(e.message().to_string())),
         };
 
-        let raw = repo
-            .find_commit(oid)
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        commits.push(commit_from_oid(repo, oid)?);
+    }
 
-        let id = CommitId(oid.to_string());
-
-        // Collect parents preserving order (parents()[0] = first parent).
-        let parents: Vec<CommitId> = raw.parent_ids().map(|p| CommitId(p.to_string())).collect();
-
-        let author = sig_from_git2(raw.author());
-        let committer = sig_from_git2(raw.committer());
-
-        let message = String::from_utf8_lossy(raw.message_bytes()).into_owned();
-        // Summary = first non-empty line of the message.
-        let summary = message.lines().next().unwrap_or("").trim_end().to_string();
-
-        commits.push(Commit {
-            id,
-            parents,
-            author,
-            committer,
-            summary,
-            message,
-        });
+    // A very old detached root can sort beyond the normal 10k history budget.
+    // Pin it before its first retained ancestor so graph parent ordering stays
+    // valid. The result can exceed `limit` by at most the number of distinct
+    // required roots, keeping every registered worktree navigable (#595).
+    for root in root_oids {
+        if commits.iter().any(|commit| commit.id.0 == root.to_string()) {
+            continue;
+        }
+        let insert_at = commits
+            .iter()
+            .position(|commit| {
+                git2::Oid::from_str(&commit.id.0)
+                    .ok()
+                    .is_some_and(|candidate| {
+                        repo.graph_descendant_of(root, candidate).unwrap_or(false)
+                    })
+            })
+            .unwrap_or(commits.len());
+        commits.insert(insert_at, commit_from_oid(repo, root)?);
     }
 
     Ok(commits)
+}
+
+fn commit_from_oid(repo: &Repository, oid: git2::Oid) -> Result<Commit, GitError> {
+    let raw = repo
+        .find_commit(oid)
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let message = String::from_utf8_lossy(raw.message_bytes()).into_owned();
+    Ok(Commit {
+        id: CommitId(oid.to_string()),
+        parents: raw.parent_ids().map(|p| CommitId(p.to_string())).collect(),
+        author: sig_from_git2(raw.author()),
+        committer: sig_from_git2(raw.committer()),
+        summary: message.lines().next().unwrap_or("").trim_end().to_string(),
+        message,
+    })
 }
 
 // ────────────────────────────────────────────────────────────

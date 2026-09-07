@@ -68,6 +68,8 @@ pub struct StashEvidence {
     pub snapshot: Option<String>,
     pub plan_blocked: bool,
     pub preflight_error: Option<String>,
+    /// Structured preflight refusal retained for localized UI delivery.
+    pub preflight_note: Option<crate::plan_note::PlanNote>,
     pub stop: Option<StashStopReason>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

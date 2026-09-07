@@ -193,7 +193,8 @@ pub fn probe_repo(host: &RemoteHost, path: &str) -> Result<RepoProbe, RemoteErro
 }
 
 /// A one-line HEAD summary of the remote repository at `path`
-/// (`git -C <path> log -1 --format=%h%x1f%s%x1f%D`). `Ok(None)` means an
+/// (`git -C <path> log -1 --format=%h%x1f%D%x1f%s`; the free-form subject is
+/// last so it cannot shift a field — issue #508). `Ok(None)` means an
 /// empty/unborn repository (no HEAD commit yet).
 pub fn repo_summary(
     host: &RemoteHost,
@@ -201,7 +202,7 @@ pub fn repo_summary(
 ) -> Result<Option<RemoteRepoSummary>, RemoteError> {
     let stdout = run_checked(
         host,
-        &["git", "-C", path, "log", "-1", "--format=%h%x1f%s%x1f%D"],
+        &["git", "-C", path, "log", "-1", "--format=%h%x1f%D%x1f%s"],
     )?;
     Ok(remote::parse_repo_summary(&stdout))
 }

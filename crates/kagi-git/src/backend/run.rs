@@ -168,6 +168,7 @@ impl Backend {
                 ));
             }
             if fresh.title != plan.title
+                || ops::remote_source_tip(&fresh) != ops::remote_source_tip(plan)
                 || ops::plan_worktree_config_sha(&fresh) != ops::plan_worktree_config_sha(plan)
                 || fresh.destructive != plan.destructive
                 || fresh.worktree_digest.is_some() != plan.worktree_digest.is_some()
@@ -182,6 +183,7 @@ impl Backend {
         if let Err(e) = preflight {
             if stash::StashAction::from_operation(op).is_some() {
                 evidence.preflight_error = Some(e.to_string());
+                evidence.preflight_note = e.blocker().cloned();
                 evidence.stop = Some(stash::StashStopReason::Preflight);
             }
             // ADR-0149: a preflight refusal is still a failed attempt — record

@@ -14,6 +14,7 @@ pub mod badges;
 pub mod blocking_ops;
 pub mod branch_cleanup;
 pub mod branch_menu;
+mod busy;
 pub mod button_style;
 pub mod command_palette;
 pub mod commands;
@@ -107,6 +108,7 @@ pub mod watcher;
 pub mod workspace;
 pub mod workspace_mode;
 pub mod worktree_menu;
+mod worktree_nav;
 pub mod worktree_wip;
 
 pub use compare_pane::ComparePane;
@@ -186,7 +188,7 @@ fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
         BadgeKind::Branch | BadgeKind::Remote => {
             Some(badge.label.trim_start_matches("🌲 ").to_string())
         }
-        BadgeKind::HeadBranch | BadgeKind::Tag => None,
+        BadgeKind::HeadBranch | BadgeKind::Tag | BadgeKind::Worktree => None,
     }
 }
 
@@ -203,6 +205,7 @@ fn context_ref_name(badge: &commit_list::RefBadge) -> Option<String> {
             Some(badge.label.trim_start_matches("🌲 ").to_string())
         }
         BadgeKind::Tag => Some(badge.label.to_string()),
+        BadgeKind::Worktree => None,
     }
 }
 
@@ -264,8 +267,8 @@ fn validate_merge_into_from_drag(
         return Err(format!("'{}' is already that branch.", source));
     }
     let is_local = |n: &str| branches.iter().any(|(b, _)| b == n);
-    if !is_local(source) {
-        return Err(format!("Branch '{}' is not a local branch.", source));
+    if !is_local(source) && !remotes.iter().any(|n| n == source) {
+        return Err(format!("Branch '{}' is not a branch.", source));
     }
     // The destination may be a remote-tracking ref: the planner resolves it to
     // the local branch of that name, creating it at the remote tip if needed.
@@ -396,33 +399,6 @@ const ROW_H_COMPACT: f32 = 22.0; // 18.0 * 1.2 (keeps compact:full ratio)
 #[inline]
 fn row_height(compact: bool) -> f32 {
     theme::scaled(if compact { ROW_H_COMPACT } else { ROW_H_FULL })
-}
-
-/// Friendly present-progressive label for the busy snackbar, keyed by the
-/// `busy_op` tag set when an async op starts.
-fn busy_label(op: &str) -> String {
-    let s = match op {
-        "merge-plan" => "Planning merge…",
-        "merge" => "Merging…",
-        "pull" => "Pulling…",
-        "push" => "Pushing…",
-        "fetch" => "Fetching…",
-        "commit" => "Committing…",
-        "amend" => "Amending commit…",
-        "checkout" => "Checking out…",
-        "cherry-pick" => "Cherry-picking…",
-        "revert" => "Reverting…",
-        "discard" => "Discarding…",
-        "stash" => "Stashing…",
-        "stash-pop" => "Applying stash…",
-        "stash-drop" => "Dropping stash…",
-        "create-worktree" => "Creating worktree…",
-        "delete-branch" => "Deleting branch…",
-        "rename-branch" => "Renaming branch…",
-        "set-upstream" => "Setting upstream…",
-        other => return format!("{other}…"),
-    };
-    s.to_string()
 }
 
 use branch_menu::{
@@ -1225,6 +1201,10 @@ pub struct KagiApp {
     /// Last `gh pr list` failure, cleared by the next success. Rendered by the
     /// PR home screen so a failed fetch is not shown as an empty inbox.
     pub github_error: Option<SharedString>,
+    /// #506: this repository has no GitHub remote (`PrFetchError::Unavailable`).
+    /// A defined "nothing to show" state — distinct from `github_error`, which
+    /// means "we could not find out" and keeps the previous list.
+    pub github_unavailable: bool,
     /// Bumped whenever `github_prs` changes — folded into the sidebar rows
     /// fingerprint so the list rebuilds exactly when the data does.
     pub github_prs_epoch: u64,
@@ -1248,6 +1228,7 @@ pub struct KagiApp {
     /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
     /// and new plan modals are refused so operations never overlap.
     pub busy_op: Option<&'static str>,
+    write_busy_op: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
@@ -1396,6 +1377,10 @@ pub struct KagiApp {
     /// branch for the PR / author columns. App-level like the pane's own open
     /// flag; empty when `gh` is unavailable.
     pub cleanup_prs: Vec<kagi_domain::github::PullRequest>,
+    /// #506: the last merged-PR fetch failed, so `cleanup_prs` is the previous
+    /// scan's data. Without this an empty PR column read as "this branch has no
+    /// pull request" when the truth was "we could not ask".
+    pub cleanup_prs_stale: bool,
     /// Branch names ticked in the cleanup table. Deleting "the selected ones"
     /// is the middle ground between the bulk button and the per-row trash
     /// (user request).
@@ -1556,12 +1541,14 @@ impl KagiApp {
             github_prs_for: None,
             transport_holds: Default::default(),
             github_error: None,
+            github_unavailable: false,
             github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
             pr_mode: None,
             pr_menu: None,
             busy_op: None,
+            write_busy_op: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),
             modal_replan_gen: 0,
@@ -1604,6 +1591,7 @@ impl KagiApp {
             cleanup_gen: 0,
             cleanup_scanning: false,
             cleanup_prs: Vec::new(),
+            cleanup_prs_stale: false,
             cleanup_selected: std::collections::HashSet::new(),
             squash_gen: 0,
             scans_stale: true,
@@ -3097,18 +3085,13 @@ impl KagiApp {
             .find_map(|(name, current)| current.then(|| name.clone()));
         // #473: `worktree_path` is the OTHER worktree's path (the current one is
         // where we already are, so "Open worktree" would be a no-op there).
-        let other_worktree = if matches!(state.kind, BranchKind::Local) {
-            self.view()
-                .worktrees
-                .iter()
-                .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
+        let branch = if matches!(state.kind, BranchKind::Local) {
+            Some(state.name.as_str())
         } else {
             None
         };
-        let checked_out_worktree_path = other_worktree.map(|wt| wt.path.display().to_string());
-        let worktree_path = other_worktree
-            .filter(|wt| !wt.is_current)
-            .map(|wt| wt.path.clone());
+        let (checked_out_worktree_path, worktree_path) =
+            worktree_nav::paths_for_branch(&self.view().worktrees, branch);
         BranchMenuContext {
             name: state.name.clone(),
             head_sha: state.target.0.clone(),
@@ -3900,6 +3883,31 @@ mod drag_merge_into_validation_tests {
 
     #[test]
     fn dropping_one_non_head_branch_onto_another_is_accepted() {
+        assert!(validate_merge_into_from_drag(
+            "origin/release",
+            "feature",
+            &branches(),
+            &remotes(),
+            false
+        )
+        .is_ok());
+        assert!(validate_merge_into_from_drag(
+            "origin/missing",
+            "feature",
+            &branches(),
+            &remotes(),
+            false
+        )
+        .is_err());
+        assert!(validate_merge_into_from_drag(
+            "origin/release",
+            "feature",
+            &branches(),
+            &remotes(),
+            true
+        )
+        .is_err());
+
         assert_eq!(
             validate_merge_into_from_drag("feature", "topic/x", &branches(), &remotes(), false),
             Ok(())

@@ -24,7 +24,7 @@ use std::sync::Arc;
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static CONFIRM_BOUNDS: RefCell<std::collections::HashMap<gpui::WindowId, gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
-    static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, &'static str), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
+    static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, String), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpui::Pixels>) {
@@ -35,20 +35,18 @@ pub fn confirm_bounds(id: gpui::WindowId) -> Option<gpui::Bounds<gpui::Pixels>> 
     CONFIRM_BOUNDS.with(|map| map.borrow().get(&id).copied())
 }
 #[cfg(feature = "gui-e2e")]
-pub fn control_bounds(
-    id: gpui::WindowId,
-    name: &'static str,
-) -> Option<gpui::Bounds<gpui::Pixels>> {
-    CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name)).copied())
+pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
+    CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
 }
 pub(crate) fn measure_control(
-    name: &'static str,
+    name: impl Into<String>,
     control: impl gpui::IntoElement,
 ) -> gpui::AnyElement {
     #[cfg(feature = "gui-e2e")]
     use gpui::{IntoElement as _, ParentElement as _};
     #[cfg(feature = "gui-e2e")]
     {
+        let name = name.into();
         gpui::div()
             .relative()
             .child(
@@ -56,7 +54,7 @@ pub(crate) fn measure_control(
                     move |bounds, window, _| {
                         CONTROL_BOUNDS.with(|map| {
                             map.borrow_mut()
-                                .insert((window.window_handle().window_id(), name), bounds);
+                                .insert((window.window_handle().window_id(), name.clone()), bounds);
                         });
                     },
                     |_, _, _, _| {},
@@ -307,4 +305,10 @@ pub fn mount_root(
     let kagi = build_kagi_entity(app_state, window, cx);
     *out.borrow_mut() = Some(kagi.clone());
     cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
+}
+
+/// Exact text consumed by the real busy snackbar renderer (#607).
+#[cfg(feature = "gui-e2e")]
+pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
+    app.busy_snackbar_label()
 }

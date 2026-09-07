@@ -452,6 +452,107 @@ fn test_plan_recovery_mentions_original_branch() {
     );
 }
 
+fn checkout_state(path: &Path) -> (String, git2::Oid, Vec<u8>, Vec<u8>, Option<Vec<u8>>) {
+    let repo = Repository::open(path).unwrap();
+    let head = repo.head().unwrap();
+    (
+        head.name().unwrap().to_string(),
+        head.target().unwrap(),
+        std::fs::read(repo.path().join("index")).unwrap(),
+        std::fs::read(path.join("README.md")).unwrap(),
+        std::fs::read(path.join("feat.txt")).ok(),
+    )
+}
+
+#[test]
+fn checkout_blocks_branches_owned_by_main_or_linked_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (main, _) = build_two_branch_repo(&tmp);
+    let linked_root = TempDir::new().unwrap();
+    let linked = linked_root.path().join("linked");
+    git(
+        &main,
+        &["worktree", "add", linked.to_str().unwrap(), "feature/one"],
+    );
+    let before = (checkout_state(&main), checkout_state(&linked));
+    for (caller, branch, owner) in [(&main, "feature/one", &linked), (&linked, "main", &main)] {
+        let mut backend = kagi_git::Backend::open(caller).unwrap();
+        let op = kagi_git::Operation::Checkout {
+            branch: branch.into(),
+        };
+        let plan = backend.plan(&op).unwrap();
+        assert!(
+            plan.blockers.iter().any(|note| matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Worktree(
+                    kagi_domain::plan_note::WorktreeNote::BranchInOtherWorktree {
+                        branch: blocked, path
+                    }
+                ) if blocked == branch
+                    && Path::new(path).canonicalize().unwrap() == owner.canonicalize().unwrap()
+            )),
+            "{:?}",
+            plan.blockers
+        );
+        let report = backend.run_recorded(&op, &plan);
+        assert!(report.result.is_err());
+        assert!(matches!(
+            report.recording.entry().outcome,
+            kagi_git::OpOutcome::Failed { .. }
+        ));
+        assert_eq!((checkout_state(&main), checkout_state(&linked)), before);
+    }
+}
+
+#[test]
+fn checkout_rechecks_worktree_occupancy_after_approval() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (main, _) = build_two_branch_repo(&tmp);
+    let mut backend = kagi_git::Backend::open(&main).unwrap();
+    let op = kagi_git::Operation::Checkout {
+        branch: "feature/one".into(),
+    };
+    let approved = backend.plan(&op).unwrap();
+    assert!(approved.blockers.is_empty());
+    let linked_root = TempDir::new().unwrap();
+    let linked = linked_root.path().join("linked");
+    git(
+        &main,
+        &["worktree", "add", linked.to_str().unwrap(), "feature/one"],
+    );
+    let before = (checkout_state(&main), checkout_state(&linked));
+    let report = backend.run_recorded(&op, &approved);
+    assert!(
+        report.result.is_err(),
+        "late worktree occupancy must invalidate checkout"
+    );
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::OpOutcome::Failed { .. }
+    ));
+    assert_eq!((checkout_state(&main), checkout_state(&linked)), before);
+
+    // A detached sibling no longer owns the branch. Its presence must not
+    // prevent a newly approved ordinary checkout.
+    git(&linked, &["switch", "--detach"]);
+    let detached = checkout_state(&linked);
+    let fresh = backend.plan(&op).unwrap();
+    assert!(fresh.blockers.is_empty());
+    backend.run_recorded(&op, &fresh).result.unwrap();
+    assert_eq!(checkout_state(&linked), detached);
+    assert_eq!(checkout_state(&main).0, "refs/heads/feature/one");
+    assert_eq!(
+        std::fs::read(main.join("feat.txt")).unwrap(),
+        b"feature work\n"
+    );
+}
+
 // ────────────────────────────────────────────────────────────
 // T014: create-branch tests
 // ────────────────────────────────────────────────────────────

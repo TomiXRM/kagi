@@ -121,3 +121,12 @@ still refuse planning. Inode, gitdir bytes, optional config SHA, HEAD OID and
 HEAD ref remain mandatory comparisons. Two observations lacking birth time can
 match; a changed/missing-versus-present birth time or any changed remaining field
 still requires re-planning. This does not relax the existing Unix inode boundary.
+
+## Busy 表示と lease の終端化 (#607)
+
+`reserve_write` は操作名を受け取り、`dispatch_job` は既存の job 名を使う。
+`busy_op` に汎用の内部識別子を入れず、lease に由来する mirror 名を別に保持する。
+lease がなくなった時だけ一致する mirror を解除し、lease を持たない legacy plan は解除しない。
+表示名は ui-core の EN/JA 対応表に集約し、未知名は汎用の「処理中…」にする。
+uv `check-busy-labels` は busy 名の literal と有限な operation/job 名を照合する。
+この表示変更は lease admission・実行・記録・既存 klog 契約を変更しない。

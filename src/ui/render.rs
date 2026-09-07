@@ -31,8 +31,8 @@ impl KagiApp {
 
         // While an async op runs, show a busy snackbar with a spinning sync icon
         // (user request) — a lighter alternative to a blocking popup.
-        if let Some(op) = self.busy_op {
-            stack = stack.child(self.render_busy_snackbar(op));
+        if let Some(label) = self.busy_snackbar_label() {
+            stack = stack.child(self.render_busy_snackbar(label));
         }
 
         // The toast cards are an independently-rendered child entity.
@@ -44,7 +44,7 @@ impl KagiApp {
     /// icon + a friendly label (user request — a non-blocking alternative to a
     /// modal busy-spinner). Driven automatically by `busy_op`, so every async
     /// op gets one for free.
-    fn render_busy_snackbar(&self, op: &'static str) -> gpui::AnyElement {
+    fn render_busy_snackbar(&self, label: &'static str) -> gpui::AnyElement {
         let accent = theme().color_branch;
         let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
         div()
@@ -68,7 +68,7 @@ impl KagiApp {
                 div()
                     .flex_1()
                     .overflow_hidden()
-                    .child(SharedString::from(busy_label(op))),
+                    .child(SharedString::from(label)),
             )
             .into_any()
     }
@@ -103,14 +103,14 @@ impl KagiApp {
             state, header, groups, window, cx,
         ))
     }
-
     fn render_worktree_menu_overlay(
         &self,
         state: worktree_menu::WorktreeMenuState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let groups = worktree_menu::build_worktree_menu(state.locked, state.path.as_deref());
+        let groups =
+            worktree_menu::build_worktree_menu(state.locked, state.is_main, state.path.as_deref());
         let header = SharedString::from(state.name.clone());
         Some(worktree_menu::render_worktree_menu_overlay(
             state, header, groups, window, cx,

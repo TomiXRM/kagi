@@ -130,7 +130,7 @@ impl KagiApp {
         match event {
             EditorWorkspaceEvent::SaveRequested(request) => {
                 let repo_path = view.read(cx).repo_path.clone();
-                let Some(guard) = self.reserve_write(&repo_path, cx) else {
+                let Some(guard) = self.reserve_write("editor-save", &repo_path, cx) else {
                     return;
                 };
                 view.update(cx, |view, cx| {
@@ -513,6 +513,22 @@ impl KagiApp {
             EditorPendingIntent::SwitchRepo(path) => {
                 self.close_editor_workspace();
                 self.switch_repo_by_path(&path, cx);
+            }
+            EditorPendingIntent::MergeInWorktree {
+                source,
+                target,
+                path,
+                owner,
+            } => {
+                if self
+                    .active_session()
+                    .and_then(|session| self.app_sessions.attachment(session))
+                    .as_ref()
+                    == Some(&owner)
+                {
+                    self.close_editor_workspace();
+                    self.open_merge_in_worktree(source, target, path, cx);
+                }
             }
             EditorPendingIntent::CloseRepoTab(session) => {
                 self.close_editor_workspace();

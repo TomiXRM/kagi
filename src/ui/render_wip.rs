@@ -312,6 +312,7 @@ impl KagiApp {
                         this.open_worktree_menu(
                             name.clone(),
                             locked,
+                            false,
                             Some(menu_path.clone()),
                             e.position,
                         );

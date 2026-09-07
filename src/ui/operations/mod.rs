@@ -15,11 +15,13 @@ pub mod discard;
 pub mod editor_fs;
 pub mod force_lease;
 pub mod history;
+pub mod merge;
 pub mod modal_state;
 pub mod pull_push;
 pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
+mod staging_failure;
 pub mod stash;
 pub mod tag;
 pub(crate) mod transport_hold;
@@ -154,6 +156,7 @@ impl KagiApp {
                 // Unconditional release (#289): whatever happened to the op,
                 // the global op mutex must not stay latched.
                 app.busy_op = None;
+                app.write_busy_op = None;
                 // Settle first, whatever the tab is doing now (#501).
                 if let Some(result) = result.as_ref() {
                     settle(app, result, cx);

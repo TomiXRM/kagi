@@ -70,6 +70,7 @@ jobs:
           - e2e-window-helper
           # canonical verification recipe references must remain real files (#544)
           - skill-refs
+          - busy-labels
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

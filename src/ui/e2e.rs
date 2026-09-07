@@ -306,3 +306,9 @@ pub fn mount_root(
     *out.borrow_mut() = Some(kagi.clone());
     cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
 }
+
+/// Exact text consumed by the real busy snackbar renderer (#607).
+#[cfg(feature = "gui-e2e")]
+pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
+    app.busy_snackbar_label()
+}

@@ -7,7 +7,7 @@ src/ui/conflict_view.rs 3
 src/ui/context_menu.rs 1
 src/ui/diff_view.rs 7
 src/ui/mod.rs 12
-src/ui/operations/branch.rs 7
+src/ui/operations/branch.rs 6
 src/ui/operations/checkout.rs 2
 src/ui/operations/cherry_revert.rs 2
 src/ui/operations/commit.rs 8

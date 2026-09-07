@@ -254,6 +254,7 @@ pub enum Msg {
     /// Default lock reason kagi records for a manual lock (issue #340).
     WorktreeLockDefaultReason,
     BusyMerge,
+    MergeDestinationChanged,
 
     // ── Operation no-op toasts ──────────────────────────────────────
     // (Per-op "started" toasts were removed: the unified busy snackbar —
@@ -1125,6 +1126,8 @@ impl Msg {
             (Ja, WorktreeLockDefaultReason) => "locked in kagi",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
+            (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",
+            (Ja, MergeDestinationChanged) => "merge 先の worktree または branch が変わりました。更新してからもう一度操作してください。",
 
             // ── No-op toasts ─────────────────────────────────────────
             (En, AlreadyUpToDatePull) => "Already up to date — nothing to pull",

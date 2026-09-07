@@ -6,6 +6,12 @@
 
 ## Decision
 
+The rules below describe the original current-branch gesture. ADR-0144 extends
+it to arbitrary branch targets and remote sources. A checked-out destination
+in another worktree now opens that worktree's tab before the same normal HEAD
+merge plan; a destination not checked out anywhere uses the off-branch planner.
+Neither route executes on drop.
+
 Add a **drag-and-drop gesture** on local-branch labels to *start* (not execute) a
 merge, GitKraken-style.
 

@@ -222,7 +222,12 @@ impl Sessions {
     /// create one for the next visit.
     pub fn depart(&mut self, session: SessionId) {
         self.stash_followups.remove(&session);
-        self.conflict_states.remove(&session);
+        if !matches!(
+            self.conflict_states.get(&session),
+            Some(ConflictOwnerState::InFlight { .. })
+        ) {
+            self.conflict_states.remove(&session);
+        }
         if let Some(tab) = self.sessions.get_mut(&session) {
             tab.visit += 1;
         }
@@ -238,6 +243,7 @@ impl Sessions {
         self.sessions.remove(&session);
         self.stash_conflicts.remove(&session);
         self.stash_followups.remove(&session);
+        self.conflict_states.remove(&session);
         if self.plan_owner == Some(session) {
             self.invalidate_plan();
         }
@@ -507,7 +513,7 @@ impl ReconcileJob {
                 )
             }
             Planned::Conflict { plan, .. } => (
-                kagi_git::Backend::open(&plan.repo)
+                kagi_git::Backend::open(plan.repo())
                     .and_then(|backend| backend.conflict_snapshot())
                     .map(|snapshot| format!("conflict={snapshot:?}"))
                     .map_err(|e| e.to_string())?,

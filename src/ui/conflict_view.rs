@@ -27,6 +27,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{
     div, prelude::*, px, rgb, Context, Entity, MouseButton, SharedString, UniformListScrollHandle,
@@ -166,6 +167,8 @@ pub struct ConflictView {
     /// Presentation-only projection used to disable Save/D-F controls while
     /// the application owns a conflict writer lease.
     pub writer_busy: bool,
+    pub(crate) intent_token: u64,
+    pub(crate) owner: crate::app::Attachment,
     /// Weak back-reference to the parent. Used ONLY from event/listener closures
     /// (deferred Backend / context actions) — NEVER read in a `Render` path
     /// (would re-enter the parent and panic).
@@ -181,7 +184,12 @@ impl ConflictView {
     /// Construct the entity for a freshly-detected conflict. Created in
     /// `KagiApp::apply_conflict_detect` via `cx.new`; the caller assigns the
     /// `mode` / `editing` immediately after (or uses [`ConflictView::set_detected`]).
-    pub fn new(app: WeakEntity<KagiApp>, repo_path: PathBuf) -> Self {
+    pub fn new(
+        app: WeakEntity<KagiApp>,
+        repo_path: PathBuf,
+        owner: crate::app::Attachment,
+    ) -> Self {
+        static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
         Self {
             mode: None,
             editing: None,
@@ -198,6 +206,8 @@ impl ConflictView {
             ab_scroll_handle: UniformListScrollHandle::new(),
             file_menu: None,
             writer_busy: false,
+            intent_token: NEXT_INTENT_TOKEN.fetch_add(1, Ordering::Relaxed),
+            owner,
             app,
             repo_path,
         }
@@ -237,6 +247,9 @@ impl ConflictView {
         path: &std::path::Path,
         choice: kagi_git::ResolutionChoice,
     ) -> Option<Result<(), kagi_git::GitError>> {
+        if self.writer_busy {
+            return None;
+        }
         let c = self.mode.as_mut()?;
         if let Err(e) = c.buffer.apply_choice(path, choice) {
             return Some(Err(e));
@@ -261,6 +274,9 @@ impl ConflictView {
         side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
+        if self.writer_busy {
+            return;
+        }
         let Some(c) = self.mode.as_mut() else {
             return;
         };
@@ -276,6 +292,9 @@ impl ConflictView {
         side: kagi_git::resolution::SelectionSide,
         taken: bool,
     ) {
+        if self.writer_busy {
+            return;
+        }
         let Some(c) = self.mode.as_mut() else {
             return;
         };
@@ -294,6 +313,9 @@ impl ConflictView {
         line_index: usize,
         taken: bool,
     ) {
+        if self.writer_busy {
+            return;
+        }
         let Some(c) = self.mode.as_mut() else {
             return;
         };
@@ -310,6 +332,9 @@ impl ConflictView {
         hunk_index: usize,
         order: kagi_git::resolution::LineOrder,
     ) {
+        if self.writer_busy {
+            return;
+        }
         let Some(c) = self.mode.as_mut() else {
             return;
         };
@@ -520,6 +545,57 @@ impl Render for ConflictView {
 }
 
 impl ConflictView {
+    pub(crate) fn freeze_save_intent(&self, path: &std::path::Path) -> FrozenConflictIntent {
+        let mode = self.mode.as_ref().expect("rendered conflict has a mode");
+        let before = self
+            .editing_before_text
+            .get(path)
+            .map(String::as_str)
+            .unwrap_or_default();
+        match kagi_git::Backend::conflict_save_request(
+            mode.revision.clone(),
+            &mode.buffer,
+            path,
+            mode.session.op.slug(),
+            before,
+        ) {
+            Ok(request) => FrozenConflictIntent::Request {
+                token: self.intent_token,
+                request: crate::app::ConflictAppRequest {
+                    owner: self.owner.clone(),
+                    request,
+                },
+            },
+            Err(error) => FrozenConflictIntent::SaveRefusal {
+                token: self.intent_token,
+                owner: self.owner.clone(),
+                revision: mode.revision.clone(),
+                operation: mode.session.op.slug().to_string(),
+                path: path.to_path_buf(),
+                error: error.to_string(),
+            },
+        }
+    }
+
+    pub(crate) fn freeze_dir_file_intent(
+        &self,
+        path: &std::path::Path,
+        choice: kagi_git::DirFileChoice,
+    ) -> FrozenConflictIntent {
+        let mode = self.mode.as_ref().expect("rendered conflict has a mode");
+        FrozenConflictIntent::Request {
+            token: self.intent_token,
+            request: crate::app::ConflictAppRequest {
+                owner: self.owner.clone(),
+                request: kagi_domain::conflict_family::ConflictRequest::ResolveDirFile {
+                    path: path.to_path_buf(),
+                    revision: mode.revision.clone(),
+                    choice,
+                },
+            },
+        }
+    }
+
     /// Build the [`EditorChrome`] the render functions thread through, from this
     /// entity's own fields (the editors + split ratios + Result mode + geometry
     /// all live on the entity now).
@@ -541,6 +617,21 @@ impl ConflictView {
             hl_cache: self.hl_cache.clone(),
         }
     }
+}
+
+pub(crate) enum FrozenConflictIntent {
+    Request {
+        token: u64,
+        request: crate::app::ConflictAppRequest,
+    },
+    SaveRefusal {
+        token: u64,
+        owner: crate::app::Attachment,
+        revision: kagi_domain::conflict_family::ConflictRevision,
+        operation: String,
+        path: PathBuf,
+        error: String,
+    },
 }
 
 // ────────────────────────────────────────────────────────────
@@ -634,6 +725,9 @@ impl ConflictView {
 
     /// T-CONFLICT-UX-015: toggle the Result pane between Preview / Edit mode.
     pub fn conflict_editor_toggle_result_mode(&mut self) {
+        if self.writer_busy {
+            return;
+        }
         self.result_editing = !self.result_editing;
         // Force the inputs to re-sync (mode is part of the content signature).
         if let Some(i) = self.editor_inputs.as_mut() {
@@ -643,6 +737,9 @@ impl ConflictView {
 
     /// Reset every hunk of `path` to unresolved (toolbar "Reset all").
     pub fn conflict_editor_reset_all(&mut self, path: &std::path::Path) {
+        if self.writer_busy {
+            return;
+        }
         // Force the editor inputs to re-sync after the reset.
         if let Some(i) = self.editor_inputs.as_mut() {
             i.content_sig = 0;
@@ -1706,10 +1803,10 @@ fn render_dir_file_center(
         cx.listener(
             move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
                 let weak_app = view.app.clone();
-                let path = path.clone();
+                let intent = view.freeze_dir_file_intent(&path, DirFileChoice::KeepDirectory);
                 cx.spawn_in(window, async move |_view, acx| {
                     let _ = weak_app.update_in(acx, |app, _window, cx| {
-                        app.resolve_dir_file(&path, DirFileChoice::KeepDirectory, cx)
+                        app.accept_conflict_intent(intent, cx)
                     });
                 })
                 .detach();
@@ -1721,10 +1818,10 @@ fn render_dir_file_center(
         cx.listener(
             move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
                 let weak_app = view.app.clone();
-                let path = path.clone();
+                let intent = view.freeze_dir_file_intent(&path, DirFileChoice::KeepFile);
                 cx.spawn_in(window, async move |_view, acx| {
                     let _ = weak_app.update_in(acx, |app, _window, cx| {
-                        app.resolve_dir_file(&path, DirFileChoice::KeepFile, cx)
+                        app.accept_conflict_intent(intent, cx)
                     });
                 })
                 .detach();

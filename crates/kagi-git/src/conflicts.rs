@@ -1546,6 +1546,15 @@ pub(crate) fn execute_conflict_save(
     buffer: &ResolutionBuffer,
     path: &Path,
 ) -> Result<SaveOutcome, GitError> {
+    execute_conflict_save_with_progress(repo, buffer, path, |_| {})
+}
+
+pub(crate) fn execute_conflict_save_with_progress(
+    repo: &Repository,
+    buffer: &ResolutionBuffer,
+    path: &Path,
+    mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress),
+) -> Result<SaveOutcome, GitError> {
     // #297/#298: a raw (binary / symlink / gitlink) resolution stages the chosen
     // side's OID directly — no working-tree write, so a conflicted symlink is
     // never dereferenced and a binary is saved byte-for-byte, mode intact.
@@ -1557,6 +1566,7 @@ pub(crate) fn execute_conflict_save(
         index
             .write()
             .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+        progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten);
         return Ok(SaveOutcome {
             path: path.to_path_buf(),
             after_short: short_sha(&raw.oid.to_string()),
@@ -1603,6 +1613,7 @@ pub(crate) fn execute_conflict_save(
     }
     std::fs::write(&abs, text.as_bytes())
         .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
+    progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten);
 
     // 2. Stage the path: index.add_path collapses stage 1/2/3 → stage 0.
     let mut index = repo
@@ -1614,6 +1625,7 @@ pub(crate) fn execute_conflict_save(
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+    progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten);
 
     Ok(SaveOutcome {
         path: path.to_path_buf(),

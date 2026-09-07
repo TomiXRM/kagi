@@ -46,6 +46,9 @@ pub enum ConflictRequest {
         revision: ConflictRevision,
         buffer_revision: BufferRevision,
         draft: ConflictDraft,
+        operation: String,
+        before_hash: String,
+        actions: String,
     },
     ResolveDirFile {
         path: PathBuf,
@@ -109,8 +112,10 @@ pub struct ConflictObservation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictProgress {
     NotStarted,
+    RecoveryCaptured,
     WorktreeWritten,
     IndexWritten,
+    IndexAndWorktreeWritten,
     Verified,
 }
 

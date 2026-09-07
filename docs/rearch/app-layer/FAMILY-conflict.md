@@ -315,7 +315,9 @@ observe し、旧 owner の toast/follow-up を受け取らない。
 ### 5.2 directory/file resolution
 
 - prepare は conflict revision、target path、D/F choice、exact stage OID/mode を束縛する。
-- execute は index-only のまま `ops/dir_file_conflict.rs` の plan/preflight/execute を再利用する。
+- execute は `ops/dir_file_conflict.rs` の plan/preflight/execute を再利用する。実境界は recovery
+  snapshot、index surgery、kept namespace への worktree 再構築の順であり、それぞれ typed progress を
+  report する（D/F の二 namespace は worktree 上で共存できないため index-only ではない）。
 - verify は intended index shape が D/F conflict を置換したことを証明する。
 - common recorded boundary に統一し、現在の Backend persistent oplog と UI non-persistent record の
   split をなくす。

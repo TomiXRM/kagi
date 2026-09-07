@@ -39,7 +39,7 @@ impl Planned {
             Self::Remove { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
             Self::Stash { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
             Self::RemoteStash { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
-            Self::Conflict { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
+            Self::Conflict { plan, .. } => WriteScope::Local(plan.common_dir().clone()),
         }
     }
     pub fn owner_session(&self) -> SessionId {
@@ -173,13 +173,13 @@ fn identity_matches(s: &Sessions, prepared: &Planned) -> Result<(), AdmissionErr
         }
         Planned::Conflict { plan, request, .. } => {
             s.confirm_identity(&request.owner)?;
-            if request.owner.worktree.as_ref() != Some(&plan.worktree) {
+            if request.owner.worktree.as_ref() != Some(plan.worktree()) {
                 return Err(AdmissionError::Identity(
                     "the conflict plan resolved a different worktree than this tab; reopen the repository"
                         .into(),
                 ));
             }
-            if s.conflict_revision(request.owner.session) != Some(plan.request.revision()) {
+            if s.conflict_revision(request.owner.session) != Some(plan.request().revision()) {
                 return Err(AdmissionError::StaleApproval);
             }
         }
@@ -491,7 +491,12 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
         }
         (Planned::RemoteStash { .. }, FamilyEvidence::RemoteStash(_)) => {}
         (Planned::Conflict { request, .. }, FamilyEvidence::Conflict(report)) => {
-            if s.is_attached(request.owner.session) {
+            let matches_in_flight = matches!(
+                s.conflict_states.get(&request.owner.session),
+                Some(ConflictOwnerState::InFlight { operation, revision })
+                    if *operation == id && revision == &report.evidence.before.revision
+            );
+            if s.is_attached(request.owner.session) && matches_in_flight {
                 s.conflict_states.insert(
                     request.owner.session,
                     ConflictOwnerState::Settled(report.evidence.after.clone()),

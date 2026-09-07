@@ -3,6 +3,31 @@
 use super::*;
 
 impl ResolutionBuffer {
+    pub fn conflict_action_summary(&self, path: &Path) -> String {
+        self.hunk_model(path)
+            .map(|model| {
+                model
+                    .hunks()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, hunk)| {
+                        use kagi_domain::resolution::HunkChoice;
+                        let choice = match hunk.choice {
+                            HunkChoice::Unresolved => "unresolved",
+                            HunkChoice::AcceptCurrent => "current",
+                            HunkChoice::AcceptIncoming => "incoming",
+                            HunkChoice::BothCurrentFirst => "both-cf",
+                            HunkChoice::BothIncomingFirst => "both-if",
+                            HunkChoice::Manual(_) => "manual",
+                        };
+                        format!("{index}:{choice}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default()
+    }
+
     /// Freeze one file's current resolution draft without repository I/O.
     pub fn conflict_draft(
         &self,

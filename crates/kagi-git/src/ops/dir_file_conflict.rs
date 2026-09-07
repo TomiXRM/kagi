@@ -185,6 +185,14 @@ pub(crate) fn apply_dir_file_resolution(
     repo: &Repository,
     plan: &DirFilePlan,
 ) -> Result<String, GitError> {
+    apply_dir_file_resolution_with_progress(repo, plan, |_| {})
+}
+
+pub(crate) fn apply_dir_file_resolution_with_progress(
+    repo: &Repository,
+    plan: &DirFilePlan,
+    mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress),
+) -> Result<String, GitError> {
     preflight_dir_file_resolution(repo, plan)?;
 
     let recovery = match crate::ops::create_snapshot(
@@ -195,14 +203,19 @@ pub(crate) fn apply_dir_file_resolution(
             plan.path.display()
         ),
     ) {
-        Ok(s) => format!("snapshot={} commit={}", s.id, s.commit),
+        Ok(s) => {
+            progress(kagi_domain::conflict_family::ConflictProgress::RecoveryCaptured);
+            format!("snapshot={} commit={}", s.id, s.commit)
+        }
         Err(e) => {
             eprintln!("kagi-git: dir-file snapshot failed (non-fatal): {}", e);
             "snapshot=unavailable".to_string()
         }
     };
     apply_to_index(repo, plan)?;
+    progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten);
     reconcile_worktree(repo, plan)?;
+    progress(kagi_domain::conflict_family::ConflictProgress::IndexAndWorktreeWritten);
     Ok(recovery)
 }
 

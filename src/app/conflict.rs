@@ -145,7 +145,7 @@ pub fn prepare_conflict(
         approved.prepared.owner_session(),
         ConflictOwnerState::InFlight {
             operation: id,
-            revision: plan.request.revision().clone(),
+            revision: plan.request().revision().clone(),
         },
     );
     let Planned::Conflict { plan, policy, .. } = approved.prepared else {

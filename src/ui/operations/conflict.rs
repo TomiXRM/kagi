@@ -30,67 +30,70 @@ impl KagiApp {
         self.conflict.as_ref().and_then(|e| e.read(cx).mode.clone())
     }
 
-    /// Save resolution (ADR-0068 / T-CONFLICT-UX-013/014): write the resolved
-    /// Result to the **working tree**, run the marker-residue check (markers
-    /// remaining BLOCK the save), then **stage** the file so its index unmerged
-    /// entries (stage 1/2/3) collapse to stage 0.  Moves the file into Resolved
-    /// Files, re-evaluates the continue gate, autosaves the buffer, and records
-    /// the resolution action to the operation log (T-035).  No commit is created.
-    pub fn conflict_editor_save(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
-        let Some(c) = self.conflict_mode_snapshot(cx) else {
-            return;
-        };
-        let request =
-            match kagi_git::Backend::conflict_save_request(c.revision.clone(), &c.buffer, path) {
-                Ok(request) => request,
-                Err(error) => {
-                    self.push_toast(ToastKind::Error, error.to_string(), cx);
-                    return;
-                }
-            };
-        self.start_conflict_request(request, cx);
-    }
-
-    /// Resolve a directory/file conflict (#320 / ADR-0164) by keeping one side.
-    /// Submits the revision-bound app request. The Backend owns the index write,
-    /// verification and sole durable receipt; apply invalidates this worktree so
-    /// re-detection removes the resolved path, mirroring `conflict_editor_save`.
-    pub fn resolve_dir_file(
+    pub(crate) fn accept_conflict_intent(
         &mut self,
-        path: &std::path::Path,
-        choice: kagi_git::DirFileChoice,
+        intent: conflict_view::FrozenConflictIntent,
         cx: &mut Context<Self>,
     ) {
-        let Some(mode) = self.conflict_mode_snapshot(cx) else {
-            return;
+        let (token, owner, revision) = match &intent {
+            conflict_view::FrozenConflictIntent::Request { token, request } => {
+                (*token, &request.owner, request.request.revision())
+            }
+            conflict_view::FrozenConflictIntent::SaveRefusal {
+                token,
+                owner,
+                revision,
+                ..
+            } => (*token, owner, revision),
         };
-        self.start_conflict_request(
-            kagi_domain::conflict_family::ConflictRequest::ResolveDirFile {
-                path: path.to_path_buf(),
-                revision: mode.revision,
-                choice,
-            },
-            cx,
-        );
-    }
-
-    fn start_conflict_request(
-        &mut self,
-        request: kagi_domain::conflict_family::ConflictRequest,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(owner) = self
+        let current_view = self.conflict.as_ref().map(|view| view.read(cx));
+        let current_token = current_view.as_ref().map(|view| view.intent_token);
+        let current_revision = current_view
+            .as_ref()
+            .and_then(|view| view.mode.as_ref().map(|mode| &mode.revision));
+        let current_owner = self
             .active_session()
-            .and_then(|session| self.app_sessions.attachment(session))
-        else {
+            .and_then(|session| self.app_sessions.attachment(session));
+        if !conflict_intent_matches(
+            current_token,
+            current_revision,
+            current_owner.as_ref(),
+            token,
+            owner,
+            revision,
+        ) {
+            self.push_toast(ToastKind::Error, "stale conflict action was ignored", cx);
             return;
-        };
+        }
+        match intent {
+            conflict_view::FrozenConflictIntent::Request { request, .. } => {
+                self.start_conflict_request(request, cx)
+            }
+            conflict_view::FrozenConflictIntent::SaveRefusal {
+                owner,
+                operation,
+                path,
+                error,
+                ..
+            } => {
+                let policy = crate::ui::blocking_ops::execution_policy();
+                let recording = kagi_git::Backend::record_conflict_save_refusal(
+                    &owner.path,
+                    policy,
+                    &operation,
+                    &path,
+                    &error,
+                );
+                self.present_conflict_recording(owner.session, recording, cx);
+                self.present_app_notice();
+            }
+        }
+    }
+
+    fn start_conflict_request(&mut self, request: app::ConflictAppRequest, cx: &mut Context<Self>) {
         let policy = crate::ui::blocking_ops::execution_policy();
-        let job = app::plan_conflict(
-            &mut self.app_sessions,
-            app::ConflictAppRequest { owner, request },
-            policy,
-        );
+        let owner = request.owner.session;
+        let job = app::plan_conflict(&mut self.app_sessions, request, policy);
         if !app::apply_plan(&mut self.app_sessions, job.run()) {
             return;
         }
@@ -101,15 +104,12 @@ impl KagiApp {
             } => {
                 let error = error.clone();
                 let recording = recording.clone();
-                if let (Some(panel), Some(recording)) = (&self.op_log, recording) {
-                    let entry = recording.entry().clone();
-                    panel.update(cx, |panel, cx| {
-                        panel.push(entry);
-                        cx.notify();
-                    });
+                if let Some(recording) = recording {
+                    self.present_conflict_recording(owner, recording, cx);
+                } else {
+                    self.push_toast(ToastKind::Error, error.clone(), cx);
+                    self.app_notices.push_back(error.clone().into());
                 }
-                self.push_toast(ToastKind::Error, error.clone(), cx);
-                self.app_notices.push_back(error.clone().into());
                 self.present_app_notice();
                 return;
             }
@@ -658,6 +658,80 @@ impl KagiApp {
     }
 }
 
+fn conflict_intent_matches(
+    current_token: Option<u64>,
+    current_revision: Option<&kagi_domain::conflict_family::ConflictRevision>,
+    current_owner: Option<&app::Attachment>,
+    frozen_token: u64,
+    frozen_owner: &app::Attachment,
+    frozen_revision: &kagi_domain::conflict_family::ConflictRevision,
+) -> bool {
+    current_token == Some(frozen_token)
+        && current_revision == Some(frozen_revision)
+        && current_owner == Some(frozen_owner)
+}
+
+#[cfg(test)]
+mod intent_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn owner(tab: u64) -> app::Attachment {
+        app::Attachment {
+            session: app::SessionId {
+                tab: app::TabId(tab),
+                incarnation: tab,
+            },
+            path: PathBuf::from(format!("repo-{tab}")),
+            worktree: None,
+            visit: 0,
+        }
+    }
+
+    #[test]
+    fn old_view_intent_is_rejected_after_next_step_or_tab_switch() {
+        let frozen_owner = owner(1);
+        let other_owner = owner(2);
+        let old_revision =
+            kagi_domain::conflict_family::ConflictRevision::from_fingerprint("old".to_string());
+        let next_revision =
+            kagi_domain::conflict_family::ConflictRevision::from_fingerprint("next".to_string());
+
+        assert!(conflict_intent_matches(
+            Some(7),
+            Some(&old_revision),
+            Some(&frozen_owner),
+            7,
+            &frozen_owner,
+            &old_revision,
+        ));
+        assert!(!conflict_intent_matches(
+            Some(8),
+            Some(&old_revision),
+            Some(&frozen_owner),
+            7,
+            &frozen_owner,
+            &old_revision,
+        ));
+        assert!(!conflict_intent_matches(
+            Some(7),
+            Some(&next_revision),
+            Some(&frozen_owner),
+            7,
+            &frozen_owner,
+            &old_revision,
+        ));
+        assert!(!conflict_intent_matches(
+            Some(7),
+            Some(&old_revision),
+            Some(&other_owner),
+            7,
+            &frozen_owner,
+            &old_revision,
+        ));
+    }
+}
+
 // Conflict-detection outcome types + the detect/apply halves, moved from
 // `src/ui/mod.rs` (T-HOTSPOT-UIMOD-001). Behaviour-preserving relocation.
 /// T-PERF-RENDER-001: the `Send` result of the read-only conflict-detection I/O
@@ -914,8 +988,16 @@ impl KagiApp {
                     None => {
                         let weak_app = cx.weak_entity();
                         let repo_path = self.repo_path.clone().unwrap_or_default();
+                        let Some(owner) = self
+                            .active_session()
+                            .and_then(|session| self.app_sessions.attachment(session))
+                        else {
+                            self.conflict = None;
+                            return;
+                        };
                         let entity = cx.new(|_| {
-                            let mut v = conflict_view::ConflictView::new(weak_app, repo_path);
+                            let mut v =
+                                conflict_view::ConflictView::new(weak_app, repo_path, owner);
                             v.mode = Some(mode);
                             v.editing = editing_path;
                             v

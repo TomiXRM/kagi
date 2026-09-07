@@ -159,6 +159,8 @@ fn save_request(fixture: &Fixture, sessions: &mut Sessions) -> ConflictRequest {
         snapshot.observation.revision,
         &buffer,
         Path::new("file.txt"),
+        snapshot.observation.operation.as_str(),
+        "",
     )
     .unwrap()
 }
@@ -213,12 +215,18 @@ fn changed_conflict_and_changed_buffer_are_refused_without_mutation() {
             path,
             revision,
             buffer_revision,
+            operation,
+            before_hash,
+            actions,
             ..
         } => ConflictRequest::Save {
             path,
             revision,
             buffer_revision,
             draft: ConflictDraft::Text(b"different\n".to_vec()),
+            operation,
+            before_hash,
+            actions,
         },
         _ => unreachable!(),
     };
@@ -408,6 +416,10 @@ fn runtime_index_drift_is_recorded_refusal_and_releases_lease() {
     std::fs::write(fixture.repo.join("base"), "changed after approval\n").unwrap();
     assert!(git(&fixture.repo, &["add", "base"]));
     let completion = job.run();
+    assert_eq!(
+        completion.report().evidence.progress,
+        ConflictProgress::NotStarted
+    );
     assert!(matches!(
         completion.report().recording.entry().outcome,
         OpOutcome::Refused { .. }
@@ -419,6 +431,54 @@ fn runtime_index_drift_is_recorded_refusal_and_releases_lease() {
         .conflict_snapshot()
         .unwrap()
         .is_some());
+}
+
+#[test]
+fn matching_external_bytes_never_forge_this_attempts_progress() {
+    let fixture = Fixture::content();
+    let mut sessions = Sessions::new();
+    let request = save_request(&fixture, &mut sessions);
+    let job = fixture.job(&mut sessions, request);
+    std::fs::write(fixture.repo.join("file.txt"), "main\n").unwrap();
+    assert!(git(&fixture.repo, &["add", "file.txt"]));
+    let completion = job.run();
+    assert_eq!(
+        completion.report().evidence.progress,
+        ConflictProgress::NotStarted
+    );
+    assert!(matches!(
+        completion.report().recording.entry().outcome,
+        OpOutcome::Refused { .. }
+    ));
+    sessions.apply(completion);
+    assert!(!sessions.has_leases());
+}
+
+#[test]
+fn depart_retains_inflight_owner_and_only_matching_completion_settles_it() {
+    let fixture = Fixture::content();
+    let mut sessions = Sessions::new();
+    let request = save_request(&fixture, &mut sessions);
+    let owner = sessions.sessions_for(
+        &Backend::open(&fixture.repo)
+            .unwrap()
+            .write_worktree_id()
+            .unwrap(),
+    )[0];
+    let job = fixture.job(&mut sessions, request);
+    let operation = job.id();
+    sessions.depart(owner);
+    assert!(matches!(
+        sessions.conflict_state(owner),
+        Some(ConflictOwnerState::InFlight { operation: current, .. }) if *current == operation
+    ));
+    sessions.apply(job.run());
+    assert!(matches!(
+        sessions.conflict_state(owner),
+        Some(ConflictOwnerState::Settled(_))
+    ));
+    sessions.detach(owner);
+    assert!(sessions.conflict_state(owner).is_none());
 }
 
 #[test]
@@ -460,7 +520,24 @@ fn same_path_new_conflict_revision_refuses_the_old_save() {
         .expect("second conflict");
     assert_ne!(fresh.observation.revision, old_revision);
     let before = std::fs::read(fixture.repo.join("file.txt")).unwrap();
-    assert!(Backend::plan_recorded_conflict(&fixture.repo, old_request).is_err());
+    let owner = sessions.sessions_for(
+        &Backend::open(&fixture.repo)
+            .unwrap()
+            .write_worktree_id()
+            .unwrap(),
+    )[0];
+    sessions.observe_conflict(owner, Some(fresh.observation));
+    let owner = sessions.attachment(owner).unwrap();
+    let plan = plan_conflict(
+        &mut sessions,
+        ConflictAppRequest {
+            owner,
+            request: old_request,
+        },
+        ExecutionPolicy::human(false),
+    );
+    assert!(apply_plan(&mut sessions, plan.run()));
+    assert!(matches!(sessions.plan_state(), PlanState::Error { .. }));
     assert_eq!(
         std::fs::read(fixture.repo.join("file.txt")).unwrap(),
         before

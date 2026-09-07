@@ -68,7 +68,8 @@ the state kagi sees — the tests drive `repo.merge` directly.)
 - The Continue gate already blocks on any file lacking a resolution; a `DirFile`
   file has none until the user picks a side, which stages it and re-detects it
   away — so it composes with the existing gate for free.
-- No new destructive commands (invariant #3); resolution is index-only.
+- No new destructive commands (invariant #3); the index choice is followed by
+  the existing recovery-backed worktree namespace reconciliation.
 - The focused GUI scenarios exercise the Save and D/F adapters one at a time;
   the window-free application tests own the revision, admission, progress and
   exactly-once receipt matrix.

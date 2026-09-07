@@ -23,14 +23,42 @@ enum ConflictPreparedAction {
 }
 
 #[derive(Clone, Debug)]
+/// Opaque prepared conflict operation. Callers may inspect the frozen identity
+/// through accessors but cannot replace a revision while retaining old bytes.
+///
+/// ```compile_fail
+/// use kagi_git::backend::conflict_ops::ConflictPlan;
+/// fn forge(plan: &mut ConflictPlan) {
+///     plan.request = panic!("a public caller cannot replace frozen request bytes");
+/// }
+/// ```
 pub struct ConflictPlan {
-    pub repo: PathBuf,
-    pub common_dir: kagi_domain::remove::RepoId,
-    pub worktree: kagi_domain::remove::WorktreeId,
-    pub request: ConflictRequest,
-    pub before: ops::StateSummary,
+    repo: PathBuf,
+    common_dir: kagi_domain::remove::RepoId,
+    worktree: kagi_domain::remove::WorktreeId,
+    request: ConflictRequest,
+    before: ops::StateSummary,
+    observed: ConflictObservation,
     op_name: String,
     action: ConflictPreparedAction,
+}
+
+impl ConflictPlan {
+    pub fn repo(&self) -> &Path {
+        &self.repo
+    }
+
+    pub fn common_dir(&self) -> &kagi_domain::remove::RepoId {
+        &self.common_dir
+    }
+
+    pub fn worktree(&self) -> &kagi_domain::remove::WorktreeId {
+        &self.worktree
+    }
+
+    pub fn request(&self) -> &ConflictRequest {
+        &self.request
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +100,15 @@ fn buffer_revision(path: &Path, draft: &ConflictDraft) -> BufferRevision {
 
 fn revision_label(revision: &ConflictRevision) -> String {
     revision.as_str().chars().take(12).collect()
+}
+
+fn short_text_hash(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>, GitError> {
@@ -251,6 +288,30 @@ fn verify_dir_file(repo: &Repository, plan: &ops::DirFilePlan) -> Result<(), Git
 }
 
 impl Backend {
+    pub fn record_conflict_save_refusal(
+        repo: &Path,
+        policy: ExecutionPolicy,
+        operation: &str,
+        path: &Path,
+        error: &str,
+    ) -> recording::Recording {
+        recording::finalize(
+            crate::oplog::OpLogEntry::new(
+                format!("conflict-save:{operation}"),
+                repo.display().to_string(),
+                ops::StateSummary {
+                    head: format!("session={operation} file={}", path.display()),
+                    dirty: format!("hunks=[] before={}", short_text_hash(b"")),
+                },
+                crate::oplog::OpOutcome::Refused {
+                    blockers: vec![error.into()],
+                },
+            )
+            .with_actor(policy.actor)
+            .with_worktree(Some(repo.display().to_string())),
+        )
+    }
+
     pub fn record_conflict_refusal(
         path: &Path,
         policy: ExecutionPolicy,
@@ -312,6 +373,8 @@ impl Backend {
         revision: ConflictRevision,
         buffer: &ResolutionBuffer,
         path: &Path,
+        operation: &str,
+        before_text: &str,
     ) -> Result<ConflictRequest, GitError> {
         let draft = buffer.conflict_draft(path).ok_or_else(|| {
             GitError::Other(format!("no resolution draft for {}", path.display()))
@@ -321,6 +384,9 @@ impl Backend {
             revision,
             buffer_revision: buffer_revision(path, &draft),
             draft,
+            operation: operation.to_string(),
+            before_hash: short_text_hash(before_text.as_bytes()),
+            actions: buffer.conflict_action_summary(path),
         })
     }
 
@@ -344,8 +410,14 @@ impl Backend {
                 path,
                 buffer_revision: expected,
                 draft,
+                operation,
                 ..
             } => {
+                if operation != &snapshot.observation.operation {
+                    return Err(GitError::Other(
+                        "conflict operation changed since it was observed".into(),
+                    ));
+                }
                 if buffer_revision(path, draft) != *expected {
                     return Err(GitError::Other(
                         "resolution buffer changed since it was prepared".into(),
@@ -384,20 +456,34 @@ impl Backend {
                 )?)
             }
         };
-        let op_name = match request.action() {
-            kagi_domain::conflict_family::ConflictAction::Save => {
-                format!("conflict-save:{}", snapshot.observation.operation)
+        let op_name = match &request {
+            ConflictRequest::Save { operation, .. } => format!("conflict-save:{operation}"),
+            ConflictRequest::ResolveDirFile { choice, .. } => {
+                format!("conflict-dir-file:{}", choice.slug())
             }
-            action => action.name(),
+        };
+        let before = match &request {
+            ConflictRequest::Save {
+                path,
+                operation,
+                before_hash,
+                actions,
+                ..
+            } => ops::StateSummary {
+                head: format!("session={operation} file={}", path.display()),
+                dirty: format!("hunks=[{actions}] before={before_hash}"),
+            },
+            ConflictRequest::ResolveDirFile { path, choice, .. } => ops::StateSummary {
+                head: format!("dir-file conflict {}", path.display()),
+                dirty: format!("choice={}", choice.slug()),
+            },
         };
         Ok(ConflictPlan {
             repo,
             common_dir: worktree.repo.clone(),
             worktree,
-            before: ops::StateSummary {
-                head: format!("conflict revision {}", revision_label(request.revision())),
-                dirty: format!("{} {}", request.action().name(), request.path().display()),
-            },
+            before,
+            observed: snapshot.observation,
             op_name,
             request,
             action,
@@ -445,15 +531,7 @@ impl Backend {
                 };
             }
         };
-        let before = observation(&backend.repo)
-            .ok()
-            .flatten()
-            .map(|snapshot| snapshot.observation)
-            .unwrap_or_else(|| ConflictObservation {
-                revision: plan.request.revision().clone(),
-                operation: "missing".into(),
-                paths: vec![],
-            });
+        let before = plan.observed.clone();
         let result = (|| -> Result<(), GitError> {
             backend.require_trust()?;
             if backend.write_worktree_id()? != plan.worktree
@@ -496,13 +574,20 @@ impl Backend {
                         ));
                     }
                     let buffer = ResolutionBuffer::from_conflict_draft(&plan.repo, path, draft)?;
-                    conflicts::execute_conflict_save(&backend.repo, &buffer, path)?;
-                    progress = ConflictProgress::IndexWritten;
+                    conflicts::execute_conflict_save_with_progress(
+                        &backend.repo,
+                        &buffer,
+                        path,
+                        |value| progress = value,
+                    )?;
                     verify_save(&backend.repo, path, draft, *expected_mode)?;
                 }
                 ConflictPreparedAction::DirFile(dir_file) => {
-                    recovery = Some(ops::apply_dir_file_resolution(&backend.repo, dir_file)?);
-                    progress = ConflictProgress::IndexWritten;
+                    recovery = Some(ops::apply_dir_file_resolution_with_progress(
+                        &backend.repo,
+                        dir_file,
+                        |value| progress = value,
+                    )?);
                     verify_dir_file(&backend.repo, dir_file)?;
                 }
             }
@@ -516,52 +601,28 @@ impl Backend {
                 .flatten()
                 .map(|snapshot| snapshot.observation);
         }
-        if result.is_err() && progress == ConflictProgress::NotStarted {
-            progress = match &plan.action {
-                ConflictPreparedAction::Save { path, draft, .. } => match draft {
-                    ConflictDraft::Text(bytes)
-                        if backend.repo.workdir().is_some_and(|root| {
-                            std::fs::read(root.join(path)).ok().as_deref() == Some(bytes.as_slice())
-                        }) =>
-                    {
-                        ConflictProgress::WorktreeWritten
-                    }
-                    ConflictDraft::Raw { oid, mode } => backend
-                        .repo
-                        .index()
-                        .ok()
-                        .and_then(|index| {
-                            index.get_path(path, 0).map(|entry| (entry.id, entry.mode))
-                        })
-                        .filter(|(actual_oid, actual_mode)| {
-                            actual_oid.to_string() == *oid && *actual_mode == *mode
-                        })
-                        .map(|_| ConflictProgress::IndexWritten)
-                        .unwrap_or(ConflictProgress::NotStarted),
-                    ConflictDraft::Text(_) => ConflictProgress::NotStarted,
-                },
-                ConflictPreparedAction::DirFile(dir_file)
-                    if verify_dir_file(&backend.repo, dir_file).is_ok() =>
-                {
-                    ConflictProgress::IndexWritten
-                }
-                ConflictPreparedAction::DirFile(_) => ConflictProgress::NotStarted,
-            };
-        }
         let detail = result
             .as_ref()
             .err()
             .map(ToString::to_string)
             .unwrap_or_else(|| recovery.clone().unwrap_or_else(|| "verified".into()));
-        let observed_after = ops::StateSummary {
-            head: after
-                .as_ref()
-                .map(|value| format!("conflict revision {}", revision_label(&value.revision)))
-                .unwrap_or_else(|| "conflict cleared".into()),
-            dirty: recovery
-                .as_ref()
-                .map(|value| format!("progress={progress:?}; {value}"))
-                .unwrap_or_else(|| format!("progress={progress:?}")),
+        let observed_after = match &plan.request {
+            ConflictRequest::Save {
+                draft, before_hash, ..
+            } => ops::StateSummary {
+                head: format!(
+                    "staged (stage 0) before={before_hash} after={}",
+                    match draft {
+                        ConflictDraft::Text(bytes) => short_text_hash(bytes),
+                        ConflictDraft::Raw { oid, .. } => oid.chars().take(16).collect(),
+                    }
+                ),
+                dirty: "clean".into(),
+            },
+            ConflictRequest::ResolveDirFile { path, choice, .. } => ops::StateSummary {
+                head: format!("kept {} side of {}", choice.slug(), path.display()),
+                dirty: "staged (stage 0)".into(),
+            },
         };
         let outcome = match &result {
             Ok(()) => crate::oplog::OpOutcome::Success {

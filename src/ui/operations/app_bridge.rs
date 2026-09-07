@@ -226,7 +226,7 @@ impl KagiApp {
                 },
             ),
             app::Planned::RemoteStash { .. } => ("remote-stash-drop", Msg::BusyStashDrop),
-            app::Planned::Conflict { plan, .. } => match plan.request.action() {
+            app::Planned::Conflict { plan, .. } => match plan.request().action() {
                 kagi_domain::conflict_family::ConflictAction::Save => {
                     ("conflict-save", Msg::OpInProgress)
                 }
@@ -475,7 +475,16 @@ impl KagiApp {
         report: kagi_git::backend::conflict_ops::ConflictReport,
         cx: &mut Context<Self>,
     ) {
-        let entry = report.recording.entry().clone();
+        self.present_conflict_recording(attachment.session, report.recording, cx);
+    }
+
+    pub(crate) fn present_conflict_recording(
+        &mut self,
+        owner: app::SessionId,
+        recording: kagi_git::backend::recording::Recording,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = recording.entry().clone();
         let success = matches!(entry.outcome, OpOutcome::Success { .. });
         let summary = oplog_panel::outcome_summary(&entry.outcome);
         if let Some(panel) = &self.op_log {
@@ -497,7 +506,7 @@ impl KagiApp {
             },
             cx,
         );
-        if self.active_session() == Some(attachment.session) {
+        if self.active_session() == Some(owner) {
             let footer = match &entry.outcome {
                 OpOutcome::Success { after } => {
                     format!("{}: {} → {}", entry.op, entry.before.head, after.head)
@@ -527,7 +536,7 @@ impl KagiApp {
             self.app_notices
                 .push_back(format!("{}: {}", entry.repo, summary).into());
         }
-        if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = recording {
             self.app_notices
                 .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
         }

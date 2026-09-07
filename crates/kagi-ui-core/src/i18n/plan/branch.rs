@@ -27,6 +27,9 @@ pub fn note_ja(note: &BranchNote) -> String {
             "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`",
             name
         ),
+        BranchNote::DeleteBranchCheckedOut { name, path } => format!(
+            "ブランチ '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別のブランチへ切り替えてください。", name, path
+        ),
         BranchNote::DeleteBranchInLockedWorktree { name, path } => format!(
             "ロックされた worktree で checkout 中です。先にロックを解除してください。\nbranch `{}` / worktree `{}`",
             name, path

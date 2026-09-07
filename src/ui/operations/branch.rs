@@ -1224,28 +1224,49 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => {
-                klog!("open_delete_branch_modal: no repo_path set");
-                return;
-            }
+        if self.repo_path.is_none() {
+            klog!("open_delete_branch_modal: no repo_path set");
+            return;
+        }
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+            .filter(|owner| owner.worktree.is_some())
+        else {
+            return;
         };
+        let generation = self.switch_generation;
+        let repo_path = owner.path.clone();
         self.busy_op = Some("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
         klog!("async: delete-branch plan started for {}", branch_name);
 
         let bg_path = repo_path.clone();
         let bg_branch = branch_name.clone();
+        let expected_worktree = owner.worktree.clone();
         let task = cx.background_spawn(async move {
             let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| format!("repo open error: {e}"))?;
+            if repo.write_worktree_id().ok() != expected_worktree {
+                return Err("worktree identity changed; reopen the repository".into());
+            }
             repo.plan_delete_branch(&bg_branch)
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
+                // A delayed proposal must not touch the destination tab, even
+                // when A and B have identical branch names and commit OIDs.
+                if app.switch_generation != generation
+                    || app
+                        .active_session()
+                        .and_then(|id| app.app_sessions.attachment(id))
+                        .as_ref()
+                        != Some(&owner)
+                {
+                    return;
+                }
                 app.busy_op = None;
                 match result {
                     Ok(plan) => {
@@ -1256,6 +1277,7 @@ impl KagiApp {
                         );
                         app.status_footer = FooterStatus::Idle(SharedString::from(""));
                         app.set_delete_branch_modal(DeleteBranchModal {
+                            owner,
                             confirm_armed: false,
                             branch_name,
                             plan: std::sync::Arc::new(plan),
@@ -1292,10 +1314,18 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
+        if self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+            .as_ref()
+            != Some(&modal.owner)
+        {
+            self.clear_delete_branch_modal();
+            cx.notify();
+            return;
+        }
+        let owner = modal.owner.clone();
+        let repo_path = owner.path.clone();
         if !modal.plan.blockers.is_empty() {
             eprintln!(
                 "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
@@ -1330,12 +1360,12 @@ impl KagiApp {
 
         let plan = modal.plan.clone();
         let branch_name = modal.branch_name.clone();
-        let bg_path = repo_path.clone();
+        let bg_owner = owner.clone();
         let bg_plan = plan.clone();
         let bg_branch = branch_name.clone();
         let task =
             cx.background_spawn(
-                async move { delete_branch_blocking(&bg_path, &bg_plan, &bg_branch) },
+                async move { delete_branch_blocking(&bg_owner, &bg_plan, &bg_branch) },
             );
         let notice_path = repo_path.clone();
         self.finish_op_on_main_settled(
@@ -1349,6 +1379,23 @@ impl KagiApp {
             move |app, result, cx| {
                 let result = match result {
                     Ok(report) => {
+                        if report.result.is_ok() {
+                            klog!("async: delete-branch finished");
+                            // Worktree-removal plans (clean worktree pinned the branch)
+                            // log the cleanup so the headless harness can assert it.
+                            // ADR-0129 F-3: matched via the typed note variant, not a
+                            // substring search over the rendered EN text.
+                            if plan.warnings.iter().any(|w| {
+                                matches!(
+                        w,
+                        kagi_git::ops::PlanNote::Branch(
+                            kagi_domain::plan_note::BranchNote::DeleteRemovesPinningWorktree { .. }
+                        )
+                    )
+                            }) {
+                                klog!("executed: delete-branch removed pinning worktree");
+                            }
+                        }
                         if report.result.is_ok()
                             && matches!(
                                 report.recording,
@@ -1385,21 +1432,6 @@ impl KagiApp {
                 };
                 match result {
                     Ok((after, recovery_line)) => {
-                        klog!("async: delete-branch finished");
-                        // Worktree-removal plans (clean worktree pinned the branch)
-                        // log the cleanup so the headless harness can assert it.
-                        // ADR-0129 F-3: matched via the typed note variant, not a
-                        // substring search over the rendered EN text.
-                        if plan.warnings.iter().any(|w| {
-                            matches!(
-                        w,
-                        kagi_git::ops::PlanNote::Branch(
-                            kagi_domain::plan_note::BranchNote::DeleteRemovesPinningWorktree { .. }
-                        )
-                    )
-                        }) {
-                            klog!("executed: delete-branch removed pinning worktree");
-                        }
                         app.record_op(
                             "delete-branch",
                             plan.current.clone(),
@@ -1425,6 +1457,7 @@ impl KagiApp {
                             cx,
                         );
                         app.set_delete_branch_modal(DeleteBranchModal {
+                            owner,
                             confirm_armed: false,
                             branch_name: branch_name.clone(),
                             plan: plan.clone(),

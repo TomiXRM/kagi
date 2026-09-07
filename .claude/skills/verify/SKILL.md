@@ -304,10 +304,17 @@ stop before deleting the worktree.
 
 G in `tests/delete_branch_test.rs` covers the actual modal arm transition, merged
 single confirmation, full-tip preflight refusal, unique reachability counts,
-receipt-backed recovery after real GC, and commit-root retirement. Tier A's
+receipt-backed recovery after real GC, and commit-root retirement. It also covers
+main/linked checked-out refusals (including clean worktrees and checkout after
+planning), symbolic alias chains versus direct roots, and reflog removal before
+branch name reuse. Tier A's
 `unmerged_branch_delete_armed` scenario drives Enter and the measured button:
 first confirmation keeps the branch/HEAD and records nothing; second deletes and
-records its retained tip. Merged deletion stays one-stage. PM runs only
+records its retained tip. Merged deletion stays one-stage. The same scenario
+starts a plan on A, switches to B before completion, and asserts that B receives
+no delete modal or mutation. It also holds the oplog sidecar lock to force an
+append failure after deletion: expect a retained tip, owner notice and Partial
+entry, no retry modal, and the existing `async: delete-branch finished` log. PM runs only
 `KAGI_GUI_E2E_ONLY=unmerged_branch_delete_armed`, with the usual isolated log directory.
 When execution is prohibited, build it with `--features gui-e2e --no-run` only.
 For M, compare EN/JA warning counts and armed labels, cancel/reopen to reset the

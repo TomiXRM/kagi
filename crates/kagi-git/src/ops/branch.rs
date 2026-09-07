@@ -491,15 +491,13 @@ pub fn worktree_checkout_of(repo: &Repository, name: &str) -> Option<WorktreeChe
 /// - The named branch is the currently checked-out branch (HEAD is attached to it).
 /// - HEAD is detached and the branch tip is HEAD (prevents deleting the only
 ///   ref pointing at the current commit).
-/// - A linked worktree has the branch checked out and is dirty or locked.
+/// - Any main or linked worktree has the branch checked out.
 ///
 /// # Warning conditions
 /// - Unmerged branches require two confirmations and a retained tip (#584).
 ///
 /// - The branch has an upstream configured: the remote branch is NOT deleted
 ///   by this operation.
-/// - A CLEAN linked worktree has the branch checked out: the plan removes the
-///   worktree first, then deletes the branch (re-validated at execute time).
 ///
 /// # Errors
 ///
@@ -604,9 +602,15 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         }
     }
 
-    // Worktree-checkout check (user report: AI-agent worktrees linger and pin
-    // their branch; git's raw refusal was opaque). Dirty or locked worktrees
-    // BLOCK — a clean one becomes part of the plan: remove it, then delete.
+    // Never remove a checked-out branch, even from a clean worktree.
+    let repositories = super::branch_delete_safety::repositories(repo)?;
+    if let Some(path) = super::branch_delete_safety::checked_out_at(&repositories, name)? {
+        blockers.push(PlanNote::Branch(BranchNote::DeleteBranchCheckedOut {
+            name: name.to_string(),
+            path: path.display().to_string(),
+        }));
+    }
+    // Keep the existing dirty/locked diagnostic hints as additional blockers.
     if let Some(wt) = worktree_checkout_of(repo, name) {
         if wt.locked {
             blockers.push(PlanNote::Branch(BranchNote::DeleteBranchInLockedWorktree {
@@ -615,11 +619,6 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
             }));
         } else if wt.dirty {
             blockers.push(PlanNote::Branch(BranchNote::DeleteBranchInDirtyWorktree {
-                name: name.to_string(),
-                path: wt.path.display().to_string(),
-            }));
-        } else {
-            warnings.push(PlanNote::Branch(BranchNote::DeleteRemovesPinningWorktree {
                 name: name.to_string(),
                 path: wt.path.display().to_string(),
             }));
@@ -741,7 +740,7 @@ fn delete_unreachable_commits(
         .map_err(|e| GitError::Other(e.to_string()))?
     {
         let reference = reference.map_err(|e| GitError::Other(e.to_string()))?;
-        if reference.name().ok() == Some(deleting.as_str()) {
+        if super::branch_delete_safety::depends_on(repo, reference.clone(), &deleting)? {
             continue;
         }
         if let Ok(commit) = reference.peel_to_commit() {
@@ -768,12 +767,12 @@ fn delete_unreachable_commits(
 /// # Design (ADR-0014)
 ///
 /// Locks and removes only the approved local ref after retaining its commit.
-/// HEAD/index/remotes are unchanged; a planned clean pinning worktree is removed.
+/// HEAD/index/remotes and every worktree remain unchanged.
 ///
 /// Steps:
 /// 1. [`preflight_check`] — verify HEAD has not moved since planning.
 /// 2. Lock the branch, compare its full tip, and create the recovery ref.
-/// 3. Remove a clean pinning worktree if needed, then commit the ref deletion.
+/// 3. Refuse checked-out branches, clean the reflog, and commit ref deletion.
 /// 4. Verify the branch is gone (`find_branch` now returns `Err`).
 ///
 /// # Errors
@@ -789,14 +788,21 @@ pub(crate) fn execute_delete_branch(
     name: &str,
     backup_refs: &mut Vec<String>,
 ) -> Result<crate::OperationOutcome, GitError> {
-    // Freeze the HEAD attachment as well as the branch tip: a concurrent
-    // checkout must not turn the deletion target into the current branch.
+    // Lock every existing HEAD, not just the caller's: a concurrent checkout
+    // in the main or another linked worktree must fail while deleting the ref.
+    let repositories = super::branch_delete_safety::repositories(repo)?;
+    let mut head_locks = Vec::new();
+    for worktree in &repositories {
+        let mut lock = worktree
+            .transaction()
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        lock.lock_ref("HEAD")
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        head_locks.push(lock);
+    }
     let branch_ref = format!("refs/heads/{name}");
     let mut transaction = repo
         .transaction()
-        .map_err(|e| GitError::Other(e.to_string()))?;
-    transaction
-        .lock_ref("HEAD")
         .map_err(|e| GitError::Other(e.to_string()))?;
     transaction
         .lock_ref(&branch_ref)
@@ -823,46 +829,30 @@ pub(crate) fn execute_delete_branch(
             "branch tip changed after planning; please re-plan".into(),
         ));
     }
+    if let Some(path) = super::branch_delete_safety::checked_out_at(&repositories, name)? {
+        return Err(GitError::Other(format!(
+            "branch '{name}' is checked out in worktree '{}'",
+            path.display()
+        )));
+    }
+    let latest = super::branch_delete_safety::repositories(repo)?;
+    if !repositories
+        .iter()
+        .map(|r| r.path())
+        .eq(latest.iter().map(|r| r.path()))
+    {
+        return Err(GitError::Other(
+            "worktree registrations changed; please re-plan".into(),
+        ));
+    }
     let reference = super::backup::retain_object(repo, &super::backup::operation_id(), 0, tip)?;
     backup_refs.push(reference.clone());
 
-    // ── 2.2 Remove the pinning worktree, if the plan promised to ─────────
-    // Re-detect at execute time (the preflight spirit: the world may have
-    // changed since planning). A worktree that turned dirty or locked in the
-    // meantime REFUSES instead of destroying work.
-    if let Some(wt) = worktree_checkout_of(repo, name) {
-        if wt.locked {
-            return Err(GitError::Other(format!(
-                "worktree '{}' is locked — not removing it",
-                wt.path.display()
-            )));
-        }
-        if wt.dirty {
-            return Err(GitError::Other(format!(
-                "worktree '{}' has uncommitted changes — not removing it",
-                wt.path.display()
-            )));
-        }
-        // Clean: delete the working directory, then prune the admin entry.
-        // Routed through the containment-checked delete (issue #340) — this
-        // replaces the codebase's last unbounded `remove_dir_all` (#294): it
-        // refuses the main worktree, any repo-overlapping path, or a symlink.
-        let main_workdir = repo
-            .workdir()
-            .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
-            .to_path_buf();
-        super::worktree_lifecycle::remove_worktree_dir_checked(&main_workdir, &wt.path)?;
-        let wt_handle = repo
-            .find_worktree(&wt.name)
-            .map_err(|e| GitError::Other(format!("worktree lookup failed: {}", e.message())))?;
-        let mut opts = git2::WorktreePruneOptions::new();
-        opts.valid(true);
-        // NOTE: no [kagi] line here — kagi-git emits none (contract lines are
-        // the UI layer's job via klog!); the delete-branch UI logs the removal.
-        wt_handle
-            .prune(Some(&mut opts))
-            .map_err(|e| GitError::Other(format!("worktree prune failed: {}", e.message())))?;
-    }
+    // libgit2 transaction.remove bypasses Branch::delete's reflog cleanup.
+    // Do this while the branch is still locked so a recreated ref cannot lose
+    // its new reflog. On failure keep the original branch and recovery root.
+    repo.reflog_delete(&branch_ref)
+        .map_err(|e| GitError::Other(e.to_string()))?;
 
     // ── 2.5 Pre-clean the branch's config section ─────────────
     pre_clean_branch_config(repo, name);

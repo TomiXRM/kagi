@@ -497,41 +497,27 @@ fn test_delete_branch_with_duplicated_gh_config_keys() {
 // their branch and git's raw refusal was opaque)
 // ────────────────────────────────────────────────────────────
 
-/// A CLEAN linked worktree pinning the branch: the plan carries a warning
-/// (remove-then-delete), and execute removes the worktree and the branch.
+/// Clean linked worktrees also retain their checked-out branch and directory.
 #[test]
-fn clean_worktree_is_removed_then_branch_deleted() {
+fn clean_worktree_blocks_delete() {
     if !crate::test_support::run_isolated() {
         return;
     }
-    let repo = setup_repo();
-    let wt_path = repo.path.join("wt-merged");
+    let fixture = setup_repo();
+    let wt_path = fixture.path.join("wt-merged");
     git(
-        &repo.path,
+        &fixture.path,
         &["worktree", "add", wt_path.to_str().unwrap(), "merged"],
     );
-
-    let r = git2::Repository::open(&repo.path).unwrap();
-    let plan = plan_delete_branch(&r, "merged").unwrap();
-    assert!(
-        plan.blockers.is_empty(),
-        "clean worktree must not block: {:?}",
-        plan.blockers
-    );
-    assert!(
-        plan.warnings
-            .iter()
-            .any(|w| w.message_en().contains("worktree")),
-        "plan must warn about the worktree removal: {:?}",
-        plan.warnings
-    );
-
-    execute_delete_branch(&r, &plan, "merged").unwrap();
-    assert!(!wt_path.exists(), "worktree dir must be removed");
-    assert!(
-        r.find_branch("merged", git2::BranchType::Local).is_err(),
-        "branch must be deleted"
-    );
+    let repo = Repository::open(&fixture.path).unwrap();
+    let plan = plan_delete_branch(&repo, "merged").unwrap();
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        PlanNote::Branch(BranchNote::DeleteBranchCheckedOut { .. })
+    )));
+    assert!(execute_delete_branch(&repo, &plan, "merged").is_err());
+    assert!(wt_path.exists());
+    assert!(repo.find_branch("merged", git2::BranchType::Local).is_ok());
 }
 
 /// A DIRTY linked worktree blocks the plan with a readable message and
@@ -805,6 +791,7 @@ fn unmerged_armed_delete_receipt_gc_restore_and_retirement() {
         PlanNote::Branch(BranchNote::DeleteUnmerged { commits: 1, .. })
     )));
     let mut modal = kagi::ui::modals::DeleteBranchModal {
+        owner: delete_owner(&fixture.path),
         branch_name: "unmerged".into(),
         plan: std::sync::Arc::new(plan),
         error: None,
@@ -888,6 +875,7 @@ fn merged_branch_confirmation_does_not_arm() {
     let fixture = setup_repo();
     let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
     let mut modal = kagi::ui::modals::DeleteBranchModal {
+        owner: delete_owner(&fixture.path),
         branch_name: "merged".into(),
         plan: std::sync::Arc::new(backend.plan_delete_branch("merged").unwrap()),
         error: None,
@@ -1016,4 +1004,138 @@ fn failed_recording_keeps_branch_tip_recovery_root() {
         backend.read_backup(&entry.backup_refs[0]).is_err(),
         "blob reader must not reinterpret a commit root"
     );
+}
+
+fn delete_owner(path: &Path) -> kagi::app::Attachment {
+    let mut sessions = kagi::app::Sessions::default();
+    let session = sessions.attach(path.to_path_buf());
+    sessions.attachment(session).unwrap()
+}
+
+#[test]
+fn linked_worktree_cannot_delete_main_checked_out_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let linked = fixture.path.join("linked");
+    git(
+        &fixture.path,
+        &["worktree", "add", linked.to_str().unwrap(), "merged"],
+    );
+    let repo = Repository::open(&linked).unwrap();
+    let head = head_sha(&fixture.path);
+    let plan = plan_delete_branch(&repo, "main").unwrap();
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        PlanNote::Branch(BranchNote::DeleteBranchCheckedOut { .. })
+    )));
+    assert!(execute_delete_branch(&repo, &plan, "main").is_err());
+    assert_eq!(head_sha(&fixture.path), head);
+    assert_eq!(
+        repo.find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap()
+            .to_string(),
+        head
+    );
+}
+
+#[test]
+fn checkout_in_main_after_linked_plan_refuses_deletion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let linked = fixture.path.join("linked");
+    git(
+        &fixture.path,
+        &["worktree", "add", linked.to_str().unwrap(), "merged"],
+    );
+    let repo = Repository::open(&linked).unwrap();
+    let plan = plan_delete_branch(&repo, "unmerged").unwrap();
+    assert!(plan.blockers.is_empty());
+    git(&fixture.path, &["checkout", "-q", "unmerged"]);
+    let head = head_sha(&fixture.path);
+    assert!(execute_delete_branch(&repo, &plan, "unmerged").is_err());
+    assert_eq!(head_sha(&fixture.path), head);
+    assert!(repo.find_reference("refs/heads/unmerged").is_ok());
+}
+
+#[test]
+fn symbolic_alias_chain_is_not_an_independent_reachability_root() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    repo.reference_symbolic("refs/heads/alias", "refs/heads/unmerged", false, "alias")
+        .unwrap();
+    repo.reference_symbolic(
+        "refs/heads/alias-chain",
+        "refs/heads/alias",
+        false,
+        "alias chain",
+    )
+    .unwrap();
+    let plan = plan_delete_branch(&repo, "unmerged").unwrap();
+    assert!(plan.warnings.iter().any(|note| matches!(
+        note,
+        PlanNote::Branch(BranchNote::DeleteUnmerged { commits: 1, .. })
+    )));
+    execute_delete_branch(&repo, &plan, "unmerged").unwrap();
+    assert!(repo
+        .find_reference("refs/heads/alias-chain")
+        .unwrap()
+        .resolve()
+        .is_err());
+}
+
+#[test]
+fn deleting_branch_removes_its_reflog_before_name_reuse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let log = repo.path().join("logs/refs/heads/merged");
+    assert!(log.exists());
+    let old = std::fs::read_to_string(&log).unwrap();
+    let plan = plan_delete_branch(&repo, "merged").unwrap();
+    execute_delete_branch(&repo, &plan, "merged").unwrap();
+    assert!(!log.exists());
+    git(&fixture.path, &["branch", "merged", "HEAD"]);
+    let new = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(new.lines().count(), 1);
+    assert_ne!(old, new);
+}
+
+#[test]
+fn main_head_lock_blocks_deletion_from_linked_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let linked = fixture.path.join("linked");
+    git(
+        &fixture.path,
+        &["worktree", "add", linked.to_str().unwrap(), "merged"],
+    );
+    let mut backend = kagi_git::Backend::open(&linked).unwrap();
+    let plan = backend.plan_delete_branch("unmerged").unwrap();
+    assert!(plan.blockers.is_empty());
+    // Model another process changing the main HEAD while the caller is linked.
+    let main = Repository::open(&fixture.path).unwrap();
+    let mut checkout = main.transaction().unwrap();
+    checkout.lock_ref("HEAD").unwrap();
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &plan,
+    );
+    assert!(report.result.is_err());
+    assert!(report.recording.entry().backup_refs.is_empty());
+    assert!(main.find_reference("refs/heads/unmerged").is_ok());
 }

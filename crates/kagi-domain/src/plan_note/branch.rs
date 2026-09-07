@@ -26,16 +26,15 @@ pub enum BranchNote {
     RenameRemoteNotRenamed,
     /// blocker (`plan_delete_branch`) — the branch is the current HEAD branch.
     DeleteCurrentBranch { name: String },
-    /// blocker (`plan_delete_branch`) — a LOCKED linked worktree has the
-    /// branch checked out.
+    /// blocker — any main/linked worktree has the branch checked out.
+    DeleteBranchCheckedOut { name: String, path: String },
+    /// blocker — a locked linked worktree has the branch checked out.
     DeleteBranchInLockedWorktree { name: String, path: String },
     /// blocker (`plan_delete_branch`) — a dirty linked worktree has the branch
     /// checked out.
     DeleteBranchInDirtyWorktree { name: String, path: String },
-    /// warning (`plan_delete_branch`) — a CLEAN linked worktree has the branch
-    /// checked out; it will be removed, then the branch deleted (ADR-0129 F-3:
-    /// the UI matches on this variant rather than substring-searching the
-    /// rendered warning text).
+    /// Legacy receipt note (ADR-0129 F-3). New delete plans refuse every
+    /// checked-out branch; preserve this variant for historical data/logs.
     DeleteRemovesPinningWorktree { name: String, path: String },
     /// blocker (`plan_delete_branch`) — HEAD is detached at the branch's tip.
     DeleteDetachedAtTip { name: String },
@@ -72,6 +71,9 @@ impl BranchNote {
             BranchNote::DeleteCurrentBranch { name } => format!(
                 "Branch '{}' is the currently checked-out branch. Checkout a different branch before deleting this one.",
                 name
+            ),
+            BranchNote::DeleteBranchCheckedOut { name, path } => format!(
+                "Branch '{}' is checked out in worktree '{}'. Switch that worktree to another branch before deleting.", name, path
             ),
             BranchNote::DeleteBranchInLockedWorktree { name, path } => format!(
                 "Branch '{}' is checked out in LOCKED worktree '{}'. Unlock it first (right-click the worktree in the sidebar \u{2192} Unlock worktree) before deleting the branch.",

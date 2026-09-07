@@ -414,6 +414,8 @@ pub struct RevertModal {
 /// Recovery retains the tip under a mandatory backup ref.
 #[derive(Clone)]
 pub struct DeleteBranchModal {
+    /// Frozen plan owner, including its departure revision.
+    pub owner: crate::app::Attachment,
     /// First confirmation arms only unmerged deletion; errors/reopening reset it.
     pub confirm_armed: bool,
     /// The local branch name to delete.

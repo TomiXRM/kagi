@@ -489,11 +489,15 @@ pub(crate) fn amend_blocking(
 /// Blocking part of delete-branch (preflight → ref delete). Lightweight, but
 /// kept on the background path for consistency with the other confirm flows.
 pub(crate) fn delete_branch_blocking(
-    repo_path: &std::path::Path,
+    owner: &crate::app::Attachment,
     plan: &OperationPlan,
     branch_name: &str,
 ) -> Result<kagi_git::backend::recording::RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo = open_backend(&owner.path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    if repo.write_worktree_id().ok().as_ref() != owner.worktree.as_ref() || owner.worktree.is_none()
+    {
+        return Err("worktree identity changed; reopen the repository".into());
+    }
     let op = kagi_git::Operation::DeleteBranch {
         name: branch_name.to_string(),
     };

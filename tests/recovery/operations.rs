@@ -905,6 +905,8 @@ pub fn scenario_create_branch_replan_error(cx: &mut VisualTestAppContext) {
 
 /// #584: both real confirm inputs share the unmerged arm transition.
 pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
+    delayed_delete_plan_stays_with_its_owner(cx);
+    delete_recording_failure_does_not_offer_retry(cx);
     for input in ["enter", "button"] {
         let fixture = build_fixture();
         let repo = fixture.path();
@@ -989,4 +991,85 @@ fn confirm_branch_delete(
         cx.run_until_parked();
         cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
     }
+}
+
+fn delayed_delete_plan_stays_with_its_owner(cx: &mut VisualTestAppContext) {
+    for revisit in [false, true] {
+        let fixture = build_fixture();
+        let other = tempfile::tempdir().unwrap();
+        // Identical commits/HEAD in two distinct owners: preflight cannot be
+        // relied upon to recognize a proposal delivered to the wrong repo.
+        git(
+            other.path(),
+            &["clone", "-q", fixture.path().to_str().unwrap(), "."],
+        );
+        git(fixture.path(), &["branch", "victim", "HEAD~1"]);
+        git(other.path(), &["branch", "victim", "HEAD~1"]);
+        assert_eq!(
+            output(fixture.path(), &["rev-parse", "HEAD"]),
+            output(other.path(), &["rev-parse", "HEAD"])
+        );
+        let before = repo_fingerprint(other.path());
+        let (app, window) = mount(cx, fixture.path());
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("victim", cx);
+            assert!(app.open_repository(other.path().to_path_buf(), cx));
+            if revisit {
+                app.switch_repo(0, cx);
+            }
+        });
+        // run_until_parked also drains the test background executor.
+        cx.run_until_parked();
+        wait_idle(cx, &app);
+        assert!(
+            cx.read(|cx| app.read(cx).delete_branch_modal().is_none()),
+            "a departed owner's delayed plan must not install a modal, including on revisit"
+        );
+        press_enter(cx, &app, window);
+        cx.run_until_parked();
+        assert_eq!(repo_fingerprint(other.path()), before);
+        assert!(records(other.path(), "delete-branch").is_empty());
+        assert!(records(fixture.path(), "delete-branch").is_empty());
+        unmount(cx, app, window);
+    }
+}
+
+fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "victim", "HEAD~1"]);
+    let tip = output(repo, &["rev-parse", "victim"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_delete_branch_modal("victim", cx));
+    wait_idle(cx, &app);
+    let log_dir = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+    let log_path = log_dir.join("operations.jsonl");
+    let before = std::fs::read(&log_path).unwrap_or_default();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(log_dir.join("operations.jsonl.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    drop(lock);
+    assert_eq!(output(repo, &["branch", "--list", "victim"]), "");
+    assert_eq!(std::fs::read(&log_path).unwrap_or_default(), before);
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state.delete_branch_modal().is_none(),
+            "completed deletion cannot be retried"
+        );
+        let notice = kagi::ui::e2e::app_notice_message(state).unwrap();
+        assert!(notice.contains("recording failed") && notice.contains(repo.to_str().unwrap()));
+        let panel = state.op_log.as_ref().unwrap().read(cx);
+        let entry = panel.entries().front().unwrap();
+        assert!(matches!(entry.outcome, OpOutcome::Partial { .. }));
+        assert_eq!(output(repo, &["rev-parse", &entry.backup_refs[0]]), tip);
+    });
+    unmount(cx, app, window);
 }

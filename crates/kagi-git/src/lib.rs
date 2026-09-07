@@ -239,6 +239,10 @@ pub enum GitError {
     /// A recorded attempt failed before execution. Display preserves the
     /// underlying error; callers can retain their preflight-specific UI label.
     Preflight(Box<GitError>),
+    /// A refusal that carries the same typed note used by the plan surface.
+    /// Display remains the English plan rendering for oplog and CLI consumers;
+    /// UI delivery can localize the note before displaying it (#606).
+    Blocked(Box<kagi_domain::plan_note::PlanNote>),
     /// CLI timeout/reap uncertainty: admission must not release on this error.
     TerminationUnknown(String),
     /// Any other libgit2 error.
@@ -255,6 +259,15 @@ impl GitError {
     pub fn is_preflight(&self) -> bool {
         matches!(self, GitError::Preflight(_))
     }
+
+    /// Typed plan blocker behind this error, including through preflight.
+    pub fn blocker(&self) -> Option<&kagi_domain::plan_note::PlanNote> {
+        match self {
+            GitError::Blocked(note) => Some(note),
+            GitError::Preflight(error) => error.blocker(),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for GitError {
@@ -269,6 +282,7 @@ impl std::fmt::Display for GitError {
                 p
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
+            GitError::Blocked(note) => f.write_str(&note.message_en()),
             GitError::Other(msg) | GitError::TerminationUnknown(msg) => {
                 write!(f, "git error: {}", msg)
             }

@@ -103,7 +103,6 @@ impl KagiApp {
             state, header, groups, window, cx,
         ))
     }
-
     fn render_worktree_menu_overlay(
         &self,
         state: worktree_menu::WorktreeMenuState,

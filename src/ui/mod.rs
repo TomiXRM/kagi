@@ -107,6 +107,7 @@ pub mod watcher;
 pub mod workspace;
 pub mod workspace_mode;
 pub mod worktree_menu;
+mod worktree_nav;
 pub mod worktree_wip;
 
 pub use compare_pane::ComparePane;
@@ -3104,7 +3105,7 @@ impl KagiApp {
             None
         };
         let (checked_out_worktree_path, worktree_path) =
-            branch_menu::worktree_paths_for_branch(&self.view().worktrees, branch);
+            worktree_nav::paths_for_branch(&self.view().worktrees, branch);
         BranchMenuContext {
             name: state.name.clone(),
             head_sha: state.target.0.clone(),

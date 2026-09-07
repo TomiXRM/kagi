@@ -10,13 +10,6 @@ use crate::ui::blocking_ops::*;
 use crate::ui::*;
 
 impl KagiApp {
-    /// Open a worktree from its graph glyph. `open_repository` owns canonical
-    /// identity and switches to an existing tab instead of duplicating it.
-    pub(crate) fn open_graph_worktree(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
-        klog!("worktree-open: {}", path.display());
-        self.open_repository(path, cx);
-    }
-
     pub fn open_create_worktree_modal(&mut self, at: CommitId, cx: &mut Context<Self>) {
         self.open_create_worktree_modal_prefilled(at, String::new(), false, cx);
     }
@@ -249,34 +242,6 @@ impl KagiApp {
                 );
             }
         });
-    }
-
-    // ── Unlock worktree (sidebar right-click → Unlock worktree…) ─────────
-
-    /// Open the worktree right-click context menu. The main worktree never
-    /// gets here (the sidebar row installs no handler for it).
-    ///
-    /// #473: `path` is `Some` when the opener knows the worktree's working-tree
-    /// path (the graph's WIP row); it unlocks the path-based menu items.
-    pub fn open_worktree_menu(
-        &mut self,
-        name: String,
-        locked: bool,
-        is_main: bool,
-        path: Option<std::path::PathBuf>,
-        position: gpui::Point<gpui::Pixels>,
-    ) {
-        self.commit_menu = None;
-        self.branch_menu = None;
-        self.stash_menu = None;
-        self.worktree_menu = Some(worktree_menu::WorktreeMenuState {
-            name: name.clone(),
-            locked,
-            is_main,
-            path,
-            position,
-        });
-        klog!("worktree-menu: open '{}'", name);
     }
 
     /// Dispatch a worktree context-menu action.

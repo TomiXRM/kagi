@@ -1,4 +1,4 @@
-//! Integration test for the `git log` wire framing (issue #508, ADR-0186).
+//! Integration test for the `git log` wire framing (issue #508, ADR-0190).
 //!
 //! Builds a **real** repository whose commit messages embed the ASCII field /
 //! record separators the old framing used, runs the real `git` binary with the

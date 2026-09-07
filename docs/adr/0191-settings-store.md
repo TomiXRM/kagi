@@ -1,4 +1,4 @@
-# ADR-0188: settings の read-modify-write を単一 store に集約する
+# ADR-0191: settings の read-modify-write を単一 store に集約する
 
 ## Status
 

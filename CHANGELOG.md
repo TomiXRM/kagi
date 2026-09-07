@@ -23,6 +23,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Operation-log reads take only the tail of `operations.jsonl` instead of parsing every historical line, so recording an operation no longer costs more as the log grows. Legacy id-less logs keep their existing index-based identity, and cross-process appends are covered by a two-process test. Numbering and append were already serialized under the sidecar lock; ADR-0181's text said otherwise and is corrected. (#499, ADR-0149)
 - Added ADR-0187 (typed oplog recovery handles), ADR-0188 (subprocess runner ownership), ADR-0189 (auto-stash pull and error modal lifetime) and ADR-0191 (settings store).
+- Operation-log reads take only the tail of `operations.jsonl` instead of parsing every historical line, so recording an operation no longer costs more as the log grows. Legacy id-less logs keep their existing index-based identity, and cross-process appends are covered by a two-process test. (#499, ADR-0149)
+- **ADR numbers are unique again.** Two parallel merges each landed an ADR on a number another ADR already held; the newer ADR of each pair now lives at **ADR-0190** (NUL-framed `git log`) and **ADR-0191** (settings store), and every reference in `.rs`, `.md` and `AGENTS.md` points at the new number. A new `check-adr-unique-number` gate fails the build on any new duplicate 4-digit ADR number; the six numbers already duplicated are grandfathered by an allowlist that itself fails once an entry goes stale. (#620)
 
 ## [0.35.0] — 2026-09-08
 
@@ -49,6 +51,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Internal
 
 - Added ADR-0185 (graph worktree navigation), ADR-0186 (PR fetch outcome contract) and ADR-0190 (NUL-framed git log).
+- Added ADR-0185 (graph worktree navigation), ADR-0186 (PR fetch outcome contract) and ADR-0190 (NUL-framed `git log`).
 - Codex GitHub reviews are requested in Japanese. (AGENTS.md)
 
 ## [0.34.0] — 2026-09-07
@@ -65,8 +68,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Remote stash drop now runs as a typed application-layer SSH job with frozen connection identity and explicit recovery evidence. (#572)
 
 ### Fixed
-- Pull now offers a guarded auto-stash workflow for dirty working trees, restores tracked and untracked changes afterward, and keeps the temporary stash when restoration conflicts.
-- Failed Pull details remain visible until explicitly dismissed instead of disappearing during the watcher reload.
 - Release checks require the complete blocking CI aggregate from the target
   commit's newest workflow run and latest attempt, including the gate selftests. (#519)
 - Branch cleanup retains remote recovery OIDs when subsequent local deletion

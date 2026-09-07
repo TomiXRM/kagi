@@ -1974,7 +1974,6 @@ impl KagiApp {
         cx: &mut Context<Self>,
         persist_non_run: bool,
     ) {
-        // Build the footer message before moving `outcome`.
         let (footer_msg, footer_ok) = match &outcome {
             OpOutcome::Success { after } => (
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
@@ -2002,6 +2001,8 @@ impl KagiApp {
             ),
         };
 
+        let display_footer_msg = Self::display_footer_message(op, &outcome, &footer_msg);
+
         // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
         // outcome (Success / Failed / Refused) becomes a toast.
         let toast_kind = if matches!(outcome, OpOutcome::Success { .. }) {
@@ -2009,7 +2010,7 @@ impl KagiApp {
         } else {
             ToastKind::Error
         };
-        self.push_toast(toast_kind, footer_msg.clone(), cx);
+        self.push_toast(toast_kind, display_footer_msg.clone(), cx);
 
         // T-BP-004: auto-open bottom panel on Failed.
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
@@ -2047,10 +2048,10 @@ impl KagiApp {
 
         if footer_ok {
             klog!("footer: {}", footer_msg);
-            self.status_footer = FooterStatus::Success(footer_msg);
+            self.status_footer = FooterStatus::Success(display_footer_msg);
         } else {
             klog!("footer: {}", footer_msg);
-            self.status_footer = FooterStatus::Failed(footer_msg);
+            self.status_footer = FooterStatus::Failed(display_footer_msg);
         }
     }
 

@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 - Graph checkout actions use the actual branch name rather than the worktree-decorated label, fixing false branch-not-found refusals from double-click, commit context menu and selected-commit checkout.
+- Checkout refuses branches already checked out in another worktree at planning
+  and before writing, including occupancy changes after approval. Graph actions
+  can no longer partially rewrite the current worktree before HEAD switching is refused.
 
 ## [0.34.0] — 2026-09-07
 

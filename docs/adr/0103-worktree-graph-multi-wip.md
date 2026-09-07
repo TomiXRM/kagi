@@ -50,6 +50,12 @@ tab-per-worktree). Two worktree-aware overlays are added on top of it:
    The marker is presentation-only: double-click, commit-menu checkout and
    selected-commit checkout use `context_ref_name`, as the badge context menu
    does, before sending the branch name to the Git backend.
+   Normalizing the name must not bypass ownership: the backend checkout plan
+   blocks branches checked out in another worktree using the existing
+   `branch_checked_out_worktree_path` guard. Preflight re-plans, and execution
+   checks again before `checkout_tree`; relying on `set_head` to refuse is too
+   late because index/files may already have changed. The tree-glyph control
+   remains the navigation route to that branch's owning worktree.
 
 The open repo's WIP row is driven by the *live* working-tree status, not by
 matching a worktree's `is_current` flag, so click-to-commit and the `+/-`

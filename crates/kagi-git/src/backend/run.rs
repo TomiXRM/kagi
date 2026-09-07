@@ -56,7 +56,13 @@ impl Backend {
                 result
             }));
             match attempted {
-                Ok(result) => result,
+                Ok(result) => {
+                    if let Err(GitError::TerminationUnknown(reason)) = &result {
+                        evidence.unknown = true;
+                        evidence.observations.push(reason.clone());
+                    }
+                    result
+                }
                 Err(_) => {
                     evidence.unknown = evidence.started;
                     evidence

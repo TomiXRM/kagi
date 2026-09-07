@@ -1067,6 +1067,9 @@ fn lost_delivery_never_appends_again_or_claims_unconfirmed_release() {
 
 #[path = "support/isolated.rs"]
 mod test_support;
+
+#[path = "support/stash_push_cli.rs"]
+mod stash_push_cli;
 /// #482 review P2: leaving a tab ends the visit. A pending follow-up proposal is
 /// discarded, a completion that lands after the departure creates no proposal,
 /// and on return the payload proposes nothing until a **live** re-observation of

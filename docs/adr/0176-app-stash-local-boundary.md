@@ -49,6 +49,18 @@ Partial、実行中 unwind は Unknown。停止済み Unknown も read→ack 前
 report は実際の停止境界（open / identity / trust / blocker / preflight / abandon）を保持する。
 plan に blocker があるだけでは blocker gate 到達とみなさず、receipt と klog lane を実停止理由に揃える。
 
+### #622: push の実行エンジン
+
+push のみ既存 `cli::run_git` の hardened `git stash push` を使う。libgit2 の
+untracked tree 構築は変更していない tracked bytes まで tree→workdir diff で
+再走査し、2ファイルの独立cloneで約12.5秒（Git CLI は351ms）を要した。
+plan/preflight/verify/recording は変更しない。CLI 後は libgit2 の cached index を
+再読込する。stdout の文言ではなく `refs/stash` の新OIDと既存 verify で結果を確定する。
+署名は従来の config/fallback を渡し、repo hooks は既存 runner が無効化する。
+external clean/smudge/process filters は libgit2 と同じく実行しないよう無効化する。
+期限切れ・不完全capture の `TerminationUnknown` は family evidence に伝播し、
+receipt/GUI/admission 全てで Unknown として read→ack を要求する。自動再試行しない。
+
 ## GUI と conflict 継続
 
 4 modal を Planning で開き、Ready だけ承認可能。debounce 入力更新で即 revision 無効化。

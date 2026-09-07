@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Stash push no longer rereads every unchanged tracked file while saving untracked files. It uses the hardened Git runner while retaining approval, preflight, stash/index verification and operation logging; an uncertain subprocess result requires reconciliation rather than retry. A two-file large-repository fixture improved from 12.5 seconds to 0.93 seconds. (#622, ADR-0176)
+
 ## [0.36.0] — 2026-09-08
 
 ### Added

@@ -247,10 +247,12 @@ RULES: tuple[Rule, ...] = (
             r"(?:(?:\\n|[\r\n]+)\s*git\s+reset\s+--hard\b|/\s*reset\s+--hard\b)"
             r"|(?:元に戻すには|復元するには|取り消すには)(?:.|\n){0,400}?"
             r"(?:\\n|[\r\n]+)\s*git\s+reset\s+--hard\b"
+            r"|[\"']git\s+reset\s+--hard\b"
             r")"
         ),
         globs=(
             "crates/kagi-domain/src/plan_note/**/*.rs",
+            "crates/kagi-git/src/**/*.rs",
             "crates/kagi-ui-core/src/i18n/plan/**/*.rs",
             "src/ui/modal_renderers_destructive.rs",
             "src/ui/operations/history.rs",
@@ -264,10 +266,13 @@ RULES: tuple[Rule, ...] = (
             "To restore the original commit:\\n  git reset --hard deadbeef",
             "実行後に merge commit を取り消すには:\n  git reset --hard HEAD~1",
             "The old commit is recoverable via git reflog / reset --hard <old>.",
+            'commands: vec![format!("git reset --hard {}", old_short)]',
+            'commands: vec!["git reset --hard HEAD~1".to_string()]',
         ),
         samples_ok=(
-            "To restore the original commit without changing the working tree:\\n  git reset --soft deadbeef",
+            "To restore without changing the tree:\\n  git reset --soft deadbeef",
             "This is a safe ref move (no reset --hard, ever).",
+            'commands: vec!["git revert -m 1 HEAD".to_string()]',
         ),
         flags=re.MULTILINE,
     ),

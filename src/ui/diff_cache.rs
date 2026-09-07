@@ -61,7 +61,7 @@ mod tests {
     /// Issue #286: caches are keyed by COMMIT ROW INDEX. After a graph renumber
     /// (tab switch / external reload / solo toggle) row 5 points at a *different*
     /// commit, so `clear()` — the single invalidation the fix routes every
-    /// renumber through (`apply_tab_view` / `graph_solo`) — must drop every
+    /// renumber through (`on_view_published` / `graph_solo`) — must drop every
     /// row-keyed field so a stale entry can never be served under a reused index.
     #[test]
     fn clear_drops_every_row_keyed_field() {

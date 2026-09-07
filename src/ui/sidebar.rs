@@ -484,7 +484,7 @@ pub enum SidebarRow {
 /// `render` recomputes this each frame and only rebuilds `rows` when it changes,
 /// so unchanged frames skip the O(all-refs) clone+collect.  The heavy collection
 /// *contents* (branch names, tag/stash/worktree data) are covered by
-/// `view_epoch`, which `KagiApp` bumps on every `active_view` write — so this
+/// `view_epoch`, which `KagiApp` bumps on every read-model write — so this
 /// never has to hash the full ref lists.  The collection lengths are folded in
 /// as an O(1) backstop, and the collapsed sets + filter text (small, and not
 /// tied to `view_epoch`) are hashed directly so collapse toggles and filter
@@ -1011,7 +1011,7 @@ fn build_local_branch_leaf(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let upstream_label: Option<SharedString> = this
-        .active_view
+        .view()
         .branch_upstream_info
         .get(branch_name)
         .and_then(|u| {
@@ -1263,7 +1263,7 @@ fn build_remote_leaf(
     depth: u8,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let can_jump = this.active_view.commit_row_index.contains_key(&rb_target);
+    let can_jump = this.view().commit_row_index.contains_key(&rb_target);
     // issue #414: remote branch names are the most literally remote-derived
     // strings in the sidebar. Neutralize control bytes in the *displayed* label
     // and tooltip; the raw `display` operand (drag/menu/id) stays untouched.
@@ -1341,7 +1341,7 @@ fn build_tag_row(
     // the visible label (the raw `tag_name` operand stays untouched).
     let tag_label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(tag_name));
     let full_name = SharedString::from(tag_name.to_string());
-    let can_jump = this.active_view.commit_row_index.contains_key(&tag_target);
+    let can_jump = this.view().commit_row_index.contains_key(&tag_target);
     // Right-click → the tag menu (ADR-0140). Tags were the only sidebar ref
     // with no menu, so publishing one meant leaving kagi for a terminal.
     let menu_name = tag_name.to_string();

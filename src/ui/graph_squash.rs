@@ -161,6 +161,9 @@ impl KagiApp {
         };
         self.squash_gen += 1;
         let my_gen = self.squash_gen;
+        let Some(session) = self.active_session() else {
+            return;
+        };
 
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move {
@@ -170,17 +173,18 @@ impl KagiApp {
         cx.spawn(async move |app, acx| {
             let result = task.await;
             let _ = app.update(acx, |app, cx| {
-                // Superseded: the repo changed, or a newer reload started one.
-                let still_ours = app.squash_gen == my_gen
-                    && app.repo_path.as_deref() == Some(repo_path.as_path());
+                // Superseded: another tab is on screen, or a newer reload
+                // started its own scan. The row indices these links carry belong
+                // to the graph this session had when the scan started.
+                let still_ours = app.squash_gen == my_gen && app.active_session() == Some(session);
                 if !still_ours {
                     return;
                 }
                 let Ok(links) = result else {
                     return;
                 };
-                let index = app.active_view.commit_row_index.clone();
-                let drawn = inject_squash_edges(&mut app.active_view.rows, &links, &index);
+                let index = app.view().commit_row_index.clone();
+                let drawn = inject_squash_edges(&mut app.view_mut().rows, &links, &index);
                 klog!("squash-links: {} found, {} drawn", links.len(), drawn);
                 cx.notify();
             });

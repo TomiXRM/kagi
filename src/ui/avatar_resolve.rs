@@ -43,14 +43,23 @@ impl KagiApp {
         self.avatars.scan_epoch = Some(self.view_epoch);
 
         // Distinct author emails not yet attempted (nor already resolved).
+        // The candidate list is collected first: `view()` borrows the whole
+        // `KagiApp` (the read model lives in the session store, not in a field
+        // of its own), so the `attempted` insert cannot run inside the loop.
+        let candidates: Vec<String> = self
+            .view()
+            .rows
+            .iter()
+            .map(|row| row.author_email.clone())
+            .filter(|email| !email.is_empty())
+            .collect();
         let mut emails: Vec<String> = Vec::new();
-        for row in &self.active_view.rows {
-            let email = &row.author_email;
-            if email.is_empty() || self.avatars.images.contains_key(email) {
+        for email in candidates {
+            if self.avatars.images.contains_key(&email) {
                 continue;
             }
             if self.avatars.attempted.insert(email.clone()) {
-                emails.push(email.clone());
+                emails.push(email);
             }
         }
         if emails.is_empty() {

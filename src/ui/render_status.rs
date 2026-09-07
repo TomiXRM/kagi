@@ -42,7 +42,7 @@ impl KagiApp {
         bottom_panel_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let summary = self.active_view.status_summary.clone();
+        let summary = self.view().status_summary.clone();
         let bottom_tab = self.bottom_tab;
 
         // ── Footer message colour ──────────────────────────────

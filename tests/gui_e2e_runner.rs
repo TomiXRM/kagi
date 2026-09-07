@@ -68,6 +68,10 @@ mod app_writer_admission;
 mod recovery_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/read_owner.rs"]
+mod read_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
 
@@ -586,6 +590,14 @@ mod macos {
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
             ),
+            (
+                "read_owner_switch",
+                Box::new(crate::read_owner::scenario_read_owner_switch),
+            ),
+            (
+                "read_owner_ordering",
+                Box::new(crate::read_owner::scenario_read_owner_ordering),
+            ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
                 "graph_copy",
@@ -701,7 +713,7 @@ mod macos {
         let (full_sha, branch) = kagi.update(cx, |app, cx| {
             app.selected = Some(0);
             cx.notify();
-            let row = &app.active_view.rows[0];
+            let row = &app.view().rows[0];
             let full_sha = row.id.0.clone();
             let branch = commit_list::graph_copy_value(&row.badges, &full_sha, CopyTarget::Branch);
             (full_sha, branch)
@@ -927,7 +939,7 @@ mod macos {
         let (kagi, win) = mount(cx, &repo_path);
 
         let (head_agent, parent_agent) = cx.read(|app| {
-            let rows = &kagi.read(app).active_view.rows;
+            let rows = &kagi.read(app).view().rows;
             (
                 rows[0]
                     .provenance
@@ -981,7 +993,7 @@ mod macos {
         }
 
         cx.read(|app| {
-            let view = &kagi.read(app).active_view;
+            let view = &kagi.read(app).view();
 
             // Two dirty working trees → two WIP rows, each with a lane.
             assert_eq!(
@@ -1078,7 +1090,7 @@ mod macos {
     /// and lists ITS dirty file; `do_stage_all` / `do_unstage_all` /
     /// `do_stage_file` / `do_unstage_file` each move the WORKTREE's
     /// `git status --porcelain` while the OPEN repo's fingerprint is unchanged;
-    /// the worktree's WIP row counts (`active_view.worktrees[i].wip`) follow;
+    /// the worktree's WIP row counts (`view().worktrees[i].wip`) follow;
     /// the still-tab-resolved ops (commit plan, commit, amend, discard-all) are
     /// still refused and leave both trees untouched; and the watcher's in-place
     /// refresh (`refresh_working_tree_external`) does not swap the panel back to
@@ -1143,12 +1155,12 @@ mod macos {
         );
 
         // ── #476 slice 1: the staging ops write into the WORKTREE ──────────
-        // The worktree's WIP row counts, straight off `active_view` — they come
+        // The worktree's WIP row counts, straight off `view()` — they come
         // from the snapshot, so this is what proves the row followed the write.
         let wip_of = |cx: &mut VisualTestAppContext| {
             cx.read(|app| {
                 kagi.read(app)
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .find(|w| w.path == wt_path)
@@ -1338,7 +1350,7 @@ mod macos {
         let wt_index = |cx: &mut VisualTestAppContext, path: &Path| -> usize {
             cx.read(|app| {
                 kagi.read(app)
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .position(|w| w.path == path)
@@ -1348,7 +1360,7 @@ mod macos {
         let idx_a = wt_index(cx, &wt_a);
         let idx_b = wt_index(cx, &wt_b);
         let (lanes_before, lane_open, lane_a, lane_b) = cx.read(|app| {
-            let lanes = kagi.read(app).active_view.wip_lanes.clone();
+            let lanes = kagi.read(app).view().wip_lanes.clone();
             let get = |t| graph_wip::wip_lane(&lanes, t);
             (
                 lanes.clone(),
@@ -1442,19 +1454,14 @@ mod macos {
         // ── The open tab's graph gained the commit (shared refs) ────────────
         let new_sha = wt_a_head_after.clone();
         assert!(
-            cx.read(|app| kagi
-                .read(app)
-                .active_view
-                .rows
-                .iter()
-                .any(|r| r.id.0 == new_sha)),
+            cx.read(|app| kagi.read(app).view().rows.iter().any(|r| r.id.0 == new_sha)),
             "the open tab must re-snapshot and show the worktree's new commit"
         );
 
         // ── The WIP rows: A's is gone, the others keep their own lanes ──────
         let wip_a = cx.read(|app| {
             kagi.read(app)
-                .active_view
+                .view()
                 .worktrees
                 .iter()
                 .find(|w| w.path == wt_a)
@@ -1481,7 +1488,7 @@ mod macos {
         );
         // …and the freshly-built map agrees, with A's entry simply absent.
         cx.read(|app| {
-            let lanes = &kagi.read(app).active_view.wip_lanes;
+            let lanes = &kagi.read(app).view().wip_lanes;
             assert_eq!(
                 graph_wip::wip_lane(lanes, graph_wip::WipTarget::Worktree(idx_a)),
                 None,
@@ -1542,7 +1549,7 @@ mod macos {
 
         let idx_a = cx.read(|app| {
             kagi.read(app)
-                .active_view
+                .view()
                 .worktrees
                 .iter()
                 .position(|w| w.path == wt_a)
@@ -1623,7 +1630,7 @@ mod macos {
         assert!(
             cx.read(|app| kagi
                 .read(app)
-                .active_view
+                .view()
                 .rows
                 .iter()
                 .any(|r| r.id.0 == head_after_amend)),
@@ -1850,7 +1857,7 @@ mod macos {
             let (kagi, win) = mount(cx, &repo_path);
             let index = cx.read(|app| {
                 kagi.read(app)
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .position(|wt| wt.path == wt_a)

@@ -18,7 +18,7 @@ M は PM 確認待ち、1b は未実装であり横展開 gate は未通過。
 | 項目 | 本文の推奨案（PM 合意待ち） | 実証・後続で決めること |
 |---|---|---|
 | 所有境界 | application は進行・所属・配送、Backend/transport は安全判定・mutation・verify・記録 | family ごとの最小 API 名と内部配置 |
-| session | slice 1 は `KagiApp` 内の最小 `Sessions` が operation/lease/stale mark だけ所有 | #482/#488 で session map、`TabId`、incarnation、snapshot 共有を導入 |
+| session | **段階1/2 実装済み**: `Sessions` が `TabId`/incarnation・operation・lease・stale、`Reads` が snapshot 由来の read model を所有 | 段階3 で selection/scroll/pane を `TabView` へ |
 | 排他 | slice 1a は remove lease + `busy_op`、1b は editor save/staging/snapshot/fetch の admission 接続。横展開には両方必須 | 全移行後は common Git directory 単位。index-only の並行化はさらに後 |
 | 実行 | GPUI 非依存の owned job と完了メッセージ。spawn は adapter host | worker 導入は #314 の独立実証後 |
 | 記録 | mutation 境界からその実行の receipt を返す。UI は append しない | multi-process 採番・crash recovery journal は別設計 |
@@ -56,7 +56,7 @@ M は PM 確認待ち、1b は未実装であり横展開 gate は未通過。
 | `WorktreeId` | slice 1: `RepoId` + canonical per-worktree Git directory（main も明示） | locator を凍結し、remove 承認は下記 admin fingerprint にも束縛 | HEAD/index/status/conflict、書込対象 |
 | `TabId` / session incarnation | **#482 段階1 で導入済み**。`Sessions::attach` が tab slot と incarnation を単調発行し、`WorktreeId` を attach 時に凍結する | resource fingerprint とは別の session 世代。close→同 path reopen は必ず別 incarnation | 表示 attachment・plan slot 所有・invalidation 配送先 |
 | `OperationId` | 実行試行を一意に区別する opaque ID | plan digest/entry の連番とは別。receipt と完了を束縛 | 二重配送防止、失敗の照会 |
-| `RequestId` | slice 1 の plan は単調 request/revision。read の incarnation 付き ID は後続 | request 完了/置換で失効 | 将来 loading/data/error の一体所有 |
+| `RequestId` | plan は単調 request/revision。read は **段階2 実装済み**の `ReadKey = (SessionId, read revision)` | request 完了/置換/mutation admission で失効 | loading/data/error を owner ごとに一体所有 |
 | remote identity | transport authority（接続先/user/port 等）+ remote 側の解決済み repo/worktree identity | alias 名だけで同一視しない。再接続は検証 | ローカル path canonicalization と混同しない |
 
 Backend が canonicalize/discover する。UI の `canon(path)` の失敗時 raw-path fallback は
@@ -88,7 +88,8 @@ Git の lock、preflight、lease/OID 条件は Backend に残す。cross-process
 slice 1 は第二の global/actor/Workspace を新設しない。
 
 ```rust,ignore
-// #482 段階1 到達状態: KagiApp の一フィールドに保持。snapshot/tab_cache は入れない。
+// #482 段階2 到達状態: KagiApp の二フィールド。identity/寿命は Sessions、
+// snapshot 由来の read model は Reads が SessionId で単一所有する。
 struct Sessions {
     sessions: HashMap<SessionId, TabSession>,   // 段階1: attach/detach/depart する表示 slot
     operations: HashMap<OperationId, InFlight>, // InFlight は凍結 Attachment を持つ
@@ -98,7 +99,12 @@ struct Sessions {
     stash_followups: HashMap<SessionId, StashConflict>,
     plan_owner: Option<SessionId>,              // 単一 plan slot の所有者
 }
-// KagiApp { app_sessions: Sessions, ...既存 active_view/tab_cache/busy_op... }
+// 段階2: read model の唯一の owner。V は generic で、src/app は UI 型を書かない。
+struct Reads<V> {
+    entries: HashMap<SessionId, Entry<V>>,       // Arc<V> + RequestSlot<ReadKey> + revision
+}
+// struct ReadKey { session: SessionId, revision: u64 }
+// KagiApp { app_sessions: Sessions, reads: Reads<TabViewState>, ...busy_op... }
 // completion と最小 owner 情報は operation に所属し、tab reset では消さない。
 ```
 
@@ -116,8 +122,24 @@ UI 側の owner 判定は `KagiApp::active_session()` の `SessionId` 一致の�
 `RemovedTarget` は `WorktreeId` で宛先 tab を引く。tab close は `Sessions::detach` を呼び、
 conflict/follow-up payload と（所有していれば）plan slot だけを失効させ、
 `operations` / `leases` / `settled` / `reconcile` には触れない（close は実行取消ではない）。
-`switch_generation` は read load の世代 guard として残る（段階2 の #489 で置換）。
-snapshot / `active_view` / `tab_cache` は段階1 では未変更。
+**#482 段階2 到達状態**（ADR-0183）: snapshot 由来の read model は
+`Reads<TabViewState>` が `SessionId` で単一所有する。`active_view` / `tab_cache` /
+`apply_tab_view` / `reload_epoch` / `reload_stale` は削除した。タブ切替は読む key が
+変わるだけで、A→B→A は参照の変更のみ・deep clone ゼロ。view は `Arc` を保持せず
+借用するので、status だけの更新は参照数 1 の `Arc::make_mut` で貫通し
+rows/details を複製しない。
+
+read の鮮度は `RequestSlot`(#489) を owner scope で再利用した
+`ReadKey = (SessionId, read revision)`。`begin` が revision を上げて古い read を
+supersede し、mutation admission / `Delivery::Invalidate` も revision を上げて
+mutation 前の観測を失効させる。stale な完了は**何も書かず**新しい read の loading を
+解除せず、失敗した read は settle して再要求できる。full reload が古い WIP/read に
+勝つ順序（#287）と #286 の row 再採番 invalidation は不変。`switch_generation` は
+read からは外れ、operation callback と remote 再 snapshot にだけ残る。
+
+背景タブの read が着地しても、その owner のデータだけ更新して表示は触らない
+(`on_view_published` は画面上の owner のときだけ走る)。
+selection/scroll/pane/menu と `reset_per_repo_ui` の撤去は段階3。
 
 最後の **tab** close は Welcome へ遷移して KagiApp が残る。
 KagiApp は window が生きている間だけの host。slice 1a は **実行中 lease がある間、window close と
@@ -132,7 +154,7 @@ slice 1 は既存 snapshot/reload/cache をそのまま利用し、operation 情
 
 | 状態 | owner / 保持 | 切替・close 規約 |
 |---|---|---|
-| immutable snapshot/graph rows/details | WorktreeSession。`Arc` 等で view と共有、active/cache の deep clone をなくす | A→B→A は参照変更。閉じた session の cache は最終参照解放時に破棄 |
+| immutable snapshot/graph rows/details | **段階2 実装済み**: `app::Reads<TabViewState>` が `SessionId` で所有し `Arc` で view と共有。active/cache の deep clone は無い | A→B→A は参照変更。閉じた session の read は `forget` で最終参照解放 |
 | refs/history | RepositoryState + worktree 文脈 | refs 変更時は sibling snapshot も invalidation。undo は対象 worktree/branch/OID を再検証 |
 | operation state | Sessions の operation map、対象 session は pinned | close は実行取消ではない。完了まで最小 identity/receipt/invalidation 所有を残す |
 | selection/scroll/focus/editor buffers | TabView / 既存 pane Entity | 同一 tab 再選択は no-op。背景 tab close は active を触らない。dirty guard は閉じる tab のみ |

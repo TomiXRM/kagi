@@ -178,7 +178,7 @@ impl KagiApp {
             return;
         }
         let tip = |name: &str| {
-            self.active_view
+            self.view()
                 .remote_branches
                 .iter()
                 .find(|rb| rb.name == name)
@@ -882,12 +882,7 @@ pub(super) fn ci_glyph(ci: CiState) -> (&'static str, u32) {
 /// decision, mergeable) — no extra API calls.
 pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> {
     let login = app.github_login.clone();
-    let local: Vec<String> = app
-        .active_view
-        .branches
-        .iter()
-        .map(|(n, _)| n.clone())
-        .collect();
+    let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
     let mut buckets: Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> = [
         PrAttention::NeedsYou,
         PrAttention::InProgress,

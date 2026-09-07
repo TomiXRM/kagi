@@ -682,7 +682,7 @@ impl CommitPanelView {
                         .timer(std::time::Duration::from_millis(250))
                         .await;
                     let tab_branch = weak_app
-                        .read_with(acx, |app, _| app.active_view.status_summary.branch.clone())
+                        .read_with(acx, |app, _| app.view().status_summary.branch.clone())
                         .unwrap_or_default();
                     let _ = this.update(acx, |view, _cx| {
                         if view.draft_save_gen != gen {

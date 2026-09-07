@@ -66,14 +66,16 @@ impl KagiApp {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| repo_path.display().to_string());
+        let Some(session) = self.active_session() else {
+            return;
+        };
         let view = build_tab_view(&snap, &repo_name);
         self.selected = None;
         self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
-        self.tab_cache.insert(repo_path.clone(), view.clone());
-        self.apply_tab_view(view);
+        self.publish_tab_view(session, view);
         self.seed_history_from_reflog(&repo);
         self.last_working_status = Some(snap.status.clone());
         // Conflict detection intentionally deferred to the launch-time
@@ -90,21 +92,26 @@ impl KagiApp {
             Some(p) => p,
             None => return Ok(()),
         };
-        // #287: bump the epoch so any FS-watcher reload still in flight is
-        // dropped on apply — this synchronous, user-initiated refresh is
-        // authoritative. (Manual Cmd+R / settings toggle path; stays sync so
-        // the caller can surface a repo-open/snapshot error.)
-        self.reload_epoch = self.reload_epoch.wrapping_add(1);
+        let Some(session) = self.active_session() else {
+            return Ok(());
+        };
+        // #287: starting a read bumps this owner's read revision, so an
+        // FS-watcher reload still in flight is refused on completion — this
+        // synchronous, user-initiated refresh is authoritative. (Manual Cmd+R /
+        // settings toggle path; stays sync so the caller can surface a
+        // repo-open/snapshot error.)
+        let key = self.reads.begin(session);
         let want_panel = self.conflict_merge_pending;
         let want_reflog = self.operation_history.is_empty();
         let data = match read_reload_data(&repo_path, self.commit_limit, want_panel, want_reflog) {
             Ok(d) => d,
             Err(msg) => {
+                self.reads.fail(key);
                 klog!("reload: {}", msg);
                 return Err(msg);
             }
         };
-        self.apply_reload_data(repo_path, data, false, cx);
+        self.apply_reload_data(key, repo_path, data, false, cx);
         Ok(())
     }
 
@@ -121,14 +128,13 @@ impl KagiApp {
     /// manual refresh, which set their own footer).
     fn apply_reload_data(
         &mut self,
+        key: crate::app::ReadKey,
         repo_path: std::path::PathBuf,
         data: ReloadData,
         external: bool,
         cx: &mut Context<Self>,
     ) {
-        if let Some(session) = self.active_session() {
-            self.app_sessions.read_applied(session);
-        }
+        let session = key.session();
         let ReloadData {
             snap,
             wip_diffstat,
@@ -141,12 +147,30 @@ impl KagiApp {
         // so we can re-select it after (survives selection across a reload).
         let prev_commit_id: Option<CommitId> = self
             .selected
-            .and_then(|idx| self.active_view.details.get(idx))
+            .and_then(|idx| self.view().details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
 
-        // W6-TABSPEED: rebuild the pure display data, reset per-repo transient
-        // UI state, then fold the view in via `apply_tab_view`.
+        // #482 stage 2: hand the rebuilt read model to its owner first. A
+        // superseded reload (a newer read, or a mutation admitted while this one
+        // was in flight) writes nothing and produces no display side effect at
+        // all — the epoch/generation pair this used to compare is gone.
         let view = build_tab_view(&snap, &repo_name);
+        // Whether this reload is the read that *first* fills the tab — i.e. it
+        // superseded the load the tab switch started. The placeholder clears
+        // itself (`loading_tab()` is derived), but the `Loading …` footer that
+        // switch set is stateful and has to be settled here, or a Cmd+R during
+        // the first load leaves the status bar Busy forever.
+        let first_read = !self.reads.has_read(session);
+        if !self.accept_tab_view(key, view) {
+            return;
+        }
+        self.app_sessions.read_applied(session);
+        // The owner is not the tab on screen: its data is refreshed, but none of
+        // the display folding below (modals, selection, conflict, panels)
+        // belongs to it.
+        if self.active_session() != Some(session) {
+            return;
+        }
 
         self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
@@ -192,14 +216,8 @@ impl KagiApp {
             self.commit_panel = None;
         }
 
-        // ADR-0030 §5: keep the stale-while-revalidate cache fresh.
-        self.tab_cache.insert(repo_path.clone(), view.clone());
-
-        // Fold the snapshot-derived data in (assignment only).
-        self.apply_tab_view(view);
-
         // ADR-0119 follow-up: refresh (never close) the HEAD-versioned overlays.
-        self.refresh_overlays_after_reload(self.active_view.head_oid.clone(), cx);
+        self.refresh_overlays_after_reload(self.view().head_oid.clone(), cx);
 
         // ADR-0084: seed the undo/redo history from the branch reflog when it is
         // empty (freshly-opened repo / post-branch-switch) so Cmd+Z works
@@ -218,7 +236,7 @@ impl KagiApp {
         // Re-resolve selection by CommitId after the graph rebuild.
         self.selected = None;
         if let Some(ref cid) = prev_commit_id {
-            if let Some(&new_idx) = self.active_view.commit_row_index.get(cid) {
+            if let Some(&new_idx) = self.view().commit_row_index.get(cid) {
                 self.selected = Some(new_idx);
             }
         }
@@ -269,7 +287,12 @@ impl KagiApp {
         }
 
         // ADR-0128 follow-up: Branch Cleanup classification is re-armed by
-        // `render` off `scans_stale`, which `apply_tab_view` set above.
+        // `render` off `scans_stale`, which `accept_tab_view` set above.
+
+        if first_read && matches!(self.status_footer, FooterStatus::Busy(_)) {
+            self.status_footer =
+                FooterStatus::Idle(SharedString::from(super::i18n::Msg::Ready.t()));
+        }
 
         if external {
             klog!("refreshed (external change)");
@@ -291,14 +314,25 @@ impl KagiApp {
     /// Triggered by the "load more" row at the bottom of the commit list, which
     /// only appears once the graph holds at least `commit_limit` commits (i.e.
     /// the walk may have been truncated). Unlike [`reload`], this is a
-    /// view-only refresh: it rebuilds `active_view` (and the tab cache) at the
-    /// new limit but leaves selection, scroll position, open panels and modals
-    /// untouched. Existing rows keep their indices because the additional
-    /// commits are older and append at the bottom of the topological order.
+    /// view-only refresh: it **amends** this owner's read model at the new limit
+    /// but leaves selection, scroll position, open panels and modals untouched.
+    /// Existing rows keep their indices because the additional commits are older
+    /// and append at the bottom of the topological order.
+    ///
+    /// Amends rather than publishes (#482 stage 2 review, item 3): paging is a
+    /// refinement of what is already on screen, not a fresh observation of the
+    /// repository, so it must not supersede a full reload in flight. A watcher
+    /// reload started by an external merge conflict carries the Conflict Mode
+    /// re-detection, the modal sweep and the working-tree baseline that paging
+    /// has no way to reproduce — rejecting it would leave the old semantic state
+    /// standing until something else refreshed.
     pub fn load_more_commits(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
+        };
+        let Some(session) = self.active_session() else {
+            return;
         };
         self.commit_limit = self.commit_limit.saturating_add(COMMIT_PAGE_STEP);
 
@@ -322,12 +356,11 @@ impl KagiApp {
             .unwrap_or_else(|| repo_path.display().to_string());
 
         let view = build_tab_view(&snap, &repo_name);
-        self.tab_cache.insert(repo_path.clone(), view.clone());
-        self.apply_tab_view(view);
+        self.amend_tab_view(session, view);
         klog!(
             "load more: limit={} rows={}",
             self.commit_limit,
-            self.active_view.rows.len()
+            self.view().rows.len()
         );
         cx.notify();
     }
@@ -405,15 +438,17 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        // #287: bump the reload epoch and capture it (plus the tab-switch
-        // generation). The background result is dropped on apply if either has
-        // moved — so a *later* reload (typically an op's own authoritative
-        // reload) wins over this in-flight one, and a tab switch discards a
-        // stale snapshot. This is what stops an FS-watcher snapshot that read a
-        // mid-write tree from clobbering the correct post-op view (#287).
-        self.reload_epoch = self.reload_epoch.wrapping_add(1);
-        let epoch_at_spawn = self.reload_epoch;
-        let gen_at_spawn = self.switch_generation;
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        // #287 / #482 stage 2: starting the read bumps this owner's read
+        // revision. The result is refused on completion if anything moved it
+        // since — a *later* reload (typically an op's own authoritative reload)
+        // wins over this in-flight one, and an admitted mutation invalidates it.
+        // This is what stops an FS-watcher snapshot that read a mid-write tree
+        // from clobbering the correct post-op view (#287). The tab-switch half
+        // of the old guard is now structural: the key names its owner.
+        let key = self.reads.begin(session);
         let commit_limit = self.commit_limit;
         let want_panel = self.conflict_merge_pending;
         let want_reflog = self.operation_history.is_empty();
@@ -429,18 +464,13 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                // Epoch + generation guard (#287): drop a superseded result.
-                if reload_stale(
-                    app.reload_epoch,
-                    epoch_at_spawn,
-                    app.switch_generation,
-                    gen_at_spawn,
-                ) {
-                    return;
-                }
                 let Some(data) = result else {
-                    // Open or snapshot failed — log and bail without nuking the
-                    // existing view (better to show stale data than none).
+                    // Open or snapshot failed — settle the read so the same one
+                    // can be asked for again, then log and bail without nuking
+                    // the existing view (better to show stale data than none).
+                    if !app.reads.fail(key) || app.active_session() != Some(session) {
+                        return;
+                    }
                     klog!("reload_external: snapshot failed (non-fatal)");
                     app.status_footer = FooterStatus::Idle(SharedString::from(
                         "[kagi] refresh skipped (snapshot failed)",
@@ -448,7 +478,7 @@ impl KagiApp {
                     cx.notify();
                     return;
                 };
-                app.apply_reload_data(apply_path, data, external, cx);
+                app.apply_reload_data(key, apply_path, data, external, cx);
             });
         })
         .detach();
@@ -467,18 +497,21 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        let Some(session) = self.active_session() else {
+            return;
+        };
         let bg_path = repo_path.clone();
-        let guard_path = repo_path.clone();
-        // #287: capture (but do NOT bump) the reload epoch. A full reload bumps
-        // it; if one lands while this cheaper working-tree read is in flight, its
-        // fresh baseline is authoritative and this stale status is dropped —
-        // otherwise a slow working-tree read could overwrite the post-reload
-        // `last_working_status` baseline with an older snapshot. We must not bump
-        // here: a working-tree refresh is a subset of a full reload and must not
-        // invalidate one. (ponytail: same-epoch worktree-vs-worktree ordering is
-        // left unguarded — a second KagiApp field would be needed and the epoch
-        // is the only new field allowed here.)
-        let epoch_at_spawn = self.reload_epoch;
+        // #287: capture (but do NOT bump) this owner's read revision. A full
+        // reload bumps it; if one lands while this cheaper working-tree read is
+        // in flight, its fresh baseline is authoritative and this stale status is
+        // dropped — otherwise a slow working-tree read could overwrite the
+        // post-reload `last_working_status` baseline with an older snapshot. We
+        // must not bump here: a working-tree refresh is a subset of a full reload
+        // and must not invalidate one, so it takes no request slot either.
+        // (ponytail: same-revision worktree-vs-worktree ordering is still
+        // unguarded — one WIP read superseding another has no observable
+        // difference, both being a status count of the same tree.)
+        let key = self.reads.current_key(session);
         let task = cx.background_spawn(async move {
             let backend = kagi_git::Backend::open(&bg_path).ok()?;
             let status = backend.working_tree_status().ok()?;
@@ -488,14 +521,12 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let refreshed = task.await;
             let _ = this.update(acx, |app, cx| {
-                // The watcher event was for `bg_path`; if the user switched
-                // tabs while we read it, these counts belong to another repo
-                // and would be written into this tab's status bar and WIP row.
-                if app.repo_path.as_deref() != Some(guard_path.as_path()) {
-                    return;
-                }
-                // #287: a full reload superseded this read — drop the stale status.
-                if app.reload_epoch != epoch_at_spawn {
+                // The watcher event was for this session's worktree; if the
+                // user switched tabs while we read it, these counts belong to
+                // another repo and would be written into this tab's status bar
+                // and WIP row. #287: and a full reload (or an admitted mutation)
+                // superseding this read drops the stale status.
+                if app.active_session() != Some(session) || !app.reads.is_fresh(key) {
                     return;
                 }
                 let Some((new_status, wip_diffstat)) = refreshed else {
@@ -522,12 +553,16 @@ impl KagiApp {
                 // the graph and closes the commit panel). Branch / ahead-behind are
                 // unchanged by a working-tree edit, so only the dirty/count fields
                 // and the commit panel's file lists need refreshing.
-                app.active_view.status_summary.is_dirty = new_status.is_dirty();
-                app.active_view.status_summary.staged = new_status.staged.len();
-                app.active_view.status_summary.unstaged = new_status.unstaged.len();
-                app.active_view.status_summary.untracked = new_status.untracked.len();
-                app.active_view.status_summary.conflict_count = new_status.conflicted.len();
-                app.active_view.is_dirty = new_status.is_dirty();
+                // #482 stage 2: a status-only change updates the owner's read
+                // model **in place** — the commit rows, details and ref lists it
+                // does not touch are not copied.
+                let view = app.view_mut();
+                view.status_summary.is_dirty = new_status.is_dirty();
+                view.status_summary.staged = new_status.staged.len();
+                view.status_summary.unstaged = new_status.unstaged.len();
+                view.status_summary.untracked = new_status.untracked.len();
+                view.status_summary.conflict_count = new_status.conflicted.len();
+                view.is_dirty = new_status.is_dirty();
                 app.last_working_status = Some(new_status);
                 app.wip_diffstat = Some(wip_diffstat);
                 // Refresh the open commit panel's lists in place (keeps it open).
@@ -607,41 +642,4 @@ fn read_reload_data(
         reflog,
         panel,
     })
-}
-
-/// Should a background reload result be dropped on apply? (#287 / cross-review
-/// N4.) A result is stale — and must NOT be applied — if either the reload
-/// epoch (a fresh reload was requested while this one was in flight) or the
-/// tab-switch generation (the user switched tabs) moved since it was spawned.
-/// Pure so it can be unit-tested without a gpui context.
-fn reload_stale(cur_epoch: u64, spawn_epoch: u64, cur_gen: u64, spawn_gen: u64) -> bool {
-    cur_epoch != spawn_epoch || cur_gen != spawn_gen
-}
-
-#[cfg(test)]
-mod reload_stale_tests {
-    use super::reload_stale;
-
-    #[test]
-    fn fresh_result_applies() {
-        // Nothing moved since spawn → apply.
-        assert!(!reload_stale(5, 5, 2, 2));
-    }
-
-    #[test]
-    fn bumped_epoch_drops() {
-        // A newer reload was requested (epoch bumped) → drop the older one.
-        assert!(reload_stale(6, 5, 2, 2));
-    }
-
-    #[test]
-    fn tab_switch_drops() {
-        // The user switched tabs (generation bumped) → drop.
-        assert!(reload_stale(5, 5, 3, 2));
-    }
-
-    #[test]
-    fn both_moved_drops() {
-        assert!(reload_stale(9, 5, 3, 2));
-    }
 }

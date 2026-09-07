@@ -132,7 +132,7 @@ impl KagiApp {
         };
         klog!("file-history: open {}", rel_path.display());
 
-        let branch = SharedString::from(self.active_view.status_summary.branch.clone());
+        let branch = SharedString::from(self.view().status_summary.branch.clone());
         let state = FileHistoryState::new(rel_path, branch);
 
         // The entity holds a shared clone of the geom cell (the divider-drag
@@ -180,7 +180,7 @@ impl KagiApp {
         self.file_history = Some(view);
         // Record the HEAD this history reflects so a later reload only reloads it
         // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
-        self.file_history_head = self.active_view.head_oid.clone();
+        self.file_history_head = self.view().head_oid.clone();
     }
 
     /// Run the async history load the pane requested and marshal the result

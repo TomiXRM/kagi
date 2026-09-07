@@ -787,13 +787,7 @@ impl KagiApp {
             // Nothing on disk behind it, so no image pair to load.
             MainDiffSource::Synthetic => return None,
             MainDiffSource::Commit { row_index, .. } => {
-                let id = CommitId(
-                    self.active_view
-                        .details
-                        .get(*row_index)?
-                        .full_sha
-                        .to_string(),
-                );
+                let id = CommitId(self.view().details.get(*row_index)?.full_sha.to_string());
                 let parent = repo.first_parent(&id).ok().flatten();
                 let old = parent.and_then(|p| repo.blob_bytes_at(&p, path).ok().flatten());
                 let new = repo.blob_bytes_at(&id, path).ok().flatten();
@@ -1344,7 +1338,7 @@ impl KagiApp {
             Some(p) => p.clone(),
             None => return,
         };
-        let detail = match self.active_view.details.get(selected) {
+        let detail = match self.view().details.get(selected) {
             Some(d) => d,
             None => return,
         };
@@ -1409,7 +1403,7 @@ impl KagiApp {
             Some(s) => s,
             None => return,
         };
-        let sha = match self.active_view.details.get(selected) {
+        let sha = match self.view().details.get(selected) {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };

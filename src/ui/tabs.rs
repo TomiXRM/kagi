@@ -202,14 +202,11 @@ impl KagiApp {
             self.remote_view = Some(rv);
             self.reset_per_repo_ui();
             self.switch_generation = self.switch_generation.wrapping_add(1);
-            if let Some(view) = self.tab_cache.get(&tab.path).cloned() {
-                self.loading_tab = None;
-                self.apply_tab_view(view);
-            } else {
-                // No cache (e.g. restored session): drop the stale tab rather
-                // than show an empty view; the user can reconnect.
-                self.loading_tab = None;
-            }
+            // #482 stage 2: the remote snapshot belongs to this tab's session
+            // and never left it, so there is nothing to copy back. A restored
+            // session has no read for it (the SSH snapshot was never persisted)
+            // and simply shows the empty view until the user reconnects.
+            self.on_view_switched();
             self.save_session();
             self.log_tabs();
             self.arm_watcher(cx); // returns early — repo_path is None
@@ -236,27 +233,28 @@ impl KagiApp {
         self.refresh_github_prs(cx);
 
         // W6-TABSPEED: bump the switch generation so an in-flight background
-        // load from an earlier (superseded) switch discards its result.
+        // *operation* callback from an earlier (superseded) switch discards its
+        // result. Reads no longer use it — they carry their owner in the key.
         self.switch_generation = self.switch_generation.wrapping_add(1);
-        let generation = self.switch_generation;
 
-        let cached = self.tab_cache.get(&tab.path).cloned();
+        // #482 stage 2: "cached" now means "this session already has a read".
+        // The swap is the switch itself — `view()` reads a different key — so
+        // there is no instant-apply copy to make.
+        let cached = self.reads.share(tab.session).is_some();
         eprintln!(
             "[kagi] tab-switch: {} cached={}",
             tab.name,
-            if cached.is_some() { "yes" } else { "no" }
+            if cached { "yes" } else { "no" }
         );
 
-        if let Some(view) = cached {
-            // Instant swap — no perceptible latency.
-            self.loading_tab = None;
-            self.apply_tab_view(view);
-        } else {
-            // First open: show a loading placeholder while we snapshot.
-            self.loading_tab = Some(SharedString::from(i18n::loading_fmt(&tab.name)));
+        if !cached {
+            // First open: the `Loading <name>…` placeholder is derived from the
+            // read this switch is about to start (`loading_tab()`), so only the
+            // footer is set here.
             self.status_footer =
                 FooterStatus::Busy(SharedString::from(i18n::loading_fmt(&tab.name)));
         }
+        self.on_view_switched();
         self.refresh_wip_diffstat();
 
         // Re-arm the watcher for the new repo and repaint immediately so the
@@ -277,19 +275,22 @@ impl KagiApp {
         self.ensure_startup_repo_io(cx);
 
         // Background (re)load to refresh / fill the cache.
-        self.load_repo_async(
-            tab.session,
-            tab.path.clone(),
-            tab.name.clone(),
-            generation,
-            cx,
-        );
+        self.load_repo_async(tab.session, tab.path.clone(), tab.name.clone(), cx);
+    }
+
+    /// The read model on screen changed owner. Same UI reaction as publishing a
+    /// new one for the active owner (row-index caches, sidebar fingerprint,
+    /// background scans) — see `on_view_published`.
+    fn on_view_switched(&mut self) {
+        if let Some(session) = self.active_session() {
+            self.on_view_published(session);
+        }
     }
 
     /// Show a **remote** repository (already snapshotted over SSH) in the main
     /// graph/sidebar/detail views, read-only (ADR-0089 Phase 2b).
     ///
-    /// Mirrors the local apply path — `reset_per_repo_ui` + `apply_tab_view` from
+    /// Mirrors the local apply path — `reset_per_repo_ui` + `publish_tab_view` from
     /// `build_tab_view(&snap, name)` — but with no `repo_path` (so the fs watcher
     /// stays disarmed and every local-path operation guards itself off). Unlike a
     /// local repo there is no working tree, so the tab carries a `remote` marker
@@ -337,18 +338,21 @@ impl KagiApp {
         // Supersede any in-flight local background load.
         self.switch_generation = self.switch_generation.wrapping_add(1);
 
-        // Build + cache the view (so switching back to this tab is instant), then
-        // apply it.
+        // #482 stage 2: build the read model first, but publish it only once the
+        // tab (and therefore its session) exists — the read belongs to an owner,
+        // not to the screen.
         let view = super::build_tab_view(&snap, &name);
-        self.tab_cache.insert(key.clone(), view.clone());
-        self.apply_tab_view(view);
-        self.loading_tab = None;
 
         // Reuse an existing tab for the same remote repo, else open a new one.
         let idx = match self.tabs.iter().position(|t| t.path == key) {
             Some(i) => {
                 // Same tab slot, fresh session: this snapshot replaces the old
-                // read-only view, so nothing the old incarnation owned survives.
+                // read-only view, so nothing the old incarnation owned survives
+                // — including its read. Without this the rows/details of every
+                // previous refresh stayed keyed under a `SessionId` no tab
+                // names any more, and `close_tab` only ever released the
+                // current one (#482 stage 2 review, item 4).
+                self.reads.forget(self.tabs[i].session);
                 self.tabs[i].session = self
                     .app_sessions
                     .reattach(self.tabs[i].session, key.clone());
@@ -369,6 +373,7 @@ impl KagiApp {
         };
         self.active_tab = idx;
         self.remote_view = Some(rv);
+        self.publish_tab_view(self.tabs[idx].session, view);
 
         self.status_footer = FooterStatus::Idle(SharedString::from(format!(
             "Remote (read-only) — {label}:{root}"
@@ -472,19 +477,21 @@ impl KagiApp {
         self.history_seed_attempted = false;
     }
 
-    /// W6-TABSPEED / ADR-0030: snapshot + build the [`TabViewState`] on a
-    /// background thread (`RepoSnapshot` is `Send`), then apply it on the main
-    /// thread iff this load is still the most-recent switch (`generation`
-    /// guard).  Updates `tab_cache`, clears any loading placeholder, and emits
-    /// `[kagi] tab-load: <name> rows=N`.
+    /// Snapshot + build the [`TabViewState`] on a background thread
+    /// (`RepoSnapshot` is `Send`), then hand it to its **owner** on the main
+    /// thread (#482 stage 2): the read is bound to `session` and to the read
+    /// revision issued here, so a superseded load writes nothing and a load that
+    /// finishes after the user moved on still refreshes the tab it belongs to.
+    /// Only the *display* half (placeholder, footer, `[kagi] tab-load:` line) is
+    /// gated on that tab still being on screen.
     fn load_repo_async(
         &mut self,
         session: crate::app::SessionId,
         path: PathBuf,
         name: String,
-        generation: u64,
         cx: &mut Context<Self>,
     ) {
+        let key = self.reads.begin(session);
         let bg_path = path.clone();
         let bg_name = name.clone();
         let commit_limit = self.commit_limit;
@@ -504,18 +511,19 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                // Generation guard: a later switch supersedes this load.
-                if app.switch_generation != generation {
-                    return;
-                }
                 match result {
                     Ok(view) => {
                         let rows = view.rows.len();
-                        app.tab_cache.insert(path.clone(), view.clone());
+                        // Superseded (a newer read, or a mutation admitted
+                        // against this owner) → write nothing, say nothing.
+                        if !app.accept_tab_view(key, view) {
+                            return;
+                        }
                         app.app_sessions.read_applied(session);
-                        app.apply_tab_view(view);
+                        if app.active_session() != Some(session) {
+                            return; // background owner: data only, no display.
+                        }
                         app.refresh_wip_diffstat();
-                        app.loading_tab = None;
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =
                                 FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
@@ -524,7 +532,11 @@ impl KagiApp {
                         cx.notify();
                     }
                     Err(err) => {
-                        app.loading_tab = None;
+                        // Settle the slot so the same read can be asked for
+                        // again — a failure must never stick on "Loading…".
+                        if !app.reads.fail(key) || app.active_session() != Some(session) {
+                            return;
+                        }
                         let msg = format!("Error: {err}");
                         klog!("tab-load: {} error: {}", name, err);
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg));
@@ -581,14 +593,9 @@ impl KagiApp {
             return;
         }
         let closed = self.tabs.remove(index);
-        // #482 stage 1: detaching the session drops everything that belonged to
-        // this display — conflict/follow-up payloads and the plan slot if it
-        // owned one — while in-flight executions keep running (ADR-0175).
-        self.app_sessions.detach(closed.session);
+        self.release_session(closed.session);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
-        // W6-TABSPEED / ADR-0030: evict the closed repo's cached view state.
-        self.tab_cache.remove(&closed.path);
 
         match decision {
             crate::app::TabClose::Nothing => unreachable!("filtered above"),
@@ -644,29 +651,16 @@ impl KagiApp {
     /// state so a stale commit list / sidebar is not shown behind the Welcome
     /// overlay.
     fn show_welcome(&mut self) {
-        let blank = KagiApp::with_error("");
         self.error = None;
-        self.active_view.header = SharedString::from("kagi");
-        self.active_view.rows = blank.active_view.rows;
-        self.active_view.details = blank.active_view.details;
+        // #482 stage 2: with no tab there is no session, so `view()` is already
+        // the empty read model — the twenty blank field assignments this used to
+        // carry (and the whole second `KagiApp` it built them from) are gone.
+        // T-PERF-RENDER-002: bump the epoch so the sidebar-rows cache misses.
+        self.view_epoch = self.view_epoch.wrapping_add(1);
         self.selected = None;
         self.diff_caches.clear();
         self.main_diff = None;
-        self.active_view.branches = blank.active_view.branches;
-        self.active_view.remote_branches = blank.active_view.remote_branches;
-        self.active_view.tags = blank.active_view.tags;
-        self.active_view.stashes = blank.active_view.stashes;
-        // T-PERF-RENDER-002: this bypasses `apply_tab_view`, so bump the epoch
-        // here too to invalidate the sidebar-rows cache.
-        self.view_epoch = self.view_epoch.wrapping_add(1);
-        self.active_view.is_dirty = false;
-        self.active_view.branch_targets = blank.active_view.branch_targets;
-        self.active_view.commit_row_index = blank.active_view.commit_row_index;
-        self.active_view.branch_upstream_info = blank.active_view.branch_upstream_info;
-        self.active_view.branch_solo = blank.active_view.branch_solo;
         self.wip_diffstat = None;
-        self.active_view.status_summary = blank.active_view.status_summary;
-        self.active_view.toolbar_state = blank.active_view.toolbar_state;
         // #492: a confirmation is bound to the repo it was planned against —
         // its plan, paths, stash indices and OIDs all came from that repo, while
         // the confirm methods read `self.repo_path` at Enter time. Dropping the

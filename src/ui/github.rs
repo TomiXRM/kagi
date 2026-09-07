@@ -125,7 +125,7 @@ impl KagiApp {
     /// branch first, then `origin/<head>`), the same jump the branch rows do.
     pub fn jump_to_pr_head(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
         let local = self
-            .active_view
+            .view()
             .branches
             .iter()
             .any(|(name, _)| name == &pr.head);
@@ -134,7 +134,7 @@ impl KagiApp {
             return;
         }
         let remote = self
-            .active_view
+            .view()
             .remote_branches
             .iter()
             .find(|rb| rb.name == pr.head)
@@ -153,7 +153,7 @@ impl KagiApp {
     /// the fetched remote tips. Both branches must exist as `origin/…`.
     pub fn open_pr_peek(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
         let tip = |name: &str| {
-            self.active_view
+            self.view()
                 .remote_branches
                 .iter()
                 .find(|rb| rb.name == name)
@@ -231,7 +231,7 @@ impl KagiApp {
         delete_branch: bool,
         cx: &mut Context<Self>,
     ) {
-        let head_summary = self.active_view.status_summary.branch.clone();
+        let head_summary = self.view().status_summary.branch.clone();
         let plan = kagi_git::github::plan_pr_merge(pr, method, delete_branch, head_summary);
         klog!(
             "plan: pr-merge #{} blockers={} warnings={}",

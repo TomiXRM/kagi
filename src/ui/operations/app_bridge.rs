@@ -186,10 +186,11 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
         self.refresh_write_busy();
-        match self
-            .app_sessions
-            .write_lease(path, LegacyBusy(self.busy_op.is_some()))
-        {
+        match app::admit(
+            &mut self.reads,
+            self.app_sessions
+                .write_lease(path, LegacyBusy(self.busy_op.is_some())),
+        ) {
             Ok(guard) => {
                 self.busy_op = Some("app-writer");
                 Some(guard)
@@ -226,10 +227,13 @@ impl KagiApp {
             ),
             app::Planned::RemoteStash { .. } => ("remote-stash-drop", Msg::BusyStashDrop),
         };
-        let job = match app::prepare(
-            &mut self.app_sessions,
-            approved,
-            LegacyBusy(self.busy_op.is_some()),
+        let job = match app::admit(
+            &mut self.reads,
+            app::prepare(
+                &mut self.app_sessions,
+                approved,
+                LegacyBusy(self.busy_op.is_some()),
+            ),
         ) {
             Ok(job) => job,
             Err(error) => {
@@ -306,7 +310,6 @@ impl KagiApp {
     fn deliver_app_result(&mut self, delivery: Delivery, cx: &mut Context<Self>) {
         match delivery {
             Delivery::RemovedTarget(target) => {
-                self.tab_cache.remove(&target.path);
                 // #528: the worktree no longer exists, so neither should its
                 // tab. `close_tab` keeps the existing dirty guard and only
                 // re-activates a neighbour when this tab was the active one.
@@ -318,13 +321,15 @@ impl KagiApp {
                 }
             }
             Delivery::Invalidate(target) => {
-                self.tab_cache.remove(&target.path);
-                let active = self.active_session();
-                if active.is_some_and(|active| {
-                    self.app_sessions
-                        .sessions_for(&target.worktree)
-                        .contains(&active)
-                }) {
+                // #482 stage 2: the mutation landed, so every read of this
+                // worktree that predates it is stale — including one still in
+                // flight, which is refused rather than allowed to overwrite the
+                // reload below. The last good read stays on screen meanwhile.
+                let owners = self.app_sessions.sessions_for(&target.worktree);
+                for session in &owners {
+                    self.reads.invalidate(*session);
+                }
+                if self.active_session().is_some_and(|a| owners.contains(&a)) {
                     self.reload(cx);
                 }
             }

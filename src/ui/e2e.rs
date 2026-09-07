@@ -103,21 +103,12 @@ pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {
     let info = kagi_git::open_repository(repo_path).map_err(|e| e.to_string())?;
     let mut backend = kagi_git::Backend::open(repo_path).map_err(|e| e.to_string())?;
     let snap = backend.snapshot(10_000).map_err(|e| e.to_string())?;
-    let mut app = KagiApp::from_snapshot(&info.name, &snap);
+    let mut app = KagiApp::from_snapshot(repo_path, &info.name, info.is_worktree, &snap);
     app.repo_path = Some(repo_path.to_path_buf());
     // ADR-0107: the per-tab session every real launch has (`tabs.rs`). Without
     // it the staging / diff paths that go through `repo_session` silently
     // no-op, which would let a scenario pass for the wrong reason (#473).
     app.repo_session = kagi_git::session::RepoSession::open(repo_path).ok();
-    app.tabs.push(super::tabs::RepoTab {
-        session: app.app_sessions.attach(repo_path.to_path_buf()),
-        path: repo_path.to_path_buf(),
-        name: info.name.clone(),
-        remote: None,
-        is_worktree: info.is_worktree,
-        wt_color_idx: None,
-    });
-    app.active_tab = 0;
     Ok(app)
 }
 

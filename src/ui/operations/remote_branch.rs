@@ -251,7 +251,7 @@ impl KagiApp {
             .or_else(|| repo.remote_urls().ok().and_then(|v| v.into_iter().next()));
 
         let base_branch = self
-            .active_view
+            .view()
             .branches
             .iter()
             .find(|(_, current)| *current)

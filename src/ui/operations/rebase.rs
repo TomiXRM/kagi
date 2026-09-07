@@ -18,7 +18,7 @@ impl KagiApp {
             self.modal_focus = Some(cx.focus_handle());
         }
         let branch = self
-            .active_view
+            .view()
             .branches
             .iter()
             .find(|(_, current)| *current)

@@ -1611,8 +1611,8 @@ impl KagiApp {
             "branch.new" => {
                 let at = self
                     .selected
-                    .and_then(|i| self.active_view.details.get(i))
-                    .or_else(|| self.active_view.details.first())
+                    .and_then(|i| self.view().details.get(i))
+                    .or_else(|| self.view().details.first())
                     .map(|d| CommitId(d.full_sha.to_string()));
                 if let Some(id) = at {
                     self.open_create_branch_modal(id, cx);
@@ -1733,7 +1733,7 @@ impl KagiApp {
             None => return,
         };
         let target = match self
-            .active_view
+            .view()
             .details
             .get(row)
             .map(|d| CommitId(d.full_sha.to_string()))
@@ -1843,7 +1843,7 @@ impl KagiApp {
                         // ADR-0127: a no-op fetch skips the reload below, so the
                         // snapshot-derived fetch timestamp would go stale and the
                         // age indicator would falsely warn — stamp it in place.
-                        app.active_view.status_summary.last_fetch_secs =
+                        app.view_mut().status_summary.last_fetch_secs =
                             Some(super::commit_list::now_unix_secs());
                         // Only reload when the fetch actually moved a ref. A no-op
                         // fetch (the common auto-fetch case) used to re-snapshot the
@@ -1920,7 +1920,7 @@ impl KagiApp {
     /// Open the branch picker overlay listing local branches.
     fn open_branch_picker(&mut self, mode: BranchPickerMode) {
         let branches: Vec<String> = self
-            .active_view
+            .view()
             .branches
             .iter()
             .map(|(n, _)| n.clone())

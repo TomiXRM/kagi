@@ -4,7 +4,9 @@
 //! `toggle_branch_solo` filters the graph to the ancestry closure of a branch
 //! tip and re-runs the lane layout on the sub-DAG; toggling again (or soloing
 //! another branch) restores the saved full row set. The saved state lives in
-//! [`BranchSolo`] on the active [`super::TabViewState`].
+//! [`BranchSolo`] on the session-owned [`super::TabViewState`] (#482 stage 2:
+//! the solo swap is an in-place edit of the owner's read model, so it can no
+//! longer be applied to one copy while another goes stale).
 
 use std::collections::{HashMap, HashSet};
 
@@ -36,7 +38,7 @@ pub(super) fn collect_history_commits(
 impl KagiApp {
     fn branch_history_commits(&self, target: &CommitId) -> HashSet<CommitId> {
         let parents_by_id: HashMap<CommitId, Vec<CommitId>> = self
-            .active_view
+            .view()
             .rows
             .iter()
             .map(|row| (row.id.clone(), row.parents.clone()))
@@ -46,7 +48,7 @@ impl KagiApp {
 
     pub fn toggle_branch_solo(&mut self, name: String, target: CommitId, cx: &mut Context<Self>) {
         let already_soloed = self
-            .active_view
+            .view()
             .branch_solo
             .as_ref()
             .is_some_and(|solo| solo.name == name && solo.target == target);
@@ -55,23 +57,24 @@ impl KagiApp {
         // the new row indexing (or dropped if hidden).
         let selected_id: Option<CommitId> = self
             .selected
-            .and_then(|idx| self.active_view.rows.get(idx))
+            .and_then(|idx| self.view().rows.get(idx))
             .map(|row| row.id.clone());
 
         // Issue #286: every path below renumbers `rows`, so drop the row-index-
-        // keyed caches/menus (same reason `apply_tab_view` does). `selected` is
+        // keyed caches/menus (same reason `on_view_published` does). `selected` is
         // re-resolved by CommitId in each branch, so it is left alone here.
         self.invalidate_caches_for_row_renumber();
 
         if already_soloed {
             // Restore the full row set saved at solo-on.
-            if let Some(solo) = self.active_view.branch_solo.take() {
-                self.active_view.rows = solo.saved_rows;
-                self.active_view.details = solo.saved_details;
-                self.active_view.commit_row_index = solo.saved_row_index;
+            if let Some(solo) = self.view_mut().branch_solo.take() {
+                let view = self.view_mut();
+                view.rows = solo.saved_rows;
+                view.details = solo.saved_details;
+                view.commit_row_index = solo.saved_row_index;
             }
             self.selected =
-                selected_id.and_then(|id| self.active_view.commit_row_index.get(&id).copied());
+                selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
             self.status_footer = FooterStatus::Idle(SharedString::from("Solo off"));
             self.push_toast(ToastKind::Info, "Solo off", cx);
             return;
@@ -79,10 +82,11 @@ impl KagiApp {
 
         // Toggling from one solo to another: restore the full set first so the
         // filter below always starts from the complete graph.
-        if let Some(prev) = self.active_view.branch_solo.take() {
-            self.active_view.rows = prev.saved_rows;
-            self.active_view.details = prev.saved_details;
-            self.active_view.commit_row_index = prev.saved_row_index;
+        if let Some(prev) = self.view_mut().branch_solo.take() {
+            let view = self.view_mut();
+            view.rows = prev.saved_rows;
+            view.details = prev.saved_details;
+            view.commit_row_index = prev.saved_row_index;
         }
 
         let visible_commits = self.branch_history_commits(&target);
@@ -91,9 +95,10 @@ impl KagiApp {
         // lane layout on the sub-DAG so lanes/edges stay consistent — simply
         // dropping rows would leave other branches' pass-through lane lines
         // floating without nodes.
-        let saved_rows = std::mem::take(&mut self.active_view.rows);
-        let saved_details = std::mem::take(&mut self.active_view.details);
-        let saved_row_index = std::mem::take(&mut self.active_view.commit_row_index);
+        let view = self.view_mut();
+        let saved_rows = std::mem::take(&mut view.rows);
+        let saved_details = std::mem::take(&mut view.details);
+        let saved_row_index = std::mem::take(&mut view.commit_row_index);
 
         let keep: Vec<usize> = saved_rows
             .iter()
@@ -135,11 +140,11 @@ impl KagiApp {
             rows.push(row);
             details.push(saved_details[old_ix].clone());
         }
-        self.active_view.rows = rows;
-        self.active_view.details = details;
-        self.active_view.commit_row_index = commit_row_index;
-        self.selected =
-            selected_id.and_then(|id| self.active_view.commit_row_index.get(&id).copied());
+        let view = self.view_mut();
+        view.rows = rows;
+        view.details = details;
+        view.commit_row_index = commit_row_index;
+        self.selected = selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
 
         klog!(
             "solo: {} rows={} (of {})",
@@ -147,7 +152,7 @@ impl KagiApp {
             keep.len(),
             saved_rows.len()
         );
-        self.active_view.branch_solo = Some(BranchSolo {
+        self.view_mut().branch_solo = Some(BranchSolo {
             name: name.clone(),
             target,
             visible_commits,

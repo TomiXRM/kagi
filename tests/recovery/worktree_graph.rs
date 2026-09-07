@@ -23,14 +23,22 @@ fn rev_parse(dir: &Path, rev: &str) -> String {
         .to_string()
 }
 
-/// A main worktree plus an attached linked worktree and a clean detached
-/// linked worktree. The linked/detached pair share the base commit while main
-/// advances, so all three graph navigation cases render.
-fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+struct Fixture {
+    _root: tempfile::TempDir,
+    main: PathBuf,
+    linked: PathBuf,
+    detached: Vec<PathBuf>,
+}
+
+/// One attached linked worktree and three clean detached worktrees at the same
+/// root commit, which is unreachable from every ref and the open HEAD.
+fn fixture() -> Fixture {
     let root = tempfile::tempdir().expect("tempdir");
     let repo = root.path().join("repo");
     let linked = root.path().join("linked");
-    let detached = root.path().join("detached");
+    let detached_a = root.path().join("detached-a");
+    let detached_b = root.path().join("detached-b");
+    let detached_c = root.path().join("detached-c");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
     std::fs::write(repo.join("f.txt"), "base\n").unwrap();
@@ -51,24 +59,59 @@ fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
             "add",
             "-q",
             "--detach",
-            detached.to_str().unwrap(),
+            detached_a.to_str().unwrap(),
             &base,
         ],
     );
-    (
-        root,
-        repo.canonicalize().unwrap(),
-        linked.canonicalize().unwrap(),
-        detached.canonicalize().unwrap(),
-    )
+    git(
+        &detached_a,
+        &["checkout", "-q", "--orphan", "detached-only"],
+    );
+    std::fs::write(detached_a.join("f.txt"), "unreachable\n").unwrap();
+    git(&detached_a, &["add", "."]);
+    git(
+        &detached_a,
+        &["commit", "-q", "-m", "unreachable detached root"],
+    );
+    let detached_head = rev_parse(&detached_a, "HEAD");
+    git(&detached_a, &["checkout", "-q", "--detach", "HEAD"]);
+    git(&repo, &["branch", "-D", "detached-only"]);
+    for path in [&detached_b, &detached_c] {
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                path.to_str().unwrap(),
+                &detached_head,
+            ],
+        );
+    }
+    Fixture {
+        _root: root,
+        main: repo.canonicalize().unwrap(),
+        linked: linked.canonicalize().unwrap(),
+        detached: [&detached_a, &detached_b, &detached_c]
+            .into_iter()
+            .map(|path| path.canonicalize().unwrap())
+            .collect(),
+    }
+}
+
+fn tree_bounds(win: gpui::WindowId, path: &Path) -> gpui::Bounds<gpui::Pixels> {
+    let control = format!("graph-worktree-open:{}", path.display());
+    e2e::control_bounds(win, &control)
+        .unwrap_or_else(|| panic!("worktree tree bounds for {}", path.display()))
 }
 
 /// Tree glyphs are navigation controls distinct from the branch-name hitbox;
 /// opening an existing path switches tabs, and clean detached worktrees remain
 /// reachable from their HEAD. Run only with the matching E2E filter.
 pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
-    let (_fixture, main, linked, detached) = fixture();
-    let (kagi, win) = mount(cx, &main);
+    let fixture = fixture();
+    let (kagi, win) = mount(cx, &fixture.main);
 
     let feature_row = cx.read(|app| {
         kagi.read(app)
@@ -82,12 +125,20 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
             })
             .expect("feature worktree badge row")
     });
-    let tree = e2e::control_bounds(win.window_id(), "graph-worktree-open-attached")
-        .expect("attached worktree tree bounds");
+    let tree = tree_bounds(win.window_id(), &fixture.linked);
     let name = e2e::control_bounds(win.window_id(), "graph-worktree-branch-name")
         .expect("attached worktree branch-name bounds");
-    let detached_tree = e2e::control_bounds(win.window_id(), "graph-worktree-open-detached")
-        .expect("detached worktree tree bounds");
+    let detached_trees: Vec<_> = fixture
+        .detached
+        .iter()
+        .map(|path| tree_bounds(win.window_id(), path))
+        .collect();
+    for pair in detached_trees.windows(2) {
+        assert!(
+            pair[0].origin.x + pair[0].size.width <= pair[1].origin.x,
+            "detached worktree controls overlap: {pair:?}"
+        );
+    }
     assert!(
         tree.origin.x + tree.size.width <= name.origin.x
             || name.origin.x + name.size.width <= tree.origin.x,
@@ -102,7 +153,7 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
         let app = kagi.read(app);
         assert_eq!(app.selected, Some(feature_row));
         assert_eq!(app.tabs.len(), 1, "branch-name click opened a worktree");
-        assert_eq!(app.tabs[app.active_tab].path, main);
+        assert_eq!(app.tabs[app.active_tab].path, fixture.main);
     });
 
     cx.simulate_mouse_move(win, tree.center(), None, gpui::Modifiers::none());
@@ -112,11 +163,10 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
     cx.read(|app| {
         let app = kagi.read(app);
         assert_eq!(app.tabs.len(), 2);
-        assert_eq!(app.tabs[app.active_tab].path, linked);
+        assert_eq!(app.tabs[app.active_tab].path, fixture.linked);
     });
 
-    let main_tree = e2e::control_bounds(win.window_id(), "graph-worktree-open-attached")
-        .expect("main worktree tree bounds from linked tab");
+    let main_tree = tree_bounds(win.window_id(), &fixture.main);
     cx.simulate_mouse_move(win, main_tree.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();
     cx.simulate_click(win, main_tree.center(), gpui::Modifiers::none());
@@ -124,9 +174,10 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
     cx.read(|app| {
         let app = kagi.read(app);
         assert_eq!(app.tabs.len(), 2, "existing main tab was duplicated");
-        assert_eq!(app.tabs[app.active_tab].path, main);
+        assert_eq!(app.tabs[app.active_tab].path, fixture.main);
     });
 
+    let detached_tree = tree_bounds(win.window_id(), &fixture.detached[0]);
     cx.simulate_mouse_down(
         win,
         detached_tree.center(),
@@ -139,7 +190,7 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
             .worktree_menu
             .as_ref()
             .expect("detached worktree menu");
-        assert_eq!(menu.path.as_deref(), Some(detached.as_path()));
+        assert_eq!(menu.path.as_deref(), Some(fixture.detached[0].as_path()));
     });
     kagi.update(cx, |app, cx| {
         app.worktree_menu = None;
@@ -147,8 +198,7 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
     });
     cx.run_until_parked();
 
-    let detached_tree = e2e::control_bounds(win.window_id(), "graph-worktree-open-detached")
-        .expect("detached worktree tree bounds after menu dismiss");
+    let detached_tree = tree_bounds(win.window_id(), &fixture.detached[0]);
     cx.simulate_mouse_move(win, detached_tree.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();
     cx.simulate_click(win, detached_tree.center(), gpui::Modifiers::none());
@@ -156,9 +206,29 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
     cx.read(|app| {
         let app = kagi.read(app);
         assert_eq!(app.tabs.len(), 3);
-        assert_eq!(app.tabs[app.active_tab].path, detached);
+        assert_eq!(app.tabs[app.active_tab].path, fixture.detached[0]);
     });
 
+    // Open every remaining tree from the same aggregate badge. In particular,
+    // the third target used to fall into badge overflow and was inoperable.
+    for (index, path) in fixture.detached.iter().enumerate().skip(1) {
+        let main_tree = tree_bounds(win.window_id(), &fixture.main);
+        cx.simulate_mouse_move(win, main_tree.center(), None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_click(win, main_tree.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        let detached_tree = tree_bounds(win.window_id(), path);
+        cx.simulate_mouse_move(win, detached_tree.center(), None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_click(win, detached_tree.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.read(|app| {
+            let app = kagi.read(app);
+            assert_eq!(app.tabs.len(), index + 3);
+            assert_eq!(app.tabs[app.active_tab].path, *path);
+        });
+    }
+
     unmount(cx, kagi, win);
-    eprintln!("[gui-e2e] PASS graph_worktree_open tabs=3");
+    eprintln!("[gui-e2e] PASS graph_worktree_open tabs=5 detached-targets=3");
 }

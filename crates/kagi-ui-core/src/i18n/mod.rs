@@ -245,6 +245,8 @@ pub enum Msg {
     MenuOpenWorktreeInNewTab,
     /// Branch menu: open the worktree this branch is checked out in (#473).
     MenuOpenWorktreeDir,
+    /// Graph badge label for a detached worktree (#595).
+    GraphDetachedWorktree,
     /// Connector in a destructive modal's title when the op runs in a linked
     /// worktree rather than the open tab: "Discard all changes (3) — in
     /// worktree wt-a" (#476 slice 3, `worktree_wip::worktree_modal_title`).
@@ -1100,6 +1102,9 @@ impl Msg {
             (Ja, MenuOpenWorktreeInNewTab) => "新しいタブで開く",
             (En, MenuOpenWorktreeDir) => "Open worktree",
             (Ja, MenuOpenWorktreeDir) => "worktree を開く",
+            (En, GraphDetachedWorktree) => "detached",
+            // `detached` is a Git domain word and stays English (ADR-0048).
+            (Ja, GraphDetachedWorktree) => "detached",
             (En, InWorktree) => "in worktree",
             (Ja, InWorktree) => "対象 worktree",
             (En, WorktreeLockDefaultReason) => "locked in kagi",
@@ -2360,6 +2365,11 @@ pub fn worktree_path_error(e: &kagi_domain::plan::WorktreePathError) -> String {
     }
 }
 
+/// Localized graph label for a detached worktree HEAD.
+pub fn graph_detached_worktree_label(short_oid: &str) -> String {
+    format!("{} {}", Msg::GraphDetachedWorktree.t(), short_oid)
+}
+
 /// Japanese label for a command-registry id (issue #352, command palette).
 ///
 /// Returns `None` for ids whose English label is a domain word that stays
@@ -2493,8 +2503,16 @@ mod tests {
             wip_row_note(3),
             "// WIP — 3 changes (click to open commit panel)"
         );
+        assert_eq!(
+            graph_detached_worktree_label("abc12345"),
+            "detached abc12345"
+        );
         set_lang_no_persist(Lang::Ja);
         assert!(wip_row_note(2).contains("クリックで commit panel"));
+        assert_eq!(
+            graph_detached_worktree_label("abc12345"),
+            "detached abc12345"
+        );
         set_lang_no_persist(Lang::En);
     }
 

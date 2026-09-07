@@ -64,12 +64,12 @@ fn every_other_worktree_branch_gets_the_tree_glyph() {
         .find(|badge| badge.label == "🌲 master")
         .expect("main worktree branch badge");
     assert_eq!(
-        main.worktree
-            .as_ref()
+        main.worktrees
+            .first()
             .map(|worktree| worktree.path.as_path()),
         Some(std::path::Path::new("/r/master"))
     );
-    assert!(main.worktree.as_ref().unwrap().is_main);
+    assert!(main.worktrees.first().unwrap().is_main);
 
     let main_view = build_badge_map(&snap("master"));
     let feature = main_view
@@ -79,8 +79,8 @@ fn every_other_worktree_branch_gets_the_tree_glyph() {
         .expect("linked worktree branch badge");
     assert_eq!(
         feature
-            .worktree
-            .as_ref()
+            .worktrees
+            .first()
             .map(|worktree| worktree.path.as_path()),
         Some(std::path::Path::new("/r/feat"))
     );
@@ -90,7 +90,7 @@ fn every_other_worktree_branch_gets_the_tree_glyph() {
         .find(|badge| badge.label == "master ✓")
         .expect("current branch badge");
     assert!(
-        current.worktree.is_none(),
+        current.worktrees.is_empty(),
         "current worktree must not self-link"
     );
 }
@@ -117,9 +117,53 @@ fn clean_detached_worktree_gets_an_actionable_head_badge() {
         .into_iter()
         .find(|badge| badge.kind == BadgeKind::Worktree)
         .expect("detached worktree badge");
-    assert_eq!(badge.label, "🌲 detached bbbbbbbb");
-    let worktree = badge.worktree.expect("actionable worktree metadata");
+    assert!(badge.label.ends_with("bbbbbbbb"));
+    let worktree = badge
+        .worktrees
+        .first()
+        .expect("actionable worktree metadata");
     assert_eq!(worktree.name, "detached-wt");
     assert_eq!(worktree.path, std::path::Path::new("/r/detached"));
     assert!(worktree.locked);
+}
+
+#[test]
+fn detached_worktrees_at_one_commit_share_one_badge_with_every_target() {
+    let mut snap = snap("master");
+    let detached_head = CommitId("c".repeat(40));
+    for index in 0..3 {
+        snap.worktrees.push(Worktree {
+            name: format!("detached-{index}"),
+            path: format!("/r/detached-{index}").into(),
+            branch: None,
+            is_current: false,
+            is_main: false,
+            wip: None,
+            head: Some(detached_head.clone()),
+            locked: false,
+            lock_reason: None,
+        });
+    }
+
+    let badges = build_badge_map(&snap)
+        .remove(&detached_head)
+        .expect("detached HEAD row");
+    let detached: Vec<_> = badges
+        .iter()
+        .filter(|badge| badge.kind == BadgeKind::Worktree)
+        .collect();
+    assert_eq!(detached.len(), 1, "one visible badge must own the group");
+    assert_eq!(
+        detached[0]
+            .worktrees
+            .iter()
+            .map(|worktree| worktree.path.as_path())
+            .collect::<Vec<_>>(),
+        vec![
+            std::path::Path::new("/r/detached-0"),
+            std::path::Path::new("/r/detached-1"),
+            std::path::Path::new("/r/detached-2"),
+        ],
+        "no detached target may fall into the non-interactive badge overflow"
+    );
 }

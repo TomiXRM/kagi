@@ -100,10 +100,18 @@ fn detached_worktree_reports_no_branch_and_keeps_its_head_when_clean_or_dirty() 
             "HEAD",
         ],
     );
+    git(&detached, &["checkout", "-q", "--orphan", "detached-only"]);
+    std::fs::write(detached.join("a.txt"), "unreachable\n").unwrap();
+    std::fs::write(detached.join("only.txt"), "detached\n").unwrap();
+    git(&detached, &["add", "."]);
+    git(&detached, &["commit", "-qm", "unreachable detached root"]);
+    git(&detached, &["checkout", "-q", "--detach", "HEAD"]);
+    git(&main, &["branch", "-D", "detached-only"]);
     let detached = detached.canonicalize().expect("canonical detached path");
 
     let mut backend = kagi_git::Backend::open(&main).expect("open main worktree");
-    let clean = backend.snapshot(100).expect("clean snapshot");
+    // A zero ordinary-history budget still pins registered detached roots.
+    let clean = backend.snapshot(0).expect("clean snapshot");
     let detached_clean = clean
         .worktrees
         .iter()
@@ -115,6 +123,15 @@ fn detached_worktree_reports_no_branch_and_keeps_its_head_when_clean_or_dirty() 
         .clone()
         .expect("clean detached HEAD is retained");
     assert_eq!(detached_clean.wip, None);
+    assert_eq!(
+        clean
+            .commits
+            .iter()
+            .map(|commit| &commit.id)
+            .collect::<Vec<_>>(),
+        vec![&head],
+        "unreachable detached HEAD must be pinned beyond the history budget"
+    );
 
     std::fs::write(detached.join("dirty.txt"), "dirty\n").unwrap();
     let dirty = backend.snapshot(100).expect("dirty snapshot");

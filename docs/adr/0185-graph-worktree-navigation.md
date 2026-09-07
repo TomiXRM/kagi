@@ -29,9 +29,17 @@ than creating a duplicate. The only new contract line is
 `[kagi] worktree-open: <path>`.
 
 A non-current detached worktree contributes a `Worktree` badge at its recorded
-`Worktree.head`, labelled `🌲 detached <short-sha>`, whether clean or dirty. It
-uses the existing worktree context menu. A detached main worktree gets the path
-and repo-wide menu actions but not linked-only lock/remove actions.
+`Worktree.head`, labelled through the EN/JA `Msg` catalog, whether clean or
+dirty. Detached worktree HEADs are additional commit-log revwalk roots, so the
+row exists even when no ref or current HEAD reaches it. The ordinary-history
+portion remains bounded; distinct detached roots are pinned beyond that budget.
+
+Detached worktrees sharing one commit are grouped into one high-priority badge
+instead of consuming the two-badge overflow budget. The badge renders one
+path-tooltip tree control per worktree, so every path remains directly
+actionable and can open the existing worktree context menu. A detached main
+worktree gets the path and repo-wide menu actions but not linked-only
+lock/remove actions.
 
 The new badge priority is after HEAD and before branches/tags/remotes. It stays
 inside the graph's two visible slots even when several refs share its commit;
@@ -45,6 +53,7 @@ behavior.
   remain the owners.
 - A detached worktree badge is navigation, not a ref: it is not copied as a
   branch, used as a merge drag source, checked out, or given a branch menu.
-- GUI evidence must exercise the tree/name hitboxes separately, tab reuse, and
-  clean detached navigation. The scenario is built for focused PM execution;
-  this implementation does not run the GUI runner.
+- GUI evidence must exercise the tree/name hitboxes separately, tab reuse, an
+  unreachable clean detached HEAD, and multiple worktrees sharing that HEAD.
+  The scenario is built for focused PM execution; implementations do not run
+  the GUI runner.

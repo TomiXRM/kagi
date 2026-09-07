@@ -10,6 +10,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 - **Flower Road gains balanced light and dark swimlane palettes** with stronger graph-row tinting while preserving the existing badge colours. (#529)
 - **Deleting an unmerged branch now requires a deliberate two-step confirmation**, with its full tip retained through a ref-backed recovery handle. (#585)
+- **Worktree WIP rows now connect directly to their checked-out commits** with lane-coloured dashed paths, making each worktree's next commit position visible in the graph. (#474)
+- **Linked-worktree WIP rows now open an inline commit panel** where stage, unstage, commit, amend and discard target that worktree without loading another graph tab. (#477, #478, #479, #480)
 
 ### Changed
 - Local stash push, apply, pop and drop now run through one application-owned planning, admission and receipt lifecycle. (#541)
@@ -18,10 +20,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 - Release checks require the complete blocking CI aggregate from the target
-  commit's newest workflow run and latest attempt, including the gate selftests.
+  commit's newest workflow run and latest attempt, including the gate selftests. (#519)
 - Branch cleanup retains remote recovery OIDs when subsequent local deletion
-  fails, records partial completion, and opens the per-target operation details.
+  fails, records partial completion, and opens the per-target operation details. (#519)
 - Branch creation records partial completion when the branch exists but its requested checkout fails. (#524)
+- WIP-to-HEAD dashed connectors remain visible across intervening stash rows. (#518)
 - Worktree removal now preserves accurate receipts across partial failure and keeps production fault injection test-only. (#533)
 - Rebase abort reconstructs its guard from replayed HEAD state, including later conflict stops. (#537)
 - Worktree commands remain available when more than one Kagi process is open. (#538)
@@ -40,10 +43,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Plan and replan failures are explicit states instead of silent or stale confirmations. (#570)
 - Branch-menu Enter no longer falls through to checkout behind the menu, and GUI tests use the same keymap setup as the app. (#579)
 - Unknown conflict-process termination remains Unknown and retains its writer lease rather than permitting an unsafe retry. (#582)
+- Branch deletion preserves partial progress and recovery handles after a post-backup failure, while worktree removal remains available on filesystems without creation timestamps. (#588)
+- CLI and MCP confirmations preserve oplog receipts and backup recovery handles when execution fails or completes only partially. (#589)
 
 ### Changed (internal)
 - Commit, compare and staging diffs share one patch decoder and inspect binary
-  flags after libgit2 materializes content rather than guessing from empty hunks.
+  flags after libgit2 materializes content rather than guessing from empty hunks. (#519)
 - The application-layer ownership and delivery model is specified before feature migration. (#521)
 - CI runs the invariant checks for both dev pushes and pull requests. (#525)
 - The first application-layer slice proves worktree removal across plan, admission, execution and delivery. (#526)

@@ -39,8 +39,12 @@ pub enum BranchNote {
     DeleteRemovesPinningWorktree { name: String, path: String },
     /// blocker (`plan_delete_branch`) — HEAD is detached at the branch's tip.
     DeleteDetachedAtTip { name: String },
-    /// blocker (`plan_delete_branch`) — the branch has unmerged commits.
-    DeleteUnmerged { name: String, tip: String },
+    /// warning (`plan_delete_branch`) — unmerged deletion requires two confirmations.
+    DeleteUnmerged {
+        name: String,
+        tip: String,
+        commits: usize,
+    },
     /// warning (`plan_delete_branch`) — the branch has an upstream that is not
     /// deleted by this operation.
     DeleteKeepsRemote { name: String },
@@ -85,9 +89,9 @@ impl BranchNote {
                 "HEAD is detached and points to the same commit as '{}'. This branch cannot be deleted while HEAD is at its tip.",
                 name
             ),
-            BranchNote::DeleteUnmerged { name, tip } => format!(
-                "Branch '{}' has unmerged commits (tip {} is not reachable from HEAD). Merge or discard the branch manually before deleting. Force delete is not provided.",
-                name, tip
+            BranchNote::DeleteUnmerged { name, tip, commits } => format!(
+                "Branch '{}' is unmerged (tip {}). Deleting it makes {} commits unreachable from other refs; a recovery ref will retain them. Confirm twice to delete.",
+                name, tip, commits
             ),
             BranchNote::DeleteSquashMerged { name, squash } => format!(
                 "Branch '{}' was squash-merged as {}: its commits are not ancestors of HEAD (the graph shows it as a dead end), but the identical change is already there. Nothing is lost by deleting it.",
@@ -168,7 +172,7 @@ impl BranchRecovery {
                 new, old
             ),
             BranchRecovery::DeleteBranch { name, tip: Some(tip) } => format!(
-                "To restore the deleted branch:\n  git branch {} {}\nThe branch tip commit '{}' remains in the object store until GC.",
+                "To restore the deleted branch:\n  git branch {} {}\nThe tip '{}' will be retained by a backup ref; use the receipt's backup ref to restore after GC.",
                 name, tip, tip
             ),
             BranchRecovery::DeleteBranch { name, tip: None } => format!(
@@ -276,10 +280,11 @@ mod tests {
         assert_eq!(
             BranchNote::DeleteUnmerged {
                 name: "feat/x".into(),
-                tip: "a1b2c3d4".into()
+                tip: "a1b2c3d4".into(),
+                commits: 2,
             }
             .message_en(),
-            "Branch 'feat/x' has unmerged commits (tip a1b2c3d4 is not reachable from HEAD). Merge or discard the branch manually before deleting. Force delete is not provided."
+            "Branch 'feat/x' is unmerged (tip a1b2c3d4). Deleting it makes 2 commits unreachable from other refs; a recovery ref will retain them. Confirm twice to delete."
         );
     }
 
@@ -379,7 +384,7 @@ mod tests {
                 tip: Some("a1b2c3d4".into())
             }
             .message_en(),
-            "To restore the deleted branch:\n  git branch feat/x a1b2c3d4\nThe branch tip commit 'a1b2c3d4' remains in the object store until GC."
+            "To restore the deleted branch:\n  git branch feat/x a1b2c3d4\nThe tip 'a1b2c3d4' will be retained by a backup ref; use the receipt's backup ref to restore after GC."
         );
         assert_eq!(
             BranchRecovery::DeleteBranch {

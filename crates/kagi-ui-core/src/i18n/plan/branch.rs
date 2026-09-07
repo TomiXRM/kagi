@@ -43,9 +43,9 @@ pub fn note_ja(note: &BranchNote) -> String {
             "HEAD がこの branch の先端を指しています(detached)。削除できません。\nbranch `{}`",
             name
         ),
-        BranchNote::DeleteUnmerged { name, tip } => format!(
-            "未 merge の commit があります。先に merge か破棄してください(強制削除は非対応)。\nbranch `{}` / 先端 `{}`",
-            name, tip
+        BranchNote::DeleteUnmerged { name, tip, commits } => format!(
+            "未 merge の branch です。削除すると {} commit が他の ref から到達不能になりますが、復元用 ref で保持します。2 回確認すると削除します。\nbranch `{}` / 先端 `{}`",
+            commits, name, tip
         ),
         BranchNote::DeleteSquashMerged { name, squash } => format!(
             "squash merge 済みです。変更は取り込み済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`",
@@ -92,7 +92,7 @@ pub fn recovery_ja(recovery: &BranchRecovery) -> String {
             name,
             tip: Some(tip),
         } => format!(
-            "復元する:\n  git branch {} {}\n先端 commit `{}` は GC まで残ります。",
+            "復元する:\n  git branch {} {}\n先端 commit `{}` は復元用 ref で保持します。GC 後は操作記録の backup ref から復元してください。",
             name, tip, tip
         ),
         BranchRecovery::DeleteBranch { name, tip: None } => {

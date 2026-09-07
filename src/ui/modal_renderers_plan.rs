@@ -465,10 +465,15 @@ pub(crate) fn render_delete_branch_modal(
     modal: DeleteBranchModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let label = if modal.confirm_armed {
+        Msg::PlanDeleteBranchArmed.t()
+    } else {
+        Msg::PlanDeleteBranch.t()
+    };
     render_plan_modal_wrapper_styled(
         modal.plan,
         modal.error,
-        "Delete",
+        label,
         None,
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
         |this, _cx| this.cancel_delete_branch_modal(),

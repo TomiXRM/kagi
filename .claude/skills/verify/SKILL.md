@@ -58,7 +58,8 @@ The current suite covers:
 - bottom-panel toggle, graph copy, oplog expand/copy, snapshot creation, theme
   switching, agent provenance, and WIP-to-HEAD connectors;
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
-- modal and branch-menu Enter isolation from the selected commit checkout.
+- modal and branch-menu Enter isolation from the selected commit checkout;
+- unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 
 App keybindings, command-registry keybindings, and native menus share their
 installation path with `run_app`; component initialization must precede that
@@ -297,3 +298,17 @@ receipt, then repeat with a stale owner and require the owner-named notice.
 G also covers a queued append after actual retirement, colon-before whitespace,
 legacy id-less cleanup, and a pre_remove-created unreadable file: removal must
 stop before deleting the worktree.
+
+
+### Unmerged branch deletion (#584)
+
+G in `tests/delete_branch_test.rs` covers the actual modal arm transition, merged
+single confirmation, full-tip preflight refusal, unique reachability counts,
+receipt-backed recovery after real GC, and commit-root retirement. Tier A's
+`unmerged_branch_delete_armed` scenario drives Enter and the measured button:
+first confirmation keeps the branch/HEAD and records nothing; second deletes and
+records its retained tip. Merged deletion stays one-stage. PM runs only
+`KAGI_GUI_E2E_ONLY=unmerged_branch_delete_armed`, with the usual isolated log directory.
+When execution is prohibited, build it with `--features gui-e2e --no-run` only.
+For M, compare EN/JA warning counts and armed labels, cancel/reopen to reset the
+arm, then use the receipt's `git branch <name> <backup-ref>` recovery command.

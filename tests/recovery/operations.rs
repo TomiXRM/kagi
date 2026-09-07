@@ -902,3 +902,91 @@ pub fn scenario_create_branch_replan_error(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS create-branch replan error rejects Enter and the old button coordinate"
     );
 }
+
+/// #584: both real confirm inputs share the unmerged arm transition.
+pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
+    for input in ["enter", "button"] {
+        let fixture = build_fixture();
+        let repo = fixture.path();
+        let head = output(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["branch", "merged-delete", "HEAD~1"]);
+        git(repo, &["checkout", "-q", "-b", "unmerged-delete"]);
+        std::fs::write(
+            repo.join("only-on-branch.txt"),
+            "keep this commit after deletion\n",
+        )
+        .unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-q", "-m", "unmerged work"]);
+        let tip = output(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["checkout", "-q", "main"]);
+        let (app, window) = mount(cx, repo);
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("unmerged-delete", cx)
+        });
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app
+            .read(cx)
+            .delete_branch_modal()
+            .unwrap()
+            .plan
+            .blockers
+            .is_empty()));
+        confirm_branch_delete(cx, &app, window, input);
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().unwrap().confirm_armed));
+        assert_eq!(
+            output(repo, &["rev-parse", "refs/heads/unmerged-delete"]),
+            tip
+        );
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+        assert!(
+            records(repo, "delete-branch").is_empty(),
+            "arming must not record or execute"
+        );
+        confirm_branch_delete(cx, &app, window, input);
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
+        assert_eq!(output(repo, &["branch", "--list", "unmerged-delete"]), "");
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+        let entries = records(repo, "delete-branch");
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+        assert_eq!(entries[0].backup_refs.len(), 1);
+        assert_eq!(
+            output(repo, &["rev-parse", &entries[0].backup_refs[0]]),
+            tip
+        );
+
+        // Merged branches still execute on the first Enter/click.
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("merged-delete", cx)
+        });
+        wait_idle(cx, &app);
+        confirm_branch_delete(cx, &app, window, input);
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
+        assert_eq!(output(repo, &["branch", "--list", "merged-delete"]), "");
+        assert_eq!(records(repo, "delete-branch").len(), 2);
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS unmerged_branch_delete_armed: Enter/button arm then execute; merged stays one-stage");
+}
+
+fn confirm_branch_delete(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    input: &str,
+) {
+    if input == "enter" {
+        press_enter(cx, app, window);
+    } else {
+        paint(cx, window);
+        let bounds =
+            kagi::ui::e2e::confirm_bounds(window.window_id()).expect("delete confirm bounds");
+        cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    }
+}

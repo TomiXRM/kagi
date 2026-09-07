@@ -492,20 +492,16 @@ pub(crate) fn delete_branch_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     branch_name: &str,
-) -> Result<StateSummary, String> {
+) -> Result<kagi_git::backend::recording::RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::DeleteBranch {
         name: branch_name.to_string(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Delete, e))?;
-    klog!("executed: delete-branch {}", branch_name);
-
-    Ok(StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("branch '{}' deleted", branch_name),
-    })
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_ok() {
+        klog!("executed: delete-branch {}", branch_name);
+    }
+    Ok(report)
 }
 
 pub(crate) fn delete_remote_branch_blocking(

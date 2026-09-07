@@ -491,11 +491,10 @@ pub fn worktree_checkout_of(repo: &Repository, name: &str) -> Option<WorktreeChe
 /// - The named branch is the currently checked-out branch (HEAD is attached to it).
 /// - HEAD is detached and the branch tip is HEAD (prevents deleting the only
 ///   ref pointing at the current commit).
-/// - The branch tip commit is **not** reachable from HEAD — the branch is
-///   unmerged; force delete is not provided.
 /// - A linked worktree has the branch checked out and is dirty or locked.
 ///
 /// # Warning conditions
+/// - Unmerged branches require two confirmations and a retained tip (#584).
 ///
 /// - The branch has an upstream configured: the remote branch is NOT deleted
 ///   by this operation.
@@ -667,9 +666,10 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
             squash: short_oid(squash),
         }));
     } else if !is_merged {
-        blockers.push(PlanNote::Branch(BranchNote::DeleteUnmerged {
+        warnings.push(PlanNote::Branch(BranchNote::DeleteUnmerged {
             name: name.to_string(),
             tip: tip_short.clone(),
+            commits: delete_unreachable_commits(repo, name, tip_oid)?,
         }));
     }
 
@@ -695,9 +695,9 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     let recovery = PlanRecovery {
         kind: RecoveryKind::Branch(BranchRecovery::DeleteBranch {
             name: name.to_string(),
-            tip: Some(tip_short.clone()),
+            tip: Some(tip_oid.to_string()),
         }),
-        commands: vec![format!("git branch {} {}", name, tip_short)],
+        commands: vec![format!("git branch {} {}", name, tip_oid)],
     };
 
     Ok(OperationPlan {
@@ -718,9 +718,44 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
-        // #353: kagi enforces the merged check (unmerged deletes are blocked
-        // above), so the faithful safe-delete equivalent is `git branch -d`.
-        equivalent_command: Some(format!("git branch -d {}", name)),
+        // The unmerged route additionally requires mandatory recovery retention.
+        equivalent_command: if is_merged {
+            Some(format!("git branch -d {}", name))
+        } else {
+            None
+        },
+    })
+}
+
+/// Commits whose only ref reachability is the branch being removed.
+fn delete_unreachable_commits(
+    repo: &Repository,
+    name: &str,
+    tip: git2::Oid,
+) -> Result<usize, GitError> {
+    let mut walk = repo.revwalk().map_err(|e| GitError::Other(e.to_string()))?;
+    walk.push(tip).map_err(|e| GitError::Other(e.to_string()))?;
+    let deleting = format!("refs/heads/{name}");
+    for reference in repo
+        .references()
+        .map_err(|e| GitError::Other(e.to_string()))?
+    {
+        let reference = reference.map_err(|e| GitError::Other(e.to_string()))?;
+        if reference.name().ok() == Some(deleting.as_str()) {
+            continue;
+        }
+        if let Ok(commit) = reference.peel_to_commit() {
+            walk.hide(commit.id())
+                .map_err(|e| GitError::Other(e.to_string()))?;
+        }
+    }
+    if let Ok(head) = repo.head().and_then(|r| r.peel_to_commit()) {
+        walk.hide(head.id())
+            .map_err(|e| GitError::Other(e.to_string()))?;
+    }
+    walk.try_fold(0, |count, oid| {
+        oid.map(|_| count + 1)
+            .map_err(|e| GitError::Other(e.to_string()))
     })
 }
 
@@ -732,13 +767,13 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
 ///
 /// # Design (ADR-0014)
 ///
-/// Uses `Branch::delete()` — a **ref-only** deletion that does NOT modify the
-/// working tree, index, HEAD, or any remote.  **Force delete is never used.**
+/// Locks and removes only the approved local ref after retaining its commit.
+/// HEAD/index/remotes are unchanged; a planned clean pinning worktree is removed.
 ///
 /// Steps:
 /// 1. [`preflight_check`] — verify HEAD has not moved since planning.
-/// 2. Locate the branch via `repo.find_branch(name, BranchType::Local)`.
-/// 3. Call `branch.delete()` to remove the local ref.
+/// 2. Lock the branch, compare its full tip, and create the recovery ref.
+/// 3. Remove a clean pinning worktree if needed, then commit the ref deletion.
 /// 4. Verify the branch is gone (`find_branch` now returns `Err`).
 ///
 /// # Errors
@@ -746,20 +781,50 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
 /// Returns [`GitError::Other`] on any failure, including:
 /// - HEAD has moved since planning (preflight mismatch).
 /// - Branch no longer exists at execute time (already deleted externally).
-/// - `branch.delete()` fails for any reason.
+/// - Backup creation or the ref transaction fails.
 /// - Post-delete verify finds the branch still present.
 pub(crate) fn execute_delete_branch(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,
-) -> Result<(), GitError> {
-    // ── 1. Preflight: HEAD must not have moved since planning ─
+    backup_refs: &mut Vec<String>,
+) -> Result<crate::OperationOutcome, GitError> {
+    // Freeze the HEAD attachment as well as the branch tip: a concurrent
+    // checkout must not turn the deletion target into the current branch.
+    let branch_ref = format!("refs/heads/{name}");
+    let mut transaction = repo
+        .transaction()
+        .map_err(|e| GitError::Other(e.to_string()))?;
+    transaction
+        .lock_ref("HEAD")
+        .map_err(|e| GitError::Other(e.to_string()))?;
+    transaction
+        .lock_ref(&branch_ref)
+        .map_err(|e| GitError::Other(e.to_string()))?;
     preflight_check(repo, plan)?;
-
-    // ── 2. Locate the branch ──────────────────────────────────
-    let mut branch = repo
+    let branch = repo
         .find_branch(name, BranchType::Local)
         .map_err(|e| GitError::Other(format!("branch '{}' not found: {}", name, e.message())))?;
+
+    let tip = branch
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("branch has no tip".into()))?;
+    let expected = plan.recovery.as_ref().and_then(|r| match &r.kind {
+        RecoveryKind::Branch(BranchRecovery::DeleteBranch { name: planned, tip })
+            if planned == name =>
+        {
+            tip.as_deref()
+        }
+        _ => None,
+    });
+    if expected != Some(tip.to_string().as_str()) {
+        return Err(GitError::Other(
+            "branch tip changed after planning; please re-plan".into(),
+        ));
+    }
+    let reference = super::backup::retain_object(repo, &super::backup::operation_id(), 0, tip)?;
+    backup_refs.push(reference.clone());
 
     // ── 2.2 Remove the pinning worktree, if the plan promised to ─────────
     // Re-detect at execute time (the preflight spirit: the world may have
@@ -803,11 +868,13 @@ pub(crate) fn execute_delete_branch(
     pre_clean_branch_config(repo, name);
 
     // ── 3. Delete the branch ref (ref-only, no WT change) ─────
-    // Branch::delete() removes refs/heads/<name>. force=false would be the
-    // --delete flag; here we rely on plan-time merged check instead.
-    branch
-        .delete()
-        .map_err(|e| GitError::Other(format!("branch delete failed: {}", e.message())))?;
+    // Keep the ref locked from the full-tip comparison through removal.
+    transaction
+        .remove(&branch_ref)
+        .map_err(|e| GitError::Other(e.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|e| GitError::Other(e.to_string()))?;
 
     // ── 4. Verify the branch is gone ─────────────────────────
     if repo.find_branch(name, BranchType::Local).is_ok() {
@@ -817,5 +884,9 @@ pub(crate) fn execute_delete_branch(
         )));
     }
 
-    Ok(())
+    Ok(crate::OperationOutcome::DeleteBranch {
+        name: name.into(),
+        tip: tip.to_string(),
+        reference,
+    })
 }

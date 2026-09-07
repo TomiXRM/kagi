@@ -91,7 +91,7 @@ pub fn execute_delete_branch(
         Some(plan),
     )
     .map(|outcome| match outcome {
-        OperationOutcome::Unit => (),
+        OperationOutcome::DeleteBranch { .. } => (),
         other => panic!("unexpected fixture outcome: {other:?}"),
     });
     refresh_fixture_index(repo, result)

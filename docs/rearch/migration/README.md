@@ -72,10 +72,12 @@ zero-copy tab ownership target.
     replace the read generation guard with `RequestSlot`.
   - [ ] **#482 stage 3.** Move selection, scroll, pane, and menu state into `TabView`,
     then remove `reset_per_repo_ui`.
-  - [ ] **Conflict C0 — closes #569.** Preserve `TerminationUnknown` as `Unknown`,
+  - [x] **Conflict C0 — #582 / part of #569.** Preserve `TerminationUnknown` as `Unknown`,
     reserve the owner lease before Continue/Skip/Abort, and retain it when stop is unconfirmed.
-  - [ ] **Conflict C1.** Move Save and directory/file resolution through the app
-    boundary while retaining the legacy busy bridge for the other conflict actions.
+  - [x] **Conflict C1.** Move Save and directory/file resolution through the app
+    boundary while retaining the legacy busy bridge for the other conflict actions;
+    exact conflict/buffer revisions and the Backend-owned receipt accompany the
+    finite completion evidence.
   - [ ] **Conflict C2.** Migrate typed Abort flows with progress-aware outcomes,
     recovery, and Backend-owned recording.
   - [ ] **Conflict C3.** Migrate Continue/Skip and reconcile, preserve typed process

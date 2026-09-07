@@ -1,7 +1,595 @@
 //! Conflict execution stays behind owner trust, including frozen D/F plans.
 use super::*;
+use kagi_domain::conflict_family::{
+    BufferRevision, ConflictDraft, ConflictEvidence, ConflictObservation, ConflictProgress,
+    ConflictRequest, ConflictRevision,
+};
+use sha2::{Digest, Sha256};
+
+#[derive(Clone, Debug)]
+pub struct ConflictSnapshot {
+    pub session: conflicts::ConflictSession,
+    pub observation: ConflictObservation,
+}
+
+#[derive(Clone, Debug)]
+enum ConflictPreparedAction {
+    Save {
+        path: PathBuf,
+        draft: ConflictDraft,
+        expected_mode: u32,
+    },
+    DirFile(ops::DirFilePlan),
+}
+
+#[derive(Clone, Debug)]
+pub struct ConflictPlan {
+    pub repo: PathBuf,
+    pub common_dir: kagi_domain::remove::RepoId,
+    pub worktree: kagi_domain::remove::WorktreeId,
+    pub request: ConflictRequest,
+    pub before: ops::StateSummary,
+    op_name: String,
+    action: ConflictPreparedAction,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictFaultPoint {
+    BeforeMutation,
+    AfterWorktreeWrite,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConflictReport {
+    pub recording: recording::Recording,
+    pub evidence: ConflictEvidence,
+}
+
+fn digest(parts: impl IntoIterator<Item = Vec<u8>>) -> String {
+    let mut hash = Sha256::new();
+    for part in parts {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part);
+    }
+    hex::encode(hash.finalize())
+}
+
+fn buffer_revision(path: &Path, draft: &ConflictDraft) -> BufferRevision {
+    let mut parts = vec![path.as_os_str().as_encoded_bytes().to_vec()];
+    match draft {
+        ConflictDraft::Text(bytes) => {
+            parts.push(b"text".to_vec());
+            parts.push(bytes.clone());
+        }
+        ConflictDraft::Raw { oid, mode } => {
+            parts.push(b"raw".to_vec());
+            parts.push(oid.as_bytes().to_vec());
+            parts.push(mode.to_be_bytes().to_vec());
+        }
+    }
+    BufferRevision::from_fingerprint(digest(parts))
+}
+
+fn revision_label(revision: &ConflictRevision) -> String {
+    revision.as_str().chars().take(12).collect()
+}
+
+fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>, GitError> {
+    let Some(session) = conflicts::detect_conflict_session(repo) else {
+        return Ok(None);
+    };
+    let mut parts = Vec::new();
+    parts.push(format!("{:?}", repo.state()).into_bytes());
+    parts.push(format!("{:?}", session.op).into_bytes());
+    if let Ok(head) = repo.head() {
+        parts.push(head.name_bytes().to_vec());
+        parts.push(
+            head.target()
+                .map(|oid| oid.to_string())
+                .unwrap_or_default()
+                .into_bytes(),
+        );
+    }
+    let mut entries: Vec<Vec<u8>> = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?
+        .iter()
+        .map(|entry| {
+            let mut value = entry.path;
+            value.extend_from_slice(&entry.mode.to_be_bytes());
+            value.extend_from_slice(&entry.flags.to_be_bytes());
+            value.extend_from_slice(entry.id.as_bytes());
+            value
+        })
+        .collect();
+    entries.sort();
+    parts.extend(entries);
+    let git_dir = repo.path();
+    for relative in [
+        "MERGE_HEAD",
+        "REBASE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "rebase-merge/done",
+        "rebase-merge/git-rebase-todo",
+        "rebase-merge/msgnum",
+        "rebase-merge/end",
+        "rebase-apply/next",
+        "rebase-apply/last",
+    ] {
+        let path = git_dir.join(relative);
+        if let Ok(bytes) = std::fs::read(path) {
+            parts.push(relative.as_bytes().to_vec());
+            parts.push(bytes);
+        }
+    }
+    let revision = ConflictRevision::from_fingerprint(digest(parts));
+    let paths = session.files.iter().map(|file| file.path.clone()).collect();
+    Ok(Some(ConflictSnapshot {
+        observation: ConflictObservation {
+            revision,
+            operation: session.op.slug().into(),
+            paths,
+        },
+        session,
+    }))
+}
+
+fn text_mode(repo: &Repository, path: &Path) -> u32 {
+    let executable = repo
+        .workdir()
+        .and_then(|root| std::fs::symlink_metadata(root.join(path)).ok())
+        .map(|metadata| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o111 != 0
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = metadata;
+                false
+            }
+        })
+        .unwrap_or(false);
+    if executable {
+        0o100755
+    } else {
+        0o100644
+    }
+}
+
+fn verify_save(
+    repo: &Repository,
+    path: &Path,
+    draft: &ConflictDraft,
+    expected_mode: u32,
+) -> Result<(), GitError> {
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    if index.get_path(path, 1).is_some()
+        || index.get_path(path, 2).is_some()
+        || index.get_path(path, 3).is_some()
+    {
+        return Err(GitError::Other(format!(
+            "{} remains unmerged after save",
+            path.display()
+        )));
+    }
+    let entry = index
+        .get_path(path, 0)
+        .ok_or_else(|| GitError::Other(format!("{} was not staged", path.display())))?;
+    match draft {
+        ConflictDraft::Text(bytes) => {
+            let root = repo
+                .workdir()
+                .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
+            let actual = std::fs::read(root.join(path))
+                .map_err(|e| GitError::Other(format!("verify {} failed: {e}", path.display())))?;
+            let expected_oid = git2::Oid::hash_object(git2::ObjectType::Blob, bytes)
+                .map_err(|e| GitError::Other(e.to_string()))?;
+            if actual != *bytes || entry.id != expected_oid || entry.mode != expected_mode {
+                return Err(GitError::Other(format!(
+                    "{} bytes, blob, or mode differ after save",
+                    path.display()
+                )));
+            }
+        }
+        ConflictDraft::Raw { oid, mode } => {
+            if entry.id.to_string() != *oid || entry.mode != *mode {
+                return Err(GitError::Other(format!(
+                    "{} raw OID or mode differs after save",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_dir_file(repo: &Repository, plan: &ops::DirFilePlan) -> Result<(), GitError> {
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    if index.get_path(&plan.path, 1).is_some()
+        || index.get_path(&plan.path, 2).is_some()
+        || index.get_path(&plan.path, 3).is_some()
+    {
+        return Err(GitError::Other(
+            "directory/file entry remains unmerged".into(),
+        ));
+    }
+    match plan.choice {
+        ops::DirFileChoice::KeepFile => {
+            let entry = index
+                .get_path(&plan.path, 0)
+                .ok_or_else(|| GitError::Other("kept file is absent from index".into()))?;
+            if entry.id != plan.file_oid || entry.mode != plan.file_mode {
+                return Err(GitError::Other("kept file identity differs".into()));
+            }
+            if plan
+                .dir_children
+                .iter()
+                .any(|path| index.get_path(path, 0).is_some())
+            {
+                return Err(GitError::Other("directory children remain in index".into()));
+            }
+        }
+        ops::DirFileChoice::KeepDirectory => {
+            if index.get_path(&plan.path, 0).is_some()
+                || plan
+                    .dir_children
+                    .iter()
+                    .any(|path| index.get_path(path, 0).is_none())
+            {
+                return Err(GitError::Other("kept directory index shape differs".into()));
+            }
+        }
+    }
+    Ok(())
+}
 
 impl Backend {
+    pub fn record_conflict_refusal(
+        path: &Path,
+        policy: ExecutionPolicy,
+        request: &ConflictRequest,
+        error: &str,
+    ) -> recording::Recording {
+        recording::finalize(
+            crate::oplog::OpLogEntry::new(
+                request.action().name(),
+                path.display().to_string(),
+                ops::StateSummary {
+                    head: format!("conflict revision {}", revision_label(request.revision())),
+                    dirty: format!("{} {}", request.action().name(), request.path().display()),
+                },
+                crate::oplog::OpOutcome::Refused {
+                    blockers: vec![error.into()],
+                },
+            )
+            .with_actor(policy.actor)
+            .with_worktree(Some(path.display().to_string())),
+        )
+    }
+
+    pub fn conflict_abandoned(plan: &ConflictPlan, policy: ExecutionPolicy) -> ConflictReport {
+        let detail = "conflict job dropped before execution".to_string();
+        let recording = recording::finalize(
+            crate::oplog::OpLogEntry::new(
+                plan.op_name.clone(),
+                plan.repo.display().to_string(),
+                plan.before.clone(),
+                crate::oplog::OpOutcome::Failed {
+                    error: detail.clone(),
+                },
+            )
+            .with_actor(policy.actor)
+            .with_worktree(Some(plan.repo.display().to_string())),
+        );
+        ConflictReport {
+            recording,
+            evidence: ConflictEvidence {
+                action: plan.request.action(),
+                progress: ConflictProgress::NotStarted,
+                before: ConflictObservation {
+                    revision: plan.request.revision().clone(),
+                    operation: "abandoned".into(),
+                    paths: vec![plan.request.path().to_path_buf()],
+                },
+                after: None,
+                detail,
+            },
+        }
+    }
+
+    pub fn conflict_snapshot(&self) -> Result<Option<ConflictSnapshot>, GitError> {
+        observation(&self.repo)
+    }
+
+    pub fn conflict_save_request(
+        revision: ConflictRevision,
+        buffer: &ResolutionBuffer,
+        path: &Path,
+    ) -> Result<ConflictRequest, GitError> {
+        let draft = buffer.conflict_draft(path).ok_or_else(|| {
+            GitError::Other(format!("no resolution draft for {}", path.display()))
+        })?;
+        Ok(ConflictRequest::Save {
+            path: path.to_path_buf(),
+            revision,
+            buffer_revision: buffer_revision(path, &draft),
+            draft,
+        })
+    }
+
+    pub fn plan_recorded_conflict(
+        path: &Path,
+        request: ConflictRequest,
+    ) -> Result<ConflictPlan, GitError> {
+        let backend = Self::open(path)?;
+        let repo =
+            std::fs::canonicalize(&backend.path).map_err(|e| GitError::Other(e.to_string()))?;
+        let worktree = backend.write_worktree_id()?;
+        let snapshot = observation(&backend.repo)?
+            .ok_or_else(|| GitError::Other("the repository is not in conflict".into()))?;
+        if &snapshot.observation.revision != request.revision() {
+            return Err(GitError::Other(
+                "conflict changed since it was observed — re-open the conflict".into(),
+            ));
+        }
+        let action = match &request {
+            ConflictRequest::Save {
+                path,
+                buffer_revision: expected,
+                draft,
+                ..
+            } => {
+                if buffer_revision(path, draft) != *expected {
+                    return Err(GitError::Other(
+                        "resolution buffer changed since it was prepared".into(),
+                    ));
+                }
+                if !snapshot.session.files.iter().any(|file| &file.path == path) {
+                    return Err(GitError::Other(format!(
+                        "{} is not in the observed conflict",
+                        path.display()
+                    )));
+                }
+                if let ConflictDraft::Text(bytes) = draft {
+                    let text = std::str::from_utf8(bytes).map_err(|_| {
+                        GitError::Other("text resolution is not valid UTF-8".into())
+                    })?;
+                    if crate::checklist::text_has_conflict_marker(text) {
+                        return Err(GitError::Other(
+                            "conflict markers remain in the resolution buffer".into(),
+                        ));
+                    }
+                }
+                ConflictPreparedAction::Save {
+                    path: path.clone(),
+                    draft: draft.clone(),
+                    expected_mode: match draft {
+                        ConflictDraft::Raw { mode, .. } => *mode,
+                        ConflictDraft::Text(_) => text_mode(&backend.repo, path),
+                    },
+                }
+            }
+            ConflictRequest::ResolveDirFile { path, choice, .. } => {
+                ConflictPreparedAction::DirFile(ops::plan_dir_file_resolution(
+                    &backend.repo,
+                    path,
+                    *choice,
+                )?)
+            }
+        };
+        let op_name = match request.action() {
+            kagi_domain::conflict_family::ConflictAction::Save => {
+                format!("conflict-save:{}", snapshot.observation.operation)
+            }
+            action => action.name(),
+        };
+        Ok(ConflictPlan {
+            repo,
+            common_dir: worktree.repo.clone(),
+            worktree,
+            before: ops::StateSummary {
+                head: format!("conflict revision {}", revision_label(request.revision())),
+                dirty: format!("{} {}", request.action().name(), request.path().display()),
+            },
+            op_name,
+            request,
+            action,
+        })
+    }
+
+    pub fn run_recorded_conflict(
+        plan: &ConflictPlan,
+        policy: ExecutionPolicy,
+        fault: Option<ConflictFaultPoint>,
+    ) -> ConflictReport {
+        let action = plan.request.action();
+        let mut progress = ConflictProgress::NotStarted;
+        let mut after = None;
+        let mut recovery = None;
+        let backend = match Self::open_with_policy(&plan.repo, policy) {
+            Ok(backend) => backend,
+            Err(error) => {
+                let outcome = crate::oplog::OpOutcome::Failed {
+                    error: error.to_string(),
+                };
+                let recording = recording::finalize(
+                    crate::oplog::OpLogEntry::new(
+                        plan.op_name.clone(),
+                        plan.repo.display().to_string(),
+                        plan.before.clone(),
+                        outcome,
+                    )
+                    .with_actor(policy.actor)
+                    .with_worktree(Some(plan.repo.display().to_string())),
+                );
+                return ConflictReport {
+                    recording,
+                    evidence: ConflictEvidence {
+                        action,
+                        progress,
+                        before: ConflictObservation {
+                            revision: plan.request.revision().clone(),
+                            operation: "unknown".into(),
+                            paths: vec![plan.request.path().to_path_buf()],
+                        },
+                        after,
+                        detail: error.to_string(),
+                    },
+                };
+            }
+        };
+        let before = observation(&backend.repo)
+            .ok()
+            .flatten()
+            .map(|snapshot| snapshot.observation)
+            .unwrap_or_else(|| ConflictObservation {
+                revision: plan.request.revision().clone(),
+                operation: "missing".into(),
+                paths: vec![],
+            });
+        let result = (|| -> Result<(), GitError> {
+            backend.require_trust()?;
+            if backend.write_worktree_id()? != plan.worktree
+                || backend.write_repo_id()? != plan.common_dir
+            {
+                return Err(GitError::Other(
+                    "repository identity changed after planning".into(),
+                ));
+            }
+            let live = observation(&backend.repo)?
+                .ok_or_else(|| GitError::Other("the conflict is no longer present".into()))?;
+            if live.observation.revision != *plan.request.revision() {
+                return Err(GitError::Other(
+                    "conflict changed since planning; no files were modified".into(),
+                ));
+            }
+            if fault == Some(ConflictFaultPoint::BeforeMutation) {
+                return Err(GitError::Other("injected before conflict mutation".into()));
+            }
+            match &plan.action {
+                ConflictPreparedAction::Save {
+                    path,
+                    draft,
+                    expected_mode,
+                } => {
+                    if fault == Some(ConflictFaultPoint::AfterWorktreeWrite) {
+                        let ConflictDraft::Text(bytes) = draft else {
+                            return Err(GitError::Other(
+                                "after-worktree fault requires a text draft".into(),
+                            ));
+                        };
+                        let root = backend.repo.workdir().ok_or_else(|| {
+                            GitError::Other("repository has no working tree".into())
+                        })?;
+                        std::fs::write(root.join(path), bytes)
+                            .map_err(|e| GitError::Other(e.to_string()))?;
+                        progress = ConflictProgress::WorktreeWritten;
+                        return Err(GitError::Other(
+                            "injected index failure after worktree write".into(),
+                        ));
+                    }
+                    let buffer = ResolutionBuffer::from_conflict_draft(&plan.repo, path, draft)?;
+                    conflicts::execute_conflict_save(&backend.repo, &buffer, path)?;
+                    progress = ConflictProgress::IndexWritten;
+                    verify_save(&backend.repo, path, draft, *expected_mode)?;
+                }
+                ConflictPreparedAction::DirFile(dir_file) => {
+                    recovery = Some(ops::apply_dir_file_resolution(&backend.repo, dir_file)?);
+                    progress = ConflictProgress::IndexWritten;
+                    verify_dir_file(&backend.repo, dir_file)?;
+                }
+            }
+            progress = ConflictProgress::Verified;
+            after = observation(&backend.repo)?.map(|snapshot| snapshot.observation);
+            Ok(())
+        })();
+        if after.is_none() {
+            after = observation(&backend.repo)
+                .ok()
+                .flatten()
+                .map(|snapshot| snapshot.observation);
+        }
+        if result.is_err() && progress == ConflictProgress::NotStarted {
+            progress = match &plan.action {
+                ConflictPreparedAction::Save { path, draft, .. } => match draft {
+                    ConflictDraft::Text(bytes)
+                        if backend.repo.workdir().is_some_and(|root| {
+                            std::fs::read(root.join(path)).ok().as_deref() == Some(bytes.as_slice())
+                        }) =>
+                    {
+                        ConflictProgress::WorktreeWritten
+                    }
+                    ConflictDraft::Raw { oid, mode } => backend
+                        .repo
+                        .index()
+                        .ok()
+                        .and_then(|index| {
+                            index.get_path(path, 0).map(|entry| (entry.id, entry.mode))
+                        })
+                        .filter(|(actual_oid, actual_mode)| {
+                            actual_oid.to_string() == *oid && *actual_mode == *mode
+                        })
+                        .map(|_| ConflictProgress::IndexWritten)
+                        .unwrap_or(ConflictProgress::NotStarted),
+                    ConflictDraft::Text(_) => ConflictProgress::NotStarted,
+                },
+                ConflictPreparedAction::DirFile(dir_file)
+                    if verify_dir_file(&backend.repo, dir_file).is_ok() =>
+                {
+                    ConflictProgress::IndexWritten
+                }
+                ConflictPreparedAction::DirFile(_) => ConflictProgress::NotStarted,
+            };
+        }
+        let detail = result
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| recovery.clone().unwrap_or_else(|| "verified".into()));
+        let observed_after = ops::StateSummary {
+            head: after
+                .as_ref()
+                .map(|value| format!("conflict revision {}", revision_label(&value.revision)))
+                .unwrap_or_else(|| "conflict cleared".into()),
+            dirty: recovery
+                .as_ref()
+                .map(|value| format!("progress={progress:?}; {value}"))
+                .unwrap_or_else(|| format!("progress={progress:?}")),
+        };
+        let outcome = match &result {
+            Ok(()) => crate::oplog::OpOutcome::Success {
+                after: observed_after,
+            },
+            Err(error) if progress != ConflictProgress::NotStarted => {
+                crate::oplog::OpOutcome::Partial {
+                    after: observed_after,
+                    error: error.to_string(),
+                }
+            }
+            Err(error) => crate::oplog::OpOutcome::Refused {
+                blockers: vec![error.to_string()],
+            },
+        };
+        let recording = backend.record_run_oplog(&plan.op_name, &plan.before, outcome);
+        ConflictReport {
+            recording,
+            evidence: ConflictEvidence {
+                action,
+                progress,
+                before,
+                after,
+                detail,
+            },
+        }
+    }
+
     pub fn continue_blockers(
         &self,
         session: &conflicts::ConflictSession,

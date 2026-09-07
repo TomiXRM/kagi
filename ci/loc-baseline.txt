@@ -10,7 +10,7 @@ crates/kagi-git/src/ops/pull.rs 824
 crates/kagi-git/src/ops/push.rs 812
 crates/kagi-git/src/ops/stash.rs 1018
 crates/kagi-git/src/ops/worktree_steps.rs 903
-crates/kagi-git/src/resolution.rs 1537
+crates/kagi-git/src/resolution.rs 1539
 crates/kagi-ui-core/src/i18n/mod.rs 2596
 crates/kagi-ui-core/src/theme.rs 1428
 crates/kagi-ui-editor/src/lib.rs 3428
@@ -19,14 +19,14 @@ src/ui/branch_menu.rs 965
 src/ui/commands.rs 2244
 src/ui/commit_list.rs 838
 src/ui/commit_panel_render.rs 1451
-src/ui/conflict_editor.rs 1328
-src/ui/conflict_view.rs 2086
+src/ui/conflict_editor.rs 1332
+src/ui/conflict_view.rs 2114
 src/ui/diff_view.rs 1600
 src/ui/inspector.rs 1244
-src/ui/mod.rs 4161
+src/ui/mod.rs 4132
 src/ui/operations/branch.rs 1584
 src/ui/operations/commit.rs 1376
-src/ui/operations/conflict.rs 1054
+src/ui/operations/conflict.rs 930
 src/ui/operations/modal_state.rs 1142
 src/ui/pr_mode.rs 2338
 src/ui/render.rs 908

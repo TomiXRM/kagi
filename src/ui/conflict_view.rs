@@ -63,6 +63,8 @@ pub struct EditorInputs {
 /// on [`KagiApp`], not on the cloned [`ConflictMode`]).
 #[derive(Clone)]
 pub struct EditorChrome {
+    /// Presentation-only projection of the authoritative Sessions writer lease.
+    pub writer_busy: bool,
     /// The Result pane `InputState`, when present for the edited content file.
     pub inputs: Option<EditorInputs>,
     /// Shared A/B row-list scroll handle; both panes track it for vertical sync.
@@ -161,6 +163,9 @@ pub struct ConflictView {
     /// `(file_index, anchor)` where `anchor` is the click position in window px.
     /// `None` when no menu is open. Rendered as a top-level overlay.
     pub file_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    /// Presentation-only projection used to disable Save/D-F controls while
+    /// the application owns a conflict writer lease.
+    pub writer_busy: bool,
     /// Weak back-reference to the parent. Used ONLY from event/listener closures
     /// (deferred Backend / context actions) — NEVER read in a `Render` path
     /// (would re-enter the parent and panic).
@@ -192,6 +197,7 @@ impl ConflictView {
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
             file_menu: None,
+            writer_busy: false,
             app,
             repo_path,
         }
@@ -344,6 +350,9 @@ impl ConflictView {
 /// `side_labels` left role.
 #[derive(Clone)]
 pub struct ConflictMode {
+    /// Exact repository conflict identity observed by the Backend. Save and
+    /// D/F intents must bind this value; path/count equality is insufficient.
+    pub revision: kagi_domain::conflict_family::ConflictRevision,
     /// The detected conflict session (operation + files), with per-file `status`
     /// recomputed from the buffer at detection time.
     pub session: kagi_git::conflicts::ConflictSession,
@@ -516,6 +525,7 @@ impl ConflictView {
     /// all live on the entity now).
     fn editor_chrome(&self) -> EditorChrome {
         EditorChrome {
+            writer_busy: self.writer_busy,
             inputs: self.editor_inputs.as_ref().map(|i| EditorInputs {
                 path: i.path.clone(),
                 result: i.result.clone(),
@@ -950,7 +960,7 @@ pub fn render_body(
             let path = file.path.clone();
             super::conflict_editor::render_editor(mode, chrome, &path, cx)
         }
-        _ => render_center(mode, cx),
+        _ => render_center(mode, chrome.writer_busy, cx),
     };
     // flex_1 + min_h(0) (NOT size_full): in the root flex_col the conflict body
     // must share height with the bottom panel + status bar, not take 100% and
@@ -1686,6 +1696,7 @@ where
 /// pattern is why this must go through the parent, not the leased entity.
 fn render_dir_file_center(
     path: &std::path::Path,
+    writer_busy: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     use kagi_git::DirFileChoice;
@@ -1730,17 +1741,25 @@ fn render_dir_file_center(
         .py(theme::scaled_px(8.))
         .border_b_1()
         .border_color(rgb(theme().surface))
-        .child(choose_button(
-            Msg::ConflictKeepDirectory.t().to_string(),
-            theme().color_branch,
-            keep_dir,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-keep-directory",
+            choose_button(
+                Msg::ConflictKeepDirectory.t().to_string(),
+                theme().color_branch,
+                keep_dir,
+                cx,
+            )
+            .disabled(writer_busy),
         ))
-        .child(choose_button(
-            Msg::ConflictKeepFile.t().to_string(),
-            theme().color_remote,
-            keep_file,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-keep-file",
+            choose_button(
+                Msg::ConflictKeepFile.t().to_string(),
+                theme().color_remote,
+                keep_file,
+                cx,
+            )
+            .disabled(writer_busy),
         ));
 
     div()
@@ -1759,7 +1778,11 @@ fn render_dir_file_center(
         .into_any_element()
 }
 
-fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
+fn render_center(
+    mode: &ConflictMode,
+    writer_busy: bool,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
         return div()
             .flex()
@@ -1788,7 +1811,7 @@ fn render_center(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
     // keep-directory-vs-keep-file decision that stages straight into the index via
     // the parent app (`resolve_dir_file`), then re-detects (like conflict-save).
     if kind == ConflictKind::DirFile {
-        return render_dir_file_center(&path, cx);
+        return render_dir_file_center(&path, writer_busy, cx);
     }
 
     let keep_current_label = format!("{} ({})", Msg::ConflictKeepCurrent.t(), labels.current.name);
@@ -1981,7 +2004,11 @@ mod tests {
     /// Build a ConflictMode from a repo path, mirroring `detect_conflict_mode`.
     fn detect(repo_path: &std::path::Path, branch: &str) -> ConflictMode {
         let backend = kagi_git::Backend::open(repo_path).unwrap();
-        let mut session = backend.detect_conflict_session().expect("conflict session");
+        let snapshot = backend
+            .conflict_snapshot()
+            .unwrap()
+            .expect("conflict session");
+        let mut session = snapshot.session;
         let buffer = backend.resolution_buffer_from_repo().unwrap();
         let residue = buffer.files_with_marker_residue();
         for f in &mut session.files {
@@ -1996,6 +2023,7 @@ mod tests {
             };
         }
         ConflictMode {
+            revision: snapshot.observation.revision,
             session,
             buffer,
             current_branch: branch.to_string(),

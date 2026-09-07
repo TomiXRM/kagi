@@ -478,6 +478,9 @@ ADR-0182 / #574 を最初の code slice の前提とする。
 
 ### PR C1 — Save / D/F の縦断実証
 
+実装状況: `feat/conflict-c1-save-df` で完了。Save/D/F のみを有限 job に移し、後続 C2/C3 の
+Abort/Continue/Skip は既存経路のまま残す。
+
 - conflict request/revision/report type、finite `Planned`/`FamilyEvidence` variant、conflict owner state を
   `Sessions` に追加。plan slot は既存の一つだけ。
 - Save と D/F に `prepare -> approve -> run -> apply` を接続。

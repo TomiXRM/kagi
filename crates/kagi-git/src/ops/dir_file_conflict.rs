@@ -140,28 +140,11 @@ pub(crate) fn execute_dir_file_resolution(
     repo_path: &Path,
     plan: &DirFilePlan,
 ) -> Result<(), GitError> {
-    preflight_dir_file_resolution(repo, plan)?;
-
-    // #408: the resolution drops one namespace from the index and rewrites the
-    // working tree (removing the losing side's on-disk files). Take a savepoint
-    // FIRST so the operation is recoverable in git's own terms — mirrors the
-    // auto-snapshot `Backend::run` takes before any destructive op.
-    let recovery = match crate::ops::create_snapshot(
-        repo,
-        &format!(
-            "auto snapshot before conflict-dir-file:{} {}",
-            plan.choice.slug(),
-            plan.path.display()
-        ),
-    ) {
-        Ok(s) => format!("snapshot={} commit={}", s.id, s.commit),
-        Err(e) => {
-            // Non-fatal, matching `Backend::run` — a snapshot failure is logged
-            // but never blocks the user's operation.
-            eprintln!("kagi-git: dir-file snapshot failed (non-fatal): {}", e);
-            "snapshot=unavailable".to_string()
-        }
-    };
+    let result = apply_dir_file_resolution(repo, plan);
+    let recovery = result
+        .as_ref()
+        .map(String::as_str)
+        .unwrap_or("snapshot/recovery status unavailable");
 
     let before = StateSummary {
         head: format!("dir-file conflict {}", plan.path.display()),
@@ -169,10 +152,8 @@ pub(crate) fn execute_dir_file_resolution(
     };
     let op_name = format!("conflict-dir-file:{}", plan.choice.slug());
 
-    let result = apply_to_index(repo, plan).and_then(|()| reconcile_worktree(repo, plan));
-
     let outcome = match &result {
-        Ok(()) => OpOutcome::Success {
+        Ok(_) => OpOutcome::Success {
             after: StateSummary {
                 head: format!(
                     "kept {} side of {}",
@@ -185,8 +166,8 @@ pub(crate) fn execute_dir_file_resolution(
                 dirty: format!("staged (stage 0); file_oid={}; {}", plan.file_oid, recovery),
             },
         },
-        Err(e) => OpOutcome::Failed {
-            error: e.to_string(),
+        Err(error) => OpOutcome::Failed {
+            error: error.to_string(),
         },
     };
     let entry = OpLogEntry::new(op_name, repo_path.display().to_string(), before, outcome);
@@ -194,7 +175,35 @@ pub(crate) fn execute_dir_file_resolution(
         eprintln!("kagi-git: dir-file oplog write failed (non-fatal): {}", e);
     }
 
-    result
+    result.map(|_| ())
+}
+
+/// C1 execution primitive. The application boundary owns the one durable
+/// receipt, while the compatibility facade above records through its existing
+/// entry point. Both routes share this exact preflight/mutation implementation.
+pub(crate) fn apply_dir_file_resolution(
+    repo: &Repository,
+    plan: &DirFilePlan,
+) -> Result<String, GitError> {
+    preflight_dir_file_resolution(repo, plan)?;
+
+    let recovery = match crate::ops::create_snapshot(
+        repo,
+        &format!(
+            "auto snapshot before conflict-dir-file:{} {}",
+            plan.choice.slug(),
+            plan.path.display()
+        ),
+    ) {
+        Ok(s) => format!("snapshot={} commit={}", s.id, s.commit),
+        Err(e) => {
+            eprintln!("kagi-git: dir-file snapshot failed (non-fatal): {}", e);
+            "snapshot=unavailable".to_string()
+        }
+    };
+    apply_to_index(repo, plan)?;
+    reconcile_worktree(repo, plan)?;
+    Ok(recovery)
 }
 
 /// The index surgery, kept separate so [`execute_dir_file_resolution`] can log

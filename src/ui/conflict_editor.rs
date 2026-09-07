@@ -44,7 +44,7 @@ use gpui::{
 use gpui_component::button::Button;
 use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
-use gpui_component::Sizable as _;
+use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_git::resolution::{LineOrder, Region, SelectionSide, TriState};
 
@@ -1147,12 +1147,16 @@ fn render_result_pane(
                     .child(SharedString::from(Msg::EditorEditingIndicator.t())),
             )
         })
-        .child(tool_button(
-            "editor-save",
-            Msg::EditorSave.t(),
-            theme().color_success,
-            save,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-save",
+            tool_button(
+                "editor-save",
+                Msg::EditorSave.t(),
+                theme().color_success,
+                save,
+                cx,
+            )
+            .disabled(chrome.writer_busy),
         ));
 
     // Body: ONE CodeEditor for both modes — Preview is the same component

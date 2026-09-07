@@ -3449,6 +3449,12 @@ pub fn run_app(app_state: KagiApp) {
             .detach();
         }
 
+        // #491: settings writes coalesce, so the tail of a burst (a divider
+        // drag, or the window_size write above) can still be in memory at quit.
+        // Registered last, and unconditionally — headless persists themes too.
+        cx.on_app_quit(|_cx| async move { settings::flush() })
+            .detach();
+
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);
 

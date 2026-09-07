@@ -12,7 +12,7 @@
 //! - `--format=%x00%at%x1f%ae` prefixes each commit with a **NUL** (record
 //!   separator) then the author time (epoch secs), a `\x1f` unit separator, and
 //!   the author email.  NUL is the only byte a commit object cannot carry
-//!   (issue #508, ADR-0186), so no author identity or path can forge a record
+//!   (issue #508, ADR-0190), so no author identity or path can forge a record
 //!   break.  The author email stays last on the header line, so a `\x1f` in it
 //!   cannot shift a field either.
 //! - `--numstat` then lists `<ins>\t<del>\t<path>` rows (`-` for binary).

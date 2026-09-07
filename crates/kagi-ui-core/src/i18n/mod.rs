@@ -1,13 +1,10 @@
 //! W22-I18N / ADR-0048: dependency-free UI localization (English / Japanese).
-//!
 //! Wave 1 covers the **UI layer** (`src/ui/`) only: modal explanatory /
 //! confirmation / recovery prose, toasts, Busy-footer texts, guard messages,
 //! the WIP row note, empty states, and the few hardcoded Japanese strings that
 //! pre-dated this module.  `src/git/` plan blocker/warning/recovery strings are
 //! pinned by tests and are **wave 2** — untouched here.
-//!
 //! # Design (same shape as [`super::theme`])
-//!
 //! * [`Lang`] is `En` / `Ja`; the active language is an [`AtomicUsize`] index
 //!   (`0 = En`, `1 = Ja`), exactly like `theme::ACTIVE`.
 //! * [`lang()`] reads it (called from every render path that shows prose);
@@ -18,29 +15,26 @@
 //!   (dependency-purity rule).
 //! * Parameterized strings get plain helper `fn`s in this module (e.g.
 //!   [`wip_row_note`]) so `format!` lives here, not at the call sites.
-//!
 //! # Domain words stay English
-//!
 //! Per ADR-0048, domain words (Pull / Push / Branch / Stash / Pop / Undo /
 //! Terminal / Commit / amend / checkout / cherry-pick / revert / discard /
 //! worktree / tag …), single-word action buttons, column headers, SHAs and
 //! branch names are **not** translated; they appear verbatim inside both the
 //! `En` and `Ja` arms below.
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::settings::{read_setting, write_setting};
 
-// ──────────────────────────────────────────────────────────────────────────
 // Lang + active-language atomic
-// ──────────────────────────────────────────────────────────────────────────
-
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
 pub use busy::busy_label;
 pub mod op;
 pub mod plan;
-pub use op::{op_failed, op_plan_failed, Op};
+pub use op::{
+    auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
+    auto_stash_restore_failed, op_failed, op_plan_failed, pull_failed_stash_restored, Op,
+};
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +200,8 @@ pub enum Msg {
     BusyCheckout,
     BusySwitchToLatest,
     BusyPull,
+    AutoStashRestored,
+    PullAutoStashConfirm,
     BusyPush,
     BusyStash,
     BusyStashPop,
@@ -1065,6 +1061,10 @@ impl Msg {
             (Ja, BusySwitchToLatest) => "最新へ切り替え中…",
             (En, BusyPull) => "pull in progress…",
             (Ja, BusyPull) => "pull 実行中…",
+            (En, PullAutoStashConfirm) => "Stash & Pull",
+            (Ja, PullAutoStashConfirm) => "StashしてPull",
+            (En, AutoStashRestored) => "auto-stash restored",
+            (Ja, AutoStashRestored) => "auto-stash を復元しました",
             (En, BusyPush) => "push in progress…",
             (Ja, BusyPush) => "push 実行中…",
             (En, BusyStash) => "stash in progress…",

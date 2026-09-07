@@ -21,8 +21,7 @@
 //! later phase, never directly from here.
 
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::process::Command;
 use std::time::Duration;
 
 use kagi_domain::refs::Worktree;
@@ -46,22 +45,54 @@ const SSH_COMMAND_TIMEOUT_SECS: u64 = SSH_CONNECT_TIMEOUT_SECS as u64 + 20;
 /// A failure running a remote command over SSH.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteError {
-    /// The `ssh` binary could not be started (not installed, etc.).
+    /// The `ssh` binary could not be started (not installed, etc.). Nothing
+    /// reached the host.
     Spawn(String),
-    /// The command exceeded [`SSH_COMMAND_TIMEOUT_SECS`].
-    Timeout,
+    /// We stopped **waiting** — the deadline expired, or the wait itself broke.
+    /// The local `ssh` client is killed and reaped, but that says nothing about
+    /// the command it had already handed to the host: the outcome is *unknown*,
+    /// never a failure, and must never be auto-retried (issue #507, ADR-0177).
+    TerminationUnknown(String),
+    /// `ssh` exited, but its output could not be collected in full — so what
+    /// came back is a prefix. A truncated remote read must never pass for a
+    /// complete one, and a truncated write result must never pass for proof
+    /// (issue #507 review).
+    Incomplete(String),
     /// ssh / the remote command exited non-zero. `stderr` is the captured
     /// message (e.g. "Host key verification failed", "Permission denied",
     /// "No such file or directory").
     NonZero { code: i32, stderr: String },
 }
 
+impl RemoteError {
+    /// The termination-unknown shape for a cut-short wait, carrying the
+    /// runner's own reason.
+    fn unknown(stop: &kagi_git::ProcStop) -> Self {
+        RemoteError::TerminationUnknown(stop.to_string())
+    }
+
+    /// True when the outcome is *unproven* rather than known-failed: neither
+    /// the caller nor the oplog may read it as "nothing happened".
+    pub fn is_unproven(&self) -> bool {
+        matches!(
+            self,
+            RemoteError::TerminationUnknown(_) | RemoteError::Incomplete(_)
+        )
+    }
+}
+
 impl std::fmt::Display for RemoteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RemoteError::Spawn(e) => write!(f, "failed to start ssh: {e}"),
-            RemoteError::Timeout => {
-                write!(f, "ssh command timed out after {SSH_COMMAND_TIMEOUT_SECS}s")
+            RemoteError::TerminationUnknown(reason) => {
+                write!(
+                    f,
+                    "ssh command {reason}; the remote command is not proven stopped"
+                )
+            }
+            RemoteError::Incomplete(reason) => {
+                write!(f, "ssh output is not complete: {reason}")
             }
             RemoteError::NonZero { code, stderr } => {
                 write!(f, "ssh exited {code}: {}", stderr.trim())
@@ -87,34 +118,36 @@ struct SshOutput {
 ///   [`kagi_domain::remote`] so it survives the remote login shell intact.
 /// - **Non-interactive**: `BatchMode=yes` (from the domain layer) + `LC_ALL=C`
 ///   for stable, parseable output — ssh never blocks on a prompt.
-/// - **Timeout**: a background thread + `recv_timeout` backstop.
+/// - **Timeout / ownership**: the shared `kagi_git::run_child` runner owns
+///   the child, drains both pipes, and kills+reaps on the deadline (#507). A
+///   deadline that expires comes back as [`RemoteError::TerminationUnknown`],
+///   never as an exit code — the local client is gone, the *remote* command is
+///   not proven stopped.
 fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, RemoteError> {
     let args = host.ssh_invocation(remote_tokens);
 
-    let child = Command::new("ssh")
-        .args(&args)
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| RemoteError::Spawn(e.to_string()))?;
+    let mut cmd = Command::new("ssh");
+    cmd.args(&args).env("LC_ALL", "C");
 
-    // `child.wait_with_output()` on a worker thread so we can time out.
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
+    let run = kagi_git::run_child(
+        &mut cmd,
+        Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
+        None,
+    )
+    .map_err(|e| RemoteError::Spawn(e.to_string()))?;
 
-    let output = rx
-        .recv_timeout(Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS))
-        .map_err(|_| RemoteError::Timeout)?
-        .map_err(|e| RemoteError::Spawn(e.to_string()))?;
-
+    let code = match &run.status {
+        Ok(code) => *code,
+        Err(stop) => return Err(RemoteError::unknown(stop)),
+    };
+    // A prefix of a snapshot is not a snapshot: never let it read as success.
+    if let Err(io) = &run.io {
+        return Err(RemoteError::Incomplete(io.to_string()));
+    }
     Ok(SshOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code,
+        stdout: run.stdout_lossy(),
+        stderr: run.stderr_lossy(),
     })
 }
 
@@ -194,13 +227,28 @@ pub fn probe_repo(host: &RemoteHost, path: &str) -> Result<RepoProbe, RemoteErro
 
 /// A one-line HEAD summary of the remote repository at `path`
 /// (`git -C <path> log -1 --format=%h%x1f%D%x1f%s`; the free-form subject is
-/// last so it cannot shift a field — issue #508). `Ok(None)` means an
-/// empty/unborn repository (no HEAD commit yet).
+/// last so it cannot shift a field — issue #508). `Ok(None)` means there is no
+/// HEAD commit to summarize — an empty/unborn repository.
+///
+/// Issue #604: an unborn HEAD makes `git log` *fail* ("your current branch
+/// 'master' does not have any commits yet", exit 128), not print nothing, so
+/// this read is lenient like [`remote_snapshot`]'s: a non-zero exit whose
+/// stderr matches an ssh-failure marker is an `Err`; any other non-zero is
+/// *classified as* the "no HEAD commit" answer, i.e. `Ok(None)`. That is
+/// `is_transport_failure`'s heuristic — the same one [`probe_repo`] uses for
+/// "not a repository" — and it proves nothing about the remote `git` having
+/// run; it is a deliberate default. Its bias: an unrecognized transport
+/// failure degrades to "empty", never to a success with forged content, so a
+/// new transport error is fixed by adding a marker. The split lives here, not
+/// in a prior call (Remote Browse does probe first, but this function is
+/// callable on its own). Keeping it `run_checked` conflated an empty
+/// repository with an unreachable one — the contract #506 established for PR
+/// fetches.
 pub fn repo_summary(
     host: &RemoteHost,
     path: &str,
 ) -> Result<Option<RemoteRepoSummary>, RemoteError> {
-    let stdout = run_checked(
+    let stdout = run_lenient(
         host,
         &["git", "-C", path, "log", "-1", "--format=%h%x1f%D%x1f%s"],
     )?;
@@ -210,7 +258,7 @@ pub fn repo_summary(
 /// Run a remote read whose **non-zero exit is acceptable** (an empty repo makes
 /// `git log`/`for-each-ref`/`stash list` fail or print nothing). A real
 /// transport failure is still surfaced; any other non-zero is treated as empty
-/// output. Used by [`remote_snapshot`].
+/// output. Used by [`repo_summary`] and [`remote_snapshot`].
 fn run_lenient(host: &RemoteHost, remote_tokens: &[&str]) -> Result<String, RemoteError> {
     let out = run_ssh(host, remote_tokens)?;
     if out.code == 0 {
@@ -556,19 +604,23 @@ pub fn remote_pull(
             };
             (Err(error), outcome)
         }
-        // The whole-command backstop fired. The child was never reaped, so the
-        // remote command is not proven stopped.
-        Err(RemoteError::Timeout) => (
-            Err(RemoteError::Timeout),
-            OpOutcome::Unknown {
-                after: after("remote pull not proven stopped".into()),
-                evidence: format!(
-                    "{}; the remote git pull may still be running — do not retry \
-                     until the host is checked",
-                    RemoteError::Timeout
-                ),
-            },
-        ),
+        // The backstop fired, the wait broke, or the output could not be
+        // collected in full. In none of those did the remote `git pull` prove
+        // anything about itself — the runner reports that as its own shape
+        // rather than as an exit (#507).
+        Err(error) if error.is_unproven() => {
+            let evidence = format!(
+                "{error}; the remote git pull may have run — do not retry \
+                 until the host is checked"
+            );
+            (
+                Err(error),
+                OpOutcome::Unknown {
+                    after: after("remote pull not proven stopped".into()),
+                    evidence,
+                },
+            )
+        }
         // Pre-spawn: nothing ran.
         Err(error) => {
             let outcome = OpOutcome::Failed {
@@ -624,6 +676,24 @@ mod tests {
             stderr: "fatal: not a git repository (or any of the parent directories): .git".into(),
         };
         assert!(!is_transport_failure(&not_repo));
+    }
+
+    // #507: a deadline that expires is reported as termination-unknown, and the
+    // message says so — it must never read as "the remote command stopped".
+    #[test]
+    fn cut_short_wait_reads_as_unknown() {
+        let stop = kagi_git::ProcStop::Deadline {
+            secs: SSH_COMMAND_TIMEOUT_SECS,
+            reaped: true,
+        };
+        let e = RemoteError::unknown(&stop);
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "ssh command timed out after {SSH_COMMAND_TIMEOUT_SECS}s; \
+                 the remote command is not proven stopped"
+            )
+        );
     }
 
     #[test]

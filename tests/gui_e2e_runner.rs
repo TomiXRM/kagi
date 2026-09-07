@@ -52,6 +52,10 @@ fn main() {
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pull.rs"]
+mod recovery_pull;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_remove.rs"]
 mod app_remove;
 
@@ -539,6 +543,14 @@ mod macos {
             (
                 "push_failure_keeps_modal",
                 Box::new(crate::recovery_operations::scenario_push_failure_keeps_modal),
+            ),
+            (
+                "pull_auto_stash_success",
+                Box::new(crate::recovery_pull::scenario_pull_auto_stash_success),
+            ),
+            (
+                "pull_auto_stash_failure_restores",
+                Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
             ),
             (
                 "cleanup_open_failure",
@@ -1739,18 +1751,15 @@ mod macos {
         // ODB as a blob, and the oplog entry carries its SHA. The worktree
         // shares the open repository's ODB, so the blob resolves from BOTH.
         //
-        // Read from the IN-MEMORY entry deliberately: the persisted entry's
-        // after-state is `plan.predicted` ("N file(s) discarded"), because
-        // ADR-0149 moved the persisted write into `Backend::run`, which only
-        // sees the plan. The blob list reaches `record_op` (this entry) and the
-        // `[kagi] executed: discarded …; backup: <path>=<sha>` line. Unchanged
-        // by #476 — the slice only redirects which repository is named.
-        let (op, repo, dirty) = cx.read(|app| {
+        // The in-memory entry is presentation only — it says which repo the op
+        // named. The recovery material is read from the PERSISTED receipt's
+        // typed `recovery` handles (#500), never by splitting the English
+        // `backup: <path>=<sha>` summary out of `after.dirty`.
+        let (op, repo) = cx.read(|app| {
             let panel = kagi.read(app).op_log.clone().expect("op_log entity");
             let panel = panel.read(app);
             let entry = panel.entries().front().expect("an op-log entry");
-            let (op, repo) = e2e::entry_op_and_repo(entry);
-            (op, repo, e2e::entry_after_dirty(entry))
+            e2e::entry_op_and_repo(entry)
         });
         assert_eq!(op, "discard", "newest op-log entry should be the discard");
         assert_eq!(
@@ -1758,22 +1767,27 @@ mod macos {
             wt_a,
             "the op-log entry's repo must be the WORKTREE's path"
         );
-        let dirty = dirty.expect("a successful discard records an after-state");
-        let blob = dirty
-            .split_once("backup: ")
-            .and_then(|(_, backups)| backups.split(';').next())
-            .and_then(|backups| {
-                backups
-                    .split(", ")
-                    .find_map(|pair| pair.strip_prefix("f.txt="))
-            })
-            .unwrap_or_else(|| panic!("no `f.txt=blob` backup in the oplog entry: {dirty:?}"));
         let receipt = kagi_git::oplog::read_oplog_tail_for_repo(&wt_a, 1)
             .pop()
             .expect("persisted discard receipt");
         assert_eq!(receipt.op, "discard");
         assert_eq!(receipt.backup_refs.len(), 1);
-        let reference = &receipt.backup_refs[0];
+        let handle = receipt
+            .recovery
+            .iter()
+            .find(|h| h.path.as_deref() == Some("f.txt"))
+            .unwrap_or_else(|| panic!("no typed f.txt backup handle: {:?}", receipt.recovery));
+        assert_eq!(handle.kind, kagi_git::oplog::recovery::FILE_BACKUP);
+        let blob = handle.oid.as_str();
+        let reference = handle
+            .reference
+            .as_deref()
+            .expect("a file backup handle names its GC root");
+        assert_eq!(
+            Some(reference),
+            receipt.backup_refs.first().map(String::as_str),
+            "the typed handle's ref must be the receipt's retained root"
+        );
         assert!(reference.starts_with("refs/kagi/backups/"));
         assert_eq!(blob.len(), 40, "expected a 40-hex blob SHA, got {blob:?}");
         for odb in [&wt_a, &repo_path] {

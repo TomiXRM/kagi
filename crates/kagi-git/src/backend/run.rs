@@ -88,6 +88,7 @@ impl Backend {
             &plan.current,
             outcome,
             backup_refs,
+            recording::recovery_handles(&result),
         );
         recording::RunReport {
             result,
@@ -307,7 +308,7 @@ impl Backend {
                 include_untracked,
             } => self
                 .execute_stash_push(message.as_deref(), *include_untracked)
-                .map(|()| OperationOutcome::Unit),
+                .map(|oid| OperationOutcome::StashPush { oid }),
             Operation::StashApply { index } => self.execute_stash_apply(*index).map(|()| {
                 evidence.applied = true;
                 OperationOutcome::Unit

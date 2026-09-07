@@ -171,6 +171,8 @@ pub fn plan_stash_push(
 /// **stash_drop is only called internally by `execute_stash_pop` — it is never
 /// called from this function.**
 ///
+/// Returns the created stash commit OID as a hex string.
+///
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
@@ -178,7 +180,7 @@ pub(crate) fn execute_stash_push(
     repo: &mut Repository,
     message: Option<&str>,
     include_untracked: bool,
-) -> Result<(), GitError> {
+) -> Result<String, GitError> {
     // Build the signature from repo config, with fallback.
     let sig = build_signature(repo)?;
 
@@ -189,11 +191,9 @@ pub(crate) fn execute_stash_push(
     };
 
     repo.stash_save2(&sig, message, flags)
-        .map_err(|e| GitError::Other(format!("stash push failed: {}", e.message())))?;
-
-    Ok(())
+        .map(|oid| oid.to_string())
+        .map_err(|e| GitError::Other(format!("stash push failed: {}", e.message())))
 }
-
 // ────────────────────────────────────────────────────────────
 // plan_stash_apply
 // ────────────────────────────────────────────────────────────

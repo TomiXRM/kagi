@@ -46,7 +46,7 @@ pub enum CheckoutPlanTarget {
 pub struct PullPlanModal {
     /// The computed pull plan.
     pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute or preflight failed.
+    pub auto_stash: bool,
     pub error: Option<SharedString>,
 }
 

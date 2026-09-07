@@ -23,7 +23,7 @@ pub mod remove;
 mod run;
 pub use policy::ExecutionPolicy;
 pub mod stash;
-pub use recording::oplog_outcome_from;
+pub use recording::{oplog_outcome_from, recovery_handles};
 
 pub struct Backend {
     repo: Repository,
@@ -1087,7 +1087,7 @@ impl Backend {
         &mut self,
         message: Option<&str>,
         include_untracked: bool,
-    ) -> Result<(), GitError> {
+    ) -> Result<String, GitError> {
         ops::execute_stash_push(&mut self.repo, message, include_untracked)
     }
 

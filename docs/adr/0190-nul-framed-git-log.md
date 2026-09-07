@@ -1,4 +1,4 @@
-# ADR-0186: `git log` の framing を NUL に統一する
+# ADR-0190: `git log` の framing を NUL に統一する
 
 ## Status
 

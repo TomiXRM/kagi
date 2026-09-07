@@ -60,6 +60,7 @@ The current suite covers:
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
 - modal and branch-menu Enter isolation from the selected commit checkout;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
+- dirty Pull auto-stash success and Pull-failure restoration, including the persistent error modal.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

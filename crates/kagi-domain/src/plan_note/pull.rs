@@ -15,6 +15,9 @@ pub enum PullNote {
     /// warning (`plan_pull`): dirty working tree may block the pull if the
     /// fetched update touches the same paths.
     DirtyPullGuard { parts: DirtyParts },
+    /// warning (`KagiApp` local pull orchestration): dirty work will be saved
+    /// before pull and restored afterwards.
+    AutoStash { parts: DirtyParts, untracked: usize },
     /// blocker (`plan_pull`): no upstream configured for the current branch,
     /// with the `git branch --set-upstream-to=…` hint.
     NoUpstreamWithHint { branch: String, err: String },
@@ -57,6 +60,20 @@ impl PullNote {
                 "Working tree has {}. Pull will proceed only if fetched changes do not touch those paths.",
                 parts.parts_en()
             ),
+            PullNote::AutoStash { parts, untracked } => {
+                let mut changes = Vec::new();
+                let tracked = parts.parts_en();
+                if !tracked.is_empty() {
+                    changes.push(tracked);
+                }
+                if *untracked > 0 {
+                    changes.push(format!("{untracked} untracked"));
+                }
+                format!(
+                    "Working tree has {}. Kagi will stash these changes, pull, then restore them. If restoration conflicts, the stash is kept.",
+                    changes.join(", ")
+                )
+            }
             PullNote::NoUpstreamWithHint { branch, err } => format!(
                 "No upstream configured for branch '{}': {}. Set one with `git branch --set-upstream-to=<remote>/<branch>`.",
                 branch, err
@@ -176,6 +193,8 @@ impl PullTitle {
 pub enum PullRecovery {
     /// `plan_pull`.
     Pull,
+    /// Local current-branch pull with UI-orchestrated stash + restore.
+    PullAutoStash,
     /// `plan_pull_remote` (SSH).
     PullRemote,
     /// `plan_pull_branch_ff`.
@@ -192,6 +211,12 @@ impl PullRecovery {
                  If the merge would conflict or overwrite dirty paths, execute is blocked and the repo remains untouched.\n\
                  To undo a merge commit after execution without rewriting history:\n  git revert -m 1 HEAD\n\
                  The reflog records every HEAD movement:\n  git reflog"
+                    .to_string()
+            }
+            PullRecovery::PullAutoStash => {
+                "Kagi will stash staged, unstaged, and untracked changes before pulling, then pop that temporary stash.\n\
+                 If the pull fails, Kagi first tries to restore the stash.\n\
+                 If restoration conflicts, the stash is kept so no saved work is discarded."
                     .to_string()
             }
             PullRecovery::PullRemote => {
@@ -235,6 +260,21 @@ mod tests {
             }
             .message_en(),
             "Working tree has 3 modified. Pull will proceed only if fetched changes do not touch those paths."
+        );
+    }
+
+    #[test]
+    fn auto_stash_describes_the_complete_sequence() {
+        assert_eq!(
+            PullNote::AutoStash {
+                parts: DirtyParts {
+                    staged: 2,
+                    modified: 1
+                },
+                untracked: 3,
+            }
+            .message_en(),
+            "Working tree has 2 staged, 1 modified, 3 untracked. Kagi will stash these changes, pull, then restore them. If restoration conflicts, the stash is kept."
         );
     }
 

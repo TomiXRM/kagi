@@ -1,7 +1,9 @@
 //! #523: actual Git GC, persisted receipts and explicit recovery retirement.
 use kagi_domain::remove::RemoveFaultPoint;
 use kagi_git::backend::{recording::Recording, Backend};
-use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{
+    append_oplog, read_oplog_tail, recovery, Actor, OpLogEntry, OpOutcome, RecoveryHandle,
+};
 use kagi_git::{Operation, OperationOutcome};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -75,6 +77,15 @@ impl Fixture {
         assert_eq!(
             entry.backup_refs,
             vec![outcome.backups[0].reference.clone()]
+        );
+        // #500: the same path→blob map, typed, next to the unchanged summary.
+        assert_eq!(
+            entry.recovery,
+            vec![RecoveryHandle::file(
+                "tracked",
+                outcome.backups[0].blob.clone(),
+                Some(outcome.backups[0].reference.clone()),
+            )]
         );
         assert!(matches!(report.recording, Recording::Appended { .. }));
         assert_eq!(
@@ -201,6 +212,31 @@ fn remove_success_partial_and_unknown_keep_persisted_refs_after_gc() {
         }
         assert_eq!(entry.backup_refs.len(), 1, "{:?}", report.progress);
         assert_eq!(entry.backup_refs, report.recording.entry().backup_refs);
+        // #500: remove records its path→blob map and the branch tip as data,
+        // while the `stage=…; backup: <path>=<blob>; branch_tip=…` prose the UI
+        // shows stays exactly as it was.
+        let file = entry
+            .recovery
+            .iter()
+            .find(|h| h.kind == recovery::FILE_BACKUP)
+            .unwrap_or_else(|| panic!("no typed file backup: {:?}", entry.recovery));
+        // The pre_remove step copies `secret` into the worktree as `copied`;
+        // that copy is what remove backs up.
+        let path = file.path.clone().expect("a file handle names its path");
+        assert_eq!(path, "copied");
+        assert_eq!(
+            file.reference.as_deref(),
+            Some(entry.backup_refs[0].as_str())
+        );
+        if let OpOutcome::Success { after } | OpOutcome::Partial { after, .. } = &entry.outcome {
+            assert!(
+                after
+                    .dirty
+                    .contains(&format!("backup: {path}={}", file.oid)),
+                "the legacy prose must be byte-identical: {}",
+                after.dirty
+            );
+        }
         gc(&f.repo);
         assert_eq!(
             f.backend().read_backup(&entry.backup_refs[0]).unwrap(),
@@ -525,7 +561,7 @@ fn legacy_retirement_preserves_surviving_ids_and_sequence_floor() {
     let mut value: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&log).unwrap()).unwrap();
     let object = value.as_object_mut().unwrap();
-    for key in ["id", "parent", "backup_refs"] {
+    for key in ["id", "parent", "backup_refs", "recovery"] {
         object.remove(key);
     }
     let lines: Vec<_> = (0..3)
@@ -537,6 +573,10 @@ fn legacy_retirement_preserves_surviving_ids_and_sequence_floor() {
         .collect();
     std::fs::write(&log, format!("{}\n", lines.join("\n"))).unwrap();
     let entries = read_oplog_tail(100);
+    assert!(
+        entries.iter().all(|entry| entry.recovery.is_empty()),
+        "a prose-only legacy line must not claim typed recovery data"
+    );
     let second = entries.iter().find(|entry| entry.id == 1).unwrap();
     let last = entries.iter().find(|entry| entry.id == 2).unwrap().clone();
     let backend = f.backend();

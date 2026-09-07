@@ -35,7 +35,7 @@ WIP entry は working tree / index / untracked から合成し、`kind = Wip`、
 ### 収集の実装(history.rs)
 
 - 1コマンドで型と件数を取る: `git log --follow --find-renames --date=iso-strict --format=<RS区切り> --name-status --numstat -- <path>`。
-  - ~~レコード区切りは `%x1e`、フィールド区切りは `%x1f`(コードベース未使用を確認済み)。~~ **ADR-0186 (issue #508) で NUL 区切りに変更**。`\x1e`/`\x1f` は commit message に合法に入るため、本文で偽レコードを作れてしまった。現在は先頭 NUL + 9 個の NUL 終端フィールドで、1 commit = ちょうど 10 chunk。各 commit ブロックの後に raw 行(`:mode mode sha sha STATUS<TAB>path`)と numstat 行(`ins<TAB>del<TAB>path`)が続く。対象パス分を取り出して `FileChangeSummary` を作る。numstat の `-` は binary。
+  - ~~レコード区切りは `%x1e`、フィールド区切りは `%x1f`(コードベース未使用を確認済み)。~~ **ADR-0190 (issue #508) で NUL 区切りに変更**。`\x1e`/`\x1f` は commit message に合法に入るため、本文で偽レコードを作れてしまった。現在は先頭 NUL + 9 個の NUL 終端フィールドで、1 commit = ちょうど 10 chunk。各 commit ブロックの後に raw 行(`:mode mode sha sha STATUS<TAB>path`)と numstat 行(`ins<TAB>del<TAB>path`)が続く。対象パス分を取り出して `FileChangeSummary` を作る。numstat の `-` は binary。
 - WIP は `git status --porcelain=v1 -- <path>` と `working_tree_status` で判定(staged / unstaged / untracked)。`include_wip` かつ変更ありのとき先頭に1件足す。
 - **path は必ず arg vector で渡す**(`run_git(dir, &[..., "--", path_str])`)。shell 文字列結合をしない。空白・日本語・記号で壊れないこと。`--` でパスとオプションを分離。
 - `run_git` の非0 status は握り潰さず `GitError` にして UI まで上げる。

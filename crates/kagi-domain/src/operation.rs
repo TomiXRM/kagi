@@ -213,6 +213,10 @@ pub enum OperationOutcome {
     Discard(DiscardOutcome),
     MergeIntoConflict(Vec<String>),
     Rebase(RebaseOutcome),
+    /// The full commit OID of the stash created by a stash push.
+    StashPush {
+        oid: String,
+    },
     StashPop(StashPopOutcome),
     /// The full commit OID of a deleted stash, recoverable with `git stash store`.
     StashDrop {

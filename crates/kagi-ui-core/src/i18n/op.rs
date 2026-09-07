@@ -158,3 +158,62 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
         Lang::Ja => format!("{} の plan に失敗しました: {}", op.t(), err),
     }
 }
+
+pub fn auto_stash_identity_unverified() -> &'static str {
+    match lang() {
+        Lang::En => {
+            "Your changes are stored in the stash entry named `kagi: auto-stash before pull`, but Kagi could not verify its identity. Pull was not started; inspect the stash before continuing."
+        }
+        Lang::Ja => {
+            "変更内容は `kagi: auto-stash before pull` という名前の stash に保存されていますが、Kagi はその識別情報を確認できませんでした。Pull は開始していません。続行前に stash を確認してください。"
+        }
+    }
+}
+
+pub fn pull_failed_stash_restored(pull_error: &str) -> String {
+    match lang() {
+        Lang::En => format!("{pull_error}. Auto-stashed changes were restored."),
+        Lang::Ja => format!("{pull_error}。auto-stash の変更は復元しました。"),
+    }
+}
+
+pub fn auto_stash_restore_conflicted(pull_error: Option<&str>, files: &str) -> String {
+    match (lang(), pull_error) {
+        (Lang::En, None) => format!(
+            "Pull completed, but auto-stash restoration conflicted in: {files}. The stash was kept."
+        ),
+        (Lang::Ja, None) => format!(
+            "Pull は完了しましたが、auto-stash の復元が次のファイルで conflict しました: {files}。stash は保持されています。"
+        ),
+        (Lang::En, Some(error)) => format!(
+            "{error}. Restoring the auto-stash conflicted in: {files}. The stash was kept."
+        ),
+        (Lang::Ja, Some(error)) => format!(
+            "{error}。auto-stash の復元が次のファイルで conflict しました: {files}。stash は保持されています。"
+        ),
+    }
+}
+
+pub fn auto_stash_restore_failed(pull_error: Option<&str>, restore_error: &str) -> String {
+    match (lang(), pull_error) {
+        (Lang::En, None) => format!(
+            "Pull completed, but auto-stash restoration failed: {restore_error}. Inspect the stash before continuing."
+        ),
+        (Lang::Ja, None) => format!(
+            "Pull は完了しましたが、auto-stash の復元に失敗しました: {restore_error}。続行前に stash を確認してください。"
+        ),
+        (Lang::En, Some(error)) => format!(
+            "{error}. Auto-stash restoration also failed: {restore_error}. Inspect the stash before continuing."
+        ),
+        (Lang::Ja, Some(error)) => format!(
+            "{error}。auto-stash の復元にも失敗しました: {restore_error}。続行前に stash を確認してください。"
+        ),
+    }
+}
+
+pub fn auto_stash_missing() -> &'static str {
+    match lang() {
+        Lang::En => "The auto-stash moved or disappeared before restoration.",
+        Lang::Ja => "復元前に auto-stash が移動または消失しました。",
+    }
+}

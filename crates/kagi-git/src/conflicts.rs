@@ -2415,7 +2415,7 @@ pub(crate) fn execute_conflict_skip(
     }
 
     // 1. Preserve the buffer first (never lose partial work).
-    let buffer_preserved_at = buffer.autosave().ok();
+    let mut buffer_preserved_at = buffer.autosave().ok();
 
     // 2. Run the skip, then judge it by the state git left behind (#540).
     //    The exit code alone cannot: `rebase --skip` that drops the step and
@@ -2483,6 +2483,12 @@ pub(crate) fn execute_conflict_skip(
             )
         }
     };
+
+    if matches!(progress, SkipProgress::Advanced | SkipProgress::Finished)
+        && ResolutionBuffer::clear(&workdir).is_ok()
+    {
+        buffer_preserved_at = None;
+    }
 
     Ok(SkipOutcome {
         head: head_sha,

@@ -172,6 +172,7 @@ pub enum Msg {
     /// "another operation is in progress" (was "別の操作が実行中です").
     OpInProgress,
     RemoteOpAwaitingCompletion,
+    TransportRetryHeld,
     NoRepoOpen,
     NoTabsOpen,
     NoCommitSelected,
@@ -1001,6 +1002,8 @@ impl Msg {
             (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
+            (En, TransportRetryHeld) => "Retry is disabled because the operation may have changed remote state. Inspect it before restarting Kagi.",
+            (Ja, TransportRetryHeld) => "remote の状態が変わった可能性があるため、再実行を停止しています。状態を確認してから Kagi を再起動してください。",
             (En, RemoteOpAwaitingCompletion) => "Waiting to confirm that the remote operation stopped. Do not retry it; inspect the remote state and completion token.",
             (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
             (En, NoRepoOpen) => "no repository is open",

@@ -231,6 +231,12 @@ impl KagiApp {
         delete_branch: bool,
         cx: &mut Context<Self>,
     ) {
+        if let Some(owner) = self.repo_path.clone() {
+            if self.reject_transport_hold(&owner, &format!("pr-merge #{}", pr.number)) {
+                cx.notify();
+                return;
+            }
+        }
         let head_summary = self.view().status_summary.branch.clone();
         let plan = kagi_git::github::plan_pr_merge(pr, method, delete_branch, head_summary);
         klog!(
@@ -264,6 +270,12 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        if self.reject_transport_hold(&repo_path, &format!("pr-merge #{}", modal.number)) {
+            self.clear_pr_merge_modal();
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
         // Concurrency gate (#402, bug class #283–#289): a PR merge is a write
         // op like any other, so it must take the single in-flight latch and
         // route completion through the stale-tab-aware shell.
@@ -312,6 +324,11 @@ impl KagiApp {
             task,
             move |app, report: &kagi_git::github::PrMergeReport, _cx| {
                 app.notice_recording_failure("pr-merge", &report.recording, &notice_repo);
+                app.settle_transport(
+                    &notice_repo,
+                    &format!("pr-merge #{number}"),
+                    &report.recording.entry().outcome,
+                );
             },
             move |app, report, cx| {
                 // The recorded outcome decides what happened, not the raw `gh`
@@ -332,7 +349,12 @@ impl KagiApp {
                     klog!("pr-merge failed: {}", detail);
                 }
                 app.present_recorded(&report.recording, cx);
-                if merged {
+                if matches!(outcome, OpOutcome::Success { .. })
+                    && matches!(
+                        report.recording,
+                        kagi_git::backend::recording::Recording::Appended { .. }
+                    )
+                {
                     app.push_toast(
                         ToastKind::Info,
                         SharedString::from(if detail.is_empty() {
@@ -347,7 +369,7 @@ impl KagiApp {
                     app.pr_mode_close_tab_for(number, cx);
                     app.refresh_github_prs(cx);
                     app.fetch_async(true, cx);
-                } else {
+                } else if matches!(outcome, OpOutcome::Failed { .. }) {
                     app.push_toast(ToastKind::Error, SharedString::from(detail), cx);
                 }
             },

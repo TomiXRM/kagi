@@ -23,7 +23,7 @@ remote mutation（`github::merge_pr`、`remote::remote_pull`）は **自分の�
 
 **PR merge**: `gh` の非ゼロ終了は「未 merge」の証拠ではない。merge が成立して
 から後段（`--delete-branch`、応答自体）が壊れることがある。非ゼロ終了時は
-`gh pr view --json merged,mergedAt` で server 状態を再読し、server 側を正とする。
+`gh pr view --json mergedAt` で server 状態を再読し、server 側を正とする。
 
 | 再読結果 | outcome |
 |---|---|
@@ -139,3 +139,14 @@ allow-list に載っていない確定的な拒否は `Unknown` として残り�
 要求する。marker を足すことは安全側の緩和なので、実出力を確認したうえで
 `REFUSAL_MARKERS` に追記してよい。conflict 判定（`Partial`）も同じ文字列依存で、
 一致しなければ `Unknown` に落ちる。
+
+## Release safety correction (2026-09-07)
+
+`mergedAt` is the supported GitHub CLI field: a string proves merged, null proves
+open, and absent/malformed data remains Unknown. Legacy PR merge and remote pull
+now retain an owner/operation admission hold for Partial and Unknown, settled
+before the stale-tab presentation guard. Notices and cached snapshots cannot
+release it. PR merge controls disappear and both plan/execute entry points refuse
+re-entry; remote pull only restores its plan after Failed. Holds last for this
+application instance: inspect the remote state before restarting Kagi. A durable
+read/ack lifecycle for these legacy transports remains future family work.

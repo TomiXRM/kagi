@@ -52,6 +52,10 @@ fn main() {
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pull.rs"]
+mod recovery_pull;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_remove.rs"]
 mod app_remove;
 
@@ -539,6 +543,14 @@ mod macos {
             (
                 "push_failure_keeps_modal",
                 Box::new(crate::recovery_operations::scenario_push_failure_keeps_modal),
+            ),
+            (
+                "pull_auto_stash_success",
+                Box::new(crate::recovery_pull::scenario_pull_auto_stash_success),
+            ),
+            (
+                "pull_auto_stash_failure_restores",
+                Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
             ),
             (
                 "cleanup_open_failure",

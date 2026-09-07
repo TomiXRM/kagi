@@ -121,6 +121,7 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
         OperationOutcome::RestoreSnapshot { savepoint } => {
             vec![RecoveryHandle::oid(recovery::SAVEPOINT, savepoint)]
         }
+        OperationOutcome::StashPush { oid } => vec![RecoveryHandle::oid(recovery::STASH, oid)],
         OperationOutcome::StashDrop { oid } => vec![RecoveryHandle::oid(recovery::STASH, oid)],
         OperationOutcome::DeleteBranch { tip, reference, .. } => {
             vec![RecoveryHandle::oid(recovery::BRANCH_TIP, tip).with_reference(reference)]

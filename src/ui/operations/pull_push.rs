@@ -6,6 +6,10 @@
 
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, PlanNote, PlanRecovery, PullNote, PullRecovery, RecoveryKind,
+    UntrackedCtx,
+};
 
 use crate::ui::*;
 
@@ -56,6 +60,7 @@ impl KagiApp {
             klog!("plan: remote pull branch={branch} behind={behind} ahead={ahead}");
             self.set_pull_modal(PullPlanModal {
                 plan: std::sync::Arc::new(plan),
+                auto_stash: false,
                 error: None,
             });
             return;
@@ -74,7 +79,32 @@ impl KagiApp {
             }
         };
         match repo.plan_pull() {
-            Ok(plan) => {
+            Ok(mut plan) => {
+                let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
+                if auto_stash {
+                    let status = &self.view().status_summary;
+                    plan.warnings.retain(|note| {
+                        !matches!(
+                            note,
+                            PlanNote::Pull(PullNote::DirtyPullGuard { .. })
+                                | PlanNote::Common(CommonNote::UntrackedRemain {
+                                    ctx: UntrackedCtx::PullFetchMayTouch,
+                                    ..
+                                })
+                        )
+                    });
+                    plan.warnings.push(PlanNote::Pull(PullNote::AutoStash {
+                        parts: DirtyParts {
+                            staged: status.staged,
+                            modified: status.unstaged,
+                        },
+                        untracked: status.untracked,
+                    }));
+                    plan.recovery = Some(PlanRecovery {
+                        kind: RecoveryKind::Pull(PullRecovery::PullAutoStash),
+                        commands: Vec::new(),
+                    });
+                }
                 eprintln!(
                     "[kagi] plan: pull blockers={} warnings={}",
                     plan.blockers.len(),
@@ -102,6 +132,7 @@ impl KagiApp {
                 }
                 self.set_pull_modal(PullPlanModal {
                     plan: std::sync::Arc::new(plan),
+                    auto_stash,
                     error: None,
                 });
             }
@@ -189,6 +220,7 @@ impl KagiApp {
                             {
                                 app.set_pull_modal(PullPlanModal {
                                     plan: modal.plan.clone(),
+                                    auto_stash: false,
                                     error: Some(SharedString::from(err_msg)),
                                 });
                             }
@@ -225,8 +257,9 @@ impl KagiApp {
         klog!("async: pull started");
 
         let plan = modal.plan.clone();
+        let auto_stash = modal.auto_stash;
         let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move { pull_blocking(&bg_path, &plan) });
+        let task = cx.background_spawn(async move { pull_blocking(&bg_path, &plan, auto_stash) });
         self.finish_op_on_main(cx, task, move |app, result, cx| {
             app.finish_pull(result, modal, repo_path, cx);
         });
@@ -236,20 +269,18 @@ impl KagiApp {
     /// `busy_op` is cleared by the `finish_op_on_main` caller before this runs.
     fn finish_pull(
         &mut self,
-        result: Result<(String, StateSummary), String>,
+        result: PullBlockingResult,
         modal: PullPlanModal,
         repo_path: PathBuf,
         cx: &mut Context<Self>,
     ) {
         match result {
-            Ok((summary, after_summary)) => {
+            PullBlockingResult::Success { summary, after } => {
                 klog!("async: pull finished — {}", summary);
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: after_summary,
-                    },
+                    OpOutcome::Success { after },
                     &repo_path,
                     cx,
                 );
@@ -257,26 +288,43 @@ impl KagiApp {
                     FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
                 self.reload_async(false, cx);
             }
-            Err(err_msg) => {
-                klog!("async: pull failed — {}", err_msg);
+            PullBlockingResult::Failed { error } => {
+                klog!("async: pull failed — {}", error);
                 self.record_op(
                     "pull",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
-                        error: err_msg.clone(),
+                        error: error.clone(),
                     },
                     &repo_path,
                     cx,
                 );
-                // #493 safety review: `start_pull` closes the modal before the
-                // background pull, so the failure has to bring it back — a
-                // user-facing error surfaces via the oplog AND a modal
-                // (CLAUDE.md). Same shape as the remote-view arm above and as
-                // `start_checkout` / `start_delete_branch` / `start_amend`.
+                // #493 / ADR-0189: the failure modal survives watcher reloads
+                // and remains until the user explicitly dismisses it.
                 self.set_pull_modal(PullPlanModal {
                     plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
+                    auto_stash: modal.auto_stash,
+                    error: Some(SharedString::from(error)),
                 });
+            }
+            PullBlockingResult::Partial { error, after } => {
+                klog!("async: pull partially applied — {}", error);
+                self.record_op(
+                    "pull",
+                    modal.plan.current.clone(),
+                    OpOutcome::Partial {
+                        after,
+                        error: error.clone(),
+                    },
+                    &repo_path,
+                    cx,
+                );
+                self.set_pull_modal(PullPlanModal {
+                    plan: modal.plan.clone(),
+                    auto_stash: modal.auto_stash,
+                    error: Some(SharedString::from(error)),
+                });
+                self.reload_async(false, cx);
             }
         }
     }

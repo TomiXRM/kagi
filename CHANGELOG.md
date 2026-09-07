@@ -54,6 +54,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Remote stash drop now runs as a typed application-layer SSH job with frozen connection identity and explicit recovery evidence. (#572)
 
 ### Fixed
+- Pull now offers a guarded auto-stash workflow for dirty working trees, restores tracked and untracked changes afterward, and keeps the temporary stash when restoration conflicts.
+- Failed Pull details remain visible until explicitly dismissed instead of disappearing during the watcher reload.
 - Release checks require the complete blocking CI aggregate from the target
   commit's newest workflow run and latest attempt, including the gate selftests. (#519)
 - Branch cleanup retains remote recovery OIDs when subsequent local deletion

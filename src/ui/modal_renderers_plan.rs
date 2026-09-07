@@ -44,11 +44,16 @@ pub(crate) fn render_pull_modal(
     modal: PullPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let confirm_label = if modal.auto_stash {
+        Msg::PullAutoStashConfirm.t()
+    } else {
+        "Pull"
+    };
     // W3-NOTIFY: confirm runs on a background thread (start/finish toasts).
     render_plan_modal_wrapper_styled(
         modal.plan,
         modal.error,
-        "Pull",
+        confirm_label,
         None,
         Some((IconName::ArrowDown.into(), theme().color_branch)),
         |this, _cx| this.cancel_pull_modal(),

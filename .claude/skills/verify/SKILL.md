@@ -358,3 +358,19 @@ source and non-HEAD target, including another-worktree occupancy and changed tip
 M: drop a remote chip onto a non-HEAD local row; the plan must show its full ref,
 OID and EN/JA last-fetch warning. Confirm that no local source branch is created
 and no fetch occurs; fetch explicitly beforehand when current remote data is needed.
+
+### Staging failure delivery (#490)
+
+G: `cargo test -p kagi --lib staging_failure` uses real index.lock and oplog
+sidecar lock fixtures in isolated children; it compares single/batch failure
+details in EN/JA and checks that trust refusal records without requesting a modal.
+Use a fresh KAGI_LOG_DIR as with all cargo tests.
+
+Tier A filter: `KAGI_GUI_E2E_ONLY=stage_failure_notice`. The scenario covers editor
+paths, panel file indices and batch buttons under index.lock, including a linked
+worktree panel while the main tab remains active. It asserts footer + notice +
+oplog, the actual owning repo/path, unchanged indexes and no modal on admission
+refusal. Compile only when PM owns E execution.
+M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
+cause is visible and no success toast appears. If recording also fails, the
+attempted failure stays visible with the recording error; it is not a success.

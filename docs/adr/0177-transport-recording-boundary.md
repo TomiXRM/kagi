@@ -150,3 +150,12 @@ release it. PR merge controls disappear and both plan/execute entry points refus
 re-entry; remote pull only restores its plan after Failed. Holds last for this
 application instance: inspect the remote state before restarting Kagi. A durable
 read/ack lifecycle for these legacy transports remains future family work.
+
+### Synchronous staging failures (#490)
+
+`operations/staging_failure.rs` owns the failure-only UI adapter for all six
+stage/unstage entry points. It uses the same `recording::finalize` and
+`present_recorded` functions, never `record_op_persist` after a receipt. The
+operation is synchronous, so its lease release and receipt settlement occur in
+one UI turn before presentation. Refusals are recorded without an error modal;
+execution/open failures preserve repo/path/cause in footer, notice and receipt.

@@ -5,6 +5,7 @@
 //! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
+use super::staging_failure::StageAction;
 use crate::ui::blocking_ops::*;
 
 use crate::ui::*;
@@ -638,14 +639,19 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_stage_write(StageAction::StageAll, &repo_path, &paths, cx)
+        else {
             return;
         };
-        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.stage_files(&paths)));
+        let result =
+            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.stage_files(&paths)));
         self.refresh_write_busy();
         let result = match result {
-            Some(r) => r,
-            None => return,
+            Ok(r) => r,
+            Err(e) => {
+                self.stage_failure(StageAction::StageAll, &repo_path, &paths, &e, cx);
+                return;
+            }
         };
         match result {
             Ok(n) => {
@@ -657,10 +663,7 @@ impl KagiApp {
                 self.refresh_worktree_wip_row(&repo_path);
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_failed(
-                    i18n::Op::StageAll,
-                    e,
-                )));
+                self.stage_failure(StageAction::StageAll, &repo_path, &paths, &e, cx);
             }
         }
     }
@@ -685,15 +688,19 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_stage_write(StageAction::UnstageAll, &repo_path, &paths, cx)
+        else {
             return;
         };
         let result =
-            lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.unstage_files(&paths)));
+            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.unstage_files(&paths)));
         self.refresh_write_busy();
         let result = match result {
-            Some(r) => r,
-            None => return,
+            Ok(r) => r,
+            Err(e) => {
+                self.stage_failure(StageAction::UnstageAll, &repo_path, &paths, &e, cx);
+                return;
+            }
         };
         match result {
             Ok(n) => {
@@ -705,10 +712,7 @@ impl KagiApp {
                 self.refresh_worktree_wip_row(&repo_path);
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_failed(
-                    i18n::Op::UnstageAll,
-                    e,
-                )));
+                self.stage_failure(StageAction::UnstageAll, &repo_path, &paths, &e, cx);
             }
         }
     }
@@ -727,20 +731,40 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_stage_write(
+            StageAction::Stage,
+            &repo_path,
+            std::slice::from_ref(&path),
+            cx,
+        ) else {
             return;
         };
-        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.stage_file(&path)));
+        let result =
+            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.stage_file(&path)));
         self.refresh_write_busy();
         let result = match result {
-            Some(r) => r,
-            None => {
+            Ok(r) => r,
+            Err(e) => {
                 klog!("stage_file: repo open error: {}", "session unavailable");
+                self.stage_failure(
+                    StageAction::Stage,
+                    &repo_path,
+                    std::slice::from_ref(&path),
+                    &e,
+                    cx,
+                );
                 return;
             }
         };
         if let Err(e) = result {
             klog!("stage_file error: {}", e);
+            self.stage_failure(
+                StageAction::Stage,
+                &repo_path,
+                std::slice::from_ref(&path),
+                &e,
+                cx,
+            );
         } else {
             klog!("staged: {}", path.display());
         }
@@ -775,20 +799,40 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_stage_write(
+            StageAction::Unstage,
+            &repo_path,
+            std::slice::from_ref(&path),
+            cx,
+        ) else {
             return;
         };
-        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.unstage_file(&path)));
+        let result =
+            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.unstage_file(&path)));
         self.refresh_write_busy();
         let result = match result {
-            Some(r) => r,
-            None => {
+            Ok(r) => r,
+            Err(e) => {
                 klog!("unstage_file: repo open error: {}", "session unavailable");
+                self.stage_failure(
+                    StageAction::Unstage,
+                    &repo_path,
+                    std::slice::from_ref(&path),
+                    &e,
+                    cx,
+                );
                 return;
             }
         };
         if let Err(e) = result {
             klog!("unstage_file error: {}", e);
+            self.stage_failure(
+                StageAction::Unstage,
+                &repo_path,
+                std::slice::from_ref(&path),
+                &e,
+                cx,
+            );
         } else {
             klog!("unstaged: {}", path.display());
         }
@@ -818,30 +862,45 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_stage_write(
+            StageAction::Stage,
+            &repo_path,
+            std::slice::from_ref(&path),
+            cx,
+        ) else {
             return;
         };
-        let result = lease.run(|| {
-            let repo = match self.repo_session.as_ref() {
-                Some(s) => s.backend(),
-                None => {
-                    klog!(
-                        "editor-ws: stage {} — repo session unavailable",
-                        path.display()
-                    );
-                    return None;
-                }
-            };
-            Some(repo.stage_file(&path))
-        });
+        let result =
+            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.stage_file(&path)));
         self.refresh_write_busy();
-        let Some(result) = result else {
-            return;
+        let result = match result {
+            Ok(result) => result,
+            Err(e) => {
+                klog!(
+                    "editor-ws: stage {} — repo session unavailable",
+                    path.display()
+                );
+                self.stage_failure(
+                    StageAction::Stage,
+                    &repo_path,
+                    std::slice::from_ref(&path),
+                    &e,
+                    cx,
+                );
+                return;
+            }
         };
         match result {
             Ok(()) => klog!("editor-ws: stage {}", path.display()),
             Err(e) => {
                 klog!("editor-ws: stage {} failed: {}", path.display(), e);
+                self.stage_failure(
+                    StageAction::Stage,
+                    &repo_path,
+                    std::slice::from_ref(&path),
+                    &e,
+                    cx,
+                );
                 return;
             }
         }
@@ -860,30 +919,45 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_stage_write(
+            StageAction::Unstage,
+            &repo_path,
+            std::slice::from_ref(&path),
+            cx,
+        ) else {
             return;
         };
-        let result = lease.run(|| {
-            let repo = match self.repo_session.as_ref() {
-                Some(s) => s.backend(),
-                None => {
-                    klog!(
-                        "editor-ws: unstage {} — repo session unavailable",
-                        path.display()
-                    );
-                    return None;
-                }
-            };
-            Some(repo.unstage_file(&path))
-        });
+        let result =
+            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.unstage_file(&path)));
         self.refresh_write_busy();
-        let Some(result) = result else {
-            return;
+        let result = match result {
+            Ok(result) => result,
+            Err(e) => {
+                klog!(
+                    "editor-ws: unstage {} — repo session unavailable",
+                    path.display()
+                );
+                self.stage_failure(
+                    StageAction::Unstage,
+                    &repo_path,
+                    std::slice::from_ref(&path),
+                    &e,
+                    cx,
+                );
+                return;
+            }
         };
         match result {
             Ok(()) => klog!("editor-ws: unstage {}", path.display()),
             Err(e) => {
                 klog!("editor-ws: unstage {} failed: {}", path.display(), e);
+                self.stage_failure(
+                    StageAction::Unstage,
+                    &repo_path,
+                    std::slice::from_ref(&path),
+                    &e,
+                    cx,
+                );
                 return;
             }
         }

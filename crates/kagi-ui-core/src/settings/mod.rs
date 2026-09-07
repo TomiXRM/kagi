@@ -26,15 +26,17 @@
 //! submodule. The parsed document lives in a process-global store instead of
 //! being re-read from disk for every key, saves go through a temp file +
 //! rename instead of a truncating write, and a file that does not parse is
-//! *kept* — moved aside as `settings.json.corrupt` before a fresh file is
-//! written, so a malformed file can no longer silently swallow every other key
-//! (including `session_repos`, the restored tab set). A burst of writes (a
-//! column-divider drag) updates memory and is collapsed into one file write.
+//! *kept* — moved aside under a reserved `settings.json.corrupt` name before a
+//! fresh file is written, so a malformed file can no longer silently swallow
+//! every other key (including `session_repos`, the restored tab set). A
+//! *repeated* write of one key (a column-divider drag) updates memory and is
+//! collapsed into one file write; every other write still lands immediately.
 
 mod store;
+#[cfg(test)]
+mod store_env_tests;
 
 pub use store::flush;
-use store::{schedule_flush, with_store};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -69,24 +71,15 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Snapshot of the live settings document. Served from the process-global
-    /// [`Store`] — no read or parse unless the file changed behind our back
-    /// (#491). A missing file yields `Settings::default()` (empty); an
-    /// *unparsable* one also reads as empty, but the original is kept on disk
-    /// and moved aside rather than overwritten (see [`flush_store`]).
+    /// Snapshot of the live settings document. Served from the store — no read
+    /// or parse unless the file changed behind our back (#491). A missing file
+    /// yields `Settings::default()` (empty); an *unparsable* one also reads as
+    /// empty, but the original is kept on disk and moved aside rather than
+    /// overwritten.
     pub fn load() -> Self {
-        with_store(|s| Self { raw: s.doc.clone() }).unwrap_or_default()
-    }
-
-    /// Replace the whole settings document with this object and persist it.
-    /// Best-effort; failures are logged. The write itself is atomic and may be
-    /// coalesced with a concurrent burst — call [`flush`] before exiting.
-    pub fn save(&self) {
-        let raw = self.raw.clone();
-        with_store(|s| {
-            s.doc = raw;
-            schedule_flush(s);
-        });
+        Self {
+            raw: store::snapshot(),
+        }
     }
 
     /// Raw string value for `key`, coercing the legacy scalar encodings (every
@@ -346,22 +339,14 @@ pub fn settings_path() -> Option<PathBuf> {
 
 /// Read a single string-valued setting from `settings.json`.
 pub fn read_setting(key: &str) -> Option<String> {
-    with_store(|s| s.doc.get(key).and_then(scalar_to_string)).flatten()
+    store::read(key)
 }
 
 /// Persist (or remove with `value = None`) one string-valued setting in
 /// `settings.json`, **preserving every other key** — including ones this build
 /// doesn't know about. Best-effort; failures are logged but non-fatal.
 pub fn write_setting(key: &str, value: Option<&str>) {
-    with_store(|s| {
-        match value {
-            Some(v) => s
-                .doc
-                .insert(key.to_string(), serde_json::Value::String(v.to_string())),
-            None => s.doc.remove(key),
-        };
-        schedule_flush(s);
-    });
+    store::write(key, value);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

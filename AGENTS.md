@@ -73,12 +73,13 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   the typed `Settings` struct (issue #13 P4 / ADR-0091). On disk it stays a **flat
   object of string values** (`"auto_fetch": "true"`, `"ui_zoom": "1000"`) — keep
   writing strings so existing settings files load.
-- `settings/store.rs` is the **only** owner of read-modify-write (#491 / ADR-0187):
+- `settings/store.rs` is the **only** owner of read-modify-write (#491 / ADR-0188):
   the parsed document lives in a process-global store, saves are a same-directory
-  temp file + rename, and a `settings.json` that doesn't parse is moved aside to
-  `settings.json.corrupt` instead of being overwritten by an empty default. Never
-  add a second `fs::write` path to `settings.json`. Bursts coalesce, so any new
-  process-exit path must call `settings::flush()`.
+  temp file + rename, and a `settings.json` that doesn't parse is moved aside to an
+  exclusively reserved `settings.json.corrupt[.N]` instead of being overwritten by
+  an empty default. Never add a second `fs::write` path to `settings.json`. Only a
+  *repeated* write of the same key coalesces (a divider drag); every other write
+  lands immediately. Any new process-exit path must call `settings::flush()`.
 - `write_setting` round-trips the **whole object**, so unknown keys are preserved — no
   `SETTINGS_KEYS` array to maintain, and adding a key needs no registration.
 - Prefer the typed `Settings` accessors (`Settings::load().theme()` / `ui_zoom_permille()`

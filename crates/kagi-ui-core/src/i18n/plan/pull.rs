@@ -113,7 +113,7 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
         PullRecovery::Pull => {
             "pull は非破壊的です。fast-forward とクリーンな merge では作業は失われません。\n\
              merge が conflict するか変更パスを上書きする場合、実行はブロックされリポジトリは変更されません。\n\
-             実行後に merge commit を取り消すには:\n  git reset --hard HEAD~1\n\
+             実行後に履歴を書き換えず merge commit を取り消すには:\n  git revert -m 1 HEAD\n\
              HEAD 移動は reflog に残ります:\n  git reflog"
                 .to_string()
         }
@@ -126,5 +126,17 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
              以前の先端に戻すには:\n  git branch -f {} <old-sha>",
             branch, branch
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pull_recovery_reverts_without_rewriting_history() {
+        let text = recovery_ja(&PullRecovery::Pull);
+        assert!(text.contains("git revert -m 1 HEAD"));
+        assert!(!text.contains("reset --hard"));
     }
 }

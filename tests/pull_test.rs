@@ -283,6 +283,19 @@ fn test_plan_pull_dirty_warning_no_blocker() {
 
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_pull(&repo).expect("plan should succeed");
+    let recovery = plan.recovery.as_ref().expect("pull recovery");
+    assert_eq!(
+        recovery.commands,
+        vec!["git revert -m 1 HEAD".to_string(), "git reflog".to_string(),]
+    );
+    assert!(
+        recovery
+            .commands
+            .iter()
+            .all(|command| !command.contains("reset --hard")),
+        "structured recovery commands must not discard the worktree: {:?}",
+        recovery.commands
+    );
     assert!(
         plan.blockers.is_empty(),
         "dirty WT alone must not be a blocker, got: {:?}",

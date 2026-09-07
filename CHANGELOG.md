@@ -5,15 +5,66 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-09-07
+
+### Added
+- **Flower Road gains balanced light and dark swimlane palettes** with stronger graph-row tinting while preserving the existing badge colours. (#529)
+- **Deleting an unmerged branch now requires a deliberate two-step confirmation**, with its full tip retained through a ref-backed recovery handle. (#585)
+
+### Changed
+- Local stash push, apply, pop and drop now run through one application-owned planning, admission and receipt lifecycle. (#541)
+- CLI and MCP operations now share one agent contract and return the receipt produced by their own confirmed run. (#571)
+- Remote stash drop now runs as a typed application-layer SSH job with frozen connection identity and explicit recovery evidence. (#572)
+
 ### Fixed
 - Release checks require the complete blocking CI aggregate from the target
   commit's newest workflow run and latest attempt, including the gate selftests.
 - Branch cleanup retains remote recovery OIDs when subsequent local deletion
   fails, records partial completion, and opens the per-target operation details.
+- Branch creation records partial completion when the branch exists but its requested checkout fails. (#524)
+- Worktree removal now preserves accurate receipts across partial failure and keeps production fault injection test-only. (#533)
+- Rebase abort reconstructs its guard from replayed HEAD state, including later conflict stops. (#537)
+- Worktree commands remain available when more than one Kagi process is open. (#538)
+- Conflict mode re-detects repository state immediately after Continue or Skip. (#539)
+- Stash drop follow-up waits for conflict reload instead of being consumed behind the conflict view. (#550)
+- Expanding long oplog entries no longer applies a second, incorrect selection-position calculation. (#552)
+- The footer consistently displays the first line of a multi-line status message. (#553)
+- Closing a tab clears only that session's stash conflict and follow-up state. (#557)
+- PR merge and SSH pull mutations are recorded at the transport execution boundary, including failed or unknown outcomes. (#558)
+- Enter confirms only the active modal and no longer propagates to controls behind it. (#559)
+- Editor history diff and snapshot loading are owned by request, preventing stale requests from leaving the editor stuck loading. (#560)
+- Closing or reselecting background tabs preserves their live session, and successful worktree removal closes the removed worktree's tab. (#562)
+- Backend execution policy is applied consistently and trust checks close previously reachable mutation bypasses. (#563)
+- Rebase Skip that advances to the next conflict is classified from repository state instead of being reported as a failure. (#567)
+- Discard and worktree-removal backups are anchored by refs so recovery bytes survive garbage collection. (#568)
+- Plan and replan failures are explicit states instead of silent or stale confirmations. (#570)
+- Branch-menu Enter no longer falls through to checkout behind the menu, and GUI tests use the same keymap setup as the app. (#579)
+- Unknown conflict-process termination remains Unknown and retains its writer lease rather than permitting an unsafe retry. (#582)
 
 ### Changed (internal)
 - Commit, compare and staging diffs share one patch decoder and inspect binary
   flags after libgit2 materializes content rather than guessing from empty hunks.
+- The application-layer ownership and delivery model is specified before feature migration. (#521)
+- CI runs the invariant checks for both dev pushes and pull requests. (#525)
+- The first application-layer slice proves worktree removal across plan, admission, execution and delivery. (#526)
+- Build guidance isolates Cargo targets per worktree to prevent cross-worktree artifact collisions. (#527)
+- Writer admission now coordinates editor saves, staging, snapshots and fetch with worktree removal. (#530)
+- The stash-family design defines local and remote operation ownership and evidence. (#532)
+- A per-process GUI driver and opt-in startup activation make visual scenarios independently addressable. (#543)
+- The canonical Kagi verification workflow is shared across Claude and Codex. (#545)
+- GUI E2E scenarios unmount their windows and support focused scenario filtering. (#551)
+- CI validates that canonical verification skill references remain resolvable. (#554)
+- GUI E2E enforces a native-window budget and closes leaked windows before they can exhaust macOS. (#555)
+- Verification documentation defines evidence tiers and the GUI hitbox API constraint. (#556)
+- The remote-stash design fixes SSH identity, completion-token and reconciliation semantics. (#561)
+- SessionId and frozen attachments own display identity, departure and delivery lifetime. (#574)
+- Raw mutation executors are confined behind Backend boundaries. (#575)
+- The conflict-family design defines request, evidence, lease and UI-adapter boundaries. (#577)
+- Test fixtures isolate oplogs and reject fallback writes into the developer's HOME. (#578)
+- Repository snapshots and reads are session-owned, replacing duplicated active-view and tab-cache state. (#580)
+- Migration notes now reflect the implemented application-layer and session-ownership slices. (#581)
+- Conflict Save and directory/file resolution now use finite application jobs and one recorded Backend boundary. (#583)
+- ADR-0175 through ADR-0184 record the release's application boundaries, transport recording, execution policy, recovery refs, modal failure state, agent contract and session ownership decisions.
 
 ## [0.33.0] — 2026-09-06
 

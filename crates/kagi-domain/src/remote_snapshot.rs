@@ -9,12 +9,22 @@
 //!
 //! ## Wire format
 //!
-//! Records and fields are separated by ASCII control characters that never
-//! occur in commit metadata: **unit separator** `0x1F` between fields and
-//! **record separator** `0x1E` between `git log` commits. The format constants
-//! ([`LOG_FORMAT`], [`BRANCH_FORMAT`], …) embed these so the same delimiters are
-//! used on the wire and in the parser — keeping the two in lock-step and the
-//! parsers unit-testable from a literal string.
+//! `git log` records and fields are delimited by **NUL** (issue #508, ADR-0186).
+//! NUL is the one byte a commit object cannot carry: `git commit` and
+//! `git commit-tree` refuse a message containing it, and `git hash-object -w` /
+//! `git fsck` reject such an object (`nulInCommit`). Author name, author email
+//! and the raw body are attacker-controlled in an untrusted repository and may
+//! hold *any* other byte — including the ASCII unit/record separators this
+//! module used before — so nothing else can bound a record.
+//!
+//! `for-each-ref` / `stash list` output still uses the ASCII **unit separator**
+//! ([`US`]) between fields: every field there is a refname, an oid or a
+//! git-generated track string, none of which may contain an ASCII control
+//! character.
+//!
+//! The format constants ([`LOG_FORMAT`], [`BRANCH_FORMAT`], …) embed the
+//! delimiters so the same ones are used on the wire and in the parser — keeping
+//! the two in lock-step and the parsers unit-testable from a literal string.
 
 use std::path::PathBuf;
 
@@ -23,18 +33,22 @@ use crate::head::Head;
 use crate::refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
 use crate::status::{ChangeKind, FileStatus, WorkingTreeStatus};
 
-/// ASCII unit separator — between fields of one record.
+/// ASCII unit separator — between fields of the `for-each-ref` / `stash list`
+/// formats, whose fields cannot contain ASCII control characters.
 pub const US: char = '\u{1f}';
-/// ASCII record separator — between `git log` commit records.
-pub const RS: char = '\u{1e}';
+/// NUL — the field *and* record delimiter of [`LOG_FORMAT`]; the only byte a
+/// commit message provably cannot contain (see the module docs).
+pub const NUL: char = '\0';
+/// Number of NUL-terminated fields [`LOG_FORMAT`] emits per commit.
+pub const LOG_FIELDS: usize = 9;
 
 // ── git format strings (embed the separators above) ─────────────
 
 /// `git log --pretty=format:` spec: hash, parents, author (name/email/time),
-/// committer (name/email/time), raw body — `US`-separated, `RS`-terminated.
-/// `%B` (raw body) is last so its embedded newlines can't be confused with a
-/// field break.
-pub const LOG_FORMAT: &str = "%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%B%x1e";
+/// committer (name/email/time), raw body — [`LOG_FIELDS`] fields, each
+/// **NUL-terminated**, so no commit body can forge a field or a record break
+/// (issue #508).
+pub const LOG_FORMAT: &str = "%H%x00%P%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct%x00%B%x00";
 
 /// `git for-each-ref refs/heads` spec: short name, tip oid, upstream short
 /// name, upstream track (`[ahead N, behind M]`).
@@ -89,39 +103,41 @@ pub fn head_from(branch: Option<&str>, commit: Option<&str>) -> Head {
 
 /// Parse the [`LOG_FORMAT`] output of `git log` into commits (input order is
 /// preserved — the caller passes `--topo-order`).
+///
+/// The output is a flat stream of NUL-terminated fields; commits are taken in
+/// fixed groups of [`LOG_FIELDS`]. `chunks_exact` drops a trailing partial
+/// group, so output truncated mid-record yields no half-filled row — and since
+/// a commit cannot contain a NUL, no commit body can add or shift a group.
 pub fn parse_commits(stdout: &str) -> Vec<Commit> {
-    stdout.split(RS).filter_map(parse_commit_record).collect()
+    let fields: Vec<&str> = stdout.split(NUL).collect();
+    fields
+        .chunks_exact(LOG_FIELDS)
+        .filter_map(parse_commit_record)
+        .collect()
 }
 
-fn parse_commit_record(record: &str) -> Option<Commit> {
-    // `--pretty=format:` joins records with a newline; after splitting on `RS`
-    // every record but the first carries that leading newline — strip it.
-    let record = record.trim_start_matches(['\n', '\r']);
-    if record.is_empty() {
-        return None;
-    }
-    // `splitn(9)` so the body (field 9) keeps any stray separators/newlines.
-    let mut f = record.splitn(9, US);
-    let id = CommitId(f.next()?.trim().to_string());
+fn parse_commit_record(f: &[&str]) -> Option<Commit> {
+    // `--pretty=format:` joins records with a newline, which lands in front of
+    // the next record's first field — `trim` absorbs it.
+    let id = CommitId(f[0].trim().to_string());
     if id.0.is_empty() {
         return None;
     }
-    let parents = f
-        .next()?
+    let parents = f[1]
         .split_whitespace()
         .map(|p| CommitId(p.to_string()))
         .collect();
     let author = Signature {
-        name: f.next()?.to_string(),
-        email: f.next()?.to_string(),
-        time: f.next()?.trim().parse().unwrap_or(0),
+        name: f[2].to_string(),
+        email: f[3].to_string(),
+        time: f[4].trim().parse().unwrap_or(0),
     };
     let committer = Signature {
-        name: f.next()?.to_string(),
-        email: f.next()?.to_string(),
-        time: f.next()?.trim().parse().unwrap_or(0),
+        name: f[5].to_string(),
+        email: f[6].to_string(),
+        time: f[7].trim().parse().unwrap_or(0),
     };
-    let message = f.next().unwrap_or("").to_string();
+    let message = f[8].to_string();
     let summary = message.lines().next().unwrap_or("").trim_end().to_string();
     Some(Commit {
         id,
@@ -390,11 +406,35 @@ mod tests {
         );
     }
 
+    /// Build [`LOG_FORMAT`]-shaped output: every field NUL-terminated, records
+    /// joined the way `--pretty=format:` joins them (a newline in between,
+    /// which lands in front of the next record's first field).
+    fn log_output(records: &[[&str; LOG_FIELDS]]) -> String {
+        records
+            .iter()
+            .map(|r| r.iter().map(|f| format!("{f}\0")).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn commits_with_merge_and_multiline_body() {
         // Two records: a merge (two parents) then a root commit. Bodies contain
-        // newlines; records are RS-separated, fields US-separated.
-        let out = "m\u{1f}p1 p2\u{1f}Alice\u{1f}a@x\u{1f}1000\u{1f}Alice\u{1f}a@x\u{1f}1001\u{1f}Merge branch\n\nlong body\u{1e}\nr\u{1f}\u{1f}Bob\u{1f}b@x\u{1f}900\u{1f}Bob\u{1f}b@x\u{1f}900\u{1f}root\u{1e}".to_string();
+        // newlines; every field is NUL-terminated.
+        let out = log_output(&[
+            [
+                "m",
+                "p1 p2",
+                "Alice",
+                "a@x",
+                "1000",
+                "Alice",
+                "a@x",
+                "1001",
+                "Merge branch\n\nlong body\n",
+            ],
+            ["r", "", "Bob", "b@x", "900", "Bob", "b@x", "900", "root\n"],
+        ]);
         let commits = parse_commits(&out);
         assert_eq!(commits.len(), 2);
 
@@ -418,6 +458,56 @@ mod tests {
     fn commits_empty() {
         assert!(parse_commits("").is_empty());
         assert!(parse_commits("\n").is_empty());
+    }
+
+    /// Regression for issue #508: a body holding the *old* wire format's
+    /// separators used to parse as an extra, fully attacker-chosen commit.
+    #[test]
+    fn body_with_old_delimiters_cannot_forge_a_row() {
+        let forged = "\u{1e}0000000000000000000000000000000000000000\u{1f}dead\
+                      \u{1f}Eve\u{1f}eve@x\u{1f}1700000000\u{1f}Eve\u{1f}eve@x\
+                      \u{1f}1700000000\u{1f}forged row\n";
+        let body = format!("real subject\n\nbody{forged}end\n");
+        let out = log_output(&[["h1", "", "Ann", "a@x", "10", "Ann", "a@x", "10", &body]]);
+
+        let commits = parse_commits(&out);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].id.0, "h1");
+        assert_eq!(commits[0].author.name, "Ann");
+        assert_eq!(commits[0].summary, "real subject");
+        // The body round-trips byte for byte — nothing is eaten as a boundary.
+        assert_eq!(commits[0].message, body);
+    }
+
+    #[test]
+    fn control_bytes_in_metadata_stay_in_their_field() {
+        let out = log_output(&[[
+            "h",
+            "p",
+            "Ann\rE\u{1f}vil",
+            "a\u{1e}@x",
+            "10",
+            "Bob",
+            "b@x",
+            "11",
+            "subj\rline\nrest\n",
+        ]]);
+        let c = parse_commits(&out);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].author.name, "Ann\rE\u{1f}vil");
+        assert_eq!(c[0].author.email, "a\u{1e}@x");
+        assert_eq!(c[0].committer.time, 11);
+        assert_eq!(c[0].summary, "subj\rline");
+    }
+
+    /// A record cut short (truncated transport) is dropped, not half-filled.
+    #[test]
+    fn truncated_final_record_is_dropped() {
+        let full = log_output(&[["h1", "", "A", "a@x", "1", "A", "a@x", "1", "one\n"]]);
+        let truncated = format!("{full}\nh2\0\0A\0");
+        let c = parse_commits(&truncated);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].id.0, "h1");
     }
 
     #[test]

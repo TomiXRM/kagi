@@ -199,14 +199,18 @@ pub fn probe_repo(host: &RemoteHost, path: &str) -> Result<RepoProbe, RemoteErro
 ///
 /// Issue #604: an unborn HEAD makes `git log` *fail* ("your current branch
 /// 'master' does not have any commits yet", exit 128), not print nothing, so
-/// this read is lenient like [`remote_snapshot`]'s: a transport failure is an
-/// `Err`; any other non-zero means the remote `git` ran and answered "no HEAD
-/// commit". What separates the two is [`is_transport_failure`]'s stderr
-/// heuristic — the same one [`probe_repo`] uses for "not a repository" — not
-/// an assumption about a prior call. (Remote Browse does probe first, but this
-/// function is callable on its own and carries the split itself.) Keeping it
-/// `run_checked` conflated an empty repository with an unreachable one — the
-/// contract #506 established for PR fetches.
+/// this read is lenient like [`remote_snapshot`]'s: a non-zero exit whose
+/// stderr matches an ssh-failure marker is an `Err`; any other non-zero is
+/// *classified as* the "no HEAD commit" answer, i.e. `Ok(None)`. That is
+/// `is_transport_failure`'s heuristic — the same one [`probe_repo`] uses for
+/// "not a repository" — and it proves nothing about the remote `git` having
+/// run; it is a deliberate default. Its bias: an unrecognized transport
+/// failure degrades to "empty", never to a success with forged content, so a
+/// new transport error is fixed by adding a marker. The split lives here, not
+/// in a prior call (Remote Browse does probe first, but this function is
+/// callable on its own). Keeping it `run_checked` conflated an empty
+/// repository with an unreachable one — the contract #506 established for PR
+/// fetches.
 pub fn repo_summary(
     host: &RemoteHost,
     path: &str,

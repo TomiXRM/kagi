@@ -22,7 +22,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::{ops::StateSummary, GitError};
 
 mod reading;
+pub mod recovery;
 pub mod retention;
+
+pub use recovery::RecoveryHandle;
 
 // ────────────────────────────────────────────────────────────
 // Public types
@@ -126,6 +129,10 @@ pub struct OpLogEntry {
     pub outcome: OpOutcome,
     /// Mandatory recovery roots, retained for the lifetime of this entry (#523).
     pub backup_refs: Vec<String>,
+    /// Typed recovery handles — savepoint / stash OIDs and path→blob backups
+    /// that used to be readable only out of the `after.dirty` sentence (#500).
+    /// Additive: an entry written before this field reads back as empty.
+    pub recovery: Vec<RecoveryHandle>,
 }
 
 impl OpLogEntry {
@@ -156,6 +163,7 @@ impl OpLogEntry {
             before,
             outcome,
             backup_refs: Vec::new(),
+            recovery: Vec::new(),
         }
     }
 
@@ -260,7 +268,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
     };
 
     format!(
-        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{},\"backup_refs\":[{}]}}",
+        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{},\"backup_refs\":[{}],\"recovery\":[{}]}}",
         entry.id,
         parent_json,
         entry.timestamp,
@@ -271,6 +279,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
         state_summary_to_json(&entry.before),
         outcome_json,
         entry.backup_refs.iter().map(|r| escape_json_string(r)).collect::<Vec<_>>().join(","),
+        recovery::to_json(&entry.recovery),
     )
 }
 
@@ -613,6 +622,7 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
         before,
         outcome,
         backup_refs: extract_string_array(line, "backup_refs"),
+        recovery: recovery::parse(line),
     })
 }
 

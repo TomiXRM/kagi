@@ -23,7 +23,7 @@ pub mod remove;
 mod run;
 pub use policy::ExecutionPolicy;
 pub mod stash;
-pub use recording::oplog_outcome_from;
+pub use recording::{oplog_outcome_from, recovery_handles};
 
 pub struct Backend {
     repo: Repository,

@@ -54,7 +54,11 @@ pub(super) fn press_key(
     cx.simulate_keystrokes(window, key);
 }
 
-fn press_enter(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn press_enter(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     press_key(cx, app, window, "enter");
 }
 

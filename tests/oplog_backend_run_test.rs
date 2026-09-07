@@ -477,6 +477,10 @@ fn recovery_handles_cover_every_family() {
     assert_eq!(stash[0].kind, recovery::STASH);
     assert_eq!(stash[0].oid, sha('b'));
 
+    let pushed = recovery_handles(&ok(OperationOutcome::StashPush { oid: sha('e') }));
+    assert_eq!(pushed[0].kind, recovery::STASH);
+    assert_eq!(pushed[0].oid, sha('e'));
+
     let deleted = recovery_handles(&ok(OperationOutcome::DeleteBranch {
         name: "feature".into(),
         tip: sha('c'),

@@ -497,6 +497,23 @@ pub fn scenario_cross_worktree_merge(cx: &mut VisualTestAppContext) {
     assert_eq!(rev_parse(&fixture.linked, "HEAD"), old_target);
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
+    // A remote drop target resolves to its local branch before worktree
+    // routing, just as the off-branch planner resolves origin/feature to
+    // feature. Its linked worktree must therefore use the HEAD-merge path.
+    app.update(cx, |app, cx| {
+        app.start_merge_into_from_drag("origin/source".into(), "origin/feature".into(), cx);
+    });
+    wait_idle(cx, &app);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(app.tabs[app.active_tab].path, fixture.linked);
+        let modal = app.merge_modal().expect("remote destination merge plan");
+        assert!(!modal.off_branch);
+        assert_eq!(modal.into_branch, "feature");
+    });
+    press_key(cx, &app, window, "escape");
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
     // Leave again before the background plan can arrive: neither tab may
     // receive a stale confirmable plan, and the planning latch must settle.
     app.update(cx, |app, cx| {

@@ -3,6 +3,19 @@
 use crate::ui::blocking_ops::*;
 use crate::ui::*;
 
+/// Translate a remote-tracking drop target to the local branch name which
+/// `plan_merge_into_branch` would operate on. The exact local name wins, just
+/// as it does in the backend, because a branch named `origin/feature` is valid.
+fn worktree_target_name(target: &str, branches: &[(String, bool)], remotes: &[String]) -> String {
+    if branches.iter().any(|(branch, _)| branch == target) {
+        return target.to_string();
+    }
+    if remotes.iter().any(|remote| remote == target) {
+        return default_tracking_branch_name(target);
+    }
+    target.to_string()
+}
+
 impl KagiApp {
     pub fn open_merge_modal(
         &mut self,
@@ -217,16 +230,23 @@ impl KagiApp {
         ) {
             Ok(()) => {
                 klog!("drag-merge: into {} from {}", target, source);
+                // The worktree inventory contains local branch names. Keep the
+                // original remote ref for the off-branch planner, which may
+                // create its local destination, but resolve it before finding
+                // a worktree that already owns that destination.
+                let worktree_target =
+                    worktree_target_name(&target, &self.view().branches, &remotes);
                 if let Some(path) = self
                     .view()
                     .worktrees
                     .iter()
                     .find(|worktree| {
-                        !worktree.is_current && worktree.branch.as_deref() == Some(target.as_str())
+                        !worktree.is_current
+                            && worktree.branch.as_deref() == Some(worktree_target.as_str())
                     })
                     .map(|worktree| worktree.path.clone())
                 {
-                    self.open_merge_in_worktree(source, target, path, cx);
+                    self.open_merge_in_worktree(source, worktree_target, path, cx);
                 } else {
                     self.open_merge_into_modal(source, target, cx);
                 }
@@ -400,5 +420,34 @@ impl KagiApp {
                 });
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worktree_target_name;
+
+    #[test]
+    fn remote_target_uses_its_checked_out_local_branch_name() {
+        assert_eq!(
+            worktree_target_name(
+                "origin/feature",
+                &[("feature".to_string(), false)],
+                &["origin/feature".to_string()],
+            ),
+            "feature"
+        );
+    }
+
+    #[test]
+    fn exact_local_target_keeps_backend_local_precedence() {
+        assert_eq!(
+            worktree_target_name(
+                "origin/feature",
+                &[("origin/feature".to_string(), false)],
+                &["origin/feature".to_string()],
+            ),
+            "origin/feature"
+        );
     }
 }

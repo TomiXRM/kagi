@@ -1147,6 +1147,10 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         ReviewState::ReviewRequired => (Msg::PrReviewRequired.t(), theme().text_sub),
         ReviewState::None => ("", theme().text_muted),
     };
+    let merge_held = app.repo_path.as_ref().is_some_and(|owner| {
+        app.transport_holds
+            .contains(owner, &format!("pr-merge #{}", pr.number))
+    });
     let pr_open = pr.clone();
     let open_gh = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         this.open_pr_in_browser(&pr_open);
@@ -1216,7 +1220,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         })
         // Merge — only for a mergeable, non-draft PR; the confirm modal
         // states the CI / review caveats before anything happens.
-        .when(!pr.is_draft, |el| {
+        .when(!pr.is_draft && !merge_held, |el| {
             let pr_merge = pr.clone();
             let merge_click =
                 cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {

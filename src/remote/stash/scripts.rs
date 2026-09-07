@@ -26,6 +26,7 @@ cd -P -- "$runtime"
 printf 'KAGI-RUNTIME\0%s\0KAGI-END\n' "$(pwd -P)""#;
 
 pub(super) const DROP_SCRIPT: &str = r#"set -eu
+LC_ALL=C; export LC_ALL
 root=$1; expected_common=$2; operation=$3; job=$4; index=$5; selected=$6
 expected_head=$7; expected_oids=$8; expected_index=$9; shift 9
 expected_worktree=$1; scope_digest=$2; expected_runtime=$3

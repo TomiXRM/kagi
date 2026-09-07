@@ -332,3 +332,15 @@ retained branch tip and recovery ref. It also covers disabled reflogs, directly
 written refs and non-NotFound cleanup errors. `backend/remove.rs` unit tests model
 Unsupported creation time and verify all remaining fingerprint fields still
 reject drift. These are fixture/unit checks; no GUI runner execution is needed.
+
+### Release transport / Skip regressions
+
+G: `transport_recording_test` validates the actual `mergedAt` query with fake gh;
+`remote_stash_script_test::drop_forces_c_locale_inside_the_remote_shell` runs the
+real script under a simulated translated Git; `conflicts_test::skip_advancing_to_the_next_conflict_is_not_a_failure`
+checks that the next same-path conflict has no skipped draft. UI `transport_hold`
+unit coverage verifies owner/operation isolation and Partial/Unknown admission.
+For M, check that notice dismissal/tab switching does not re-enable PR merge or
+remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
+the app lifetime; inspect remote state before restarting. GUI runner build only
+when execution is reserved for PM.

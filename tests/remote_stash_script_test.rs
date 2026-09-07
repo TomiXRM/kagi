@@ -137,6 +137,7 @@ impl Fixture {
                 &"1".repeat(64),
                 physical_runtime.to_str().unwrap(),
             ])
+            .env("LC_ALL", "ja_JP.UTF-8")
             .env("PATH", path)
             .env("XDG_RUNTIME_DIR", runtime)
             .output()
@@ -222,4 +223,49 @@ fn known_hosts_snapshot_is_revalidated_before_use() {
     assert!(verify_known_hosts_snapshot_for_test(&snapshot, b"host key\n").is_err());
     fs::remove_file(&snapshot).unwrap();
     assert!(verify_known_hosts_snapshot_for_test(&snapshot, b"host key\n").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn drop_forces_c_locale_inside_the_remote_shell() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new("bsd");
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real_git = String::from_utf8(real_git.stdout).unwrap();
+    let wrapper = fixture.fake_bin.join("git");
+    // Simulate a remote Git translation even on hosts without that locale installed.
+    // The destructive command still runs, but non-C output has different punctuation.
+    let script = format!(
+        r#"#!/bin/sh
+if test "$1 $2" = "stash drop"; then
+    output=$('{}' "$@") || exit $?
+    if test "$LC_ALL" = C; then printf '%s\n' "$output"; else printf '削除しました：%s\n' "$output" | tr '()' '[]'; fi
+else
+    exec '{}' "$@"
+fi
+"#,
+        real_git.trim(),
+        real_git.trim()
+    );
+    fs::write(&wrapper, script).unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = fixture.run_drop(&fixture.runtime);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame = parse_stash_frame(&output.stdout).expect("C-locale completion must be verifiable");
+    assert_eq!(frame.exit, 0);
+    assert_eq!(frame.stdout_oid, frame.selected_oid);
+    assert_eq!(frame.after.ordered_oids.len(), 2);
+    assert_eq!(
+        parse_completion_token(&fixture.read_token().stdout)
+            .unwrap()
+            .result,
+        frame
+    );
 }

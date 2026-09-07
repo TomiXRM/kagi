@@ -1221,6 +1221,7 @@ pub struct KagiApp {
     /// first refresh for the new one is in flight.
     pub github_prs: Vec<kagi_domain::github::PullRequest>,
     pub github_prs_for: Option<PathBuf>,
+    transport_holds: operations::transport_hold::TransportHolds,
     /// Last `gh pr list` failure, cleared by the next success. Rendered by the
     /// PR home screen so a failed fetch is not shown as an empty inbox.
     pub github_error: Option<SharedString>,
@@ -1553,6 +1554,7 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             github_prs: Vec::new(),
             github_prs_for: None,
+            transport_holds: Default::default(),
             github_error: None,
             github_prs_epoch: 0,
             github_ticker_alive: false,

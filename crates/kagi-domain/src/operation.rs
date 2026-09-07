@@ -234,3 +234,9 @@ pub enum OperationOutcome {
     },
     Unit,
 }
+
+/// Observed metadata side effects of branch deletion, even if ref commit fails.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeleteBranchProgress {
+    pub reflog_removed: bool,
+}

@@ -62,12 +62,14 @@ M は PM 確認待ち、1b は未実装であり横展開 gate は未通過。
 Backend が canonicalize/discover する。UI の `canon(path)` の失敗時 raw-path fallback は
 表示・過去ログ検索には残せるが、**新規 mutation の排他 identity には使わない**。
 解決不能は refusal。削除予定の worktree の locator は dispatch 前に凍結し、完了時に再解決しない。
-slice 1a の remove 承認は `<common>/worktrees/<name>` の **`(inode, st_birthtime)` +
-`gitdir` ファイル内容 + config SHA + HEAD OID** を plan 時に凍結し、preflight で再照合する。
-不一致/取得不能は Refused。path/name/OID/config が同じ再作成でも古い承認で削除しない。
-これが今回の resource incarnation の出所であり、session 世代は #482 の別設計。
-birthtime 等が得られない filesystem/platform は path-only に縮退せず拒否する。対応拡張時は
-代替 identity と ABA fixture を別途合意する。任意の外部改変に対する cross-process lock ではない。
+slice 1a の remove 承認は `<common>/worktrees/<name>` の **inode + optional birthtime +
+`gitdir` ファイル内容 + config SHA + HEAD OID/ref** を plan 時に凍結し、preflight で再照合する。
+#587 リリースレビュー対応で `created()` の Unsupported だけを `None` として許容する。
+他の必須情報の取得不能・各フィールドの不一致は Refused。birthtime が取得できる場合も保持し、
+Some/None の変化も拒否する。inode 等が変わった再作成に古い承認は使えない。
+これが resource incarnation の出所であり、session 世代は #482 の別設計。
+path-only へは縮退しない。birthtime 非対応時に inode と全残存フィールドまで同一に再利用された
+ケースは識別できず、任意の外部改変に対する cross-process lock を保証するものでもない。
 
 | 資源 | 初期の排他キー | 理由 / 限界 |
 |---|---|---|

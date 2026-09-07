@@ -12,7 +12,7 @@ use std::time::SystemTime;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Fingerprint {
     inode: u64,
-    birth: SystemTime,
+    birth: Option<SystemTime>,
     gitdir: Vec<u8>,
     config: Option<String>,
     head: String,
@@ -53,6 +53,14 @@ fn io(error: impl std::fmt::Display) -> GitError {
     GitError::Other(error.to_string())
 }
 
+fn optional_birth(created: std::io::Result<SystemTime>) -> Result<Option<SystemTime>, GitError> {
+    match created {
+        Ok(time) => Ok(Some(time)),
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => Ok(None),
+        Err(error) => Err(io(error)),
+    }
+}
+
 fn fingerprint(repo: &Repository, name: &str) -> Result<Fingerprint, GitError> {
     let admin = repo.commondir().join("worktrees").join(name);
     let meta = std::fs::symlink_metadata(&admin).map_err(io)?;
@@ -77,7 +85,7 @@ fn fingerprint(repo: &Repository, name: &str) -> Result<Fingerprint, GitError> {
     let head_ref = linked.head().map_err(io)?.name().unwrap_or("").to_string();
     Ok(Fingerprint {
         inode,
-        birth: meta.created().map_err(io)?,
+        birth: optional_birth(meta.created())?,
         gitdir: std::fs::read(admin.join("gitdir")).map_err(io)?,
         config: ops::load_worktree_config(wt.path())?.map(|cfg| cfg.sha256),
         head,
@@ -339,4 +347,62 @@ fn evidence(progress: &RemoveProgress, error: &str) -> String {
         progress.observations,
         error
     )
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_birthtime_preserves_other_fingerprint_checks() {
+        let missing = || optional_birth(Err(std::io::ErrorKind::Unsupported.into())).unwrap();
+        let planned = Fingerprint {
+            inode: 7,
+            birth: missing(),
+            gitdir: b"/repo/worktree/.git".to_vec(),
+            config: None,
+            head: "tip".into(),
+            head_ref: "refs/heads/topic".into(),
+        };
+        let mut fresh = planned.clone();
+        fresh.birth = missing();
+        assert_eq!(planned, fresh);
+        for changed in [
+            Fingerprint {
+                inode: 8,
+                ..fresh.clone()
+            },
+            Fingerprint {
+                gitdir: b"/other/.git".to_vec(),
+                ..fresh.clone()
+            },
+            Fingerprint {
+                config: Some("config-sha".into()),
+                ..fresh.clone()
+            },
+            Fingerprint {
+                head: "new-tip".into(),
+                ..fresh.clone()
+            },
+            Fingerprint {
+                head_ref: "refs/heads/other".into(),
+                ..fresh.clone()
+            },
+            Fingerprint {
+                birth: Some(SystemTime::UNIX_EPOCH),
+                ..fresh.clone()
+            },
+        ] {
+            assert_ne!(planned, changed);
+        }
+    }
+
+    #[test]
+    fn birthtime_retains_supported_values_and_propagates_other_errors() {
+        assert_eq!(
+            optional_birth(Ok(SystemTime::UNIX_EPOCH)).unwrap(),
+            Some(SystemTime::UNIX_EPOCH)
+        );
+        assert!(optional_birth(Err(std::io::ErrorKind::PermissionDenied.into())).is_err());
+    }
 }

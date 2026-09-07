@@ -414,6 +414,11 @@ pub(crate) fn render_badges_column(
         } else {
             chip
         };
+        let chip = if badge.kind == BadgeKind::Remote {
+            super::e2e::measure_control(format!("graph-remote-{}", badge.label), chip)
+        } else {
+            chip.into_any_element()
+        };
         inner = inner.child(chip);
 
         // "+N" chip directly after the primary chip (never clipped).

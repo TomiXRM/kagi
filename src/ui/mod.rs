@@ -266,8 +266,8 @@ fn validate_merge_into_from_drag(
         return Err(format!("'{}' is already that branch.", source));
     }
     let is_local = |n: &str| branches.iter().any(|(b, _)| b == n);
-    if !is_local(source) {
-        return Err(format!("Branch '{}' is not a local branch.", source));
+    if !is_local(source) && !remotes.iter().any(|n| n == source) {
+        return Err(format!("Branch '{}' is not a branch.", source));
     }
     // The destination may be a remote-tracking ref: the planner resolves it to
     // the local branch of that name, creating it at the remote tip if needed.
@@ -3897,6 +3897,31 @@ mod drag_merge_into_validation_tests {
 
     #[test]
     fn dropping_one_non_head_branch_onto_another_is_accepted() {
+        assert!(validate_merge_into_from_drag(
+            "origin/release",
+            "feature",
+            &branches(),
+            &remotes(),
+            false
+        )
+        .is_ok());
+        assert!(validate_merge_into_from_drag(
+            "origin/missing",
+            "feature",
+            &branches(),
+            &remotes(),
+            false
+        )
+        .is_err());
+        assert!(validate_merge_into_from_drag(
+            "origin/release",
+            "feature",
+            &branches(),
+            &remotes(),
+            true
+        )
+        .is_err());
+
         assert_eq!(
             validate_merge_into_from_drag("feature", "topic/x", &branches(), &remotes(), false),
             Ok(())

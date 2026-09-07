@@ -75,3 +75,26 @@ are not touched.
   the source branch, files on disk) as well as what did. A merge that quietly
   checked the target out would satisfy "the target advanced" just as well; the
   mutation that adds `checkout_tree` back fails two of them.
+
+## Remote source support (#590, 2026-09-07)
+
+The source accepts both local branches and remote-tracking refs, matching the
+existing target lookup namespaces. A local branch with the same spelling keeps
+precedence. Unlike a remote **target**, a remote **source** is never materialized
+as a local branch: its commit is read directly from `refs/remotes/<remote>/<name>`.
+Only the resolved local target moves; HEAD, index, worktree and remote refs stay
+unchanged. Existing occupancy and conflict blockers still apply.
+
+The plan includes the full remote ref and tip OID with an EN/JA warning that this
+is the last-fetch observation and may be stale. Planning and execution do not
+fetch. Backend's existing fresh-plan preflight compares the approved remote ref
+and OID, so a changed observation requires new confirmation. This is a preflight
+check, not a lock against external Git writers. The existing Backend policy and
+single receipt boundary remain unchanged.
+
+G in `tests/drag_merge_test.rs` covers FF/two-parent merges, remote freshness,
+no local source creation or fetch, dirty-tree/index/HEAD preservation, target
+occupancy and source-tip changes after approval. The native E scenario
+`remote_source_merge_into` drags the graph chip onto the non-HEAD sidebar row,
+asserts that drop only opens a plan, then confirms via Enter and checks the single
+receipt. Its runner is built by the agent and executed by PM.

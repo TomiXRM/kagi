@@ -344,3 +344,17 @@ For M, check that notice dismissal/tab switching does not re-enable PR merge or
 remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
 the app lifetime; inspect remote state before restarting. GUI runner build only
 when execution is reserved for PM.
+
+### Remote source drag merge (#590)
+
+Tier A filter: `KAGI_GUI_E2E_ONLY=remote_source_merge_into`. The scenario uses
+`graph-remote-<remote/name>` and `sidebar-local-<branch>` control bounds to deliver
+real drag events, confirms through Enter, and asserts one successful receipt with
+HEAD/index/worktree and remote ref unchanged. Each scenario unmounts its window.
+When PM owns execution, compile only with `--features gui-e2e --test gui_e2e_runner --no-run`.
+
+G: `tests/drag_merge_test.rs` exercises the public Backend boundary with a remote
+source and non-HEAD target, including another-worktree occupancy and changed tip.
+M: drop a remote chip onto a non-HEAD local row; the plan must show its full ref,
+OID and EN/JA last-fetch warning. Confirm that no local source branch is created
+and no fetch occurs; fetch explicitly beforehand when current remote data is needed.

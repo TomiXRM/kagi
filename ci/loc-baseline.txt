@@ -23,7 +23,7 @@ src/ui/conflict_editor.rs 1332
 src/ui/conflict_view.rs 2211
 src/ui/diff_view.rs 1600
 src/ui/inspector.rs 1244
-src/ui/mod.rs 4123
+src/ui/mod.rs 4148
 src/ui/modals.rs 840
 src/ui/operations/branch.rs 1672
 src/ui/operations/commit.rs 1376
@@ -33,6 +33,6 @@ src/ui/pr_mode.rs 2342
 src/ui/render.rs 908
 src/ui/render_header.rs 807
 src/ui/settings_view.rs 823
-src/ui/sidebar.rs 2007
+src/ui/sidebar.rs 2008
 src/ui/tabs.rs 1247
 src/ui/workspace.rs 1052

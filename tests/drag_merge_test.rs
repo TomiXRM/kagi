@@ -365,3 +365,203 @@ fn rev_parse(dir: &Path, rev: &str) -> String {
 
 #[path = "support/isolated.rs"]
 mod test_support;
+
+// #590: remote sources use exactly the same Backend boundary as local sources.
+fn remote_source_fixture(diverged: bool) -> (TempDir, git2::Oid, git2::Oid) {
+    let tmp = init_repo();
+    let repo = git2::Repository::open(tmp.path()).unwrap();
+    let base = repo.head().unwrap().peel_to_commit().unwrap();
+    let sig = repo.signature().unwrap();
+    let make_commit = |name: &str| {
+        let mut tree = repo.treebuilder(Some(&base.tree().unwrap())).unwrap();
+        tree.insert(name, repo.blob(name.as_bytes()).unwrap(), 0o100644)
+            .unwrap();
+        repo.commit(
+            None,
+            &sig,
+            &sig,
+            name,
+            &repo.find_tree(tree.write().unwrap()).unwrap(),
+            &[&base],
+        )
+        .unwrap()
+    };
+    let source = make_commit("remote.txt");
+    let target = if diverged {
+        make_commit("target.txt")
+    } else {
+        base.id()
+    };
+    repo.branch("target", &repo.find_commit(target).unwrap(), false)
+        .unwrap();
+    repo.reference(
+        "refs/remotes/origin/source",
+        source,
+        false,
+        "fixture remote ref",
+    )
+    .unwrap();
+    // Any implicit fetch would fail; FETCH_HEAD also proves no fetch was attempted.
+    repo.remote("origin", "file:///kagi-590-no-such-remote")
+        .unwrap();
+    std::fs::write(repo.path().join("FETCH_HEAD"), "last explicit fetch\n").unwrap();
+    (tmp, source, target)
+}
+
+fn merge_remote_operation() -> kagi_git::Operation {
+    kagi_git::Operation::MergeIntoBranch {
+        source: "origin/source".into(),
+        target: "target".into(),
+    }
+}
+
+#[test]
+fn remote_source_merges_into_non_head_without_checkout_fetch_or_local_source() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for diverged in [false, true] {
+        let (tmp, source, old_target) = remote_source_fixture(diverged);
+        let repo = git2::Repository::open(tmp.path()).unwrap();
+        let head = repo.head().unwrap().target().unwrap();
+        write_file(tmp.path(), "base.txt", "dirty stays here\n");
+        let index = std::fs::read(repo.path().join("index")).unwrap();
+        let mut backend =
+            Backend::open_with_policy(tmp.path(), kagi_git::backend::ExecutionPolicy::human(false))
+                .unwrap();
+        let op = merge_remote_operation();
+        let plan = backend.plan(&op).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        let note = plan
+            .warnings
+            .iter()
+            .find_map(|note| match note {
+                kagi_domain::plan_note::PlanNote::Merge(
+                    note @ kagi_domain::plan_note::MergeNote::IntoRemoteSource { .. },
+                ) => Some(note),
+                _ => None,
+            })
+            .expect("remote freshness warning");
+        for text in [
+            note.message_en(),
+            kagi_ui_core::i18n::plan::merge::note_ja(note),
+        ] {
+            assert!(text.contains("refs/remotes/origin/source"));
+            assert!(text.contains(&source.to_string()));
+            assert!(text.contains("fetch"));
+        }
+        assert!(note.message_en().contains("last fetch"));
+        backend.preflight_check(&plan).unwrap();
+        let report = backend.run_recorded(&op, &plan);
+        assert!(report.result.is_ok(), "{:?}", report.result);
+        assert!(matches!(
+            report.recording.entry().outcome,
+            kagi_git::OpOutcome::Success { .. }
+        ));
+        let repo = git2::Repository::open(tmp.path()).unwrap();
+        let merged = repo
+            .find_reference("refs/heads/target")
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        if diverged {
+            assert_eq!(merged.parent_count(), 2);
+            assert_eq!(merged.parent_id(0).unwrap(), old_target);
+            assert_eq!(merged.parent_id(1).unwrap(), source);
+        } else {
+            assert_eq!(merged.id(), source);
+        }
+        assert_eq!(repo.head().unwrap().target(), Some(head));
+        assert_eq!(
+            repo.find_reference("refs/remotes/origin/source")
+                .unwrap()
+                .target(),
+            Some(source)
+        );
+        assert!(repo.find_branch("source", git2::BranchType::Local).is_err());
+        assert!(repo
+            .find_branch("origin/source", git2::BranchType::Local)
+            .is_err());
+        assert_eq!(std::fs::read(repo.path().join("index")).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("base.txt")).unwrap(),
+            "dirty stays here\n"
+        );
+        assert!(!tmp.path().join("remote.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("FETCH_HEAD")).unwrap(),
+            "last explicit fetch\n"
+        );
+        assert_eq!(
+            kagi_git::oplog::read_oplog_tail_for_repo(tmp.path(), 100).len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn remote_source_does_not_bypass_worktree_occupancy() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (tmp, _, old_target) = remote_source_fixture(false);
+    let linked = tempfile::tempdir().unwrap();
+    let path = linked.path().join("linked");
+    let mut backend =
+        Backend::open_with_policy(tmp.path(), kagi_git::backend::ExecutionPolicy::human(false))
+            .unwrap();
+    let op = merge_remote_operation();
+    let approved = backend.plan(&op).unwrap();
+    git(
+        tmp.path(),
+        &["worktree", "add", path.to_str().unwrap(), "target"],
+    );
+    let blocked = backend.plan(&op).unwrap();
+    assert!(blocked.blockers.iter().any(|note| matches!(
+        note,
+        kagi_domain::plan_note::PlanNote::Merge(
+            kagi_domain::plan_note::MergeNote::IntoCheckedOutElsewhere { .. }
+        )
+    )));
+    assert!(backend.run_recorded(&op, &approved).result.is_err());
+    let repo = git2::Repository::open(tmp.path()).unwrap();
+    assert_eq!(
+        repo.find_reference("refs/heads/target").unwrap().target(),
+        Some(old_target)
+    );
+}
+
+#[test]
+fn remote_source_tip_movement_requires_new_confirmation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (tmp, source, old_target) = remote_source_fixture(false);
+    let mut backend =
+        Backend::open_with_policy(tmp.path(), kagi_git::backend::ExecutionPolicy::human(false))
+            .unwrap();
+    let op = merge_remote_operation();
+    let approved = backend.plan(&op).unwrap();
+    let repo = git2::Repository::open(tmp.path()).unwrap();
+    let parent = repo.find_commit(source).unwrap();
+    let sig = repo.signature().unwrap();
+    repo.commit(
+        Some("refs/remotes/origin/source"),
+        &sig,
+        &sig,
+        "remote advances",
+        &parent.tree().unwrap(),
+        &[&parent],
+    )
+    .unwrap();
+    let report = backend.run_recorded(&op, &approved);
+    assert!(report.result.unwrap_err().to_string().contains("re-plan"));
+    assert_eq!(
+        repo.find_reference("refs/heads/target").unwrap().target(),
+        Some(old_target)
+    );
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(tmp.path(), 100).len(),
+        1
+    );
+}

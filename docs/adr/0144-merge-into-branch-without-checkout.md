@@ -36,8 +36,8 @@ are not touched.
   the current branch. The blocker says so and names the fix (check `target`
   out). This is the one thing the off-branch path cannot do, and it is better
   to refuse than to half-apply.
-- **A target checked out in a linked worktree is a blocker.** Moving the ref
-  would leave that worktree's index and files describing a commit its HEAD no
+- **A target checked out in a linked worktree is a blocker for this off-branch executor.**
+  Moving the ref would leave that worktree's index and files describing a commit its HEAD no
   longer points at — a corruption the user would meet later, somewhere else,
   with no connection to what caused it. Detected with the existing
   `worktree_checkout_of`.
@@ -65,9 +65,9 @@ are not touched.
 
 - ADR-0079's "future work: branch→branch DnD (with target checkout)" is
   delivered **without** the target checkout it assumed.
-- The gesture is now asymmetric in a way worth knowing: dropping onto the
-  current branch can start a conflict resolution, dropping onto any other
-  branch cannot. The blocker text carries that difference.
+- Dropping onto a checked-out branch uses its owning worktree's normal HEAD
+  merge and can enter Conflict Mode. A target not checked out anywhere keeps
+  the off-branch path and its conflict blocker.
 - `MergePlanModal` gains an `off_branch` flag rather than a second modal — its
   confirm label already read `Merge <source> into <destination>`, which is
   correct for both.
@@ -98,3 +98,30 @@ occupancy and source-tip changes after approval. The native E scenario
 `remote_source_merge_into` drags the graph chip onto the non-HEAD sidebar row,
 asserts that drop only opens a plan, then confirms via Enter and checks the single
 receipt. Its runner is built by the agent and executed by PM.
+
+## Checked-out destination routing
+
+A drop onto a branch checked out in another worktree opens or reuses that
+worktree's tab, then plans `MergeBranch` against its HEAD. This does not check
+out another branch, and it never bypasses the off-branch occupancy blocker.
+The remote source remains a ref read; no source branch creation or fetch is added.
+
+`src/ui/operations/merge.rs` owns both existing merge UI paths. The normal
+planner derives the destination from its actual plan rather than a possibly
+loading tab read, and checks it against the branch selected by the drop.
+Plan completion and confirmation are bound to the destination `Attachment`;
+the blocking worker reopens and verifies its `WorktreeId` before planning or
+executing. Leaving the tab invalidates pending plan publication.
+
+Unsaved editor buffers first require the existing discard/cancel guard.
+Discard resumes navigation and planning, not execution. The continuation is
+bound to the originating attachment so a stale intent cannot discard another
+session's editor. Only the destination's confirmed normal merge may change
+its HEAD/index/files or enter Conflict Mode. Parent worktree edits are unrelated
+and preserved.
+
+`cross_worktree_merge` exercises real graph drag events, destination tab reuse,
+cancellation, stale plan completion, editor guard and external branch drift,
+then confirms a two-parent merge and checks both worktrees and the destination
+receipt. Backend fixtures in `tests/drag_merge_test.rs` cover a dirty parent and
+both fresh and stale approvals against a dirty linked destination.

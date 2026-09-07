@@ -21,7 +21,7 @@ fn output(repo: &Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap().trim().to_string()
 }
 
-fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+pub(super) fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         cx.run_until_parked();
@@ -777,7 +777,7 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS push_failure_keeps_modal: failure reaches the modal and the oplog");
 }
 
-fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
         window.draw(cx).clear();
     })

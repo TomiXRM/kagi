@@ -212,6 +212,8 @@ pub struct PushPlanModal {
 /// State for an in-progress branch merge confirmation (T-BCM-030).
 #[derive(Clone)]
 pub struct MergePlanModal {
+    /// Frozen plan owner, including its departure revision.
+    pub owner: crate::app::Attachment,
     /// The branch merged INTO HEAD (the "source" in user terms; the argument to
     /// `git merge`).
     pub target: String,
@@ -628,6 +630,15 @@ pub enum EditorPendingIntent {
     Close,
     /// Switch repository tabs after discarding the whole editor workspace.
     SwitchRepo(std::path::PathBuf),
+    /// Open another worktree and plan its HEAD merge after discarding the
+    /// originating editor workspace.
+    MergeInWorktree {
+        source: String,
+        target: String,
+        path: std::path::PathBuf,
+        /// Origin attachment before navigation, including its departure revision.
+        owner: crate::app::Attachment,
+    },
     /// Close a repository tab after discarding the whole editor workspace.
     /// #482 stage 1: the tab to close is named by its session, so a guard the
     /// user resolves later can never close a tab reopened on the same path.

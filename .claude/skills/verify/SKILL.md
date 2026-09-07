@@ -369,6 +369,16 @@ M: drop a remote chip onto a non-HEAD local row; the plan must show its full ref
 OID and EN/JA last-fetch warning. Confirm that no local source branch is created
 and no fetch occurs; fetch explicitly beforehand when current remote data is needed.
 
+For a checked-out destination in another worktree, scope
+`KAGI_GUI_E2E_ONLY=cross_worktree_merge`. It drags the fetched remote graph chip
+onto the linked-worktree branch name, checks tab opening/reuse, cancellation,
+late-plan suppression, dirty-editor discard/cancel and external destination
+branch drift. Enter then performs a normal two-parent HEAD merge in the linked
+worktree; its index/files and receipt must agree, while the dirty parent stays
+unchanged. The scenario unmounts its window. Backend coverage in
+`tests/drag_merge_test.rs` also rejects fresh and stale plans against a dirty
+linked destination without touching either worktree.
+
 ### Staging failure delivery (#490)
 
 G: `cargo test -p kagi --lib staging_failure` uses real index.lock and oplog

@@ -121,6 +121,8 @@ pub struct ResolutionBuffer {
     hunks: BTreeMap<PathBuf, HunkModel>,
 }
 
+mod conflict_boundary;
+
 // ────────────────────────────────────────────────────────────
 // Construction / materialization
 // ────────────────────────────────────────────────────────────

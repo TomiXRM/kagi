@@ -226,6 +226,17 @@ impl KagiApp {
                 },
             ),
             app::Planned::RemoteStash { .. } => ("remote-stash-drop", Msg::BusyStashDrop),
+            app::Planned::Conflict { plan, .. } => match plan.request().action() {
+                kagi_domain::conflict_family::ConflictAction::Save => {
+                    ("conflict-save", Msg::OpInProgress)
+                }
+                kagi_domain::conflict_family::ConflictAction::ResolveDirFile(
+                    kagi_git::DirFileChoice::KeepDirectory,
+                ) => ("conflict-dir-file:keep-directory", Msg::OpInProgress),
+                kagi_domain::conflict_family::ConflictAction::ResolveDirFile(
+                    kagi_git::DirFileChoice::KeepFile,
+                ) => ("conflict-dir-file:keep-file", Msg::OpInProgress),
+            },
         };
         let job = match app::admit(
             &mut self.reads,
@@ -256,6 +267,14 @@ impl KagiApp {
             "app-writer"
         };
         self.busy_op = Some(busy);
+        if name.starts_with("conflict-") {
+            if let Some(conflict) = self.conflict.clone() {
+                conflict.update(cx, |view, cx| {
+                    view.writer_busy = true;
+                    cx.notify();
+                });
+            }
+        }
         match name {
             "remove-worktree" => self.clear_remove_worktree_modal(),
             "stash-push" => self.clear_stash_push_modal(),
@@ -263,6 +282,9 @@ impl KagiApp {
             "stash-pop" => self.clear_pop_modal(),
             "stash-drop" => self.clear_stash_drop_modal(),
             "remote-stash-drop" => self.clear_stash_drop_modal(),
+            "conflict-save"
+            | "conflict-dir-file:keep-directory"
+            | "conflict-dir-file:keep-file" => {}
             _ => unreachable!(),
         }
         self.status_footer = FooterStatus::Busy(SharedString::from(label.t()));
@@ -296,6 +318,14 @@ impl KagiApp {
                 let deliveries = app::apply(&mut app.app_sessions, completion);
                 if !app.app_sessions.has_leases() && app.busy_op == Some(busy) {
                     app.busy_op = None;
+                }
+                if name.starts_with("conflict-") {
+                    if let Some(conflict) = app.conflict.clone() {
+                        conflict.update(cx, |view, cx| {
+                            view.writer_busy = false;
+                            cx.notify();
+                        });
+                    }
                 }
                 for delivery in deliveries {
                     app.deliver_app_result(delivery, cx);
@@ -345,6 +375,10 @@ impl KagiApp {
                         return;
                     }
                     app::FamilyEvidence::RemoteStash(_) => return,
+                    app::FamilyEvidence::Conflict(report) => {
+                        self.deliver_conflict_result(attachment, report, cx);
+                        return;
+                    }
                 };
                 let entry = report.recording.entry().clone();
                 let summary = oplog_panel::outcome_summary(&entry.outcome);
@@ -433,6 +467,78 @@ impl KagiApp {
                 };
                 self.deliver_remote_stash_result(id, attachment, report, cx);
             }
+        }
+    }
+    fn deliver_conflict_result(
+        &mut self,
+        attachment: app::Attachment,
+        report: kagi_git::backend::conflict_ops::ConflictReport,
+        cx: &mut Context<Self>,
+    ) {
+        self.present_conflict_recording(attachment.session, report.recording, cx);
+    }
+
+    pub(crate) fn present_conflict_recording(
+        &mut self,
+        owner: app::SessionId,
+        recording: kagi_git::backend::recording::Recording,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = recording.entry().clone();
+        let success = matches!(entry.outcome, OpOutcome::Success { .. });
+        let summary = oplog_panel::outcome_summary(&entry.outcome);
+        if let Some(panel) = &self.op_log {
+            panel.update(cx, |panel, cx| {
+                panel.push(entry.clone());
+                cx.notify();
+            });
+        }
+        self.push_toast(
+            if success {
+                ToastKind::Success
+            } else {
+                ToastKind::Error
+            },
+            if success {
+                Msg::EditorSavedResolved.t().to_string()
+            } else {
+                summary.clone()
+            },
+            cx,
+        );
+        if self.active_session() == Some(owner) {
+            let footer = match &entry.outcome {
+                OpOutcome::Success { after } => {
+                    format!("{}: {} → {}", entry.op, entry.before.head, after.head)
+                }
+                OpOutcome::Partial { error, .. }
+                | OpOutcome::Unknown {
+                    evidence: error, ..
+                } => {
+                    format!("{}: partially applied — {}", entry.op, error)
+                }
+                OpOutcome::Failed { error } => format!("{}: failed — {}", entry.op, error),
+                OpOutcome::Refused { blockers } => format!(
+                    "{}: refused ({} blocker{})",
+                    entry.op,
+                    blockers.len(),
+                    if blockers.len() == 1 { "" } else { "s" }
+                ),
+            };
+            klog!("footer: {}", footer);
+            self.status_footer = if success {
+                FooterStatus::Success(footer.into())
+            } else {
+                FooterStatus::Failed(footer.into())
+            };
+        }
+        if !success {
+            self.app_notices
+                .push_back(format!("{}: {}", entry.repo, summary).into());
+        }
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = recording {
+            self.app_notices
+                .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
         }
     }
     fn deliver_remote_stash_result(

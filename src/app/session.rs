@@ -135,6 +135,7 @@ pub struct Sessions {
     sessions: HashMap<SessionId, TabSession>,
     pub(crate) stash_conflicts: HashMap<SessionId, StashConflict>,
     pub(crate) stash_followups: HashMap<SessionId, StashConflict>,
+    pub(crate) conflict_states: HashMap<SessionId, ConflictOwnerState>,
     pub(crate) state: PlanState,
     /// Owner of the single plan slot. The slot expires when that session
     /// detaches, so an approval planned in A can never be spent in B.
@@ -161,6 +162,7 @@ impl Sessions {
             sessions: HashMap::new(),
             stash_conflicts: HashMap::new(),
             stash_followups: HashMap::new(),
+            conflict_states: HashMap::new(),
             state: PlanState::Draft,
             plan_owner: None,
             revision: RequestId(next_id()),
@@ -220,6 +222,12 @@ impl Sessions {
     /// create one for the next visit.
     pub fn depart(&mut self, session: SessionId) {
         self.stash_followups.remove(&session);
+        if !matches!(
+            self.conflict_states.get(&session),
+            Some(ConflictOwnerState::InFlight { .. })
+        ) {
+            self.conflict_states.remove(&session);
+        }
         if let Some(tab) = self.sessions.get_mut(&session) {
             tab.visit += 1;
         }
@@ -235,6 +243,7 @@ impl Sessions {
         self.sessions.remove(&session);
         self.stash_conflicts.remove(&session);
         self.stash_followups.remove(&session);
+        self.conflict_states.remove(&session);
         if self.plan_owner == Some(session) {
             self.invalidate_plan();
         }
@@ -305,6 +314,17 @@ impl Sessions {
     }
     pub fn worktree_of(&self, session: SessionId) -> Option<&WorktreeId> {
         self.sessions.get(&session)?.worktree.as_ref()
+    }
+    pub(crate) fn conflict_revision(
+        &self,
+        session: SessionId,
+    ) -> Option<&kagi_domain::conflict_family::ConflictRevision> {
+        match self.conflict_states.get(&session) {
+            Some(ConflictOwnerState::Observed(observation)) => Some(&observation.revision),
+            Some(ConflictOwnerState::InFlight { revision, .. }) => Some(revision),
+            Some(ConflictOwnerState::Settled(Some(observation))) => Some(&observation.revision),
+            _ => None,
+        }
     }
     pub fn drain_abandoned(&mut self) -> Vec<Delivery> {
         let completions: Vec<_> = self.abandoned_rx.try_iter().collect();
@@ -492,6 +512,13 @@ impl ReconcileJob {
                     true,
                 )
             }
+            Planned::Conflict { plan, .. } => (
+                kagi_git::Backend::open(plan.repo())
+                    .and_then(|backend| backend.conflict_snapshot())
+                    .map(|snapshot| format!("conflict={snapshot:?}"))
+                    .map_err(|e| e.to_string())?,
+                true,
+            ),
         };
         Ok(ReconcileRead {
             id: self.id,

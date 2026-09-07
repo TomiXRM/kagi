@@ -64,6 +64,10 @@ mod app_stash;
 mod app_writer_admission;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/app_conflict.rs"]
+mod app_conflict;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
 
@@ -539,6 +543,14 @@ mod macos {
             (
                 "editor_save_admission",
                 Box::new(crate::app_writer_admission::scenario_editor_save_admission),
+            ),
+            (
+                "conflict_save_boundary",
+                Box::new(crate::app_conflict::scenario_conflict_save_boundary),
+            ),
+            (
+                "conflict_dir_file_boundary",
+                Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
             ),
             (
                 "stash_public_boundary",

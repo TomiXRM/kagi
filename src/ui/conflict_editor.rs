@@ -44,7 +44,7 @@ use gpui::{
 use gpui_component::button::Button;
 use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
-use gpui_component::Sizable as _;
+use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_git::resolution::{LineOrder, Region, SelectionSide, TriState};
 
@@ -1102,10 +1102,10 @@ fn render_result_pane(
     let save = cx.listener(
         move |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
             let weak_app = view.app.clone();
-            let p_save = p_save.clone();
+            let intent = view.freeze_save_intent(&p_save);
             cx.spawn_in(window, async move |_view, acx| {
                 let _ = weak_app.update_in(acx, |app, _window, cx| {
-                    app.conflict_editor_save(&p_save, cx)
+                    app.accept_conflict_intent(intent, cx)
                 });
             })
             .detach();
@@ -1147,12 +1147,16 @@ fn render_result_pane(
                     .child(SharedString::from(Msg::EditorEditingIndicator.t())),
             )
         })
-        .child(tool_button(
-            "editor-save",
-            Msg::EditorSave.t(),
-            theme().color_success,
-            save,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-save",
+            tool_button(
+                "editor-save",
+                Msg::EditorSave.t(),
+                theme().color_success,
+                save,
+                cx,
+            )
+            .disabled(chrome.writer_busy),
         ));
 
     // Body: ONE CodeEditor for both modes — Preview is the same component
@@ -1168,7 +1172,7 @@ fn render_result_pane(
         .font_family(terminal::pick_font_family())
         .child(
             Input::new(&inputs.result)
-                .disabled(!editing)
+                .disabled(!editing || chrome.writer_busy)
                 .appearance(false)
                 .bordered(false)
                 .h_full(),

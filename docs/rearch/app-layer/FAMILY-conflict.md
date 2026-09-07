@@ -47,7 +47,7 @@ resolution recovery buffer、sequencer 分類、feature 別 Backend logic を bo
 | user intent | この family が所有する repository effect |
 |---|---|
 | Save resolution | 選択した resolution を worktree に書き、index を更新 |
-| Resolve directory/file conflict | 選択した D/F resolution を index-only で適用 |
+| Resolve directory/file conflict | recovery snapshot を取り、選択した D/F resolution を index に適用して worktree の namespace を再構築 |
 | Continue merge | resolution を stage し、既存 commit flow へ handoff |
 | Continue rebase/cherry-pick/revert | resolution を stage して sequencer を進行 |
 | Continue stash conflict | resolution を stage し、stash follow-up payload を発行 |
@@ -315,7 +315,9 @@ observe し、旧 owner の toast/follow-up を受け取らない。
 ### 5.2 directory/file resolution
 
 - prepare は conflict revision、target path、D/F choice、exact stage OID/mode を束縛する。
-- execute は index-only のまま `ops/dir_file_conflict.rs` の plan/preflight/execute を再利用する。
+- execute は `ops/dir_file_conflict.rs` の plan/preflight/execute を再利用する。実境界は recovery
+  snapshot、index surgery、kept namespace への worktree 再構築の順であり、それぞれ typed progress を
+  report する（D/F の二 namespace は worktree 上で共存できないため index-only ではない）。
 - verify は intended index shape が D/F conflict を置換したことを証明する。
 - common recorded boundary に統一し、現在の Backend persistent oplog と UI non-persistent record の
   split をなくす。
@@ -477,6 +479,9 @@ entity borrow の終了後に `KagiApp` が app API を呼ぶ。
 ADR-0182 / #574 を最初の code slice の前提とする。
 
 ### PR C1 — Save / D/F の縦断実証
+
+実装状況: `feat/conflict-c1-save-df` で完了。Save/D/F のみを有限 job に移し、後続 C2/C3 の
+Abort/Continue/Skip は既存経路のまま残す。
 
 - conflict request/revision/report type、finite `Planned`/`FamilyEvidence` variant、conflict owner state を
   `Sessions` に追加。plan slot は既存の一つだけ。

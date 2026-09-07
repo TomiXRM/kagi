@@ -622,6 +622,10 @@ mod macos {
                 "remote_source_merge_into",
                 Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
             ),
+            (
+                "stage_failure_notice",
+                Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
                 "graph_copy",

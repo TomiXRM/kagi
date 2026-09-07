@@ -427,6 +427,21 @@ pub struct DeleteBranchModal {
 }
 
 impl DeleteBranchModal {
+    /// Settle the global plan latch before deciding whether to display its
+    /// result. Tab departure invalidates approval, not completion. An unrelated
+    /// busy tag is never owned by this plan.
+    pub fn settle_plan(
+        owner: &crate::app::Attachment,
+        current: Option<&crate::app::Attachment>,
+        same_generation: bool,
+        busy: &mut Option<&'static str>,
+    ) -> bool {
+        if *busy == Some("delete-branch-plan") {
+            *busy = None;
+        }
+        same_generation && current == Some(owner)
+    }
+
     /// Returns true when this confirmation only arms; false permits the caller
     /// to continue through its existing blockers/busy/preflight checks.
     pub fn arm_if_required(&mut self) -> bool {

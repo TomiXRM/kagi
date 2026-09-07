@@ -1254,20 +1254,23 @@ impl KagiApp {
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
-            let result = task.await;
+            let result = task.fallible().await;
             let _ = this.update(acx, |app, cx| {
-                // A delayed proposal must not touch the destination tab, even
-                // when A and B have identical branch names and commit OIDs.
-                if app.switch_generation != generation
-                    || app
-                        .active_session()
-                        .and_then(|id| app.app_sessions.attachment(id))
-                        .as_ref()
-                        != Some(&owner)
-                {
+                let current = app
+                    .active_session()
+                    .and_then(|id| app.app_sessions.attachment(id));
+                // Terminalize even stale/failed tasks before the display guard.
+                if !DeleteBranchModal::settle_plan(
+                    &owner,
+                    current.as_ref(),
+                    app.switch_generation == generation,
+                    &mut app.busy_op,
+                ) {
+                    cx.notify();
                     return;
                 }
-                app.busy_op = None;
+                let result =
+                    result.unwrap_or_else(|| Err("delete-branch plan failed unexpectedly".into()));
                 match result {
                     Ok(plan) => {
                         eprintln!(

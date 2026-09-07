@@ -312,7 +312,8 @@ branch name reuse. Tier A's
 first confirmation keeps the branch/HEAD and records nothing; second deletes and
 records its retained tip. Merged deletion stays one-stage. The same scenario
 starts a plan on A, switches to B before completion, and asserts that B receives
-no delete modal or mutation. It also holds the oplog sidecar lock to force an
+no delete modal or mutation, releases the plan busy latch, and permits a fresh
+plan on returning to A. It also holds the oplog sidecar lock to force an
 append failure after deletion: expect a retained tip, owner notice and Partial
 entry, no retry modal, and the existing `async: delete-branch finished` log. PM runs only
 `KAGI_GUI_E2E_ONLY=unmerged_branch_delete_armed`, with the usual isolated log directory.

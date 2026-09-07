@@ -1139,3 +1139,57 @@ fn main_head_lock_blocks_deletion_from_linked_worktree() {
     assert!(report.recording.entry().backup_refs.is_empty());
     assert!(main.find_reference("refs/heads/unmerged").is_ok());
 }
+
+#[test]
+fn departed_delete_plan_releases_busy_and_revisit_can_replan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use kagi::ui::modals::DeleteBranchModal;
+    let a = setup_repo();
+    let b = setup_repo();
+    let mut sessions = kagi::app::Sessions::new();
+    let session_a = sessions.attach(a.path.clone());
+    let session_b = sessions.attach(b.path.clone());
+    let owner = sessions.attachment(session_a).unwrap();
+    let mut busy = Some("delete-branch-plan");
+    sessions.depart(session_a);
+    let current_b = sessions.attachment(session_b).unwrap();
+    assert!(
+        !DeleteBranchModal::settle_plan(&owner, Some(&current_b), false, &mut busy),
+        "A's completion may not install a modal or footer on B"
+    );
+    assert_eq!(busy, None, "departed plan must release its latch");
+    sessions.depart(session_b);
+    let revisited_a = sessions.attachment(session_a).unwrap();
+    assert!(
+        !DeleteBranchModal::settle_plan(&owner, Some(&revisited_a), true, &mut busy),
+        "the old visit cannot restore a modal on A"
+    );
+    assert_eq!(busy, None, "A must be free to re-plan");
+    busy = Some("delete-branch-plan");
+    let fresh_plan = kagi_git::Backend::open(&a.path)
+        .unwrap()
+        .plan_delete_branch("unmerged")
+        .unwrap();
+    assert!(fresh_plan.blockers.is_empty());
+    assert!(DeleteBranchModal::settle_plan(
+        &revisited_a,
+        Some(&revisited_a),
+        true,
+        &mut busy
+    ));
+    assert_eq!(busy, None);
+    busy = Some("checkout");
+    assert!(!DeleteBranchModal::settle_plan(
+        &owner,
+        Some(&current_b),
+        false,
+        &mut busy
+    ));
+    assert_eq!(
+        busy,
+        Some("checkout"),
+        "do not release an unrelated operation"
+    );
+}

@@ -1030,6 +1030,17 @@ fn delayed_delete_plan_stays_with_its_owner(cx: &mut VisualTestAppContext) {
         assert_eq!(repo_fingerprint(other.path()), before);
         assert!(records(other.path(), "delete-branch").is_empty());
         assert!(records(fixture.path(), "delete-branch").is_empty());
+        app.update(cx, |app, cx| {
+            app.switch_repo(0, cx);
+            assert!(app.delete_branch_modal().is_none());
+            assert!(app.busy_op.is_none());
+            app.open_delete_branch_modal("victim", cx);
+        });
+        wait_idle(cx, &app);
+        assert!(
+            cx.read(|cx| app.read(cx).delete_branch_modal().is_some()),
+            "returning to A must permit a fresh plan"
+        );
         unmount(cx, app, window);
     }
 }

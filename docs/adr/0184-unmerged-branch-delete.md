@@ -32,7 +32,8 @@ Commit roots share ADR-0179's retention: indefinite by default, retired only wit
 the final referencing oplog entry. Blob readers stay blob-only; retention accepts
 both blobs and commits. The sidecar lock/sequence contract is unchanged.
 The async plan freezes `Attachment` (SessionId, WorktreeId, path and visit) plus
-the switch generation. Stale completion returns before modal/busy/footer updates;
+the switch generation. Completion first releases its plan busy latch, even on stale delivery or task
+failure. Stale delivery then returns before modal/footer updates;
 confirm must match that attachment, and execution reopens its frozen path and
 compares WorktreeId before Backend admission. A tab departure/revisit cannot
 revive the old approval, even if branch names and tips coincide.

@@ -179,8 +179,14 @@ impl KagiApp {
         // ADR-0119 follow-up: the full-screen Analyze + File History overlays are
         // HEAD-versioned and refreshed *in place* after the snapshot is applied
         // (see `refresh_overlays_after_reload`), only when HEAD actually moved.
+        // ADR-0186: fetch fires the watcher before a failed Pull can finish
+        // presenting its error. Preserve only the error state; an ordinary
+        // confirmation plan is still invalidated by repository reload.
+        let keep_pull_error = self.pull_modal().is_some_and(|modal| modal.error.is_some());
         self.clear_plan_modal();
-        self.clear_pull_modal();
+        if !keep_pull_error {
+            self.clear_pull_modal();
+        }
         self.clear_amend_modal();
         self.clear_pop_modal();
         self.clear_stash_drop_modal();

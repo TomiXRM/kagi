@@ -23,6 +23,20 @@ pub fn note_ja(note: &PullNote) -> String {
             "作業ツリーに{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。",
             parts_ja(parts)
         ),
+        PullNote::AutoStash { parts, untracked } => {
+            let mut changes = Vec::new();
+            let tracked = parts_ja(parts);
+            if !tracked.is_empty() {
+                changes.push(tracked);
+            }
+            if *untracked > 0 {
+                changes.push(format!("未追跡 {} 件", untracked));
+            }
+            format!(
+                "作業ツリーに{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。",
+                changes.join("、")
+            )
+        }
         PullNote::NoUpstreamWithHint { branch, err } => format!(
             "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>",
             branch, err
@@ -115,6 +129,12 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
              merge が conflict するか変更パスを上書きする場合、実行はブロックされリポジトリは変更されません。\n\
              実行後に merge commit を取り消すには:\n  git reset --hard HEAD~1\n\
              HEAD 移動は reflog に残ります:\n  git reflog"
+                .to_string()
+        }
+        PullRecovery::PullAutoStash => {
+            "pull の前に stage 済み・未 stage・未追跡の変更を stash し、pull 後にその一時 stash を pop します。\n\
+             pull が失敗した場合も、結果を表示する前に stash の復元を試みます。\n\
+             復元が conflict した場合は、保存した作業を失わないよう stash を保持します。"
                 .to_string()
         }
         PullRecovery::PullRemote => {

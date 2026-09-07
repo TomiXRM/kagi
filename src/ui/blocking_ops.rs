@@ -26,34 +26,10 @@ pub(crate) fn execution_policy() -> kagi_git::backend::ExecutionPolicy {
 
 mod discard;
 pub(crate) use discard::{discard_blocking, DiscardReport};
+mod pull;
+pub(crate) use pull::{pull_blocking, PullBlockingResult};
 
 // Background and headless hosts share these operation cores.
-
-/// Blocking part of pull. Returns (human summary, after-state) or an error
-/// message suitable for the oplog / modal.
-pub(crate) fn pull_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-) -> Result<(String, StateSummary), String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    let outcome = match repo.run(&kagi_git::Operation::Pull, plan) {
-        Ok(kagi_git::OperationOutcome::Pull(o)) => o,
-        Ok(_) => return Err("pull: unexpected outcome".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Pull, e)),
-    };
-    let summary = match &outcome {
-        PullOutcome::UpToDate => "already up to date".to_string(),
-        PullOutcome::FastForward { to } => format!("fast-forward to {}", to.short()),
-        PullOutcome::Merged { commit } => format!("merge commit {}", commit.short()),
-    };
-    klog!("executed: pull — {}", summary);
-
-    // Verify: re-snapshot for the after-state.
-    let after_summary = verify_after_snapshot(repo_path, plan);
-    klog!("verified: pull after = {}", after_summary.head);
-    Ok((summary, after_summary))
-}
 
 /// Blocking part of push. Returns (human summary, after-state) or an error
 /// message suitable for the oplog / modal.
@@ -763,3 +739,7 @@ pub(crate) fn verify_new_commit_snapshot(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "blocking_ops_tests.rs"]
+mod tests;

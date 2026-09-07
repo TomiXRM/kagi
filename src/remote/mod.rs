@@ -194,13 +194,24 @@ pub fn probe_repo(host: &RemoteHost, path: &str) -> Result<RepoProbe, RemoteErro
 
 /// A one-line HEAD summary of the remote repository at `path`
 /// (`git -C <path> log -1 --format=%h%x1f%D%x1f%s`; the free-form subject is
-/// last so it cannot shift a field — issue #508). `Ok(None)` means an
-/// empty/unborn repository (no HEAD commit yet).
+/// last so it cannot shift a field — issue #508). `Ok(None)` means there is no
+/// HEAD commit to summarize — an empty/unborn repository.
+///
+/// Issue #604: an unborn HEAD makes `git log` *fail* ("your current branch
+/// 'master' does not have any commits yet", exit 128), not print nothing, so
+/// this read is lenient like [`remote_snapshot`]'s: a transport failure is an
+/// `Err`; any other non-zero means the remote `git` ran and answered "no HEAD
+/// commit". What separates the two is [`is_transport_failure`]'s stderr
+/// heuristic — the same one [`probe_repo`] uses for "not a repository" — not
+/// an assumption about a prior call. (Remote Browse does probe first, but this
+/// function is callable on its own and carries the split itself.) Keeping it
+/// `run_checked` conflated an empty repository with an unreachable one — the
+/// contract #506 established for PR fetches.
 pub fn repo_summary(
     host: &RemoteHost,
     path: &str,
 ) -> Result<Option<RemoteRepoSummary>, RemoteError> {
-    let stdout = run_checked(
+    let stdout = run_lenient(
         host,
         &["git", "-C", path, "log", "-1", "--format=%h%x1f%D%x1f%s"],
     )?;
@@ -210,7 +221,7 @@ pub fn repo_summary(
 /// Run a remote read whose **non-zero exit is acceptable** (an empty repo makes
 /// `git log`/`for-each-ref`/`stash list` fail or print nothing). A real
 /// transport failure is still surfaced; any other non-zero is treated as empty
-/// output. Used by [`remote_snapshot`].
+/// output. Used by [`repo_summary`] and [`remote_snapshot`].
 fn run_lenient(host: &RemoteHost, remote_tokens: &[&str]) -> Result<String, RemoteError> {
     let out = run_ssh(host, remote_tokens)?;
     if out.code == 0 {

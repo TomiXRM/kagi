@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A remote repository with no commits yet reads as empty instead of failing: Remote Browse shows "(no commits yet)" for an unborn HEAD, while an unreachable host is still reported as an error. (#604, ADR-0089)
+
 ## [0.35.0] — 2026-09-08
 
 ### Added

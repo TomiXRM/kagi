@@ -12,17 +12,17 @@
 //!   process or pipe-reader thread leaks (issue #294), and the caller gets
 //!   [`GitError::TerminationUnknown`] rather than something that reads like an
 //!   exit (issue #507).
-//!
-//! [`run_child`] is that machinery on its own: **the** subprocess runner for the
-//! whole codebase (`git`, `ssh`, worktree `command` steps, the message-gen CLIs
-//! — issue #507). One owner for the child, its three pipes and its deadline;
-//! no caller polls `try_wait` or reads a pipe itself.
 //! - Config hardening: [`HARDENING_ARGS`] plus [`repo_local_overrides`] are
 //!   injected as `-c KEY=VALUE` *before* the subcommand so a hostile
 //!   `.git/config` cannot turn `git status`/`git fetch` into code execution
 //!   (issue #290).
 //! - [`check_operand`]: call sites validate remote/ref names read back from the
 //!   repository, and pass `--` before positional operands (issue #291).
+//!
+//! The machinery itself lives in [`crate::proc`]: **the** subprocess runner for
+//! the whole codebase (`git`, `ssh`, worktree `command` steps, the message-gen
+//! CLIs — issue #507). One owner for the child, its three pipes and its
+//! deadline; no caller polls `try_wait` or reads a pipe itself.
 //!
 //! # Usage
 //!
@@ -34,8 +34,9 @@
 //! ```
 
 use std::path::Path;
-use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::proc::run_child;
 
 use super::GitError;
 
@@ -243,6 +244,14 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
         .status
         .clone()
         .map_err(|stop| GitError::TerminationUnknown(format!("git {} {}", args.join(" "), stop)))?;
+    // Exit 0 with a truncated capture is not a successful read: the caller
+    // parses this output. Unknown, not success and not a plain failure.
+    if let Err(io) = &run.io {
+        return Err(GitError::TerminationUnknown(format!(
+            "git {}: {io}",
+            args.join(" ")
+        )));
+    }
 
     Ok(GitCliOutput {
         status,
@@ -251,231 +260,10 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// The subprocess runner (issue #507)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Why a run produced **no exit status**.
-///
-/// Both variants mean *unknown*, never "the process ended". A deadline that
-/// expires cuts the **wait** short; whatever the child had already set in
-/// motion — a `git push` on the wire, a `git pull` running on an SSH host —
-/// is not proven stopped by it. Callers map this to
-/// [`GitError::TerminationUnknown`] and an `Unknown` oplog outcome, never to a
-/// plain failure (ADR-0177, #582).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProcStop {
-    /// The deadline expired before the child exited.
-    Deadline { secs: u64, reaped: bool },
-    /// `try_wait` itself failed, so the exit status is unknowable.
-    Wait { error: String, reaped: bool },
-}
-
-impl ProcStop {
-    /// True when the **local** child was confirmed killed and collected.
-    ///
-    /// It says nothing about the child's own descendants, nor about work the
-    /// child had already started on another machine — those stay unknown.
-    // ponytail: kills the direct child only, not its process group, so a child
-    // whose grandchildren outlive it (ssh → remote, node) can still leak one.
-    // Killing the group is a platform-specific follow-up (#507 "process tree").
-    pub fn reaped(&self) -> bool {
-        match self {
-            ProcStop::Deadline { reaped, .. } | ProcStop::Wait { reaped, .. } => *reaped,
-        }
-    }
-}
-
-impl std::fmt::Display for ProcStop {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProcStop::Deadline { secs, .. } => write!(f, "timed out after {secs}s")?,
-            ProcStop::Wait { error, .. } => write!(f, "wait failed: {error}")?,
-        }
-        if !self.reaped() {
-            write!(f, " (the local child could not be stopped)")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for ProcStop {}
-
-/// The result of one subprocess run: the drained output, plus **either** a real
-/// exit code or the reason there is none.
-///
-/// The split is the point of [`run_child`]: a caller cannot accidentally read a
-/// cut-short wait as an exit code, because there is no code to read.
-#[derive(Debug, Clone)]
-pub struct ProcRun {
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
-    /// `Ok(code)` — the process really exited. `Err(_)` — see [`ProcStop`].
-    pub status: Result<i32, ProcStop>,
-}
-
-impl ProcRun {
-    /// Captured stdout, UTF-8 lossy.
-    pub fn stdout_lossy(&self) -> String {
-        String::from_utf8_lossy(&self.stdout).into_owned()
-    }
-    /// Captured stderr, UTF-8 lossy.
-    pub fn stderr_lossy(&self) -> String {
-        String::from_utf8_lossy(&self.stderr).into_owned()
-    }
-}
-
-/// Run `cmd` with a deadline, owning the child and all three of its pipes —
-/// the single subprocess runner for the whole codebase (issue #507).
-///
-/// - **Pipes**: stdout and stderr are piped and drained on their own threads,
-///   so a chatty child can never deadlock in `write(2)` against a full pipe
-///   buffer while we wait for it (issues #294/#403). `stdin` is piped and fed
-///   from a third thread when `stdin` is `Some` — a prompt bigger than the pipe
-///   buffer would otherwise deadlock the same way — and `null` otherwise, so no
-///   child ever blocks reading a terminal we are not watching.
-/// - **Deadline**: on expiry the child is killed and reaped here, and the run
-///   comes back with [`ProcStop`] instead of an exit code. Killing closes the
-///   pipes, which unblocks the reader/writer threads so they join instead of
-///   leaking.
-///
-/// The caller supplies the program, args, env and cwd; the runner sets the
-/// three `Stdio`s itself (they are what it owns).
-///
-/// # Errors
-///
-/// `Err(io::Error)` **only** when the child never started — nothing ran, so
-/// nothing can have changed. Everything else is a `ProcRun`.
-pub fn run_child(
-    cmd: &mut std::process::Command,
-    timeout: Duration,
-    stdin: Option<&[u8]>,
-) -> std::io::Result<ProcRun> {
-    use std::io::Write;
-
-    cmd.stdin(if stdin.is_some() {
-        Stdio::piped()
-    } else {
-        Stdio::null()
-    })
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn()?;
-
-    let writer = match (stdin, child.stdin.take()) {
-        (Some(data), Some(mut pipe)) => {
-            let data = data.to_vec();
-            Some(std::thread::spawn(move || {
-                let _ = pipe.write_all(&data);
-                // `pipe` is dropped here → the child sees EOF on stdin.
-            }))
-        }
-        _ => None,
-    };
-    let out_reader = drain(child.stdout.take());
-    let err_reader = drain(child.stderr.take());
-
-    let status = wait_or_kill(&mut child, timeout);
-
-    // Every pipe is closed once the child is gone, so the threads have finished
-    // (or are about to) and joining them is bounded. The one case where the
-    // child may still be holding them open is a kill we could not confirm:
-    // joining there would hang the caller on a process it does not control, so
-    // the threads are detached and the output is dropped — the status already
-    // says the outcome is unknown.
-    let confirmed = status.as_ref().err().is_none_or(ProcStop::reaped);
-    let (stdout, stderr) = if confirmed {
-        if let Some(w) = writer {
-            let _ = w.join();
-        }
-        (
-            out_reader.join().unwrap_or_default(),
-            err_reader.join().unwrap_or_default(),
-        )
-    } else {
-        (Vec::new(), Vec::new())
-    };
-
-    Ok(ProcRun {
-        stdout,
-        stderr,
-        status: status.map(|s| s.code().unwrap_or(-1)),
-    })
-}
-
-/// Read a child pipe to EOF on its own thread.
-fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut p) = pipe {
-            let _ = p.read_to_end(&mut buf);
-        }
-        buf
-    })
-}
-
-/// Wait up to `timeout` for `child` to exit, polling `try_wait`.
-///
-/// `Ok(status)` means it really exited. On timeout (or a `try_wait` error) the
-/// child is **killed and reaped** and the [`ProcStop`] says so, so a hung
-/// process never leaks (issue #294) and no caller can mistake the cut-short
-/// wait for an exit (issue #507). The reap is bounded — after a kill the child
-/// exits promptly — so this never blocks indefinitely; if the bound is hit,
-/// `reaped` is false.
-pub(crate) fn wait_or_kill(
-    child: &mut std::process::Child,
-    timeout: Duration,
-) -> Result<std::process::ExitStatus, ProcStop> {
-    let deadline = Instant::now() + timeout;
-    let secs = timeout.as_secs();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            // Timed out, or try_wait failed: kill and reap.
-            other => {
-                let error = other.err().map(|e| e.to_string());
-                let _ = child.kill();
-                // Bounded reap: the child exits promptly once killed.
-                let mut reaped = false;
-                for _ in 0..200 {
-                    match child.try_wait() {
-                        Ok(Some(_)) => {
-                            reaped = true;
-                            break;
-                        }
-                        // `try_wait` is broken; we cannot confirm anything.
-                        Err(_) => break,
-                        Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-                    }
-                }
-                return Err(match error {
-                    Some(error) => ProcStop::Wait { error, reaped },
-                    None => ProcStop::Deadline { secs, reaped },
-                });
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Command, Stdio};
-
-    /// True if `pid` is still a live (un-reaped) process.
-    fn pid_alive(pid: u32) -> bool {
-        Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
+    use std::process::Command;
 
     /// `Command::get_envs` yields `(key, Some(val))` for each `.env(...)`.
     fn has_env(cmd: &Command, key: &str, val: &str) -> bool {
@@ -496,161 +284,6 @@ mod tests {
         assert!(
             has_env(&gh, "GIT_ADVICE", "0"),
             "gh subprocess must set GIT_ADVICE=0"
-        );
-    }
-
-    #[test]
-    fn wait_or_kill_kills_and_reaps_on_timeout() {
-        // A child that would otherwise run for 30s.
-        let mut child = Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("spawn sleep");
-        let pid = child.id();
-        assert!(pid_alive(pid), "sleep should be running before the timeout");
-
-        let start = Instant::now();
-        let result = wait_or_kill(&mut child, Duration::from_millis(200));
-
-        assert!(
-            matches!(result, Err(ProcStop::Deadline { reaped: true, .. })),
-            "a timed-out child reports a killed-and-reaped deadline, not an exit: {result:?}"
-        );
-        assert!(
-            start.elapsed() < Duration::from_secs(5),
-            "wait_or_kill must return promptly, not wait out the full sleep"
-        );
-        // The kill()+reap() must have taken effect: the pid is gone.
-        assert!(
-            !pid_alive(pid),
-            "child process leaked: kill()/reap() did not run (issue #294)"
-        );
-    }
-
-    #[test]
-    fn wait_or_kill_returns_status_for_fast_child() {
-        let mut child = Command::new("true").spawn().expect("spawn true");
-        let status = wait_or_kill(&mut child, Duration::from_secs(5));
-        assert_eq!(status.ok().and_then(|s| s.code()), Some(0));
-    }
-
-    // ── issue #507: one runner owning the child, its pipes and its deadline ──
-
-    /// True while any process on the machine has `token` in its command line.
-    /// The runner kills its child, so nothing it spawned may still match.
-    #[cfg(unix)]
-    fn any_process_matching(token: &str) -> bool {
-        let out = Command::new("ps")
-            .args(["-A", "-o", "args="])
-            .output()
-            .expect("ps");
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .any(|l| l.contains(token))
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn run_child_deadline_is_not_an_exit_and_reaps_the_child() {
-        // `exec` so the sleep replaces the shell: one process, which is exactly
-        // the direct child the runner owns and kills.
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "exec sleep 3071"]);
-
-        let start = Instant::now();
-        let run = run_child(&mut cmd, Duration::from_millis(300), None).expect("spawn");
-
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "the runner must return on its deadline, not wait out the child"
-        );
-        // The whole point of #507: there is no exit code to misread.
-        match &run.status {
-            Err(ProcStop::Deadline { reaped, .. }) => {
-                assert!(*reaped, "the timed-out child must be killed and reaped")
-            }
-            other => panic!("expected a Deadline stop, got {other:?}"),
-        }
-        assert!(
-            !any_process_matching("sleep 3071"),
-            "the child leaked: it is still running after the deadline (issue #507)"
-        );
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn run_child_drains_far_more_than_a_pipe_buffer() {
-        // 256 KiB on each stream — four times the ~64 KiB pipe buffer. Without
-        // a concurrent drain the child blocks in write(2) and the run can only
-        // end at the deadline.
-        let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            "dd if=/dev/zero bs=1024 count=256 2>/dev/null | tr '\\0' 'a'; \
-             dd if=/dev/zero bs=1024 count=256 2>/dev/null | tr '\\0' 'b' >&2",
-        ]);
-
-        let run = run_child(&mut cmd, Duration::from_secs(30), None).expect("spawn");
-
-        assert_eq!(run.status, Ok(0), "chatty child must exit normally");
-        assert_eq!(run.stdout.len(), 256 * 1024, "stdout was truncated");
-        assert_eq!(run.stderr.len(), 256 * 1024, "stderr was truncated");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn run_child_feeds_oversized_stdin_while_draining_stdout() {
-        // The message-gen shape: a prompt larger than the pipe buffer written to
-        // a child that is concurrently filling stdout. Both directions must be
-        // in flight at once or this deadlocks.
-        let prompt = vec![b'p'; 256 * 1024];
-        let mut cmd = Command::new("cat");
-
-        let run = run_child(&mut cmd, Duration::from_secs(30), Some(&prompt)).expect("spawn");
-
-        assert_eq!(run.status, Ok(0));
-        assert_eq!(run.stdout, prompt, "stdin was not fully delivered/echoed");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn run_child_reports_exit_code_and_stderr_unchanged() {
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "echo out; echo err >&2; exit 7"]);
-
-        let run = run_child(&mut cmd, Duration::from_secs(30), None).expect("spawn");
-
-        assert_eq!(run.status, Ok(7));
-        assert_eq!(run.stdout_lossy(), "out\n");
-        assert_eq!(run.stderr_lossy(), "err\n");
-    }
-
-    #[test]
-    fn run_child_spawn_failure_is_the_only_hard_error() {
-        let mut cmd = Command::new("kagi-no-such-binary-507");
-        assert!(
-            run_child(&mut cmd, Duration::from_secs(5), None).is_err(),
-            "a binary that never started must not look like a run"
-        );
-    }
-
-    #[test]
-    fn proc_stop_reads_as_unknown_not_as_failure() {
-        assert_eq!(
-            ProcStop::Deadline {
-                secs: 60,
-                reaped: true
-            }
-            .to_string(),
-            "timed out after 60s"
-        );
-        assert_eq!(
-            ProcStop::Deadline {
-                secs: 60,
-                reaped: false
-            }
-            .to_string(),
-            "timed out after 60s (the local child could not be stopped)"
         );
     }
 }

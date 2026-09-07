@@ -53,6 +53,11 @@ pub enum RemoteError {
     /// the command it had already handed to the host: the outcome is *unknown*,
     /// never a failure, and must never be auto-retried (issue #507, ADR-0177).
     TerminationUnknown(String),
+    /// `ssh` exited, but its output could not be collected in full — so what
+    /// came back is a prefix. A truncated remote read must never pass for a
+    /// complete one, and a truncated write result must never pass for proof
+    /// (issue #507 review).
+    Incomplete(String),
     /// ssh / the remote command exited non-zero. `stderr` is the captured
     /// message (e.g. "Host key verification failed", "Permission denied",
     /// "No such file or directory").
@@ -62,8 +67,17 @@ pub enum RemoteError {
 impl RemoteError {
     /// The termination-unknown shape for a cut-short wait, carrying the
     /// runner's own reason.
-    fn unknown(stop: &kagi_git::cli::ProcStop) -> Self {
+    fn unknown(stop: &kagi_git::ProcStop) -> Self {
         RemoteError::TerminationUnknown(stop.to_string())
+    }
+
+    /// True when the outcome is *unproven* rather than known-failed: neither
+    /// the caller nor the oplog may read it as "nothing happened".
+    pub fn is_unproven(&self) -> bool {
+        matches!(
+            self,
+            RemoteError::TerminationUnknown(_) | RemoteError::Incomplete(_)
+        )
     }
 }
 
@@ -76,6 +90,9 @@ impl std::fmt::Display for RemoteError {
                     f,
                     "ssh command {reason}; the remote command is not proven stopped"
                 )
+            }
+            RemoteError::Incomplete(reason) => {
+                write!(f, "ssh output is not complete: {reason}")
             }
             RemoteError::NonZero { code, stderr } => {
                 write!(f, "ssh exited {code}: {}", stderr.trim())
@@ -101,7 +118,7 @@ struct SshOutput {
 ///   [`kagi_domain::remote`] so it survives the remote login shell intact.
 /// - **Non-interactive**: `BatchMode=yes` (from the domain layer) + `LC_ALL=C`
 ///   for stable, parseable output — ssh never blocks on a prompt.
-/// - **Timeout / ownership**: the shared `kagi_git::cli::run_child` runner owns
+/// - **Timeout / ownership**: the shared `kagi_git::run_child` runner owns
 ///   the child, drains both pipes, and kills+reaps on the deadline (#507). A
 ///   deadline that expires comes back as [`RemoteError::TerminationUnknown`],
 ///   never as an exit code — the local client is gone, the *remote* command is
@@ -112,7 +129,7 @@ fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, Remot
     let mut cmd = Command::new("ssh");
     cmd.args(&args).env("LC_ALL", "C");
 
-    let run = kagi_git::cli::run_child(
+    let run = kagi_git::run_child(
         &mut cmd,
         Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
         None,
@@ -123,6 +140,10 @@ fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, Remot
         Ok(code) => *code,
         Err(stop) => return Err(RemoteError::unknown(stop)),
     };
+    // A prefix of a snapshot is not a snapshot: never let it read as success.
+    if let Err(io) = &run.io {
+        return Err(RemoteError::Incomplete(io.to_string()));
+    }
     Ok(SshOutput {
         code,
         stdout: run.stdout_lossy(),
@@ -583,13 +604,13 @@ pub fn remote_pull(
             };
             (Err(error), outcome)
         }
-        // The whole-command backstop fired (or the wait broke). The local ssh
-        // client is killed and reaped, but the command it handed to the host is
-        // not proven stopped — the runner reports that as its own shape rather
-        // than as an exit (#507).
-        Err(error @ RemoteError::TerminationUnknown(_)) => {
+        // The backstop fired, the wait broke, or the output could not be
+        // collected in full. In none of those did the remote `git pull` prove
+        // anything about itself — the runner reports that as its own shape
+        // rather than as an exit (#507).
+        Err(error) if error.is_unproven() => {
             let evidence = format!(
-                "{error}; the remote git pull may still be running — do not retry \
+                "{error}; the remote git pull may have run — do not retry \
                  until the host is checked"
             );
             (
@@ -661,7 +682,7 @@ mod tests {
     // message says so — it must never read as "the remote command stopped".
     #[test]
     fn cut_short_wait_reads_as_unknown() {
-        let stop = kagi_git::cli::ProcStop::Deadline {
+        let stop = kagi_git::ProcStop::Deadline {
             secs: SSH_COMMAND_TIMEOUT_SECS,
             reaped: true,
         };

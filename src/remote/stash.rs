@@ -305,7 +305,7 @@ fn run_frozen(
     // The shared runner owns the child, its pipes and its deadline (#507): on
     // expiry the local ssh client is killed and reaped and we get a
     // termination-unknown stop, not a fabricated exit status.
-    let run = kagi_git::cli::run_child(&mut cmd, timeout, None)
+    let run = kagi_git::run_child(&mut cmd, timeout, None)
         .map_err(|e| FrozenRunError::LocalSpawn(e.to_string()))?;
     let code = match &run.status {
         Ok(code) => *code,
@@ -315,6 +315,13 @@ fn run_frozen(
             ))
         }
     };
+    // A truncated frame cannot prove a stop: the completion token may be the
+    // part we did not get. Unconfirmed, never a clean result (#507 review).
+    if let Err(io) = &run.io {
+        return Err(FrozenRunError::Unconfirmed(
+            RemoteError::Incomplete(io.to_string()).to_string(),
+        ));
+    }
     let stderr = run.stderr_lossy();
     Ok((code, run.stdout, stderr))
 }

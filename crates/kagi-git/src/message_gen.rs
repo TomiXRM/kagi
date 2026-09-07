@@ -454,7 +454,7 @@ fn cli_generate(provider: CliProvider, prompt: &str) -> Result<String, GenError>
     // from one thread while draining stdout and stderr on two others — a prompt
     // or an answer bigger than the OS pipe buffer would otherwise deadlock — and
     // it kills and reaps the child on the deadline instead of leaving it behind.
-    let run = crate::cli::run_child(&mut cmd, CLI_TIMEOUT, Some(prompt.as_bytes()))
+    let run = crate::proc::run_child(&mut cmd, CLI_TIMEOUT, Some(prompt.as_bytes()))
         .map_err(|e| GenError::Http(format!("spawn {}: {e}", provider.binary())))?;
 
     // A cut-short wait is not an exit status: say so rather than reporting a
@@ -463,6 +463,11 @@ fn cli_generate(provider: CliProvider, prompt: &str) -> Result<String, GenError>
         .status
         .as_ref()
         .map_err(|stop| GenError::Http(format!("{} {stop}", provider.binary())))?;
+    // A prompt that was not fully delivered, or an answer we only have a prefix
+    // of, is not a generation — fall back rather than commit a truncated message.
+    if let Err(io) = &run.io {
+        return Err(GenError::Http(format!("{}: {io}", provider.binary())));
+    }
 
     if status != 0 {
         return Err(GenError::Http(format!(
@@ -555,8 +560,9 @@ fn login_shell_path() -> Option<OsString> {
     // Through the shared runner (#507): an rc file that prints a banner bigger
     // than the pipe buffer used to deadlock here, because stdout was only read
     // *after* the child exited. A cut-short wait is `Err` — no PATH, no guess.
-    let run = crate::cli::run_child(&mut cmd, Duration::from_secs(5), None).ok()?;
+    let run = crate::proc::run_child(&mut cmd, Duration::from_secs(5), None).ok()?;
     run.status.as_ref().ok()?;
+    run.io.as_ref().ok()?; // a truncated PATH is worse than no PATH
     let buf = run.stdout_lossy();
 
     let start = buf.find("__KAGI_PATH__")? + "__KAGI_PATH__".len();

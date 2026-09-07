@@ -450,9 +450,13 @@ fn do_command_progress(
     // The shared runner owns the child, drains both pipes concurrently (so a
     // command emitting more than one pipe buffer — `npm ci` — cannot deadlock,
     // issues #294/#403) and kills+reaps on the deadline (#507).
-    progress.termination_unknown = true;
-    let out = crate::cli::run_child(&mut cmd, Duration::from_secs(COMMAND_TIMEOUT_SECS), None)
+    //
+    // `Err` here is a spawn failure: the step never started, so `progress` keeps
+    // what the earlier steps recorded and this one is NOT termination-unknown
+    // (#507 review P2-3). Everything after this point ran.
+    let out = crate::proc::run_child(&mut cmd, Duration::from_secs(COMMAND_TIMEOUT_SECS), None)
         .map_err(|e| GitError::Other(format!("failed to start '{program}': {e}")))?;
+    progress.termination_unknown = true;
     let (stdout, stderr) = (out.stdout_lossy(), out.stderr_lossy());
 
     let status = match out.status {
@@ -466,6 +470,14 @@ fn do_command_progress(
             )))
         }
     };
+    // Exit status without complete output: a descendant of the step is still
+    // running (it holds the pipes), so the step is not proven finished either.
+    if let Err(io) = &out.io {
+        return Err(GitError::TerminationUnknown(format!(
+            "command '{run}' exited with status {status} but {io}{}",
+            output_tail(&stdout, &stderr)
+        )));
+    }
     progress.termination_unknown = false;
     if status == 0 {
         Ok(())
@@ -821,6 +833,41 @@ run = "docker compose down"
         assert!(
             msg.contains("output"),
             "the captured tail must surface: {msg}"
+        );
+    }
+
+    // #507 review: a command that cannot be spawned never started, so it must
+    // not be recorded as termination-unknown (which would promote a known
+    // no-op to `Unknown` and hold the lease). The classification stays Partial
+    // via `progress.started()`.
+    #[test]
+    #[cfg(unix)]
+    fn do_command_spawn_failure_is_not_termination_unknown() {
+        let (_root, main, wt, _outside) = containment_fixture();
+        let env = StepEnv {
+            main_root: main,
+            worktree: wt,
+        };
+        let mut progress = kagi_domain::remove::RemoveProgress {
+            termination_unknown: false,
+            ..Default::default()
+        };
+        progress.observations.push("step 0 started".into());
+
+        let err = do_command_progress(&env, "kagi-no-such-binary-507", &mut progress).unwrap_err();
+
+        assert!(
+            format!("{err:?}").contains("failed to start"),
+            "got: {err:?}"
+        );
+        assert!(
+            !progress.termination_unknown,
+            "a command that never started is not termination-unknown"
+        );
+        assert_eq!(
+            progress.observations.len(),
+            1,
+            "earlier steps' progress must survive a spawn failure"
         );
     }
 

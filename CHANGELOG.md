@@ -18,6 +18,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- **Busy notifications name the operation again.** The snackbar shown while an operation runs says what it is doing in English and Japanese instead of an internal writer tag, and an unknown label can no longer leak one. (#607)
+- **The stash preflight refusal is a typed, localized note.** An approved stash that is no longer at its index reports which entry changed, in English and Japanese, instead of a raw English string. (#606)
 - **A commit message can no longer forge graph or Remote Browse rows.** `git log` records are NUL-framed, a byte Git commit objects cannot contain. (#508, ADR-0186)
 - **Recovery guidance and copied commands no longer recommend `git reset --hard`.** Amend keeps the working tree with a safe ref move, and pull undo uses revert. (#456)
 - A save completing after a file switch no longer marks another buffer clean; saves remain bound to their originating buffer and written bytes. (#486)

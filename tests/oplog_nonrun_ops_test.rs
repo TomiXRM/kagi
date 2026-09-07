@@ -10,7 +10,9 @@ use std::sync::Mutex;
 
 use kagi_domain::history::{HistoryEntry, OperationKind};
 use kagi_domain::plan_note::HistoryMoveDir;
-use kagi_git::oplog::{read_oplog_tail, read_oplog_tail_for_repo, Actor, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{
+    read_oplog_tail, read_oplog_tail_for_repo, recovery, Actor, OpLogEntry, OpOutcome,
+};
 use kagi_git::ops::{CleanupDeleteTarget, MergedBranchStatus, StateSummary};
 use kagi_git::trust::RepoTrust;
 use kagi_git::{Backend, CommitId, Operation, OperationOutcome};
@@ -310,6 +312,18 @@ fn history_undo_redo_preserves_edits_and_records_full_oid_chain() {
     assert_eq!(undo.parent, None);
     logged_oid(&success(undo).dirty, &entry.after.0);
     logged_oid(&success(undo).dirty, &entry.before.0);
+    // #500: the same two ends, typed, so a recovery consumer never has to read
+    // "moved from <oid> to <oid>" out of the sentence above.
+    assert_eq!(
+        undo.recovery
+            .iter()
+            .map(|h| (h.kind.as_str(), h.oid.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (recovery::HISTORY_FROM, entry.after.0.as_str()),
+            (recovery::HISTORY_TO, entry.before.0.as_str()),
+        ]
+    );
 
     let redo_plan = backend.plan_redo(&entry).unwrap();
     assert!(redo_plan.blockers.is_empty(), "{:?}", redo_plan.blockers);

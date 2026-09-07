@@ -2,7 +2,7 @@ use kagi_domain::history::HistoryEntry;
 use kagi_domain::plan_note::HistoryMoveDir;
 
 use super::{ops, Backend, GitError, OperationOutcome, OperationPlan};
-use crate::oplog::{append_oplog_receipt, OpLogEntry};
+use crate::oplog::{append_oplog_receipt, recovery, OpLogEntry, RecoveryHandle};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -106,6 +106,39 @@ pub fn oplog_outcome_from(
     }
 }
 
+/// The typed recovery handles a dispatch result carries (#500).
+///
+/// The `after.dirty` sentences built above stay exactly as they are — they are
+/// what the UI shows. This is the same material recorded as data, so a recovery
+/// consumer never parses display text. A failed attempt contributes nothing
+/// here: its recovery roots, if any, are the mandatory `backup_refs`.
+/// Pure + `pub` so every family is unit-testable without a real repo.
+pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<RecoveryHandle> {
+    let Ok(outcome) = result else {
+        return Vec::new();
+    };
+    match outcome {
+        OperationOutcome::RestoreSnapshot { savepoint } => {
+            vec![RecoveryHandle::oid(recovery::SAVEPOINT, savepoint)]
+        }
+        OperationOutcome::StashDrop { oid } => vec![RecoveryHandle::oid(recovery::STASH, oid)],
+        OperationOutcome::DeleteBranch { tip, reference, .. } => {
+            vec![RecoveryHandle::oid(recovery::BRANCH_TIP, tip).with_reference(reference)]
+        }
+        // Partial discards land here too: `is_partial` keeps the outcome `Ok`
+        // precisely so the backups are never dropped with an `Err` (#281).
+        OperationOutcome::Discard(discard) => discard
+            .backups
+            .iter()
+            .map(|b| RecoveryHandle::file(&b.path, &b.blob, Some(b.reference.clone())))
+            .collect(),
+        OperationOutcome::Suggestion(s) => {
+            vec![RecoveryHandle::file(&s.path, &s.backup_blob, None)]
+        }
+        _ => Vec::new(),
+    }
+}
+
 impl Backend {
     /// Build and append the oplog entry for a completed backend attempt
     /// (ADR-0149). `before` comes from the plan; `actor`/`worktree` from
@@ -117,7 +150,7 @@ impl Backend {
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
     ) -> Recording {
-        self.record_run_oplog_with_backups(op, before, outcome, Vec::new())
+        self.record_run_oplog_with_backups(op, before, outcome, Vec::new(), Vec::new())
     }
 
     pub(super) fn record_run_oplog_with_backups(
@@ -126,12 +159,14 @@ impl Backend {
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
         backup_refs: Vec<String>,
+        recovery: Vec<RecoveryHandle>,
     ) -> Recording {
         let repo = self.path.display().to_string();
         let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
             .with_actor(self.policy.actor)
             .with_worktree(Some(repo));
         entry.backup_refs = backup_refs;
+        entry.recovery = recovery;
         finalize(entry)
     }
 
@@ -166,8 +201,17 @@ impl Backend {
                 error: error.to_string(),
             },
         };
+        // #500: the two ends of the move are the recovery material — `to` is
+        // where the branch is now, `from` is where it came back from.
+        let handles = match &result {
+            Ok(moved) => vec![
+                RecoveryHandle::oid(recovery::HISTORY_FROM, moved.from.to_string()),
+                RecoveryHandle::oid(recovery::HISTORY_TO, moved.to.to_string()),
+            ],
+            Err(_) => Vec::new(),
+        };
         let op_name = format!("{}-{}", dir.label_en_lower(), entry.kind.slug());
-        self.record_run_oplog(&op_name, &plan.current, outcome);
+        self.record_run_oplog_with_backups(&op_name, &plan.current, outcome, Vec::new(), handles);
         result
     }
 }

@@ -11,6 +11,7 @@ fn entry(op: &str) -> OpLogEntry {
         id: 0,
         parent: None,
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         actor: Actor::Human,
         worktree: None,
         timestamp: 1,

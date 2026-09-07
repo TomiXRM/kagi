@@ -651,10 +651,12 @@ fn invalid_bytes_inside_the_window_keep_the_all_or_nothing_read() {
 }
 
 /// #499 x #500: the bounded read must not be a second, poorer interpretation of
-/// a line. Typed recovery handles — and an unknown future field beside them —
-/// survive a tail read exactly as they do a whole-file read.
+/// a line. Typed recovery handles come back exactly as written, and an unknown
+/// sibling field on the same line does not make the entry — or its handles —
+/// disappear. (`OpLogEntry` has no storage for an unknown field, so nothing
+/// here claims one round-trips.)
 #[test]
-fn tail_read_preserves_typed_recovery_and_unknown_fields() {
+fn tail_read_keeps_typed_recovery_beside_an_unknown_field() {
     let dir = tempfile::tempdir().unwrap();
     // Past one chunk, so the read really is a window and not the whole file.
     let path = synthetic_log(dir.path(), 200, &["/tmp/r"]);

@@ -65,7 +65,7 @@ pub mod worktree_ports;
 #[allow(unused_imports)]
 pub use authoring::{load_commit_template, recent_authors, AuthorCandidate};
 #[allow(unused_imports)]
-pub use backend::{oplog_outcome_from, Backend};
+pub use backend::{oplog_outcome_from, recovery_handles, Backend};
 #[allow(unused_imports)]
 pub use blame::{
     blame_file, parse_blame_ignore_revs, BlameLine, BlameResult, IGNORED_MARK, IGNORE_REVS_FILE,

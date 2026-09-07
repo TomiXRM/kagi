@@ -473,9 +473,14 @@ pub fn run_remote_stash_drop(
         "{}; selected stash OID {}",
         recorded_before.dirty, plan.selected_oid
     );
-    let entry = OpLogEntry::new("stash-drop", scope.clone(), recorded_before, oplog_outcome)
+    let mut entry = OpLogEntry::new("stash-drop", scope.clone(), recorded_before, oplog_outcome)
         .with_actor(policy.actor)
         .with_worktree(Some(scope));
+    // #500: the approved stash OID as data, not only inside the `before` prose.
+    entry.recovery = vec![kagi_git::oplog::RecoveryHandle::oid(
+        kagi_git::oplog::recovery::STASH,
+        &plan.selected_oid,
+    )];
     let recording = recording::finalize(entry);
     let recovery = fake_recovery_fixture(fault, operation_id, &remote_job_id, plan);
     RemoteStashReport {

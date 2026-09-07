@@ -3816,23 +3816,6 @@ impl KagiApp {
     }
 }
 
-// ────────────────────────────────────────────────────────────
-// W32-CONFLICT-EDITOR: small helpers for the Save oplog record
-// ────────────────────────────────────────────────────────────
-
-/// A short stable content hash for the oplog before/after fields.  Reuses the
-/// crate's self-contained FNV-1a (no new deps); 16 lowercase hex chars.  This is
-/// a log fingerprint only (no security properties).  `chars()`-safe: hashes
-/// bytes of a `&str`, never byte-slices it.
-fn short_hash(text: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in text.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01B3);
-    }
-    format!("{:016x}", h)
-}
-
 /// T-CONFLICT-UI-001: cheap FNV-1a content signature for the Conflict Editor's
 /// three panes, so the editors only re-`set_value` when something actually
 /// changes (avoids clobbering an in-progress manual edit every frame).
@@ -3866,19 +3849,6 @@ fn conflict_split_ratio_from_cursor(
         return None;
     }
     Some(((cursor - start - divider_size / 2.0) / span).clamp(min, max))
-}
-
-/// Stable slug for a per-hunk choice, for the oplog action summary (T-035).
-fn hunk_choice_slug(choice: &kagi_git::resolution::HunkChoice) -> &'static str {
-    use kagi_git::resolution::HunkChoice::*;
-    match choice {
-        AcceptCurrent => "current",
-        AcceptIncoming => "incoming",
-        BothCurrentFirst => "both-cf",
-        BothIncomingFirst => "both-if",
-        Manual(_) => "manual",
-        Unresolved => "unresolved",
-    }
 }
 
 #[cfg(test)]

@@ -45,17 +45,23 @@ the state kagi sees — the tests drive `repo.merge` directly.)
      remain, so the tree keeps the directory.
    - *KeepFile*: `remove_dir(path, 0)` + `conflict_remove(path)` + stage the file
      blob (OID + mode) at stage 0, so the tree keeps the file.
-   No working-tree write happens (a kept symlink file side is never dereferenced,
-   #298). `preflight_` re-plans and compares before executing (TOCTOU guard).
+   After the index surgery, the losing namespace is removed from the worktree
+   and the kept side is rebuilt. A kept symlink file side is written as a
+   symlink and never dereferenced (#298). A recovery snapshot is taken before
+   mutation; `preflight_` re-plans and compares before executing (TOCTOU guard).
 
 4. **Oplog.** A D/F resolution is a conflict-lane op (like `conflict-save`: it
-   stages into the index and is re-detected away), not a `Backend::run`
-   `Operation`. So `execute_dir_file_resolution` is the **sole** oplog writer for
-   the op (`conflict-dir-file:<choice>`); the UI records with `record_op`
-   (non-persist) to avoid a double record. No write path is left unlogged.
+   stages into the index and is re-detected away). C1 routes both actions through
+   one Backend recorded boundary: `run_recorded_conflict` is the **sole** durable
+   receipt writer and returns its recording result with typed progress evidence.
+   The UI only presents that receipt. The legacy
+   `execute_dir_file_resolution` facade retains its compatibility record until
+   its remaining non-app callers migrate; the two entry points share one
+   preflight/mutation primitive and are never composed.
 
-5. **UI.** `Backend::execute_dir_file_resolution` + `KagiApp::resolve_dir_file`
-   (re-detect after, mirroring `conflict_editor_save`). For a `DirFile` file the
+5. **UI.** `KagiApp::resolve_dir_file` submits a revision-bound app request and
+   applies the Backend's fresh observation (mirroring `conflict_editor_save`).
+   For a `DirFile` file the
    conflict center renders two buttons — Keep directory / Keep file — plus a hint,
    instead of the text/buffer choose row. EN + JA `Msg` added (invariant, i18n).
 
@@ -64,6 +70,8 @@ the state kagi sees — the tests drive `repo.merge` directly.)
 - The Continue gate already blocks on any file lacking a resolution; a `DirFile`
   file has none until the user picks a side, which stages it and re-detects it
   away — so it composes with the existing gate for free.
-- No new destructive commands (invariant #3); resolution is index-only.
-- GUI behavior (the two buttons and re-detect) is not exercisable by subagents and
-  needs human verification; build + tests pass.
+- No new destructive commands (invariant #3); the index choice is followed by
+  the existing recovery-backed worktree namespace reconciliation.
+- The focused GUI scenarios exercise the Save and D/F adapters one at a time;
+  the window-free application tests own the revision, admission, progress and
+  exactly-once receipt matrix.

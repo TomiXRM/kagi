@@ -19,6 +19,11 @@ pub enum Planned {
         request: RemoteStashRequest,
         policy: StashPolicy,
     },
+    Conflict {
+        plan: Box<kagi_git::backend::conflict_ops::ConflictPlan>,
+        request: ConflictAppRequest,
+        policy: kagi_git::backend::ExecutionPolicy,
+    },
 }
 impl Planned {
     pub fn owner(&self) -> OwnerAttachment {
@@ -26,6 +31,7 @@ impl Planned {
             Self::Remove { request, .. } => OwnerAttachment::Local(request.owner.clone()),
             Self::Stash { request, .. } => OwnerAttachment::Local(request.owner.clone()),
             Self::RemoteStash { request, .. } => OwnerAttachment::Remote(request.owner.clone()),
+            Self::Conflict { request, .. } => OwnerAttachment::Local(request.owner.clone()),
         }
     }
     pub fn scope(&self) -> WriteScope {
@@ -33,6 +39,7 @@ impl Planned {
             Self::Remove { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
             Self::Stash { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
             Self::RemoteStash { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
+            Self::Conflict { plan, .. } => WriteScope::Local(plan.common_dir().clone()),
         }
     }
     pub fn owner_session(&self) -> SessionId {
@@ -51,6 +58,7 @@ impl Planned {
             // Remote invalidation is routed to its frozen session; local
             // WorktreeId sibling discovery cannot describe a remote repository.
             Self::RemoteStash { .. } => false,
+            Self::Conflict { .. } => false,
         }
     }
 }
@@ -58,6 +66,7 @@ impl Planned {
 pub enum Policy {
     Remove(RemovePolicy),
     Stash(StashPolicy),
+    Conflict(kagi_git::backend::ExecutionPolicy),
 }
 impl From<RemovePolicy> for Policy {
     fn from(p: RemovePolicy) -> Self {
@@ -162,6 +171,18 @@ fn identity_matches(s: &Sessions, prepared: &Planned) -> Result<(), AdmissionErr
                 ));
             }
         }
+        Planned::Conflict { plan, request, .. } => {
+            s.confirm_identity(&request.owner)?;
+            if request.owner.worktree.as_ref() != Some(plan.worktree()) {
+                return Err(AdmissionError::Identity(
+                    "the conflict plan resolved a different worktree than this tab; reopen the repository"
+                        .into(),
+                ));
+            }
+            if s.conflict_revision(request.owner.session) != Some(plan.request().revision()) {
+                return Err(AdmissionError::StaleApproval);
+            }
+        }
     }
     Ok(())
 }
@@ -220,6 +241,7 @@ pub fn approve(
         Planned::Remove { policy, .. } => Policy::Remove(policy.clone()),
         Planned::Stash { policy, .. } => Policy::Stash(*policy),
         Planned::RemoteStash { policy, .. } => Policy::Stash(*policy),
+        Planned::Conflict { policy, .. } => Policy::Conflict(*policy),
     };
     if current.revision != token.revision || planned_policy != policy.into() {
         return Err(AdmissionError::StaleApproval);
@@ -275,6 +297,7 @@ pub(crate) fn reserve(
 pub enum Completion {
     Remove(Box<RemoveCompletion>),
     Stash(Box<StashCompletion>),
+    Conflict(Box<ConflictCompletion>),
 }
 impl From<RemoveCompletion> for Completion {
     fn from(c: RemoveCompletion) -> Self {
@@ -286,11 +309,17 @@ impl From<StashCompletion> for Completion {
         Self::Stash(Box::new(c))
     }
 }
+impl From<ConflictCompletion> for Completion {
+    fn from(c: ConflictCompletion) -> Self {
+        Self::Conflict(Box::new(c))
+    }
+}
 #[derive(Clone, Debug)]
 pub enum FamilyEvidence {
     Remove(kagi_git::backend::remove::RemoveReport),
     Stash(kagi_git::backend::stash::StashReport),
     RemoteStash(crate::remote::stash::RemoteStashReport),
+    Conflict(kagi_git::backend::conflict_ops::ConflictReport),
 }
 #[derive(Clone, Debug)]
 pub struct ExecutionReport {
@@ -300,6 +329,7 @@ pub struct ExecutionReport {
 pub enum Job {
     Remove(RemoveJob),
     Stash(StashJob),
+    Conflict(ConflictJob),
 }
 pub enum Event {
     Remove(kagi_git::backend::remove::RemoveEvent),
@@ -313,6 +343,7 @@ impl Job {
         match self {
             Self::Remove(job) => job.run_with_events(|e| event(Event::Remove(e))).into(),
             Self::Stash(job) => job.run_with_events(|e| event(Event::Stash(e))).into(),
+            Self::Conflict(job) => job.run().into(),
         }
     }
 }
@@ -325,6 +356,7 @@ pub fn prepare(
         Planned::Remove { .. } => prepare_remove(s, approved, legacy).map(Job::Remove),
         Planned::Stash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
         Planned::RemoteStash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
+        Planned::Conflict { .. } => prepare_conflict(s, approved, legacy).map(Job::Conflict),
     }
 }
 pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Delivery> {
@@ -366,6 +398,18 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                 )
             }
         },
+        Completion::Conflict(c) => {
+            let c = *c;
+            (
+                c.id,
+                ExecutionReport {
+                    recording: c.report.recording.clone(),
+                    evidence: FamilyEvidence::Conflict(c.report),
+                },
+                true,
+                None,
+            )
+        }
     };
     if s.settled.contains(&id) {
         return vec![];
@@ -446,6 +490,29 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             s.stale.insert(manager.worktree.clone());
         }
         (Planned::RemoteStash { .. }, FamilyEvidence::RemoteStash(_)) => {}
+        (Planned::Conflict { request, .. }, FamilyEvidence::Conflict(report)) => {
+            let matches_in_flight = matches!(
+                s.conflict_states.get(&request.owner.session),
+                Some(ConflictOwnerState::InFlight { operation, revision })
+                    if *operation == id && revision == &report.evidence.before.revision
+            );
+            if s.is_attached(request.owner.session) && matches_in_flight {
+                s.conflict_states.insert(
+                    request.owner.session,
+                    ConflictOwnerState::Settled(report.evidence.after.clone()),
+                );
+            }
+            let target = InvalidTarget {
+                worktree: request
+                    .owner
+                    .worktree
+                    .clone()
+                    .expect("local conflict owner has a worktree"),
+                path: request.owner.path.clone(),
+            };
+            s.stale.insert(target.worktree.clone());
+            deliveries.push(Delivery::Invalidate(target));
+        }
         _ => unreachable!("completion family is fixed by its owned job"),
     }
     // Shared refs / stash / worktree administration make every *open* sibling
@@ -456,6 +523,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             Planned::Remove { plan, .. } => &plan.common_dir,
             Planned::Stash { plan, .. } => &plan.common_dir,
             Planned::RemoteStash { .. } => unreachable!("remote refs have no local siblings"),
+            Planned::Conflict { .. } => unreachable!("conflict writes are worktree-local"),
         };
         let delivered: Vec<_> = deliveries
             .iter()

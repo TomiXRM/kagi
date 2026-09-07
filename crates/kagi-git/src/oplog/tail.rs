@@ -6,13 +6,19 @@
 //! them, so an append cost grew with total history.
 //!
 //! This scans backwards from the end of the file in chunks and stops as soon as
-//! `n` matching entries are in hand. Two cases cannot be answered from a window
-//! and fall back to the whole-file read that owns them:
+//! `n` matching entries are in hand. A **legacy id-less line** (pre-ADR-0149)
+//! cannot be answered from a window — it takes its `id`/`parent` from its
+//! position among the successfully parsed lines, which a backward scan does not
+//! know — so a window holding one falls back to the whole-file read that owns
+//! that reconstruction.
 //!
-//! - a **legacy id-less line** (pre-ADR-0149) takes its `id`/`parent` from its
-//!   position among the successfully parsed lines, which a backward scan does
-//!   not know;
-//! - **non-UTF-8 bytes**, which `read_to_string` rejects for the entire file.
+//! **Non-UTF-8 bytes** are the one deliberate narrowing. `read_to_string`
+//! rejects the *file*, so a single stray byte anywhere used to blank the whole
+//! log — and a blank log made the locked append restart the chain at `id 0`
+//! (only the lock's sequence counter kept ids from repeating). Invalid bytes
+//! inside the window still fall back to that all-or-nothing read; invalid bytes
+//! in older history are simply never touched, so corruption no longer reaches
+//! forward into readable recent entries.
 //!
 //! An unterminated final line (a process killed mid-append) is handled exactly
 //! as before: it fails to parse and is skipped, leaving every complete entry
@@ -94,6 +100,8 @@ fn bounded(path: &Path, n: usize, keep: &dyn Fn(&OpLogEntry) -> bool) -> Option<
             if entries.len() == n {
                 break;
             }
+            // Invalid bytes in the window: hand over to the all-or-nothing
+            // whole-file read rather than guess at a record.
             let text = std::str::from_utf8(line).ok()?;
             if text.trim().is_empty() {
                 continue;

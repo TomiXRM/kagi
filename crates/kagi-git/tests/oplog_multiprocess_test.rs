@@ -6,8 +6,11 @@
 //! processes — which is the case the CLI/MCP and the GUI actually create.
 //!
 //! Each worker is this test binary re-executed with `--exact
-//! oplog_append_worker`, waiting on a gate file so both start appending at
-//! once, and printing every receipt it was assigned.
+//! oplog_append_worker`. The barrier is two-phase: a worker writes its own
+//! `ready-<n>` file and only then spins on the shared gate, and the parent
+//! opens the gate only after every `ready-<n>` exists — otherwise a worker
+//! spawned late could find the gate already open and never overlap. Each
+//! worker prints every receipt it was assigned.
 
 use kagi_domain::plan::StateSummary;
 use kagi_git::oplog::{append_oplog_receipt, read_oplog_tail, OpLogEntry, OpOutcome};
@@ -32,6 +35,7 @@ fn two_processes_appending_keep_ids_unique_and_the_chain_intact() {
     }
     let log_dir = PathBuf::from(std::env::var("KAGI_LOG_DIR").expect("isolated log directory"));
     let gate = log_dir.join("start");
+    let ready = |index: usize| log_dir.join(format!("ready-{index}"));
 
     let workers: Vec<_> = (0..WORKERS)
         .map(|index| {
@@ -39,12 +43,17 @@ fn two_processes_appending_keep_ids_unique_and_the_chain_intact() {
                 .args(["--exact", "oplog_append_worker", "--nocapture"])
                 .env("KAGI_OPLOG_APPEND_WORKER", index.to_string())
                 .env("KAGI_OPLOG_APPEND_GATE", &gate)
+                .env("KAGI_OPLOG_APPEND_READY", ready(index))
                 .stdout(std::process::Stdio::piped())
                 .spawn()
                 .expect("spawn append worker")
         })
         .collect();
-    // Both are already spinning on the gate: release them together.
+    // Release only once every worker reports it is spinning on the gate, so
+    // neither can find the gate already open and run to completion alone.
+    for index in 0..WORKERS {
+        await_file(&ready(index));
+    }
     std::fs::write(&gate, b"go").unwrap();
 
     let mut receipts = Vec::new();
@@ -127,7 +136,10 @@ fn oplog_append_worker() {
         return;
     };
     let gate = PathBuf::from(std::env::var("KAGI_OPLOG_APPEND_GATE").expect("gate path"));
-    await_gate(&gate);
+    let ready = PathBuf::from(std::env::var("KAGI_OPLOG_APPEND_READY").expect("ready path"));
+    // Announce readiness last, so the parent's release really finds us waiting.
+    std::fs::write(&ready, b"ready").unwrap();
+    await_file(&gate);
     for step in 0..PER_WORKER {
         let entry = OpLogEntry::new(
             format!("worker-{index}-{step}"),
@@ -148,10 +160,14 @@ fn oplog_append_worker() {
     }
 }
 
-fn await_gate(gate: &Path) {
+fn await_file(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(30);
-    while !gate.exists() {
-        assert!(Instant::now() < deadline, "gate never opened");
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "{} never appeared",
+            path.display()
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
 }

@@ -625,8 +625,9 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
 ///
 /// Only the tail of the file is read (#499): the cost of a read — including
 /// the id/parent assignment inside a locked append — no longer grows with
-/// total history. See [`tail`] for the two cases that still need the whole
-/// file (legacy id-less lines, non-UTF-8 bytes).
+/// total history. A legacy id-less line in that window still needs the whole
+/// file, and non-UTF-8 bytes *older* than the window are deliberately no
+/// longer read at all (see [`tail`]).
 ///
 /// Lines that cannot be parsed are silently skipped.
 /// Returns an empty `Vec` if the file does not exist or cannot be read.

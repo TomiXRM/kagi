@@ -602,3 +602,42 @@ fn an_unterminated_final_line_leaves_earlier_entries_readable() {
         "the fragment is skipped, complete entries survive"
     );
 }
+
+/// Deliberate narrowing (#499): `read_to_string` rejects a file for one stray
+/// byte, and a blank read made the locked append restart the chain at id 0.
+/// A bounded read never touches older history, so corruption behind the window
+/// no longer hides readable recent entries.
+#[test]
+fn invalid_bytes_older_than_the_window_no_longer_blank_the_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = synthetic_log(dir.path(), 4, &["/tmp/r"]);
+    let mut raw = std::fs::read(&path).unwrap();
+    let first = raw.iter().position(|byte| *byte == b'\n').unwrap();
+    raw[first / 2] = 0xff;
+    std::fs::write(&path, &raw).unwrap();
+    assert!(std::fs::read_to_string(&path).is_err(), "file is not UTF-8");
+
+    let tail = super::tail::read_path(&path, 2, &|_| true);
+
+    assert_eq!(
+        tail.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![3, 2]
+    );
+}
+
+#[test]
+fn invalid_bytes_inside_the_window_keep_the_all_or_nothing_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = synthetic_log(dir.path(), 4, &["/tmp/r"]);
+    let mut raw = std::fs::read(&path).unwrap();
+    let last = raw.len() - 2;
+    raw[last] = 0xff;
+    std::fs::write(&path, &raw).unwrap();
+
+    let tail = super::tail::read_path(&path, 2, &|_| true);
+
+    // The window itself cannot be interpreted, so the whole-file read decides —
+    // and it rejects the file, exactly as every reader did before.
+    assert!(tail.entries.is_empty());
+    assert_eq!(tail.bytes, 0);
+}

@@ -1,6 +1,7 @@
 use super::*;
 use kagi_domain::plan_note::{
     CheckoutNote, CheckoutRecovery, CheckoutTitle, CommonNote, DirtyParts, OpPhrase, UntrackedCtx,
+    WorktreeNote,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -13,6 +14,7 @@ use kagi_domain::plan_note::{
 ///
 /// - Target branch does not exist in the repository.
 /// - Target branch is already the current HEAD branch (no-op would be confusing).
+/// - Target branch is checked out in another registered worktree.
 /// - Repository is in a conflict state (`status.conflicted` is non-empty).
 /// - Staged / unstaged changes exist **and** overlap the files the checkout must
 ///   rewrite (the HEAD-tree → target-tree diff). Only then would a safe-mode
@@ -76,14 +78,15 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     }
 
     // Already-HEAD check (only meaningful when HEAD is attached).
-    if let Head::Attached {
-        branch: ref current_branch,
-        ..
-    } = head
-    {
-        if current_branch == branch {
-            blockers.push(PlanNote::Checkout(CheckoutNote::AlreadyCurrent {
+    if matches!(&head, Head::Attached { branch: current, .. } if current == branch) {
+        blockers.push(PlanNote::Checkout(CheckoutNote::AlreadyCurrent {
+            branch: branch.to_string(),
+        }));
+    } else if branch_exists {
+        if let Some(path) = branch_checked_out_worktree_path(repo, branch)? {
+            blockers.push(PlanNote::Worktree(WorktreeNote::BranchInOtherWorktree {
                 branch: branch.to_string(),
+                path: path.display().to_string(),
             }));
         }
     }
@@ -241,6 +244,18 @@ pub fn preflight_check(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
 /// Returns [`GitError::Other`] on any libgit2 failure, including safe-mode
 /// conflicts where an untracked file would be overwritten.
 pub(crate) fn execute_checkout(repo: &Repository, branch: &str) -> Result<(), GitError> {
+    // Recheck immediately before the first write. set_head may refuse an
+    // occupied branch only after checkout_tree has already changed the files.
+    if let Some(path) = branch_checked_out_worktree_path(repo, branch)? {
+        return Err(GitError::Other(
+            PlanNote::Worktree(WorktreeNote::BranchInOtherWorktree {
+                branch: branch.to_string(),
+                path: path.display().to_string(),
+            })
+            .message_en(),
+        ));
+    }
+
     // Locate the branch reference.
     let branch_ref = repo
         .find_branch(branch, BranchType::Local)

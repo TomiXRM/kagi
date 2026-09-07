@@ -36,7 +36,7 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     }
 }
 
-fn press_key(
+pub(super) fn press_key(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -58,7 +58,7 @@ fn press_enter(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
     press_key(cx, app, window, "enter");
 }
 
-fn dispatch_checkout_selected(
+pub(super) fn dispatch_checkout_selected(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,

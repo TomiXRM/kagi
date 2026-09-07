@@ -50,6 +50,7 @@ pub mod message_gen;
 pub use kagi_domain::message_template; // ADR-0121: was a shim file
 pub mod oplog;
 pub mod ops;
+pub mod proc;
 use kagi_domain::refs; // ADR-0121: was a shim file
 pub mod resolution;
 pub mod ruleset;
@@ -146,6 +147,7 @@ pub(crate) use ops::{
     execute_stash_apply, execute_stash_drop, execute_stash_push, execute_undo, execute_undo_commit,
     fetch_remote,
 };
+pub use proc::{run_child, ProcIo, ProcRun, ProcStop};
 // PR review "suggested change" local apply (#351, ADR-0172).
 pub use kagi_domain::plan::SuggestionOutcome;
 pub use kagi_domain::suggestion::{parse_suggestion, Suggestion};

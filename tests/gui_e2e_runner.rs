@@ -553,6 +553,10 @@ mod macos {
                 Box::new(crate::app_writer_admission::scenario_editor_save_admission),
             ),
             (
+                "editor_save_buffer_identity",
+                Box::new(crate::app_writer_admission::scenario_editor_save_buffer_identity),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),

@@ -227,10 +227,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     // ── 7. Recovery guidance ──────────────────────────────────
     let recovery = PlanRecovery {
         kind: RecoveryKind::Pull(PullRecovery::Pull),
-        commands: vec![
-            "git reset --hard HEAD~1".to_string(),
-            "git reflog".to_string(),
-        ],
+        commands: vec!["git revert -m 1 HEAD".to_string(), "git reflog".to_string()],
     };
 
     Ok(OperationPlan {

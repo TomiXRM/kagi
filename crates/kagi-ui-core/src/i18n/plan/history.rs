@@ -162,7 +162,7 @@ pub fn recovery_ja(recovery: &HistoryRecovery) -> String {
         }
         HistoryRecovery::Amend { sha, blocked: false } => format!(
             "amend は履歴を書き換えます。新しい SHA が付き、元の commit `{}` は branch から到達不能になります(reflog には残ります)。\n\
-             元に戻すには:\n  git reset --hard {}\n\
+             作業ツリーと index を変えずに元に戻すには:\n  git reset --soft {}\n\
              HEAD 移動は reflog に残ります:\n  git reflog",
             sha, sha
         ),
@@ -185,5 +185,20 @@ pub fn recovery_ja(recovery: &HistoryRecovery) -> String {
             branch,
             from_full
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn amend_recovery_keeps_the_working_tree() {
+        let text = recovery_ja(&HistoryRecovery::Amend {
+            sha: "a1b2c3d4".into(),
+            blocked: false,
+        });
+        assert!(text.contains("git reset --soft a1b2c3d4"));
+        assert!(!text.contains("reset --hard"));
     }
 }

@@ -156,6 +156,7 @@ impl KagiApp {
                 // Unconditional release (#289): whatever happened to the op,
                 // the global op mutex must not stay latched.
                 app.busy_op = None;
+                app.write_busy_op = None;
                 // Settle first, whatever the tab is doing now (#501).
                 if let Some(result) = result.as_ref() {
                     settle(app, result, cx);

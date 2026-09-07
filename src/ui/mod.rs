@@ -14,6 +14,7 @@ pub mod badges;
 pub mod blocking_ops;
 pub mod branch_cleanup;
 pub mod branch_menu;
+mod busy;
 pub mod button_style;
 pub mod command_palette;
 pub mod commands;
@@ -398,33 +399,6 @@ const ROW_H_COMPACT: f32 = 22.0; // 18.0 * 1.2 (keeps compact:full ratio)
 #[inline]
 fn row_height(compact: bool) -> f32 {
     theme::scaled(if compact { ROW_H_COMPACT } else { ROW_H_FULL })
-}
-
-/// Friendly present-progressive label for the busy snackbar, keyed by the
-/// `busy_op` tag set when an async op starts.
-fn busy_label(op: &str) -> String {
-    let s = match op {
-        "merge-plan" => "Planning merge…",
-        "merge" => "Merging…",
-        "pull" => "Pulling…",
-        "push" => "Pushing…",
-        "fetch" => "Fetching…",
-        "commit" => "Committing…",
-        "amend" => "Amending commit…",
-        "checkout" => "Checking out…",
-        "cherry-pick" => "Cherry-picking…",
-        "revert" => "Reverting…",
-        "discard" => "Discarding…",
-        "stash" => "Stashing…",
-        "stash-pop" => "Applying stash…",
-        "stash-drop" => "Dropping stash…",
-        "create-worktree" => "Creating worktree…",
-        "delete-branch" => "Deleting branch…",
-        "rename-branch" => "Renaming branch…",
-        "set-upstream" => "Setting upstream…",
-        other => return format!("{other}…"),
-    };
-    s.to_string()
 }
 
 use branch_menu::{
@@ -1254,6 +1228,7 @@ pub struct KagiApp {
     /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
     /// and new plan modals are refused so operations never overlap.
     pub busy_op: Option<&'static str>,
+    write_busy_op: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
@@ -1573,6 +1548,7 @@ impl KagiApp {
             pr_mode: None,
             pr_menu: None,
             busy_op: None,
+            write_busy_op: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),
             modal_replan_gen: 0,

@@ -36,6 +36,8 @@ use crate::settings::{read_setting, write_setting};
 // ──────────────────────────────────────────────────────────────────────────
 
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
+pub mod busy;
+pub use busy::busy_label;
 pub mod op;
 pub mod plan;
 pub use op::{op_failed, op_plan_failed, Op};

@@ -207,7 +207,7 @@ impl KagiApp {
                 // optional, so the index may still hold unmerged entries.  Without
                 // this the commit panel shows nothing staged (Commit disabled) and
                 // execute_merge_commit refuses the still-conflicted index.
-                let Some(guard) = self.reserve_write(&repo_path, cx) else {
+                let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
                     return;
                 };
                 let result = self
@@ -285,7 +285,7 @@ impl KagiApp {
                 // #309: a stash conflict is not a commit — "continue" just stages
                 // the resolved paths (execute_conflict_continue collapses the
                 // unmerged entries to stage 0). No merge commit, no `--continue`.
-                let Some(guard) = self.reserve_write(&repo_path, cx) else {
+                let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
                     return;
                 };
                 let result = self
@@ -380,7 +380,7 @@ impl KagiApp {
         }
         let op_name = format!("{}-continue", mode.session.op.slug());
 
-        let Some(guard) = self.reserve_write(&repo_path, cx) else {
+        let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
             return;
         };
         let result = self
@@ -488,7 +488,7 @@ impl KagiApp {
             }
         };
         let op_name = format!("{}-abort", mode.session.op.slug());
-        let Some(guard) = self.reserve_write(&repo_path, cx) else {
+        let Some(guard) = self.reserve_write("conflict-abort", &repo_path, cx) else {
             return;
         };
 

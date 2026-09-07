@@ -4,6 +4,9 @@
 //! All repositories (local + bare remote) are created inside `TempDir`s. No
 //! network access: the "remote" is a local bare repository on disk.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_force_with_lease_push;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,7 +14,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{ForceLeaseNote, PlanNote};
-use kagi_git::ops::{execute_force_with_lease_push, plan_force_with_lease_push};
+use kagi_git::ops::plan_force_with_lease_push;
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -114,6 +117,9 @@ fn setup() -> Repos {
 
 #[test]
 fn test_plan_normal_no_blockers_after_amend() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     // Amend locally so `local`'s HEAD diverges from the remote-tracking ref
     // (the classic force-with-lease scenario).
@@ -144,6 +150,9 @@ fn test_plan_normal_no_blockers_after_amend() {
 
 #[test]
 fn test_plan_nothing_to_push_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).expect("open local");
     let plan = plan_force_with_lease_push(&repo).expect("plan failed");
@@ -159,6 +168,9 @@ fn test_plan_nothing_to_push_blocker() {
 
 #[test]
 fn test_execute_overwrites_remote_after_amend() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     write_file(&r.local, "base.txt", "base amended\n");
     git(&r.local, &["add", "-A"]);
@@ -178,6 +190,9 @@ fn test_execute_overwrites_remote_after_amend() {
 
 #[test]
 fn test_execute_rejects_when_remote_moved_since_last_fetch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Someone else pushes to the remote via `other`, without `local` ever
@@ -216,6 +231,9 @@ fn test_execute_rejects_when_remote_moved_since_last_fetch() {
 /// local HEAD, which a fetch does not move.
 #[test]
 fn a_fetch_between_plan_and_execute_does_not_refresh_the_lease() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Plan while the remote is still where the user can see it.
@@ -247,3 +265,6 @@ fn a_fetch_between_plan_and_execute_does_not_refresh_the_lease() {
         "the colleague's commit must survive"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

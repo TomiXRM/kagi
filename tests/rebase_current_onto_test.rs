@@ -4,13 +4,16 @@
 //! All write operations are confined to `TempDir` repositories created
 //! within each test.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_rebase_current_onto;
 use std::path::Path;
 
 use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{PlanNote, RebaseNote};
-use kagi_git::ops::{execute_rebase_current_onto, plan_rebase_current_onto, RebaseOutcome};
+use kagi_git::ops::{plan_rebase_current_onto, RebaseOutcome};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = std::process::Command::new("git")
@@ -71,6 +74,9 @@ fn clean_rebase_repo() -> (TempDir, std::path::PathBuf) {
 
 #[test]
 fn test_plan_normal_no_blockers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_tmp, dir) = clean_rebase_repo();
     let repo = Repository::open(&dir).expect("open");
 
@@ -93,6 +99,9 @@ fn test_plan_normal_no_blockers() {
 
 #[test]
 fn test_plan_dirty_working_tree_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_tmp, dir) = clean_rebase_repo();
     write_file(&dir, "base.txt", "dirty\n");
     let repo = Repository::open(&dir).expect("open");
@@ -103,6 +112,9 @@ fn test_plan_dirty_working_tree_blocker() {
 
 #[test]
 fn test_plan_invalid_onto_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_tmp, dir) = clean_rebase_repo();
     let repo = Repository::open(&dir).expect("open");
 
@@ -115,6 +127,9 @@ fn test_plan_invalid_onto_blocker() {
 /// ever invoked.
 #[test]
 fn test_plan_detached_head_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_tmp, dir) = clean_rebase_repo();
     let side_tip = head_sha(&dir);
     git(&dir, &["checkout", "-q", "--detach", &side_tip]);
@@ -133,6 +148,9 @@ fn test_plan_detached_head_blocker() {
 
 #[test]
 fn test_plan_already_up_to_date_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_tmp, dir) = clean_rebase_repo();
     let repo = Repository::open(&dir).expect("open");
 
@@ -145,6 +163,9 @@ fn test_plan_already_up_to_date_blocker() {
 
 #[test]
 fn test_execute_clean_rebase_completes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_tmp, dir) = clean_rebase_repo();
     let repo = Repository::open(&dir).expect("open");
 
@@ -180,6 +201,9 @@ fn test_execute_clean_rebase_completes() {
 
 #[test]
 fn test_execute_conflicting_rebase_reports_conflicted_not_error() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path().to_path_buf();
     git(&dir, &["init", "-q", "-b", "main", "."]);
@@ -210,3 +234,6 @@ fn test_execute_conflicting_rebase_reports_conflicted_not_error() {
     );
     assert!(dir.join(".git").join("rebase-merge").exists());
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

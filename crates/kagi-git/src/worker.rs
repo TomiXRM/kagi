@@ -1,20 +1,16 @@
 //! Repository worker thread (ADR-0073).
 //!
-//! A dedicated thread per `RepoSession` that owns the `Backend` exclusively.
-//! The UI sends operations via an mpsc channel; the worker executes them and
-//! returns results via a oneshot channel.
-//!
-//! Benefits over the per-op `Backend::open` pattern:
-//! 1. **Opens once** — the `git2::Repository` lives for the tab lifetime.
-//! 2. **Serializes mutations** — git ops on the same repo are not thread-safe;
-//!    the single-threaded receive loop guarantees no concurrency.
-//! 3. **No lock contention** — no `Arc<Mutex<Backend>>`; the thread IS the owner.
+//! A dedicated thread serializes requests for one repository. Each request
+//! carries execution policy and opens a fresh mutation Backend, so owner trust
+//! is evaluated at execution rather than inherited from worker startup (#494).
+//! The GUI worker migration remains #314; this is the existing opt-in consumer.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 
 use super::{Backend, GitError, OperationPlan};
+use crate::backend::ExecutionPolicy;
 use kagi_domain::operation::{Operation, OperationOutcome};
 
 /// A request sent from the UI to the worker thread.
@@ -27,14 +23,15 @@ enum WorkRequest {
     Run {
         op: Operation,
         plan: OperationPlan,
+        policy: ExecutionPolicy,
         reply: mpsc::Sender<Result<OperationOutcome, GitError>>,
     },
     /// Shut down the worker thread cleanly.
     Shutdown,
 }
 
-/// Handle to a dedicated repository worker thread. The thread owns a `Backend`
-/// for the lifetime of the tab; the UI communicates via channels.
+/// Handle to a dedicated repository worker thread. Each request gets a fresh
+/// mutation Backend; clients communicate via channels.
 pub struct RepoWorker {
     tx: mpsc::Sender<WorkRequest>,
     path: PathBuf,
@@ -78,11 +75,22 @@ impl RepoWorker {
         op: Operation,
         plan: OperationPlan,
     ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
+        self.submit_with_policy(op, plan, ExecutionPolicy::default())
+    }
+
+    /// Explicit policy per request; a long-lived worker never caches GUI settings.
+    pub fn submit_with_policy(
+        &self,
+        op: Operation,
+        plan: OperationPlan,
+        policy: ExecutionPolicy,
+    ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(WorkRequest::Run {
                 op,
                 plan,
+                policy,
                 reply: reply_tx,
             })
             .map_err(|e| GitError::Other(format!("worker channel send failed: {}", e)))?;
@@ -101,11 +109,19 @@ impl RepoWorker {
 
     /// The worker thread's main loop. Opens the backend, then receives and
     /// executes requests until `Shutdown` or the channel closes.
-    fn worker_loop(mut backend: Backend, rx: mpsc::Receiver<WorkRequest>) {
+    fn worker_loop(backend: Backend, rx: mpsc::Receiver<WorkRequest>) {
         while let Ok(req) = rx.recv() {
             match req {
-                WorkRequest::Run { op, plan, reply } => {
-                    let result = backend.run(&op, &plan);
+                WorkRequest::Run {
+                    op,
+                    plan,
+                    policy,
+                    reply,
+                } => {
+                    // Fresh-open at execution re-evaluates owner trust, matching
+                    // direct mutation boundaries. Read-session reuse is unchanged.
+                    let result = Backend::open_with_policy(backend.path(), policy)
+                        .and_then(|mut current| current.run(&op, &plan));
                     // If the reply channel is closed (caller dropped), the
                     // result is silently discarded — the operation still ran.
                     let _ = reply.send(result);
@@ -159,6 +175,9 @@ mod tests {
 
     #[test]
     fn worker_spawns_and_shuts_down() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let tmp = init_test_repo();
         let mut worker = RepoWorker::spawn(tmp.path()).expect("spawn");
         worker.shutdown();
@@ -168,6 +187,9 @@ mod tests {
 
     #[test]
     fn worker_executes_create_branch() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let tmp = init_test_repo();
         let session = super::super::session::RepoSession::open(tmp.path()).expect("session");
 
@@ -198,6 +220,9 @@ mod tests {
 
     #[test]
     fn worker_rejects_stale_plan() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let tmp = init_test_repo();
         let session = super::super::session::RepoSession::open(tmp.path()).expect("session");
         let backend = session.backend();

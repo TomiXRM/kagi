@@ -17,7 +17,7 @@ impl KagiApp {
             start_title,
             input: String::new(),
             input_state: None,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_create_tag();
@@ -38,10 +38,15 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_tag: repo session unavailable");
+                let outcome = session_unavailable(i18n::Op::CreateTag);
+                if let Some(modal) = self.create_tag_modal_mut() {
+                    modal.plan.replan(outcome);
+                }
                 return;
             }
         };
-        match repo.plan_create_tag(&name, &at) {
+        let result = repo.plan_create_tag(&name, &at);
+        match &result {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-tag '{}' blockers={} warnings={}",
@@ -49,13 +54,15 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                if let Some(modal) = self.create_tag_modal_mut() {
-                    modal.plan = Some(std::sync::Arc::new(plan));
-                }
             }
             Err(e) => {
                 klog!("plan: create-tag error: {}", e);
             }
+        }
+        // #510: a failed replan replaces the plan instead of leaving it behind.
+        let outcome = plan_outcome(i18n::Op::CreateTag, result);
+        if let Some(modal) = self.create_tag_modal_mut() {
+            modal.plan.replan(outcome);
         }
     }
 
@@ -63,14 +70,15 @@ impl KagiApp {
     ///
     /// On failure the modal remains open and shows the error text.
     pub fn confirm_create_tag(&mut self, cx: &mut Context<Self>) {
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         let modal = match self.create_tag_modal().cloned() {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // #510: `Pending` and `Failed` both yield None, so a failed replan
+        // refuses Enter and the button alike.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         if !plan.blockers.is_empty() {
             klog!("refused: create-tag plan has blockers, not executing");
@@ -92,7 +100,7 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
@@ -273,7 +281,7 @@ impl KagiApp {
         let (name, remote) = (modal.name.clone(), modal.remote.clone());
         let task = cx.background_spawn(async move {
             let run = || -> Result<kagi_git::StateSummary, String> {
-                let mut repo = kagi_git::Backend::open(&bg_path)
+                let mut repo = crate::ui::blocking_ops::open_backend(&bg_path)
                     .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
                 let op = kagi_git::Operation::PushTag {
                     name: name.clone(),

@@ -40,6 +40,9 @@ use kagi_domain::plan_note::{
     ConflictsNote, ConflictsRecovery, ConflictsTitle, PlanDisposition, PlanNote, PlanRecovery,
     PlanTitle, RecoveryKind,
 };
+pub use kagi_domain::sequencer_skip::{
+    classify_skip, ReplayPosition, SkipObservation, SkipProgress,
+};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, RepositoryState};
@@ -1090,6 +1093,7 @@ pub fn plan_conflict_continue(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -1111,7 +1115,7 @@ pub fn plan_conflict_continue(
 ///
 /// **Preconditions** (caller must check the plan first): no blockers.  This
 /// function re-checks marker residue defensively but trusts resolution presence.
-pub fn execute_conflict_continue(
+pub(crate) fn execute_conflict_continue(
     repo: &Repository,
     repo_path: &Path,
     session: &ConflictSession,
@@ -1153,11 +1157,7 @@ pub fn execute_conflict_continue(
     // message (no editor is opened) and, for rebase, keeps auto-continuing
     // through any further non-conflicting commits until it either finishes or
     // stops at the next conflict.
-    //
-    // A single `--continue` call is *usually* enough to run the whole
-    // remaining sequence. Loop, bounded by the sequence length, nudging once
-    // per resolved step.
-    //
+    // A bounded loop nudges once per resolved step.
     // #296(a): `--continue` exit status is authoritative. EVERY other run_git
     // caller checks `out.status`; this site used to ignore it, so a hard
     // refusal (e.g. "The previous cherry-pick is now empty", "You must edit all
@@ -1168,8 +1168,10 @@ pub fn execute_conflict_continue(
     let slug = session.op.slug();
     let max_attempts = read_rebase_progress(repo.path()).1.max(1) + 1;
     for _attempt in 0..max_attempts {
-        let out = run_git(repo_path, &[slug, "--continue"])
-            .map_err(|e| GitError::Other(format!("{} --continue failed to start: {}", slug, e)))?;
+        let out = run_git(repo_path, &[slug, "--continue"]).map_err(|e| match e {
+            GitError::TerminationUnknown(_) => e,
+            other => GitError::Other(format!("{} --continue failed to start: {}", slug, other)),
+        })?;
 
         // #296(b): libgit2 caches the index on the long-lived session repo and
         // does NOT re-read it after an external `git … --continue`. Force a
@@ -1240,7 +1242,7 @@ fn fresh_index_has_conflicts(repo: &Repository) -> bool {
 /// to refs and creates no commit.
 ///
 /// Defensively refuses if conflict markers remain in the buffer.
-pub fn stage_conflict_resolution(
+pub(crate) fn stage_conflict_resolution(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -1539,10 +1541,19 @@ fn create_merge_commit(
 /// - the file has no resolution draft in the buffer,
 /// - the resolved text still contains conflict markers (marker-residue block),
 /// - any working-tree write / index operation fails.
-pub fn execute_conflict_save(
+pub(crate) fn execute_conflict_save(
     repo: &Repository,
     buffer: &ResolutionBuffer,
     path: &Path,
+) -> Result<SaveOutcome, GitError> {
+    execute_conflict_save_with_progress(repo, buffer, path, |_| {})
+}
+
+pub(crate) fn execute_conflict_save_with_progress(
+    repo: &Repository,
+    buffer: &ResolutionBuffer,
+    path: &Path,
+    mut progress: impl FnMut(kagi_domain::conflict_family::ConflictProgress),
 ) -> Result<SaveOutcome, GitError> {
     // #297/#298: a raw (binary / symlink / gitlink) resolution stages the chosen
     // side's OID directly — no working-tree write, so a conflicted symlink is
@@ -1555,6 +1566,7 @@ pub fn execute_conflict_save(
         index
             .write()
             .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+        progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten);
         return Ok(SaveOutcome {
             path: path.to_path_buf(),
             after_short: short_sha(&raw.oid.to_string()),
@@ -1601,6 +1613,7 @@ pub fn execute_conflict_save(
     }
     std::fs::write(&abs, text.as_bytes())
         .map_err(|e| GitError::Other(format!("write {} failed: {}", abs.display(), e)))?;
+    progress(kagi_domain::conflict_family::ConflictProgress::WorktreeWritten);
 
     // 2. Stage the path: index.add_path collapses stage 1/2/3 → stage 0.
     let mut index = repo
@@ -1612,6 +1625,7 @@ pub fn execute_conflict_save(
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+    progress(kagi_domain::conflict_family::ConflictProgress::IndexWritten);
 
     Ok(SaveOutcome {
         path: path.to_path_buf(),
@@ -1701,7 +1715,7 @@ fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &
 /// index still has unmerged entries (a defensive re-check of the gate).
 ///
 /// Returns the new merge commit's [`CommitId`].
-pub fn execute_merge_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
+pub(crate) fn execute_merge_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
     if message.trim().is_empty() {
         return Err(GitError::Other(
             "merge commit message must not be empty".to_string(),
@@ -1761,6 +1775,7 @@ pub fn plan_conflict_abort(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -1784,7 +1799,7 @@ pub fn plan_conflict_abort(
 /// The `buffer` is flushed to the autosave directory first so a partial
 /// resolution is never lost (ADR-0057); its path is returned for the oplog
 /// entry the caller writes.
-pub fn execute_conflict_abort(
+pub(crate) fn execute_conflict_abort(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -1929,6 +1944,22 @@ pub fn execute_conflict_abort(
     repo.cleanup_state()
         .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
 
+    // libgit2 clears the rebase directory but leaves Git's replay pseudoref.
+    if matches!(session.op, ConflictOp::Rebase { .. }) {
+        match repo.find_reference("REBASE_HEAD") {
+            Ok(mut head) => head.delete().map_err(|e| {
+                GitError::Other(format!("remove REBASE_HEAD failed: {}", e.message()))
+            })?,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => {}
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "read REBASE_HEAD failed: {}",
+                    e.message()
+                )))
+            }
+        }
+    }
+
     Ok(AbortOutcome {
         restored_to: orig_sha,
         buffer_preserved_at,
@@ -1953,7 +1984,7 @@ pub fn execute_conflict_abort(
 ///
 /// The stash entry is left untouched (dropping it, if wanted, is a separate,
 /// explicit stash-drop op).
-pub fn execute_stash_conflict_abort(
+pub(crate) fn execute_stash_conflict_abort(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -2127,8 +2158,8 @@ fn commit_tree<'r>(repo: &'r Repository, oid: git2::Oid) -> Result<git2::Tree<'r
 /// from a user's mid-conflict edit to a non-conflicted file. Extended in #369
 /// to the sequencer ops (rebase / cherry-pick / revert), not just merge.
 ///
-/// Each op maps to the same 3-way `merge_trees(base, ours=HEAD, theirs)` git
-/// itself performs:
+/// Rebase replays onto current HEAD (onto + applied commits), not ORIG_HEAD,
+/// which is only the abort restoration target. Other ops retain their pre-op tree.
 /// - **merge**: base = merge-base(HEAD, MERGE_HEAD), theirs = MERGE_HEAD tree.
 /// - **cherry-pick / rebase** (replay commit `C`): base = `C^` tree, theirs = `C` tree.
 /// - **revert** (undo commit `C`): base = `C` tree, theirs = `C^` tree.
@@ -2177,10 +2208,21 @@ fn reconstruct_op_result<'r>(
         // StashConflict has no commit-producing output to reconstruct.
         ConflictOp::StashConflict => return Ok(None),
     };
+    let rebase_ours = if matches!(session.op, ConflictOp::Rebase { .. }) {
+        Some(
+            repo.head()
+                .and_then(|head| head.peel_to_tree())
+                .map_err(|e| {
+                    GitError::Other(format!("rebase HEAD tree lookup failed: {}", e.message()))
+                })?,
+        )
+    } else {
+        None
+    };
     let index = repo
         .merge_trees(
             base_tree.as_ref().unwrap_or(orig_tree),
-            orig_tree,
+            rebase_ours.as_ref().unwrap_or(orig_tree),
             &theirs_tree,
             None,
         )
@@ -2286,6 +2328,18 @@ pub struct SkipOutcome {
     pub head: Option<String>,
     /// Path the resolution buffer was preserved at, if a buffer was saved.
     pub buffer_preserved_at: Option<PathBuf>,
+    /// What the repository state says happened (#540). A non-zero exit is NOT
+    /// a failure by itself: stopping at the next conflicting commit is the
+    /// normal way a skip lands.
+    pub progress: SkipProgress,
+    /// Repository state after the skip, for a faithful oplog record.
+    pub after: StateSummary,
+    /// git's complaint when it exited non-zero, `None` otherwise. Present even
+    /// for [`SkipProgress::Advanced`], where it is only the "could not apply …"
+    /// notice for the *next* commit. A [`GitError`] rather than a bare string
+    /// so callers render it through the same `Display` as every other failure
+    /// and the `git error: …` payload prefix survives (#567 P2).
+    pub error: Option<GitError>,
 }
 
 /// Plan a `skip` of the current sequencer step (rebase / cherry-pick / revert).
@@ -2328,6 +2382,7 @@ pub fn plan_conflict_skip(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -2348,7 +2403,7 @@ pub fn plan_conflict_skip(
 /// `rebase-apply/` / `sequencer/` wholesale, so "skip one step" silently threw
 /// away every remaining pick and left HEAD detached mid-sequence.  Only real
 /// git's sequencer can advance one step; libgit2 exposes no such API.
-pub fn execute_conflict_skip(
+pub(crate) fn execute_conflict_skip(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -2360,26 +2415,40 @@ pub fn execute_conflict_skip(
     }
 
     // 1. Preserve the buffer first (never lose partial work).
-    let buffer_preserved_at = buffer.autosave().ok();
+    let mut buffer_preserved_at = buffer.autosave().ok();
 
-    // 2. Everything else is one fallible step: either `git <op> --skip`
-    //    succeeds and the sequencer is coherently on the next pick, or it
-    //    fails and git left the current step untouched.  No half state.
+    // 2. Run the skip, then judge it by the state git left behind (#540).
+    //    The exit code alone cannot: `rebase --skip` that drops the step and
+    //    then stops on the NEXT conflicting commit exits 1, and treating that
+    //    as a failure recorded "rebase-skip failed" while the UI was already
+    //    detecting the new conflict session.
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?
         .to_path_buf();
     let slug = session.op.slug();
-    let out = run_git(&workdir, &[slug, "--skip"])
-        .map_err(|e| GitError::Other(format!("{} --skip failed to start: {}", slug, e)))?;
-    if out.status != 0 {
-        return Err(GitError::Other(format!(
+    let position_before = sequencer_position(repo, session);
+    let out = run_git(&workdir, &[slug, "--skip"]).map_err(|e| match e {
+        GitError::TerminationUnknown(_) => e,
+        other => GitError::Other(format!("{} --skip failed to start: {}", slug, other)),
+    })?;
+
+    let progress = classify_skip(SkipObservation {
+        ok: out.status == 0,
+        in_progress: repo.state() != RepositoryState::Clean,
+        // Same libgit2 index-cache trap as `--continue` (#296b): re-read.
+        unmerged: fresh_index_has_conflicts(repo),
+        before: position_before,
+        after: sequencer_position(repo, session),
+    });
+    let error = (out.status != 0).then(|| {
+        format!(
             "{} --skip failed (exit {}): {}",
             slug,
             out.status,
             out.stderr.trim()
-        )));
-    }
+        )
+    });
 
     // 3. HEAD as git left it (unchanged for a dropped single pick; advanced if
     //    the sequencer replayed further commits).
@@ -2389,10 +2458,66 @@ pub fn execute_conflict_skip(
         .and_then(|h| h.target())
         .map(|oid| oid.to_string());
 
+    // 4. git has already run, so a failure to read the state it left is NOT
+    //    "the skip did not happen" (#567 P1). Returning `Err` here made the UI
+    //    record Failed and skip its reload, leaving the stale conflict session
+    //    on screen. Degrade to `Unclear` with the read error as evidence: the
+    //    caller still reloads and re-detects.
+    let (progress, after, error) = match current_state_summary(repo) {
+        Ok(after) => (progress, after, error),
+        Err(e) => {
+            let note = format!(
+                "{} --skip: reading the state after it ran failed: {}",
+                slug, e
+            );
+            (
+                SkipProgress::Unclear,
+                StateSummary {
+                    head: "unknown".to_string(),
+                    dirty: note.clone(),
+                },
+                Some(match error {
+                    Some(prev) => format!("{}; {}", prev, note),
+                    None => note,
+                }),
+            )
+        }
+    };
+
+    if matches!(progress, SkipProgress::Advanced | SkipProgress::Finished)
+        && ResolutionBuffer::clear(&workdir).is_ok()
+    {
+        buffer_preserved_at = None;
+    }
+
     Ok(SkipOutcome {
         head: head_sha,
         buffer_preserved_at,
+        progress,
+        after,
+        // One `GitError` at the end so the payload reaches callers through the
+        // same `Display` as every other failure (#567 P2).
+        error: error.map(GitError::Other),
     })
+}
+
+/// Where the sequencer stands: the commit being replayed plus the rebase step
+/// counter. Comparing this across `git <op> --skip` is what tells "we left the
+/// step you asked us to drop" from "we are still sitting on it" (#540).
+///
+/// Both readers collapse absent / unreadable / unparsable into `None`, which
+/// [`classify_skip`] treats as a missing observation rather than a changed
+/// value (#567 P1) — so this must never substitute a placeholder such as `0`.
+fn sequencer_position(repo: &Repository, session: &ConflictSession) -> ReplayPosition {
+    let name = match session.op {
+        ConflictOp::CherryPick { .. } => "CHERRY_PICK_HEAD",
+        ConflictOp::Revert { .. } => "REVERT_HEAD",
+        _ => "REBASE_HEAD",
+    };
+    ReplayPosition {
+        marker: read_head_oid(repo, name).map(|oid| oid.to_string()),
+        step: read_trimmed_usize(&repo.path().join("rebase-merge").join("msgnum")),
+    }
 }
 
 /// Display string for a [`Head`] (mirrors `current_state_summary`'s head line).

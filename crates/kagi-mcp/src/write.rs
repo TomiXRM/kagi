@@ -12,8 +12,13 @@
 //! approval prompt on the `destructiveHint` `kagi_confirm` tool IS the second
 //! confirmation (PM-locked §5). Blockers are still hard-refused.
 
-use kagi_domain::commit::CommitId;
-use kagi_git::{Actor, Backend, Operation, OperationPlan};
+//! Operation resolution and the plan/confirm JSON are the shared agent contract
+//! in [`kagi_git::api`] (#509) — the same code the CLI runs. This module owns
+//! only the MCP edge: the tool envelope, the server-side plan store, and the
+//! host-approval semantics.
+
+use kagi_git::api;
+use kagi_git::Backend;
 use serde_json::{json, Value};
 
 use crate::{Server, StoredPlan};
@@ -22,14 +27,9 @@ use crate::{Server, StoredPlan};
 /// as an `isError: true` tool result.
 type ToolResult = Result<Value, String>;
 
-/// The op set exposed over MCP — exactly what [`build_operation`] dispatches on.
-pub const SUPPORTED_OPS: &[&str] = &[
-    "checkout",
-    "create-branch",
-    "delete-branch",
-    "discard",
-    "reset",
-];
+/// The op set exposed over MCP. Re-exported from the shared contract so the CLI
+/// and MCP cannot advertise different operations (#509).
+pub use kagi_git::api::SUPPORTED_OPS;
 
 /// `kagi_confirm`'s list-time `destructiveHint`: the fold of
 /// `OperationPlan.destructive` (ADR-0004/0023) over [`SUPPORTED_OPS`] — true
@@ -44,7 +44,8 @@ pub const CONFIRM_DESTRUCTIVE: bool = true;
 pub const CONFIRM_NETWORK: bool = false;
 
 fn open(server: &Server) -> Result<Backend, String> {
-    Backend::discover(server.repo()).map_err(|e| e.to_string())
+    Backend::discover_with_policy(server.repo(), kagi_git::backend::ExecutionPolicy::mcp())
+        .map_err(|e| e.to_string())
 }
 
 /// Parse the `args` string array from a tool-call argument object.
@@ -59,64 +60,6 @@ fn string_args(args: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Build the [`Operation`] for `op_name` + positional `args`. Ported from
-/// `cli_main::build_operation` so the two agent-facing entry points support the
-/// exact same op set (checkout / create-branch / delete-branch / discard /
-/// reset). Deliberately NO force-push / reset --hard / clean op.
-pub fn build_operation(
-    backend: &Backend,
-    op_name: &str,
-    args: &[String],
-) -> Result<Operation, String> {
-    let need = |n: usize| -> Result<(), String> {
-        if args.len() < n {
-            Err(format!("`{}` needs {} argument(s)", op_name, n))
-        } else {
-            Ok(())
-        }
-    };
-    match op_name {
-        "checkout" => {
-            need(1)?;
-            Ok(Operation::Checkout {
-                branch: args[0].clone(),
-            })
-        }
-        "create-branch" => {
-            need(1)?;
-            let at = match args.get(1) {
-                Some(c) => CommitId(c.clone()),
-                None => backend
-                    .head_commit_id()
-                    .ok_or_else(|| "HEAD has no commit to branch from".to_string())?,
-            };
-            Ok(Operation::CreateBranch {
-                name: args[0].clone(),
-                at,
-            })
-        }
-        "delete-branch" => {
-            need(1)?;
-            Ok(Operation::DeleteBranch {
-                name: args[0].clone(),
-            })
-        }
-        "discard" => {
-            need(1)?;
-            Ok(Operation::Discard {
-                paths: args.to_vec(),
-            })
-        }
-        "reset" => {
-            need(1)?;
-            Ok(Operation::ResetCurrentToHead {
-                target: CommitId(args[0].clone()),
-            })
-        }
-        other => Err(format!("unsupported op '{}'", other)),
-    }
-}
-
 /// `kagi_plan(op, args)` — stage 1. Side-effect-free.
 pub fn plan(server: &mut Server, args: &Value) -> ToolResult {
     let op_name = args
@@ -127,26 +70,24 @@ pub fn plan(server: &mut Server, args: &Value) -> ToolResult {
     let op_args = string_args(args);
 
     let backend = open(server)?;
-    let op = build_operation(&backend, &op_name, &op_args)?;
+    let op = api::resolve_operation(&backend, &op_name, &op_args)?;
     // Planning never mutates the repo.
     let plan = backend.plan(&op).map_err(|e| e.to_string())?;
     let plan_id = plan.plan_id();
 
     server.plans.insert(
-        plan_id.clone(),
+        plan_id,
         StoredPlan {
             op: op_name.clone(),
             args: op_args.clone(),
         },
     );
 
-    Ok(json!({
-        "plan_id": plan_id,
-        "op": op_name,
-        "args": op_args,
-        "next": "call kagi_confirm(plan_id) to execute",
-        "plan": plan_body(&plan),
-    }))
+    // The shared envelope (identical to what `kagi plan` prints), plus the MCP
+    // edge's own next-step hint.
+    let mut out = api::plan_envelope(&op_name, &op_args, &plan);
+    out["next"] = json!("call kagi_confirm(plan_id) to execute");
+    Ok(out)
 }
 
 /// `kagi_confirm(plan_id)` — stage 2. Executes through `Backend::run`.
@@ -164,7 +105,7 @@ pub fn confirm(server: &mut Server, args: &Value) -> ToolResult {
         .ok_or_else(|| format!("unknown plan_id '{}' — call kagi_plan first", plan_id))?;
 
     let mut backend = open(server)?;
-    let op = build_operation(&backend, &stored.op, &stored.args)?;
+    let op = api::resolve_operation(&backend, &stored.op, &stored.args)?;
     // Re-plan against the repo NOW: a matching id proves nothing moved.
     let fresh = backend.plan(&op).map_err(|e| e.to_string())?;
 
@@ -181,40 +122,13 @@ pub fn confirm(server: &mut Server, args: &Value) -> ToolResult {
     }
 
     // The one true write path: preflight → execute → verify → oplog all happen
-    // inside `Backend::run`. Actor=mcp tags every entry this server writes.
-    backend.set_actor(Actor::Mcp);
-    let outcome = backend.run(&op, &fresh).map_err(|e| e.to_string())?;
-
-    // The oplog entry `run` just appended (newest-first tail of one).
-    let oplog: Value = kagi_git::read_oplog_tail(1)
-        .first()
-        .map(|e| serde_json::from_str(&kagi_git::entry_to_json(e)).unwrap_or(Value::Null))
-        .unwrap_or(Value::Null);
+    // inside `run_recorded`. Actor=mcp tags every entry this server writes, and
+    // the report carries THIS run's receipt, so a concurrently appended entry
+    // (another repo, another process) can never be echoed back as ours (#505).
+    let report = backend.run_recorded(&op, &fresh);
 
     // Drop the consumed plan so a plan_id can't be replayed.
     server.plans.remove(&plan_id);
 
-    Ok(json!({
-        "status": "ok",
-        "op": op.oplog_name(),
-        "plan_id": plan_id,
-        "outcome": format!("{:?}", outcome),
-        "oplog": oplog,
-    }))
-}
-
-/// Human/machine-readable plan block. Uses the domain types' `message_en()`
-/// renderers (the same strings the GUI/oplog use) so `kagi-domain` needs no
-/// serde derive — identical approach to `cli_main::plan_body`.
-fn plan_body(p: &OperationPlan) -> Value {
-    json!({
-        "title": p.title.message_en(),
-        "current": { "head": p.current.head, "dirty": p.current.dirty },
-        "predicted": { "head": p.predicted.head, "dirty": p.predicted.dirty },
-        "warnings": p.warnings.iter().map(|n| n.message_en()).collect::<Vec<_>>(),
-        "blockers": p.blockers.iter().map(|n| n.message_en()).collect::<Vec<_>>(),
-        "recovery": p.recovery.as_ref().map(|r| r.message_en()),
-        "disposition": format!("{:?}", p.disposition),
-        "destructive": p.destructive,
-    })
+    Ok(api::confirm_response(&op, &plan_id, &report))
 }

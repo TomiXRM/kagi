@@ -337,6 +337,7 @@ pub fn plan_delete_merged_branches(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,
@@ -357,7 +358,7 @@ pub fn plan_delete_merged_branches(
 /// global preflight failure (HEAD moved since planning) returns `Err`.
 /// A branch can appear in both `deleted` and `failed`: a completed remote
 /// deletion retains its recovery OID even when the later local deletion fails.
-pub fn execute_delete_merged_branches(
+pub(crate) fn execute_delete_merged_branches(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,

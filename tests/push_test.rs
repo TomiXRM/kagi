@@ -14,13 +14,16 @@
 //! | 6 | `test_push_no_force_in_args`         | execute_push never passes --force / --force-with-lease |
 //! | 7 | `test_push_local_unchanged_on_error` | local repo HEAD/WT untouched after push failure |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_push;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_push, plan_push};
+use kagi_git::plan_push;
 
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -143,6 +146,9 @@ fn remote_commit(r: &Repos, name: &str, content: &str, msg: &str) {
 /// Test 1: ahead 2 → push succeeds, remote ref = HEAD, preview_commits has 2 entries.
 #[test]
 fn test_push_ahead_two() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Make two local commits not yet pushed.
@@ -187,6 +193,9 @@ fn test_push_ahead_two() {
 /// Test 2: ahead 0 → plan has blocker.
 #[test]
 fn test_push_ahead_zero_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     // No local commits beyond remote — already up to date.
     let repo = Repository::open(&r.local).unwrap();
@@ -200,6 +209,9 @@ fn test_push_ahead_zero_blocker() {
 /// Test 3: no upstream + origin → set-upstream plan → execute sets upstream.
 #[test]
 fn test_push_set_upstream() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Create a new branch locally without tracking.
@@ -264,6 +276,9 @@ fn test_push_set_upstream() {
 /// 2026-07-23: "commits to push" showed 100 for a branch with 1 new commit).
 #[test]
 fn test_push_set_upstream_excludes_commits_already_on_remote() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Advance `main` on the remote via the `other` clone, then fetch so
@@ -297,6 +312,9 @@ fn test_push_set_upstream_excludes_commits_already_on_remote() {
 /// Test 4: non-FF (remote is ahead) → execute returns Err, stderr contains "rejected".
 #[test]
 fn test_push_non_ff_fails() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Advance the remote from "other" so our local is diverged.
@@ -330,6 +348,9 @@ fn test_push_non_ff_fails() {
 /// Test 5: detached HEAD → plan has blocker.
 #[test]
 fn test_push_detached_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Detach HEAD.
@@ -356,6 +377,9 @@ fn test_push_detached_blocker() {
 /// include any force flag as a string literal value (not in comments).
 #[test]
 fn test_push_no_force_in_args() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // Read the push-operation source (ops.rs was split into per-op modules; the
     // push pipeline now lives in crates/kagi-git/src/ops/push.rs after the Wave 3
     // pull_push split — issue #13 Phase 3 / ADR-0072 / ADR-0116).
@@ -366,7 +390,7 @@ fn test_push_no_force_in_args() {
 
     // Find the execute_push function section only (up to build_push_preview).
     let push_section_start = src
-        .find("pub fn execute_push")
+        .find("pub(crate) fn execute_push")
         .expect("execute_push not found");
     let push_section = &src[push_section_start..];
 
@@ -392,6 +416,9 @@ fn test_push_no_force_in_args() {
 /// Test 7: local repo HEAD and working tree untouched after push failure.
 #[test]
 fn test_push_local_unchanged_on_error() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
 
     // Make a local commit.
@@ -427,3 +454,6 @@ fn test_push_local_unchanged_on_error() {
         "working tree must be untouched after failed push"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

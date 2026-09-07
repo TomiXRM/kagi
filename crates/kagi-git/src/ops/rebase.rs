@@ -105,6 +105,7 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -120,7 +121,7 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
 /// Run `git rebase <onto>`. A conflict (non-zero exit, repo left in
 /// `RepositoryState::Rebase*`) is reported as [`RebaseOutcome::Conflicted`],
 /// not an `Err` — see the module doc.
-pub fn execute_rebase_current_onto(
+pub(crate) fn execute_rebase_current_onto(
     repo: &Repository,
     repo_path: &Path,
     onto: &str,

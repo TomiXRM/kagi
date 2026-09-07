@@ -63,6 +63,9 @@ fn suggestion(start: u32, end: u32, replacement: &str) -> Suggestion {
 
 #[test]
 fn apply_replaces_exactly_the_anchored_range() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -111,6 +114,9 @@ fn apply_replaces_exactly_the_anchored_range() {
 
 #[test]
 fn stale_range_after_plan_makes_execute_refuse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -135,8 +141,10 @@ fn stale_range_after_plan_makes_execute_refuse() {
     let err = backend
         .run(&op, &plan)
         .expect_err("stale range must refuse");
+    // #502 refuses at the shared preflight, retaining the concrete blocker.
+    assert!(matches!(&err, kagi_git::GitError::Preflight(_)));
     assert!(
-        err.to_string().contains("stale range"),
+        err.to_string().contains("src/lib.rs") && err.to_string().contains("changed since"),
         "refusal names the stale range, got: {err}"
     );
 
@@ -154,6 +162,9 @@ fn stale_range_after_plan_makes_execute_refuse() {
 
 #[test]
 fn apply_is_recorded_in_oplog() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -191,3 +202,6 @@ fn apply_is_recorded_in_oplog() {
         None => std::env::remove_var("KAGI_LOG_DIR"),
     }
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

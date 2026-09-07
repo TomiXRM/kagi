@@ -6,7 +6,31 @@
 //! remote branch / tag / stash information as a [`RepoSnapshot`], and
 //! computing the file-level diff for a single commit.
 //! Network transports (https/ssh) are not used in the MVP.
+//!
+//! [`backend::remove`] owns the recorded worktree-removal execution boundary,
+//! including panic classification and the exact persisted oplog receipt.
 
+//! # Mutation boundary (#566)
+//! Use [`Backend::run`] or a dedicated Backend method. Raw executors and step
+//! runners are unavailable outside this crate:
+//!
+//! ```compile_fail
+//! use kagi_git::execute_absorb;
+//! ```
+//! ```compile_fail
+//! use kagi_git::ops::execute_checkout;
+//! ```
+//! ```compile_fail
+//! use kagi_git::conflicts::execute_conflict_abort;
+//! ```
+//! ```compile_fail
+//! use kagi_git::stage_file;
+//! ```
+//! ```compile_fail
+//! use kagi_git::ops::run_post_create;
+//! ```
+
+pub mod api;
 pub mod authoring;
 pub mod backend;
 pub mod blame;
@@ -52,13 +76,17 @@ pub use checklist::{checklist, text_has_conflict_marker};
 pub use cli::{run_git, GitCliOutput};
 #[allow(unused_imports)]
 pub use conflicts::{
-    continue_blockers, detect_conflict_session, execute_conflict_abort, execute_conflict_continue,
-    execute_conflict_save, execute_conflict_skip, execute_merge_commit,
-    execute_stash_conflict_abort, plan_conflict_abort, plan_conflict_continue,
+    continue_blockers, detect_conflict_session, plan_conflict_abort, plan_conflict_continue,
     plan_conflict_continue_route, plan_conflict_skip, resolve_selected_file, side_labels,
-    stage_conflict_resolution, AbortOutcome, ConflictFile, ConflictKind, ConflictOp,
-    ConflictSession, ConflictStatus, ContinueBlocker, ContinueOutcome, ContinueResult,
-    ContinueRoute, SaveOutcome, SideLabel, SideLabels, SkipOutcome,
+    AbortOutcome, ConflictFile, ConflictKind, ConflictOp, ConflictSession, ConflictStatus,
+    ContinueBlocker, ContinueOutcome, ContinueResult, ContinueRoute, SaveOutcome, SideLabel,
+    SideLabels, SkipOutcome, SkipProgress,
+};
+#[allow(unused_imports)]
+pub(crate) use conflicts::{
+    execute_conflict_abort, execute_conflict_continue, execute_conflict_save,
+    execute_conflict_skip, execute_merge_commit, execute_stash_conflict_abort,
+    stage_conflict_resolution,
 };
 #[allow(unused_imports)]
 pub use diff::{
@@ -94,44 +122,44 @@ pub use oplog::{
     OpOutcome,
 };
 pub use ops::{
-    branch_checked_out_worktree_path, default_tracking_branch_name, execute_amend,
-    execute_checkout, execute_checkout_commit, execute_checkout_tracking_branch,
+    branch_checked_out_worktree_path, default_tracking_branch_name, plan_amend, plan_checkout,
+    plan_checkout_commit, plan_checkout_tracking_branch, plan_cherry_pick, plan_create_branch,
+    plan_create_branch_with_checkout, plan_create_worktree, plan_delete_branch,
+    plan_dir_file_resolution, plan_discard, plan_merge_branch, plan_merge_into_branch,
+    plan_open_worktree_for_branch, plan_pull, plan_pull_branch_ff, plan_pull_remote, plan_push,
+    plan_push_branch, plan_redo, plan_rename_branch, plan_revert, plan_set_upstream,
+    plan_stash_apply, plan_stash_drop, plan_stash_drop_remote, plan_stash_pop, plan_stash_push,
+    plan_undo, plan_undo_commit, pr_conflict_files, pr_conflict_text, preflight_check,
+    preflight_check_stash, validate_branch_rename, validate_worktree_path, AmendMode, AmendOutcome,
+    BranchRenameValidation, DirFileChoice, DirFilePlan, DiscardBackup, DiscardOutcome,
+    FetchOutcome, HistoryMoveOutcome, MergeIntoKind, MergeKind, OperationPlan, PrConflictFile,
+    PrConflictKind, PullOutcome, PushOutcome, StashPopOutcome, StateSummary, UndoOutcome,
+};
+#[allow(unused_imports)]
+pub(crate) use ops::{
+    execute_amend, execute_checkout, execute_checkout_commit, execute_checkout_tracking_branch,
     execute_cherry_pick, execute_create_branch, execute_create_worktree, execute_delete_branch,
-    execute_dir_file_resolution, execute_discard, execute_merge_branch, execute_merge_into_branch,
-    execute_merge_into_conflict, execute_open_worktree_for_branch, execute_pull,
-    execute_pull_branch_ff, execute_push, execute_push_branch, execute_redo, execute_rename_branch,
-    execute_revert, execute_set_upstream, execute_stash_apply, execute_stash_drop,
-    execute_stash_pop, execute_stash_push, execute_undo, execute_undo_commit, fetch_remote,
-    plan_amend, plan_checkout, plan_checkout_commit, plan_checkout_tracking_branch,
-    plan_cherry_pick, plan_create_branch, plan_create_branch_with_checkout, plan_create_worktree,
-    plan_delete_branch, plan_dir_file_resolution, plan_discard, plan_merge_branch,
-    plan_merge_into_branch, plan_open_worktree_for_branch, plan_pull, plan_pull_branch_ff,
-    plan_pull_remote, plan_push, plan_push_branch, plan_redo, plan_rename_branch, plan_revert,
-    plan_set_upstream, plan_stash_apply, plan_stash_drop, plan_stash_drop_remote, plan_stash_pop,
-    plan_stash_push, plan_undo, plan_undo_commit, pr_conflict_files, pr_conflict_text,
-    preflight_check, preflight_check_stash, validate_branch_rename, validate_worktree_path,
-    AmendMode, AmendOutcome, BranchRenameValidation, DirFileChoice, DirFilePlan, DiscardBackup,
-    DiscardOutcome, FetchOutcome, HistoryMoveOutcome, MergeIntoKind, MergeKind, OperationPlan,
-    PrConflictFile, PrConflictKind, PullOutcome, PushOutcome, StashPopOutcome, StateSummary,
-    UndoOutcome,
+    execute_discard, execute_merge_branch, execute_merge_into_branch, execute_merge_into_conflict,
+    execute_open_worktree_for_branch, execute_pull, execute_pull_branch_ff, execute_push,
+    execute_push_branch, execute_redo, execute_rename_branch, execute_revert, execute_set_upstream,
+    execute_stash_apply, execute_stash_drop, execute_stash_push, execute_undo, execute_undo_commit,
+    fetch_remote,
 };
 // PR review "suggested change" local apply (#351, ADR-0172).
 pub use kagi_domain::plan::SuggestionOutcome;
 pub use kagi_domain::suggestion::{parse_suggestion, Suggestion};
-pub use ops::{
-    capture_suggestion_context, execute_apply_suggestion, plan_apply_suggestion,
-    preflight_apply_suggestion,
-};
+#[allow(unused_imports)]
+pub(crate) use ops::execute_apply_suggestion;
+pub use ops::{capture_suggestion_context, plan_apply_suggestion, preflight_apply_suggestion};
 // Snapshots (working-tree savepoints under `refs/kagi/snapshots/`, ADR-0154).
+#[allow(unused_imports)]
+pub(crate) use ops::{create_snapshot, delete_snapshot, execute_restore_snapshot, prune_snapshots};
 pub use ops::{
-    create_snapshot, delete_snapshot, execute_restore_snapshot, list_snapshots,
-    plan_restore_snapshot, preflight_restore_snapshot, prune_snapshots, snapshot_exists,
+    list_snapshots, plan_restore_snapshot, preflight_restore_snapshot, snapshot_exists,
     verify_restore_snapshot, SnapshotEntry, DEFAULT_SNAPSHOT_CAP, SNAPSHOT_REF_PREFIX,
 };
 #[allow(unused_imports)]
-pub use ops::{
-    execute_absorb, plan_absorb, preflight_absorb, verify_absorb, DEFAULT_ABSORB_WINDOW,
-};
+pub use ops::{plan_absorb, preflight_absorb, verify_absorb, DEFAULT_ABSORB_WINDOW};
 #[allow(unused_imports)]
 pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
@@ -143,9 +171,10 @@ pub use resolution::{
 pub use snapshot::{snapshot, RepoSnapshot};
 #[allow(unused_imports)]
 pub use staging::{
-    commit_preview, execute_commit, plan_commit, stage_file, stage_files, staged_file_diff,
-    unstage_file, unstage_files, unstaged_file_diff, CommitPreview,
+    commit_preview, plan_commit, staged_file_diff, unstaged_file_diff, CommitPreview,
 };
+#[allow(unused_imports)]
+pub(crate) use staging::{execute_commit, stage_file, stage_files, unstage_file, unstage_files};
 #[allow(unused_imports)]
 pub use status::{working_tree_status, ChangeKind, FileStatus, WorkingTreeStatus};
 #[allow(unused_imports)]
@@ -209,6 +238,8 @@ pub enum GitError {
     /// A recorded attempt failed before execution. Display preserves the
     /// underlying error; callers can retain their preflight-specific UI label.
     Preflight(Box<GitError>),
+    /// CLI timeout/reap uncertainty: admission must not release on this error.
+    TerminationUnknown(String),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -237,7 +268,9 @@ impl std::fmt::Display for GitError {
                 p
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
-            GitError::Other(msg) => write!(f, "git error: {}", msg),
+            GitError::Other(msg) | GitError::TerminationUnknown(msg) => {
+                write!(f, "git error: {}", msg)
+            }
         }
     }
 }
@@ -374,3 +407,7 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

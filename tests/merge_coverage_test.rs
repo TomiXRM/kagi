@@ -13,6 +13,9 @@
 //!
 //! All repos live in `TempDir`s (no network, no writes to real repos).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_merge_branch;
 use std::path::Path;
 use std::process::Command;
 
@@ -103,6 +106,9 @@ fn init_repo() -> TempDir {
 /// working tree is stale" gap on the merge side.
 #[test]
 fn merge_fast_forward_execute_updates_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = init_repo();
     let dir = tmp.path();
 
@@ -130,8 +136,7 @@ fn merge_fast_forward_execute_updates_worktree() {
         "an ahead branch fast-forwards"
     );
 
-    let merged = backend
-        .execute_merge_branch("feature")
+    let merged = execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
         .expect("execute FF merge");
 
     // The ref advanced to exactly the feature tip (and is the returned oid).
@@ -180,6 +185,9 @@ fn merge_fast_forward_execute_updates_worktree() {
 /// one of the touched files has the correct content on disk afterwards.
 #[test]
 fn merge_bulk_clean_execute_lands_all_files_and_bounds_preview() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     const BASE: usize = 300;
     // feature edits f0..f259 (260 files); main edits f260..f299 (40 files).
     // Disjoint edits → a clean merge; the incoming diff (260 files) exceeds the
@@ -224,8 +232,7 @@ fn merge_bulk_clean_execute_lands_all_files_and_bounds_preview() {
         plan.preview_files.len()
     );
 
-    let merged = backend
-        .execute_merge_branch("feature")
+    let merged = execute_merge_branch(&git2::Repository::open(dir).unwrap(), "feature")
         .expect("execute merge");
 
     // Two-parent merge, current branch advanced, target untouched.
@@ -265,3 +272,6 @@ fn merge_bulk_clean_execute_lands_all_files_and_bounds_preview() {
         dangling_commits(dir)
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

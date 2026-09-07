@@ -140,6 +140,7 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -188,7 +189,7 @@ fn plan_lease_sha(plan: &OperationPlan) -> Option<&str> {
     }
 }
 
-pub fn execute_force_with_lease_push(
+pub(crate) fn execute_force_with_lease_push(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,

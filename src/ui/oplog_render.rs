@@ -42,6 +42,25 @@ use super::{format_hms, oplog_panel, theme as theme_mod};
 /// expanded row grows past it).
 const SUMMARY_ROW_H: f32 = 22.;
 
+/// Issue #548: above this many bytes of detail text the block stops being
+/// selectable.
+///
+/// gpui-component's `Inline::paint` recomputes a selection rectangle for EVERY
+/// character on EVERY paint while `selectable(true)` — even with nothing
+/// selected — and each one is a from-the-start scan of the wrapped line, so the
+/// cost grows with the square of the text. A real 158 KB abort error measured
+/// **9.7 s per draw**; the same payload not selectable, 4.6 ms. Under this
+/// threshold the whole block costs well under a millisecond, so ordinary
+/// entries keep issue #468's drag-select.
+///
+/// Nothing becomes unreachable: the row's copy button still writes the WHOLE
+/// entry to the clipboard, and a note says so.
+///
+/// ponytail: a size switch, not a fix in the dependency. The real repair is
+/// bounding `Inline::paint` to the visible glyphs upstream (#548 improvement 1);
+/// raise or drop this threshold once that lands.
+const SELECTABLE_DETAIL_MAX: usize = 4096;
+
 impl gpui::Render for oplog_panel::OpLogPanel {
     /// Render the Operation Log tab body (T-BP-004).
     ///
@@ -106,7 +125,7 @@ fn render_row(
     let outcome_color = match &entry.outcome {
         OpOutcome::Success { .. } => theme().color_success,
         OpOutcome::Partial { .. } | OpOutcome::Refused { .. } => theme().color_warning,
-        OpOutcome::Failed { .. } => theme().color_blocker,
+        OpOutcome::Unknown { .. } | OpOutcome::Failed { .. } => theme().color_blocker,
     };
     let outcome_label = SharedString::from(oplog_panel::outcome_summary(&entry.outcome));
     let time_label = SharedString::from(format_hms(entry.timestamp));
@@ -221,9 +240,9 @@ fn render_row(
 /// HTML text run; the clipboard copy keeps the exact alignment. Give the block
 /// its own escaper only if the column alignment turns out to matter on screen.
 fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
-    let html = SharedString::from(kagi_domain::message::message_to_html(
-        &oplog_panel::detail_lines(entry).join("\n"),
-    ));
+    let text = oplog_panel::detail_lines(entry).join("\n");
+    let selectable = text.len() <= SELECTABLE_DETAIL_MAX;
+    let html = SharedString::from(kagi_domain::message::message_to_html(&text));
     div()
         .id(("oplog-row-detail", i))
         .flex()
@@ -240,12 +259,20 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
         .on_mouse_down(MouseButton::Left, |_e, _w, cx| {
             cx.stop_propagation();
         })
+        .when(!selectable, |d| {
+            d.child(
+                div()
+                    .pb_1()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::OpLogDetailSelectionOff.t())),
+            )
+        })
         .child(
             gpui_component::text::TextView::html(
                 SharedString::from(format!("oplog-detail-{}-{}", entry.id, i)),
                 html,
             )
-            .selectable(true),
+            .selectable(selectable),
         )
         .into_any_element()
 }

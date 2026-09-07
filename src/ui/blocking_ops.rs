@@ -5,91 +5,29 @@
 //! operation, and return a result. The UI's `start_*` handlers call them via
 //! `cx.background_spawn`. None of them touch `&self`, `cx`, or `window`.
 
-use std::time::Instant;
-
 use kagi_git::{AmendMode, CommitId, Head, MergeKind, OperationPlan, PullOutcome, StateSummary};
 
 use crate::ui::i18n;
-use crate::ui::i18n::Msg;
 use crate::ui::settings::Settings;
 use crate::ui::{BranchPlanKind, BranchPlanModal, CheckoutPlanTarget};
 
 /// Open a [`kagi_git::Backend`] with the `auto_snapshot` setting applied
 /// (ADR-0154 / #335). Every blocking op opens through here so the automatic
 /// pre-destructive savepoint honours the user's toggle (default on).
-fn open_backend(repo_path: &std::path::Path) -> Result<kagi_git::Backend, kagi_git::GitError> {
-    let mut b = kagi_git::Backend::open(repo_path)?;
-    b.set_auto_snapshot(Settings::load().auto_snapshot());
-    Ok(b)
-}
-
-// W3-NOTIFY: blocking cores for pull / push
-//
-// Everything that may take seconds (repo open → preflight → execute →
-// verify snapshot) lives here, free of `&mut KagiApp`, so the UI path can
-// run it via `cx.background_spawn` while the headless path calls it inline.
-// ──────────────────────────────────────────────────────────────
-
-/// Blocking part of stash push (preflight → execute → verify). Stashing
-/// copies the working tree (and untracked files) into the stash, which can
-/// take a long time on large repos — running it on the UI thread looked
-/// like a total freeze (user-reported).
-pub(crate) fn stash_push_blocking(
+pub(crate) fn open_backend(
     repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    message: Option<String>,
-) -> Result<(String, StateSummary), String> {
-    let t0 = Instant::now();
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
-    // (run uses preflight_check_stash for stash ops: HEAD + stash-count guard).
-    let op = kagi_git::Operation::StashPush {
-        message: message.clone(),
-        include_untracked: true,
-    };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::StashPush, e))?;
-    let t_stash = t0.elapsed();
-    eprintln!(
-        "[kagi] executed: stash-push message={:?}",
-        message.unwrap_or_default()
-    );
-
-    // Light verify: the full reload that follows on the main thread already
-    // rebuilds the complete snapshot, so re-walking 10k commits here only
-    // doubled the wall-clock (user asked why stash took ~10s). Status + a
-    // stash-count check are enough to confirm the operation took effect.
-    let t1 = Instant::now();
-    let after = match repo.working_tree_status() {
-        Ok(status) => {
-            if !status.is_dirty() {
-                klog!("verified: working tree clean after stash-push");
-            } else {
-                klog!("verify: working tree NOT clean after stash-push");
-            }
-            let count = repo.stash_count().unwrap_or(0);
-            klog!("verified: stash count={}", count);
-            // resolve_head is crate-private; the predicted head from the
-            // plan is accurate here (stash does not move HEAD).
-            let head = plan.predicted.head.clone();
-            StateSummary {
-                head,
-                dirty: if status.is_dirty() {
-                    "dirty".into()
-                } else {
-                    "clean".into()
-                },
-            }
-        }
-        Err(_) => plan.predicted.clone(),
-    };
-    eprintln!(
-        "[kagi] async: stash-push timing stash={:.1}s verify={:.1}s",
-        t_stash.as_secs_f32(),
-        t1.elapsed().as_secs_f32()
-    );
-    Ok(("stashed working tree".to_string(), after))
+) -> Result<kagi_git::Backend, kagi_git::GitError> {
+    kagi_git::Backend::open_with_policy(repo_path, execution_policy())
 }
+
+pub(crate) fn execution_policy() -> kagi_git::backend::ExecutionPolicy {
+    kagi_git::backend::ExecutionPolicy::human(Settings::load().auto_snapshot())
+}
+
+mod discard;
+pub(crate) use discard::{discard_blocking, DiscardReport};
+
+// Background and headless hosts share these operation cores.
 
 /// Blocking part of pull. Returns (human summary, after-state) or an error
 /// message suitable for the oplog / modal.
@@ -507,174 +445,6 @@ pub(crate) fn commit_blocking(
     Ok((new_id.short().to_string(), after))
 }
 
-/// Blocking part of stash-pop (preflight + apply-then-drop). Re-snapshots HEAD
-/// for the after-state.
-pub(crate) fn stash_pop_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    stash_index: usize,
-) -> Result<(String, StateSummary, bool), String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
-    // in one place. run() runs preflight_check_stash (HEAD + stash count) for
-    // StashPop, so a concurrent stash push between plan and execute can't shift
-    // indices and pop the WRONG entry.
-    //
-    // The third tuple field is `stash_kept`: true when the apply conflicted
-    // and the stash entry was retained (#280). BOTH callers — start_pop and
-    // the sync confirm_pop — must branch on it; interpreting the outcome here,
-    // once, is what fixed the Enter path recording "applied and dropped" for
-    // a conflicted pop.
-    let op = kagi_git::Operation::StashPop { index: stash_index };
-    let outcome = repo
-        .run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Pop, e))?;
-    klog!("executed: stash-pop index={}", stash_index);
-
-    // issue #280: a conflicted apply is NOT a failure — the stashed content is
-    // in the working tree (with markers) — but the stash entry was kept, so the
-    // oplog/footer must say so instead of "applied and dropped".
-    if let kagi_git::OperationOutcome::StashPop(kagi_git::StashPopOutcome::ConflictedStashKept {
-        files,
-    }) = outcome
-    {
-        klog!(
-            "executed: stash-pop index={} — conflicts in {} file(s), stash kept",
-            stash_index,
-            files.len()
-        );
-        let after = StateSummary {
-            head: plan.current.head.clone(),
-            dirty: format!("{} conflicted (stash kept)", files.len()),
-        };
-        return Ok((Msg::StashPopConflictedKept.t().to_string(), after, true));
-    }
-
-    let after = StateSummary {
-        head: plan.current.head.clone(),
-        dirty: "changes restored (stash removed)".to_string(),
-    };
-    Ok(("applied and dropped".to_string(), after, false))
-}
-
-/// Blocking part of standalone stash drop (ADR-0087). Deletes the stash entry
-/// without touching the working tree; returns the dropped stash commit OID as
-/// the oplog recovery handle.
-pub(crate) fn stash_drop_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    stash_index: usize,
-) -> Result<(String, StateSummary), String> {
-    use i18n::Op::{Drop, Preflight};
-
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // run owns preflight and durable recovery recording, even if the UI tab
-    // disappears before the completion callback can present the result.
-    let outcome = repo
-        .run(&kagi_git::Operation::StashDrop { index: stash_index }, plan)
-        .map_err(|e| i18n::op_failed(if e.is_preflight() { Preflight } else { Drop }, e))?;
-    let kagi_git::OperationOutcome::StashDrop { oid: dropped_oid } = outcome else {
-        return Err("unexpected stash-drop outcome".to_string());
-    };
-    klog!(
-        "executed: stash-drop index={} oid={}",
-        stash_index,
-        dropped_oid
-    );
-
-    let after = StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("stash@{{{}}} deleted (oid {})", stash_index, dropped_oid),
-    };
-    Ok(("entry deleted".to_string(), after))
-}
-
-/// Blocking part of discard (W17-DISCARD, ADR-0046). Backup-then-discard scales
-/// with the working-tree content written, so it runs on the background path.
-/// The returned `after` carries the path→blob backup list (the recovery handle)
-/// into the oplog entry.
-///
-/// The third tuple element is `Some(error)` when the discard was only PARTIALLY
-/// applied (issue #281): the working tree was mutated but not every target was
-/// discarded. The caller must record the oplog entry with the after-state (which
-/// carries the backup blob SHAs) and reload, NOT report success.
-pub(crate) fn discard_blocking(
-    repo_path: &std::path::Path,
-    plan: &OperationPlan,
-    paths: &[String],
-) -> Result<(String, StateSummary, Option<String>), String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    // run() returns OperationOutcome::Discard(DiscardOutcome) which carries the
-    // backup-blob list (recovery handle) into the oplog.
-    let op = kagi_git::Operation::Discard {
-        paths: paths.to_vec(),
-    };
-    let outcome = match repo.run(&op, plan) {
-        Ok(kagi_git::OperationOutcome::Discard(d)) => d,
-        Ok(_) => return Err("discard: unexpected outcome variant".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Discard, e)),
-    };
-    let summary = outcome.oplog_summary();
-    klog!("executed: {}", summary);
-
-    // Verify: re-read status; targets must have left the unstaged set.
-    // #282: compare against `outcome.backups[].path` — the repo-relative paths the
-    // git layer actually acted on — not the raw UI strings, so both sides of the
-    // comparison went through the same normalization.
-    let mut leftover: Vec<String> = Vec::new();
-    match repo.working_tree_status() {
-        Ok(status) => {
-            let still: std::collections::HashSet<String> = status
-                .unstaged
-                .iter()
-                .map(|f| f.path.to_string_lossy().replace('\\', "/"))
-                .collect();
-            leftover = outcome
-                .backups
-                .iter()
-                .map(|b| b.path.clone())
-                .filter(|p| still.contains(p))
-                .collect();
-            if leftover.is_empty() {
-                eprintln!(
-                    "[kagi] verified: {} target(s) left the unstaged set",
-                    paths.len()
-                );
-            } else {
-                klog!("verify: {} target(s) still unstaged", leftover.len());
-            }
-        }
-        Err(e) => klog!("verify: status error: {}", e),
-    }
-
-    // #281: a leftover target means the discard was only partially applied — it
-    // must NOT be reported as a plain success.
-    let partial = outcome.error.clone().or_else(|| {
-        (!leftover.is_empty()).then(|| {
-            format!(
-                "discard verify failed: {} target(s) not discarded: {}",
-                leftover.len(),
-                leftover.join(", ")
-            )
-        })
-    });
-
-    // The after-state carries the recovery handle (path→blob list) into the oplog,
-    // partial or not.
-    let after = StateSummary {
-        head: plan.current.head.clone(),
-        dirty: summary,
-    };
-    let human = if outcome.backups.len() == 1 {
-        format!("{} discarded", outcome.backups[0].path)
-    } else {
-        format!("{} files discarded", outcome.backups.len())
-    };
-    Ok((human, after, partial))
-}
-
 /// Blocking part of amend (history rewrite: tree-build + commit-replace).
 /// Returns (summary-suffix, after, old, new) so the UI footer can render the
 /// 旧→新 SHA transition and the restore hint.
@@ -719,23 +489,23 @@ pub(crate) fn amend_blocking(
 /// Blocking part of delete-branch (preflight → ref delete). Lightweight, but
 /// kept on the background path for consistency with the other confirm flows.
 pub(crate) fn delete_branch_blocking(
-    repo_path: &std::path::Path,
+    owner: &crate::app::Attachment,
     plan: &OperationPlan,
     branch_name: &str,
-) -> Result<StateSummary, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
+) -> Result<kagi_git::backend::recording::RunReport, String> {
+    let mut repo = open_backend(&owner.path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    if repo.write_worktree_id().ok().as_ref() != owner.worktree.as_ref() || owner.worktree.is_none()
+    {
+        return Err("worktree identity changed; reopen the repository".into());
+    }
     let op = kagi_git::Operation::DeleteBranch {
         name: branch_name.to_string(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Delete, e))?;
-    klog!("executed: delete-branch {}", branch_name);
-
-    Ok(StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("branch '{}' deleted", branch_name),
-    })
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_ok() {
+        klog!("executed: delete-branch {}", branch_name);
+    }
+    Ok(report)
 }
 
 pub(crate) fn delete_remote_branch_blocking(

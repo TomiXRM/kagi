@@ -102,6 +102,7 @@ pub fn plan_checkout_tracking_branch(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: vec![format!(
@@ -115,7 +116,7 @@ pub fn plan_checkout_tracking_branch(
 }
 
 /// Create a local branch tracking `remote_branch` and check it out.
-pub fn execute_checkout_tracking_branch(
+pub(crate) fn execute_checkout_tracking_branch(
     repo: &Repository,
     remote_branch: &str,
     local_branch: &str,
@@ -314,6 +315,7 @@ pub fn plan_switch_to_latest(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,
@@ -324,7 +326,7 @@ pub fn plan_switch_to_latest(
 
 /// Execute "switch to latest": fetch, then switch to `branch_name`,
 /// fast-forwarding it to `remote_branch` when the move is a fast-forward.
-pub fn execute_switch_to_latest(
+pub(crate) fn execute_switch_to_latest(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,

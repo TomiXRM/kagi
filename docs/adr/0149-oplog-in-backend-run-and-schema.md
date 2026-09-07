@@ -56,6 +56,9 @@ consume them are later work.
   time. The UI remains its recorder: `record_op` still appends `Refused`.
 - Remaining non-run families (conflict resolution, terminal start and PR
   merge) still use `record_op_persist`. They are not migrated by this recovery.
+  **Superseded for PR merge and SSH pull by [ADR-0177](0177-transport-recording-boundary.md)**
+  (#501): both now record at their transport boundary, and that ADR carries the
+  full ownership table plus the remaining synchronous UI writers.
 - **2026-09-06 recovery:** stash drop now uses `Backend::run`, including stash
   list/HEAD preflight, trust and one durable full-OID result; it remains exempt
   from automatic snapshots because dropping a stash must not create a stash.
@@ -98,6 +101,18 @@ consume them are later work.
 
 ## Explicitly deferred (do NOT implement here)
 
+### Slice 1a addendum (#484)
+
+[ADR-0175](0175-app-remove-boundary.md) supersedes the UI-owned non-run writer
+only for worktree remove: recording is now in its Backend execution boundary,
+including open failure and refusal. `append_oplog_receipt` returns the assigned
+entry and the old append API delegates to it. `Unknown { after, evidence }` is
+an additive variant; old variant wire encodings are unchanged. Remove uses
+observed progress/verification and full recovery OIDs, not predicted after.
+This does not supply crash durability, multi-process locking or GC retention.
+
+### Remaining deferrals
+
 - **Snapshot / checkpoint strategy** — no `snapshot` field, no ref-set capture.
   A separate future issue owns point-in-time restore.
 - **Per-repo oplog files** — the single `~/.kagi/operations.jsonl` stays; no
@@ -122,3 +137,19 @@ consume them are later work.
   new non-run mutating subsystem is added and forgets `record_op_persist`, it
   loses log coverage (never a double-record) — a known, bounded risk until those
   subsystems join the pipeline.
+
+### Test-process storage confinement (#573)
+
+When runtime `CARGO_MANIFEST_DIR` is present, oplog path resolution requires a
+nonempty `KAGI_LOG_DIR`; it must return `tests must set KAGI_LOG_DIR` instead of
+falling back to the user's home directory. This is a runtime environment check,
+not `cfg(test)`, so integration-test consumers of the production library receive
+the same protection. An explicit log directory keeps normal durable recording
+and receipts enabled. Normal launches without the Cargo marker retain the
+existing home-directory fallback.
+
+Git fixtures use `tests/support/isolated.rs` to run each exact test in a child
+with its own temporary log directory. The parent never changes its environment
+and retains the directory until the child exits. The shared helper is also the
+fixture route for the raw-executor caller migration in #566/#575. Tests must not
+remove the Cargo marker or disable oplog recording to bypass this protection.

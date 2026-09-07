@@ -53,6 +53,9 @@ fn setup() -> TempDir {
 
 #[test]
 fn links_a_squash_merged_branch_to_the_commit_that_replayed_it() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let td = setup();
     let repo = git2::Repository::open(td.path()).unwrap();
     let links = kagi_git::ops::collect_squash_links(&repo).unwrap();
@@ -81,6 +84,9 @@ fn links_a_squash_merged_branch_to_the_commit_that_replayed_it() {
 /// be looser than git on an irreversible delete.
 #[test]
 fn a_whitespace_only_difference_is_not_a_squash_merge() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let td = TempDir::new().unwrap();
     let p = td.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -151,6 +157,9 @@ fn a_whitespace_only_difference_is_not_a_squash_merge() {
 /// net-zero branch matches every `--allow-empty` commit — and each other.
 #[test]
 fn a_net_zero_branch_is_not_squash_merged_by_an_empty_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let td = TempDir::new().unwrap();
     let p = td.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -178,3 +187,6 @@ fn a_net_zero_branch_is_not_squash_merged_by_an_empty_commit() {
         links
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -6,6 +6,12 @@
 //! each test.  This project's own repository and any other existing repository
 //! are **never** touched.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_checkout, execute_checkout_commit, execute_cherry_pick, execute_create_branch,
+    execute_create_tag, execute_stash_apply, execute_stash_push,
+};
 use std::path::Path;
 use std::process::Command;
 
@@ -14,9 +20,7 @@ use tempfile::TempDir;
 
 use kagi_git::{
     ops::{
-        execute_checkout, execute_checkout_commit, execute_cherry_pick, execute_create_branch,
-        execute_create_tag, execute_stash_apply, execute_stash_push, plan_checkout,
-        plan_checkout_commit, plan_cherry_pick, plan_create_branch,
+        plan_checkout, plan_checkout_commit, plan_cherry_pick, plan_create_branch,
         plan_create_branch_with_checkout, plan_create_tag, plan_stash_apply, plan_stash_push,
         preflight_check, preflight_check_stash,
     },
@@ -89,6 +93,9 @@ fn build_two_branch_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
 
 #[test]
 fn test_plan_clean_repo_no_blockers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -107,6 +114,9 @@ fn test_plan_clean_repo_no_blockers() {
 
 #[test]
 fn test_execute_clean_repo_moves_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -144,6 +154,9 @@ fn test_execute_clean_repo_moves_head() {
 // a safe checkout that preserves the edit and moves HEAD.
 #[test]
 fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -185,6 +198,9 @@ fn test_plan_dirty_unstaged_non_overlapping_no_blocker_carries_over() {
 // with the checkout either → no blocker.
 #[test]
 fn test_plan_dirty_staged_non_overlapping_no_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -205,6 +221,9 @@ fn test_plan_dirty_staged_non_overlapping_no_blocker() {
 // checkout would be refused — so the plan must block and point at stash.
 #[test]
 fn test_plan_dirty_overlapping_has_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, _repo) = build_two_branch_repo(&tmp);
 
@@ -240,6 +259,9 @@ fn test_plan_dirty_overlapping_has_blocker() {
 
 #[test]
 fn test_plan_untracked_only_no_blocker_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -261,6 +283,9 @@ fn test_plan_untracked_only_no_blocker_warning() {
 
 #[test]
 fn test_execute_untracked_only_file_remains() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -292,6 +317,9 @@ fn test_execute_untracked_only_file_remains() {
 
 #[test]
 fn test_plan_nonexistent_branch_has_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -318,6 +346,9 @@ fn test_plan_nonexistent_branch_has_blocker() {
 
 #[test]
 fn test_plan_already_head_has_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -345,6 +376,9 @@ fn test_plan_already_head_has_blocker() {
 
 #[test]
 fn test_preflight_aborts_when_head_changed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -371,6 +405,9 @@ fn test_preflight_aborts_when_head_changed() {
 
 #[test]
 fn test_execute_nonexistent_branch_returns_error() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -387,6 +424,9 @@ fn test_execute_nonexistent_branch_returns_error() {
 
 #[test]
 fn test_plan_recovery_mentions_original_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -467,6 +507,9 @@ fn build_readme_conflict_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository,
 
 #[test]
 fn test_checkout_commit_plan_warns_and_execute_detaches_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
     let target = branch_commit_id(&repo, "feature/one");
@@ -512,6 +555,9 @@ fn test_checkout_commit_plan_warns_and_execute_detaches_head() {
 
 #[test]
 fn test_checkout_commit_dirty_safe_checkout_fails_without_moving_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo, target) = build_readme_conflict_repo(&tmp);
 
@@ -553,6 +599,9 @@ fn test_checkout_commit_dirty_safe_checkout_fails_without_moving_head() {
 
 #[test]
 fn test_checkout_commit_preflight_aborts_when_head_changed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
     let target = branch_commit_id(&repo, "feature/one");
@@ -573,6 +622,9 @@ fn test_checkout_commit_preflight_aborts_when_head_changed() {
 
 #[test]
 fn test_create_branch_normal_creates_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -614,6 +666,9 @@ fn test_create_branch_normal_creates_branch() {
 
 #[test]
 fn test_create_branch_head_and_wt_unchanged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -663,6 +718,9 @@ fn test_create_branch_head_and_wt_unchanged() {
 
 #[test]
 fn test_create_branch_same_name_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -689,6 +747,9 @@ fn test_create_branch_same_name_blocker() {
 
 #[test]
 fn test_create_branch_invalid_name_with_space() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -712,6 +773,9 @@ fn test_create_branch_invalid_name_with_space() {
 
 #[test]
 fn test_create_branch_invalid_name_double_dot() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -726,6 +790,9 @@ fn test_create_branch_invalid_name_double_dot() {
 
 #[test]
 fn test_create_branch_invalid_name_leading_dash() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -742,6 +809,9 @@ fn test_create_branch_invalid_name_leading_dash() {
 
 #[test]
 fn test_create_branch_empty_name_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -756,6 +826,9 @@ fn test_create_branch_empty_name_blocker() {
 
 #[test]
 fn test_create_branch_with_checkout_predicts_new_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -776,6 +849,9 @@ fn test_create_branch_with_checkout_predicts_new_head() {
 
 #[test]
 fn test_execute_create_branch_does_not_overwrite_existing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -822,6 +898,9 @@ fn test_execute_create_branch_does_not_overwrite_existing() {
 
 #[test]
 fn test_create_tag_normal_creates_tag() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
 
@@ -852,6 +931,9 @@ fn test_create_tag_normal_creates_tag() {
 
 #[test]
 fn test_create_tag_same_name_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
     let at = head_commit_id(&repo);
@@ -867,6 +949,9 @@ fn test_create_tag_same_name_blocker() {
 
 #[test]
 fn test_create_tag_empty_name_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
     let at = head_commit_id(&repo);
@@ -880,6 +965,9 @@ fn test_create_tag_empty_name_blocker() {
 
 #[test]
 fn test_execute_create_tag_does_not_overwrite_existing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo) = build_two_branch_repo(&tmp);
     let at = head_commit_id(&repo);
@@ -926,6 +1014,9 @@ fn build_clean_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
 
 #[test]
 fn test_stash_push_normal_cleans_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -960,6 +1051,9 @@ fn test_stash_push_normal_cleans_working_tree() {
 
 #[test]
 fn test_stash_push_blocker_on_clean_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -984,6 +1078,9 @@ fn test_stash_push_blocker_on_clean_repo() {
 
 #[test]
 fn test_stash_push_untracked_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -1007,6 +1104,9 @@ fn test_stash_push_untracked_warning() {
 
 #[test]
 fn test_stash_apply_normal_restores_content_stash_remains() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -1054,6 +1154,9 @@ fn test_stash_apply_normal_restores_content_stash_remains() {
 
 #[test]
 fn test_stash_apply_blocker_dirty_working_tree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -1087,6 +1190,9 @@ fn test_stash_apply_blocker_dirty_working_tree() {
 
 #[test]
 fn test_stash_apply_blocker_index_out_of_range() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -1112,6 +1218,9 @@ fn test_stash_apply_blocker_index_out_of_range() {
 
 #[test]
 fn test_stash_push_apply_round_trip_content_matches() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -1155,6 +1264,9 @@ fn test_stash_push_apply_round_trip_content_matches() {
 
 #[test]
 fn test_preflight_check_stash_detects_count_change() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, mut repo) = build_clean_repo(&tmp);
 
@@ -1230,6 +1342,9 @@ fn build_cherry_pick_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, Com
 
 #[test]
 fn test_cherry_pick_plan_normal_no_blockers() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
     let _ = repo_dir;
@@ -1277,6 +1392,9 @@ fn test_cherry_pick_plan_normal_no_blockers() {
 
 #[test]
 fn test_cherry_pick_execute_normal() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
 
@@ -1379,6 +1497,9 @@ fn test_cherry_pick_execute_normal() {
 
 #[test]
 fn test_cherry_pick_plan_conflict_blocker_wt_intact() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-q", "-b", "main", "."]);
@@ -1454,6 +1575,9 @@ fn test_cherry_pick_plan_conflict_blocker_wt_intact() {
 
 #[test]
 fn test_cherry_pick_plan_dirty_wt_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
 
@@ -1493,6 +1617,9 @@ fn test_cherry_pick_plan_dirty_wt_blocker() {
 
 #[test]
 fn test_cherry_pick_plan_merge_commit_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-q", "-b", "main", "."]);
@@ -1563,6 +1690,9 @@ fn test_cherry_pick_plan_merge_commit_blocker() {
 
 #[test]
 fn test_cherry_pick_plan_head_same_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_repo_dir, repo, _feature_id) = build_cherry_pick_repo(&tmp);
 
@@ -1592,6 +1722,9 @@ fn test_cherry_pick_plan_head_same_blocker() {
 
 #[test]
 fn test_cherry_pick_plan_already_applied_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
 
@@ -1635,6 +1768,9 @@ fn test_cherry_pick_plan_already_applied_blocker() {
 
 #[test]
 fn test_cherry_pick_plan_preview_files_match() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
     let _ = repo_dir;
@@ -1671,6 +1807,9 @@ fn test_cherry_pick_plan_preview_files_match() {
 
 #[test]
 fn test_cherry_pick_plan_does_not_change_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (repo_dir, repo, feature_id) = build_cherry_pick_repo(&tmp);
 
@@ -1732,7 +1871,10 @@ fn test_cherry_pick_plan_does_not_change_repo() {
 // new files.  Same ref-ordering pitfall as the pull FF/merge paths.
 #[test]
 fn test_cherry_pick_updates_modified_existing_file() {
-    use kagi_git::{execute_cherry_pick, CommitId};
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::CommitId;
     let tmp = tempfile::TempDir::new().unwrap();
     let dir = tmp.path();
     git(dir, &["init", "-q", "-b", "main", "."]);
@@ -1781,6 +1923,9 @@ fn test_cherry_pick_updates_modified_existing_file() {
 /// content instead of the cherry-pick refusing.
 #[test]
 fn test_cherry_pick_dirty_safe_checkout_refuses_and_preserves_user_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
     git(d, &["init", "-q", "-b", "main", "."]);
@@ -1824,3 +1969,6 @@ fn test_cherry_pick_dirty_safe_checkout_refuses_and_preserves_user_content() {
         "HEAD must not move when the cherry-pick refuses"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

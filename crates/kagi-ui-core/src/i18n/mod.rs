@@ -164,9 +164,15 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    AppNoticeDismiss,
+    AppReconcileAcknowledge,
+    AppReconcileInspect,
+    AppReconcileConfirm,
     // ── Generic guards / footers ────────────────────────────────────
     /// "another operation is in progress" (was "別の操作が実行中です").
     OpInProgress,
+    RemoteOpAwaitingCompletion,
+    TransportRetryHeld,
     NoRepoOpen,
     NoTabsOpen,
     NoCommitSelected,
@@ -316,6 +322,9 @@ pub enum Msg {
     NoOperationsYet,
     /// Operation Log row: tooltip on the per-row copy button (issue #468).
     OpLogCopyEntry,
+    /// Operation Log row: shown above a huge expanded detail block, whose text
+    /// selection is switched off to keep the draw cheap (issue #548).
+    OpLogDetailSelectionOff,
 
     // ── Command palette (issue #352) ─────────────────────────────────
     /// Placeholder text in the palette's search box.
@@ -401,6 +410,8 @@ pub enum Msg {
     EditorIncomingFirst,
     // ── W33-CONFLICT-DASHBOARD: Right-panel dashboard + escape hatch ──
     ConflictDashHeader,
+    ConflictRebaseApplying,
+    ConflictRebaseCommits,
     ConflictRoleCurrent,
     ConflictRoleIncoming,
     ConflictGitTermHint,
@@ -721,6 +732,8 @@ pub enum Msg {
     /// Confirm button on the rebase modal, `{}` = branch.
     PlanRebaseOnto,
     /// Delete-remote-branch confirm, and its armed second stage.
+    PlanDeleteBranch,
+    PlanDeleteBranchArmed,
     PlanDeleteRemoteBranch,
     PlanDeleteRemoteBranchArmed,
     /// Reset-current confirm, and its armed second stage.
@@ -979,8 +992,20 @@ impl Msg {
             (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
 
             // ── Generic guards ──────────────────────────────────────
+            (En, AppNoticeDismiss) => "Dismiss",
+            (En, AppReconcileInspect) => "Inspect current state",
+            (Ja, AppReconcileInspect) => "現在の状態を照会",
+            (En, AppReconcileConfirm) => "Acknowledge observation",
+            (Ja, AppReconcileConfirm) => "照会結果を確認",
+            (En, AppReconcileAcknowledge) => "Execution stopped. Acknowledge this read-only observation to allow a new plan (no operation is retried).",
+            (Ja, AppReconcileAcknowledge) => "実行は停止済みです。この照会結果を確認すると新しい計画を作成できます（操作は再実行しません）。",
+            (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
+            (En, TransportRetryHeld) => "Retry is disabled because the operation may have changed remote state. Inspect it before restarting Kagi.",
+            (Ja, TransportRetryHeld) => "remote の状態が変わった可能性があるため、再実行を停止しています。状態を確認してから Kagi を再起動してください。",
+            (En, RemoteOpAwaitingCompletion) => "Waiting to confirm that the remote operation stopped. Do not retry it; inspect the remote state and completion token.",
+            (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
             (En, NoRepoOpen) => "no repository is open",
             (Ja, NoRepoOpen) => "リポジトリが開かれていません",
             (En, NoTabsOpen) => "no open tabs",
@@ -1194,6 +1219,12 @@ impl Msg {
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
             (En, OpLogCopyEntry) => "Copy entry",
             (Ja, OpLogCopyEntry) => "エントリをコピー",
+            (En, OpLogDetailSelectionOff) => {
+                "Long entry: text selection is off. The copy button copies the full text."
+            }
+            (Ja, OpLogDetailSelectionOff) => {
+                "長いエントリのため文字選択は無効です。全文はコピーボタンから取得できます。"
+            }
 
             // ── Misc footers ────────────────────────────────────────
             (En, Refreshed) => "Refreshed",
@@ -1324,6 +1355,10 @@ impl Msg {
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",
+            (En, ConflictRebaseApplying) => "Applying",
+            (Ja, ConflictRebaseApplying) => "適用中",
+            (En, ConflictRebaseCommits) => "commits",
+            (Ja, ConflictRebaseCommits) => "コミット",
             (En, ConflictRoleCurrent) => "Current",
             (Ja, ConflictRoleCurrent) => "現在の側",
             (En, ConflictRoleIncoming) => "Incoming",
@@ -1763,6 +1798,10 @@ impl Msg {
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
             (Ja, PlanRebaseOnto) => "{} へ rebase",
+            (En, PlanDeleteBranch) => "Delete",
+            (Ja, PlanDeleteBranch) => "削除",
+            (En, PlanDeleteBranchArmed) => "Really delete — keep recovery ref",
+            (Ja, PlanDeleteBranchArmed) => "本当に削除する — 復元用 ref を保持",
             (En, PlanDeleteRemoteBranch) => "Delete remote branch",
             (Ja, PlanDeleteRemoteBranch) => "remote branch を削除",
             (En, PlanDeleteRemoteBranchArmed) => "\u{26a0} Really delete — cannot be undone",

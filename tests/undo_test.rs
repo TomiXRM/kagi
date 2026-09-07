@@ -13,13 +13,16 @@
 //! | 7 | `test_plan_undo_commit_detached_blocker` | detached HEAD → plan returns blocker |
 //! | 8 | `test_undo_commit_no_upstream_allowed` | local branch without upstream → undo is allowed |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_undo_commit;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_undo_commit, plan_undo_commit, working_tree_status};
+use kagi_git::{plan_undo_commit, working_tree_status};
 
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -146,6 +149,9 @@ fn setup_with_remote() -> RepoWithRemote {
 
 #[test]
 fn test_undo_commit_normal() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     // Add a second commit that we will undo.
@@ -193,6 +199,9 @@ fn test_undo_commit_normal() {
 
 #[test]
 fn test_undo_commit_staged_remain() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     // Commit a new file.
@@ -243,6 +252,9 @@ fn test_undo_commit_staged_remain() {
 
 #[test]
 fn test_undo_commit_round_trip() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     write_file(&r.path, "round.txt", "round trip\n");
@@ -277,6 +289,9 @@ fn test_undo_commit_round_trip() {
 
 #[test]
 fn test_plan_undo_commit_pushed_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_with_remote();
 
     // The current HEAD has been pushed (upstream == HEAD).
@@ -308,6 +323,9 @@ fn test_plan_undo_commit_pushed_blocker() {
 
 #[test]
 fn test_plan_undo_commit_merge_commit_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
@@ -362,6 +380,9 @@ fn test_plan_undo_commit_merge_commit_blocker() {
 
 #[test]
 fn test_plan_undo_commit_root_commit_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     // HEAD is the very first commit (no parent).
@@ -392,6 +413,9 @@ fn test_plan_undo_commit_root_commit_blocker() {
 
 #[test]
 fn test_plan_undo_commit_detached_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     // Add a second commit so detached HEAD has a real sha to point to.
@@ -430,6 +454,9 @@ fn test_plan_undo_commit_detached_blocker() {
 
 #[test]
 fn test_undo_commit_no_upstream_allowed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     // Add a second commit on a local-only branch (no remote, no upstream).
@@ -469,3 +496,6 @@ fn test_undo_commit_no_upstream_allowed() {
         "UndoOutcome.now_at must be parent SHA"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

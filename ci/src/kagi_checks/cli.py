@@ -21,10 +21,13 @@ from kagi_checks.rules import (
     ManifestRule,
     Ratchet,
     Rule,
+    is_excluded,
     ui_lateral_crate_count,
     ui_lateral_hits,
     ui_lateral_manifest_hits,
 )
+from kagi_checks.skill_refs import issues as skill_ref_issues
+from kagi_checks.skill_refs import selftest as skill_ref_selftest
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -138,6 +141,14 @@ def check_ui_git2() -> int:
     return _run_rule(_rule("ui-git2"))
 
 
+def check_app_layering() -> int:
+    return _run_rule(_rule("app-layering"))
+
+
+def check_fault_test_only() -> int:
+    return _run_rule(_rule("fault-test-only"))
+
+
 def check_mcp_gpui() -> int:
     status = _run_rule(_rule("mcp-gpui"))
     return status | _run_manifest_rule(_manifest_rule("mcp-gpui-manifest"))
@@ -156,6 +167,10 @@ def check_modal_lists() -> int:
     return _run_rule(_rule("modal-lists"))
 
 
+def check_e2e_window_helper() -> int:
+    return _run_rule(_rule("e2e-window-helper"))
+
+
 def check_klog_raw() -> int:
     return _run_rule(_rule("klog-raw"))
 
@@ -163,6 +178,16 @@ def check_klog_raw() -> int:
 def check_shell_hygiene() -> int:
     status = _run_rule(_rule("shell-hygiene"))
     return status | _run_rule(_rule("uv-invocation"))
+
+
+def check_skill_refs() -> int:
+    issues = skill_ref_issues(ROOT)
+    if not issues:
+        print("OK: skill-refs — canonical verification skill references exist.")
+        return 0
+    for issue in issues:
+        print(f"::error::{issue}")
+    return 1
 
 
 # ── Custom check ────────────────────────────────────────────────────────────
@@ -240,6 +265,14 @@ def selftest() -> int:
                     f"(false positive):\n{sample}"
                 )
                 failed = True
+        for path, expected_exclusion in gate.path_samples if isinstance(gate, Rule) else ():
+            actual = is_excluded(Path(path), gate.excludes)
+            if actual != expected_exclusion:
+                print(
+                    f"::error::gate {gate.name} path sample {path!r} exclusion was "
+                    f"{actual}, expected {expected_exclusion}"
+                )
+                failed = True
     for ratchet in RATCHETS:
         if not (ROOT / ratchet.baseline).exists():
             print(f"::error::ratchet {ratchet.name} has no baseline at {ratchet.baseline}.")
@@ -258,10 +291,13 @@ def selftest() -> int:
                     f"expected, in the sample:\n{_excerpt(sample)}"
                 )
                 failed = True
+    for issue in skill_ref_selftest():
+        print(f"::error::skill-refs selftest: {issue}")
+        failed = True
     if failed:
         return 1
     print(
-        f"OK: {len(RULES) + len(MANIFEST_RULES)} gates match their samples; "
+        f"OK: {len(RULES) + len(MANIFEST_RULES) + 1} gates match their samples; "
         f"{len(RATCHETS)} ratchet counters match their expected counts."
     )
     return 0
@@ -275,6 +311,7 @@ def check_all() -> int:
         status |= _run_rule(rule)
     for manifest_rule in MANIFEST_RULES:
         status |= _run_manifest_rule(manifest_rule)
+    status |= check_skill_refs()
     status |= check_ui_lateral()
     for ratchet in RATCHETS:
         status |= _run_ratchet(ratchet, False)

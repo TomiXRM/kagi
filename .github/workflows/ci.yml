@@ -10,9 +10,9 @@ name: ci
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, dev]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, dev]
   workflow_dispatch:
 
 permissions:
@@ -42,6 +42,8 @@ jobs:
         check:
           # UI is git2-free (ADR-0072 / ADR-0078)
           - ui-git2
+          - app-layering
+          - fault-test-only
           # kagi-mcp is gpui-free (ADR-0163 / #331)
           - mcp-gpui
           # [kagi] contract lines go through klog!. Two gates on purpose:
@@ -62,6 +64,10 @@ jobs:
           - modal-lists
           # gates stay in one dialect (this file included)
           - shell-hygiene
+          # GUI E2E windows go through the budgeted helper (#549)
+          - e2e-window-helper
+          # canonical verification recipe references must remain real files (#544)
+          - skill-refs
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

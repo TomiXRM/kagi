@@ -2,40 +2,105 @@ use kagi_domain::history::HistoryEntry;
 use kagi_domain::plan_note::HistoryMoveDir;
 
 use super::{ops, Backend, GitError, OperationOutcome, OperationPlan};
+use crate::oplog::{append_oplog_receipt, OpLogEntry};
+use std::path::PathBuf;
+
+#[derive(Clone, Debug)]
+pub enum Recording {
+    Appended {
+        path: PathBuf,
+        entry: OpLogEntry,
+    },
+    Failed {
+        attempted: OpLogEntry,
+        error: String,
+    },
+}
+impl Recording {
+    pub fn entry(&self) -> &OpLogEntry {
+        match self {
+            Self::Appended { entry, .. } => entry,
+            Self::Failed { attempted, .. } => attempted,
+        }
+    }
+}
+
+pub struct RunReport {
+    pub result: Result<OperationOutcome, GitError>,
+    pub recording: Recording,
+    pub stash: Option<super::stash::StashEvidence>,
+}
+
+/// Single append implementation, shared with factories that fail before open
+/// and with the transport boundaries outside this crate (`src/remote`, #501).
+/// Every recorded mutation goes through here — never a second writer.
+pub fn finalize(entry: OpLogEntry) -> Recording {
+    match append_oplog_receipt(&entry) {
+        Ok((path, entry)) => Recording::Appended { path, entry },
+        Err(error) => Recording::Failed {
+            attempted: entry,
+            error: error.to_string(),
+        },
+    }
+}
 
 /// Map a `Backend::run` dispatch result into the oplog [`OpOutcome`] (ADR-0149).
 ///
-/// A partially-applied discard (#281) becomes [`OpOutcome::Partial`]; any other
-/// `Ok` becomes [`OpOutcome::Success`] with the plan's predicted after-state;
-/// an `Err` becomes [`OpOutcome::Failed`]. Pure + `pub` so the mapping (notably
-/// the `is_partial` branch) is unit-testable without forcing a real repo
-/// failure.
+/// A partially-applied discard (#281), or a supplied partial after-state from
+/// dispatch, becomes [`OpOutcome::Partial`]; any other `Ok` becomes
+/// [`OpOutcome::Success`] with the plan's predicted after-state; an `Err`
+/// becomes [`OpOutcome::Failed`]. Pure + `pub` so the mapping (notably the
+/// `is_partial` branch) is unit-testable without forcing a real repo failure.
 pub fn oplog_outcome_from(
     result: &Result<OperationOutcome, GitError>,
     predicted: &ops::StateSummary,
+    partial_after: Option<ops::StateSummary>,
 ) -> crate::oplog::OpOutcome {
-    match result {
-        Ok(OperationOutcome::Discard(d)) if d.is_partial() => crate::oplog::OpOutcome::Partial {
-            after: predicted.clone(),
-            error: d.error.clone().unwrap_or_default(),
+    match (result, partial_after) {
+        (Err(e), Some(after)) => crate::oplog::OpOutcome::Partial {
+            after,
+            error: e.to_string(),
         },
+        (Ok(OperationOutcome::Discard(d)), _) if d.is_partial() => {
+            crate::oplog::OpOutcome::Partial {
+                after: predicted.clone(),
+                error: d.error.clone().unwrap_or_default(),
+            }
+        }
         // #418: persist the restore's recovery handle (savepoint id) in `after`.
-        Ok(OperationOutcome::RestoreSnapshot { savepoint }) => crate::oplog::OpOutcome::Success {
+        (Ok(OperationOutcome::RestoreSnapshot { savepoint }), _) => {
+            crate::oplog::OpOutcome::Success {
+                after: ops::StateSummary {
+                    head: predicted.head.clone(),
+                    dirty: format!("savepoint {savepoint}"),
+                },
+            }
+        }
+        (
+            Ok(OperationOutcome::DeleteBranch {
+                name,
+                tip,
+                reference,
+            }),
+            _,
+        ) => crate::oplog::OpOutcome::Success {
             after: ops::StateSummary {
                 head: predicted.head.clone(),
-                dirty: format!("savepoint {savepoint}"),
+                dirty: format!(
+                    "branch '{name}' deleted (tip {tip}); restore: git branch {name} {reference}"
+                ),
             },
         },
-        Ok(OperationOutcome::StashDrop { oid }) => crate::oplog::OpOutcome::Success {
+        (Ok(OperationOutcome::StashDrop { oid }), _) => crate::oplog::OpOutcome::Success {
             after: ops::StateSummary {
                 head: predicted.head.clone(),
                 dirty: format!("stash entry deleted (oid {oid})"),
             },
         },
-        Ok(_) => crate::oplog::OpOutcome::Success {
+        (Ok(_), _) => crate::oplog::OpOutcome::Success {
             after: predicted.clone(),
         },
-        Err(e) => crate::oplog::OpOutcome::Failed {
+        (Err(e), _) => crate::oplog::OpOutcome::Failed {
             error: e.to_string(),
         },
     }
@@ -51,12 +116,23 @@ impl Backend {
         op: &str,
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
-    ) {
+    ) -> Recording {
+        self.record_run_oplog_with_backups(op, before, outcome, Vec::new())
+    }
+
+    pub(super) fn record_run_oplog_with_backups(
+        &self,
+        op: &str,
+        before: &ops::StateSummary,
+        outcome: crate::oplog::OpOutcome,
+        backup_refs: Vec<String>,
+    ) -> Recording {
         let repo = self.path.display().to_string();
-        let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
-            .with_actor(self.actor)
+        let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
+            .with_actor(self.policy.actor)
             .with_worktree(Some(repo));
-        let _ = crate::oplog::append_oplog(&entry);
+        entry.backup_refs = backup_refs;
+        finalize(entry)
     }
 
     /// Preflight, move the recorded branch ref, then persist one entry per attempt.
@@ -67,8 +143,11 @@ impl Backend {
         entry: &HistoryEntry,
     ) -> Result<ops::HistoryMoveOutcome, GitError> {
         let result = self
-            .preflight_check(plan)
-            .map_err(|e| GitError::Preflight(Box::new(e)))
+            .require_trust()
+            .and_then(|()| {
+                self.preflight_check(plan)
+                    .map_err(|e| GitError::Preflight(Box::new(e)))
+            })
             .and_then(|()| match dir {
                 HistoryMoveDir::Undo => self.execute_undo(entry),
                 HistoryMoveDir::Redo => self.execute_redo(entry),

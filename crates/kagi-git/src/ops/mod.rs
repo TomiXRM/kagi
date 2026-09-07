@@ -10,7 +10,7 @@
 //! - `stash-pop` (ADR-0009, Destructive-緩和): `plan_stash_pop` / `execute_stash_pop`
 //! - `cherry-pick` (ADR-0004/0005, Guarded class): `plan_cherry_pick` / `execute_cherry_pick`
 //! - `pull` (ADR-0004/0005/0009, Guarded class): `plan_pull` / `execute_pull`
-//! - `delete-branch` (ADR-0014, Safe-class + merged-only guard): `plan_delete_branch` / `execute_delete_branch`
+//! - `delete-branch` (ADR-0014, checked-out guard + retained recovery tip): `plan_delete_branch` / `execute_delete_branch`
 //!
 //! The checkout operation is **always safe-mode only**: `CheckoutBuilder::safe()` is the only
 //! strategy used.  Force-checkout and any reset/clean APIs are intentionally absent.
@@ -27,9 +27,9 @@
 //! **exclusively** for both plan and execute — the working-tree variant `repo.cherrypick()` is
 //! **never used**.  This keeps the repo state clean (no CHERRYPICK state, no abort needed).
 //!
-//! The delete-branch operation uses `Branch::delete()` — a ref-only deletion that does NOT
-//! touch the working tree.  **Force delete is intentionally absent.**  Only branches whose
-//! tip commit is reachable from HEAD (merged) may be deleted; unmerged branches are a blocker.
+//! Delete-branch locks the ref and all existing worktree HEADs, rejects checked-out
+//! branches, and retains the approved tip under a recovery ref before deletion.
+//! Unmerged branches require two GUI confirmations (ADR-0184).
 //!
 //! # Public API
 //!
@@ -47,13 +47,13 @@
 //! - [`plan_stash_apply`]       — generate an [`OperationPlan`] for stash apply
 //! - [`execute_stash_apply`]    — apply a stash entry (apply only, no pop/drop)
 //! - [`plan_stash_pop`]         — generate an [`OperationPlan`] for stash pop (ADR-0009)
-//! - [`execute_stash_pop`]      — apply then drop only on a conflict-free apply (issue #280)
+//! - [`execute_stash_pop_recorded`]      — apply then drop only on a conflict-free apply (issue #280)
 //! - [`preflight_check_stash`]  — verify HEAD + stash count unchanged since planning
 //! - [`plan_cherry_pick`]       — generate an [`OperationPlan`] for cherry-pick (in-memory, no WT touch)
 //! - [`execute_cherry_pick`]    — apply a cherry-pick commit (in-memory → commit → checkout_head safe)
 //! - [`plan_pull`]              — generate an [`OperationPlan`] for pull (fetch + merge/fast-forward)
 //! - [`execute_pull`]           — run fetch(CLI) then merge/FF (in-memory, no MERGING state)
-//! - [`plan_delete_branch`]     — generate an [`OperationPlan`] for branch deletion (merged only)
+//! - [`plan_delete_branch`]     — generate an [`OperationPlan`] for branch deletion with recovery
 //! - [`execute_delete_branch`]  — delete the branch ref (no working-tree changes, no force)
 //!
 //! # Environment variables (test / headless use only)
@@ -101,8 +101,10 @@ pub use kagi_domain::plan_note::{
 // ────────────────────────────────────────────────────────────
 
 mod absorb;
+pub(crate) mod backup;
 mod branch;
 mod branch_cleanup;
+mod branch_delete_safety;
 mod checkout;
 mod cherry_revert;
 mod dir_file_conflict;
@@ -128,6 +130,7 @@ mod tag;
 mod worktree;
 mod worktree_lifecycle;
 mod worktree_paths;
+mod worktree_remove;
 mod worktree_steps;
 
 pub use absorb::*;
@@ -137,7 +140,7 @@ pub use checkout::*;
 pub use cherry_revert::*;
 pub use dir_file_conflict::*;
 pub use discard::*;
-pub use fetch::*;
+pub(crate) use fetch::*;
 pub use force_lease::*;
 pub use history::*;
 pub use merge::*;
@@ -157,6 +160,7 @@ pub use tag::*;
 pub use worktree::*;
 pub use worktree_lifecycle::*;
 pub(crate) use worktree_paths::*;
+pub use worktree_remove::*;
 pub use worktree_steps::*;
 
 // ────────────────────────────────────────────────────────────

@@ -153,10 +153,17 @@ impl Server {
         // not as JSON-RPC protocol errors, so the model can see and react to
         // them. Protocol errors are reserved for malformed requests.
         Ok(match outcome {
-            Ok(value) => tool_result(value, false),
+            Ok(value) => {
+                let is_error = tool_value_is_error(&value);
+                tool_result(value, is_error)
+            }
             Err(msg) => tool_result(json!({ "error": msg }), true),
         })
     }
+}
+
+fn tool_value_is_error(value: &Value) -> bool {
+    value.get("status").and_then(Value::as_str) == Some("error")
 }
 
 /// Wrap a tool's structured value as an MCP `tools/call` result. We emit BOTH
@@ -232,6 +239,27 @@ pub fn serve_stdio(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn failed_confirm_receipt_is_a_structured_tool_error() {
+        let receipt = json!({
+            "status": "error",
+            "error": "delete failed after backup",
+            "oplog": {
+                "backup_refs": ["refs/kagi/backup/delete-branch/main"]
+            },
+            "recorded": true
+        });
+
+        let result = tool_result(receipt.clone(), tool_value_is_error(&receipt));
+
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"], receipt);
+        assert_eq!(
+            result["structuredContent"]["oplog"]["backup_refs"][0],
+            "refs/kagi/backup/delete-branch/main"
+        );
+    }
 
     // A throwaway git repo with one commit and a dirty working tree, used to
     // exercise the handler end to end. Uses `git` on PATH (already required by
@@ -312,6 +340,9 @@ mod tests {
 
     #[test]
     fn kagi_oplog_is_confined_to_the_bound_repo() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         // A server bound to repo A must never surface repo B's operation log,
         // even though both live in the single global oplog file (#421).
         let _oplog = OplogEnv::new();
@@ -356,6 +387,9 @@ mod tests {
 
     #[test]
     fn crate_has_no_gpui_dependency() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         // Mirrors the CI grep gate (ADR-0163 / #331): the MCP server must stay
         // gpui-free so it runs headless. Scan this crate's manifest + sources.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -393,6 +427,9 @@ mod tests {
 
     #[test]
     fn initialize_reports_protocol_and_tools_capability() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let mut s = Server::new(".");
         let resp = s.handle(&req(1, "initialize", json!({}))).unwrap();
         assert_eq!(resp["result"]["protocolVersion"], PROTOCOL_VERSION);
@@ -402,6 +439,9 @@ mod tests {
 
     #[test]
     fn notification_gets_no_response() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let mut s = Server::new(".");
         let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
         assert!(s.handle(&note).is_none());
@@ -409,6 +449,9 @@ mod tests {
 
     #[test]
     fn tools_list_advertises_read_and_write_tools_and_no_force_push() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let mut s = Server::new(".");
         let resp = s.handle(&req(1, "tools/list", json!({}))).unwrap();
         let tools = resp["result"]["tools"].as_array().unwrap();
@@ -430,6 +473,9 @@ mod tests {
 
     #[test]
     fn read_tools_are_side_effect_free() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let _oplog = OplogEnv::new();
         let dir = temp_repo();
         let mut s = Server::new(dir.path());
@@ -465,6 +511,9 @@ mod tests {
 
     #[test]
     fn plan_returns_plan_and_does_not_mutate_without_confirm() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let dir = temp_repo();
         let mut s = Server::new(dir.path());
         let head_before = head_sha(dir.path());
@@ -483,6 +532,9 @@ mod tests {
 
     #[test]
     fn confirm_executes_and_lands_in_oplog() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let _oplog = OplogEnv::new();
         let dir = temp_repo();
         let mut s = Server::new(dir.path());
@@ -511,6 +563,9 @@ mod tests {
 
     #[test]
     fn confirm_of_unknown_plan_id_is_refused() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let dir = temp_repo();
         let mut s = Server::new(dir.path());
         let r = call(&mut s, "kagi_confirm", json!({ "plan_id": "deadbeef" }));
@@ -519,6 +574,9 @@ mod tests {
 
     #[test]
     fn confirm_of_plan_with_blocker_is_refused() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         // Deleting the current branch is a blocker (can't delete checked-out
         // branch). The plan builds, but confirm must refuse it.
         let dir = temp_repo();
@@ -549,6 +607,9 @@ mod tests {
 
     #[test]
     fn tools_list_annotations_derive_from_plan_classification() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         // #332 PM-locked: annotations come from OperationPlan.destructive
         // (ADR-0004/0023), not a hand-written table. Rebuild the fold from
         // REAL plans and require tools/list to advertise exactly that — this
@@ -564,7 +625,7 @@ mod tests {
                 "reset" => vec![head.clone()],
                 other => panic!("no representative args for op '{}'", other),
             };
-            let op = write::build_operation(&backend, op_name, &args).unwrap();
+            let op = kagi_git::api::resolve_operation(&backend, op_name, &args).unwrap();
             let plan = backend.plan(&op).unwrap();
             any_destructive |= plan.destructive;
         }
@@ -598,6 +659,9 @@ mod tests {
 
     #[test]
     fn readonly_removes_confirm_from_tools_list_but_keeps_plan() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let mut s = Server::new(".");
         s.set_readonly(true);
         let resp = s.handle(&req(1, "tools/list", json!({}))).unwrap();
@@ -620,6 +684,9 @@ mod tests {
 
     #[test]
     fn readonly_confirm_call_is_method_not_found() {
+        if !crate::test_support::run_isolated() {
+            return;
+        }
         let dir = temp_repo();
         let mut s = Server::new(dir.path());
         s.set_readonly(true);
@@ -662,3 +729,7 @@ mod tests {
             .success()
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

@@ -62,6 +62,7 @@ pub mod main_diff_pane;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
 mod modal_copy;
+pub mod modal_plan;
 mod modal_renderers;
 mod modal_renderers_commit;
 mod modal_renderers_create;
@@ -127,8 +128,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     actions, div, prelude::*, px, rgb, uniform_list, App, ClipboardItem, Context, Entity,
-    FocusHandle, KeyBinding, KeyDownEvent, MouseButton, ScrollStrategy, SharedString,
-    UniformListScrollHandle, Window,
+    FocusHandle, KeyDownEvent, MouseButton, ScrollStrategy, SharedString, UniformListScrollHandle,
+    Window,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::Scrollbar;
@@ -440,7 +441,7 @@ use kagi_git::{
         default_tracking_branch_name, validate_branch_rename, AmendMode, OperationPlan,
         StateSummary,
     },
-    CommitId, FileDiffStat, FileStatus, Head, RepoSnapshot,
+    CommitId, FileDiffStat, FileStatus, RepoSnapshot, SkipProgress,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -954,13 +955,15 @@ pub struct KagiApp {
     /// default — without a focused element gpui never dispatches key events,
     /// so window-wide actions like cmd-j would silently do nothing.
     pub root_focus: Option<gpui::FocusHandle>,
-    /// One-line header text: repo name + HEAD + status summary.
-    /// The active tab's snapshot-derived view data (single source of
-    /// truth; ADR-0075 P2). Inactive tabs live in `tab_cache`. Adding a
-    /// field to `TabViewState` no longer needs an `apply_tab_view` edit.
-    pub active_view: TabViewState,
+    /// #482 stage 2 (ADR-0183): every open session's snapshot-derived read
+    /// model, owned once. There is no "active copy" and no per-path cache — the
+    /// tab on screen is a *key* (`active_session()`), so switching tabs changes
+    /// which entry is read and copies nothing. Read it with [`KagiApp::view`],
+    /// write in place with [`KagiApp::view_mut`], publish a whole new read with
+    /// [`KagiApp::publish_tab_view`] / [`KagiApp::accept_tab_view`].
+    pub reads: crate::app::Reads<TabViewState>,
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): monotonic counter bumped on every
-    /// `active_view` write so the sidebar can cheaply detect that its inputs
+    /// read-model write so the sidebar can cheaply detect that its inputs
     /// (branches/remotes/tags/stashes/worktrees) may have changed without
     /// hashing the full ref lists each frame.  Read into the sidebar-rows
     /// fingerprint in `render`.
@@ -1096,7 +1099,7 @@ pub struct KagiApp {
     pub commit_limit: usize,
     /// Maps local branch name → the CommitId it points to.
     /// Built at snapshot time; used by jump_to_branch.
-    /// Maps CommitId → row index in `self.active_view.rows`.
+    /// Maps CommitId → row index in `self.view().rows`.
     /// Built at snapshot time; used by jump_to_branch.
     // ── T-BP-003: StatusBar summary ──────────────────────────────
     /// Pre-computed status bar data (branch, ahead/behind, staged, unstaged).
@@ -1218,6 +1221,7 @@ pub struct KagiApp {
     /// first refresh for the new one is in flight.
     pub github_prs: Vec<kagi_domain::github::PullRequest>,
     pub github_prs_for: Option<PathBuf>,
+    transport_holds: operations::transport_hold::TransportHolds,
     /// Last `gh pr list` failure, cleared by the next success. Rendered by the
     /// PR home screen so a failed fetch is not shown as an empty inbox.
     pub github_error: Option<SharedString>,
@@ -1244,6 +1248,8 @@ pub struct KagiApp {
     /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
     /// and new plan modals are refused so operations never overlap.
     pub busy_op: Option<&'static str>,
+    pub app_sessions: crate::app::Sessions,
+    pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
@@ -1275,23 +1281,11 @@ pub struct KagiApp {
     /// only read on Linux/FreeBSD (dead on other targets).
     #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub platform_menu_open: Option<usize>,
-    // ── W6-TABSPEED: async tab loading + stale-while-revalidate cache ──
-    /// Cache of snapshot-derived display data keyed by repository path
-    /// (ADR-0030).  A cached tab is applied instantly on switch (zero-frame
-    /// swap) and then revalidated in the background.  Evicted in `close_tab`.
-    pub tab_cache: HashMap<PathBuf, TabViewState>,
+    // ── W6-TABSPEED: async tab loading ──
     /// Monotonic switch generation.  Bumped on every async tab switch so a
     /// stale background load (an earlier switch that lost a rapid-fire race)
     /// can detect a mismatch and discard its result before applying.
     pub switch_generation: u64,
-    /// Monotonic reload epoch (#287). Bumped when a fresh reload is requested;
-    /// each async reload drops its result on apply if the epoch moved — so an
-    /// op's authoritative reload wins over an in-flight watcher reload that read
-    /// a mid-write tree. See `reload_stale` (reload-vs-reload / reload-vs-watcher).
-    pub reload_epoch: u64,
-    /// When `Some(name)`, the main pane shows a `Loading <name>…` placeholder
-    /// (uncached first open) until the background load completes.
-    pub loading_tab: Option<SharedString>,
     // ── W11-AVATAR: GitHub avatar images (ADR-0037) ──────────────
     /// Resolved-avatar cache (memory images + per-repo fetch guard), grouped
     /// into one cohesive sub-struct (ADR-0118 Phase 5.2).
@@ -1322,7 +1316,6 @@ pub struct KagiApp {
     /// kept stash's index to offer for dropping. Set before `reload`; consumed
     /// (via `take`) at the END of the reload apply, so the drop-confirm modal is
     /// opened AFTER reload's `clear_*_modal()` sweep instead of being wiped by it.
-    pub pending_stash_drop: Option<usize>,
     /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
     /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
     /// index entries).  This is the "ready to create the merge commit" state — the
@@ -1369,7 +1362,7 @@ pub struct KagiApp {
     /// normal body. Its own `Entity<EcosystemView>` owns the mining + ranking.
     pub ecosystem: Option<Entity<ecosystem::EcosystemView>>,
     /// ADR-0128: Branch Cleanup takeover open flag. The table data itself
-    /// is per-tab (`active_view.cleanup_rows`), so a bool is the whole gate.
+    /// is per-tab (`view().cleanup_rows`), so a bool is the whole gate.
     pub branch_cleanup_open: bool,
     /// ADR-0128: Branch Cleanup table column widths (persisted).
     pub cleanup_cols: branch_cleanup::CleanupCols,
@@ -1389,7 +1382,7 @@ pub struct KagiApp {
     pub modal_list_scroll: UniformListScrollHandle,
     /// ADR-0128 follow-up: monotonic token identifying the *current* branch
     /// cleanup scan. A completing background scan only applies its result
-    /// (`active_view.cleanup_rows`) if this still equals the value it
+    /// (`view().cleanup_rows`) if this still equals the value it
     /// captured at start — same guard shape as `ecosystem_gen`, needed
     /// because the scan moved off the synchronous snapshot path (see
     /// `KagiApp::start_branch_cleanup_scan`) and can now be superseded by a
@@ -1411,9 +1404,9 @@ pub struct KagiApp {
     /// graph's ghost connectors. A result whose token no longer matches is
     /// dropped — its row indices belong to a graph that has been rebuilt.
     pub squash_gen: u64,
-    /// Set by `apply_tab_view`, cleared by the next `render`: the per-tab view
+    /// Set by `on_view_published`, cleared by the next `render`: the per-tab view
     /// was replaced, so the background scans that decorate it (Branch Cleanup
-    /// rows, squash ghost connectors) need re-arming. See `apply_tab_view`.
+    /// rows, squash ghost connectors) need re-arming. See `on_view_published`.
     pub scans_stale: bool,
     /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
     /// the slow `git log` scan. Invalidated on reload / repo switch.
@@ -1455,7 +1448,7 @@ pub struct ConflictEditorInputs {
 /// Marks the workspace as showing a remote repository opened read-only over SSH
 /// (ADR-0089 Phase 2b). Holds what's needed to identify/refresh it; the rendered
 /// data lives in the normal `rows`/`branches`/… fields (applied from a remote
-/// `RepoSnapshot` via [`KagiApp::apply_tab_view`]).
+/// `RepoSnapshot` via [`KagiApp::publish_tab_view`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteRepoView {
     /// The connected host.
@@ -1488,12 +1481,12 @@ impl KagiApp {
     /// The single place a `KagiApp` is constructed: every field default lives
     /// here exactly once, so adding a field means touching one place.  The two
     /// public constructors below differ only in the arguments they pass in.
-    fn new_common(active_view: TabViewState, op_log_seed: VecDeque<OpLogEntry>) -> Self {
+    fn new_common(op_log_seed: VecDeque<OpLogEntry>) -> Self {
         KagiApp {
             // Created in `open_main_window`'s `cx.new` closure from this seed.
             op_log: None,
             op_log_seed,
-            active_view,
+            reads: crate::app::Reads::new(),
             root_focus: None,
             view_epoch: 0,
             selected: None,
@@ -1561,6 +1554,7 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             github_prs: Vec::new(),
             github_prs_for: None,
+            transport_holds: Default::default(),
             github_error: None,
             github_prs_epoch: 0,
             github_ticker_alive: false,
@@ -1568,6 +1562,8 @@ impl KagiApp {
             pr_mode: None,
             pr_menu: None,
             busy_op: None,
+            app_sessions: crate::app::Sessions::new(),
+            app_notices: std::collections::VecDeque::new(),
             modal_replan_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
@@ -1583,17 +1579,13 @@ impl KagiApp {
             menu_overlay: None,
             platform_menu_open: None,
             // W6-TABSPEED
-            tab_cache: HashMap::new(),
             switch_generation: 0,
-            reload_epoch: 0,
-            loading_tab: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
             conflict: None,
             conflict_detected_for: None,
             conflict_merge_pending: false,
-            pending_stash_drop: None,
             merge_commit_ready: false,
             update_available: None,
             update_checked: false,
@@ -1627,21 +1619,28 @@ impl KagiApp {
     /// W6-TABSPEED: the snapshot-derived display data is produced by the pure
     /// [`build_tab_view`] free function; this constructor just folds that
     /// `TabViewState` into a fresh `KagiApp`.
-    pub fn from_snapshot(repo_name: &str, snap: &RepoSnapshot) -> Self {
+    /// #482 stage 2: the bootstrap launch (CLI argument / offscreen E2E mount)
+    /// builds its first tab by hand, before a `Context` exists. It goes through
+    /// the same `attach` → publish path every other open uses, so the read model
+    /// has an owner from the first frame — there is no "view without a session".
+    pub fn from_snapshot(
+        repo_path: &std::path::Path,
+        repo_name: &str,
+        is_worktree: bool,
+        snap: &RepoSnapshot,
+    ) -> Self {
         // T-BP-004: load up to 100 entries from the oplog file at startup.
         let op_entries: VecDeque<OpLogEntry> = read_oplog_tail(OP_ENTRIES_LOAD).into();
-        Self::new_common(build_tab_view(snap, repo_name), op_entries)
+        let mut app = Self::new_common(op_entries);
+        let view = build_tab_view(snap, repo_name);
+        app.open_initial_tab(repo_path, repo_name, is_worktree, view);
+        app
     }
 
-    /// Construct a placeholder for the no-argument / error case.
+    /// Construct a placeholder for the no-argument / error case. No tab, so no
+    /// session and no read model — `view()` returns the empty one.
     pub fn with_error(message: impl Into<String>) -> Self {
-        let mut app = Self::new_common(
-            TabViewState {
-                header: SharedString::from("kagi"),
-                ..Default::default()
-            },
-            VecDeque::new(),
-        );
+        let mut app = Self::new_common(VecDeque::new());
         app.error = Some(SharedString::from(message.into()));
         app
     }
@@ -1727,7 +1726,7 @@ impl KagiApp {
                 (sel, v.editing.clone())
             })
             .unwrap_or((None, None));
-        let current_branch = self.active_view.status_summary.branch.clone();
+        let current_branch = self.view().status_summary.branch.clone();
         let outcome = Self::detect_conflict_payload(
             &repo_path,
             prev_selected_path,
@@ -1777,7 +1776,7 @@ impl KagiApp {
                 (sel, v.editing.clone())
             })
             .unwrap_or((None, None));
-        let current_branch = self.active_view.status_summary.branch.clone();
+        let current_branch = self.view().status_summary.branch.clone();
 
         // codex Q5: capture the repo path the task ran against so a repo switch
         // mid-task discards the stale result at apply time (the `detected_for`
@@ -1846,6 +1845,10 @@ impl KagiApp {
     /// Debounced live re-plan for the open modal(s): waits 250ms of input
     /// silence before doing git work, so typing stays fluid.
     fn schedule_modal_replan(&mut self, cx: &mut Context<Self>) {
+        if let Some(modal) = self.stash_push_modal_mut() {
+            modal.plan = None;
+            self.app_sessions.invalidate_plan();
+        }
         self.modal_replan_gen = self.modal_replan_gen.wrapping_add(1);
         let gen = self.modal_replan_gen;
         cx.spawn(async move |this, acx| {
@@ -1854,7 +1857,7 @@ impl KagiApp {
                 .await;
             let _ = this.update(acx, |app, cx| {
                 if app.modal_replan_gen == gen {
-                    app.run_modal_replans();
+                    app.run_modal_replans(cx);
                     cx.notify();
                 }
             });
@@ -1864,7 +1867,7 @@ impl KagiApp {
 
     /// Re-plan whichever input-bearing modal is open (used by the debounce
     /// timer and as a freshness guard right before confirm).
-    fn run_modal_replans(&mut self) {
+    fn run_modal_replans(&mut self, cx: &mut Context<Self>) {
         if self.create_branch_modal().is_some() {
             self.replan_create_branch();
         }
@@ -1875,7 +1878,7 @@ impl KagiApp {
             self.replan_create_worktree();
         }
         if self.stash_push_modal().is_some() {
-            self.replan_stash_push();
+            self.replan_stash_push(cx);
         }
         if self.set_upstream_modal().is_some() {
             self.replan_set_upstream();
@@ -1896,12 +1899,7 @@ impl KagiApp {
         if dx.abs() < 0.01 {
             return;
         }
-        let lane_count = self
-            .active_view
-            .rows
-            .first()
-            .map(|r| r.lane_count)
-            .unwrap_or(0);
+        let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
         // W28: scroll content extent uses the scaled lane pitch so a fully
         // zoomed graph can still be scrolled to reveal its rightmost lanes.
         let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
@@ -1940,7 +1938,9 @@ impl KagiApp {
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        self.record_op_impl(op, before, outcome, repo_path, cx, false);
+        let persist = matches!(outcome, OpOutcome::Refused { .. });
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
+        self.record_op_impl(entry, cx, persist);
     }
 
     /// Like [`record_op`] but ALSO persists entries for operations whose
@@ -1955,25 +1955,23 @@ impl KagiApp {
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        self.record_op_impl(op, before, outcome, repo_path, cx, true);
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
+        self.record_op_impl(entry, cx, true);
     }
 
-    fn record_op_impl(
-        &mut self,
-        op: &str,
-        before: StateSummary,
-        outcome: OpOutcome,
-        repo_path: &std::path::Path,
-        cx: &mut Context<Self>,
-        persist_non_run: bool,
-    ) {
-        // Build the footer message before moving `outcome`.
-        let (footer_msg, footer_ok) = match &outcome {
+    fn record_op_impl(&mut self, entry: OpLogEntry, cx: &mut Context<Self>, persist: bool) {
+        let op = entry.op.as_str();
+        let before = &entry.before;
+        let outcome = &entry.outcome;
+        let (footer_msg, footer_ok) = match outcome {
             OpOutcome::Success { after } => (
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
                 true,
             ),
-            OpOutcome::Partial { error, .. } => (
+            OpOutcome::Unknown {
+                evidence: error, ..
+            }
+            | OpOutcome::Partial { error, .. } => (
                 SharedString::from(format!("{}: partially applied — {}", op, error)),
                 false,
             ),
@@ -1992,6 +1990,8 @@ impl KagiApp {
             ),
         };
 
+        let display_footer_msg = Self::display_footer_message(op, outcome, &footer_msg);
+
         // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
         // outcome (Success / Failed / Refused) becomes a toast.
         let toast_kind = if matches!(outcome, OpOutcome::Success { .. }) {
@@ -1999,20 +1999,14 @@ impl KagiApp {
         } else {
             ToastKind::Error
         };
-        self.push_toast(toast_kind, footer_msg.clone(), cx);
+        self.push_toast(toast_kind, display_footer_msg.clone(), cx);
 
         // T-BP-004: auto-open bottom panel on Failed.
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
 
-        let repo_str = repo_path.display().to_string();
-        let entry = OpLogEntry::new(op, &repo_str, before, outcome);
-
-        // ADR-0149: `run` is the sole oplog writer for run-path ops. Here we
-        // persist only (a) `Refused` (never reaches `run`) or (b) non-run ops
-        // that opt in via `record_op_persist`. Otherwise skip to avoid a
-        // double-record; the entry is still shown in the in-memory panel below.
-        let should_persist = persist_non_run || matches!(entry.outcome, OpOutcome::Refused { .. });
-        if should_persist {
+        // Callers choose persistence. Already-recorded/attempted receipts are
+        // presentation-only, including Refused outcomes: never append twice.
+        if persist {
             if let Err(e) = append_oplog(&entry) {
                 klog!("oplog: write failed (non-fatal): {}", e);
             }
@@ -2037,10 +2031,10 @@ impl KagiApp {
 
         if footer_ok {
             klog!("footer: {}", footer_msg);
-            self.status_footer = FooterStatus::Success(footer_msg);
+            self.status_footer = FooterStatus::Success(display_footer_msg);
         } else {
             klog!("footer: {}", footer_msg);
-            self.status_footer = FooterStatus::Failed(footer_msg);
+            self.status_footer = FooterStatus::Failed(display_footer_msg);
         }
     }
 
@@ -2241,7 +2235,7 @@ impl KagiApp {
         self.main_diff = None;
         self.compare_view = None;
 
-        if let Some(detail) = self.active_view.details.get(index) {
+        if let Some(detail) = self.view().details.get(index) {
             let parent_count = detail.parent_ids.len();
             eprintln!(
                 "[kagi] selected: {} parents={}",
@@ -2467,7 +2461,7 @@ impl KagiApp {
             Some(v) => (v.host.clone(), v.root.clone()),
             None => return,
         };
-        let sha = match self.active_view.details.get(index) {
+        let sha = match self.view().details.get(index) {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
@@ -2516,7 +2510,7 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let Some(detail) = self.active_view.details.get(index) else {
+        let Some(detail) = self.view().details.get(index) else {
             return;
         };
         let sha = detail.full_sha.as_ref().to_string();
@@ -2540,7 +2534,7 @@ impl KagiApp {
                 app.diff_caches.local_inflight.remove(&index);
                 // Drop the result if a reload remapped this row to another commit.
                 let still_current = app
-                    .active_view
+                    .view()
                     .details
                     .get(index)
                     .is_some_and(|d| d.full_sha.as_ref() == sha_guard);
@@ -2570,7 +2564,7 @@ impl KagiApp {
 
         // Early-exit if no repo is open (the session is None in that case too).
         self.repo_session.as_ref()?;
-        let detail = self.active_view.details.get(index)?;
+        let detail = self.view().details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
@@ -2584,7 +2578,7 @@ impl KagiApp {
         use kagi_git::CommitId;
 
         let repo_path = self.repo_path.as_ref()?;
-        let detail = self.active_view.details.get(index)?;
+        let detail = self.view().details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
         let repo = kagi_git::Backend::open(repo_path).ok()?;
@@ -2867,7 +2861,7 @@ impl KagiApp {
     ///   `commit_row_index`), logs a warning and returns without crashing.
     pub fn jump_to_branch(&mut self, branch_name: &str) {
         // Look up the CommitId the branch points to.
-        let target = match self.active_view.branch_targets.get(branch_name) {
+        let target = match self.view().branch_targets.get(branch_name) {
             Some(t) => t.clone(),
             None => {
                 eprintln!(
@@ -2879,7 +2873,7 @@ impl KagiApp {
         };
 
         // Look up the row index for that commit.
-        let row_ix = match self.active_view.commit_row_index.get(&target) {
+        let row_ix = match self.view().commit_row_index.get(&target) {
             Some(&ix) => ix,
             None => {
                 eprintln!(
@@ -2913,7 +2907,7 @@ impl KagiApp {
     /// Used for remote branch and tag clicks where there is no branch name.
     /// Scrolls the commit list to the row and selects it.
     pub fn jump_to_commit(&mut self, target: &CommitId) {
-        let row_ix = match self.active_view.commit_row_index.get(target) {
+        let row_ix = match self.view().commit_row_index.get(target) {
             Some(&ix) => ix,
             None => {
                 eprintln!(
@@ -2939,7 +2933,7 @@ impl KagiApp {
     /// Open the commit context menu for a row, selecting the row first without
     /// toggling off an already-selected row.
     pub fn open_commit_menu(&mut self, row_index: usize, position: gpui::Point<gpui::Pixels>) {
-        if self.active_view.rows.get(row_index).is_none() {
+        if self.view().rows.get(row_index).is_none() {
             return;
         }
         if self.selected != Some(row_index) {
@@ -2956,7 +2950,7 @@ impl KagiApp {
 
     /// Headless path for KAGI_CONTEXT_MENU=<row>.
     pub fn open_commit_menu_headless(&mut self, row_index: usize) {
-        if self.active_view.rows.get(row_index).is_none() {
+        if self.view().rows.get(row_index).is_none() {
             klog!("context-menu: row={} out of range", row_index);
             return;
         }
@@ -2968,19 +2962,19 @@ impl KagiApp {
     }
 
     fn commit_id_for_row(&self, row_index: usize) -> Option<CommitId> {
-        self.active_view
+        self.view()
             .details
             .get(row_index)
             .map(|detail| CommitId(detail.full_sha.as_ref().to_string()))
     }
 
     fn row_for_commit_id(&self, target: &CommitId) -> Option<usize> {
-        self.active_view
+        self.view()
             .commit_row_index
             .get(target)
             .copied()
             .or_else(|| {
-                self.active_view
+                self.view()
                     .details
                     .iter()
                     .position(|detail| detail.full_sha.as_ref() == target.0)
@@ -2991,7 +2985,7 @@ impl KagiApp {
     /// ancestry, so callers that render every frame must not ask again — see
     /// `CommitMenuState::is_ancestor_of_head`.
     pub(crate) fn compute_is_ancestor_of_head(&self, row_index: usize) -> bool {
-        let Some(row) = self.active_view.rows.get(row_index) else {
+        let Some(row) = self.view().rows.get(row_index) else {
             return false;
         };
         if row.is_head {
@@ -3015,18 +3009,18 @@ impl KagiApp {
     /// `menu_context` with the ancestry answer supplied — the render path uses
     /// this so it does not re-walk the graph on every frame.
     fn menu_context_at(&self, row_index: usize, is_ancestor_of_head: bool) -> Option<MenuContext> {
-        let row = self.active_view.rows.get(row_index)?;
+        let row = self.view().rows.get(row_index)?;
 
         Some(MenuContext {
             is_head: row.is_head,
             is_ancestor_of_head,
             is_merge: row.is_merge,
-            dirty: self.active_view.is_dirty,
-            detached: self.active_view.status_summary.is_detached,
-            has_local_changes: self.active_view.is_dirty,
+            dirty: self.view().is_dirty,
+            detached: self.view().status_summary.is_detached,
+            has_local_changes: self.view().is_dirty,
             refs_here: row.badges.clone(),
             local_branches: self
-                .active_view
+                .view()
                 .branches
                 .iter()
                 .map(|(n, _)| n.clone())
@@ -3046,7 +3040,7 @@ impl KagiApp {
         branch_name: String,
         position: gpui::Point<gpui::Pixels>,
     ) {
-        let target = match self.active_view.branch_targets.get(&branch_name) {
+        let target = match self.view().branch_targets.get(&branch_name) {
             Some(target) => target.clone(),
             None => {
                 eprintln!(
@@ -3086,25 +3080,25 @@ impl KagiApp {
 
     fn branch_menu_context(&self, state: &BranchMenuState) -> BranchMenuContext {
         let upstream = if matches!(state.kind, BranchKind::Local) {
-            self.active_view.branch_upstream_info.get(&state.name)
+            self.view().branch_upstream_info.get(&state.name)
         } else {
             None
         };
         let is_current = matches!(state.kind, BranchKind::Local)
             && self
-                .active_view
+                .view()
                 .branches
                 .iter()
                 .any(|(name, current)| name == &state.name && *current);
         let current_branch = self
-            .active_view
+            .view()
             .branches
             .iter()
             .find_map(|(name, current)| current.then(|| name.clone()));
         // #473: `worktree_path` is the OTHER worktree's path (the current one is
         // where we already are, so "Open worktree" would be a no-op there).
         let other_worktree = if matches!(state.kind, BranchKind::Local) {
-            self.active_view
+            self.view()
                 .worktrees
                 .iter()
                 .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
@@ -3124,8 +3118,8 @@ impl KagiApp {
             upstream_name: upstream.map(|u| u.remote_branch.clone()),
             ahead: upstream.map(|u| u.ahead).unwrap_or(0),
             behind: upstream.map(|u| u.behind).unwrap_or(0),
-            dirty: self.active_view.status_summary.is_dirty,
-            conflict_mode: if self.active_view.status_summary.conflict_count > 0 {
+            dirty: self.view().status_summary.is_dirty,
+            conflict_mode: if self.view().status_summary.conflict_count > 0 {
                 BranchConflictMode::Conflicted
             } else {
                 BranchConflictMode::None
@@ -3136,11 +3130,11 @@ impl KagiApp {
             worktree_path,
             merged_into_current: false,
             is_pushed: upstream.is_some(),
-            detached_head: self.active_view.status_summary.is_detached,
+            detached_head: self.view().status_summary.is_detached,
             busy: self.busy_op.is_some(),
             current_branch,
             is_soloed: self
-                .active_view
+                .view()
                 .branch_solo
                 .as_ref()
                 .is_some_and(|solo| solo.name == state.name && solo.target == state.target),
@@ -3166,7 +3160,7 @@ impl KagiApp {
     /// selected; the `!Terminal && !Input` keybinding + the diff-selection
     /// guard keep it off text selections.
     fn copy_graph_selection(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(row) = self.active_view.rows.get(index) else {
+        let Some(row) = self.view().rows.get(index) else {
             return;
         };
         let target = settings::Settings::load().graph_copy_target();
@@ -3182,80 +3176,26 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Enter while a modal is open: confirm/approve the active modal (highest
-    /// priority first). Returns `true` if a modal was open — the caller consumes
-    /// Enter and does NOT fall through to commit checkout. Each confirm method
-    /// self-guards on blockers, so a blocked plan stays open. View-only/multi-
-    /// choice overlays (update, menu/settings) are consumed but not actioned.
-    /// (User request: Enter approves a modal, Esc cancels it.)
+    /// Enter while a modal is open: confirm/approve the active modal. Returns
+    /// `true` if a modal was open — the caller consumes Enter and does NOT fall
+    /// through to commit checkout. Each confirm method self-guards on blockers
+    /// and on its own two-stage arming, so Enter can neither execute a blocked
+    /// plan nor skip a stage. View-only/multi-choice overlays (update,
+    /// menu/settings) are consumed but not actioned.
+    ///
+    /// #492: the `match` over [`ActiveModal`] is **exhaustive** — a new variant
+    /// fails to compile until Enter and Esc handle it. The old hand-written
+    /// accessor chain silently skipped five variants (create-tag,
+    /// delete-remote-branch, reset-current, force-with-lease-push,
+    /// rebase-onto), and Enter over those modals checked out the commit
+    /// selected behind them.
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.trust_repo_modal().is_some() {
-            self.confirm_trust_repo(cx);
-        } else if self.editor_fs_prompt_modal().is_some() {
-            self.confirm_editor_fs_prompt(cx);
-        } else if self.editor_delete_confirm_modal().is_some() {
-            self.confirm_editor_delete(cx);
-        } else if self.editor_dirty_guard_modal().is_some() {
-            self.confirm_editor_dirty_guard(cx);
-        } else if self.discard_modal().is_some() {
-            self.start_discard(cx);
-        } else if self.conflict_continue_modal().is_some() {
-            self.confirm_conflict_continue(cx);
-        } else if self.history_modal().is_some() {
-            self.confirm_history(cx);
-        } else if self.amend_modal().is_some() {
-            self.confirm_amend(cx);
-        } else if self.push_tag_modal().is_some() {
-            self.start_push_tag(cx);
-        } else if self.cherry_pick_modal().is_some() {
-            self.start_cherry_pick(cx);
-        } else if self.revert_modal().is_some() {
-            self.start_revert(cx);
-        } else if self.pr_merge_modal().is_some() {
-            self.start_pr_merge(cx);
-        } else if self.stash_apply_modal().is_some() {
-            self.confirm_stash_apply(cx);
-        } else if self.stash_push_modal().is_some() {
-            self.confirm_stash_push(cx);
-        } else if self.unlock_worktree_modal().is_some() {
-            self.confirm_unlock_worktree(cx);
-        } else if self.remove_worktree_modal().is_some() {
-            self.confirm_remove_worktree(cx);
-        } else if self.lock_worktree_modal().is_some() {
-            self.confirm_lock_worktree(cx);
-        } else if self.prune_worktrees_modal().is_some() {
-            self.confirm_prune_worktrees(cx);
-        } else if self.repair_worktrees_modal().is_some() {
-            self.confirm_repair_worktrees(cx);
-        } else if self.create_worktree_modal().is_some() {
-            self.start_create_worktree(cx);
-        } else if self.create_branch_modal().is_some() {
-            self.confirm_create_branch(cx);
-        } else if self.rename_branch_modal().is_some() {
-            self.start_rename_branch(cx);
-        } else if self.set_upstream_modal().is_some() {
-            self.start_set_upstream(cx);
-        } else if self.tracking_checkout_modal().is_some() {
-            self.start_tracking_checkout(cx);
-        } else if self.switch_to_latest_modal().is_some() {
-            self.start_switch_to_latest(cx);
-        } else if self.merge_modal().is_some() {
-            self.start_merge(cx);
-        } else if self.branch_plan_modal().is_some() {
-            self.start_branch_plan(cx);
-        } else if self.branch_cleanup_modal().is_some() {
-            self.confirm_branch_cleanup(cx);
-        } else if self.delete_branch_modal().is_some() {
-            self.confirm_delete_branch(cx);
-        } else if self.pop_modal().is_some() {
-            self.confirm_pop(cx);
-        } else if self.push_modal().is_some() {
-            self.confirm_push(cx);
-        } else if self.pull_modal().is_some() {
-            self.confirm_pull(cx);
-        } else if self.plan_modal().is_some() {
-            self.confirm_checkout(cx);
-        } else if self.smart_commit.modal.is_some() {
+        if self.active_modal.is_some() {
+            self.confirm_open_modal(cx);
+            cx.notify();
+            return true;
+        }
+        if self.smart_commit.modal.is_some() {
             self.confirm_smart_consent(cx);
         } else if self
             .commit_panel
@@ -3274,76 +3214,70 @@ impl KagiApp {
         true
     }
 
-    /// Esc while a modal is open: cancel/close the active modal (same priority
-    /// order as `confirm_active_modal`). Returns `true` if a modal was open.
+    /// Confirm whichever [`ActiveModal`] owns the slot. Split out of
+    /// `confirm_active_modal` so the exhaustive match is one screen; the caller
+    /// has already established that `active_modal` is `Some`.
+    ///
+    /// Write modals dispatch to their `start_*` entry (#493) — the same one the
+    /// modal's own button uses.
+    fn confirm_open_modal(&mut self, cx: &mut Context<Self>) {
+        use modals::ActiveModal as M;
+        let Some(modal) = self.active_modal.as_ref() else {
+            return;
+        };
+        match modal {
+            M::AppNotice(_) => self.confirm_app_notice(cx),
+            M::Checkout(_) => self.start_checkout(cx),
+            M::Pull(_) => self.start_pull(cx),
+            M::Amend(_) => self.start_amend(cx),
+            M::Pop(_) => self.start_pop(cx),
+            M::StashDrop(_) => self.start_stash_drop(cx),
+            M::PushTag(_) => self.start_push_tag(cx),
+            M::PrMerge(_) => self.start_pr_merge(cx),
+            M::Push(_) => self.start_push(cx),
+            M::BranchPlan(_) => self.start_branch_plan(cx),
+            M::SetUpstream(_) => self.start_set_upstream(cx),
+            M::RenameBranch(_) => self.start_rename_branch(cx),
+            M::Merge(_) => self.start_merge(cx),
+            M::TrackingCheckout(_) => self.start_tracking_checkout(cx),
+            M::SwitchToLatest(_) => self.start_switch_to_latest(cx),
+            M::CreateBranch(_) => self.confirm_create_branch(cx),
+            M::CreateTag(_) => self.confirm_create_tag(cx),
+            M::CreateWorktree(_) => self.start_create_worktree(cx),
+            M::UnlockWorktree(_) => self.confirm_unlock_worktree(cx),
+            M::RemoveWorktree(_) => self.confirm_remove_worktree(cx),
+            M::LockWorktree(_) => self.confirm_lock_worktree(cx),
+            M::PruneWorktrees(_) => self.confirm_prune_worktrees(cx),
+            M::RepairWorktrees(_) => self.confirm_repair_worktrees(cx),
+            M::StashPush(_) => self.confirm_stash_push(cx),
+            M::StashApply(_) => self.confirm_stash_apply(cx),
+            M::CherryPick(_) => self.start_cherry_pick(cx),
+            M::Revert(_) => self.start_revert(cx),
+            M::History(_) => self.confirm_history(cx),
+            M::DeleteBranch(_) => self.start_delete_branch(cx),
+            M::DeleteRemoteBranch(_) => self.start_delete_remote_branch(cx),
+            M::ResetCurrent(_) => self.start_reset_current(cx),
+            M::ForceLeasePush(_) => self.start_force_lease_push(cx),
+            M::RebaseCurrentOnto(_) => self.start_rebase(cx),
+            M::BranchCleanup(_) => self.confirm_branch_cleanup(cx),
+            M::Discard(_) => self.start_discard(cx),
+            M::ConflictContinue(_) => self.confirm_conflict_continue(cx),
+            M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
+            M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
+            M::EditorDeleteConfirm(_) => self.confirm_editor_delete(cx),
+            M::TrustRepo(_) => self.confirm_trust_repo(cx),
+        }
+    }
+
+    /// Esc while a modal is open: cancel/close the active modal. Returns `true`
+    /// if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.trust_repo_modal().is_some() {
-            self.cancel_trust_repo_modal();
-        } else if self.editor_fs_prompt_modal().is_some() {
-            self.cancel_editor_fs_prompt();
-        } else if self.editor_delete_confirm_modal().is_some() {
-            self.cancel_editor_delete_confirm();
-        } else if self.editor_dirty_guard_modal().is_some() {
-            self.cancel_editor_dirty_guard();
-        } else if self.discard_modal().is_some() {
-            self.cancel_discard_modal();
-        } else if self.conflict_continue_modal().is_some() {
-            self.cancel_conflict_continue();
-        } else if self.history_modal().is_some() {
-            self.clear_history_modal();
-        } else if self.amend_modal().is_some() {
-            self.cancel_amend_modal();
-        } else if self.push_tag_modal().is_some() {
-            self.cancel_push_tag_modal();
-        } else if self.pr_merge_modal().is_some() {
-            self.cancel_pr_merge_modal();
-        } else if self.cherry_pick_modal().is_some() {
-            self.cancel_cherry_pick_modal();
-        } else if self.revert_modal().is_some() {
-            self.cancel_revert_modal();
-        } else if self.stash_apply_modal().is_some() {
-            self.cancel_stash_apply_modal();
-        } else if self.stash_push_modal().is_some() {
-            self.cancel_stash_push_modal();
-        } else if self.unlock_worktree_modal().is_some() {
-            self.cancel_unlock_worktree_modal();
-        } else if self.remove_worktree_modal().is_some() {
-            self.cancel_remove_worktree_modal();
-        } else if self.lock_worktree_modal().is_some() {
-            self.cancel_lock_worktree_modal();
-        } else if self.prune_worktrees_modal().is_some() {
-            self.cancel_prune_worktrees_modal();
-        } else if self.repair_worktrees_modal().is_some() {
-            self.cancel_repair_worktrees_modal();
-        } else if self.create_worktree_modal().is_some() {
-            self.cancel_create_worktree_modal();
-        } else if self.create_branch_modal().is_some() {
-            self.cancel_create_branch_modal();
-        } else if self.rename_branch_modal().is_some() {
-            self.cancel_rename_branch_modal();
-        } else if self.set_upstream_modal().is_some() {
-            self.cancel_set_upstream_modal();
-        } else if self.tracking_checkout_modal().is_some() {
-            self.cancel_tracking_checkout_modal();
-        } else if self.switch_to_latest_modal().is_some() {
-            self.cancel_switch_to_latest_modal();
-        } else if self.merge_modal().is_some() {
-            self.cancel_merge_modal();
-        } else if self.branch_plan_modal().is_some() {
-            self.cancel_branch_plan_modal();
-        } else if self.branch_cleanup_modal().is_some() {
-            self.cancel_branch_cleanup_modal();
-        } else if self.delete_branch_modal().is_some() {
-            self.cancel_delete_branch_modal();
-        } else if self.pop_modal().is_some() {
-            self.cancel_pop_modal();
-        } else if self.push_modal().is_some() {
-            self.cancel_push_modal();
-        } else if self.pull_modal().is_some() {
-            self.cancel_pull_modal();
-        } else if self.plan_modal().is_some() {
-            self.cancel_modal();
-        } else if self.smart_commit.modal.is_some() {
+        if self.active_modal.is_some() {
+            self.cancel_open_modal();
+            cx.notify();
+            return true;
+        }
+        if self.smart_commit.modal.is_some() {
             self.cancel_smart_modal(cx);
         } else if self
             .commit_panel
@@ -3362,17 +3296,79 @@ impl KagiApp {
         true
     }
 
+    /// Cancel whichever [`ActiveModal`] owns the slot (#492 — exhaustive, so a
+    /// new variant cannot ship without an Esc path). The caller has already
+    /// established that `active_modal` is `Some`.
+    fn cancel_open_modal(&mut self) {
+        use modals::ActiveModal as M;
+        let Some(modal) = self.active_modal.as_ref() else {
+            return;
+        };
+        match modal {
+            M::AppNotice(_) => {
+                // Keep a non-mutating reconciliation available after Escape.
+                if let Some(notice) = self
+                    .app_notice()
+                    .filter(|n| n.inspect.is_some() || n.acknowledge.is_some())
+                    .cloned()
+                {
+                    self.app_notices.push_back(notice);
+                }
+                self.clear_app_notice();
+            }
+            M::Checkout(_) => self.cancel_modal(),
+            M::Pull(_) => self.cancel_pull_modal(),
+            M::Amend(_) => self.cancel_amend_modal(),
+            M::Pop(_) => self.cancel_pop_modal(),
+            M::StashDrop(_) => self.cancel_stash_drop_modal(),
+            M::PushTag(_) => self.cancel_push_tag_modal(),
+            M::PrMerge(_) => self.cancel_pr_merge_modal(),
+            M::Push(_) => self.cancel_push_modal(),
+            M::BranchPlan(_) => self.cancel_branch_plan_modal(),
+            M::SetUpstream(_) => self.cancel_set_upstream_modal(),
+            M::RenameBranch(_) => self.cancel_rename_branch_modal(),
+            M::Merge(_) => self.cancel_merge_modal(),
+            M::TrackingCheckout(_) => self.cancel_tracking_checkout_modal(),
+            M::SwitchToLatest(_) => self.cancel_switch_to_latest_modal(),
+            M::CreateBranch(_) => self.cancel_create_branch_modal(),
+            M::CreateTag(_) => self.cancel_create_tag_modal(),
+            M::CreateWorktree(_) => self.cancel_create_worktree_modal(),
+            M::UnlockWorktree(_) => self.cancel_unlock_worktree_modal(),
+            M::RemoveWorktree(_) => self.cancel_remove_worktree_modal(),
+            M::LockWorktree(_) => self.cancel_lock_worktree_modal(),
+            M::PruneWorktrees(_) => self.cancel_prune_worktrees_modal(),
+            M::RepairWorktrees(_) => self.cancel_repair_worktrees_modal(),
+            M::StashPush(_) => self.cancel_stash_push_modal(),
+            M::StashApply(_) => self.cancel_stash_apply_modal(),
+            M::CherryPick(_) => self.cancel_cherry_pick_modal(),
+            M::Revert(_) => self.cancel_revert_modal(),
+            M::History(_) => self.clear_history_modal(),
+            M::DeleteBranch(_) => self.cancel_delete_branch_modal(),
+            M::DeleteRemoteBranch(_) => self.cancel_delete_remote_branch_modal(),
+            M::ResetCurrent(_) => self.cancel_reset_current_modal(),
+            M::ForceLeasePush(_) => self.cancel_force_lease_push_modal(),
+            M::RebaseCurrentOnto(_) => self.cancel_rebase_modal(),
+            M::BranchCleanup(_) => self.cancel_branch_cleanup_modal(),
+            M::Discard(_) => self.cancel_discard_modal(),
+            M::ConflictContinue(_) => self.cancel_conflict_continue(),
+            M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
+            M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),
+            M::EditorDeleteConfirm(_) => self.cancel_editor_delete_confirm(),
+            M::TrustRepo(_) => self.cancel_trust_repo_modal(),
+        }
+    }
+
     /// Move the commit selection up/down by `delta` rows (arrow keys).
     /// No selection yet → selects the first row. Idempotent at the ends.
     pub fn step_commit_selection(&mut self, delta: i64) {
-        if self.active_view.rows.is_empty() {
+        if self.view().rows.is_empty() {
             return;
         }
         let next = match self.selected {
             None => 0,
             Some(cur) => {
                 let n = cur as i64 + delta;
-                n.clamp(0, self.active_view.rows.len() as i64 - 1) as usize
+                n.clamp(0, self.view().rows.len() as i64 - 1) as usize
             }
         };
         if self.selected != Some(next) {
@@ -3480,92 +3476,19 @@ pub fn run_app(app_state: KagiApp) {
         // render in kagi's colours rather than the system default.
         theme::sync_gpui_component_theme(cx);
 
-        // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
-        // the toggle key for the bottom panel. context = None means the binding
-        // fires regardless of focus context. GUI-CLICK: was `cmd-j`, which on
-        // Linux is Super-J — so Ctrl-J never toggled the panel.
-        cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
-        // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
-        // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
-        cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
-        // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
-        // text field keeps its own copy; no-ops when nothing is selected.
-        cx.bind_keys([KeyBinding::new(
-            "secondary-c",
-            CopyDiffSelection,
-            Some("!Terminal && !Input"),
-        )]);
-        // T-TERM-INTERACT-001 follow-up: Tab completion in the embedded
-        // terminal. Deeper "Terminal" context outranks gpui_component Root's
-        // "tab" → focus-cycling binding; handlers live on the terminal
-        // wrapper div in render_bottom.rs and write \t / ESC[Z to the PTY.
-        cx.bind_keys([
-            KeyBinding::new("tab", TerminalSendTab, Some("Terminal")),
-            KeyBinding::new("shift-tab", TerminalSendShiftTab, Some("Terminal")),
-        ]);
-        // Arrow keys step through files while the main diff is open
-        // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
-        // reach a focused terminal (shell history), and `!Input` so they reach
-        // a focused text field / code editor: these bindings register AFTER
-        // gpui_component::init, so at equal context depth they would shadow
-        // Input's own MoveUp/MoveDown — the editor cursor stopped moving
-        // vertically while left/right (unbound here) still worked
-        // (user-reported).
-        cx.bind_keys([
-            KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
-            KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
-            // GitHub Phase 1c: ←/→ cycle PR mode's focused pane. No-op outside
-            // PR mode (handler checks), so graph mode keeps ←/→ free.
-            KeyBinding::new("left", PrModePrevPane, Some("!Terminal && !Input")),
-            KeyBinding::new("right", PrModeNextPane, Some("!Terminal && !Input")),
-        ]);
-        // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
-        // No context predicate — gpui-component 0.5.1's "Input" context binds
-        // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in
-        // its src/input/state.rs), so this fires even while the code editor
-        // has focus. `save_editor_file` no-ops when there is nothing to save.
-        cx.bind_keys([KeyBinding::new("secondary-s", SaveEditorFile, None)]);
-        // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
-        // focused text field (gpui-component Input, key_context "Input") keeps
-        // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
-        // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
-        // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
-        cx.bind_keys([
-            KeyBinding::new(
-                "secondary-z",
-                commands::HistoryUndo,
-                Some("!Input && !Terminal"),
-            ),
-            KeyBinding::new(
-                "secondary-shift-z",
-                commands::HistoryRedo,
-                Some("!Input && !Terminal"),
-            ),
-        ]);
-        // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
-        // *both* SelectAll and MoveHome (emacs-style) in the "Input" context,
-        // and the later (MoveHome) wins — so on this platform Ctrl+A jumped to
-        // line start instead of selecting all. Re-bind it to SelectAll here
-        // (registered after gpui_component::init, so it takes precedence).
-        // cmd-a (SelectAll) and double-click word-select already work natively.
-        cx.bind_keys([KeyBinding::new(
-            "ctrl-a",
-            gpui_component::input::SelectAll,
-            Some("Input"),
-        )]);
-
         // NOTE: a KeyBinding::new("enter", …) here never dispatched (the
         // Return key's key_char "\n" path); Enter is handled as a raw key
         // on the root element instead — see render().
-
-        // W5-MENU / ADR-0029: register the command-registry keystrokes and the
-        // native menu bar.  Keystrokes are passed into `set_menus` via the live
-        // keymap, so they render next to each menu item automatically.
-        commands::register_keybindings(cx);
-        cx.set_menus(commands::build_menus());
+        //
+        // W5-MENU / ADR-0029: install the same keymap and native menu setup
+        // used by the GUI E2E harness. Keystrokes are passed into `set_menus`
+        // via the live keymap, so they render next to each menu item automatically.
+        commands::setup_app(cx);
 
         open_main_window(app_state, cx);
-        cx.activate(true);
+        if std::env::var_os("KAGI_NO_ACTIVATE").as_deref() != Some(std::ffi::OsStr::new("1")) {
+            cx.activate(true);
+        }
     });
 }
 
@@ -3895,23 +3818,6 @@ impl KagiApp {
     }
 }
 
-// ────────────────────────────────────────────────────────────
-// W32-CONFLICT-EDITOR: small helpers for the Save oplog record
-// ────────────────────────────────────────────────────────────
-
-/// A short stable content hash for the oplog before/after fields.  Reuses the
-/// crate's self-contained FNV-1a (no new deps); 16 lowercase hex chars.  This is
-/// a log fingerprint only (no security properties).  `chars()`-safe: hashes
-/// bytes of a `&str`, never byte-slices it.
-fn short_hash(text: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in text.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01B3);
-    }
-    format!("{:016x}", h)
-}
-
 /// T-CONFLICT-UI-001: cheap FNV-1a content signature for the Conflict Editor's
 /// three panes, so the editors only re-`set_value` when something actually
 /// changes (avoids clobbering an in-progress manual edit every frame).
@@ -3945,19 +3851,6 @@ fn conflict_split_ratio_from_cursor(
         return None;
     }
     Some(((cursor - start - divider_size / 2.0) / span).clamp(min, max))
-}
-
-/// Stable slug for a per-hunk choice, for the oplog action summary (T-035).
-fn hunk_choice_slug(choice: &kagi_git::resolution::HunkChoice) -> &'static str {
-    use kagi_git::resolution::HunkChoice::*;
-    match choice {
-        AcceptCurrent => "current",
-        AcceptIncoming => "incoming",
-        BothCurrentFirst => "both-cf",
-        BothIncomingFirst => "both-if",
-        Manual(_) => "manual",
-        Unresolved => "unresolved",
-    }
 }
 
 #[cfg(test)]

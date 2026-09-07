@@ -23,7 +23,7 @@ impl KagiApp {
         self.close_file_history();
         self.branch_cleanup_open = false;
         self.pr_mode = None;
-        let head = self.active_view.head_oid.clone();
+        let head = self.view().head_oid.clone();
         // Reuse a cached mine only if it reflects the current HEAD (instant
         // reopen, even after switching to another repo tab and back). A cache
         // mined at a different HEAD is stale → drop it so the mine below isn't

@@ -35,6 +35,11 @@ SKIP_PARTS = frozenset({".git", "target", "vendor", "node_modules", ".claude", "
 LOC_CEILING = 800
 
 
+def is_excluded(rel: Path, excludes: tuple[str, ...]) -> bool:
+    """Whether a repo-relative path belongs to an excluded root directory."""
+    return any(rel.as_posix().startswith(exclude) for exclude in excludes)
+
+
 def iter_files(globs: list[str], excludes: tuple[str, ...] = ()) -> list[Path]:
     """Repo-relative files matching any glob, minus build output and `excludes`.
 
@@ -48,7 +53,7 @@ def iter_files(globs: list[str], excludes: tuple[str, ...] = ()) -> list[Path]:
             rel = path.relative_to(ROOT)
             if SKIP_PARTS & set(rel.parts):
                 continue
-            if any(ex in rel.as_posix() for ex in excludes):
+            if is_excluded(rel, excludes):
                 continue
             seen[rel] = None
     return list(seen)
@@ -70,6 +75,8 @@ class Rule:
     excludes: tuple[str, ...] = ()
     samples: tuple[str, ...] = ()
     samples_ok: tuple[str, ...] = ()
+    # (repo-relative path, should be excluded), checked by the selftest.
+    path_samples: tuple[tuple[str, bool], ...] = ()
     flags: int = re.MULTILINE | re.DOTALL
     # Skip matches on `#`-comment lines. Set for rules whose subject is shell
     # or YAML, where the words being banned also appear in prose explaining
@@ -121,6 +128,37 @@ RUST_SOURCES = (
 )
 
 RULES: tuple[Rule, ...] = (
+    Rule(
+        name="app-layering",
+        summary="application layer has no UI or direct I/O dependencies (#484)",
+        pattern=r"\b(?:gpui|git2|settings|i18n)\s*::|\bstd\s*::\s*(?:fs|process|net)\b",
+        globs=("src/app/**/*.rs",),
+        message="src/app must use typed backend capabilities, not UI or direct I/O",
+        samples=(
+            "gpui::Context",
+            "std::fs::read(path)",
+            "std::process::Command",
+            "settings::load()",
+            "git2::Repository",
+            "i18n::Msg",
+        ),
+        samples_ok=("Backend::open(path)",),
+    ),
+    Rule(
+        name="fault-test-only",
+        summary="remove fault injection is called only from tests (#484 N1)",
+        pattern=r"(?<!fn )\bwith_fault_for_test\b",
+        globs=("**/*.rs",),
+        excludes=("tests/",),
+        message="with_fault_for_test callers must live under tests/",
+        samples=(
+            "job.with_fault_for_test(point)",
+            "RemoveJob::with_fault_for_test(job, point)",
+            "let f = RemoveJob::with_fault_for_test;",
+        ),
+        samples_ok=("pub fn with_fault_for_test(mut self, point: Fault) -> Self { self }",),
+        path_samples=(("tests/app_remove_test.rs", True), ("src/contests/x.rs", False)),
+    ),
     Rule(
         name="ui-git2",
         summary="src/ui never uses git2 directly (ADR-0072 / ADR-0078)",
@@ -220,6 +258,36 @@ RULES: tuple[Rule, ...] = (
             "for f in plan.preview_files.iter().filter(|f| f.is_new()).take(10) {}",
         ),
         samples_ok=("let short: String = p.chars().take(80).collect();",),
+    ),
+    Rule(
+        name="e2e-window-helper",
+        summary="GUI E2E windows all go through the budgeted open_offscreen helper",
+        # gpui's `open_offscreen_window` hardcodes `show: true` and counts
+        # nothing, so a nested loop can open thousands of real NSWindows — a
+        # full run once opened 1,408 and the WindowServer watchdog killed the
+        # user's session (#549). `macos::open_offscreen` sets `show: false`
+        # unless KAGI_GUI_E2E_VISIBLE=1 and panics past MAX_LIVE_WINDOWS.
+        #
+        # Matched with the leading dot, i.e. the *call*; prose naming the gpui
+        # method as `VisualTestAppContext::open_offscreen_window` is fine.
+        pattern=r"\.\s*open_offscreen_window\s*\(",
+        globs=("tests/**/*.rs",),
+        message=(
+            "tests must open GUI E2E windows through `macos::open_offscreen` "
+            "(hidden by default + live-window budget), never gpui's raw "
+            "`.open_offscreen_window(` — see #549."
+        ),
+        samples=(
+            "let win = cx.open_offscreen_window(size(px(640.), px(480.)), f).unwrap();",
+            # The rustfmt-wrapped form, which a line-based gate would miss.
+            "let win = cx\n"
+            "    .open_offscreen_window(size(px(w), px(h)), f)\n"
+            '    .expect("open row matrix window");',
+        ),
+        samples_ok=(
+            "let win = crate::macos::open_offscreen(cx, size(px(w), px(h)), f);",
+            "/// gpui's own `VisualTestAppContext::open_offscreen_window` hardcodes `show: true`.",
+        ),
     ),
     Rule(
         name="shell-hygiene",
@@ -514,7 +582,6 @@ RATCHETS: tuple[Ratchet, ...] = (
             ("fn f() {}\n" * (LOC_CEILING + 1), LOC_CEILING + 1),
             ("fn f() {}\n" * LOC_CEILING, 0),
         ),
-        excludes=("/tests/",),
     ),
 )
 

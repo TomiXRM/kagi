@@ -10,6 +10,8 @@ Conflict Mode 中、Right Panel は通常の Commit Inspector から **Conflict 
 - ヘッダ: `Merge conflicts detected`(op 別文言)+ operation summary(ADR-0058 の方向文言)
 - **Current / Incoming の badge**(役割名 + 実名。ours/theirs は出さない、tooltip で補足)
 - conflicted count / resolved count
+- Rebase は `適用中 n / total コミット` (EN: `Applying n / total commits`) を
+  既存の `ConflictOp::Rebase` から表示し、現在コミットの競合ファイル数と区別する (#534)。
 - **Path / Tree toggle**(MVP は Path のみ実装、Tree は v0.2)
 - **Conflicted Files** セクション(type badge: both modified / rename-delete 等、ADR-0065)
 - **Resolved Files** セクション(解決候補に移ったファイル)

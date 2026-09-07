@@ -3,6 +3,9 @@
 //! All repositories are created under `TempDir`; no existing user repository is
 //! touched.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_revert;
 use std::path::Path;
 use std::process::Command;
 
@@ -10,7 +13,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{
-    ops::{execute_revert, plan_revert, preflight_check},
+    ops::{plan_revert, preflight_check},
     CommitId,
 };
 
@@ -76,6 +79,9 @@ fn commit_file(dir: &Path, name: &str, content: &str, message: &str) -> CommitId
 
 #[test]
 fn revert_success_creates_commit_and_updates_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -108,6 +114,9 @@ fn revert_success_creates_commit_and_updates_worktree() {
 
 #[test]
 fn revert_conflict_is_blocker_and_leaves_repo_untouched() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -135,6 +144,9 @@ fn revert_conflict_is_blocker_and_leaves_repo_untouched() {
 
 #[test]
 fn revert_merge_commit_is_blocked_by_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -160,6 +172,9 @@ fn revert_merge_commit_is_blocked_by_plan() {
 
 #[test]
 fn revert_dirty_worktree_warns_without_blocking() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -186,6 +201,9 @@ fn revert_dirty_worktree_warns_without_blocking() {
 
 #[test]
 fn revert_preflight_fails_when_head_moves_after_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -216,6 +234,9 @@ fn revert_preflight_fails_when_head_moves_after_plan() {
 /// overwritten with the reverted content instead of the operation refusing.
 #[test]
 fn revert_dirty_file_safe_checkout_refuses_and_preserves_user_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     init_repo(dir);
@@ -244,3 +265,6 @@ fn revert_dirty_file_safe_checkout_refuses_and_preserves_user_content() {
         "HEAD must not move when the revert refuses"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

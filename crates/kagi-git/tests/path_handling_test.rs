@@ -70,6 +70,9 @@ fn added_contains(diff: &kagi_git::FileDiff, needle: &str) -> bool {
 /// returned `ab.txt` — a different file's content in the diff pane.
 #[test]
 fn glob_char_name_does_not_show_neighbor_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = init_repo(&tmp);
 
@@ -102,6 +105,9 @@ fn glob_char_name_does_not_show_neighbor_content() {
 /// the right file rather than over-filtering it out.
 #[test]
 fn glob_char_name_shows_its_own_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = init_repo(&tmp);
 
@@ -132,6 +138,9 @@ fn glob_char_name_shows_its_own_content() {
 /// never delta 0 (a member file's content). Catches a restored `.unwrap_or(0)`.
 #[test]
 fn no_exact_delta_match_returns_empty_not_delta_zero() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = init_repo(&tmp);
 
@@ -163,6 +172,9 @@ fn no_exact_delta_match_returns_empty_not_delta_zero() {
 /// "no change". Catches a missing `disable_pathspec_match`.
 #[test]
 fn hash_prefixed_name_diff_is_not_empty() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo) = init_repo(&tmp);
 
@@ -197,6 +209,9 @@ fn hash_prefixed_name_diff_is_not_empty() {
 #[cfg(unix)]
 #[test]
 fn non_utf8_name_appears_in_status_with_exact_bytes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
@@ -249,3 +264,6 @@ fn non_utf8_name_appears_in_status_with_exact_bytes() {
         "no empty PathBuf may appear in staged/unstaged status",
     );
 }
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;

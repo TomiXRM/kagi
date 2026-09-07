@@ -83,6 +83,9 @@ fn status_porcelain(dir: &Path) -> String {
 
 #[test]
 fn compare_commits_lists_files_and_diff_without_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -126,6 +129,9 @@ fn compare_commits_lists_files_and_diff_without_mutation() {
 
 #[test]
 fn compare_commit_to_workdir_includes_staged_unstaged_untracked_without_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(&tmp);
     let dir = tmp.path();
@@ -179,3 +185,6 @@ fn compare_commit_to_workdir_includes_staged_unstaged_untracked_without_mutation
         "workdir file diff must be read-only"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -1,12 +1,15 @@
 //! `plan_push_tag` / `execute_push_tag` — publishing a local tag (ADR-0140).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_push_tag;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::ops::{execute_push_tag, plan_push_tag};
+use kagi_git::ops::plan_push_tag;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -69,6 +72,9 @@ fn remote_tag_sha(remote: &Path, name: &str) -> String {
 
 #[test]
 fn pushes_a_local_tag_to_the_remote() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     git(&r.local, &["tag", "v1.0.0"]);
     let local_sha = git(&r.local, &["rev-parse", "v1.0.0"]);
@@ -88,6 +94,9 @@ fn pushes_a_local_tag_to_the_remote() {
 
 #[test]
 fn a_missing_tag_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_push_tag(&repo, "nope").unwrap();
@@ -97,6 +106,9 @@ fn a_missing_tag_is_blocked() {
 
 #[test]
 fn a_repo_with_no_remote_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let td = TempDir::new().unwrap();
     let p = td.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -115,6 +127,9 @@ fn a_repo_with_no_remote_is_blocked() {
 /// than silently moving what everyone else has already fetched.
 #[test]
 fn a_moved_tag_is_refused_by_the_remote_not_forced() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup();
     git(&r.local, &["tag", "v1.0.0"]);
     let first_sha = git(&r.local, &["rev-parse", "v1.0.0"]);
@@ -135,3 +150,6 @@ fn a_moved_tag_is_refused_by_the_remote_not_forced() {
         "the published tag must not move"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

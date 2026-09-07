@@ -35,6 +35,8 @@ use kagi_domain::status::FileStatus;
 
 use kagi_git::{FileDiff, Head, RepoSnapshot};
 
+pub mod stash;
+
 /// Whole-command backstop timeout. ssh's own `ConnectTimeout`
 /// ([`SSH_CONNECT_TIMEOUT_SECS`]) bounds the handshake; this bounds the entire
 /// invocation (a hung remote command, a stalled transfer) so the UI never waits
@@ -458,22 +460,128 @@ pub fn remote_stash_drop(
 /// auth failure, or a merge conflict that leaves the host mid-merge) is surfaced
 /// as a [`RemoteError`] for the UI to show; the user resolves conflicts on the
 /// host (a remote conflict editor is out of scope for this slice).
-pub fn remote_pull(host: &RemoteHost, repo: &str) -> Result<String, RemoteError> {
-    // Combine stdout+stderr in the message: git prints progress to stderr but
-    // the "Fast-forward" / "Already up to date." summary to stdout.
-    let out = run_ssh(host, &["git", "-C", repo, "pull"])?;
-    if out.code == 0 {
-        let summary = out.stdout.trim();
-        Ok(if summary.is_empty() {
-            "pull complete".to_string()
-        } else {
-            summary.lines().last().unwrap_or(summary).to_string()
-        })
-    } else {
-        Err(RemoteError::NonZero {
-            code: out.code,
-            stderr: out.stderr,
-        })
+///
+/// #501: like [`remote_stash_drop`], the attempt is recorded **here**, at the
+/// transport boundary, before returning across the UI's tab-owned completion
+/// guard. Previously the only recorder was the UI's presentation-only
+/// `record_op`, so a remote pull was never persisted at all. The receipt comes
+/// back with the result — a failed append is never swallowed.
+pub struct RemotePullReport {
+    pub result: Result<String, RemoteError>,
+    pub recording: kagi_git::backend::recording::Recording,
+}
+
+/// git left the remote worktree mid-merge. Conflict text goes to stdout, the
+/// "Automatic merge failed" summary too; scan both streams.
+const GIT_CONFLICT_MARKERS: [&str; 2] = ["CONFLICT", "Automatic merge failed"];
+
+/// The **allow-list** of outputs proving nothing ran — the only way a non-zero
+/// remote pull becomes `Failed` (PM ruling on #501). Everything else, an
+/// unrecognized message and a disconnect banner alike, defaults to `Unknown`:
+/// a false Unknown only holds the lease and asks the user to confirm, while a
+/// false Failed invites a retry against a host whose `git pull` may have run.
+const REFUSAL_MARKERS: [&str; 8] = [
+    // ssh refused outright — nothing reached the host.
+    "Permission denied",
+    "Host key verification failed",
+    "Could not resolve hostname",
+    "Connection refused",
+    // git declined before touching the worktree.
+    "cannot change to",
+    "not a git repository",
+    "There is no tracking information",
+    "couldn't find remote ref",
+];
+
+pub fn remote_pull(
+    host: &RemoteHost,
+    repo: &str,
+    before: &kagi_git::StateSummary,
+) -> RemotePullReport {
+    use kagi_git::oplog::OpOutcome;
+    let transport = run_ssh(host, &["git", "-C", repo, "pull"]);
+    let after = |dirty: String| kagi_git::StateSummary {
+        head: before.head.clone(),
+        dirty,
+    };
+    let (result, outcome) = match transport {
+        Ok(out) if out.code == 0 => {
+            // Combine stdout+stderr in the message: git prints progress to
+            // stderr but the "Fast-forward" / "Already up to date." summary to
+            // stdout.
+            let summary = out.stdout.trim();
+            let summary = if summary.is_empty() {
+                "pull complete".to_string()
+            } else {
+                summary.lines().last().unwrap_or(summary).to_string()
+            };
+            let outcome = OpOutcome::Success {
+                after: after(summary.clone()),
+            };
+            (Ok(summary), outcome)
+        }
+        Ok(out) => {
+            let text = format!("{}\n{}", out.stdout, out.stderr);
+            let error = RemoteError::NonZero {
+                code: out.code,
+                stderr: out.stderr.clone(),
+            };
+            let outcome = if GIT_CONFLICT_MARKERS.iter().any(|m| text.contains(m)) {
+                // The merge started and stopped mid-way: the host's worktree
+                // and index changed. Not a clean failure.
+                OpOutcome::Partial {
+                    after: after(format!(
+                        "remote worktree left mid-merge; {}",
+                        text.trim().replace('\n', " / ")
+                    )),
+                    error: error.to_string(),
+                }
+            } else if REFUSAL_MARKERS.iter().any(|m| text.contains(m)) {
+                // A recognized refusal: ssh auth/host-key, or git declining
+                // before it touched anything ("no tracking information").
+                OpOutcome::Failed {
+                    error: error.to_string(),
+                }
+            } else {
+                // Default (PM ruling): an output we cannot read as a refusal
+                // does not prove the remote `git pull` left the host alone.
+                OpOutcome::Unknown {
+                    after: after("remote pull not proven stopped".into()),
+                    evidence: format!(
+                        "{error}; the output matches no known refusal, so the remote git \
+                         pull may have run — do not retry until the host is checked"
+                    ),
+                }
+            };
+            (Err(error), outcome)
+        }
+        // The whole-command backstop fired. The child was never reaped, so the
+        // remote command is not proven stopped.
+        Err(RemoteError::Timeout) => (
+            Err(RemoteError::Timeout),
+            OpOutcome::Unknown {
+                after: after("remote pull not proven stopped".into()),
+                evidence: format!(
+                    "{}; the remote git pull may still be running — do not retry \
+                     until the host is checked",
+                    RemoteError::Timeout
+                ),
+            },
+        ),
+        // Pre-spawn: nothing ran.
+        Err(error) => {
+            let outcome = OpOutcome::Failed {
+                error: error.to_string(),
+            };
+            (Err(error), outcome)
+        }
+    };
+    let scope = format!("{}:{repo}", host.label());
+    let entry = kagi_git::oplog::OpLogEntry::new("pull", scope.clone(), before.clone(), outcome)
+        .with_worktree(Some(scope));
+    RemotePullReport {
+        result,
+        recording: kagi_git::backend::recording::finalize(entry),
     }
 }
 

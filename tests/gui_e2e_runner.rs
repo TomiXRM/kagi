@@ -52,8 +52,32 @@ fn main() {
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/app_remove.rs"]
+mod app_remove;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/app_stash.rs"]
+mod app_stash;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/app_writer_admission.rs"]
+mod app_writer_admission;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/app_conflict.rs"]
+mod app_conflict;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/read_owner.rs"]
+mod read_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "perf/oplog_detail.rs"]
+mod perf_oplog_detail;
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -63,7 +87,10 @@ mod macos {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
+    use gpui::{
+        point, px, size, AnyWindowHandle, App, Bounds, Entity, Pixels, Render, Size,
+        VisualTestAppContext, Window as GpuiWindow, WindowBounds, WindowHandle, WindowOptions,
+    };
     use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
         commands::CreateSnapshot, commit_list, e2e, editor_tree_menu::EditorTreeAction, graph_wip,
@@ -298,6 +325,72 @@ mod macos {
         String::from_utf8_lossy(&out.stdout).to_string()
     }
 
+    /// How many `NSWindow`s a scenario may keep alive at once (#549).
+    ///
+    /// Eight is generous: no scenario legitimately needs more than the four
+    /// viewports of the layout matrix. The point is that the *next* runaway
+    /// loop fails on window five, not on window 1,408.
+    pub(crate) const MAX_LIVE_WINDOWS: usize = 8;
+
+    thread_local! {
+        /// Name of the scenario currently running, so the budget panic can say
+        /// which loop leaked. Set by `run`, read only by `open_offscreen`.
+        static CURRENT_SCENARIO: std::cell::Cell<&'static str> =
+            const { std::cell::Cell::new("<startup>") };
+    }
+
+    pub(crate) fn set_current_scenario(name: &'static str) {
+        CURRENT_SCENARIO.with(|cell| cell.set(name));
+    }
+
+    /// Open an off-screen scenario window **hidden**, under a live-window
+    /// budget (#549).
+    ///
+    /// Two problems, one helper. First, gpui's own
+    /// `VisualTestAppContext::open_offscreen_window` hardcodes `show: true`
+    /// (`gpui/src/app/visual_test_context.rs:114`) and macOS clamps the
+    /// (-10000, -10000) origin back onto a real display, so every mount stacks
+    /// a black window on the developer's screen. With `show: false` AppKit
+    /// never sends `orderFront:` (`gpui_macos/src/window.rs:1082`), so the
+    /// window never joins the on-screen list. `KAGI_GUI_E2E_VISIBLE=1` puts
+    /// them back for human triage.
+    ///
+    /// Second, hidden windows are still real `NSWindow`s. A full run once
+    /// opened 1,408 of them at once and the WindowServer watchdog killed the
+    /// user's login session, so this asserts the live count before opening.
+    ///
+    /// Visibility changes nothing else: under `test-support`
+    /// `App::flush_effects` draws every dirty window itself
+    /// (`gpui/src/app.rs:1566`) rather than waiting for the display link, so
+    /// layout, hitboxes, action dispatch and the `simulate_*` helpers are
+    /// unaffected.
+    pub(crate) fn open_offscreen<V: Render + 'static>(
+        cx: &mut VisualTestAppContext,
+        window_size: Size<Pixels>,
+        build_root: impl FnOnce(&mut GpuiWindow, &mut App) -> Entity<V>,
+    ) -> WindowHandle<V> {
+        let live = cx.update(|app| app.windows().len());
+        assert!(
+            live < MAX_LIVE_WINDOWS,
+            "[gui-e2e] window budget exceeded in scenario {}: {live} live NSWindows, \
+             limit {MAX_LIVE_WINDOWS} (#549). Reuse one window per viewport and mutate \
+             its root entity instead of mounting a fresh one per cell, and `unmount` \
+             every window you open.",
+            CURRENT_SCENARIO.with(|cell| cell.get()),
+        );
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(-10000.0), px(-10000.0)),
+                size: window_size,
+            })),
+            focus: false,
+            show: std::env::var_os("KAGI_GUI_E2E_VISIBLE").is_some(),
+            ..Default::default()
+        };
+        cx.update(|app| app.open_window(options, build_root))
+            .expect("open hidden offscreen window")
+    }
+
     /// Mount the real `KagiApp` offscreen against `repo_path`, settle the first
     /// frame, and hand back the captured entity + window handle. Mirrors the
     /// PoC mount (ADR-0166) so every scenario builds the root identically.
@@ -308,14 +401,37 @@ mod macos {
         let app_state = e2e::app_state(repo_path).expect("build app_state");
         let cell: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::new(RefCell::new(None));
         let build_cell = cell.clone();
-        let window = cx
-            .open_offscreen_window(size(px(1440.0), px(900.0)), move |window, cx| {
-                e2e::mount_root(app_state, window, cx, &build_cell)
-            })
-            .expect("open_offscreen_window");
+        let window = open_offscreen(cx, size(px(1440.0), px(900.0)), move |window, cx| {
+            e2e::mount_root(app_state, window, cx, &build_cell)
+        });
         let kagi = cell.borrow().clone().expect("kagi entity captured");
         cx.run_until_parked();
         (kagi, window.into())
+    }
+
+    /// Release an offscreen root before the next scenario mounts a native
+    /// window. The root entity can retain input state and tasks after its
+    /// window closes, so drop it before parking the dispatcher.
+    pub(super) fn unmount<T: 'static>(
+        cx: &mut VisualTestAppContext,
+        entity: Entity<T>,
+        window: AnyWindowHandle,
+    ) {
+        cx.update_window(window, |_, window, _| window.remove_window())
+            .expect("close offscreen window");
+        drop(entity);
+        cx.update(|_| {});
+        cx.run_until_parked();
+        // Dropping the gpui `Window` does NOT close the `NSWindow`:
+        // `impl Drop for MacWindow` (`gpui_macos/src/window.rs:1169-1192`)
+        // *spawns* `window.close()` on the platform foreground executor and
+        // detaches it. `VisualTestPlatform` delegates `open_window` straight to
+        // the real `MacPlatform` (`gpui/src/platform/visual_test.rs:122-128`),
+        // so that executor is `MacDispatcher` → `DispatchQueue::main()`
+        // (`gpui_macos/src/dispatcher.rs:55-60`), not the `TestDispatcher` that
+        // `run_until_parked` drains. Pump the main run loop or the window stays
+        // alive — which is how a full run piled up 1,408 of them (#549).
+        drain_native_events();
     }
 
     /// `git rev-parse HEAD` + porcelain status, for the no-mutation assertion.
@@ -343,6 +459,20 @@ mod macos {
         dir
     }
 
+    /// Parse the optional comma-separated scenario substring filter. Empty
+    /// entries are ignored; only an unset variable runs the full suite.
+    fn scenario_filters() -> Option<Vec<String>> {
+        std::env::var_os("KAGI_GUI_E2E_ONLY").map(|value| {
+            value
+                .to_string_lossy()
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+    }
+
     /// The scenario suite. Returns a process exit code (0 = pass). Each scenario
     /// asserts observable `KagiApp` state / clipboard / repo refs (ADR-0166 §3:
     /// deterministic assertions are the oracle, screenshots are triage only) and
@@ -355,6 +485,7 @@ mod macos {
             eprintln!("[gui-e2e] SKIP: set KAGI_GUI_E2E=1 to run the visual scenarios");
             return 0;
         }
+        let filters = scenario_filters();
 
         // Redirect settings.json to a throwaway dir so scenarios that touch
         // settings (graph_copy_target, theme via set_active) never read or clobber
@@ -368,35 +499,182 @@ mod macos {
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();
         cx.update(e2e::init_app);
-        crate::recovery_operations::scenario_stash_drop_persists(&mut cx);
-        crate::recovery_operations::scenario_history_persists(&mut cx);
-        crate::recovery_operations::scenario_cleanup_stale_tab(&mut cx);
-        crate::recovery_operations::scenario_preflight_presentation(&mut cx);
-        crate::recovery_operations::scenario_cleanup_open_failure(&mut cx);
-        crate::recovery_operations::scenario_cleanup_partial_presentation(&mut cx);
-        crate::recovery_layout::scenario_commit_row_layout(&mut cx);
-        let history_fixture = build_fixture();
-        let history_before = repo_fingerprint(history_fixture.path());
-        crate::recovery_layout::scenario_editor_history_layout(&mut cx, history_fixture.path());
-        assert_eq!(history_before, repo_fingerprint(history_fixture.path()));
-
-        scenario_bottom_panel(&mut cx);
-        scenario_graph_copy(&mut cx, log_dir.path());
-        scenario_oplog_expand_copy(&mut cx);
-        scenario_create_snapshot(&mut cx);
-        scenario_theme_switch(&mut cx);
-        scenario_agent_provenance(&mut cx);
-        scenario_wip_head_connector(&mut cx);
-        scenario_worktree_wip_inline(&mut cx);
-        scenario_worktree_panel_commit(&mut cx);
-        scenario_worktree_panel_amend_discard(&mut cx);
+        let mut scenarios: Vec<(&str, Box<dyn FnMut(&mut VisualTestAppContext)>)> = vec![
+            (
+                "stash_drop_persists",
+                Box::new(crate::recovery_operations::scenario_stash_drop_persists),
+            ),
+            (
+                "history_persists",
+                Box::new(crate::recovery_operations::scenario_history_persists),
+            ),
+            (
+                "cleanup_stale_tab",
+                Box::new(crate::recovery_operations::scenario_cleanup_stale_tab),
+            ),
+            (
+                "preflight_presentation",
+                Box::new(crate::recovery_operations::scenario_preflight_presentation),
+            ),
+            (
+                "unmerged_branch_delete_armed",
+                Box::new(crate::recovery_operations::scenario_unmerged_branch_delete_armed),
+            ),
+            (
+                "modal_no_fallthrough",
+                Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
+            ),
+            (
+                "branch_menu_no_checkout_fallthrough",
+                Box::new(crate::recovery_operations::scenario_branch_menu_no_checkout_fallthrough),
+            ),
+            (
+                "push_failure_keeps_modal",
+                Box::new(crate::recovery_operations::scenario_push_failure_keeps_modal),
+            ),
+            (
+                "cleanup_open_failure",
+                Box::new(crate::recovery_operations::scenario_cleanup_open_failure),
+            ),
+            (
+                "cleanup_partial_presentation",
+                Box::new(crate::recovery_operations::scenario_cleanup_partial_presentation),
+            ),
+            (
+                "remove_public_boundary",
+                Box::new(crate::app_remove::scenario_remove_public_boundary),
+            ),
+            (
+                "editor_save_admission",
+                Box::new(crate::app_writer_admission::scenario_editor_save_admission),
+            ),
+            (
+                "conflict_save_boundary",
+                Box::new(crate::app_conflict::scenario_conflict_save_boundary),
+            ),
+            (
+                "conflict_dir_file_boundary",
+                Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
+            ),
+            (
+                "stash_public_boundary",
+                Box::new(crate::app_stash::scenario_stash_public_boundary),
+            ),
+            (
+                "stash_remote_drop",
+                Box::new(crate::app_stash::scenario_remote_stash_drop),
+            ),
+            (
+                "stash_conflict_followup",
+                Box::new(crate::app_stash::scenario_stash_conflict_followup),
+            ),
+            (
+                "stash_conflict_close_reopen",
+                Box::new(crate::app_stash::scenario_stash_conflict_close_reopen),
+            ),
+            (
+                "stash_replan_error",
+                Box::new(crate::app_stash::scenario_stash_replan_error),
+            ),
+            (
+                "create_branch_replan_error",
+                Box::new(crate::recovery_operations::scenario_create_branch_replan_error),
+            ),
+            (
+                "external_stash_conflict_has_no_drop_prompt",
+                Box::new(crate::app_stash::scenario_external_stash_conflict_has_no_drop_prompt),
+            ),
+            (
+                "commit_row_layout",
+                Box::new(crate::recovery_layout::scenario_commit_row_layout),
+            ),
+            (
+                "editor_history_layout",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_editor_history_layout(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+            ),
+            (
+                "footer_status_line",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_footer_status_line(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+            ),
+            (
+                "read_owner_switch",
+                Box::new(crate::read_owner::scenario_read_owner_switch),
+            ),
+            (
+                "read_owner_ordering",
+                Box::new(crate::read_owner::scenario_read_owner_ordering),
+            ),
+            ("bottom_panel", Box::new(scenario_bottom_panel)),
+            (
+                "graph_copy",
+                Box::new(|cx| scenario_graph_copy(cx, log_dir.path())),
+            ),
+            ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
+            ("create_snapshot", Box::new(scenario_create_snapshot)),
+            ("theme_switch", Box::new(scenario_theme_switch)),
+            ("agent_provenance", Box::new(scenario_agent_provenance)),
+            ("wip_head_connector", Box::new(scenario_wip_head_connector)),
+            (
+                "worktree_wip_inline",
+                Box::new(scenario_worktree_wip_inline),
+            ),
+            (
+                "worktree_panel_commit",
+                Box::new(scenario_worktree_panel_commit),
+            ),
+            (
+                "worktree_panel_discard_recording_failure",
+                Box::new(scenario_worktree_panel_discard_recording_failure),
+            ),
+            (
+                "worktree_panel_amend_discard",
+                Box::new(scenario_worktree_panel_amend_discard),
+            ),
+            (
+                "oplog_detail_draw",
+                Box::new(crate::perf_oplog_detail::scenario_expanded_detail_draw),
+            ),
+        ];
+        let mut executed = 0;
+        for (name, scenario) in &mut scenarios {
+            if filters
+                .as_ref()
+                .is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
+            {
+                set_current_scenario(name);
+                scenario(&mut cx);
+                executed += 1;
+            } else {
+                eprintln!("[gui-e2e] SKIP {} (filtered)", name);
+            }
+        }
+        if executed == 0 {
+            eprintln!(
+                "[gui-e2e] ERROR: KAGI_GUI_E2E_ONLY={filters:?} matched no enabled scenarios"
+            );
+            return 1;
+        }
         cx.run_until_parked();
         drain_native_events();
         drop(native_pool);
         cx.update(|_| {});
         cx.run_until_parked();
 
-        eprintln!("[gui-e2e] PASS all scenarios");
+        if filters.is_none() {
+            eprintln!("[gui-e2e] PASS all scenarios");
+        } else {
+            eprintln!("[gui-e2e] PASS filtered scenarios");
+        }
         0
     }
 
@@ -432,6 +710,7 @@ mod macos {
             repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
         );
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS bottom_panel initial={initial}");
     }
 
@@ -450,7 +729,7 @@ mod macos {
         let (full_sha, branch) = kagi.update(cx, |app, cx| {
             app.selected = Some(0);
             cx.notify();
-            let row = &app.active_view.rows[0];
+            let row = &app.view().rows[0];
             let full_sha = row.id.0.clone();
             let branch = commit_list::graph_copy_value(&row.badges, &full_sha, CopyTarget::Branch);
             (full_sha, branch)
@@ -480,6 +759,7 @@ mod macos {
             Some(branch.as_str()),
             "graph Cmd+C (branch) should copy the local branch name"
         );
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS graph_copy hash={} branch={branch}",
             &full_sha[..8]
@@ -503,7 +783,7 @@ mod macos {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let long_error = "e".repeat(200);
         kagi.update(cx, |app, cx| {
@@ -593,6 +873,8 @@ mod macos {
             repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
         );
+        drop(panel);
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS oplog_expand_copy grew {:?} -> {:?}, row1 {:?} -> {:?}, copied {} chars",
             collapsed0.size.height,
@@ -611,7 +893,7 @@ mod macos {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);
-        let (_kagi, win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         assert!(
             for_each_ref(&repo_path, "refs/kagi/snapshots/")
@@ -633,6 +915,7 @@ mod macos {
             repo_fingerprint(&repo_path),
             "CreateSnapshot must not move HEAD or dirty the working tree"
         );
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS create_snapshot ref_count={count}");
     }
 
@@ -642,7 +925,7 @@ mod macos {
     fn scenario_theme_switch(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let before = theme::theme().slug;
         let target = if before == "dracula" {
@@ -659,6 +942,7 @@ mod macos {
             "SetTheme should make {target} the active theme"
         );
         assert_ne!(after, before, "active theme should have changed");
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS theme_switch {before} -> {after}");
     }
 
@@ -668,10 +952,10 @@ mod macos {
     fn scenario_agent_provenance(cx: &mut VisualTestAppContext) {
         let fixture = build_agent_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let (head_agent, parent_agent) = cx.read(|app| {
-            let rows = &kagi.read(app).active_view.rows;
+            let rows = &kagi.read(app).view().rows;
             (
                 rows[0]
                     .provenance
@@ -692,6 +976,7 @@ mod macos {
             parent_agent, None,
             "plain human commit should carry no provenance"
         );
+        unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS agent_provenance head=ClaudeCode human=None");
     }
 
@@ -707,7 +992,7 @@ mod macos {
     fn scenario_wip_head_connector(cx: &mut VisualTestAppContext) {
         let (_fixture, repo_path, _wt_path) = build_wip_connector_fixture();
         let before_fp = repo_fingerprint(&repo_path);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         // One WIP-ghost edge of `row`, by kind and colour index.
         fn ghost(
@@ -724,7 +1009,7 @@ mod macos {
         }
 
         cx.read(|app| {
-            let view = &kagi.read(app).active_view;
+            let view = &kagi.read(app).view();
 
             // Two dirty working trees → two WIP rows, each with a lane.
             assert_eq!(
@@ -808,6 +1093,7 @@ mod macos {
             repo_fingerprint(&repo_path),
             "repo mutated during a read-only scenario"
         );
+        unmount(cx, kagi, win);
     }
 
     /// Issue #473 + #476 slice 1: clicking a LINKED WORKTREE's WIP row shows
@@ -820,7 +1106,7 @@ mod macos {
     /// and lists ITS dirty file; `do_stage_all` / `do_unstage_all` /
     /// `do_stage_file` / `do_unstage_file` each move the WORKTREE's
     /// `git status --porcelain` while the OPEN repo's fingerprint is unchanged;
-    /// the worktree's WIP row counts (`active_view.worktrees[i].wip`) follow;
+    /// the worktree's WIP row counts (`view().worktrees[i].wip`) follow;
     /// the still-tab-resolved ops (commit plan, commit, amend, discard-all) are
     /// still refused and leave both trees untouched; and the watcher's in-place
     /// refresh (`refresh_working_tree_external`) does not swap the panel back to
@@ -829,7 +1115,7 @@ mod macos {
         let (_fixture, repo_path, wt_path) = build_wip_connector_fixture();
         let repo_fp = repo_fingerprint(&repo_path);
         let wt_fp = repo_fingerprint(&wt_path);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         let tabs_before = cx.read(|app| kagi.read(app).tabs.len());
 
@@ -885,12 +1171,12 @@ mod macos {
         );
 
         // ── #476 slice 1: the staging ops write into the WORKTREE ──────────
-        // The worktree's WIP row counts, straight off `active_view` — they come
+        // The worktree's WIP row counts, straight off `view()` — they come
         // from the snapshot, so this is what proves the row followed the write.
         let wip_of = |cx: &mut VisualTestAppContext| {
             cx.read(|app| {
                 kagi.read(app)
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .find(|w| w.path == wt_path)
@@ -1043,6 +1329,8 @@ mod macos {
             "staging in the open repo must not touch the worktree"
         );
 
+        drop(panel);
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS worktree_wip_inline tabs={tabs_before} panel={} files={files:?} \
              own-panel-staged={:?}",
@@ -1071,14 +1359,14 @@ mod macos {
         let wt_b_fp = repo_fingerprint(&wt_b);
         let wt_a_head_before = repo_fingerprint(&wt_a).0;
         let wt_a_commits_before = commit_count(&wt_a);
-        let (kagi, _win) = mount(cx, &repo_path);
+        let (kagi, win) = mount(cx, &repo_path);
 
         // Where each worktree sits in the snapshot's list — its `WipTarget` key
         // and its lane colour index are both that position.
         let wt_index = |cx: &mut VisualTestAppContext, path: &Path| -> usize {
             cx.read(|app| {
                 kagi.read(app)
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .position(|w| w.path == path)
@@ -1088,7 +1376,7 @@ mod macos {
         let idx_a = wt_index(cx, &wt_a);
         let idx_b = wt_index(cx, &wt_b);
         let (lanes_before, lane_open, lane_a, lane_b) = cx.read(|app| {
-            let lanes = kagi.read(app).active_view.wip_lanes.clone();
+            let lanes = kagi.read(app).view().wip_lanes.clone();
             let get = |t| graph_wip::wip_lane(&lanes, t);
             (
                 lanes.clone(),
@@ -1182,19 +1470,14 @@ mod macos {
         // ── The open tab's graph gained the commit (shared refs) ────────────
         let new_sha = wt_a_head_after.clone();
         assert!(
-            cx.read(|app| kagi
-                .read(app)
-                .active_view
-                .rows
-                .iter()
-                .any(|r| r.id.0 == new_sha)),
+            cx.read(|app| kagi.read(app).view().rows.iter().any(|r| r.id.0 == new_sha)),
             "the open tab must re-snapshot and show the worktree's new commit"
         );
 
         // ── The WIP rows: A's is gone, the others keep their own lanes ──────
         let wip_a = cx.read(|app| {
             kagi.read(app)
-                .active_view
+                .view()
                 .worktrees
                 .iter()
                 .find(|w| w.path == wt_a)
@@ -1221,7 +1504,7 @@ mod macos {
         );
         // …and the freshly-built map agrees, with A's entry simply absent.
         cx.read(|app| {
-            let lanes = &kagi.read(app).active_view.wip_lanes;
+            let lanes = &kagi.read(app).view().wip_lanes;
             assert_eq!(
                 graph_wip::wip_lane(lanes, graph_wip::WipTarget::Worktree(idx_a)),
                 None,
@@ -1248,6 +1531,7 @@ mod macos {
             "the tab's Undo must not point at the WORKTREE's commit: {undo_head:?}"
         );
 
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS worktree_panel_commit wt-a {}..{} lanes open={lane_open:?} \
              b={lane_b:?} oplog={op}@{repo}",
@@ -1281,7 +1565,7 @@ mod macos {
 
         let idx_a = cx.read(|app| {
             kagi.read(app)
-                .active_view
+                .view()
                 .worktrees
                 .iter()
                 .position(|w| w.path == wt_a)
@@ -1362,7 +1646,7 @@ mod macos {
         assert!(
             cx.read(|app| kagi
                 .read(app)
-                .active_view
+                .view()
                 .rows
                 .iter()
                 .any(|r| r.id.0 == head_after_amend)),
@@ -1444,13 +1728,31 @@ mod macos {
         );
         let dirty = dirty.expect("a successful discard records an after-state");
         let blob = dirty
-            .rsplit_once('=')
-            .map(|(_, sha)| sha.trim().to_string())
-            .unwrap_or_else(|| panic!("no `path=blob` backup in the oplog entry: {dirty:?}"));
+            .split_once("backup: ")
+            .and_then(|(_, backups)| backups.split(';').next())
+            .and_then(|backups| {
+                backups
+                    .split(", ")
+                    .find_map(|pair| pair.strip_prefix("f.txt="))
+            })
+            .unwrap_or_else(|| panic!("no `f.txt=blob` backup in the oplog entry: {dirty:?}"));
+        let receipt = kagi_git::oplog::read_oplog_tail_for_repo(&wt_a, 1)
+            .pop()
+            .expect("persisted discard receipt");
+        assert_eq!(receipt.op, "discard");
+        assert_eq!(receipt.backup_refs.len(), 1);
+        let reference = &receipt.backup_refs[0];
+        assert!(reference.starts_with("refs/kagi/backups/"));
         assert_eq!(blob.len(), 40, "expected a 40-hex blob SHA, got {blob:?}");
         for odb in [&wt_a, &repo_path] {
+            assert_eq!(
+                rev_parse(odb, reference),
+                blob,
+                "receipt ref must resolve to the logged backup blob in {}",
+                odb.display()
+            );
             assert!(
-                git_ok(odb, &["cat-file", "-e", &blob]),
+                git_ok(odb, &["cat-file", "-e", blob]),
                 "the discard's backup blob {blob} must resolve in {}",
                 odb.display()
             );
@@ -1553,12 +1855,107 @@ mod macos {
             "the panel's discard must not touch the open repo"
         );
 
+        unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS worktree_panel_amend_discard wt-a {}..{} backup={} undo={undo_head:?}",
             &head_before[..8],
             &head_after_amend[..8],
             &blob[..8],
         );
+    }
+
+    /// Real lock timeout after mutation: preserve recovery and deliver the notice
+    /// even if the owner generation changes before the background result arrives.
+    fn scenario_worktree_panel_discard_recording_failure(cx: &mut VisualTestAppContext) {
+        for stale in [false, true] {
+            let (_fixture, repo_path, wt_a, _wt_b) = build_two_worktree_fixture();
+            let original = std::fs::read(wt_a.join("dirty.txt")).unwrap();
+            let (kagi, win) = mount(cx, &repo_path);
+            let index = cx.read(|app| {
+                kagi.read(app)
+                    .view()
+                    .worktrees
+                    .iter()
+                    .position(|wt| wt.path == wt_a)
+                    .unwrap()
+            });
+            kagi.update(cx, |app, cx| {
+                e2e::open_worktree_panel_no_inputs(app, wt_a.clone(), "wt-a", index, cx)
+            });
+            cx.run_until_parked();
+            kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+            cx.run_until_parked();
+            let log_dir = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+            let log_path = log_dir.join("operations.jsonl");
+            let before_log = std::fs::read(&log_path).unwrap_or_default();
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(log_dir.join("operations.jsonl.lock"))
+                .unwrap();
+            lock.lock().unwrap();
+            kagi.update(cx, |app, cx| app.start_discard(cx));
+            kagi.update(cx, |app, cx| {
+                app.start_discard(cx);
+                if stale {
+                    app.switch_generation += 1;
+                }
+            });
+            cx.run_until_parked();
+            drop(lock);
+            assert_eq!(
+                repo_fingerprint(&wt_a).1,
+                "",
+                "mutation must already have completed"
+            );
+            assert_eq!(
+                std::fs::read(&log_path).unwrap_or_default(),
+                before_log,
+                "no fake durable success or retry"
+            );
+            cx.read(|app| {
+                let state = kagi.read(app);
+                let notice =
+                    e2e::app_notice_message(state).expect("owner-named recording failure notice");
+                assert!(
+                    notice.contains("recording failed") && notice.contains(wt_a.to_str().unwrap()),
+                    "{notice}"
+                );
+                assert!(!matches!(
+                    state.status_footer,
+                    kagi::ui::types::FooterStatus::Success(_)
+                ));
+                assert!(
+                    state.discard_modal().is_none(),
+                    "must not offer to repeat a completed mutation"
+                );
+                if !stale {
+                    let kagi::ui::types::FooterStatus::Failed(message) = &state.status_footer
+                    else {
+                        panic!("expected failure footer")
+                    };
+                    assert!(message.contains("changed but not recorded"));
+                    let panel = state.op_log.as_ref().unwrap().read(app);
+                    let entry = panel.entries().front().unwrap();
+                    assert!(matches!(
+                        entry.outcome,
+                        kagi_git::oplog::OpOutcome::Partial { .. }
+                    ));
+                    assert_eq!(entry.backup_refs.len(), 1);
+                    let output = Command::new("git")
+                        .current_dir(&wt_a)
+                        .args(["cat-file", "blob", &entry.backup_refs[0]])
+                        .output()
+                        .unwrap();
+                    assert!(output.status.success());
+                    assert_eq!(output.stdout, original);
+                }
+            });
+            unmount(cx, kagi, win);
+        }
+        eprintln!("[gui-e2e] PASS worktree_panel_discard_recording_failure current + stale owner");
     }
 
     /// Try to capture a PNG; tolerate the locked gpui rev's unimplemented

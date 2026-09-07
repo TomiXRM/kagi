@@ -8,6 +8,12 @@ use kagi_git::{
     ops::{AmendMode, BranchRenameValidation, MergeKind, OperationPlan},
     CommitId,
 };
+// #510: the plan slot and its two adapters live next door; re-exported so every
+// `use modals::*` consumer keeps reaching them.
+pub use super::modal_plan::ModalPlan;
+pub(crate) use super::modal_plan::{
+    plan_or_exec_error, plan_outcome, session_unavailable, SESSION_UNAVAILABLE,
+};
 
 // ──────────────────────────────────────────────────────────────
 // CheckoutPlanModal — state for the plan confirmation overlay (T013)
@@ -92,7 +98,7 @@ pub struct AmendPlanModal {
 /// State for an in-progress stash-pop confirmation (T-HT-007).
 #[derive(Clone)]
 pub struct PopPlanModal {
-    pub plan: std::sync::Arc<OperationPlan>,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
     pub error: Option<SharedString>,
     /// Stash index the plan was built for.
     pub stash_index: usize,
@@ -139,7 +145,7 @@ pub struct TrustRepoModal {
 /// State for a stash-drop confirmation.
 #[derive(Clone, Debug)]
 pub struct StashDropModal {
-    pub plan: std::sync::Arc<OperationPlan>,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
     pub error: Option<SharedString>,
     /// Stash index the plan was built for.
     pub stash_index: usize,
@@ -265,9 +271,11 @@ pub struct CreateBranchModal {
     pub input_state: Option<Entity<InputState>>,
     /// Whether to check out the new branch after creating it.
     pub checkout_after: bool,
-    /// Live plan (re-generated each keystroke from `input` and `at`).
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
+    /// Live plan (re-generated each keystroke from `input` and `at`), or the
+    /// explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
+    /// Error message to show if execute or preflight failed. Plan failures live
+    /// in `plan` instead, so they cannot leave a confirmable plan behind.
     pub error: Option<SharedString>,
 }
 
@@ -291,9 +299,11 @@ pub struct CreateTagModal {
     /// Real text-input entity (gpui-component). Created lazily on first
     /// render (needs a Window); `None` in headless paths.
     pub input_state: Option<Entity<InputState>>,
-    /// Live plan (re-generated each keystroke from `input` and `at`).
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
+    /// Live plan (re-generated each keystroke from `input` and `at`), or the
+    /// explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
+    /// Error message to show if execute or preflight failed. Plan failures live
+    /// in `plan` instead, so they cannot leave a confirmable plan behind.
     pub error: Option<SharedString>,
 }
 
@@ -317,9 +327,11 @@ pub struct CreateWorktreeModal {
     /// True when this modal attaches an existing local branch to a worktree
     /// instead of creating a new branch first.
     pub allow_existing_branch: bool,
-    /// Live plan regenerated from branch/path/start.
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
-    /// Error message to show if execute or preflight failed.
+    /// Live plan regenerated from branch/path/start, or the explicit failure of
+    /// the last replan (#510).
+    pub plan: ModalPlan,
+    /// Error message to show if execute or preflight failed. Plan failures live
+    /// in `plan` instead, so they cannot leave a confirmable plan behind.
     pub error: Option<SharedString>,
 }
 
@@ -354,7 +366,7 @@ pub struct StashApplyModal {
     /// The stash index to apply.
     pub index: usize,
     /// The computed plan.
-    pub plan: std::sync::Arc<OperationPlan>,
+    pub plan: Option<std::sync::Arc<OperationPlan>>,
     /// Error message to show if execute or preflight failed.
     pub error: Option<SharedString>,
 }
@@ -398,16 +410,56 @@ pub struct RevertModal {
 
 /// State for an in-progress delete-branch confirmation (W2-DELETE).
 ///
-/// The modal shows blockers (unmerged / current branch) and the recovery
-/// `git branch <name> <sha>` string before the user confirms.
+/// Unmerged deletion requires two confirmations; blockers still refuse.
+/// Recovery retains the tip under a mandatory backup ref.
 #[derive(Clone)]
 pub struct DeleteBranchModal {
+    /// Frozen plan owner, including its departure revision.
+    pub owner: crate::app::Attachment,
+    /// First confirmation arms only unmerged deletion; errors/reopening reset it.
+    pub confirm_armed: bool,
     /// The local branch name to delete.
     pub branch_name: String,
     /// The computed plan.
     pub plan: std::sync::Arc<OperationPlan>,
     /// Error message to show if preflight or execute failed.
     pub error: Option<SharedString>,
+}
+
+impl DeleteBranchModal {
+    /// Settle the global plan latch before deciding whether to display its
+    /// result. Tab departure invalidates approval, not completion. An unrelated
+    /// busy tag is never owned by this plan.
+    pub fn settle_plan(
+        owner: &crate::app::Attachment,
+        current: Option<&crate::app::Attachment>,
+        same_generation: bool,
+        busy: &mut Option<&'static str>,
+    ) -> bool {
+        if *busy == Some("delete-branch-plan") {
+            *busy = None;
+        }
+        same_generation && current == Some(owner)
+    }
+
+    /// Returns true when this confirmation only arms; false permits the caller
+    /// to continue through its existing blockers/busy/preflight checks.
+    pub fn arm_if_required(&mut self) -> bool {
+        let unmerged = self.plan.warnings.iter().any(|note| {
+            matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Branch(
+                    kagi_domain::plan_note::BranchNote::DeleteUnmerged { .. }
+                )
+            )
+        });
+        if unmerged && !self.confirm_armed {
+            self.confirm_armed = true;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// State for an in-progress delete-remote-branch confirmation
@@ -498,7 +550,8 @@ pub struct SetUpstreamModal {
     pub branch_name: String,
     pub input: String,
     pub input_state: Option<Entity<InputState>>,
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Live plan, or the explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
     pub error: Option<SharedString>,
 }
 
@@ -508,7 +561,8 @@ pub struct RenameBranchModal {
     pub input: String,
     pub input_state: Option<Entity<InputState>>,
     pub validation: BranchRenameValidation,
-    pub plan: Option<std::sync::Arc<OperationPlan>>,
+    /// Live plan, or the explicit failure of the last replan (#510).
+    pub plan: ModalPlan,
     pub error: Option<SharedString>,
 }
 
@@ -575,7 +629,9 @@ pub enum EditorPendingIntent {
     /// Switch repository tabs after discarding the whole editor workspace.
     SwitchRepo(std::path::PathBuf),
     /// Close a repository tab after discarding the whole editor workspace.
-    CloseRepoTab(std::path::PathBuf),
+    /// #482 stage 1: the tab to close is named by its session, so a guard the
+    /// user resolves later can never close a tab reopened on the same path.
+    CloseRepoTab(crate::app::SessionId),
     /// Enter a remote read-only repo after discarding the local editor workspace.
     EnterRemoteView {
         host: kagi_domain::remote::RemoteHost,
@@ -669,7 +725,24 @@ pub struct BranchCleanupModal {
     pub error: Option<SharedString>,
 }
 
+#[derive(Clone)]
+pub struct AppNotice {
+    pub message: String,
+    pub inspect: Option<crate::app::OperationId>,
+    pub acknowledge: Option<crate::app::ReconcileRead>,
+}
+impl From<String> for AppNotice {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            inspect: None,
+            acknowledge: None,
+        }
+    }
+}
+
 pub enum ActiveModal {
+    AppNotice(AppNotice),
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
     Amend(AmendPlanModal),
@@ -709,4 +782,59 @@ pub enum ActiveModal {
     EditorFsPrompt(EditorFsPromptModal),
     EditorDeleteConfirm(EditorDeleteConfirmModal),
     TrustRepo(TrustRepoModal),
+}
+
+impl ActiveModal {
+    /// True when this confirmation belongs to the repo it was opened for and
+    /// must be dropped when the active repo changes (#492). A modal's plan,
+    /// paths, stash indices and OIDs all came from one repo, but the confirm
+    /// methods read `self.repo_path` at Enter time — so a survivor would apply
+    /// repo A's plan to repo B. `AppNotice` is the only app-scoped modal: it
+    /// reports a finished operation that names its own repo. Exhaustive on
+    /// purpose: a new variant must declare its scope before it compiles.
+    pub fn is_repo_scoped(&self) -> bool {
+        use ActiveModal as M;
+        match self {
+            M::AppNotice(_) => false,
+            M::Checkout(_)
+            | M::Pull(_)
+            | M::Amend(_)
+            | M::Pop(_)
+            | M::StashDrop(_)
+            | M::PushTag(_)
+            | M::PrMerge(_)
+            | M::Push(_)
+            | M::BranchPlan(_)
+            | M::SetUpstream(_)
+            | M::RenameBranch(_)
+            | M::Merge(_)
+            | M::TrackingCheckout(_)
+            | M::SwitchToLatest(_)
+            | M::CreateBranch(_)
+            | M::CreateTag(_)
+            | M::CreateWorktree(_)
+            | M::UnlockWorktree(_)
+            | M::RemoveWorktree(_)
+            | M::LockWorktree(_)
+            | M::PruneWorktrees(_)
+            | M::RepairWorktrees(_)
+            | M::StashPush(_)
+            | M::StashApply(_)
+            | M::CherryPick(_)
+            | M::Revert(_)
+            | M::History(_)
+            | M::DeleteBranch(_)
+            | M::DeleteRemoteBranch(_)
+            | M::ResetCurrent(_)
+            | M::ForceLeasePush(_)
+            | M::RebaseCurrentOnto(_)
+            | M::BranchCleanup(_)
+            | M::Discard(_)
+            | M::ConflictContinue(_)
+            | M::EditorDirtyGuard(_)
+            | M::EditorFsPrompt(_)
+            | M::EditorDeleteConfirm(_)
+            | M::TrustRepo(_) => true,
+        }
+    }
 }

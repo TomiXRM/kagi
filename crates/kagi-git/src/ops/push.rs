@@ -125,6 +125,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 }),
                 head_at_plan: head,
                 stash_count_at_plan: 0,
+                stash_identity: None,
                 worktree_digest: None,
                 preview_files: Vec::new(),
                 preview_commits: Vec::new(),
@@ -274,6 +275,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,
@@ -308,7 +310,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any failure.
-pub fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, GitError> {
+pub(crate) fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOutcome, GitError> {
     // ── 1. Resolve current branch ─────────────────────────────
     let head_ref = repo
         .head()
@@ -666,6 +668,7 @@ pub fn plan_push_branch(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits,
@@ -674,7 +677,7 @@ pub fn plan_push_branch(
     })
 }
 
-pub fn execute_push_branch(
+pub(crate) fn execute_push_branch(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,
@@ -777,6 +780,7 @@ pub fn plan_set_upstream(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -785,7 +789,7 @@ pub fn plan_set_upstream(
     })
 }
 
-pub fn execute_set_upstream(
+pub(crate) fn execute_set_upstream(
     repo: &Repository,
     plan: &OperationPlan,
     branch_name: &str,

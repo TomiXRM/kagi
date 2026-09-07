@@ -128,6 +128,15 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         match event {
+            EditorWorkspaceEvent::SaveRequested(request) => {
+                let repo_path = view.read(cx).repo_path.clone();
+                let Some(guard) = self.reserve_write(&repo_path, cx) else {
+                    return;
+                };
+                view.update(cx, |view, cx| {
+                    view.save_reserved(request.clone(), Box::new(move || guard.complete()), cx);
+                });
+            }
             EditorWorkspaceEvent::CloseRequested => {
                 self.close_editor_workspace();
                 cx.notify();
@@ -505,9 +514,9 @@ impl KagiApp {
                 self.close_editor_workspace();
                 self.switch_repo_by_path(&path, cx);
             }
-            EditorPendingIntent::CloseRepoTab(path) => {
+            EditorPendingIntent::CloseRepoTab(session) => {
                 self.close_editor_workspace();
-                self.close_tab_by_path(&path, cx);
+                self.close_tab_by_session(session, cx);
             }
             EditorPendingIntent::EnterRemoteView { host, root, snap } => {
                 self.close_editor_workspace();

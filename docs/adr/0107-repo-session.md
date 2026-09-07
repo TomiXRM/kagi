@@ -102,6 +102,15 @@ See `/docs/refactor-plan.md` Step 2.1. Commit series:
 
 ## What this does NOT change (this sprint)
 
+### Slice 1a addendum (#484)
+
+[ADR-0175](0175-app-remove-boundary.md) keeps read RepoSession unchanged and
+uses a fresh Backend inside the remove job. Application Sessions owns only
+approval, operation lifetime and delivery under KagiApp, not this read handle
+or a second snapshot cache. Worker/map migration remains deferred.
+
+### Original exclusions
+
 - No worker thread (ADR-0073 deferred — needs careful `Send`/channel design).
 - No child `Entity<T>` decomposition of `KagiApp` (Phase 5, deferred).
 - `Backend`'s method count (the delegators shrink later, not in this sprint).

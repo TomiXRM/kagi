@@ -4,6 +4,9 @@
 //! All write operations are confined to `TempDir` repositories created
 //! within each test.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_reset_current_to_head;
 use std::path::Path;
 use std::process::Command;
 
@@ -11,10 +14,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{PlanNote, ResetNote};
-use kagi_git::{
-    ops::{execute_reset_current_to_head, plan_reset_current_to_head},
-    CommitId,
-};
+use kagi_git::{ops::plan_reset_current_to_head, CommitId};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -74,6 +74,9 @@ fn build_three_commit_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, Ve
 
 #[test]
 fn test_plan_normal_no_blockers_and_warns_abandons() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_dir, repo, commits) = build_three_commit_repo(&tmp);
     let target = CommitId(commits[0].clone());
@@ -102,6 +105,9 @@ fn test_plan_normal_no_blockers_and_warns_abandons() {
 // (kagi never touches the index/working tree, so `--soft`, never `--hard`).
 #[test]
 fn test_equivalent_command_is_faithful_soft_reset() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_dir, repo, commits) = build_three_commit_repo(&tmp);
     let target = CommitId(commits[0].clone());
@@ -123,6 +129,9 @@ fn test_equivalent_command_is_faithful_soft_reset() {
 
 #[test]
 fn test_execute_moves_the_branch_ref_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, repo, commits) = build_three_commit_repo(&tmp);
     let target = CommitId(commits[0].clone());
@@ -142,6 +151,9 @@ fn test_execute_moves_the_branch_ref_only() {
 
 #[test]
 fn test_plan_missing_commit_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (_dir, repo, _commits) = build_three_commit_repo(&tmp);
     let target = CommitId("0".repeat(40));
@@ -159,6 +171,9 @@ fn test_plan_missing_commit_blocker() {
 
 #[test]
 fn test_plan_unrelated_target_warns_not_ancestor() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let (dir, _repo, commits) = build_three_commit_repo(&tmp);
 
@@ -181,3 +196,6 @@ fn test_plan_unrelated_target_warns_not_ancestor() {
         plan.warnings
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

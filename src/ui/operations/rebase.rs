@@ -18,7 +18,7 @@ impl KagiApp {
             self.modal_focus = Some(cx.focus_handle());
         }
         let branch = self
-            .active_view
+            .view()
             .branches
             .iter()
             .find(|(_, current)| *current)
@@ -160,8 +160,8 @@ fn rebase_blocking(
     plan: &kagi_git::ops::OperationPlan,
     onto: &str,
 ) -> Result<String, String> {
-    let mut repo =
-        kagi_git::Backend::open(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
+        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::RebaseCurrentOnto {
         onto: onto.to_string(),
     };

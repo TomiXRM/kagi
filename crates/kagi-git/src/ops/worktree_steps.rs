@@ -16,15 +16,12 @@
 //!    child (issue #294). A `command` is **never** run untrusted, and **never**
 //!    run under the headless harness (assert).
 
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use sha2::{Digest, Sha256};
-
 use super::worktree_paths::{reject_escaping_relative, resolve_contained};
 use super::GitError;
 use kagi_domain::worktree_steps::{WorktreeStep, WorktreeSteps};
-
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 const COMMAND_TIMEOUT_SECS: u64 = 600; // `npm ci` can take minutes; kill past 10m.
 const CONFIG_REL_PATH: &str = ".kagi/worktree.toml";
 
@@ -216,27 +213,28 @@ pub struct StepEnv {
     pub worktree: PathBuf,
 }
 
-/// True unless the headless `KAGI_*` test harness is active. A `command` is
+/// True unless a recognized headless-harness signal is active. A `command` is
 /// **never** executed under headless (issue #341 §6). `KAGI_LOG_DIR` is
 /// deliberately excluded: it is only test-isolation for the store and unit
 /// tests, and gating on it would make the trusted-command path untestable.
+/// `KAGI_NO_SINGLE_INSTANCE` is a normal GUI launch-routing override, not a
+/// headless-harness signal, so it does not suppress trusted commands.
 fn command_execution_allowed() -> bool {
-    const HEADLESS_SIGNALS: &[&str] = &[
-        "KAGI_OPEN_REPO",
-        "KAGI_MENU_DUMP",
-        "KAGI_SELECT_FIRST",
-        "KAGI_NO_SINGLE_INSTANCE",
-    ];
+    const HEADLESS_SIGNALS: &[&str] = &["KAGI_OPEN_REPO", "KAGI_MENU_DUMP", "KAGI_SELECT_FIRST"];
     !HEADLESS_SIGNALS
         .iter()
         .any(|k| std::env::var_os(k).is_some())
 }
 
+#[cfg(test)]
+#[path = "worktree_steps_command_tests.rs"]
+mod command_execution_tests;
+
 /// Run the `post_create` steps best-effort: the worktree already exists, so a
 /// step failure is never allowed to undo it. `copy`/`symlink` always run;
 /// `command` runs only when `trusted` and not headless. Returns a human summary
 /// of what happened, for the oplog.
-pub fn run_post_create(steps: &[WorktreeStep], env: &StepEnv, trusted: bool) -> Vec<String> {
+pub(crate) fn run_post_create(steps: &[WorktreeStep], env: &StepEnv, trusted: bool) -> Vec<String> {
     let mut log = Vec::new();
     for step in steps {
         let line = match step {
@@ -270,31 +268,46 @@ pub fn run_post_create(steps: &[WorktreeStep], env: &StepEnv, trusted: bool) -> 
 /// a copy/symlink error, or a `command` that fails, is untrusted, or is blocked
 /// by headless — returns `Err`, and the caller must then abort the removal so
 /// the worktree survives (issue #341 §5, matching kagi's preflight ethos).
-pub fn run_pre_remove(
+pub(crate) fn run_pre_remove_progress(
     steps: &[WorktreeStep],
     env: &StepEnv,
     trusted: bool,
+    progress: &mut kagi_domain::remove::RemoveProgress,
+    fault: Option<kagi_domain::remove::RemoveFaultPoint>,
 ) -> Result<(), GitError> {
-    for step in steps {
+    for (index, step) in steps.iter().enumerate() {
+        if let WorktreeStep::Command { run } = step {
+            if !command_execution_allowed() {
+                progress.policy_rejected = true;
+                return Err(GitError::Other(format!(
+                    "pre-remove command cannot run under the headless harness, so cleanup \
+                     cannot be verified — aborting removal: {run}"
+                )));
+            }
+            if !trusted {
+                progress.policy_rejected = true;
+                return Err(GitError::Other(format!(
+                    "pre-remove command is not trusted, so it will not run — aborting \
+                     removal (trust .kagi/worktree.toml first): {run}"
+                )));
+            }
+        }
+        progress.stage = kagi_domain::remove::RemoveStage::PreRemove { step: index };
+        progress
+            .observations
+            .push(format!("step {index} started: {step:?}"));
+        if fault == Some(kagi_domain::remove::RemoveFaultPoint::PreRemoveTerminationUnknown) {
+            progress.termination_unknown = true;
+            return Err(GitError::Other("pre_remove termination unknown".into()));
+        }
         match step {
             WorktreeStep::Copy { from, to } => do_copy(env, from, to)?,
             WorktreeStep::Symlink { from, to } => do_symlink(env, from, to)?,
-            WorktreeStep::Command { run } => {
-                if !command_execution_allowed() {
-                    return Err(GitError::Other(format!(
-                        "pre-remove command cannot run under the headless harness, so cleanup \
-                         cannot be verified — aborting removal: {run}"
-                    )));
-                }
-                if !trusted {
-                    return Err(GitError::Other(format!(
-                        "pre-remove command is not trusted, so it will not run — aborting \
-                         removal (trust .kagi/worktree.toml first): {run}"
-                    )));
-                }
-                do_command(env, run)?;
-            }
+            WorktreeStep::Command { run } => do_command_progress(env, run, progress)?,
         }
+        progress
+            .observations
+            .push(format!("step {index} completed"));
     }
     Ok(())
 }
@@ -408,6 +421,14 @@ fn symlink_impl(_target: &Path, _link: &Path) -> Result<(), GitError> {
 /// process PATH already carries the login-shell PATH (see `shell_env.rs`), so
 /// tools like `npm` resolve.
 fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
+    do_command_progress(env, run, &mut Default::default())
+}
+
+fn do_command_progress(
+    env: &StepEnv,
+    run: &str,
+    progress: &mut kagi_domain::remove::RemoveProgress,
+) -> Result<(), GitError> {
     use std::io::Read;
     use std::process::{Command, Stdio};
 
@@ -431,6 +452,7 @@ fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| GitError::Other(format!("failed to start '{program}': {e}")))?;
+    progress.termination_unknown = true;
 
     // Drain stdout and stderr on dedicated threads so a command that emits more
     // than one pipe buffer (~64 KiB — e.g. `npm ci`) can never deadlock in
@@ -468,6 +490,7 @@ fn do_command(env: &StepEnv, run: &str) -> Result<(), GitError> {
             output_tail(&stdout, &stderr)
         )));
     };
+    progress.termination_unknown = false;
     if status.success() {
         Ok(())
     } else {
@@ -874,3 +897,7 @@ run = "docker compose down"
         assert!(trust_worktree_config_at(root.path(), &sha_a).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "worktree_steps_acceptance_tests.rs"]
+mod acceptance_tests;

@@ -9,7 +9,7 @@ resolver = "2"
 
 [package]
 name = "kagi"
-version = "0.33.0"
+version = "0.34.0"
 license = "MIT"
 description = "Safety-first, commit-graph Git GUI client built with GPUI"
 edition = "2021"
@@ -63,6 +63,7 @@ percent-encoding = "2"
 # Auto-update (ADR-0082): SHA-256 verification of downloaded release assets, and
 # tempfiles for the download staging area (also used by tests).
 sha2 = "0.10"
+getrandom = "0.3"
 tempfile = "3"
 # Typed settings persistence (issue #13 P4, ADR-0091): a real JSON parser for
 # settings.json replaces the hand-rolled string scanner and preserves unknown
@@ -84,6 +85,9 @@ winresource = "0.1"
 # `image` matches gpui's transitive version for screenshot encoding.
 [dev-dependencies]
 image = "0.25"
+# #509: the CLI/MCP shared-contract test drives both agent entry points in one
+# process to prove they emit the same plan JSON. Workspace path dep — no download.
+kagi-mcp = { path = "crates/kagi-mcp" }
 # ADR-0166 GUI E2E runner: throwaway fixture repos. Already a normal dep (cargo
 # unifies it), listed here so the `tests/` crate can name it directly.
 tempfile = "3"

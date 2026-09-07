@@ -56,6 +56,9 @@ fn head_commit(backend: &Backend) -> CommitId {
 /// trust confirmation, after which the same op proceeds.
 #[test]
 fn untrusted_repo_refuses_write_then_proceeds_once_trusted() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     build_repo(d);
@@ -112,6 +115,9 @@ fn untrusted_repo_refuses_write_then_proceeds_once_trusted() {
 /// to satisfy the call signatures.
 #[test]
 fn untrusted_repo_refuses_direct_execute_paths() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let d = tmp.path();
     build_repo(d);
@@ -125,6 +131,9 @@ fn untrusted_repo_refuses_direct_execute_paths() {
     let history = backend.history_from_reflog().expect("reflog history");
     let undo_entry = history.last().expect("at least one history entry").clone();
     let prune_plan = backend.plan_prune_worktrees().expect("prune plan");
+    let stash_plan = backend.plan_stash_drop(0).unwrap();
+    let undo_plan = backend.plan_undo(&undo_entry).unwrap();
+    let redo_plan = backend.plan_redo(&undo_entry).unwrap();
 
     // Now simulate the foreign-owner outcome.
     backend.set_trust_for_test(RepoTrust::Untrusted);
@@ -165,20 +174,31 @@ fn untrusted_repo_refuses_direct_execute_paths() {
     );
     // stash-drop
     assert!(
-        backend.execute_stash_drop(0).unwrap_err().is_untrusted(),
+        backend
+            .run(&Operation::StashDrop { index: 0 }, &stash_plan)
+            .unwrap_err()
+            .is_untrusted(),
         "execute_stash_drop must be refused"
     );
     // undo/redo (history rewrite)
     assert!(
         backend
-            .execute_undo(&undo_entry)
+            .run_history_move(
+                kagi_domain::plan_note::HistoryMoveDir::Undo,
+                &undo_plan,
+                &undo_entry
+            )
             .unwrap_err()
             .is_untrusted(),
         "execute_undo must be refused"
     );
     assert!(
         backend
-            .execute_redo(&undo_entry)
+            .run_history_move(
+                kagi_domain::plan_note::HistoryMoveDir::Redo,
+                &redo_plan,
+                &undo_entry
+            )
             .unwrap_err()
             .is_untrusted(),
         "execute_redo must be refused"
@@ -219,3 +239,6 @@ fn branch_exists(dir: &Path, name: &str) -> bool {
         .status
         .success()
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

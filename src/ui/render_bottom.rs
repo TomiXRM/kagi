@@ -162,11 +162,11 @@ impl KagiApp {
 
     /// Render the Activity tab body: a Day/Week/Month granularity toggle, a
     /// commit + merge line chart, and the top-5 contributor ranking. The data is
-    /// pre-aggregated in `active_view.activity` (built in `build_tab_view`), so
+    /// pre-aggregated in `view().activity` (built in `build_tab_view`), so
     /// this method only lays it out and wires the toggle.
     fn render_activity_body(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         use kagi_domain::activity::Granularity;
-        let activity = &self.active_view.activity;
+        let activity = &self.view().activity;
         let gran = self.activity_granularity;
         let gdata = activity.get(gran);
         let buckets = gdata.buckets.clone();

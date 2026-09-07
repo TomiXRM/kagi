@@ -1,5 +1,11 @@
 # ADR-0154: Working-tree snapshots under `refs/kagi/snapshots/`
 
+> #523 update: new discard/remove file backups are pinned by mandatory refs
+> under [ADR-0179](0179-ref-backed-discard-remove-backups.md). The historical
+> naked-blob limitation below applies to legacy receipts. Snapshot retention
+> remains separate from the lifetime of oplog-owned backup refs.
+
+
 - Status: **Accepted**
 - Date: 2026-09-03
 - Related: ADR-0046 / ADR-0083 (discard ODB-blob backup), ADR-0149 (#333 oplog id),

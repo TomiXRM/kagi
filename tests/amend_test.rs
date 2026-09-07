@@ -18,13 +18,16 @@
 //! | 12 | `test_amend_preflight_mismatch` | HEAD moved since plan → preflight_check fails |
 //! | 13 | `test_amend_no_upstream_allowed` | local branch without upstream → amend allowed |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_amend;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_amend, plan_amend, preflight_check, AmendMode};
+use kagi_git::{plan_amend, preflight_check, AmendMode};
 
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -216,6 +219,9 @@ fn setup_with_remote_on(branch: &str) -> RepoWithRemote {
 
 #[test]
 fn test_amend_message_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     let old_sha = head_sha(&r.path);
@@ -265,6 +271,9 @@ fn test_amend_message_only() {
 
 #[test]
 fn test_amend_staged_folds_changes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     let old_sha = head_sha(&r.path);
@@ -319,6 +328,9 @@ fn test_amend_staged_folds_changes() {
 
 #[test]
 fn test_amend_both() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     let old_sha = head_sha(&r.path);
@@ -357,6 +369,9 @@ fn test_amend_both() {
 
 #[test]
 fn test_amend_author_preserved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local_with_author("Bob Original", "bob@orig.example");
 
     let repo = Repository::open(&r.path).unwrap();
@@ -384,6 +399,9 @@ fn test_amend_author_preserved() {
 
 #[test]
 fn test_plan_amend_pushed_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_with_remote();
 
     let repo = Repository::open(&r.local).unwrap();
@@ -413,6 +431,9 @@ fn test_plan_amend_pushed_blocker() {
 
 #[test]
 fn test_plan_amend_merge_commit_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
@@ -458,6 +479,9 @@ fn test_plan_amend_merge_commit_blocker() {
 
 #[test]
 fn test_plan_amend_detached_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
     let sha = head_sha(&r.path);
     git(&r.path, &["checkout", "--detach", &sha]);
@@ -494,6 +518,9 @@ fn test_plan_amend_detached_blocker() {
 
 #[test]
 fn test_plan_amend_root_commit_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
@@ -538,6 +565,9 @@ fn test_plan_amend_root_commit_blocker() {
 
 #[test]
 fn test_plan_amend_message_empty_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
     let repo = Repository::open(&r.path).unwrap();
     let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("   ")).unwrap();
@@ -556,6 +586,9 @@ fn test_plan_amend_message_empty_blocker() {
 
 #[test]
 fn test_plan_amend_staged_nothing_blocker() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
     // Nothing staged (clean working tree).
     let repo = Repository::open(&r.path).unwrap();
@@ -576,6 +609,9 @@ fn test_plan_amend_staged_nothing_blocker() {
 
 #[test]
 fn test_amend_round_trip() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     let old_sha = head_sha(&r.path);
@@ -604,6 +640,9 @@ fn test_amend_round_trip() {
 
 #[test]
 fn test_amend_preflight_mismatch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     let repo = Repository::open(&r.path).unwrap();
@@ -626,6 +665,9 @@ fn test_amend_preflight_mismatch() {
 
 #[test]
 fn test_amend_no_upstream_allowed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_local();
 
     let repo = Repository::open(&r.path).unwrap();
@@ -652,6 +694,9 @@ fn test_amend_no_upstream_allowed() {
 /// name is the only difference, which is what makes this pair meaningful.
 #[test]
 fn test_plan_amend_pushed_on_ordinary_branch_warns_but_allows() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_with_remote_on("feat/x");
 
     let repo = Repository::open(&r.local).unwrap();
@@ -681,6 +726,9 @@ fn test_plan_amend_pushed_on_ordinary_branch_warns_but_allows() {
 /// …and it actually runs, replacing the commit rather than adding one.
 #[test]
 fn test_execute_amend_pushed_on_ordinary_branch_rewrites_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_with_remote_on("feat/x");
 
     let before = head_sha(&r.local);
@@ -712,6 +760,9 @@ fn test_execute_amend_pushed_on_ordinary_branch_rewrites_head() {
 /// the protection, not merely present.
 #[test]
 fn test_plan_amend_pushed_on_protected_branch_says_why() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let r = setup_with_remote_on("main");
 
     let repo = Repository::open(&r.local).unwrap();
@@ -728,3 +779,6 @@ fn test_plan_amend_pushed_on_protected_branch_says_why() {
         "the refusal must explain that the branch is shared: {msg}"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

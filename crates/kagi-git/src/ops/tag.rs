@@ -120,6 +120,7 @@ pub fn plan_create_tag(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -139,7 +140,11 @@ pub fn plan_create_tag(
 /// tag, mirroring [`super::execute_create_branch`].
 ///
 /// **This function does not perform a checkout.** HEAD remains unchanged.
-pub fn execute_create_tag(repo: &Repository, name: &str, at: &CommitId) -> Result<(), GitError> {
+pub(crate) fn execute_create_tag(
+    repo: &Repository,
+    name: &str,
+    at: &CommitId,
+) -> Result<(), GitError> {
     let oid = git2::Oid::from_str(&at.0)
         .map_err(|e| GitError::Other(format!("invalid commit id '{}': {}", at.0, e.message())))?;
     let object = repo
@@ -234,6 +239,7 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -248,7 +254,7 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
 /// credential helper and SSH agent apply. The refspec is fully qualified so a
 /// branch of the same name can never be pushed by accident, and **no force
 /// flag is ever passed** — see `plan_push_tag`.
-pub fn execute_push_tag(repo_path: &Path, remote: &str, name: &str) -> Result<(), GitError> {
+pub(crate) fn execute_push_tag(repo_path: &Path, remote: &str, name: &str) -> Result<(), GitError> {
     check_operand("remote", remote)?;
     check_operand("tag", name)?;
 

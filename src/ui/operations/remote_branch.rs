@@ -159,27 +159,33 @@ impl KagiApp {
     /// No modal, no plan — fetch never merges or moves the current branch, so
     /// it fires directly, mirroring the repo-level `Fetch` command.
     pub fn fetch_remote_branch_async(&mut self, remote_branch: String, cx: &mut Context<Self>) {
-        if self.busy_op.is_some() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
-            return;
-        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
+        };
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
         };
         klog!("fetch-remote-branch: start {}", remote_branch);
         let bg_path = repo_path.clone();
         let bg_remote_branch = remote_branch.clone();
         let task = cx.background_spawn(async move {
-            let backend = kagi_git::Backend::open(&bg_path)
-                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-            backend
-                .fetch_remote_branch(&bg_remote_branch)
-                .map_err(|e| format!("{e}"))
+            let result = crate::ui::blocking_ops::open_backend(&bg_path);
+            let open_failed = result.is_err();
+            let result = result.and_then(|backend| backend.fetch_remote_branch(&bg_remote_branch));
+            lease.complete_git(&result);
+            result.map_err(|e| {
+                if open_failed {
+                    i18n::op_failed(i18n::Op::RepoOpen, e)
+                } else {
+                    format!("{e}")
+                }
+            })
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
+                app.refresh_write_busy();
                 match result {
                     Ok(outcome) => {
                         klog!("fetch-remote-branch: ok {}", remote_branch);
@@ -245,7 +251,7 @@ impl KagiApp {
             .or_else(|| repo.remote_urls().ok().and_then(|v| v.into_iter().next()));
 
         let base_branch = self
-            .active_view
+            .view()
             .branches
             .iter()
             .find(|(_, current)| *current)

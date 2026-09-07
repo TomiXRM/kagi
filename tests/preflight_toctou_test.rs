@@ -4,13 +4,16 @@
 //! target is untouched. The "HEAD didn't move" part is what the old
 //! HEAD-only preflight missed.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_discard;
 use std::path::Path;
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_discard, plan_discard};
+use kagi_git::plan_discard;
 
 fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git")
@@ -61,6 +64,9 @@ fn repo() -> TempDir {
 /// refuse — "restore from index" must not become "delete from disk".
 #[test]
 fn discard_refuses_when_a_target_became_untracked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let t = repo();
     let d = t.path();
     write(d, "tracked.txt", "PRECIOUS EDIT\n");
@@ -89,6 +95,9 @@ fn discard_refuses_when_a_target_became_untracked() {
 /// force-overwrite a half-done resolution.
 #[test]
 fn discard_refuses_when_a_target_became_conflicted() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let t = repo();
     let d = t.path();
     // Branch b changes tracked.txt one way…
@@ -133,6 +142,9 @@ fn discard_refuses_when_a_target_became_conflicted() {
 /// cover, so a plan for A can never be replayed to touch B.
 #[test]
 fn execute_discard_rejects_paths_outside_its_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let t = repo();
     let d = t.path();
     write(d, "tracked.txt", "edit A\n");
@@ -144,7 +156,10 @@ fn execute_discard_rejects_paths_outside_its_plan() {
     // Replay the plan-for-A against path B: must be refused before any write.
     let err = execute_discard(&repo, &plan, &["other.txt".into()])
         .expect_err("a plan for tracked.txt must refuse a discard of other.txt");
-    assert!(format!("{err}").contains("other.txt"), "{err}");
+    assert!(
+        format!("{err}").contains("plan safety requirements differ"),
+        "{err}"
+    );
     assert_eq!(
         read(d, "other.txt"),
         "edit B\n",
@@ -154,3 +169,6 @@ fn execute_discard_rejects_paths_outside_its_plan() {
     // Sanity: the planned path itself still works.
     execute_discard(&repo, &plan, &["tracked.txt".into()]).expect("planned path discards fine");
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

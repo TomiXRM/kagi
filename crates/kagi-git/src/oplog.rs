@@ -21,6 +21,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{ops::StateSummary, GitError};
 
+mod reading;
+pub mod retention;
+
 // ────────────────────────────────────────────────────────────
 // Public types
 // ────────────────────────────────────────────────────────────
@@ -28,6 +31,11 @@ use super::{ops::StateSummary, GitError};
 /// The result of a git operation.
 #[derive(Debug, Clone)]
 pub enum OpOutcome {
+    /// Side effects or process termination cannot be fully established.
+    Unknown {
+        after: StateSummary,
+        evidence: String,
+    },
     /// Operation completed without error.
     Success {
         /// Repository state immediately after execution.
@@ -116,6 +124,8 @@ pub struct OpLogEntry {
     pub before: StateSummary,
     /// Outcome of the operation.
     pub outcome: OpOutcome,
+    /// Mandatory recovery roots, retained for the lifetime of this entry (#523).
+    pub backup_refs: Vec<String>,
 }
 
 impl OpLogEntry {
@@ -145,6 +155,7 @@ impl OpLogEntry {
             worktree: None,
             before,
             outcome,
+            backup_refs: Vec::new(),
         }
     }
 
@@ -215,6 +226,13 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
                 escape_json_string(error)
             )
         }
+        OpOutcome::Unknown { after, evidence } => {
+            format!(
+                "{{\"kind\":\"Unknown\",\"after\":{},\"evidence\":{}}}",
+                state_summary_to_json(after),
+                escape_json_string(evidence)
+            )
+        }
         OpOutcome::Failed { error } => {
             format!(
                 "{{\"kind\":\"Failed\",\"error\":{}}}",
@@ -242,7 +260,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
     };
 
     format!(
-        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{}}}",
+        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{},\"backup_refs\":[{}]}}",
         entry.id,
         parent_json,
         entry.timestamp,
@@ -252,6 +270,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
         worktree_json,
         state_summary_to_json(&entry.before),
         outcome_json,
+        entry.backup_refs.iter().map(|r| escape_json_string(r)).collect::<Vec<_>>().join(","),
     )
 }
 
@@ -266,15 +285,30 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
 ///    and CI to avoid writing to `$HOME`).
 /// 2. `$HOME/.kagi/operations.jsonl` — default production path.
 ///
-/// Returns `None` if neither `$KAGI_LOG_DIR` nor `$HOME` can be determined.
-fn log_file_path() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("KAGI_LOG_DIR") {
-        if !dir.is_empty() {
-            return Some(PathBuf::from(dir).join("operations.jsonl"));
-        }
+///
+/// Test binaries always carry `CARGO_MANIFEST_DIR`; they must explicitly set
+/// `KAGI_LOG_DIR` so a failed fixture cannot write into a developer's home.
+fn log_file_path() -> Result<Option<PathBuf>, GitError> {
+    let log_dir = std::env::var_os("KAGI_LOG_DIR");
+    let home = dirs_home();
+    let test_runtime = std::env::var_os("CARGO_MANIFEST_DIR").is_some();
+    log_file_path_from_env(log_dir.as_deref(), home.as_deref(), test_runtime)
+}
+
+fn log_file_path_from_env(
+    log_dir: Option<&std::ffi::OsStr>,
+    home: Option<&Path>,
+    test_runtime: bool,
+) -> Result<Option<PathBuf>, GitError> {
+    if let Some(dir) = log_dir.filter(|dir| !dir.is_empty()) {
+        return Ok(Some(PathBuf::from(dir).join("operations.jsonl")));
     }
-    // Fall back to $HOME/.kagi/operations.jsonl.
-    dirs_home().map(|home| home.join(".kagi").join("operations.jsonl"))
+    if test_runtime {
+        return Err(GitError::Other("tests must set KAGI_LOG_DIR".to_string()));
+    }
+    Ok(home
+        .filter(|home| !home.as_os_str().is_empty())
+        .map(|home| home.join(".kagi").join("operations.jsonl")))
 }
 
 /// Minimal home-directory resolution without adding a crate dependency.
@@ -427,12 +461,14 @@ fn extract_object_field(json: &str, key: &str) -> Option<String> {
 ///
 /// Returns only the string elements; other element types are skipped.
 fn extract_string_array(json: &str, key: &str) -> Vec<String> {
-    let needle = format!("\"{}\":[", key);
+    let needle = format!("\"{}\":", key);
     let pos = match json.find(needle.as_str()) {
         Some(p) => p,
         None => return Vec::new(),
     };
-    let after = &json[pos + needle.len()..];
+    let Some(after) = json[pos + needle.len()..].trim_start().strip_prefix('[') else {
+        return Vec::new();
+    };
 
     // Scan elements until the closing ']'.
     let mut result = Vec::new();
@@ -545,6 +581,16 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
                 error,
             }
         }
+        "Unknown" => {
+            let after_obj = extract_object_field(&outcome_obj, "after")?;
+            OpOutcome::Unknown {
+                after: StateSummary {
+                    head: extract_str_field(&after_obj, "head")?,
+                    dirty: extract_str_field(&after_obj, "dirty")?,
+                },
+                evidence: extract_str_field(&outcome_obj, "evidence")?,
+            }
+        }
         "Failed" => {
             let error = extract_str_field(&outcome_obj, "error").unwrap_or_default();
             OpOutcome::Failed { error }
@@ -566,6 +612,7 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
         worktree,
         before,
         outcome,
+        backup_refs: extract_string_array(line, "backup_refs"),
     })
 }
 
@@ -631,28 +678,18 @@ fn normalize_repo_path(path: &Path) -> PathBuf {
 /// id/parent. Returns an empty `Vec` if the file is missing/unreadable.
 fn read_all_oplog_entries() -> Vec<OpLogEntry> {
     let path = match log_file_path() {
-        Some(p) => p,
-        None => return Vec::new(),
+        Ok(Some(path)) => path,
+        Ok(None) | Err(_) => return Vec::new(),
     };
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };
 
-    let mut entries: Vec<OpLogEntry> = Vec::new();
-    let mut prev_id: Option<u64> = None;
-    let mut idx: u64 = 0;
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Some(mut entry) = parse_oplog_line(line) {
-            if !line.contains("\"id\":") {
-                entry.id = idx;
-                entry.parent = prev_id;
-            }
-            prev_id = Some(entry.id);
-            idx += 1;
+    let mut entries = Vec::new();
+    let mut reader = reading::Reader::default();
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        if let Ok((entry, _)) = reader.parse(line) {
             entries.push(entry);
         }
     }
@@ -668,9 +705,14 @@ fn read_all_oplog_entries() -> Vec<OpLogEntry> {
 ///
 /// Returns the path of the file that was written to on success.
 pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
+    append_oplog_receipt(entry).map(|(path, _)| path)
+}
+
+/// Returns the exact assigned entry, never a tail read after the append.
+pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry), GitError> {
     use std::io::Write;
 
-    let path = log_file_path().ok_or_else(|| {
+    let path = log_file_path()?.ok_or_else(|| {
         GitError::Other("could not determine oplog path (no HOME or KAGI_LOG_DIR)".to_string())
     })?;
 
@@ -685,11 +727,13 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
         })?;
     }
 
+    let mut lock = retention::append_lock(&path)?;
+    retention::validate_append_roots(entry)?;
+
     // ADR-0149: assign the sequence id/parent from the current tail so ids are
     // monotonic and each entry chains to the previous one. Placeholder id/parent
     // on `entry` (from `OpLogEntry::new`) are overwritten here.
-    // ponytail: single-user oplog — no cross-process locking on the read→write
-    // window; add a lock if concurrent writers ever appear.
+    // Append and explicit retirement share the stable sidecar lock.
     let mut entry = entry.clone();
     let last = read_oplog_tail(1);
     match last.first() {
@@ -703,6 +747,7 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
         }
     }
 
+    entry.id = retention::reserve_id(&mut lock, entry.id)?;
     let line = format!("{}\n", entry_to_json(&entry));
 
     let mut file = std::fs::OpenOptions::new()
@@ -717,7 +762,7 @@ pub fn append_oplog(entry: &OpLogEntry) -> Result<PathBuf, GitError> {
         GitError::Other(format!("oplog: write failed for {}: {}", path.display(), e))
     })?;
 
-    Ok(path)
+    Ok((path, entry))
 }
 
 // ────────────────────────────────────────────────────────────

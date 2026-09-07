@@ -5,13 +5,16 @@
 //! what moved — a merge that quietly checked the target out would satisfy
 //! "the target advanced" just as well.
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_merge_into_branch;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
-use kagi_git::{execute_merge_into_branch, plan_merge_into_branch, MergeIntoKind};
+use kagi_git::{plan_merge_into_branch, MergeIntoKind};
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -74,6 +77,9 @@ fn setup() -> (TempDir, PathBuf) {
 
 #[test]
 fn merging_into_a_branch_moves_only_that_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     let repo = Repository::open(&p).unwrap();
 
@@ -138,6 +144,9 @@ fn merging_into_a_branch_moves_only_that_branch() {
 
 #[test]
 fn an_uncommitted_change_survives_the_merge() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     write(&p, "base.txt", "MY UNCOMMITTED EDIT\n");
 
@@ -153,6 +162,9 @@ fn an_uncommitted_change_survives_the_merge() {
 
 #[test]
 fn a_fast_forward_target_just_moves_its_ref() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     // `behind` sits at main's parent, so merging main into it fast-forwards.
     git(&p, &["branch", "behind", "main~1"]);
@@ -179,6 +191,9 @@ fn a_fast_forward_target_just_moves_its_ref() {
 
 #[test]
 fn a_conflicting_merge_is_blocked_rather_than_half_done() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     // Make both branches edit the same file differently.
     git(&p, &["checkout", "-q", "feature"]);
@@ -216,6 +231,9 @@ fn a_conflicting_merge_is_blocked_rather_than_half_done() {
 
 #[test]
 fn merging_into_the_current_branch_is_refused_here() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     git(&p, &["checkout", "-q", "main"]);
     let repo = Repository::open(&p).unwrap();
@@ -229,6 +247,9 @@ fn merging_into_the_current_branch_is_refused_here() {
 
 #[test]
 fn merging_into_a_branch_checked_out_in_a_worktree_is_refused() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     // Its own TempDir: a worktree cannot live inside the repo, and a fixed
     // path under the system temp dir survives the test and collides with the
@@ -253,6 +274,9 @@ fn merging_into_a_branch_checked_out_in_a_worktree_is_refused() {
 
 #[test]
 fn a_target_that_already_contains_the_source_is_a_no_op() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     let repo = Repository::open(&p).unwrap();
     execute_merge_into_branch(&repo, "feature", "main").expect("first merge");
@@ -285,6 +309,9 @@ fn with_remote_only_branch() -> (TempDir, PathBuf) {
 
 #[test]
 fn dropping_onto_a_remote_ref_creates_the_local_branch_and_merges_into_it() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = with_remote_only_branch();
     let repo = Repository::open(&p).unwrap();
 
@@ -336,6 +363,9 @@ fn dropping_onto_a_remote_ref_creates_the_local_branch_and_merges_into_it() {
 /// to lose work.
 #[test]
 fn dropping_onto_a_remote_ref_whose_local_branch_exists_targets_the_local_one() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let (_t, p) = setup();
     // Its own TempDir: a fixed path under the system temp dir survives the run
     // and the next one pushes into a remote that is already ahead.
@@ -373,3 +403,6 @@ fn dropping_onto_a_remote_ref_whose_local_branch_exists_targets_the_local_one() 
         "the merge must build on the LOCAL tip, not the remote's"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

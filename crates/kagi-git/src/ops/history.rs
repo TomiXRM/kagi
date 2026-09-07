@@ -240,6 +240,7 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -275,7 +276,7 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
 /// - HEAD commit has no parent (root commit — guard in plan phase).
 /// - HEAD commit is a merge commit (guard in plan phase).
 /// - Any libgit2 ref-update failure.
-pub fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitError> {
+pub(crate) fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitError> {
     // ── 1. Resolve HEAD branch + commit ───────────────────────
     let head_ref = repo
         .head()
@@ -590,6 +591,7 @@ pub fn plan_amend(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files,
         preview_commits: Vec::new(),
@@ -617,7 +619,7 @@ pub fn plan_amend(
 ///
 /// The caller is responsible for recording the old HEAD SHA in the oplog
 /// **before** calling this (ADR-0040).
-pub fn execute_amend(
+pub(crate) fn execute_amend(
     repo: &Repository,
     mode: AmendMode,
     message: Option<&str>,
@@ -936,6 +938,7 @@ fn plan_history_move(
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -1087,7 +1090,7 @@ fn execute_history_move(
 }
 
 /// Execute an **undo**: move `branch` back from `after` to `before`.
-pub fn execute_undo(
+pub(crate) fn execute_undo(
     repo: &Repository,
     branch: &str,
     before: &CommitId,
@@ -1097,7 +1100,7 @@ pub fn execute_undo(
 }
 
 /// Execute a **redo**: move `branch` forward from `before` to `after`.
-pub fn execute_redo(
+pub(crate) fn execute_redo(
     repo: &Repository,
     branch: &str,
     before: &CommitId,

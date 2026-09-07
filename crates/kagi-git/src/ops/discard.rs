@@ -177,7 +177,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 
     let recovery = PlanRecovery {
         kind: RecoveryKind::Discard,
-        commands: vec!["git cat-file -p <blob-sha>".to_string()],
+        commands: vec!["git cat-file blob <backup-ref>".to_string()],
     };
 
     // ADR-0083: untracked targets are DELETED (after an ODB backup). Surface this
@@ -199,6 +199,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         // #295: pin the classification so execute refuses if a target became
         // conflicted or moved tracked→untracked between plan and execute.
         worktree_digest: Some(status.digest()),
@@ -249,7 +250,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 /// been mutated at that point, so the backup blob SHAs are the user's only route
 /// back to their content and must never be dropped. Only failures *before* any
 /// mutation (blockers, preflight, backup) return `Err`.
-pub fn execute_discard(
+pub(crate) fn execute_discard(
     repo: &Repository,
     plan: &OperationPlan,
     paths: &[String],
@@ -301,6 +302,7 @@ pub fn execute_discard(
     // ── 1. BACKUP — write each target's current WT content to the ODB. ──
     // Any failure aborts the whole discard BEFORE the working tree is touched.
     let mut backups: Vec<DiscardBackup> = Vec::with_capacity(rels.len());
+    let backup_id = super::backup::operation_id();
     for rel in &rels {
         let abs = workdir.join(rel);
         // #324 (mirrors #298): never read the backup THROUGH a symlink. `fs::read`
@@ -342,17 +344,13 @@ pub fn execute_discard(
                 }
             }
         };
-        let oid = repo.blob(&content).map_err(|e| {
-            GitError::Other(format!(
-                "discard aborted: blob backup failed for '{}': {}",
-                rel,
-                e.message()
-            ))
-        })?;
-        backups.push(DiscardBackup {
-            path: rel.clone(),
-            blob: oid.to_string(),
-        });
+        backups.push(super::backup::write_blob(
+            repo,
+            &backup_id,
+            backups.len(),
+            rel.clone(),
+            &content,
+        )?);
     }
 
     // Partition into tracked (restore from index) vs untracked (delete).

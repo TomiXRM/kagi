@@ -2,7 +2,7 @@
 //!
 //! The single place that decides **what each layout slot shows**. Before this
 //! module, the precedence between the scattered gate fields (`file_history`,
-//! `ecosystem`, `loading_tab`, `main_diff`, `commit_panel_open`,
+//! `ecosystem`, `main_diff`, `commit_panel_open`,
 //! `inspector_visible`, `sidebar.visible`, …) was implicit in the if/else
 //! ordering inside `render_body`. Adding a new pane content meant finding the
 //! right branch by archaeology.
@@ -197,7 +197,7 @@ impl WorkspaceItem for PrModeItem {
 
 /// Branch Cleanup takeover (ADR-0128) — bridges `KagiApp.branch_cleanup_open`.
 /// Unlike the entity-backed takeovers, the table data lives in
-/// `active_view.cleanup_rows` (snapshot-derived, per-tab), so the gate is a
+/// `view().cleanup_rows` (snapshot-derived, per-tab), so the gate is a
 /// plain bool and the pane re-renders from fresh rows after every reload.
 pub struct BranchCleanupItem;
 
@@ -419,12 +419,10 @@ fn render_inspector_body(
 ) -> Option<AnyElement> {
     // ── Commit metadata ─
     let selected = app.selected;
-    let d = selected
-        .and_then(|i| app.active_view.details.get(i))
-        .cloned()?;
+    let d = selected.and_then(|i| app.view().details.get(i)).cloned()?;
     let at = CommitId(d.full_sha.as_ref().to_string());
     let selected_badges: Vec<commit_list::RefBadge> = selected
-        .and_then(|i| app.active_view.rows.get(i))
+        .and_then(|i| app.view().rows.get(i))
         .map(|r| r.badges.clone())
         .unwrap_or_default();
     // GitHub Phase 1: PRs whose head branch (local or origin/) points at this
@@ -433,9 +431,9 @@ fn render_inspector_body(
         .github_prs
         .iter()
         .filter(|pr| {
-            let local_tip = app.active_view.branch_targets.get(&pr.head);
+            let local_tip = app.view().branch_targets.get(&pr.head);
             let remote_tip = app
-                .active_view
+                .view()
                 .remote_branches
                 .iter()
                 .find(|rb| rb.name == pr.head)
@@ -641,7 +639,7 @@ pub struct WorkspaceInputs {
     pub branch_cleanup_open: bool,
     /// `pr_mode.is_some()` (GitHub Phase 1c).
     pub pr_mode: bool,
-    /// `loading_tab.is_some()`.
+    /// `loading_tab().is_some()`.
     pub loading: bool,
     /// `main_diff.is_some()`.
     pub diff_open: bool,

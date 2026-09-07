@@ -8,16 +8,16 @@
 //! | 4 | `execute_deletes_local_and_remote` | full pipeline vs a file:// bare origin: both halves deleted, tips recorded |
 //! | 5 | `execute_refuses_moved_local_tip` | commit lands after plan → per-branch failure, branch survives |
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::execute_delete_merged_branches;
 use std::path::Path;
 use std::process::Command;
 
 use tempfile::TempDir;
 
 use git2::Repository;
-use kagi_git::ops::{
-    collect_branch_cleanup, execute_delete_merged_branches, plan_delete_merged_branches,
-    MergedBranchStatus,
-};
+use kagi_git::ops::{collect_branch_cleanup, plan_delete_merged_branches, MergedBranchStatus};
 
 /// 2026-01-10T00:00:00Z — all fixture dates are relative to this "now".
 const NOW: i64 = 1_768_003_200;
@@ -73,6 +73,9 @@ fn init(tmp: &TempDir) -> &Path {
 
 #[test]
 fn collect_classifies_merged_grown_stale() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -142,6 +145,9 @@ fn collect_classifies_merged_grown_stale() {
 
 #[test]
 fn collect_flags_gone_upstream_as_squash_candidate() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
     // origin exists (URL only, never contacted) so upstream config resolves.
@@ -177,6 +183,9 @@ fn collect_flags_gone_upstream_as_squash_candidate() {
 
 #[test]
 fn plan_blocks_when_tip_moved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -212,6 +221,9 @@ fn plan_blocks_when_tip_moved() {
 
 #[test]
 fn execute_deletes_local_and_remote() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
     let remote_tmp = TempDir::new().unwrap();
@@ -258,6 +270,9 @@ fn execute_deletes_local_and_remote() {
 
 #[test]
 fn execute_refuses_moved_local_tip() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = TempDir::new().unwrap();
     let dir = init(&tmp);
 
@@ -292,3 +307,6 @@ fn execute_refuses_moved_local_tip() {
     assert!(outcome.failed[0].1.contains("moved since plan"));
     assert!(repo.find_branch("merged", git2::BranchType::Local).is_ok());
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

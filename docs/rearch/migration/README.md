@@ -5,7 +5,7 @@ Strangler migration from the v0.2.0 single-crate app to the v1.0 workspace
 green. This file is the running log: check off steps, record deviations, and
 note why any destructive change was made.
 
-## Current interpretation (2026-09-06)
+## Current interpretation (2026-09-07)
 
 The numbered steps below retain dated history, including their historical
 LOC/test counts. ADR-0121's entity/feature-pane route is implemented; it does
@@ -16,6 +16,9 @@ Current workspace/DAG/counts and explicit deferred ownership work are recorded
 in `docs/agent-loop/2026-09-astra-recovery/{AUDIT,METRICS}.md`.
 The recovery extends ADR-0149's mutation-owned logging for stash drop,
 history undo/redo and cleanup; guarded UI completion is presentation-only.
+The measured app-layer slices below now live in `src/app` and existing `Sessions`;
+they do not establish the original `kagi-app` crate, universal worker dispatch, or
+zero-copy tab ownership target.
 
 ## Invariants held at every step
 - `cargo test --workspace` green.
@@ -40,7 +43,47 @@ history undo/redo and cleanup; guarded UI completion is presentation-only.
 - [x] **S4 — De-leak the UI** (ADR-0078). Done in 2 batches:
   - S4a (Codex): added `src/git/backend.rs` — a `Backend` handle owning git2::Repository with 98 delegating methods (git2-clean public API). Additive, green.
   - S4b (Codex): rewrote all ~82 `Repository::open` sites + every `plan_/execute_/git::` call across `src/ui/{mod,avatar_fetch,tabs,conflict_view,commit_panel,commands}.rs` onto `Backend`. **`grep -rE 'git2::|Repository::open' src/ui` = 0.** 635 tests green. CI grep gate added in `ci.yml`. (Crate-level enforcement — moving src/ui into a git2-free `kagi-ui` crate — lands with S6.)
-- [ ] **S5 — Original `kagi-app` target, deferred.** `OperationController`, zero-copy active/cache ownership, `Selection` and `RepoMode` are not implemented. ADR-0121 chose entity/slot registration and stable feature-pane crates instead of this wholesale move. A later measured ownership batch must establish a concrete boundary and worker setting parity before reconsidering crate extraction.
+- [~] **S5 — Measured application-layer migration.** `src/app` now owns selected
+  plan/approval/lease/completion flows and session identity, while the original
+  `kagi-app` crate, `OperationController`, zero-copy active/cache ownership,
+  `Selection`, and `RepoMode` remain unimplemented. ADR-0121 still rejects a
+  wholesale crate move without measured ownership and worker-setting parity.
+  - [x] **#484 — remove boundary and writer admission (#526/#530).** Remove owns receipts/Unknown handling;
+    competing GUI writers use the same Sessions leases ([ADR-0175](../../adr/0175-app-remove-boundary.md)).
+  - [x] **Stash family complete — #541/#550/#557/#572.** Local push/apply/pop/drop and remote drop use Sessions plans/leases;
+    conflict follow-up waits for reload and stays bound to its owner ([ADR-0176](../../adr/0176-app-stash-local-boundary.md)).
+  - [x] **#482 stage 1 — #574.** `SessionId`/`WorktreeId`, attach/detach lifetime,
+    owner-bound plans, and sibling invalidation are implemented ([ADR-0182](../../adr/0182-session-identity-and-lifetime.md)).
+  - [x] **Plan failure state — #570.** Modal plan/replan failure replaces the old
+    plan and prevents confirmation until a new Ready plan exists ([ADR-0180](../../adr/0180-modal-plan-failure-state.md)).
+  - [x] **Transport recording — #558.** PR merge and SSH remote pull record at their
+    execution boundary; ambiguous transport outcomes remain `Unknown` ([ADR-0177](../../adr/0177-transport-recording-boundary.md)).
+  - [x] **Backend policy — #563/#575.** Central actor/auto-snapshot policy enforces mandatory trust/preflight/verify;
+    raw-executor callers migrated, retaining documented family exceptions ([ADR-0178](../../adr/0178-backend-execution-policy.md)).
+  - [x] **Recovery roots — #568.** Discard/remove file backups survive GC through ref-backed blob roots;
+    default retention matches the oplog entry lifetime ([ADR-0179](../../adr/0179-ref-backed-discard-remove-backups.md)).
+  - [x] **CLI/MCP contract — #571.** Both frontends use the shared agent contract and
+    report the receipt from their own run, never the global oplog tail ([ADR-0181](../../adr/0181-agent-contract-cli-mcp.md)).
+  - [x] **Test oplog isolation — #578.** Git fixtures use per-test children with temporary
+    `KAGI_LOG_DIR`; test runs refuse the HOME fallback with `tests must set KAGI_LOG_DIR` ([ADR-0149](../../adr/0149-oplog-in-backend-run-and-schema.md)).
+  - [x] **Conflict design r1 — #577.** [FAMILY-conflict](../app-layer/FAMILY-conflict.md) defines revision-bound jobs and settlement;
+    the PR's PM ruling requires implementation in C0 → C1 → C2 → C3 order below.
+  - [ ] **#482 stage 2 — #489.** Make snapshot/read ownership single-owner and
+    replace the read generation guard with `RequestSlot`.
+  - [ ] **#482 stage 3.** Move selection, scroll, pane, and menu state into `TabView`,
+    then remove `reset_per_repo_ui`.
+  - [x] **Conflict C0 — #582 / part of #569.** Preserve `TerminationUnknown` as `Unknown`,
+    reserve the owner lease before Continue/Skip/Abort, and retain it when stop is unconfirmed.
+  - [x] **Conflict C1.** Move Save and directory/file resolution through the app
+    boundary while retaining the legacy busy bridge for the other conflict actions;
+    exact conflict/buffer revisions and the Backend-owned receipt accompany the
+    finite completion evidence.
+  - [ ] **Conflict C2.** Migrate typed Abort flows with progress-aware outcomes,
+    recovery, and Backend-owned recording.
+  - [ ] **Conflict C3.** Migrate Continue/Skip and reconcile, preserve typed process
+    evidence, and remove the remaining direct conflict writers/UI recording.
+  - [ ] **#314.** Establish a separate worker proof before any universal dispatch
+    migration; the current worker remains outside the production GUI path.
 - [~] **S6 — Split the view.** Carve `ui/mod.rs` into per-feature modules; later collapse modals into `ActiveModal` + add view-models. Progress (`ui/mod.rs` 16,775 → 14,331 LOC):
   - [x] S6a (Codex): modal subsystem → `src/ui/modals.rs` (3,504 LOC; ~22 modal structs + ~24 render_*_modal fns).
   - [x] S6c (Claude): diff view-models + tree-sitter highlighter → `src/ui/diff_view.rs` (287 LOC).

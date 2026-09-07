@@ -260,7 +260,7 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
     let Some(status) = wait_or_kill(&mut child, Duration::from_secs(GIT_CLI_TIMEOUT_SECS)) else {
         let _ = out_reader.join();
         let _ = err_reader.join();
-        return Err(GitError::Other(format!(
+        return Err(GitError::TerminationUnknown(format!(
             "git {} timed out after {}s",
             args.join(" "),
             GIT_CLI_TIMEOUT_SECS

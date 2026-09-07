@@ -211,7 +211,7 @@ impl KagiApp {
         // instead would otherwise show no toggle at all (user report).
         // Cached after the first read — this touches the filesystem.
         if entity.read(cx).commit_template.is_none() {
-            if let Some(tpl) = kagi_git::Backend::open(&repo_path)
+            if let Some(tpl) = crate::ui::blocking_ops::open_backend(&repo_path)
                 .ok()
                 .and_then(|b| b.commit_template())
             {
@@ -536,7 +536,7 @@ impl KagiApp {
         cx.notify();
 
         let task = cx.background_spawn(async move {
-            let repo = match kagi_git::Backend::open(&repo_path) {
+            let repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
                 Ok(r) => r,
                 Err(_) => return None,
             };
@@ -638,7 +638,12 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.stage_files(&paths)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.stage_files(&paths)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => return,
         };
@@ -680,7 +685,13 @@ impl KagiApp {
         if paths.is_empty() {
             return;
         }
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.unstage_files(&paths)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result =
+            lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.unstage_files(&paths)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => return,
         };
@@ -716,7 +727,12 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.stage_file(&path)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.stage_file(&path)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => {
                 klog!("stage_file: repo open error: {}", "session unavailable");
@@ -759,7 +775,12 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let result = match self.with_commit_panel_repo(cx, |repo| repo.unstage_file(&path)) {
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| self.with_commit_panel_repo(cx, |repo| repo.unstage_file(&path)));
+        self.refresh_write_busy();
+        let result = match result {
             Some(r) => r,
             None => {
                 klog!("unstage_file: repo open error: {}", "session unavailable");
@@ -797,17 +818,27 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => {
-                klog!(
-                    "editor-ws: stage {} — repo session unavailable",
-                    path.display()
-                );
-                return;
-            }
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
         };
-        match repo.stage_file(&path) {
+        let result = lease.run(|| {
+            let repo = match self.repo_session.as_ref() {
+                Some(s) => s.backend(),
+                None => {
+                    klog!(
+                        "editor-ws: stage {} — repo session unavailable",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
+            Some(repo.stage_file(&path))
+        });
+        self.refresh_write_busy();
+        let Some(result) = result else {
+            return;
+        };
+        match result {
             Ok(()) => klog!("editor-ws: stage {}", path.display()),
             Err(e) => {
                 klog!("editor-ws: stage {} failed: {}", path.display(), e);
@@ -829,17 +860,27 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => {
-                klog!(
-                    "editor-ws: unstage {} — repo session unavailable",
-                    path.display()
-                );
-                return;
-            }
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
         };
-        match repo.unstage_file(&path) {
+        let result = lease.run(|| {
+            let repo = match self.repo_session.as_ref() {
+                Some(s) => s.backend(),
+                None => {
+                    klog!(
+                        "editor-ws: unstage {} — repo session unavailable",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
+            Some(repo.unstage_file(&path))
+        });
+        self.refresh_write_busy();
+        let Some(result) = result else {
+            return;
+        };
+        match result {
             Ok(()) => klog!("editor-ws: unstage {}", path.display()),
             Err(e) => {
                 klog!("editor-ws: unstage {} failed: {}", path.display(), e);
@@ -1093,7 +1134,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 self.push_toast(
@@ -1126,7 +1167,7 @@ impl KagiApp {
             Ok(kagi_git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
                 let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                let branch = self.active_view.status_summary.branch.clone();
+                let branch = self.view().status_summary.branch.clone();
                 let _ = kagi_git::clear_draft(&repo_path, &branch);
                 if let Some(entity) = self.commit_panel.clone() {
                     entity.update(cx, |v, _| v.last_draft_value = String::new());
@@ -1238,7 +1279,7 @@ impl KagiApp {
             }
             CommitAction::CopySha => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.active_view.details.get(row_index) {
+                    if let Some(detail) = self.view().details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         let short: String = full_sha.chars().take(8).collect();
                         context_menu::copy_full_sha(self, full_sha, cx);
@@ -1251,7 +1292,7 @@ impl KagiApp {
             }
             CommitAction::CopyShortSha => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.active_view.details.get(row_index) {
+                    if let Some(detail) = self.view().details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         context_menu::copy_short_sha(self, &full_sha, cx);
                     }
@@ -1259,7 +1300,7 @@ impl KagiApp {
             }
             CommitAction::CopyMessage => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if let Some(detail) = self.active_view.details.get(row_index) {
+                    if let Some(detail) = self.view().details.get(row_index) {
                         let full_sha = detail.full_sha.as_ref().to_string();
                         context_menu::copy_message(
                             self,

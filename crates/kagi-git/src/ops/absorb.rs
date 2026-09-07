@@ -11,7 +11,7 @@
 //!   targets, build the distribution table ([`AbsorbPlan`]).
 //! - [`preflight_absorb`] — refuse if HEAD moved, a target is no longer mutable,
 //!   or a merge commit sits in the rebuild range.
-//! - [`execute_absorb`] — rebuild the affected slice of history **in memory**
+//! - [`execute_absorb_with_progress`] — rebuild the affected slice of history **in memory**
 //!   (git2 `apply_to_tree` per commit), then move the branch ref last. The
 //!   working tree is never touched, so kept hunks simply remain uncommitted.
 //! - [`verify_absorb`] — confirm the branch tip is the rebuilt commit.
@@ -483,9 +483,22 @@ pub fn preflight_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<(), GitE
     Ok(())
 }
 
-/// Rebuild the affected slice of history in memory, folding each absorbed hunk
-/// into its target commit, then move the branch ref. Returns the outcome.
-pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutcome, GitError> {
+/// Evidence survives fallible ref/index writes; owned by the Backend boundary.
+#[derive(Default)]
+pub(crate) struct AbsorbProgress {
+    pub original_head: Option<String>,
+    pub rebuilt_head: Option<String>,
+    pub ref_update_started: bool,
+    pub ref_updated: bool,
+    pub index_write_started: bool,
+    pub index_written: bool,
+}
+
+pub(crate) fn execute_absorb_with_progress(
+    repo: &Repository,
+    plan: &AbsorbPlan,
+    progress: &mut AbsorbProgress,
+) -> Result<AbsorbOutcome, GitError> {
     preflight_absorb(repo, plan)?;
 
     let head = repo
@@ -637,6 +650,9 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
         &head_oid.to_string()[..8],
         &new_head.to_string()[..8],
     );
+    progress.original_head = Some(head_oid.to_string());
+    progress.rebuilt_head = Some(new_head.to_string());
+    progress.ref_update_started = true;
     repo.reference(&branch_refname, new_head, true, &log_msg)
         .map_err(|e| {
             GitError::Other(format!(
@@ -644,6 +660,8 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
                 e.message()
             ))
         })?;
+
+    progress.ref_updated = true;
 
     // Sync the index to the rewritten HEAD **without touching the working tree**
     // (a `reset --mixed`, never `--hard`): the absorbed hunks now live in HEAD so
@@ -659,9 +677,11 @@ pub fn execute_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<AbsorbOutc
     index
         .read_tree(&new_head_tree)
         .map_err(|e| GitError::Other(format!("index.read_tree failed: {}", e.message())))?;
+    progress.index_write_started = true;
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
+    progress.index_written = true;
 
     // #417: build the outcome from what was actually applied, so the reported
     // counts can never disagree with reality. (With the preflight digest guard

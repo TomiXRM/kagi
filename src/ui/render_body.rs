@@ -61,7 +61,7 @@ impl KagiApp {
         // ADR-0128: sidebar badge count — merged-class rows only (stale-only
         // rows are listed in the table but don't count as "merged").
         let cleanup_count = self
-            .active_view
+            .view()
             .cleanup_rows
             .iter()
             .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
@@ -86,13 +86,13 @@ impl KagiApp {
 
         // ── WIP rows (Model A+: one per dirty worktree, each in its own colour) ──
         // Built before the column so the closures don't conflict-borrow `self`:
-        // gather plain params first (cloning out of `self.active_view`), then map
+        // gather plain params first (cloning out of `self.view()`), then map
         // to elements via `render_wip_row`.
         let (wip_rows, wip_passing_lanes) = {
             // Count every dirty kind so the row's "N changes" matches the
             // `is_dirty` gate above — otherwise an untracked-only (or
             // conflict-only) tree renders the row with a misleading "0 changes".
-            let live_total = self.active_view.status_summary.wip_change_count();
+            let live_total = self.view().status_summary.wip_change_count();
             // Whether the *open* repo is itself a linked worktree (vs the main
             // working tree). Drives the open-repo WIP row's glyph: 🌲 worktree,
             // ✏️ normal branch.
@@ -101,7 +101,7 @@ impl KagiApp {
                 .get(self.active_tab)
                 .map(|t| t.is_worktree)
                 .unwrap_or(false);
-            let worktrees = &self.active_view.worktrees;
+            let worktrees = &self.view().worktrees;
             let cur_idx = worktrees.iter().position(|w| w.is_current);
             // NOTE (#472/#476): each row carries the same `WipTarget` key
             // `graph_wip::wip_targets` derives from the snapshot, and looks its
@@ -121,7 +121,7 @@ impl KagiApp {
                 let label = cur_idx
                     .and_then(|i| worktrees[i].branch.clone())
                     .or_else(|| {
-                        self.active_view
+                        self.view()
                             .branches
                             .iter()
                             .find(|(_, is_head)| *is_head)
@@ -171,7 +171,7 @@ impl KagiApp {
             // rows above it, whose connectors pass straight through — the same
             // accumulation the stash rows do with `passing_lanes`.
             let row_targets: Vec<graph_wip::WipTarget> = params.iter().map(|p| p.0).collect();
-            let wip_lanes = graph_wip::lanes_for_rows(&self.active_view.wip_lanes, &row_targets);
+            let wip_lanes = graph_wip::lanes_for_rows(&self.view().wip_lanes, &row_targets);
             let graph_scroll_x = self.graph_scroll_x;
             let mut passing: Vec<(usize, usize)> = Vec::new();
             let mut rows: Vec<gpui::AnyElement> = Vec::with_capacity(params.len());
@@ -229,7 +229,7 @@ impl KagiApp {
                     // column when soloing, so the way back sits on the same
                     // sight line (right-aligned placement reviewed and
                     // rejected). Replaces the header label while active.
-                    .map(|el| match self.active_view.branch_solo.as_ref() {
+                    .map(|el| match self.view().branch_solo.as_ref() {
                         None => el.child(SharedString::from("BRANCH / TAG")),
                         Some(solo) => {
                             let name = solo.name.clone();
@@ -402,14 +402,14 @@ impl KagiApp {
                         "commit-list",
                         row_count,
                         cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                            let rows_len = this.active_view.rows.len();
+                            let rows_len = this.view().rows.len();
                             let compact = this.graph_compact;
                             // Real commit rows for the part of the range that
                             // maps to commits; the trailing synthetic index
                             // (== rows_len) is the "load more" row.
                             let commit_range = range.start..range.end.min(rows_len);
                             let mut els: Vec<gpui::AnyElement> = render_rows(
-                                &this.active_view.rows,
+                                &this.view().rows,
                                 &this.avatars.images,
                                 commit_range,
                                 selected,
@@ -417,8 +417,8 @@ impl KagiApp {
                                 this.graph_col_w,
                                 compact,
                                 this.graph_scroll_x,
-                                &this.active_view.stash_graph_lanes,
-                                this.active_view
+                                &this.view().stash_graph_lanes,
+                                this.view()
                                     .branch_solo
                                     .as_ref()
                                     .map(|solo| &solo.visible_commits),
@@ -452,7 +452,7 @@ impl KagiApp {
             ecosystem_open: workspace::EcosystemItem.is_open(self),
             branch_cleanup_open: workspace::BranchCleanupItem.is_open(self),
             pr_mode: workspace::PrModeItem.is_open(self),
-            loading: self.loading_tab.is_some(),
+            loading: self.loading_tab().is_some(),
             diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,
             commit_panel_present: commit_panel.is_some(),
@@ -516,7 +516,7 @@ impl KagiApp {
             None => match layout.center {
                 // W6-TABSPEED loading placeholder.
                 workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
-                    self.loading_tab.clone().unwrap_or_default(),
+                    self.loading_tab().unwrap_or_default(),
                 )),
                 _ => body_row.child(commit_list_col),
             },

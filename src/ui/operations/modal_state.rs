@@ -28,6 +28,36 @@ use gpui_component::input::InputState;
 // unused `*_mut` shims were removed in the 2026-06-20 rearch sweep; call sites
 // that need to consume match on `active_modal` directly.
 impl KagiApp {
+    pub(crate) fn has_active_modal(&self) -> bool {
+        self.active_modal.is_some()
+    }
+
+    /// Drop the active modal when it belongs to the repository being switched
+    /// away from (#492). Called by `reset_per_repo_ui` / `show_welcome`; see
+    /// [`ActiveModal::is_repo_scoped`] for the classification.
+    pub(crate) fn drop_repo_scoped_modal(&mut self) {
+        if self
+            .active_modal
+            .as_ref()
+            .is_some_and(|m| m.is_repo_scoped())
+        {
+            self.active_modal = None;
+        }
+    }
+    pub(crate) fn app_notice(&self) -> Option<&crate::ui::modals::AppNotice> {
+        match &self.active_modal {
+            Some(ActiveModal::AppNotice(message)) => Some(message),
+            _ => None,
+        }
+    }
+    pub(crate) fn set_app_notice(&mut self, message: crate::ui::modals::AppNotice) {
+        self.active_modal = Some(ActiveModal::AppNotice(message));
+    }
+    pub(crate) fn clear_app_notice(&mut self) {
+        if self.app_notice().is_some() {
+            self.active_modal = None;
+        }
+    }
     /// #454 Phase 1: flip modal section `id` between its default and the
     /// opposite. Read side is `modal_renderers::section_open` (renderers hold
     /// the defaults); this only records the user's override.
@@ -1086,5 +1116,27 @@ impl KagiApp {
         if let Some(entity) = self.conflict.clone() {
             entity.update(cx, |v, cx| v.sync_editor_inputs(window, cx));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::modals::{ActiveModal, StashDropModal, TrustRepoModal};
+
+    /// #492: `AppNotice` is the only modal that survives a repo switch — the
+    /// runnable half of the invariant the exhaustive match enforces.
+    #[test]
+    fn only_app_notice_survives_a_repo_switch() {
+        assert!(!ActiveModal::AppNotice("done".to_string().into()).is_repo_scoped());
+        assert!(ActiveModal::StashDrop(StashDropModal {
+            plan: None,
+            error: None,
+            stash_index: 0,
+        })
+        .is_repo_scoped());
+        assert!(ActiveModal::TrustRepo(TrustRepoModal {
+            repo_path: std::path::PathBuf::from("/tmp/repo"),
+        })
+        .is_repo_scoped());
     }
 }

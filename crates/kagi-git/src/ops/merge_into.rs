@@ -154,6 +154,7 @@ pub fn plan_merge_into_branch(
         recovery: Some(recovery.clone()),
         head_at_plan: head.clone(),
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -300,6 +301,7 @@ pub fn plan_merge_into_branch(
             recovery: Some(recovery),
             head_at_plan: head,
             stash_count_at_plan: 0,
+            stash_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),
@@ -316,7 +318,7 @@ pub fn plan_merge_into_branch(
 /// calls in [`super::merge::execute_merge_branch`] that touch the working tree
 /// — are deliberately absent: the files on disk belong to the current branch,
 /// which this operation is not changing.
-pub fn execute_merge_into_branch(
+pub(crate) fn execute_merge_into_branch(
     repo: &Repository,
     source: &str,
     target: &str,

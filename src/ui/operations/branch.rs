@@ -26,7 +26,7 @@ impl KagiApp {
             input: String::new(),
             input_state: None, // created lazily on first render (needs Window)
             checkout_after: false,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         // Re-plan immediately (empty name → blocker).
@@ -35,7 +35,7 @@ impl KagiApp {
 
     pub(crate) fn commit_title_for(&self, at: &CommitId) -> String {
         self.row_for_commit_id(at)
-            .and_then(|idx| self.active_view.details.get(idx))
+            .and_then(|idx| self.view().details.get(idx))
             .map(|detail| {
                 detail
                     .full_message
@@ -68,10 +68,15 @@ impl KagiApp {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_branch: repo session unavailable");
+                let outcome = session_unavailable(i18n::Op::CreateBranch);
+                if let Some(modal) = self.create_branch_modal_mut() {
+                    modal.plan.replan(outcome);
+                }
                 return;
             }
         };
-        match repo.plan_create_branch_with_checkout(&name, &at, checkout_after) {
+        let result = repo.plan_create_branch_with_checkout(&name, &at, checkout_after);
+        match &result {
             Ok(plan) => {
                 eprintln!(
                     "[kagi] plan: create-branch '{}' checkout_after={} blockers={} warnings={}",
@@ -84,13 +89,16 @@ impl KagiApp {
                 // typed (`CommonNote::BranchNameErrorKeyed`) and localize
                 // automatically via `plan_note_text()` — no separate
                 // localized-blocker computation needed.
-                if let Some(modal) = self.create_branch_modal_mut() {
-                    modal.plan = Some(std::sync::Arc::new(plan));
-                }
             }
             Err(e) => {
                 klog!("plan: create-branch error: {}", e);
             }
+        }
+        // #510: adopt the outcome either way — a failure replaces the plan it
+        // was recomputing, so neither Enter nor the button can confirm a stale one.
+        let outcome = plan_outcome(i18n::Op::CreateBranch, result);
+        if let Some(modal) = self.create_branch_modal_mut() {
+            modal.plan.replan(outcome);
         }
     }
 
@@ -100,14 +108,15 @@ impl KagiApp {
     pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         let modal = match self.create_branch_modal().cloned() {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        // #510: `Pending` and `Failed` both yield None, so a failed replan
+        // refuses Enter and the button alike.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         // Defence in depth: refuse if blockers exist.
         if !plan.blockers.is_empty() {
@@ -130,7 +139,7 @@ impl KagiApp {
             None => return,
         };
 
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
+        let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
@@ -153,9 +162,10 @@ impl KagiApp {
         // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
         // in one place (run() calls preflight_check as its first line — the
         // separate preflight_check call above was redundant).
-        let op = kagi_git::Operation::CreateBranch {
+        let op = kagi_git::Operation::CreateBranchWithCheckout {
             name: modal.input.clone(),
             at: modal.at.clone(),
+            checkout_after: modal.checkout_after,
         };
         if let Err(e) = repo.run(&op, &plan) {
             let err_msg = i18n::op_failed(i18n::Op::CreateBranch, e);
@@ -181,7 +191,7 @@ impl KagiApp {
         );
 
         // Verify: confirm the branch now exists.
-        let mut repo2 = match kagi_git::Backend::open(&repo_path) {
+        let repo2 = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
@@ -199,95 +209,19 @@ impl KagiApp {
             );
         }
 
-        // Record branch creation success first. If checkout_after is on, the
-        // checkout below records its own second operation entry.
-        let create_after = StateSummary {
-            head: plan.current.head.clone(),
-            dirty: plan.current.dirty.clone(),
-        };
+        // The combined Backend operation already performed optional checkout and
+        // persisted one receipt. Keep the established presentation/log lines.
         self.record_op(
             "create-branch",
             plan.current.clone(),
             OpOutcome::Success {
-                after: create_after.clone(),
+                after: plan.predicted.clone(),
             },
             &repo_path,
             cx,
         );
-
         if modal.checkout_after {
-            let checkout_plan = match repo2.plan_checkout(&modal.input) {
-                Ok(plan) => plan,
-                Err(e) => {
-                    let err_msg = i18n::op_plan_failed(i18n::Op::Checkout, e);
-                    self.record_op(
-                        "checkout",
-                        create_after,
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
-                    if let Some(m) = self.create_branch_modal_mut() {
-                        m.error = Some(SharedString::from(err_msg));
-                    }
-                    return;
-                }
-            };
-            if !checkout_plan.blockers.is_empty() {
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: checkout_plan
-                            .blockers
-                            .iter()
-                            .map(|b| b.message_en())
-                            .collect(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(
-                        "Branch created, but checkout was refused by the checkout plan.",
-                    ));
-                }
-                return;
-            }
-            // ADR-0104 Phase 2: route through Backend::run so preflight is
-            // enforced in one place (the separate preflight_check + execute
-            // above collapses into run()).
-            let checkout_op = kagi_git::Operation::Checkout {
-                branch: modal.input.clone(),
-            };
-            if let Err(e) = repo2.run(&checkout_op, &checkout_plan) {
-                let err_msg = i18n::op_failed(i18n::Op::Checkout, e);
-                self.record_op(
-                    "checkout",
-                    checkout_plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(SharedString::from(err_msg));
-                }
-                return;
-            }
             klog!("executed: checkout {}", modal.input);
-            self.record_op(
-                "checkout",
-                checkout_plan.current.clone(),
-                OpOutcome::Success {
-                    after: checkout_plan.predicted.clone(),
-                },
-                &repo_path,
-                cx,
-            );
         }
 
         // Reload display data (new branch badge should appear).
@@ -419,7 +353,7 @@ impl KagiApp {
 
     pub fn open_set_upstream_modal(&mut self, branch_name: String) {
         let input = self
-            .active_view
+            .view()
             .branch_upstream_info
             .get(&branch_name)
             .map(|u| u.remote_branch.clone())
@@ -428,7 +362,7 @@ impl KagiApp {
             branch_name,
             input,
             input_state: None,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_set_upstream();
@@ -450,27 +384,27 @@ impl KagiApp {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => return,
+            None => {
+                let outcome = session_unavailable(i18n::Op::SetUpstream);
+                if let Some(m) = self.set_upstream_modal_mut() {
+                    m.plan.replan(outcome);
+                }
+                return;
+            }
         };
-        match repo.plan_set_upstream(&branch_name, &input) {
-            Ok(plan) => {
-                if let Some(m) = self.set_upstream_modal_mut() {
-                    m.plan = Some(std::sync::Arc::new(plan));
-                }
-            }
-            Err(e) => {
-                if let Some(m) = self.set_upstream_modal_mut() {
-                    m.error = Some(SharedString::from(format!(
-                        "Set upstream plan error: {}",
-                        e
-                    )));
-                }
-            }
+        // #510: the failure now lands in the plan slot, so the previous plan is
+        // gone rather than merely accompanied by an error line.
+        let outcome = plan_outcome(
+            i18n::Op::SetUpstream,
+            repo.plan_set_upstream(&branch_name, &input),
+        );
+        if let Some(m) = self.set_upstream_modal_mut() {
+            m.plan.replan(outcome);
         }
     }
 
     pub fn start_set_upstream(&mut self, cx: &mut Context<Self>) {
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
@@ -479,9 +413,9 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.clone() {
-            Some(p) => p,
-            None => return,
+        // #510: a failed replan leaves no plan, so Enter and the button both refuse.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -534,7 +468,7 @@ impl KagiApp {
                     branch_name: modal.branch_name.clone(),
                     input: modal.input.clone(),
                     input_state: None,
-                    plan: Some(plan.clone()),
+                    plan: ModalPlan::Ready(plan.clone()),
                     error: Some(SharedString::from(err_msg)),
                 });
             }
@@ -543,7 +477,7 @@ impl KagiApp {
 
     pub fn open_rename_branch_modal(&mut self, branch_name: String) {
         let existing: Vec<String> = self
-            .active_view
+            .view()
             .branches
             .iter()
             .map(|(name, _)| name.clone())
@@ -554,7 +488,7 @@ impl KagiApp {
             input: branch_name,
             input_state: None,
             validation,
-            plan: None,
+            plan: ModalPlan::Pending,
             error: None,
         });
         self.replan_rename_branch();
@@ -570,7 +504,7 @@ impl KagiApp {
             None => return,
         };
         let existing: Vec<String> = self
-            .active_view
+            .view()
             .branches
             .iter()
             .map(|(name, _)| name.clone())
@@ -583,29 +517,26 @@ impl KagiApp {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => return,
+            None => {
+                let outcome = session_unavailable(i18n::Op::Rename);
+                if let Some(m) = self.rename_branch_modal_mut() {
+                    m.validation = validation;
+                    m.plan.replan(outcome);
+                }
+                return;
+            }
         };
-        match repo.plan_rename_branch(&old_name, &input) {
-            Ok(plan) => {
-                if let Some(m) = self.rename_branch_modal_mut() {
-                    m.validation = validation;
-                    m.plan = Some(std::sync::Arc::new(plan));
-                }
-            }
-            Err(e) => {
-                if let Some(m) = self.rename_branch_modal_mut() {
-                    m.validation = validation;
-                    m.error = Some(SharedString::from(i18n::op_plan_failed(
-                        i18n::Op::Rename,
-                        e,
-                    )));
-                }
-            }
+        // #510: the localized failure now lands in the plan slot, which drops the
+        // plan it was recomputing instead of leaving it confirmable.
+        let outcome = plan_outcome(i18n::Op::Rename, repo.plan_rename_branch(&old_name, &input));
+        if let Some(m) = self.rename_branch_modal_mut() {
+            m.validation = validation;
+            m.plan.replan(outcome);
         }
     }
 
     pub fn start_rename_branch(&mut self, cx: &mut Context<Self>) {
-        self.run_modal_replans();
+        self.run_modal_replans(cx);
         if self.busy_op.is_some() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
@@ -614,9 +545,9 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        let plan = match modal.plan.clone() {
-            Some(p) => p,
-            None => return,
+        // #510: a failed replan leaves no plan, so Enter and the button both refuse.
+        let Some(plan) = modal.plan.plan().cloned() else {
+            return;
         };
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
@@ -669,7 +600,7 @@ impl KagiApp {
                     input: modal.input.clone(),
                     input_state: None,
                     validation: modal.validation.clone(),
-                    plan: Some(plan.clone()),
+                    plan: ModalPlan::Ready(plan.clone()),
                     error: Some(SharedString::from(err_msg)),
                 });
             }
@@ -688,7 +619,7 @@ impl KagiApp {
         // Current (checked-out) branch = the merge destination, captured on the
         // main thread for the modal's into-branch label (ADR-0079).
         let into_branch = self
-            .active_view
+            .view()
             .branches
             .iter()
             .find(|(_, is_head)| *is_head)
@@ -704,7 +635,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_target = target.clone();
         let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&bg_path)
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             repo.plan_merge_branch(&bg_target)
                 .map_err(|e| format!("{e}"))
@@ -763,14 +694,14 @@ impl KagiApp {
     /// dirty-WT / ff / conflict prediction).
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
         let remotes: Vec<String> = self
-            .active_view
+            .view()
             .remote_branches
             .iter()
             .map(|rb| format!("{}/{}", rb.remote, rb.name))
             .collect();
         match validate_merge_from_drag(
             &source,
-            &self.active_view.branches,
+            &self.view().branches,
             &remotes,
             self.busy_op.is_some(),
         ) {
@@ -815,7 +746,7 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let (bg_source, bg_target) = (source.clone(), target.clone());
         let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&bg_path)
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             repo.plan_merge_into_branch(&bg_source, &bg_target)
                 .map_err(|e| format!("{e}"))
@@ -865,7 +796,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let remotes: Vec<String> = self
-            .active_view
+            .view()
             .remote_branches
             .iter()
             .map(|rb| format!("{}/{}", rb.remote, rb.name))
@@ -873,7 +804,7 @@ impl KagiApp {
         match crate::ui::validate_merge_into_from_drag(
             &source,
             &target,
-            &self.active_view.branches,
+            &self.view().branches,
             &remotes,
             self.busy_op.is_some(),
         ) {
@@ -1293,29 +1224,53 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => {
-                klog!("open_delete_branch_modal: no repo_path set");
-                return;
-            }
+        if self.repo_path.is_none() {
+            klog!("open_delete_branch_modal: no repo_path set");
+            return;
+        }
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+            .filter(|owner| owner.worktree.is_some())
+        else {
+            return;
         };
+        let generation = self.switch_generation;
+        let repo_path = owner.path.clone();
         self.busy_op = Some("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
         klog!("async: delete-branch plan started for {}", branch_name);
 
         let bg_path = repo_path.clone();
         let bg_branch = branch_name.clone();
+        let expected_worktree = owner.worktree.clone();
         let task = cx.background_spawn(async move {
-            let repo =
-                kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
+            let repo = crate::ui::blocking_ops::open_backend(&bg_path)
+                .map_err(|e| format!("repo open error: {e}"))?;
+            if repo.write_worktree_id().ok() != expected_worktree {
+                return Err("worktree identity changed; reopen the repository".into());
+            }
             repo.plan_delete_branch(&bg_branch)
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
-            let result = task.await;
+            let result = task.fallible().await;
             let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
+                let current = app
+                    .active_session()
+                    .and_then(|id| app.app_sessions.attachment(id));
+                // Terminalize even stale/failed tasks before the display guard.
+                if !DeleteBranchModal::settle_plan(
+                    &owner,
+                    current.as_ref(),
+                    app.switch_generation == generation,
+                    &mut app.busy_op,
+                ) {
+                    cx.notify();
+                    return;
+                }
+                let result =
+                    result.unwrap_or_else(|| Err("delete-branch plan failed unexpectedly".into()));
                 match result {
                     Ok(plan) => {
                         eprintln!(
@@ -1325,6 +1280,8 @@ impl KagiApp {
                         );
                         app.status_footer = FooterStatus::Idle(SharedString::from(""));
                         app.set_delete_branch_modal(DeleteBranchModal {
+                            owner,
+                            confirm_armed: false,
                             branch_name,
                             plan: std::sync::Arc::new(plan),
                             error: None,
@@ -1347,115 +1304,12 @@ impl KagiApp {
         self.clear_delete_branch_modal();
     }
 
-    /// Confirm delete-branch: preflight → execute → oplog → reload.
-    pub fn confirm_delete_branch(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.delete_branch_modal().cloned() {
-            Some(m) => m,
-            None => return,
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-
-        if !modal.plan.blockers.is_empty() {
-            eprintln!(
-                "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
-                modal.plan.blockers.len()
-            );
-            self.record_op(
-                "delete-branch",
-                modal.plan.current.clone(),
-                kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
-            return;
-        }
-
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
-                self.record_op(
-                    "delete-branch",
-                    modal.plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_delete_branch_modal(DeleteBranchModal {
-                    branch_name: modal.branch_name.clone(),
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-                return;
-            }
-        };
-
-        // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
-        // in one place (run() calls preflight_check as its first line — the
-        // separate preflight_check call above was redundant).
-        let del_op = kagi_git::Operation::DeleteBranch {
-            name: modal.branch_name.clone(),
-        };
-        match repo.run(&del_op, &modal.plan) {
-            Ok(_) => {
-                klog!("executed: delete-branch {}", modal.branch_name);
-                self.clear_delete_branch_modal();
-                let after = kagi_git::ops::StateSummary {
-                    head: modal.plan.current.head.clone(),
-                    dirty: format!("branch '{}' deleted", modal.branch_name),
-                };
-                self.record_op(
-                    "delete-branch",
-                    modal.plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "delete-branch: '{}' deleted (restore: {})",
-                    modal.branch_name,
-                    modal
-                        .plan
-                        .recovery
-                        .as_ref()
-                        .and_then(|r| r.commands.first())
-                        .map(String::as_str)
-                        .unwrap_or("git branch …")
-                )));
-                self.reload(cx);
-            }
-            Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::Delete, e);
-                self.record_op(
-                    "delete-branch",
-                    modal.plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_delete_branch_modal(DeleteBranchModal {
-                    branch_name: modal.branch_name.clone(),
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        }
-    }
-
     /// W15-ASYNCOPS: UI-path delete-branch — background thread + start/finish
     /// toasts (ref delete is lightweight, but kept on the background path for a
-    /// uniform busy/disabled experience). Headless keeps `confirm_delete_branch`.
+    /// uniform busy/disabled experience). #493: the single delete-branch entry —
+    /// the modal button and the root Enter dispatch both land here.
     pub fn start_delete_branch(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.delete_branch_modal().cloned() {
+        let mut modal = match self.delete_branch_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -1463,10 +1317,18 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
+        if self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+            .as_ref()
+            != Some(&modal.owner)
+        {
+            self.clear_delete_branch_modal();
+            cx.notify();
+            return;
+        }
+        let owner = modal.owner.clone();
+        let repo_path = owner.path.clone();
         if !modal.plan.blockers.is_empty() {
             eprintln!(
                 "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
@@ -1486,6 +1348,14 @@ impl KagiApp {
             return;
         }
 
+        if modal.arm_if_required() {
+            self.reset_modal_sections();
+            self.set_delete_branch_modal(modal);
+            klog!("delete-branch: armed (second confirm required — unmerged)");
+            cx.notify();
+            return;
+        }
+
         self.busy_op = Some("delete-branch");
         self.clear_delete_branch_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
@@ -1493,70 +1363,116 @@ impl KagiApp {
 
         let plan = modal.plan.clone();
         let branch_name = modal.branch_name.clone();
-        let bg_path = repo_path.clone();
+        let bg_owner = owner.clone();
         let bg_plan = plan.clone();
         let bg_branch = branch_name.clone();
         let task =
             cx.background_spawn(
-                async move { delete_branch_blocking(&bg_path, &bg_plan, &bg_branch) },
+                async move { delete_branch_blocking(&bg_owner, &bg_plan, &bg_branch) },
             );
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                klog!("async: delete-branch finished");
-                // Worktree-removal plans (clean worktree pinned the branch)
-                // log the cleanup so the headless harness can assert it.
-                // ADR-0129 F-3: matched via the typed note variant, not a
-                // substring search over the rendered EN text.
-                if plan.warnings.iter().any(|w| {
-                    matches!(
+        let notice_path = repo_path.clone();
+        self.finish_op_on_main_settled(
+            cx,
+            task,
+            move |app, result: &Result<kagi_git::backend::recording::RunReport, String>, _cx| {
+                if let Ok(report) = result {
+                    app.notice_recording_failure("delete-branch", &report.recording, &notice_path);
+                }
+            },
+            move |app, result, cx| {
+                let result = match result {
+                    Ok(report) => {
+                        if report.result.is_ok() {
+                            klog!("async: delete-branch finished");
+                            // Worktree-removal plans (clean worktree pinned the branch)
+                            // log the cleanup so the headless harness can assert it.
+                            // ADR-0129 F-3: matched via the typed note variant, not a
+                            // substring search over the rendered EN text.
+                            if plan.warnings.iter().any(|w| {
+                                matches!(
                         w,
                         kagi_git::ops::PlanNote::Branch(
                             kagi_domain::plan_note::BranchNote::DeleteRemovesPinningWorktree { .. }
                         )
                     )
-                }) {
-                    klog!("executed: delete-branch removed pinning worktree");
+                            }) {
+                                klog!("executed: delete-branch removed pinning worktree");
+                            }
+                        }
+                        if matches!(
+                            report.recording.entry().outcome,
+                            kagi_git::oplog::OpOutcome::Partial { .. }
+                        ) {
+                            if let Err(error) = &report.result {
+                                let err_msg = i18n::op_failed(i18n::Op::Delete, error);
+                                klog!("async: delete-branch failed — {}", err_msg);
+                            }
+                            app.present_recorded(&report.recording, cx);
+                            app.reload(cx);
+                            return;
+                        }
+                        if report.result.is_ok()
+                            && matches!(
+                                report.recording,
+                                kagi_git::backend::recording::Recording::Failed { .. }
+                            )
+                        {
+                            app.present_recorded(&report.recording, cx);
+                            app.reload(cx);
+                            return;
+                        }
+                        report
+                            .result
+                            .map_err(|e| i18n::op_failed(i18n::Op::Delete, e))
+                            .and_then(|outcome| {
+                                let kagi_git::OperationOutcome::DeleteBranch { reference, .. } =
+                                    outcome
+                                else {
+                                    return Err("unexpected delete-branch outcome".into());
+                                };
+                                let recovery = format!("git branch {} {reference}", branch_name);
+                                if !matches!(
+                                    report.recording.entry().outcome,
+                                    kagi_git::oplog::OpOutcome::Success { .. }
+                                ) {
+                                    return Err("unexpected delete-branch receipt".into());
+                                }
+                                Ok((report.recording, recovery))
+                            })
+                    }
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok((recording, recovery_line)) => {
+                        app.present_recorded(&recording, cx);
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "delete-branch: '{}' deleted (restore: {})",
+                            branch_name, recovery_line
+                        )));
+                        app.reload(cx);
+                    }
+                    Err(err_msg) => {
+                        klog!("async: delete-branch failed — {}", err_msg);
+                        app.record_op(
+                            "delete-branch",
+                            plan.current.clone(),
+                            kagi_git::oplog::OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                            cx,
+                        );
+                        app.set_delete_branch_modal(DeleteBranchModal {
+                            owner,
+                            confirm_armed: false,
+                            branch_name: branch_name.clone(),
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
                 }
-                // ADR-0129 F-4: the restore command is structured data now —
-                // no more parsing the recovery text's second line.
-                let recovery_line = plan
-                    .recovery
-                    .as_ref()
-                    .and_then(|r| r.commands.first())
-                    .map(String::as_str)
-                    .unwrap_or("git branch …")
-                    .to_string();
-                app.record_op(
-                    "delete-branch",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "delete-branch: '{}' deleted (restore: {})",
-                    branch_name, recovery_line
-                )));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: delete-branch failed — {}", err_msg);
-                app.record_op(
-                    "delete-branch",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_delete_branch_modal(DeleteBranchModal {
-                    branch_name: branch_name.clone(),
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        });
+            },
+        );
     }
 }
 
@@ -1579,7 +1495,7 @@ impl KagiApp {
             }
             BranchAction::CopyUpstreamName => {
                 let upstream = self
-                    .active_view
+                    .view()
                     .branch_upstream_info
                     .get(&state.name)
                     .map(|u| u.remote_branch.clone());
@@ -1603,7 +1519,7 @@ impl KagiApp {
             BranchAction::SwitchToLatest => {
                 let (branch_name, remote_branch) = if matches!(state.kind, BranchKind::Local) {
                     let upstream = self
-                        .active_view
+                        .view()
                         .branch_upstream_info
                         .get(&state.name)
                         .map(|u| u.remote_branch.clone());
@@ -1635,7 +1551,7 @@ impl KagiApp {
             BranchAction::Pull => {
                 if matches!(state.kind, BranchKind::Local) {
                     let is_current = self
-                        .active_view
+                        .view()
                         .branches
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
@@ -1649,7 +1565,7 @@ impl KagiApp {
             BranchAction::Push => {
                 if matches!(state.kind, BranchKind::Local) {
                     let is_current = self
-                        .active_view
+                        .view()
                         .branches
                         .iter()
                         .any(|(name, current)| name == &state.name && *current);
@@ -1677,7 +1593,7 @@ impl KagiApp {
             }
             BranchAction::OpenWorktreeFromBranch => {
                 let existing_path = self
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
@@ -1695,7 +1611,7 @@ impl KagiApp {
             // #473: open the worktree this branch is already checked out in.
             BranchAction::OpenWorktreeDir => {
                 let path = self
-                    .active_view
+                    .view()
                     .worktrees
                     .iter()
                     .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()) && !wt.is_current)
@@ -1736,7 +1652,7 @@ impl KagiApp {
             }
             BranchAction::ForceWithLeasePush => {
                 let is_current = self
-                    .active_view
+                    .view()
                     .branches
                     .iter()
                     .any(|(name, current)| name == &state.name && *current);

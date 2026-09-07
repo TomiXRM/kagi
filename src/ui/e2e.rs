@@ -21,12 +21,97 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{App, AppContext as _, AssetSource, Entity, KeyBinding, Platform, Styled as _, Window};
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CONFIRM_BOUNDS: RefCell<std::collections::HashMap<gpui::WindowId, gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
+    static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, &'static str), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpui::Pixels>) {
+    CONFIRM_BOUNDS.with(|map| map.borrow_mut().insert(id, bounds));
+}
+#[cfg(feature = "gui-e2e")]
+pub fn confirm_bounds(id: gpui::WindowId) -> Option<gpui::Bounds<gpui::Pixels>> {
+    CONFIRM_BOUNDS.with(|map| map.borrow().get(&id).copied())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn control_bounds(
+    id: gpui::WindowId,
+    name: &'static str,
+) -> Option<gpui::Bounds<gpui::Pixels>> {
+    CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name)).copied())
+}
+pub(crate) fn measure_control(
+    name: &'static str,
+    control: impl gpui::IntoElement,
+) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    use gpui::{IntoElement as _, ParentElement as _};
+    #[cfg(feature = "gui-e2e")]
+    {
+        gpui::div()
+            .relative()
+            .child(
+                gpui::canvas(
+                    move |bounds, window, _| {
+                        CONTROL_BOUNDS.with(|map| {
+                            map.borrow_mut()
+                                .insert((window.window_handle().window_id(), name), bounds);
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .child(control)
+            .into_any_element()
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        let _ = name;
+        control.into_any_element()
+    }
+}
+pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    use gpui::{IntoElement as _, ParentElement as _};
+    #[cfg(feature = "gui-e2e")]
+    {
+        gpui::div()
+            .relative()
+            .child(
+                gpui::canvas(
+                    |bounds, window, _| {
+                        record_confirm_bounds(window.window_handle().window_id(), bounds)
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .child(button)
+            .into_any_element()
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        button.into_any_element()
+    }
+}
+
+use gpui::{App, AppContext as _, AssetSource, Entity, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
-use super::{
-    fonts, oplog_panel, theme, toast_stack, CopyDiffSelection, KagiApp, ToggleBottomPanel,
-};
+use super::{fonts, oplog_panel, theme, toast_stack, KagiApp};
+
+#[cfg(feature = "gui-e2e")]
+pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
+    app.app_notice().map(|notice| notice.message.as_str())
+}
 
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.
 /// (`gpui_platform` is a normal dep, so the runner cannot call it directly.)
@@ -40,20 +125,18 @@ pub fn asset_source() -> Arc<dyn AssetSource> {
 }
 
 /// App-level one-time init a first render needs, mirroring `run_app`: bundled
-/// fonts, `gpui_component` init, theme sync, and the keybindings the E2E
-/// scenarios exercise (`cmd-j` → [`ToggleBottomPanel`], `cmd-c` →
-/// [`CopyDiffSelection`], the latter scoped like `run_app` so a focused text
-/// field/terminal keeps its own copy — ADR-0170 graph Cmd+C).
+/// fonts, `gpui_component` init, theme sync, and the app command setup.
+///
+/// #492: this used to hand-pick two bindings (`cmd-j`, `cmd-c`), so scenarios
+/// ran against a different keymap than the app — `escape` was bound to nothing
+/// here, and a modal survived an Esc that closes it for real users. Call
+/// [`super::commands::setup_app`] instead of re-listing bindings or menus; keep
+/// it after `gpui_component::init`, which several bindings deliberately outrank.
 pub fn init_app(cx: &mut App) {
     fonts::load_bundled_fonts(cx);
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);
-    cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
-    cx.bind_keys([KeyBinding::new(
-        "secondary-c",
-        CopyDiffSelection,
-        Some("!Terminal && !Input"),
-    )]);
+    super::commands::setup_app(cx);
 }
 
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via
@@ -62,20 +145,12 @@ pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {
     let info = kagi_git::open_repository(repo_path).map_err(|e| e.to_string())?;
     let mut backend = kagi_git::Backend::open(repo_path).map_err(|e| e.to_string())?;
     let snap = backend.snapshot(10_000).map_err(|e| e.to_string())?;
-    let mut app = KagiApp::from_snapshot(&info.name, &snap);
+    let mut app = KagiApp::from_snapshot(repo_path, &info.name, info.is_worktree, &snap);
     app.repo_path = Some(repo_path.to_path_buf());
     // ADR-0107: the per-tab session every real launch has (`tabs.rs`). Without
     // it the staging / diff paths that go through `repo_session` silently
     // no-op, which would let a scenario pass for the wrong reason (#473).
     app.repo_session = kagi_git::session::RepoSession::open(repo_path).ok();
-    app.tabs.push(super::tabs::RepoTab {
-        path: repo_path.to_path_buf(),
-        name: info.name.clone(),
-        remote: None,
-        is_worktree: info.is_worktree,
-        wt_color_idx: None,
-    });
-    app.active_tab = 0;
     Ok(app)
 }
 
@@ -95,10 +170,26 @@ pub fn build_kagi_entity(
         app_state.op_log = Some(cx.new(|_| oplog_panel::OpLogPanel::from_entries(seed)));
         app_state
     });
+    let close_owner = kagi.downgrade();
+    window.on_window_should_close(cx, move |_, cx| {
+        close_owner
+            .update(cx, |app, cx| !app.hold_host_close(cx))
+            .unwrap_or(true)
+    });
     if let Some(fh) = kagi.read(cx).root_focus.clone() {
         window.focus(&fh, cx);
     }
     kagi
+}
+
+/// Issue #547: the laid-out bounds of the footer's message element after the
+/// last draw, in window coordinates. The footer is a fixed 22 px
+/// `items_center()` row, so a message that wraps is centre-clipped and the
+/// first line — the op name and reason — is what gets hidden; the scenario
+/// asserts these bounds stay one line inside the bar.
+#[cfg(feature = "gui-e2e")]
+pub fn footer_message_bounds() -> gpui::Bounds<gpui::Pixels> {
+    super::render_status::footer_message_bounds()
 }
 
 /// Issue #468: push a synthetic `Failed` op-log entry onto the panel, through

@@ -4,11 +4,13 @@
 //! operations as additional `impl KagiApp` blocks. Pure physical split —
 //! behaviour and signatures are unchanged.
 
+mod app_bridge;
 pub mod branch;
 pub mod checkout;
 pub mod cherry_revert;
 pub mod commit;
 pub mod conflict;
+mod conflict_skip;
 pub mod discard;
 pub mod editor_fs;
 pub mod force_lease;
@@ -20,12 +22,14 @@ pub mod remote_branch;
 pub mod reset;
 pub mod stash;
 pub mod tag;
+pub(crate) mod transport_hold;
 pub mod worktree;
 
 use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;
 use crate::ui::KagiApp;
 use gpui::{Context, SharedString, Task};
+use kagi_git::backend::recording::Recording;
 use std::path::Path;
 
 /// What to do with a finished background op, decided from the join result and
@@ -104,7 +108,8 @@ impl KagiApp {
     /// Reject a state-changing op if another is in flight (#283 stage 1).
     /// Returns true (and sets the footer) when the caller must bail out.
     pub(crate) fn reject_if_busy(&mut self, cx: &mut Context<Self>) -> bool {
-        if op_may_start(self.busy_op) {
+        self.refresh_write_busy();
+        if op_may_start(self.busy_op) && !self.app_sessions.has_leases() {
             return false;
         }
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
@@ -121,6 +126,25 @@ impl KagiApp {
         R: 'static,
         F: FnOnce(&mut Self, R, &mut Context<Self>) + 'static,
     {
+        self.finish_op_on_main_settled(cx, task, |_, _, _| {}, on_done);
+    }
+
+    /// Like [`finish_op_on_main`], with a `settle` half that runs on **every**
+    /// arrival — before the stale-tab guard. Anything the execution boundary
+    /// already made durable (a receipt, or the notice that appending it failed)
+    /// belongs here: DESIGN §4 "operation の終端化は常に先". `on_done` remains
+    /// the presentation half and is still dropped when the tab moved (#501).
+    pub(crate) fn finish_op_on_main_settled<R, S, F>(
+        &mut self,
+        cx: &mut Context<Self>,
+        task: Task<R>,
+        settle: S,
+        on_done: F,
+    ) where
+        R: 'static,
+        S: FnOnce(&mut Self, &R, &mut Context<Self>) + 'static,
+        F: FnOnce(&mut Self, R, &mut Context<Self>) + 'static,
+    {
         let owner_repo = self.repo_path.clone();
         let owner_gen = self.switch_generation;
         let op_tag = self.busy_op;
@@ -130,6 +154,10 @@ impl KagiApp {
                 // Unconditional release (#289): whatever happened to the op,
                 // the global op mutex must not stay latched.
                 app.busy_op = None;
+                // Settle first, whatever the tab is doing now (#501).
+                if let Some(result) = result.as_ref() {
+                    settle(app, result, cx);
+                }
                 let still_current = op_result_applies(
                     app.repo_path.as_deref(),
                     app.switch_generation,
@@ -159,6 +187,32 @@ impl KagiApp {
         })
         .detach();
         cx.notify();
+    }
+
+    /// Owner-named notice for a record the execution boundary could not append
+    /// (#501). Call it from the settle half so a tab switch cannot swallow
+    /// "changed but not recorded" — the same delivery the stash family uses.
+    pub(crate) fn notice_recording_failure(
+        &mut self,
+        op: &str,
+        recording: &Recording,
+        repo: &Path,
+    ) {
+        if let Recording::Failed { error, .. } = recording {
+            self.app_notices
+                .push_back(format!("{}: {op}: recording failed: {error}", repo.display()).into());
+        }
+    }
+
+    /// Present an outcome the execution boundary already recorded. When the
+    /// append failed there is no durable trace at all, so a mutation that DID
+    /// happen is presented as "changed but not recorded" — never a clean
+    /// success toast (#501). A failure that changed nothing stands as it is.
+    pub(crate) fn present_recorded(&mut self, recording: &Recording, cx: &mut Context<Self>) {
+        // Presentation consumes the attempted receipt, never reconstructs its
+        // structured recovery/owner metadata and never retries persistence.
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        self.record_op_impl(entry, cx, false);
     }
 }
 

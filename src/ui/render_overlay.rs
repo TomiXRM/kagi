@@ -243,6 +243,28 @@ impl KagiApp {
             el.child(render_unlock_worktree_modal(modal, cx))
         })
         // ── Worktree lifecycle confirmations (issue #340) ──
+        .when_some(self.app_notice().cloned(), |el, notice| {
+            el.child(modal_renderers::modal_overlay(
+                div()
+                    .p_4()
+                    .bg(rgb(theme().bg_base))
+                    .child(notice.message)
+                    .child(
+                        div()
+                            .id("app-notice-dismiss")
+                            .child(if notice.inspect.is_some() {
+                                Msg::AppReconcileInspect.t()
+                            } else if notice.acknowledge.is_some() {
+                                Msg::AppReconcileConfirm.t()
+                            } else {
+                                Msg::AppNoticeDismiss.t()
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirm_app_notice(cx);
+                            })),
+                    ),
+            ))
+        })
         .when_some(self.remove_worktree_modal().cloned(), |el, modal| {
             el.child(render_remove_worktree_modal(modal, cx))
         })

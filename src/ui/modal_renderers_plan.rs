@@ -38,7 +38,7 @@ pub(crate) fn render_plan_modal(
 
 /// Pull plan confirmation overlay (T-HT-003) — richer icon-badge card
 /// (user request 2026-07-22: "make the popup cards richer, starting with
-/// Pull/Push"), wired to `confirm_pull`. Accent colour matches the toolbar's
+/// Pull/Push"), wired to `start_pull`. Accent colour matches the toolbar's
 /// Pull button (`color_branch`, same as the ↓N chip).
 pub(crate) fn render_pull_modal(
     modal: PullPlanModal,
@@ -107,8 +107,11 @@ pub(crate) fn render_conflict_continue_modal(
 
 /// Stash-pop confirmation overlay (T-HT-007).
 pub(crate) fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let Some(plan) = modal.plan else {
+        return render_stash_planning(modal.error, cx);
+    };
     render_plan_modal_wrapper_styled(
-        modal.plan,
+        plan,
         modal.error,
         "Pop",
         None,
@@ -126,8 +129,11 @@ pub(crate) fn render_stash_drop_modal(
     modal: StashDropModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let Some(plan) = modal.plan else {
+        return render_stash_planning(modal.error, cx);
+    };
     render_plan_modal_wrapper_styled(
-        modal.plan,
+        plan,
         modal.error,
         "Drop",
         None,
@@ -136,6 +142,25 @@ pub(crate) fn render_stash_drop_modal(
         |this, cx| this.start_stash_drop(cx),
         cx,
     )
+}
+
+pub(crate) fn render_stash_planning(
+    error: Option<SharedString>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    use gpui_component::button::{Button, ButtonVariants};
+    let card = super::modal_shell::modal_card(super::modal_shell::MODAL_W_MD)
+        .child(error.unwrap_or_else(|| Msg::EditorWorkspaceLoading.t().into()))
+        .child(
+            Button::new("stash-planning-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.cancel_active_modal(cx);
+                    cx.notify();
+                })),
+        );
+    super::modal_renderers::modal_overlay(card).into_any_element()
 }
 
 /// PR-merge confirmation overlay (GitHub Phase 2). Same plan wrapper as every
@@ -251,7 +276,7 @@ pub(crate) fn render_repair_worktrees_modal(
 }
 
 /// Push plan confirmation overlay (T-HT-004) — richer icon-badge card (see
-/// `render_pull_modal`), wired to `confirm_push`. Accent colour is
+/// `render_pull_modal`), wired to `start_push`. Accent colour is
 /// `color_success` (green "sending" feel), distinct from Pull's blue so the
 /// two are scannable at a glance.
 pub(crate) fn render_push_modal(
@@ -317,9 +342,11 @@ pub(crate) fn render_set_upstream_modal(
             .replace("{}", &modal.branch_name),
         "Upstream",
         modal.input_state,
-        modal.plan,
+        // #510: a failed replan hands over no plan, so the confirm button is
+        // not rendered and the failure text takes its place.
+        modal.plan.plan().cloned(),
         None,
-        modal.error,
+        plan_or_exec_error(&modal.plan, modal.error),
         "Set upstream",
         Some((IconName::ExternalLink.into(), theme().color_branch)),
         cancel_handler,
@@ -349,9 +376,11 @@ pub(crate) fn render_rename_branch_modal(
         Msg::PlanRenameBranch.t().replace("{}", &modal.old_name),
         "New branch name",
         modal.input_state,
-        modal.plan,
+        // #510: a failed replan hands over no plan, so the confirm button is
+        // not rendered and the failure text takes its place.
+        modal.plan.plan().cloned(),
         Some(modal.validation),
-        modal.error,
+        plan_or_exec_error(&modal.plan, modal.error),
         "Rename",
         Some((
             ModalIcon::Path("icons/square-pen.svg"),
@@ -436,10 +465,15 @@ pub(crate) fn render_delete_branch_modal(
     modal: DeleteBranchModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let label = if modal.confirm_armed {
+        Msg::PlanDeleteBranchArmed.t()
+    } else {
+        Msg::PlanDeleteBranch.t()
+    };
     render_plan_modal_wrapper_styled(
         modal.plan,
         modal.error,
-        "Delete",
+        label,
         None,
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
         |this, _cx| this.cancel_delete_branch_modal(),

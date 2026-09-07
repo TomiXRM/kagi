@@ -165,7 +165,7 @@ impl KagiApp {
     pub(crate) fn panel_draft_branch(&self, cx: &gpui::App) -> String {
         let panel = self.commit_panel.as_ref().map(|e| e.read(cx));
         let label = panel.and_then(|v| v.foreign.as_ref().map(|(l, _)| l.to_string()));
-        draft_branch(label.as_deref(), &self.active_view.status_summary.branch)
+        draft_branch(label.as_deref(), &self.view().status_summary.branch)
     }
 
     /// Run `f` against a `Backend` for [`Self::write_repo_path`].
@@ -224,7 +224,7 @@ impl KagiApp {
             unstaged: status.unstaged.len(),
             untracked: status.untracked.len(),
         };
-        for wt in self.active_view.worktrees.iter_mut() {
+        for wt in self.view_mut().worktrees.iter_mut() {
             if canon(wt.path.clone()) == path {
                 wt.wip = Some(wip);
             }

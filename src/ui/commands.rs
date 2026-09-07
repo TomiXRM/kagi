@@ -1146,6 +1146,106 @@ pub fn effective_keystroke(id: &str) -> Option<String> {
 /// - `cmd-j` (already bound by the bottom-panel ticket; reused for
 ///   Toggle Terminal — re-binding would double it),
 /// - all Edit actions (os_action only — must not shadow text-input).
+use crate::ui::{
+    CloseMainDiff, CopyDiffSelection, DiffNextFile, DiffPrevFile, PrModeNextPane, PrModePrevPane,
+    SaveEditorFile, TerminalSendShiftTab, TerminalSendTab,
+};
+
+/// Every app-level [`KeyBinding`] the real window installs.
+///
+/// Shared with the GUI E2E harness (`ui::e2e::init_app`), which used to bind
+/// only `secondary-j` and `secondary-c` of its own accord. A scenario therefore
+/// ran against a *different keymap* than the app: `escape` was bound to nothing,
+/// so `CloseMainDiff` — the only route from the Escape key to
+/// `cancel_active_modal` — never dispatched, and a modal survived an Esc that
+/// closes it for real users. Any keyboard scenario could pass or fail for that
+/// reason, so the two keymaps are one function now (#492).
+///
+/// Registered after `gpui_component::init`, which several of these deliberately
+/// outrank — keep the order.
+pub(crate) fn bind_app_keys(cx: &mut App) {
+    // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
+    // the toggle key for the bottom panel. context = None means the binding
+    // fires regardless of focus context. GUI-CLICK: was `cmd-j`, which on
+    // Linux is Super-J — so Ctrl-J never toggled the panel.
+    cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
+    // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
+    // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
+    cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
+    // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
+    // text field keeps its own copy; no-ops when nothing is selected.
+    cx.bind_keys([KeyBinding::new(
+        "secondary-c",
+        CopyDiffSelection,
+        Some("!Terminal && !Input"),
+    )]);
+    // T-TERM-INTERACT-001 follow-up: Tab completion in the embedded
+    // terminal. Deeper "Terminal" context outranks gpui_component Root's
+    // "tab" → focus-cycling binding; handlers live on the terminal
+    // wrapper div in render_bottom.rs and write \t / ESC[Z to the PTY.
+    cx.bind_keys([
+        KeyBinding::new("tab", TerminalSendTab, Some("Terminal")),
+        KeyBinding::new("shift-tab", TerminalSendShiftTab, Some("Terminal")),
+    ]);
+    // Arrow keys step through files while the main diff is open
+    // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
+    // reach a focused terminal (shell history), and `!Input` so they reach
+    // a focused text field / code editor: these bindings register AFTER
+    // gpui_component::init, so at equal context depth they would shadow
+    // Input's own MoveUp/MoveDown — the editor cursor stopped moving
+    // vertically while left/right (unbound here) still worked
+    // (user-reported).
+    cx.bind_keys([
+        KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
+        KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
+        // GitHub Phase 1c: ←/→ cycle PR mode's focused pane. No-op outside
+        // PR mode (handler checks), so graph mode keeps ←/→ free.
+        KeyBinding::new("left", PrModePrevPane, Some("!Terminal && !Input")),
+        KeyBinding::new("right", PrModeNextPane, Some("!Terminal && !Input")),
+    ]);
+    // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
+    // No context predicate — gpui-component 0.5.1's "Input" context binds
+    // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in
+    // its src/input/state.rs), so this fires even while the code editor
+    // has focus. `save_editor_file` no-ops when there is nothing to save.
+    cx.bind_keys([KeyBinding::new("secondary-s", SaveEditorFile, None)]);
+    // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
+    // focused text field (gpui-component Input, key_context "Input") keeps
+    // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
+    // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
+    // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
+    cx.bind_keys([
+        KeyBinding::new("secondary-z", HistoryUndo, Some("!Input && !Terminal")),
+        KeyBinding::new(
+            "secondary-shift-z",
+            HistoryRedo,
+            Some("!Input && !Terminal"),
+        ),
+    ]);
+    // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to
+    // *both* SelectAll and MoveHome (emacs-style) in the "Input" context,
+    // and the later (MoveHome) wins — so on this platform Ctrl+A jumped to
+    // line start instead of selecting all. Re-bind it to SelectAll here
+    // (registered after gpui_component::init, so it takes precedence).
+    // cmd-a (SelectAll) and double-click word-select already work natively.
+    cx.bind_keys([KeyBinding::new(
+        "ctrl-a",
+        gpui_component::input::SelectAll,
+        Some("Input"),
+    )]);
+}
+
+/// Install the application-wide command bindings and native menu definition.
+///
+/// Both the real application and the GUI E2E harness must use this after
+/// `gpui_component::init`: menu accelerators are derived from the live keymap,
+/// so omitting either registration makes a harness exercise a different app.
+pub(crate) fn setup_app(cx: &mut App) {
+    bind_app_keys(cx);
+    register_keybindings(cx);
+    cx.set_menus(build_menus());
+}
+
 pub fn register_keybindings(cx: &mut App) {
     // (id, action). The keystroke comes from the registry / settings; a
     // command with no effective keystroke is simply not bound.
@@ -1347,12 +1447,18 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let result = kagi_git::Backend::open(&repo_path).and_then(|backend| {
-            let entry = backend.create_snapshot("manual snapshot")?;
-            // Enforce the generation cap so the ODB does not grow unbounded.
-            let _ = backend.prune_snapshots(kagi_git::DEFAULT_SNAPSHOT_CAP);
-            Ok(entry)
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
+        };
+        let result = lease.run(|| {
+            kagi_git::Backend::open(&repo_path).and_then(|backend| {
+                let entry = backend.create_snapshot("manual snapshot")?;
+                // Enforce the generation cap so the ODB does not grow unbounded.
+                let _ = backend.prune_snapshots(kagi_git::DEFAULT_SNAPSHOT_CAP);
+                Ok(entry)
+            })
         });
+        self.refresh_write_busy();
         match result {
             Ok(entry) => {
                 klog!("snapshot: created {}", entry.id);
@@ -1396,7 +1502,11 @@ impl KagiApp {
                 self.ensure_analyze_ignore_input(window, cx);
                 cx.notify();
             }
-            "app.quit" => cx.quit(),
+            "app.quit" => {
+                if !self.hold_host_close(cx) {
+                    cx.quit();
+                }
+            }
 
             // ── File ────────────────────────────────────────────────
             "file.newTab" | "file.openRepository" => self.pick_repository(window, cx),
@@ -1501,8 +1611,8 @@ impl KagiApp {
             "branch.new" => {
                 let at = self
                     .selected
-                    .and_then(|i| self.active_view.details.get(i))
-                    .or_else(|| self.active_view.details.first())
+                    .and_then(|i| self.view().details.get(i))
+                    .or_else(|| self.view().details.first())
                     .map(|d| CommitId(d.full_sha.to_string()));
                 if let Some(id) = at {
                     self.open_create_branch_modal(id, cx);
@@ -1525,7 +1635,11 @@ impl KagiApp {
             // ── Window ──────────────────────────────────────────────
             "window.minimize" => window.minimize_window(),
             "window.zoom" => window.zoom_window(),
-            "window.close" => window.remove_window(),
+            "window.close" => {
+                if !self.hold_host_close(cx) {
+                    window.remove_window();
+                }
+            }
 
             // ── Help ────────────────────────────────────────────────
             "help.shortcuts" => self.open_shortcuts_overlay(),
@@ -1619,7 +1733,7 @@ impl KagiApp {
             None => return,
         };
         let target = match self
-            .active_view
+            .view()
             .details
             .get(row)
             .map(|d| CommitId(d.full_sha.to_string()))
@@ -1679,12 +1793,18 @@ impl KagiApp {
     /// `reload()` (and the FS watcher would catch the ref change anyway). Never
     /// stacks: a no-op while another fetch is in flight or an operation is busy.
     pub fn fetch_async(&mut self, silent: bool, cx: &mut Context<Self>) {
-        if self.fetch_in_flight || self.busy_op.is_some() {
+        self.refresh_write_busy();
+        if self.fetch_in_flight
+            || (silent && (self.busy_op.is_some() || self.app_sessions.has_leases()))
+        {
             return;
         }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
+        };
+        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+            return;
         };
         self.fetch_in_flight = true;
         let repo_path_guard = repo_path.clone();
@@ -1693,14 +1813,23 @@ impl KagiApp {
             klog!("fetch: start");
         }
         let task = cx.background_spawn(async move {
-            let backend =
-                kagi_git::Backend::open(&repo_path).map_err(|e| format!("repo open error: {e}"))?;
-            backend.fetch_remote().map_err(|e| format!("{e}"))
+            let result = kagi_git::Backend::open(&repo_path);
+            let open_failed = result.is_err();
+            let result = result.and_then(|backend| backend.fetch_remote());
+            lease.complete_git(&result);
+            result.map_err(|e| {
+                if open_failed {
+                    format!("repo open error: {e}")
+                } else {
+                    format!("{e}")
+                }
+            })
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 app.fetch_in_flight = false;
+                app.refresh_write_busy();
                 // A fetch takes seconds; the user may have switched tabs. The
                 // apply below stamps `last_fetch_secs` and can trigger a full
                 // reload, both of which would land on the wrong repo — falsely
@@ -1714,7 +1843,7 @@ impl KagiApp {
                         // ADR-0127: a no-op fetch skips the reload below, so the
                         // snapshot-derived fetch timestamp would go stale and the
                         // age indicator would falsely warn — stamp it in place.
-                        app.active_view.status_summary.last_fetch_secs =
+                        app.view_mut().status_summary.last_fetch_secs =
                             Some(super::commit_list::now_unix_secs());
                         // Only reload when the fetch actually moved a ref. A no-op
                         // fetch (the common auto-fetch case) used to re-snapshot the
@@ -1791,7 +1920,7 @@ impl KagiApp {
     /// Open the branch picker overlay listing local branches.
     fn open_branch_picker(&mut self, mode: BranchPickerMode) {
         let branches: Vec<String> = self
-            .active_view
+            .view()
             .branches
             .iter()
             .map(|(n, _)| n.clone())

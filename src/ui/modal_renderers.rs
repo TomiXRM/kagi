@@ -669,13 +669,35 @@ fn render_plan_modal_card_styled(
 
     // Checkout button: only shown when there are no blockers.
     if !has_blockers {
-        button_row = button_row.child(
-            Button::new("plan-confirm")
-                .label(confirm_label)
-                .primary()
-                .small()
-                .on_click(confirm_handler),
-        );
+        let button = Button::new("plan-confirm")
+            .label(confirm_label)
+            .primary()
+            .small()
+            .on_click(confirm_handler);
+        #[cfg(feature = "gui-e2e")]
+        let button = {
+            // Keep the measurement layer behind the real button and anchor it
+            // to the wrapper, independent of absolute static-position layout.
+            div()
+                .relative()
+                .child(
+                    gpui::canvas(
+                        move |bounds, window, _| {
+                            crate::ui::e2e::record_confirm_bounds(
+                                window.window_handle().window_id(),
+                                bounds,
+                            );
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+                .child(button)
+        };
+        button_row = button_row.child(button);
     }
 
     let card = card.child(body).child(button_row.flex_shrink_0());

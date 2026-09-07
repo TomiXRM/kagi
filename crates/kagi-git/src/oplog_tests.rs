@@ -1,5 +1,24 @@
 use super::*;
 
+#[test]
+fn test_runtime_without_log_dir_refuses_home_fallback() {
+    let error = log_file_path_from_env(None, Some(Path::new("/home/tester")), true)
+        .expect_err("test runtime must not fall back to HOME");
+    assert!(matches!(error, GitError::Other(message) if message == "tests must set KAGI_LOG_DIR"));
+}
+
+#[test]
+fn log_dir_override_selects_that_directory() {
+    let path = log_file_path_from_env(
+        Some(std::ffi::OsStr::new("/tmp/kagi-logs")),
+        Some(Path::new("/home/tester")),
+        true,
+    )
+    .expect("KAGI_LOG_DIR must be accepted")
+    .expect("KAGI_LOG_DIR produces a path");
+    assert_eq!(path, Path::new("/tmp/kagi-logs/operations.jsonl"));
+}
+
 // ── escape_json_string ────────────────────────────────────
 
 #[test]
@@ -50,6 +69,7 @@ fn escape_all_specials_together() {
 #[test]
 fn json_success_entry_contains_required_fields() {
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -86,6 +106,7 @@ fn json_success_entry_contains_required_fields() {
 #[test]
 fn json_refused_entry_contains_blockers() {
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -116,6 +137,7 @@ fn json_refused_entry_contains_blockers() {
 #[test]
 fn json_failed_entry_contains_error() {
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -139,6 +161,7 @@ fn json_failed_entry_contains_error() {
 #[test]
 fn json_escapes_special_chars_in_repo_path() {
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -175,6 +198,9 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn append_two_entries_creates_two_jsonl_lines() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().expect("tempdir");
     let log_dir = dir.path().to_str().unwrap().to_string();
@@ -184,6 +210,7 @@ fn append_two_entries_creates_two_jsonl_lines() {
     std::env::set_var("KAGI_LOG_DIR", &log_dir);
 
     let make_entry = |op: &str, ts: i64| OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -230,6 +257,9 @@ fn append_two_entries_creates_two_jsonl_lines() {
 
 #[test]
 fn append_includes_expected_json_fields() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().expect("tempdir");
     let log_dir = dir.path().to_str().unwrap().to_string();
@@ -238,6 +268,7 @@ fn append_includes_expected_json_fields() {
     std::env::set_var("KAGI_LOG_DIR", &log_dir);
 
     let entry = OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -276,6 +307,9 @@ fn append_includes_expected_json_fields() {
 
 #[test]
 fn oplog_filter_scopes_to_bound_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     // The global oplog holds entries for many repos. A server/CLI bound to repo
     // A must only ever see A's entries, never repo B's — and the filter must
     // survive path-shape differences (trailing slash, `.`, symlinked $TMPDIR).
@@ -294,6 +328,7 @@ fn oplog_filter_scopes_to_bound_repo() {
     git2::Repository::init(&repo_b).unwrap();
 
     let mk = |repo: &std::path::Path, op: &str| OpLogEntry {
+        backup_refs: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -344,6 +379,83 @@ fn oplog_filter_scopes_to_bound_repo() {
 
     match prev {
         Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
+        None => std::env::remove_var("KAGI_LOG_DIR"),
+    }
+}
+
+#[test]
+fn append_waiting_for_retirement_cannot_publish_a_deleted_root() {
+    // Worker/absorb unit tests also append while ENV_LOCK is held. Isolate the
+    // process-wide log environment so only this deliberate writer race exists.
+    if std::env::var_os("KAGI_RETENTION_RACE_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "oplog::tests::append_waiting_for_retirement_cannot_publish_a_deleted_root",
+                "--nocapture",
+            ])
+            .env("KAGI_RETENTION_RACE_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let repo_path = root.path().join("repo");
+    let repo = git2::Repository::init_bare(&repo_path).unwrap();
+    let log_dir = root.path().join("log");
+    let previous = std::env::var_os("KAGI_LOG_DIR");
+    std::env::set_var("KAGI_LOG_DIR", &log_dir);
+    let oid = repo.blob(b"shared recovery").unwrap();
+    let name = "refs/kagi/backups/race/0";
+    repo.reference(name, oid, false, "fixture backup").unwrap();
+    let state = StateSummary {
+        head: "fixture".into(),
+        dirty: "clean".into(),
+    };
+    let mut entry = OpLogEntry::new(
+        "discard",
+        repo_path.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    );
+    entry.backup_refs.push(name.into());
+    let (_, entry) = append_oplog_receipt(&entry).unwrap();
+    let plan = retention::plan(&repo, &entry).unwrap();
+    let mut lock = retention::lock(&log_file_path().unwrap().unwrap()).unwrap();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (finished, completion) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            started.send(()).unwrap();
+            finished.send(append_oplog_receipt(&entry)).unwrap();
+        });
+        ready.recv().unwrap();
+        // The root exists while append is queued, then retirement removes it
+        // before append acquires the lock. Validation before locking is unsafe.
+        assert!(completion
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        let mut retired = false;
+        retention::execute_locked(&repo, &plan, &mut retired, &mut lock).unwrap();
+        assert!(retired);
+        drop(lock);
+        let result = completion.recv().unwrap();
+        assert!(
+            result.is_err(),
+            "queued append must not advertise a retired root"
+        );
+    });
+    assert!(read_oplog_tail(10).is_empty());
+    assert!(repo.find_reference(name).is_err());
+    match previous {
+        Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
         None => std::env::remove_var("KAGI_LOG_DIR"),
     }
 }

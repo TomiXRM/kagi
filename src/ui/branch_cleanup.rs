@@ -1,7 +1,7 @@
 //! Branch Cleanup pane + operations (ADR-0128).
 //!
 //! A center-takeover table of merged/stale branch candidates. The rows live
-//! in `active_view.cleanup_rows` (per-tab) but are **not** snapshot-derived
+//! in the owner's `cleanup_rows` (per-tab) but are **not** snapshot-derived
 //! any more (ADR-0128 follow-up, 2026-07-22): classifying every branch walks
 //! main's first-parent history plus one `merge_base` per branch, which
 //! measured over a second on repos with many long-lived unmerged branches.
@@ -71,7 +71,7 @@ impl KagiApp {
     /// everything already is.
     pub fn toggle_cleanup_select_all(&mut self, cx: &mut Context<Self>) {
         let all: Vec<String> = self
-            .active_view
+            .view()
             .cleanup_rows
             .iter()
             .filter(|r| r.delete_target().is_some())
@@ -88,7 +88,7 @@ impl KagiApp {
     /// Plan a delete for exactly the ticked rows.
     pub fn delete_selected_cleanup_branches(&mut self, cx: &mut Context<Self>) {
         let targets: Vec<CleanupDeleteTarget> = self
-            .active_view
+            .view()
             .cleanup_rows
             .iter()
             .filter(|r| self.cleanup_selected.contains(&r.name))
@@ -105,14 +105,15 @@ impl KagiApp {
     }
 
     /// Recompute the Branch Cleanup table for the current repo on a
-    /// background thread, updating `active_view.cleanup_rows` in place when
+    /// background thread, updating the owner's `cleanup_rows` in place when
     /// it finishes (ADR-0128 follow-up). Call after every reload — same
     /// "cheap to call repeatedly" shape as `ensure_startup_repo_io`'s
     /// sub-tasks: no-op with no repo open, and a superseded scan (repo
     /// changed, or a newer scan started) just drops its result instead of
     /// clobbering a fresher one.
     pub fn start_branch_cleanup_scan(&mut self, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else {
+        let (Some(repo_path), Some(session)) = (self.repo_path.clone(), self.active_session())
+        else {
             return;
         };
         self.cleanup_gen += 1;
@@ -141,10 +142,9 @@ impl KagiApp {
         cx.spawn(async move |app, acx| {
             let result = task.await;
             let _ = app.update(acx, |app, cx| {
-                // Drop the result if superseded: the repo changed under us, or
+                // Drop the result if superseded: another tab is on screen, or
                 // a newer scan (another reload) already started.
-                let still_ours = app.cleanup_gen == my_gen
-                    && app.repo_path.as_deref() == Some(repo_path.as_path());
+                let still_ours = app.cleanup_gen == my_gen && app.active_session() == Some(session);
                 if !still_ours {
                     return;
                 }
@@ -179,7 +179,7 @@ impl KagiApp {
                             warn,
                             stale
                         );
-                        app.active_view.cleanup_rows = rows;
+                        app.view_mut().cleanup_rows = rows;
                         cx.notify();
                     }
                     Err(e) => {
@@ -193,7 +193,7 @@ impl KagiApp {
 
     /// Copy every listed branch name (newline-joined) to the clipboard.
     pub fn copy_branch_cleanup_names(&mut self, cx: &mut Context<Self>) {
-        let text = copy_all_text(&self.active_view.cleanup_rows);
+        let text = copy_all_text(&self.view().cleanup_rows);
         if text.is_empty() {
             return;
         }
@@ -560,7 +560,7 @@ fn action_button(
 
 /// The Branch Cleanup takeover pane (ADR-0128).
 pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let rows = app.active_view.cleanup_rows.clone();
+    let rows = app.view().cleanup_rows.clone();
     let cols = app.cleanup_cols;
     let bulk_count = rows.iter().filter(|r| r.bulk_deletable).count();
     let selected_count = app.cleanup_selected.len();
@@ -596,7 +596,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         (bulk_count > 0).then(|| {
             let handler = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                 let targets: Vec<CleanupDeleteTarget> = this
-                    .active_view
+                    .view()
                     .cleanup_rows
                     .iter()
                     .filter(|r| r.bulk_deletable)
@@ -765,7 +765,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                     let selected = this.cleanup_selected.clone();
                     range
                         .filter_map(|i| {
-                            this.active_view.cleanup_rows.get(i).cloned().map(|row| {
+                            this.view().cleanup_rows.get(i).cloned().map(|row| {
                                 let pr = prs.iter().find(|p| p.head == row.name);
                                 let ticked = selected.contains(&row.name);
                                 build_cleanup_row(&row, i, cols, pr, ticked, cx)

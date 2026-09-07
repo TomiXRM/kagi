@@ -126,6 +126,9 @@ fn entry(kind: OperationKind, branch: &str, before: &str, after: &str) -> Histor
 
 #[test]
 fn commit_undo_then_redo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -148,7 +151,13 @@ fn commit_undo_then_redo() {
         "undo blockers: {:?}",
         plan.blockers
     );
-    backend.execute_undo(&e).expect("execute_undo");
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Undo,
+            &backend.plan_undo(&e).unwrap(),
+            &e,
+        )
+        .expect("execute_undo");
     assert_eq!(
         head_sha(dir),
         before,
@@ -173,7 +182,13 @@ fn commit_undo_then_redo() {
         "redo blockers: {:?}",
         plan.blockers
     );
-    backend.execute_redo(&e).expect("execute_redo");
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Redo,
+            &backend.plan_redo(&e).unwrap(),
+            &e,
+        )
+        .expect("execute_redo");
     assert_eq!(
         head_sha(dir),
         after,
@@ -187,6 +202,9 @@ fn commit_undo_then_redo() {
 
 #[test]
 fn merge_undo_then_redo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -224,7 +242,13 @@ fn merge_undo_then_redo() {
     // ── UNDO: HEAD back to the pre-merge commit ──────────────
     let backend = Backend::open(dir).expect("open");
     assert!(backend.plan_undo(&e).expect("plan").blockers.is_empty());
-    backend.execute_undo(&e).expect("execute_undo");
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Undo,
+            &backend.plan_undo(&e).unwrap(),
+            &e,
+        )
+        .expect("execute_undo");
     assert_eq!(head_sha(dir), before, "HEAD must be pre-merge after undo");
 
     // The merge commit must survive (not destroyed).
@@ -237,7 +261,13 @@ fn merge_undo_then_redo() {
     // ── REDO: re-apply the merge ─────────────────────────────
     let backend = Backend::open(dir).expect("reopen");
     assert!(backend.plan_redo(&e).expect("plan").blockers.is_empty());
-    backend.execute_redo(&e).expect("execute_redo");
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Redo,
+            &backend.plan_redo(&e).unwrap(),
+            &e,
+        )
+        .expect("execute_redo");
     assert_eq!(
         head_sha(dir),
         after,
@@ -251,6 +281,9 @@ fn merge_undo_then_redo() {
 
 #[test]
 fn undo_preserves_working_tree_changes() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -270,7 +303,13 @@ fn undo_preserves_working_tree_changes() {
     let plan = backend.plan_undo(&e).expect("plan_undo");
     assert!(plan.blockers.is_empty(), "dirty WT must not block undo");
 
-    backend.execute_undo(&e).expect("execute_undo");
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Undo,
+            &backend.plan_undo(&e).unwrap(),
+            &e,
+        )
+        .expect("execute_undo");
     assert_eq!(head_sha(dir), before);
 
     // The uncommitted file must survive verbatim — nothing hard-reset away.
@@ -307,6 +346,9 @@ fn undo_preserves_working_tree_changes() {
 
 #[test]
 fn reflog_seed_enables_undo_on_freshly_opened_repo() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -343,7 +385,13 @@ fn reflog_seed_enables_undo_on_freshly_opened_repo() {
 
     // And it actually executes: HEAD moves back to the parent (soft).
     let e = top.clone();
-    backend.execute_undo(&e).expect("execute_undo");
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Undo,
+            &backend.plan_undo(&e).unwrap(),
+            &e,
+        )
+        .expect("execute_undo");
     assert_eq!(head_sha(dir), parent, "undo moves HEAD to the parent");
     // The commit's file returns staged (soft).
     let status = backend.working_tree_status().expect("status");
@@ -362,6 +410,9 @@ fn reflog_seed_enables_undo_on_freshly_opened_repo() {
 
 #[test]
 fn plan_undo_stale_entry_is_blocked() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -387,7 +438,13 @@ fn plan_undo_stale_entry_is_blocked() {
     );
 
     // Execute must also refuse rather than corrupt state.
-    let err = backend.execute_undo(&e).expect_err("stale undo must error");
+    let err = backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Undo,
+            &backend.plan_undo(&e).unwrap(),
+            &e,
+        )
+        .expect_err("stale undo must error");
     let msg = format!("{}", err);
     assert!(
         msg.to_lowercase().contains("stale") || msg.to_lowercase().contains("expected"),
@@ -404,6 +461,9 @@ fn plan_undo_stale_entry_is_blocked() {
 
 #[test]
 fn undo_redo_pipeline_via_domain_history() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let repo = setup_local();
     let dir = &repo.path;
 
@@ -421,9 +481,13 @@ fn undo_redo_pipeline_via_domain_history() {
 
     // Undo: peek, run the backend move, then advance the cursor.
     let e = history.peek_undo().cloned().expect("peek_undo");
-    Backend::open(dir)
-        .unwrap()
-        .execute_undo(&e)
+    let backend = Backend::open(dir).unwrap();
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Undo,
+            &backend.plan_undo(&e).unwrap(),
+            &e,
+        )
         .expect("execute_undo");
     history.undo();
     assert_eq!(head_sha(dir), before);
@@ -432,12 +496,19 @@ fn undo_redo_pipeline_via_domain_history() {
 
     // Redo.
     let e = history.peek_redo().cloned().expect("peek_redo");
-    Backend::open(dir)
-        .unwrap()
-        .execute_redo(&e)
+    let backend = Backend::open(dir).unwrap();
+    backend
+        .run_history_move(
+            kagi_domain::plan_note::HistoryMoveDir::Redo,
+            &backend.plan_redo(&e).unwrap(),
+            &e,
+        )
         .expect("execute_redo");
     history.redo();
     assert_eq!(head_sha(dir), after);
     assert!(history.can_undo());
     assert!(!history.can_redo());
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

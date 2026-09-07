@@ -16,7 +16,9 @@ use std::sync::Mutex;
 
 use tempfile::TempDir;
 
-use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{
+    append_oplog, read_oplog_tail, read_oplog_tail_for_repo, Actor, OpLogEntry, OpOutcome,
+};
 use kagi_git::ops::StateSummary;
 use kagi_git::{
     oplog_outcome_from, Backend, CommitId, DiscardOutcome, Operation, OperationOutcome,
@@ -67,10 +69,165 @@ fn run_create_branch(repo: &Path, name: &str) {
     backend.run(&op, &plan).expect("run");
 }
 
+#[test]
+fn create_branch_with_checkout_records_partial_after_checkout_failure() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap();
+    let repo = TempDir::new().unwrap();
+    let logdir = TempDir::new().unwrap();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", logdir.path());
+
+    build_repo(repo.path());
+    std::fs::write(repo.path().join("base.txt"), "second\n").unwrap();
+    git(repo.path(), &["add", "base.txt"]);
+    git(repo.path(), &["commit", "-qm", "c2"]);
+
+    let mut backend = Backend::open(repo.path()).expect("open");
+    let original = head_commit_id(&backend);
+    let op = Operation::CreateBranchWithCheckout {
+        name: "recovery-branch".to_string(),
+        at: original.clone(),
+        checkout_after: true,
+    };
+    let plan = backend.plan(&op).expect("clean plan");
+    assert!(
+        plan.blockers.is_empty(),
+        "unexpected blockers: {:?}",
+        plan.blockers
+    );
+
+    // #502 now refuses post-plan dirty blockers before branch creation. A
+    // clean tree plus an index lock still reaches the #522 partial boundary:
+    // the ref is created, but checkout cannot acquire its index write lock.
+    std::fs::write(repo.path().join(".git/index.lock"), "held by fixture\n").unwrap();
+    assert!(
+        backend.run(&op, &plan).is_err(),
+        "checkout must fail safely"
+    );
+
+    let git_repo = git2::Repository::open(repo.path()).unwrap();
+    let branch = git_repo
+        .find_branch("recovery-branch", git2::BranchType::Local)
+        .expect("branch was created");
+    assert_eq!(
+        branch.get().target().unwrap().to_string(),
+        original.0,
+        "branch retains the full recovery OID"
+    );
+    assert_eq!(
+        git_repo.head().unwrap().shorthand(),
+        Ok("main"),
+        "failed safe checkout leaves HEAD on the original branch"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("base.txt")).unwrap(),
+        "second\n",
+        "failed safe checkout preserves working-tree content"
+    );
+
+    let tail = read_oplog_tail_for_repo(repo.path(), 10);
+    // MUTATION GUARD: before #522's fix, `?` in the dispatch arm returns
+    // directly from `run`, leaving this tail empty.
+    assert_eq!(tail.len(), 1, "one attempted operation must be recorded");
+    match &tail[0].outcome {
+        OpOutcome::Partial { after, .. } => {
+            assert!(after.dirty.contains("recovery-branch"));
+            assert!(after.dirty.contains(&original.0));
+        }
+        other => panic!("expected Partial outcome, got {other:?}"),
+    }
+
+    match prev {
+        Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
+        None => std::env::remove_var("KAGI_LOG_DIR"),
+    }
+}
+
+#[test]
+fn create_branch_with_checkout_records_success_when_clean() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap();
+    let repo = TempDir::new().unwrap();
+    let logdir = TempDir::new().unwrap();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", logdir.path());
+
+    build_repo(repo.path());
+    let mut backend = Backend::open(repo.path()).expect("open");
+    let op = Operation::CreateBranchWithCheckout {
+        name: "clean-branch".to_string(),
+        at: head_commit_id(&backend),
+        checkout_after: true,
+    };
+    let plan = backend.plan(&op).expect("plan");
+    backend.run(&op, &plan).expect("run");
+
+    let tail = read_oplog_tail_for_repo(repo.path(), 10);
+    assert_eq!(tail.len(), 1, "clean run records exactly one entry");
+    assert!(matches!(tail[0].outcome, OpOutcome::Success { .. }));
+    assert_eq!(
+        git2::Repository::open(repo.path())
+            .unwrap()
+            .head()
+            .unwrap()
+            .shorthand(),
+        Ok("clean-branch"),
+        "clean run checks out the new branch"
+    );
+
+    match prev {
+        Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
+        None => std::env::remove_var("KAGI_LOG_DIR"),
+    }
+}
+
+#[test]
+fn create_branch_with_checkout_records_failed_when_creation_fails() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap();
+    let repo = TempDir::new().unwrap();
+    let logdir = TempDir::new().unwrap();
+    let prev = std::env::var("KAGI_LOG_DIR").ok();
+    std::env::set_var("KAGI_LOG_DIR", logdir.path());
+
+    build_repo(repo.path());
+    let mut backend = Backend::open(repo.path()).expect("open");
+    let op = Operation::CreateBranchWithCheckout {
+        name: "raced-branch".to_string(),
+        at: head_commit_id(&backend),
+        checkout_after: true,
+    };
+    let plan = backend.plan(&op).expect("plan before competing create");
+    git(repo.path(), &["branch", "raced-branch"]);
+
+    assert!(
+        backend.run(&op, &plan).is_err(),
+        "branch creation must fail"
+    );
+    let tail = read_oplog_tail_for_repo(repo.path(), 10);
+    assert_eq!(tail.len(), 1, "failed attempt records exactly once");
+    assert!(matches!(tail[0].outcome, OpOutcome::Failed { .. }));
+
+    match prev {
+        Some(v) => std::env::set_var("KAGI_LOG_DIR", v),
+        None => std::env::remove_var("KAGI_LOG_DIR"),
+    }
+}
+
 // ── #329: run records without any UI ─────────────────────────
 
 #[test]
 fn run_records_oplog_without_ui() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -100,6 +257,9 @@ fn run_records_oplog_without_ui() {
 
 #[test]
 fn run_records_actor_set_on_backend() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -130,6 +290,9 @@ fn run_records_actor_set_on_backend() {
 
 #[test]
 fn ids_are_monotonic_and_parent_chains() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let repo = TempDir::new().unwrap();
     let logdir = TempDir::new().unwrap();
@@ -168,6 +331,9 @@ fn ids_are_monotonic_and_parent_chains() {
 
 #[test]
 fn old_and_new_format_lines_both_parse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let logdir = TempDir::new().unwrap();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -212,6 +378,9 @@ fn old_and_new_format_lines_both_parse() {
 
 #[test]
 fn new_fields_round_trip() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let _guard = ENV_LOCK.lock().unwrap();
     let logdir = TempDir::new().unwrap();
     let prev = std::env::var("KAGI_LOG_DIR").ok();
@@ -251,6 +420,9 @@ fn new_fields_round_trip() {
 
 #[test]
 fn partial_discard_maps_to_partial_outcome() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let predicted = StateSummary {
         head: "branch: main".into(),
         dirty: "clean".into(),
@@ -263,8 +435,11 @@ fn partial_discard_maps_to_partial_outcome() {
     let result: Result<OperationOutcome, kagi_git::GitError> =
         Ok(OperationOutcome::Discard(partial));
     // MUTATION GUARD: dropping the is_partial() branch makes this Success.
-    match oplog_outcome_from(&result, &predicted) {
-        OpOutcome::Partial { error, .. } => assert_eq!(error, "write failed"),
+    match oplog_outcome_from(&result, &predicted, None) {
+        OpOutcome::Partial { after, error } => {
+            assert_eq!(after, predicted, "legacy persisted discard after-state");
+            assert_eq!(error, "write failed");
+        }
         other => panic!("expected Partial, got {other:?}"),
     }
 
@@ -273,7 +448,10 @@ fn partial_discard_maps_to_partial_outcome() {
         DiscardOutcome::complete(Vec::new()),
     ));
     assert!(matches!(
-        oplog_outcome_from(&complete, &predicted),
+        oplog_outcome_from(&complete, &predicted, None),
         OpOutcome::Success { .. }
     ));
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

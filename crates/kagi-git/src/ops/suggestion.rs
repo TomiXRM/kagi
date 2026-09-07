@@ -103,6 +103,7 @@ pub fn plan_apply_suggestion(
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         // The fine-grained stale guard lives in execute (line-range compare);
         // only HEAD needs the generic preflight digest here.
         worktree_digest: None,
@@ -128,7 +129,7 @@ pub fn preflight_apply_suggestion(repo: &Repository, plan: &OperationPlan) -> Re
 /// anchored range still matches `expected` (TOCTOU stale guard). Backs up the
 /// pre-apply file content to the ODB and returns the blob SHA as the recovery
 /// handle. Never stages or commits.
-pub fn execute_apply_suggestion(
+pub(crate) fn execute_apply_suggestion(
     repo: &Repository,
     plan: &OperationPlan,
     s: &Suggestion,

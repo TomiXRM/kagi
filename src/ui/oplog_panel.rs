@@ -43,6 +43,28 @@ fn new_oplog_list_state() -> gpui::ListState {
 }
 
 impl OpLogPanel {
+    /// Prepare the boundary receipt for display, including attempted entries
+    /// whose append failed. This path performs no persistence.
+    pub fn entry_for_recording(recording: &kagi_git::backend::recording::Recording) -> OpLogEntry {
+        use kagi_git::backend::recording::Recording;
+        let entry = recording.entry();
+        let outcome = match recording {
+            Recording::Appended { .. } => entry.outcome.clone(),
+            Recording::Failed { error, .. } => match &entry.outcome {
+                OpOutcome::Success { after }
+                | OpOutcome::Partial { after, .. }
+                | OpOutcome::Unknown { after, .. } => OpOutcome::Partial {
+                    after: after.clone(),
+                    error: format!("changed but not recorded: {error}"),
+                },
+                unchanged => unchanged.clone(),
+            },
+        };
+        let mut displayed = entry.clone();
+        displayed.outcome = outcome;
+        displayed
+    }
+
     pub fn new() -> Self {
         Self {
             entries: VecDeque::new(),
@@ -122,6 +144,7 @@ pub fn outcome_summary(outcome: &OpOutcome) -> String {
         OpOutcome::Partial { after, error } => {
             format!("Partial \u{2192} {}: {}", after.head, error)
         }
+        OpOutcome::Unknown { evidence, .. } => format!("Unknown: {}", evidence),
         OpOutcome::Failed { error } => format!("Failed: {}", error),
         OpOutcome::Refused { blockers } => format!(
             "Refused ({} blocker{})",
@@ -142,7 +165,11 @@ pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
             lines.push(format!("  after:   {}", after.head));
             lines.push(format!("  dirty:   {}", after.dirty));
         }
-        OpOutcome::Partial { after, error } => {
+        OpOutcome::Unknown {
+            after,
+            evidence: error,
+        }
+        | OpOutcome::Partial { after, error } => {
             lines.push(format!("  after:   {}", after.head));
             lines.push(format!("  dirty:   {}", after.dirty));
             lines.push(format!("  error:   {}", error));

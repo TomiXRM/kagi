@@ -12,6 +12,9 @@
 //!
 //! Each is written to FAIL if its fix is reverted (see the per-test notes).
 
+#[path = "support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{execute_conflict_continue, execute_stash_conflict_abort};
 use std::path::Path;
 use std::process::Command;
 
@@ -19,8 +22,8 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{
-    detect_conflict_session, execute_conflict_continue, execute_stash_conflict_abort, ConflictKind,
-    ConflictOp, ContinueOutcome, ResolutionBuffer, ResolutionChoice,
+    detect_conflict_session, ConflictKind, ConflictOp, ContinueOutcome, ResolutionBuffer,
+    ResolutionChoice,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -123,6 +126,9 @@ fn stash_conflict_repo() -> TempDir {
 /// `detect_conflict_session` return `None` here → this `.expect` panics.
 #[test]
 fn detects_stash_conflict_session() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = stash_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -163,6 +169,9 @@ fn detects_stash_conflict_session() {
 /// unchanged, no commit.
 #[test]
 fn continue_stages_resolution_without_committing() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = stash_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -217,6 +226,9 @@ fn continue_stages_resolution_without_committing() {
 /// session would persist → the content / conflict assertions fail.
 #[test]
 fn abort_restores_head_and_keeps_stash() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
     let tmp = stash_conflict_repo();
     let dir = tmp.path();
     let repo = Repository::open(dir).unwrap();
@@ -265,3 +277,6 @@ fn abort_restores_head_and_keeps_stash() {
         "abort must leave the stash entry intact"
     );
 }
+
+#[path = "support/isolated.rs"]
+mod test_support;

@@ -8,7 +8,7 @@
 //! only unbounded `remove_dir_all`, flagged in #294).
 
 use super::*;
-use git2::{WorktreeLockStatus, WorktreePruneOptions};
+use git2::WorktreeLockStatus;
 use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
 // ────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ pub(crate) fn remove_worktree_dir_checked(
 
 /// Build an admin/ref-only plan skeleton (HEAD of the main repo is unchanged by
 /// all four lifecycle ops), letting each op supply its own notes/title/recovery.
-fn admin_plan(
+pub(super) fn admin_plan(
     repo: &Repository,
     title: WorktreeTitle,
     warnings: Vec<PlanNote>,
@@ -116,6 +116,7 @@ fn admin_plan(
         recovery,
         head_at_plan: head,
         stash_count_at_plan: 0,
+        stash_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -126,7 +127,7 @@ fn admin_plan(
 
 /// Open a linked worktree as its own repo and return `(branch, dirty_summary)`.
 /// `dirty_summary` is `None` when the worktree is clean or unreadable-as-clean.
-fn worktree_branch_and_dirt(wt: &git2::Worktree) -> (Option<String>, Option<String>) {
+pub(super) fn worktree_branch_and_dirt(wt: &git2::Worktree) -> (Option<String>, Option<String>) {
     let Ok(wt_repo) = Repository::open_from_worktree(wt) else {
         return (None, None);
     };
@@ -141,7 +142,7 @@ fn worktree_branch_and_dirt(wt: &git2::Worktree) -> (Option<String>, Option<Stri
     (branch, dirty)
 }
 
-fn lock_reason(wt: &git2::Worktree) -> Option<String> {
+pub(super) fn lock_reason(wt: &git2::Worktree) -> Option<String> {
     match wt.is_locked() {
         Ok(WorktreeLockStatus::Locked(reason)) => reason
             .as_deref()
@@ -150,280 +151,6 @@ fn lock_reason(wt: &git2::Worktree) -> Option<String> {
             .map(str::to_string),
         _ => None,
     }
-}
-
-// ────────────────────────────────────────────────────────────
-// remove
-// ────────────────────────────────────────────────────────────
-
-/// Analyse whether removing the linked worktree `name` is safe.
-///
-/// Blockers: the main worktree (never removable), a dirty worktree (kagi never
-/// forces), a locked worktree, or a missing worktree. `delete_branch` controls
-/// whether the plan also promises to delete the checked-out branch.
-pub fn plan_remove_worktree(
-    repo: &Repository,
-    name: &str,
-    delete_branch: bool,
-) -> Result<OperationPlan, GitError> {
-    let title = WorktreeTitle::RemoveWorktree {
-        name: name.to_string(),
-    };
-
-    let wt = match repo.find_worktree(name) {
-        Ok(wt) => wt,
-        Err(_) => {
-            // The main worktree has no admin entry, so a request to remove it
-            // lands here — refuse it explicitly rather than reporting "missing".
-            let blocker = if name == "main" {
-                WorktreeNote::RemoveMainRefused
-            } else {
-                WorktreeNote::WorktreeMissing {
-                    name: name.to_string(),
-                }
-            };
-            return admin_plan(
-                repo,
-                title,
-                Vec::new(),
-                vec![PlanNote::Worktree(blocker)],
-                None,
-                false,
-            );
-        }
-    };
-
-    let path = wt.path().to_path_buf();
-    let path_str = path.display().to_string();
-    let (branch, dirt) = worktree_branch_and_dirt(&wt);
-
-    let mut blockers = Vec::new();
-    if let Some(summary) = dirt {
-        blockers.push(PlanNote::Worktree(WorktreeNote::RemoveDirty {
-            path: path_str.clone(),
-            summary,
-        }));
-    }
-    if matches!(wt.is_locked(), Ok(WorktreeLockStatus::Locked(_))) {
-        blockers.push(PlanNote::Worktree(WorktreeNote::RemoveLocked {
-            path: path_str.clone(),
-            reason: lock_reason(&wt),
-        }));
-    }
-
-    let mut warnings = vec![PlanNote::Worktree(WorktreeNote::RemovesWorktree {
-        path: path_str.clone(),
-        branch: branch.clone(),
-        delete_branch,
-    })];
-    // issue #341: enumerate the typed pre_remove steps from the worktree's own
-    // committed config. A command step in an untrusted config marks the note
-    // trust-required (and, at execute time, aborts the removal until trusted).
-    if let Ok(Some(cfg)) = load_worktree_config(&path) {
-        if let Some(note) = pre_remove_note(&cfg) {
-            warnings.push(note);
-        }
-    }
-    let recovery = Some(PlanRecovery {
-        kind: RecoveryKind::Worktree(WorktreeRecovery::RemoveWorktree {
-            path: path_str,
-            branch: branch.clone(),
-        }),
-        commands: vec![format!(
-            "git worktree add {} {}",
-            path.display(),
-            branch.as_deref().unwrap_or("<branch>")
-        )],
-    });
-
-    admin_plan(repo, title, warnings, blockers, recovery, true)
-}
-
-/// Remove the linked worktree `name`: preflight → ODB-backup any uncommitted
-/// content (defensive; the plan already blocks dirt) → containment-checked
-/// directory delete → prune admin entry → optionally delete the branch → verify.
-///
-/// Returns a [`DiscardOutcome`] carrying the ODB backups (empty for the normal
-/// clean path) so the caller records them in the oplog as a recovery handle. A
-/// failure *after* the directory delete began still returns `Ok` with
-/// [`DiscardOutcome::error`] set (issue #413, mirroring `execute_discard`) — the
-/// backup blob SHAs are the user's only handle on any raced-in uncommitted
-/// content, so they must never be dropped by a bare `Err`.
-pub fn execute_remove_worktree(
-    repo: &Repository,
-    plan: &OperationPlan,
-    name: &str,
-    delete_branch: bool,
-) -> Result<DiscardOutcome, GitError> {
-    if !plan.blockers.is_empty() {
-        return Err(GitError::Other(format!(
-            "remove-worktree refused: plan has {} blocker(s)",
-            plan.blockers.len()
-        )));
-    }
-    preflight_check(repo, plan)?;
-
-    let main_workdir = repo
-        .workdir()
-        .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
-        .to_path_buf();
-
-    let wt = repo
-        .find_worktree(name)
-        .map_err(|e| GitError::Other(format!("worktree '{}' not found: {}", name, e.message())))?;
-    let wt_path = wt.path().to_path_buf();
-
-    // issue #405: close the plan→execute TOCTOU. The plan's dirty/locked blockers
-    // are point-in-time and `preflight` only inspects the MAIN repo, so a worktree
-    // that turned dirty or got locked since planning would otherwise be deleted
-    // anyway. Re-detect on the LINKED worktree now and refuse — the same
-    // execute-time re-check `ops/branch.rs` already does ("the world may have
-    // changed since planning"). This runs BEFORE any pre_remove command or delete.
-    let (_branch_now, dirt_now) = worktree_branch_and_dirt(&wt);
-    if let Some(summary) = dirt_now {
-        return Err(GitError::Other(format!(
-            "worktree '{}' became dirty since planning — refusing to remove (no --force): {}",
-            wt_path.display(),
-            summary
-        )));
-    }
-    if matches!(wt.is_locked(), Ok(WorktreeLockStatus::Locked(_))) {
-        return Err(GitError::Other(format!(
-            "worktree '{}' was locked since planning — refusing to remove",
-            wt_path.display()
-        )));
-    }
-
-    // issue #341: run the typed pre_remove steps as a precondition of deletion.
-    // A failed, untrusted, or headless-blocked command returns Err here — BEFORE
-    // any destructive step — so the worktree survives (matches preflight ethos:
-    // "docker compose down" failing must not orphan the container by proceeding).
-    if let Ok(Some(cfg)) = load_worktree_config(&wt_path) {
-        // issue #393: bind execution to the exact config the plan showed. If it
-        // changed since planning, refuse rather than run unreviewed content.
-        if let Some(expected) = plan_worktree_config_sha(plan) {
-            verify_worktree_config_sha(&wt_path, expected)?;
-        }
-        let trusted = is_worktree_config_trusted(&cfg);
-        let env = StepEnv {
-            main_root: main_workdir.clone(),
-            worktree: wt_path.clone(),
-        };
-        run_pre_remove(&cfg.steps.pre_remove, &env, trusted)?;
-    }
-
-    // Belt-and-suspenders: the plan blocks dirt, but a race could have dirtied
-    // the worktree since. Back up any uncommitted content into the main ODB
-    // before the delete so nothing is ever lost (mirrors the discard order).
-    let backups = odb_backup_worktree(repo, &wt_path)?;
-
-    // From here the working directory may be partly deleted. issue #413: every
-    // fallible step below returns the backups inside a PARTIAL `DiscardOutcome`
-    // instead of a bare `Err`, so the ODB backup blob SHAs always reach the oplog
-    // as a recovery handle (they were dropped on every error path before).
-    let partial = |err: String| -> Result<DiscardOutcome, GitError> {
-        Ok(DiscardOutcome {
-            backups: backups.clone(),
-            unverified: vec![wt_path.display().to_string()],
-            error: Some(err),
-        })
-    };
-
-    // Detect the branch before deleting the directory (needs the linked repo).
-    let branch: Option<String> = Repository::open(&wt_path).ok().and_then(|r| {
-        r.head()
-            .ok()
-            .and_then(|h| h.shorthand().ok().map(str::to_string))
-    });
-
-    // Containment-checked recursive delete (the ONLY sanctioned one).
-    if let Err(e) = remove_worktree_dir_checked(&main_workdir, &wt_path) {
-        return partial(e.to_string());
-    }
-
-    // Prune the now-orphaned admin entry.
-    let mut opts = WorktreePruneOptions::new();
-    opts.valid(true).working_tree(true);
-    if let Err(e) = wt.prune(Some(&mut opts)) {
-        return partial(format!("worktree prune failed: {}", e.message()));
-    }
-
-    if delete_branch {
-        if let Some(ref b) = branch {
-            // Ref-only, force=false: an unmerged branch errors instead of losing
-            // commits. The worktree is already gone, so surface it but succeed.
-            if let Ok(mut branch_ref) = repo.find_branch(b, git2::BranchType::Local) {
-                if let Err(e) = branch_ref.delete() {
-                    return partial(format!(
-                        "worktree removed, but branch '{}' delete failed: {}",
-                        b,
-                        e.message()
-                    ));
-                }
-            }
-        }
-    }
-
-    // Verify the admin entry is gone.
-    if repo.find_worktree(name).is_ok() {
-        return partial(format!(
-            "worktree '{}' still registered after remove — unexpected state",
-            name
-        ));
-    }
-    Ok(DiscardOutcome::complete(backups))
-}
-
-/// Write every uncommitted file in the worktree at `wt_path` into the MAIN
-/// repo's ODB, returning `path → blob SHA`. Best-effort: clean worktrees return
-/// an empty vec. Never follows symlinks (mirrors discard's #324 guard).
-fn odb_backup_worktree(repo: &Repository, wt_path: &Path) -> Result<Vec<DiscardBackup>, GitError> {
-    let Ok(wt_repo) = Repository::open(wt_path) else {
-        return Ok(Vec::new());
-    };
-    let status = match working_tree_status(&wt_repo) {
-        Ok(st) => st,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let mut rels: Vec<String> = Vec::new();
-    let push_rel = |p: &Path, rels: &mut Vec<String>| {
-        let rel = p.to_string_lossy().replace('\\', "/");
-        if !rel.is_empty() && !rels.contains(&rel) {
-            rels.push(rel);
-        }
-    };
-    for fs in status.staged.iter().chain(status.unstaged.iter()) {
-        push_rel(&fs.path, &mut rels);
-    }
-    for p in &status.untracked {
-        push_rel(p, &mut rels);
-    }
-    let mut backups = Vec::new();
-    for rel in rels {
-        let abs = wt_path.join(&rel);
-        let is_symlink = std::fs::symlink_metadata(&abs)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false);
-        let content: Vec<u8> = if is_symlink {
-            match std::fs::read_link(&abs) {
-                Ok(t) => t.to_string_lossy().into_owned().into_bytes(),
-                Err(_) => continue,
-            }
-        } else {
-            match std::fs::read(&abs) {
-                Ok(b) => b,
-                Err(_) => continue, // deletion / unreadable — nothing to back up
-            }
-        };
-        let oid = repo.blob(&content).map_err(|e| {
-            GitError::Other(format!("ODB backup failed for '{}': {}", rel, e.message()))
-        })?;
-        backups.push(DiscardBackup {
-            path: rel,
-            blob: oid.to_string(),
-        });
-    }
-    Ok(backups)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -486,7 +213,7 @@ pub fn plan_lock_worktree(
 }
 
 /// Lock the linked worktree `name`: preflight → lock → verify.
-pub fn execute_lock_worktree(
+pub(crate) fn execute_lock_worktree(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,
@@ -599,7 +326,10 @@ pub fn plan_prune_worktrees(repo: &Repository) -> Result<OperationPlan, GitError
 
 /// Prune the stale worktree admin entries kagi selected: preflight → prune each
 /// → verify none remain prunable.
-pub fn execute_prune_worktrees(repo: &Repository, plan: &OperationPlan) -> Result<usize, GitError> {
+pub(crate) fn execute_prune_worktrees(
+    repo: &Repository,
+    plan: &OperationPlan,
+) -> Result<usize, GitError> {
     if !plan.blockers.is_empty() {
         return Err(GitError::Other(
             "prune-worktrees refused: plan has blockers".to_string(),
@@ -684,7 +414,10 @@ fn unrepaired_worktrees(repo: &Repository) -> Vec<String> {
 /// surfaces that in `out.status`, not as `Err` (issue #391, same class as #296).
 /// It can also exit 0 having repaired only *some* links, so the exit check is
 /// paired with a verify pass, exactly as `execute_prune_worktrees` verifies.
-pub fn execute_repair_worktrees(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
+pub(crate) fn execute_repair_worktrees(
+    repo: &Repository,
+    plan: &OperationPlan,
+) -> Result<(), GitError> {
     preflight_check(repo, plan)?;
     let repo_dir = repo
         .workdir()
@@ -708,58 +441,4 @@ pub fn execute_repair_worktrees(repo: &Repository, plan: &OperationPlan) -> Resu
         )));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-
-    fn git(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", dir)
-            .env("GIT_AUTHOR_NAME", "T")
-            .env("GIT_AUTHOR_EMAIL", "t@e")
-            .env("GIT_COMMITTER_NAME", "T")
-            .env("GIT_COMMITTER_EMAIL", "t@e")
-            .status()
-            .expect("spawn git")
-            .success();
-        assert!(ok, "git {args:?} failed");
-    }
-
-    /// issue #413: the ODB backup blob SHA is a REAL, recoverable object in the
-    /// MAIN repo's ODB — i.e. the recovery handle the oplog records actually
-    /// resolves to the raced-in content, not a dangling name.
-    #[test]
-    fn odb_backup_worktree_returns_recoverable_blob() {
-        let base = tempfile::tempdir().unwrap();
-        let main = base.path().join("main");
-        std::fs::create_dir(&main).unwrap();
-        git(&main, &["init", "-q", "-b", "main", "."]);
-        std::fs::write(main.join("README.md"), "x\n").unwrap();
-        git(&main, &["add", "."]);
-        git(&main, &["commit", "-qm", "init"]);
-        let wt = base.path().join("wt");
-        git(
-            &main,
-            &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
-        );
-        // Dirty the worktree with a known-content untracked file (the race #413
-        // guards: content present at execute that the plan did not see).
-        std::fs::write(wt.join("scratch.txt"), "raced work\n").unwrap();
-
-        let repo = Repository::open(&main).unwrap();
-        let backups = odb_backup_worktree(&repo, &wt).expect("backup");
-        assert_eq!(backups.len(), 1, "the untracked file must be backed up");
-        assert_eq!(backups[0].path, "scratch.txt");
-        let oid = git2::Oid::from_str(&backups[0].blob).unwrap();
-        let blob = repo
-            .find_blob(oid)
-            .expect("backup blob SHA must resolve in the main ODB (issue #413)");
-        assert_eq!(blob.content(), b"raced work\n");
-    }
 }

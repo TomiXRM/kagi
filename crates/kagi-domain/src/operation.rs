@@ -226,5 +226,17 @@ pub enum OperationOutcome {
     },
     /// A PR review suggestion applied to the working tree (#351).
     Suggestion(SuggestionOutcome),
+    /// Deleted branch tip retained by a mandatory commit recovery ref (#584).
+    DeleteBranch {
+        name: String,
+        tip: String,
+        reference: String,
+    },
     Unit,
+}
+
+/// Observed metadata side effects of branch deletion, even if ref commit fails.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeleteBranchProgress {
+    pub reflog_removed: bool,
 }

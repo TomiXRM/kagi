@@ -244,32 +244,6 @@ impl KagiApp {
         });
     }
 
-    // ── Unlock worktree (sidebar right-click → Unlock worktree…) ─────────
-
-    /// Open the worktree right-click context menu. The main worktree never
-    /// gets here (the sidebar row installs no handler for it).
-    ///
-    /// #473: `path` is `Some` when the opener knows the worktree's working-tree
-    /// path (the graph's WIP row); it unlocks the path-based menu items.
-    pub fn open_worktree_menu(
-        &mut self,
-        name: String,
-        locked: bool,
-        path: Option<std::path::PathBuf>,
-        position: gpui::Point<gpui::Pixels>,
-    ) {
-        self.commit_menu = None;
-        self.branch_menu = None;
-        self.stash_menu = None;
-        self.worktree_menu = Some(worktree_menu::WorktreeMenuState {
-            name: name.clone(),
-            locked,
-            path,
-            position,
-        });
-        klog!("worktree-menu: open '{}'", name);
-    }
-
     /// Dispatch a worktree context-menu action.
     pub fn dispatch_worktree_action(
         &mut self,

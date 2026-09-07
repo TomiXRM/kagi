@@ -103,14 +103,14 @@ impl KagiApp {
             state, header, groups, window, cx,
         ))
     }
-
     fn render_worktree_menu_overlay(
         &self,
         state: worktree_menu::WorktreeMenuState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let groups = worktree_menu::build_worktree_menu(state.locked, state.path.as_deref());
+        let groups =
+            worktree_menu::build_worktree_menu(state.locked, state.is_main, state.path.as_deref());
         let header = SharedString::from(state.name.clone());
         Some(worktree_menu::render_worktree_menu_overlay(
             state, header, groups, window, cx,

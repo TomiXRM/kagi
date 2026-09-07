@@ -17,9 +17,10 @@ use super::*;
 pub(crate) fn badge_priority(kind: &BadgeKind) -> u8 {
     match kind {
         BadgeKind::HeadBranch => 0,
-        BadgeKind::Branch => 1,
-        BadgeKind::Tag => 2,
-        BadgeKind::Remote => 3,
+        BadgeKind::Worktree => 1,
+        BadgeKind::Branch => 2,
+        BadgeKind::Tag => 3,
+        BadgeKind::Remote => 4,
     }
 }
 
@@ -115,7 +116,7 @@ pub(crate) fn render_badges_column(
             Some(c) => c,
             None => match badge.kind {
                 BadgeKind::HeadBranch => theme().color_head,
-                BadgeKind::Branch => theme().color_branch,
+                BadgeKind::Branch | BadgeKind::Worktree => theme().color_branch,
                 BadgeKind::Remote => theme().color_remote,
                 BadgeKind::Tag => theme().color_tag,
             },
@@ -165,8 +166,20 @@ pub(crate) fn render_badges_column(
         let name: SharedString = SharedString::from(name);
         let tooltip_label: SharedString =
             SharedString::from(super::commit_list::badge_tooltip(badge));
+        let worktree = badge.worktree.clone();
+        let worktree_control = if badge.kind == BadgeKind::Worktree {
+            "graph-worktree-open-detached"
+        } else {
+            "graph-worktree-open-attached"
+        };
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
+        let name_el = div().min_w(px(0.)).truncate().child(name);
+        let name_el = if badge.kind == BadgeKind::Branch && worktree.is_some() {
+            super::e2e::measure_control("graph-worktree-branch-name", name_el)
+        } else {
+            name_el.into_any_element()
+        };
         let chip = div()
             // Stable element id so gpui interactivity (drag/drop) works. Keyed
             // by row position + badge label so a row with multiple branch chips
@@ -197,7 +210,36 @@ pub(crate) fn render_badges_column(
                 gpui_component::tooltip::Tooltip::new(tooltip_label.clone()).build(window, cx)
             })
             .when_some(prefix_glyph, |c, g| {
-                c.child(div().flex_shrink_0().child(SharedString::from(g)))
+                let glyph = div().flex_shrink_0().child(SharedString::from(g));
+                let Some(worktree) = worktree.clone() else {
+                    return c.child(glyph);
+                };
+                let open_path = worktree.path.clone();
+                let tooltip = SharedString::from(format!(
+                    "{}: {}",
+                    Msg::MenuOpenWorktreeDir.t(),
+                    worktree.path.display()
+                ));
+                let glyph = glyph
+                    .id(SharedString::from(format!(
+                        "graph-worktree-open-{i}-{}",
+                        row_id.0
+                    )))
+                    // The tree owns only its padded box; the adjacent branch
+                    // name remains the row's jump target (#591).
+                    .px_1()
+                    .cursor_pointer()
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    })
+                    .on_click(cx.listener(
+                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                            this.open_graph_worktree(open_path.clone(), cx);
+                            cx.stop_propagation();
+                            cx.notify();
+                        },
+                    ));
+                c.child(super::e2e::measure_control(worktree_control, glyph))
             })
             .when(is_head, |c| {
                 c.child(div().flex_shrink_0().child(SharedString::from("\u{2713}")))
@@ -210,7 +252,7 @@ pub(crate) fn render_badges_column(
                     .h(theme::scaled_px(11.))
                     .text_color(rgb(badge_text))
             }))
-            .child(div().min_w(px(0.)).truncate().child(name));
+            .child(name_el);
 
         // T-DNDMERGE-001 / ADR-0079: wire drag/drop onto the chip based on kind.
         //   - `BadgeKind::Branch` / `BadgeKind::Remote` → INDEPENDENTLY draggable,
@@ -278,7 +320,7 @@ pub(crate) fn render_badges_column(
                 })
                 .on_drop::<BranchDrag>(drop_handler)
             }
-            BadgeKind::Tag => chip,
+            BadgeKind::Tag | BadgeKind::Worktree => chip,
         };
         // Double-click a branch pill → switch. A local-branch pill checks out
         // the branch; a remote-branch pill switches to its latest (create/
@@ -310,7 +352,7 @@ pub(crate) fn render_badges_column(
                     },
                 ))
             }
-            BadgeKind::HeadBranch | BadgeKind::Tag => chip,
+            BadgeKind::HeadBranch | BadgeKind::Tag | BadgeKind::Worktree => chip,
         };
         let chip = if let Some(ref_name) = context_ref_name(badge) {
             let badge_kind = badge.kind.clone();
@@ -332,12 +374,41 @@ pub(crate) fn render_badges_column(
                             BadgeKind::Tag => {
                                 this.open_tag_menu(ref_name.clone(), event.position);
                             }
+                            BadgeKind::Worktree => unreachable!(
+                                "detached worktree badges use the worktree context menu"
+                            ),
                         }
                         cx.stop_propagation();
                         cx.notify();
                     },
                 ),
             )
+        } else {
+            chip
+        };
+        // A detached worktree has no branch menu. Its badge reuses the same
+        // worktree menu as WIP/sidebar entries, including path actions.
+        let chip = if badge.kind == BadgeKind::Worktree {
+            if let Some(worktree) = badge.worktree.clone() {
+                chip.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(
+                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
+                            this.open_worktree_menu(
+                                worktree.name.clone(),
+                                worktree.locked,
+                                worktree.is_main,
+                                Some(worktree.path.clone()),
+                                event.position,
+                            );
+                            cx.stop_propagation();
+                            cx.notify();
+                        },
+                    ),
+                )
+            } else {
+                chip
+            }
         } else {
             chip
         };
@@ -482,7 +553,10 @@ mod badge_priority_tests {
 
     /// The badge column and the inspector sort on this one key (the inspector
     /// used to hold a byte-identical copy — deleted, it now imports this one).
-    /// Order is HeadBranch → Branch → Tag → Remote, rendered left-to-right.
+    /// Order is HeadBranch → detached worktree → Branch → Tag → Remote,
+    /// rendered left-to-right. The navigation badge must stay inside the two
+    /// visible slots, while existing ref kinds keep their relative order
+    /// (#591).
     #[test]
     fn priority_orders_head_branch_first_remote_last() {
         let mut kinds = [
@@ -490,14 +564,17 @@ mod badge_priority_tests {
             BadgeKind::Tag,
             BadgeKind::HeadBranch,
             BadgeKind::Branch,
+            BadgeKind::Worktree,
         ];
         kinds.sort_by_key(badge_priority);
         assert_eq!(
             kinds.iter().map(badge_priority).collect::<Vec<_>>(),
-            vec![0, 1, 2, 3]
+            vec![0, 1, 2, 3, 4]
         );
         assert!(matches!(kinds[0], BadgeKind::HeadBranch));
-        assert!(matches!(kinds[3], BadgeKind::Remote));
+        assert!(matches!(kinds[1], BadgeKind::Worktree));
+        assert!(matches!(kinds[2], BadgeKind::Branch));
+        assert!(matches!(kinds[4], BadgeKind::Remote));
     }
 }
 

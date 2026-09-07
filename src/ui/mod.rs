@@ -107,6 +107,7 @@ pub mod watcher;
 pub mod workspace;
 pub mod workspace_mode;
 pub mod worktree_menu;
+mod worktree_nav;
 pub mod worktree_wip;
 
 pub use compare_pane::ComparePane;
@@ -186,7 +187,7 @@ fn draggable_branch_name(badge: &commit_list::RefBadge) -> Option<String> {
         BadgeKind::Branch | BadgeKind::Remote => {
             Some(badge.label.trim_start_matches("🌲 ").to_string())
         }
-        BadgeKind::HeadBranch | BadgeKind::Tag => None,
+        BadgeKind::HeadBranch | BadgeKind::Tag | BadgeKind::Worktree => None,
     }
 }
 
@@ -203,6 +204,7 @@ fn context_ref_name(badge: &commit_list::RefBadge) -> Option<String> {
             Some(badge.label.trim_start_matches("🌲 ").to_string())
         }
         BadgeKind::Tag => Some(badge.label.to_string()),
+        BadgeKind::Worktree => None,
     }
 }
 
@@ -3097,18 +3099,13 @@ impl KagiApp {
             .find_map(|(name, current)| current.then(|| name.clone()));
         // #473: `worktree_path` is the OTHER worktree's path (the current one is
         // where we already are, so "Open worktree" would be a no-op there).
-        let other_worktree = if matches!(state.kind, BranchKind::Local) {
-            self.view()
-                .worktrees
-                .iter()
-                .find(|wt| wt.branch.as_deref() == Some(state.name.as_str()))
+        let branch = if matches!(state.kind, BranchKind::Local) {
+            Some(state.name.as_str())
         } else {
             None
         };
-        let checked_out_worktree_path = other_worktree.map(|wt| wt.path.display().to_string());
-        let worktree_path = other_worktree
-            .filter(|wt| !wt.is_current)
-            .map(|wt| wt.path.clone());
+        let (checked_out_worktree_path, worktree_path) =
+            worktree_nav::paths_for_branch(&self.view().worktrees, branch);
         BranchMenuContext {
             name: state.name.clone(),
             head_sha: state.target.0.clone(),

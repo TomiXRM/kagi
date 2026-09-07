@@ -1,8 +1,8 @@
 //! Worktree context menu model and overlay renderer.
 //!
-//! Right-clicking a linked worktree in the sidebar opens this menu. Its single
-//! action today is **Unlock worktree…** (enabled only while the worktree is
-//! locked); the main worktree never opens the menu.
+//! Right-clicking a worktree in the sidebar, graph WIP row, or detached-HEAD
+//! badge opens this menu. Main worktrees expose only safe path and repository-
+//! wide maintenance actions; linked worktrees also expose lifecycle actions.
 
 use std::path::{Path, PathBuf};
 
@@ -23,6 +23,10 @@ pub struct WorktreeMenuState {
     pub name: String,
     /// Whether the worktree is currently locked.
     pub locked: bool,
+    /// Main worktrees cannot be removed or locked through linked-worktree
+    /// lifecycle operations; a detached main worktree can still reach the
+    /// path actions from its graph badge (#591).
+    pub is_main: bool,
     /// #473: the worktree's working-tree path, when the menu was opened from a
     /// place that knows it (the graph's WIP row). `None` from the sidebar, which
     /// only carries the registry name — the path-based items are then omitted.
@@ -30,7 +34,7 @@ pub struct WorktreeMenuState {
     pub position: Point<Pixels>,
 }
 
-/// Actions available on a linked worktree (issue #340).
+/// Actions available from a worktree context menu (issues #340 and #591).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorktreeAction {
     Unlock,
@@ -59,7 +63,11 @@ pub enum WorktreeAction {
 /// #473: when `path` is known (the graph's WIP row), a leading group offers
 /// "Open in new tab" / "Reveal" / "Copy path". The sidebar passes `None` and
 /// gets exactly the menu it had before.
-pub fn build_worktree_menu(locked: bool, path: Option<&Path>) -> Vec<MenuGroup<WorktreeAction>> {
+pub fn build_worktree_menu(
+    locked: bool,
+    is_main: bool,
+    path: Option<&Path>,
+) -> Vec<MenuGroup<WorktreeAction>> {
     let unlock_state = if locked {
         ItemState::Enabled
     } else {
@@ -100,63 +108,65 @@ pub fn build_worktree_menu(locked: bool, path: Option<&Path>) -> Vec<MenuGroup<W
             ],
         });
     }
-    groups.extend([
-        MenuGroup {
-            title: None,
-            items: vec![
-                MenuItem {
-                    action: WorktreeAction::Remove {
-                        delete_branch: false,
+    if !is_main {
+        groups.extend([
+            MenuGroup {
+                title: None,
+                items: vec![
+                    MenuItem {
+                        action: WorktreeAction::Remove {
+                            delete_branch: false,
+                        },
+                        label: SharedString::from(Msg::MenuRemoveWorktreeKeepBranch.t()),
+                        state: ItemState::Enabled,
+                        dangerous: true,
                     },
-                    label: SharedString::from(Msg::MenuRemoveWorktreeKeepBranch.t()),
-                    state: ItemState::Enabled,
-                    dangerous: true,
-                },
-                MenuItem {
-                    action: WorktreeAction::Remove {
-                        delete_branch: true,
+                    MenuItem {
+                        action: WorktreeAction::Remove {
+                            delete_branch: true,
+                        },
+                        label: SharedString::from(Msg::MenuRemoveWorktreeAndBranch.t()),
+                        state: ItemState::Enabled,
+                        dangerous: true,
                     },
-                    label: SharedString::from(Msg::MenuRemoveWorktreeAndBranch.t()),
-                    state: ItemState::Enabled,
-                    dangerous: true,
-                },
-            ],
-        },
-        MenuGroup {
-            title: None,
-            items: vec![
-                MenuItem {
-                    action: WorktreeAction::Lock,
-                    label: SharedString::from(Msg::MenuLockWorktree.t()),
-                    state: lock_state,
-                    dangerous: false,
-                },
-                MenuItem {
-                    action: WorktreeAction::Unlock,
-                    label: SharedString::from(Msg::MenuUnlockWorktree.t()),
-                    state: unlock_state,
-                    dangerous: false,
-                },
-            ],
-        },
-        MenuGroup {
-            title: None,
-            items: vec![
-                MenuItem {
-                    action: WorktreeAction::Prune,
-                    label: SharedString::from(Msg::MenuPruneWorktrees.t()),
-                    state: ItemState::Enabled,
-                    dangerous: false,
-                },
-                MenuItem {
-                    action: WorktreeAction::Repair,
-                    label: SharedString::from(Msg::MenuRepairWorktrees.t()),
-                    state: ItemState::Enabled,
-                    dangerous: false,
-                },
-            ],
-        },
-    ]);
+                ],
+            },
+            MenuGroup {
+                title: None,
+                items: vec![
+                    MenuItem {
+                        action: WorktreeAction::Lock,
+                        label: SharedString::from(Msg::MenuLockWorktree.t()),
+                        state: lock_state,
+                        dangerous: false,
+                    },
+                    MenuItem {
+                        action: WorktreeAction::Unlock,
+                        label: SharedString::from(Msg::MenuUnlockWorktree.t()),
+                        state: unlock_state,
+                        dangerous: false,
+                    },
+                ],
+            },
+        ]);
+    }
+    groups.push(MenuGroup {
+        title: None,
+        items: vec![
+            MenuItem {
+                action: WorktreeAction::Prune,
+                label: SharedString::from(Msg::MenuPruneWorktrees.t()),
+                state: ItemState::Enabled,
+                dangerous: false,
+            },
+            MenuItem {
+                action: WorktreeAction::Repair,
+                label: SharedString::from(Msg::MenuRepairWorktrees.t()),
+                state: ItemState::Enabled,
+                dangerous: false,
+            },
+        ],
+    });
     groups
 }
 

@@ -76,6 +76,10 @@ mod recovery_layout;
 mod read_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_graph.rs"]
+mod worktree_graph;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
 
@@ -624,6 +628,10 @@ mod macos {
             ("theme_switch", Box::new(scenario_theme_switch)),
             ("agent_provenance", Box::new(scenario_agent_provenance)),
             ("wip_head_connector", Box::new(scenario_wip_head_connector)),
+            (
+                "graph_worktree_open",
+                Box::new(crate::worktree_graph::scenario_graph_worktree_open),
+            ),
             (
                 "worktree_wip_inline",
                 Box::new(scenario_worktree_wip_inline),

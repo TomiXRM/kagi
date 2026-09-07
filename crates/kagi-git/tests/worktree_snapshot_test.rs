@@ -1,6 +1,6 @@
 //! Regression: opening kagi AT a linked worktree must flag that worktree as
-//! `is_current` and report each worktree's own branch — the graph's WIP row
-//! label and 🌲 badges come from these.
+//! `is_current` and report each worktree's own branch/HEAD — the graph's WIP
+//! row labels and attached/detached 🌲 badges come from these.
 
 use std::path::Path;
 use std::process::Command;
@@ -73,6 +73,64 @@ fn snapshot_from_a_linked_worktree_marks_it_current_with_its_own_branch() {
         matches!(&snap.head, kagi_git::Head::Attached { branch, .. } if branch == "feat"),
         "head = {:?}",
         snap.head
+    );
+}
+
+#[test]
+fn detached_worktree_reports_no_branch_and_keeps_its_head_when_clean_or_dirty() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let td = tempfile::tempdir().unwrap();
+    let main = td.path().join("main");
+    let detached = td.path().join("detached");
+    std::fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(main.join("a.txt"), "a\n").unwrap();
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-qm", "base"]);
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            detached.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let detached = detached.canonicalize().expect("canonical detached path");
+
+    let mut backend = kagi_git::Backend::open(&main).expect("open main worktree");
+    let clean = backend.snapshot(100).expect("clean snapshot");
+    let detached_clean = clean
+        .worktrees
+        .iter()
+        .find(|worktree| worktree.path == detached)
+        .expect("detached worktree listed while clean");
+    assert_eq!(detached_clean.branch, None, "detached HEAD is not a branch");
+    let head = detached_clean
+        .head
+        .clone()
+        .expect("clean detached HEAD is retained");
+    assert_eq!(detached_clean.wip, None);
+
+    std::fs::write(detached.join("dirty.txt"), "dirty\n").unwrap();
+    let dirty = backend.snapshot(100).expect("dirty snapshot");
+    let detached_dirty = dirty
+        .worktrees
+        .iter()
+        .find(|worktree| worktree.path == detached)
+        .expect("detached worktree listed while dirty");
+    assert_eq!(detached_dirty.branch, None);
+    assert_eq!(detached_dirty.head.as_ref(), Some(&head));
+    assert!(
+        detached_dirty
+            .wip
+            .as_ref()
+            .is_some_and(|wip| wip.is_dirty()),
+        "dirty detached worktree keeps WIP state"
     );
 }
 

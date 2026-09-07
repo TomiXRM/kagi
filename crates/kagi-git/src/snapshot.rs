@@ -472,7 +472,15 @@ fn worktree_branch_and_head(path: &std::path::Path) -> (Option<String>, Option<C
     let Ok(head) = repo.head() else {
         return (None, None);
     };
-    let branch = head.shorthand().ok().map(str::to_string);
+    // A detached repository still returns the symbolic-looking shorthand
+    // "HEAD" here. It is not a local branch: only refs/heads/* may populate
+    // Worktree::branch, otherwise clean detached worktrees disappear from the
+    // graph navigation model (#591).
+    let branch = if head.is_branch() {
+        head.shorthand().ok().map(str::to_string)
+    } else {
+        None
+    };
     let target = head.target().map(|oid| CommitId(oid.to_string()));
     (branch, target)
 }

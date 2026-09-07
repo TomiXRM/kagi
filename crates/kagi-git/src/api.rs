@@ -27,8 +27,8 @@
 use kagi_domain::commit::CommitId;
 use serde_json::{json, Value};
 
-use crate::backend::recording::Recording;
-use crate::{Backend, Head, Operation, OperationOutcome, OperationPlan};
+use crate::backend::recording::{Recording, RunReport};
+use crate::{Backend, Head, Operation, OperationPlan};
 
 /// The op set both agent entry points expose. Deliberately no force-push, no
 /// `reset --hard`, no clean — their absence is the product's reason to exist.
@@ -160,21 +160,38 @@ pub fn plan_body(p: &OperationPlan) -> Value {
 /// entry actually reached the log: on an append failure the entry is reported as
 /// *attempted* rather than substituted with some unrelated earlier entry, so
 /// "the mutation happened" and "the mutation was recorded" stay distinguishable.
-pub fn confirm_response(
-    op: &Operation,
-    plan_id: &str,
-    outcome: &OperationOutcome,
-    recording: &Recording,
-) -> Value {
+pub fn confirm_response(op: &Operation, plan_id: &str, report: &RunReport) -> Value {
+    let recording = &report.recording;
     let (recorded, error) = match recording {
         Recording::Appended { .. } => (true, Value::Null),
         Recording::Failed { error, .. } => (false, json!(error)),
     };
+    let entry_outcome = &recording.entry().outcome;
+    let failed =
+        report.result.is_err() || !matches!(entry_outcome, crate::oplog::OpOutcome::Success { .. });
+    let outcome = if failed {
+        format!("{entry_outcome:?}")
+    } else {
+        report
+            .result
+            .as_ref()
+            .map(|outcome| format!("{outcome:?}"))
+            .unwrap_or_else(|error| format!("{error}"))
+    };
+    let run_error = match (&report.result, entry_outcome) {
+        (Err(error), _) => json!(error.to_string()),
+        (_, crate::oplog::OpOutcome::Partial { error, .. })
+        | (_, crate::oplog::OpOutcome::Failed { error }) => json!(error),
+        (_, crate::oplog::OpOutcome::Unknown { evidence, .. }) => json!(evidence),
+        (_, crate::oplog::OpOutcome::Refused { blockers }) => json!(blockers.join("; ")),
+        (Ok(_), crate::oplog::OpOutcome::Success { .. }) => Value::Null,
+    };
     json!({
-        "status": "ok",
+        "status": if failed { "error" } else { "ok" },
         "op": op.oplog_name(),
         "plan_id": plan_id,
-        "outcome": format!("{:?}", outcome),
+        "outcome": outcome,
+        "error": run_error,
         "oplog": entry_value(recording.entry()),
         "recorded": recorded,
         "recording_error": error,

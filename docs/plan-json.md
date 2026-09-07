@@ -114,7 +114,8 @@ Success:
   "outcome": "Unit",                 // Debug of OperationOutcome
   "oplog": { /* THIS run's OpLogEntry */ },
   "recorded": true,                  // false ⇒ the append failed
-  "recording_error": null }          // the append error when recorded is false
+  "recording_error": null,           // the append error when recorded is false
+  "error": null }
 ```
 
 `oplog` is the receipt `run_recorded` returned for *this* invocation, never a
@@ -123,6 +124,17 @@ process) can no longer be echoed back as your operation (#505 / ADR-0181). When
 the append fails, `status` stays `"ok"` (the mutation happened), `recorded` is
 `false`, `recording_error` names the failure, and `oplog` holds the *attempted*
 entry rather than some unrelated earlier one.
+
+Execution failure (exit 1) keeps the same receipt envelope rather than dropping
+recovery data. `outcome` is the recorded `Failed` or `Partial` outcome, and the
+embedded oplog entry retains fields such as `backup_refs`:
+
+```jsonc
+{ "status": "error", "op": "delete-branch", "plan_id": "…",
+  "outcome": "Partial { … }", "error": "…",
+  "oplog": { /* THIS failed run's entry, including backup_refs */ },
+  "recorded": true, "recording_error": null }
+```
 
 The MCP server's `kagi_confirm` returns this exact object (`actor` = `mcp`), and
 its `kagi_plan` returns the `plan` envelope above plus a `next` hint.
@@ -136,7 +148,8 @@ Refusal (exit 2):
               "expected_plan_id": "…", "actual_plan_id": "…" } }
 ```
 
-Error (exit 1): `{ "status": "error", "error": "…" }`.
+Errors before execution (exit 1) remain `{ "status": "error", "error": "…" }`
+because no `RunReport` or receipt exists yet.
 
 ## `status`
 

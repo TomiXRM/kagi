@@ -86,8 +86,8 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp
 }
 
 pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
-    // An accepted Save with no owned draft is still a Backend-recorded refusal
-    // and preserves the long-standing footer/klog contract.
+    // A marker-bearing owned draft is a Backend-recorded refusal and preserves
+    // the long-standing footer/klog contract byte-for-byte.
     {
         let fixture = content_fixture();
         let repo = fixture.path().canonicalize().unwrap();
@@ -97,8 +97,18 @@ pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
         let conflict = cx.read(|cx| app.read(cx).conflict.clone()).unwrap();
         conflict.update(cx, |view, cx| {
             view.conflict_open_editor(Path::new("file.txt"));
+            view.conflict_editor_reset_all(Path::new("file.txt"));
             cx.notify();
         });
+        assert!(cx.read(|cx| {
+            let view = conflict.read(cx);
+            let mode = view.mode.as_ref().expect("conflict mode");
+            matches!(
+                mode.buffer.conflict_draft(Path::new("file.txt")),
+                Some(kagi_domain::conflict_family::ConflictDraft::Text(bytes))
+                    if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
+            )
+        }));
         click_control(cx, window, "conflict-save");
         cx.run_until_parked();
         let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
@@ -107,10 +117,11 @@ pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
             .collect();
         assert_eq!(entries.len(), 1);
         assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
+        const EXPECTED_REFUSAL_FOOTER: &str = "conflict-save:merge: refused (1 blocker)";
         assert!(cx.read(|cx| matches!(
             &app.read(cx).status_footer,
             kagi::ui::FooterStatus::Failed(message)
-                if message.as_ref() == "conflict-save:merge: refused (1 blocker)"
+                if message.as_ref() == EXPECTED_REFUSAL_FOOTER
         )));
         drop(conflict);
         unmount(cx, app, window);

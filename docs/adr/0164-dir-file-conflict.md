@@ -45,8 +45,10 @@ the state kagi sees — the tests drive `repo.merge` directly.)
      remain, so the tree keeps the directory.
    - *KeepFile*: `remove_dir(path, 0)` + `conflict_remove(path)` + stage the file
      blob (OID + mode) at stage 0, so the tree keeps the file.
-   No working-tree write happens (a kept symlink file side is never dereferenced,
-   #298). `preflight_` re-plans and compares before executing (TOCTOU guard).
+   After the index surgery, the losing namespace is removed from the worktree
+   and the kept side is rebuilt. A kept symlink file side is written as a
+   symlink and never dereferenced (#298). A recovery snapshot is taken before
+   mutation; `preflight_` re-plans and compares before executing (TOCTOU guard).
 
 4. **Oplog.** A D/F resolution is a conflict-lane op (like `conflict-save`: it
    stages into the index and is re-detected away). C1 routes both actions through

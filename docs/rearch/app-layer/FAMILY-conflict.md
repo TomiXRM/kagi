@@ -47,7 +47,7 @@ resolution recovery buffer、sequencer 分類、feature 別 Backend logic を bo
 | user intent | この family が所有する repository effect |
 |---|---|
 | Save resolution | 選択した resolution を worktree に書き、index を更新 |
-| Resolve directory/file conflict | 選択した D/F resolution を index-only で適用 |
+| Resolve directory/file conflict | recovery snapshot を取り、選択した D/F resolution を index に適用して worktree の namespace を再構築 |
 | Continue merge | resolution を stage し、既存 commit flow へ handoff |
 | Continue rebase/cherry-pick/revert | resolution を stage して sequencer を進行 |
 | Continue stash conflict | resolution を stage し、stash follow-up payload を発行 |

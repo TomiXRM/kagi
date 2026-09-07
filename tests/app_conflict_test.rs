@@ -260,6 +260,51 @@ fn changed_conflict_and_changed_buffer_are_refused_without_mutation() {
 }
 
 #[test]
+fn marker_draft_refusal_preserves_the_session_suffix_in_the_recording() {
+    let fixture = Fixture::content();
+    let mut sessions = Sessions::new();
+    let (owner, snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let backend = Backend::open(&fixture.repo).unwrap();
+    let mut buffer = backend.resolution_buffer_from_repo().unwrap();
+    let markers = backend
+        .materialized_markers(&buffer, Path::new("file.txt"))
+        .expect("text conflict markers");
+    assert!(buffer.ensure_hunks(Path::new("file.txt"), &markers));
+    assert!(buffer.reset_hunk(Path::new("file.txt"), 0));
+    let request = Backend::conflict_save_request(
+        snapshot.observation.revision,
+        &buffer,
+        Path::new("file.txt"),
+        snapshot.observation.operation.as_str(),
+        "",
+    )
+    .unwrap();
+    assert!(matches!(
+        &request,
+        ConflictRequest::Save {
+            draft: ConflictDraft::Text(bytes),
+            ..
+        } if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
+    ));
+    let owner = sessions.attachment(owner).unwrap();
+    let completion = plan_conflict(
+        &mut sessions,
+        ConflictAppRequest { owner, request },
+        ExecutionPolicy::human(false),
+    )
+    .run();
+    assert!(apply_plan(&mut sessions, completion));
+    let PlanState::Error {
+        recording: Some(recording),
+        ..
+    } = sessions.plan_state()
+    else {
+        panic!("marker draft must be refused during planning")
+    };
+    assert_eq!(recording.entry().op, "conflict-save:merge");
+}
+
+#[test]
 fn legacy_busy_refuses_approval_and_partial_save_retains_recovery_evidence() {
     let fixture = Fixture::content();
     let mut sessions = Sessions::new();

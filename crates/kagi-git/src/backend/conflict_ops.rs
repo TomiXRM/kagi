@@ -318,9 +318,15 @@ impl Backend {
         request: &ConflictRequest,
         error: &str,
     ) -> recording::Recording {
+        let op_name = match request {
+            ConflictRequest::Save { operation, .. } => format!("conflict-save:{operation}"),
+            ConflictRequest::ResolveDirFile { choice, .. } => {
+                format!("conflict-dir-file:{}", choice.slug())
+            }
+        };
         recording::finalize(
             crate::oplog::OpLogEntry::new(
-                request.action().name(),
+                op_name,
                 path.display().to_string(),
                 ops::StateSummary {
                     head: format!("conflict revision {}", revision_label(request.revision())),

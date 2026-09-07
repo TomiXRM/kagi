@@ -12,6 +12,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Internal
 
 - Operation-log reads take only the tail of `operations.jsonl` instead of parsing every historical line, so recording an operation no longer costs more as the log grows. Legacy id-less logs keep their existing index-based identity, and cross-process appends are covered by a two-process test. (#499, ADR-0149)
+- **ADR numbers are unique again.** Two parallel merges each landed an ADR on a number another ADR already held; the newer ADR of each pair now lives at **ADR-0190** (NUL-framed `git log`) and **ADR-0191** (settings store), and every reference in `.rs`, `.md` and `AGENTS.md` points at the new number. A new `check-adr-unique-number` gate fails the build on any new duplicate 4-digit ADR number; the six numbers already duplicated are grandfathered by an allowlist that itself fails once an entry goes stale. (#620)
 
 ## [0.35.0] — 2026-09-08
 
@@ -28,7 +29,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - **Busy notifications name the operation again.** The snackbar shown while an operation runs says what it is doing in English and Japanese instead of an internal writer tag, and an unknown label can no longer leak one. (#607)
 - **The stash preflight refusal is a typed, localized note.** An approved stash that is no longer at its index reports which entry changed, in English and Japanese, instead of a raw English string. (#606)
-- **A commit message can no longer forge graph or Remote Browse rows.** `git log` records are NUL-framed, a byte Git commit objects cannot contain. (#508, ADR-0186)
+- **A commit message can no longer forge graph or Remote Browse rows.** `git log` records are NUL-framed, a byte Git commit objects cannot contain. (#508, ADR-0190)
 - **Recovery guidance and copied commands no longer recommend `git reset --hard`.** Amend keeps the working tree with a safe ref move, and pull undo uses revert. (#456)
 - A save completing after a file switch no longer marks another buffer clean; saves remain bound to their originating buffer and written bytes. (#486)
 - Stage and unstage failures now appear in the footer, notice, and operation log across their UI entry points. (#490)
@@ -37,7 +38,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
-- Added ADR-0185 (graph worktree navigation) and ADR-0186 (PR fetch outcome contract and safe log framing).
+- Added ADR-0185 (graph worktree navigation), ADR-0186 (PR fetch outcome contract) and ADR-0190 (NUL-framed `git log`).
 - Codex GitHub reviews are requested in Japanese. (AGENTS.md)
 
 ## [0.34.0] — 2026-09-07

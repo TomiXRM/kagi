@@ -73,7 +73,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   the typed `Settings` struct (issue #13 P4 / ADR-0091). On disk it stays a **flat
   object of string values** (`"auto_fetch": "true"`, `"ui_zoom": "1000"`) — keep
   writing strings so existing settings files load.
-- `settings/store.rs` is the **only** owner of read-modify-write (#491 / ADR-0188):
+- `settings/store.rs` is the **only** owner of read-modify-write (#491 / ADR-0191):
   the parsed document lives in a process-global store, saves are a same-directory
   temp file + rename, and a `settings.json` that doesn't parse is moved aside to an
   exclusively reserved `settings.json.corrupt[.N]` instead of being overwritten by

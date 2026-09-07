@@ -138,7 +138,12 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        let footer = if let Some(error) = &report.evidence.preflight_error {
+        let footer = if let Some(note) = &report.evidence.preflight_note {
+            i18n::op_failed(
+                i18n::Op::Preflight,
+                kagi_ui_core::i18n::plan_note_text(note),
+            )
+        } else if let Some(error) = &report.evidence.preflight_error {
             i18n::op_failed(i18n::Op::Preflight, error)
         } else if !report.evidence.conflicts.is_empty() {
             format!("{}: {}", name, Msg::StashPopConflictedKept.t())

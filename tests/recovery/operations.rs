@@ -274,7 +274,11 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
             .unwrap()
             .preflight_check_stash(&plan, plan.stash_count_at_plan())
             .unwrap_err();
-        let expected = i18n::op_failed(Op::Preflight, error);
+        let detail = error
+            .blocker()
+            .map(i18n::plan_note_text)
+            .unwrap_or_else(|| error.to_string());
+        let expected = i18n::op_failed(Op::Preflight, detail);
         cx.run_until_parked();
         // Local stash now shares the root Enter/button approval boundary.
         app.update(cx, |app, cx| app.start_stash_drop(cx));

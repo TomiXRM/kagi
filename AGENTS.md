@@ -183,3 +183,13 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   seven days in every worktree: `cargo sweep --time 7` (requires cargo-sweep).
   Do not routinely clean a worktree target; clean-build benchmarks need an idle
   build window and destroy reusable build artifacts.
+
+## Code Review Rules
+
+### Review language
+
+- Write all user-facing Codex GitHub code-review comments in Japanese.
+- Keep code identifiers, commands, file paths, and established technical terms
+  in English where that is clearer.
+- Write findings, follow-up replies, and approval or no-finding summaries in
+  Japanese.

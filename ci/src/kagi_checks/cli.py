@@ -17,12 +17,19 @@ from pathlib import Path
 from kagi_checks.busy_labels import issues as busy_label_issues
 from kagi_checks.busy_labels import selftest as busy_label_selftest
 from kagi_checks.rules import (
+    ADR_DIR,
+    ADR_GRANDFATHERED,
     MANIFEST_RULES,
     RATCHETS,
     RULES,
     ManifestRule,
     Ratchet,
     Rule,
+    adr_duplicate_hits,
+    adr_file_names,
+    adr_groups,
+    adr_selftest,
+    adr_stale_allowlist,
     is_excluded,
     ui_lateral_crate_count,
     ui_lateral_hits,
@@ -235,6 +242,48 @@ def check_ui_lateral() -> int:
     return 1
 
 
+def check_adr_unique_number() -> int:
+    names = adr_file_names()
+    groups = adr_groups(names)
+    if not groups:
+        # Nothing to scan is not a pass: the directory moved or the naming
+        # convention changed, and either way this gate was about to report OK
+        # forever (the ui-lateral lesson).
+        print(
+            f"::error::adr-unique-number found no numbered ADRs in {ADR_DIR} — the gate "
+            "would pass by scanning nothing. Fix ADR_DIR / ADR_NAME in "
+            "ci/src/kagi_checks/rules.py."
+        )
+        return 1
+    hits = adr_duplicate_hits(names)
+    stale = adr_stale_allowlist(names)
+    if not hits and not stale:
+        print(
+            f"OK: adr-unique-number — {len(groups)} ADR numbers in {ADR_DIR}, none shared "
+            f"outside the {len(ADR_GRANDFATHERED)} grandfathered pairs."
+        )
+        return 0
+    for number, files in hits:
+        print(f"{ADR_DIR}: ADR-{number} is used by {len(files)} files: {', '.join(files)}")
+        approved = ADR_GRANDFATHERED.get(number)
+        if approved:
+            print(f"{ADR_DIR}: ADR-{number} only approves {', '.join(sorted(approved))}")
+    for number in stale:
+        print(f"{ADR_DIR}: ADR-{number} is grandfathered but is no longer duplicated")
+    if hits:
+        print(
+            "::error::two ADRs share a 4-digit number — give the newer one the next free "
+            "number, rename its file, fix its heading, and update every reference (#620)."
+        )
+    if stale:
+        print(
+            "::error::a grandfathered ADR number is no longer duplicated — drop it from "
+            "ADR_GRANDFATHERED in ci/src/kagi_checks/rules.py so the exemption cannot "
+            "license the next collision there."
+        )
+    return 1
+
+
 # ── Ratchets ────────────────────────────────────────────────────────────────
 
 
@@ -313,10 +362,13 @@ def selftest() -> int:
     for issue in skill_ref_selftest():
         print(f"::error::skill-refs selftest: {issue}")
         failed = True
+    for issue in adr_selftest():
+        print(f"::error::adr-unique-number selftest: {issue}")
+        failed = True
     if failed:
         return 1
     print(
-        f"OK: {len(RULES) + len(MANIFEST_RULES) + 2} gates match their samples; "
+        f"OK: {len(RULES) + len(MANIFEST_RULES) + 3} gates match their samples; "
         f"{len(RATCHETS)} ratchet counters match their expected counts."
     )
     return 0
@@ -333,6 +385,7 @@ def check_all() -> int:
     status |= check_skill_refs()
     status |= check_busy_labels()
     status |= check_ui_lateral()
+    status |= check_adr_unique_number()
     for ratchet in RATCHETS:
         status |= _run_ratchet(ratchet, False)
     return status

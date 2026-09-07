@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 import tomllib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -691,3 +691,119 @@ def ui_lateral_manifest_hits() -> list[tuple[Path, str, str, str]]:
 
 def ui_lateral_crate_count() -> int:
     return len(ui_lateral_crates())
+
+
+# ── ADR numbering: one 4-digit number, one ADR ──────────────────────────────
+
+ADR_DIR = "docs/adr"
+
+# The canonical filename shape: `docs/adr/NNNN-slug.md`. Scope is deliberately
+# the 4-digit prefix, because that prefix *is* the numbering convention — a
+# gate on it is a gate on the convention. `ADR-0097-web-e2e-harness.md` uses an
+# older spelling and is outside this gate; if a second ADR-prefixed file ever
+# appears, rename it to the canonical form rather than widening the pattern
+# (#620).
+ADR_NAME = re.compile(r"^(\d{4})-.*\.md$")
+
+# The duplicates that already existed when this gate landed (#620), pinned to
+# the exact pair of filenames approved at each number.
+# 以前からの重複。番号を動かすと参照が広範に動くため据え置き。
+# (Renumbering any of these would move references across `.rs`, `.md`,
+# `AGENTS.md` and `ci/` for no behavioural gain. The two pairs #620 *did*
+# renumber were days old, so their references were still cheap to move.)
+#
+# Filenames, not bare numbers: a number-only exemption would also license a
+# *third* ADR at that number, which is the very collision this gate exists to
+# stop. Adding or renaming a file at a grandfathered number therefore fails
+# until the pair below is updated on purpose.
+ADR_GRANDFATHERED: dict[str, frozenset[str]] = {
+    "0073": frozenset(
+        {"0073-git-backend-trait-operation-pipeline.md", "0073-repo-worker-thread.md"}
+    ),
+    "0089": frozenset({"0089-file-history.md", "0089-remote-ssh-git-backend.md"}),
+    "0104": frozenset({"0104-enforced-operation-pipeline.md", "0104-swimlane-compaction.md"}),
+    "0129": frozenset({"0129-appendix-templates.md", "0129-plan-note-i18n.md"}),
+    "0130": frozenset({"0130-bundled-japanese-font-fallback.md", "0130-force-with-lease-push.md"}),
+    "0175": frozenset({"0175-app-remove-boundary.md", "0175-flower-road-lane-palettes.md"}),
+}
+
+
+def adr_groups(names: Iterable[str]) -> dict[str, list[str]]:
+    """4-digit ADR number -> the canonical filenames carrying it."""
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        match = ADR_NAME.match(name)
+        if match:
+            groups.setdefault(match.group(1), []).append(name)
+    return {number: sorted(files) for number, files in groups.items()}
+
+
+def adr_file_names() -> list[str]:
+    """Every Markdown file in `docs/adr`, by name (numbering is in the name)."""
+    directory = ROOT / ADR_DIR
+    if not directory.is_dir():
+        return []
+    return sorted(path.name for path in directory.glob("*.md"))
+
+
+def adr_duplicate_hits(
+    names: Iterable[str],
+    allowlist: dict[str, frozenset[str]] | None = None,
+) -> list[tuple[str, list[str]]]:
+    """(number, files) for each number shared by ADRs the allowlist does not approve.
+
+    A grandfathered number is exempt only while its files are *exactly* the
+    approved pair — a third ADR, or a renamed one, is a fresh collision.
+    """
+    approved = ADR_GRANDFATHERED if allowlist is None else allowlist
+    return [
+        (number, files)
+        for number, files in sorted(adr_groups(names).items())
+        if len(files) > 1 and frozenset(files) != approved.get(number)
+    ]
+
+
+def adr_stale_allowlist(
+    names: Iterable[str],
+    allowlist: dict[str, frozenset[str]] | None = None,
+) -> list[str]:
+    """Allowlisted numbers that no longer hold a duplicate at all.
+
+    Without this the allowlist rots in the dangerous direction: a duplicate
+    resolved later leaves its number permanently exempt, silently licensing the
+    *next* collision there.
+    """
+    approved = ADR_GRANDFATHERED if allowlist is None else allowlist
+    groups = adr_groups(names)
+    return sorted(number for number in approved if len(groups.get(number, ())) < 2)
+
+
+def adr_selftest() -> list[str]:
+    """Prove the gate flags a duplicate, clears a renumbered set, and honours the allowlist."""
+    issues: list[str] = []
+    none: dict[str, frozenset[str]] = {}
+    # The #620 collision itself, and the state after renumbering.
+    duplicate = ["0186-nul-framed-git-log.md", "0186-pr-fetch-outcome-contract.md"]
+    renumbered = ["0186-pr-fetch-outcome-contract.md", "0190-nul-framed-git-log.md"]
+    pinned = {"0186": frozenset(duplicate)}
+    if not adr_duplicate_hits(duplicate, none):
+        issues.append(f"no longer flags a duplicate number: {duplicate}")
+    if adr_duplicate_hits(renumbered, none):
+        issues.append(f"flags unique numbers as duplicates (false positive): {renumbered}")
+    if adr_duplicate_hits(duplicate, pinned):
+        issues.append("the approved grandfathered pair is reported as a duplicate")
+    # The reason the allowlist pins filenames: a third ADR at a grandfathered
+    # number is a new collision, not part of the exemption.
+    if not adr_duplicate_hits([*duplicate, "0186-a-third-adr.md"], pinned):
+        issues.append("a third ADR at a grandfathered number is not flagged")
+    # …and so is a rename that leaves the pair no longer the approved one.
+    if not adr_duplicate_hits(["0186-pr-fetch-outcome-contract.md", "0186-renamed.md"], pinned):
+        issues.append("a renamed file at a grandfathered number is not flagged")
+    if adr_stale_allowlist(duplicate, pinned):
+        issues.append("a live duplicate is reported as a stale allowlist entry")
+    if adr_stale_allowlist(renumbered, pinned) != ["0186"]:
+        issues.append("a resolved duplicate is no longer reported as a stale allowlist entry")
+    # And that the real directory is still visible to the gate.
+    if not adr_groups(adr_file_names()):
+        issues.append(f"{ADR_DIR} yielded no numbered ADRs — the gate would scan nothing")
+    return issues

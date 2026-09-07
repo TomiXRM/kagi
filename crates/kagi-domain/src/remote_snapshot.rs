@@ -9,7 +9,7 @@
 //!
 //! ## Wire format
 //!
-//! `git log` records and fields are delimited by **NUL** (issue #508, ADR-0186).
+//! `git log` records and fields are delimited by **NUL** (issue #508, ADR-0190).
 //! NUL is the one byte a commit object cannot carry: `git commit` and
 //! `git commit-tree` refuse a message containing it, and `git hash-object -w` /
 //! `git fsck` reject such an object (`nulInCommit`). Author name, author email

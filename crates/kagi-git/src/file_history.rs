@@ -20,7 +20,7 @@
 //!
 //! A single `git log` invocation is used with **NUL**-delimited fields so the
 //! free-form commit subject and body cannot corrupt parsing (issue #508,
-//! ADR-0186):
+//! ADR-0190):
 //!
 //! - NUL is the only byte a commit object cannot carry — `git commit` and
 //!   `git commit-tree` refuse a message containing one, and

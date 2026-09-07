@@ -39,3 +39,12 @@ impl Reader {
         Ok((entry, legacy))
     }
 }
+
+/// Parse one line in isolation for the bounded tail read (#499).
+///
+/// `None` for a legacy id-less line: its `id`/`parent` come from its position
+/// in the file, which only a whole-file read knows.
+pub(super) fn parse_standalone(line: &str) -> Result<Option<OpLogEntry>, GitError> {
+    let (entry, legacy) = Reader::default().parse(line)?;
+    Ok((!legacy).then_some(entry))
+}

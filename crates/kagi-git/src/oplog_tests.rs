@@ -467,6 +467,218 @@ fn append_waiting_for_retirement_cannot_publish_a_deleted_root() {
     }
 }
 
+// ── #499: bounded tail reads ────────────────────────────────
+
+fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
+    let state = StateSummary {
+        head: "branch: main".to_string(),
+        dirty: "clean".to_string(),
+    };
+    OpLogEntry {
+        id,
+        parent: id.checked_sub(1),
+        timestamp: 1_700_000_000 + id as i64,
+        op: format!("op-{id}"),
+        repo: repo.to_string(),
+        actor: Actor::Human,
+        worktree: None,
+        before: state.clone(),
+        outcome: OpOutcome::Success { after: state },
+        backup_refs: Vec::new(),
+        recovery: Vec::new(),
+    }
+}
+
+/// A log of `count` explicit-id lines, chained exactly as `append_oplog`
+/// writes them. `repos` is cycled so a filtered read has non-matching lines
+/// to skip.
+fn synthetic_log(dir: &Path, count: u64, repos: &[&str]) -> PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join("operations.jsonl");
+    let mut content = String::new();
+    for id in 0..count {
+        content.push_str(&entry_to_json(&synthetic_entry(
+            id,
+            repos[id as usize % repos.len()],
+        )));
+        content.push('\n');
+    }
+    std::fs::write(&path, &content).unwrap();
+    path
+}
+
+#[test]
+fn tail_read_bytes_do_not_grow_with_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let small = synthetic_log(&dir.path().join("s"), 500, &["/tmp/r"]);
+    let large = synthetic_log(&dir.path().join("l"), 20_000, &["/tmp/r"]);
+
+    let small_tail = super::tail::read_path(&small, 3, &|_| true);
+    let large_tail = super::tail::read_path(&large, 3, &|_| true);
+
+    assert_eq!(
+        small_tail.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![499, 498, 497],
+        "newest first"
+    );
+    assert_eq!(
+        large_tail.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![19_999, 19_998, 19_997]
+    );
+    assert_eq!(large_tail.entries[0].parent, Some(19_998));
+    // The measurement #499 asks for: a 40x longer history costs the same read.
+    assert_eq!(small_tail.bytes, large_tail.bytes);
+    let length = std::fs::metadata(&large).unwrap().len();
+    assert!(
+        large_tail.bytes * 10 < length,
+        "read {} of {} bytes",
+        large_tail.bytes,
+        length
+    );
+}
+
+#[test]
+fn tail_read_spans_several_chunks_without_losing_a_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = synthetic_log(dir.path(), 400, &["/tmp/r"]);
+    assert!(
+        std::fs::metadata(&path).unwrap().len() > 3 * 8 * 1024,
+        "fixture must cross the chunk boundary"
+    );
+
+    let tail = super::tail::read_path(&path, 300, &|_| true);
+
+    assert_eq!(
+        tail.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        (100..400).rev().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn filtered_tail_read_returns_the_newest_matching_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = synthetic_log(dir.path(), 60, &["/tmp/a", "/tmp/b"]);
+
+    let tail = super::tail::read_path(&path, 2, &|entry| entry.repo == "/tmp/b");
+
+    assert_eq!(
+        tail.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![59, 57]
+    );
+}
+
+#[test]
+fn a_legacy_line_in_the_window_falls_back_to_the_whole_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("operations.jsonl");
+    let legacy: Vec<String> = (0..3)
+        .map(|index| {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&entry_to_json(&synthetic_entry(index, "/tmp/r"))).unwrap();
+            let object = value.as_object_mut().unwrap();
+            object.remove("id");
+            object.remove("parent");
+            value.to_string()
+        })
+        .collect();
+    std::fs::write(&path, format!("{}\n", legacy.join("\n"))).unwrap();
+
+    let tail = super::tail::read_path(&path, 1, &|_| true);
+
+    // Identity still comes from the position in the file (ADR-0149 back-compat),
+    // which only the whole-file read knows — so it read the whole file.
+    assert_eq!(tail.entries.len(), 1);
+    assert_eq!(tail.entries[0].id, 2);
+    assert_eq!(tail.entries[0].parent, Some(1));
+    assert_eq!(tail.bytes, std::fs::metadata(&path).unwrap().len());
+}
+
+#[test]
+fn an_unterminated_final_line_leaves_earlier_entries_readable() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = synthetic_log(dir.path(), 3, &["/tmp/r"]);
+    let mut content = std::fs::read_to_string(&path).unwrap();
+    // A writer killed mid-append: a partial record with no terminator.
+    content.push_str("{\"id\":3,\"parent\":2,\"timestamp\":17000");
+    std::fs::write(&path, &content).unwrap();
+
+    let tail = super::tail::read_path(&path, 3, &|_| true);
+
+    assert_eq!(
+        tail.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![2, 1, 0],
+        "the fragment is skipped, complete entries survive"
+    );
+}
+
+/// Deliberate narrowing (#499): `read_to_string` rejects a file for one stray
+/// byte, and a blank read made the locked append restart the chain at id 0.
+/// A bounded read never touches older history, so corruption behind the window
+/// no longer hides readable recent entries.
+#[test]
+fn invalid_bytes_older_than_the_window_no_longer_blank_the_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = synthetic_log(dir.path(), 4, &["/tmp/r"]);
+    let mut raw = std::fs::read(&path).unwrap();
+    let first = raw.iter().position(|byte| *byte == b'\n').unwrap();
+    raw[first / 2] = 0xff;
+    std::fs::write(&path, &raw).unwrap();
+    assert!(std::fs::read_to_string(&path).is_err(), "file is not UTF-8");
+
+    let tail = super::tail::read_path(&path, 2, &|_| true);
+
+    assert_eq!(
+        tail.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        vec![3, 2]
+    );
+}
+
+#[test]
+fn invalid_bytes_inside_the_window_keep_the_all_or_nothing_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = synthetic_log(dir.path(), 4, &["/tmp/r"]);
+    let mut raw = std::fs::read(&path).unwrap();
+    let last = raw.len() - 2;
+    raw[last] = 0xff;
+    std::fs::write(&path, &raw).unwrap();
+
+    let tail = super::tail::read_path(&path, 2, &|_| true);
+
+    // The window itself cannot be interpreted, so the whole-file read decides —
+    // and it rejects the file, exactly as every reader did before.
+    assert!(tail.entries.is_empty());
+    assert_eq!(tail.bytes, 0);
+}
+
+/// #499 x #500: the bounded read must not be a second, poorer interpretation of
+/// a line. Typed recovery handles come back exactly as written, and an unknown
+/// sibling field on the same line does not make the entry — or its handles —
+/// disappear. (`OpLogEntry` has no storage for an unknown field, so nothing
+/// here claims one round-trips.)
+#[test]
+fn tail_read_keeps_typed_recovery_beside_an_unknown_field() {
+    let dir = tempfile::tempdir().unwrap();
+    // Past one chunk, so the read really is a window and not the whole file.
+    let path = synthetic_log(dir.path(), 200, &["/tmp/r"]);
+    let mut newest = synthetic_entry(200, "/tmp/r");
+    newest.recovery = vec![
+        RecoveryHandle::oid(recovery::SAVEPOINT, "a".repeat(40)),
+        RecoveryHandle::file("dir=x, y/ファイル.txt", "b".repeat(40), None)
+            .with_reference("refs/kagi/backups/attempt/1"),
+    ];
+    let mut line: serde_json::Value = serde_json::from_str(&entry_to_json(&newest)).unwrap();
+    line["future_field"] = serde_json::json!({ "keep": true });
+    let mut content = std::fs::read_to_string(&path).unwrap();
+    content.push_str(&format!("{line}\n"));
+    std::fs::write(&path, &content).unwrap();
+
+    let tail = super::tail::read_path(&path, 1, &|_| true);
+
+    assert_eq!(tail.entries.len(), 1);
+    assert_eq!(tail.entries[0].recovery, newest.recovery);
+    assert!(tail.bytes < content.len() as u64, "still a bounded read");
+}
+
 // ── recovery handles (#500) ───────────────────────────────
 
 /// A path containing `,`, `=` and non-ASCII is exactly what the comma-joined

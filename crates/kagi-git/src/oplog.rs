@@ -24,6 +24,7 @@ use super::{ops::StateSummary, GitError};
 mod reading;
 pub mod recovery;
 pub mod retention;
+mod tail;
 
 pub use recovery::RecoveryHandle;
 
@@ -627,18 +628,21 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
 }
 
 /// Read the last `n` entries from the oplog file (newest last in file,
-/// returned newest-first by reversing the tail slice).
+/// returned newest-first).
 ///
 /// Uses the same path resolution as [`append_oplog`] (`$KAGI_LOG_DIR` first,
 /// then `$HOME/.kagi/operations.jsonl`).
 ///
+/// Only the tail of the file is read (#499): the cost of a read — including
+/// the id/parent assignment inside a locked append — no longer grows with
+/// total history. A legacy id-less line in that window still needs the whole
+/// file, and non-UTF-8 bytes *older* than the window are deliberately no
+/// longer read at all (see [`tail`]).
+///
 /// Lines that cannot be parsed are silently skipped.
 /// Returns an empty `Vec` if the file does not exist or cannot be read.
 pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
-    let entries = read_all_oplog_entries();
-    // Return the tail (up to n), newest first.
-    let start = entries.len().saturating_sub(n);
-    entries[start..].iter().rev().cloned().collect()
+    tail::read(n, &|_| true).entries
 }
 
 /// Read the last `n` oplog entries whose repository matches `repo`, newest
@@ -661,12 +665,10 @@ pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
 /// backwards within the filtered set — noted for #334).
 pub fn read_oplog_tail_for_repo(repo: &Path, n: usize) -> Vec<OpLogEntry> {
     let want = normalize_repo_path(repo);
-    let entries: Vec<OpLogEntry> = read_all_oplog_entries()
-        .into_iter()
-        .filter(|e| normalize_repo_path(Path::new(&e.repo)) == want)
-        .collect();
-    let start = entries.len().saturating_sub(n);
-    entries[start..].iter().rev().cloned().collect()
+    tail::read(n, &|entry| {
+        normalize_repo_path(Path::new(&entry.repo)) == want
+    })
+    .entries
 }
 
 /// Normalize a repository path for oplog filtering: resolve to the repo workdir
@@ -680,30 +682,6 @@ fn normalize_repo_path(path: &Path) -> PathBuf {
         .and_then(|r| r.workdir().map(Path::to_path_buf))
         .unwrap_or_else(|| path.to_path_buf());
     std::fs::canonicalize(&base).unwrap_or(base)
-}
-
-/// Read and parse the entire oplog file, oldest-first, reconstructing id/parent
-/// for pre-ADR-0149 lines that lack an explicit `id`: id = 0-based index of the
-/// entry in the file, parent = previous entry's id. New lines carry their own
-/// id/parent. Returns an empty `Vec` if the file is missing/unreadable.
-fn read_all_oplog_entries() -> Vec<OpLogEntry> {
-    let path = match log_file_path() {
-        Ok(Some(path)) => path,
-        Ok(None) | Err(_) => return Vec::new(),
-    };
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut entries = Vec::new();
-    let mut reader = reading::Reader::default();
-    for line in content.lines().filter(|line| !line.trim().is_empty()) {
-        if let Ok((entry, _)) = reader.parse(line) {
-            entries.push(entry);
-        }
-    }
-    entries
 }
 
 /// Append `entry` to the operation log file as a JSON Lines record.

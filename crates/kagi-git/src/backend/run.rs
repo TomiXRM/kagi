@@ -375,7 +375,9 @@ impl Backend {
             Operation::Amend { mode, message } => self
                 .execute_amend(*mode, message.as_deref())
                 .map(OperationOutcome::Amend),
-            Operation::DeleteBranch { name } => self.execute_delete_branch(plan, name, backup_refs),
+            Operation::DeleteBranch { name } => {
+                self.execute_delete_branch(plan, name, backup_refs, partial_after)
+            }
             Operation::DeleteRemoteBranch { remote_branch } => self
                 .execute_delete_remote_branch(remote_branch)
                 .map(|()| OperationOutcome::Unit),

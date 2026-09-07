@@ -112,3 +112,12 @@ Implemented for review; the 1a+1b rollout gate remains a PM decision.
 
 This closes only the named GUI bypasses. Other writer families and independent
 repo concurrency are not enabled; LegacyBusy is removed at the last migration.
+
+### Filesystems without birth time (#587 release review)
+
+The admin fingerprint stores creation time as `Option<SystemTime>`.
+`Metadata::created()` returning `Unsupported` contributes `None`; other errors
+still refuse planning. Inode, gitdir bytes, optional config SHA, HEAD OID and
+HEAD ref remain mandatory comparisons. Two observations lacking birth time can
+match; a changed/missing-versus-present birth time or any changed remaining field
+still requires re-planning. This does not relax the existing Unix inode boundary.

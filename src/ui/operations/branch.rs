@@ -1399,6 +1399,18 @@ impl KagiApp {
                                 klog!("executed: delete-branch removed pinning worktree");
                             }
                         }
+                        if matches!(
+                            report.recording.entry().outcome,
+                            kagi_git::oplog::OpOutcome::Partial { .. }
+                        ) {
+                            if let Err(error) = &report.result {
+                                let err_msg = i18n::op_failed(i18n::Op::Delete, error);
+                                klog!("async: delete-branch failed — {}", err_msg);
+                            }
+                            app.present_recorded(&report.recording, cx);
+                            app.reload(cx);
+                            return;
+                        }
                         if report.result.is_ok()
                             && matches!(
                                 report.recording,

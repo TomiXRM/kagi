@@ -61,6 +61,13 @@ The current suite covers:
 - modal and branch-menu Enter isolation from the selected commit checkout;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 
+For worktree-decorated branch checkout, scope
+`KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual
+branch-name hitbox, then dispatches selected-commit checkout after reselecting
+the row. Both plans must resolve the undecorated branch without blockers; an
+untracked fixture file keeps confirmation visible, and cancelling preserves
+both worktrees' HEADs. The existing tree-glyph navigation checks still run.
+
 App keybindings, command-registry keybindings, and native menus share their
 installation path with `run_app`; component initialization must precede that
 installation so app bindings keep the same precedence. For menu/Enter routing,

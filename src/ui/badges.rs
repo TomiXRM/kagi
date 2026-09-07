@@ -355,11 +355,12 @@ pub(crate) fn render_badges_column(
         // fast-forward the tracking branch). A clean plan switches with no
         // popup; blockers/warnings open the relevant modal (see
         // `dblclick_checkout_branch` / `dblclick_switch_to_latest`). The
-        // current-branch (HeadBranch) and tags are unaffected. Uses the full
-        // `badge.label` (the displayed `label` may be truncated).
-        let chip = match badge.kind {
-            BadgeKind::Branch => {
-                let dbl_branch = badge.label.to_string();
+        // current-branch (HeadBranch) and tags are unaffected. Use the same
+        // undecorated ref name as the context menu, never the display label.
+        let ref_name = context_ref_name(badge);
+        let chip = match (&badge.kind, ref_name.as_ref()) {
+            (BadgeKind::Branch, Some(branch)) => {
+                let dbl_branch = branch.clone();
                 chip.on_click(cx.listener(
                     move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
@@ -369,8 +370,8 @@ pub(crate) fn render_badges_column(
                     },
                 ))
             }
-            BadgeKind::Remote => {
-                let dbl_remote = badge.label.to_string();
+            (BadgeKind::Remote, Some(remote)) => {
+                let dbl_remote = remote.clone();
                 chip.on_click(cx.listener(
                     move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
@@ -380,9 +381,9 @@ pub(crate) fn render_badges_column(
                     },
                 ))
             }
-            BadgeKind::HeadBranch | BadgeKind::Tag | BadgeKind::Worktree => chip,
+            _ => chip,
         };
-        let chip = if let Some(ref_name) = context_ref_name(badge) {
+        let chip = if let Some(ref_name) = ref_name {
             let badge_kind = badge.kind.clone();
             chip.on_mouse_down(
                 MouseButton::Right,

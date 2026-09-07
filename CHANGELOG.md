@@ -5,6 +5,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Graph checkout actions use the actual branch name rather than the worktree-decorated label, fixing false branch-not-found refusals from double-click, commit context menu and selected-commit checkout.
+
 ## [0.34.0] — 2026-09-07
 
 ### Added

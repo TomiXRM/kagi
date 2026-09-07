@@ -111,6 +111,9 @@ fn tree_bounds(win: gpui::WindowId, path: &Path) -> gpui::Bounds<gpui::Pixels> {
 /// reachable from their HEAD. Run only with the matching E2E filter.
 pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
     let fixture = fixture();
+    // Keep checkout in its confirmation modal so the decorated-name paths can
+    // be exercised without moving either worktree's HEAD.
+    std::fs::write(fixture.main.join("untracked.txt"), "keep\n").unwrap();
     let (kagi, win) = mount(cx, &fixture.main);
 
     let feature_row = cx.read(|app| {
@@ -155,6 +158,57 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
         assert_eq!(app.tabs.len(), 1, "branch-name click opened a worktree");
         assert_eq!(app.tabs[app.active_tab].path, fixture.main);
     });
+
+    cx.simulate_event(
+        win,
+        gpui::MouseDownEvent {
+            position: name.center(),
+            button: gpui::MouseButton::Left,
+            modifiers: gpui::Modifiers::none(),
+            click_count: 2,
+            first_mouse: false,
+        },
+    );
+    cx.simulate_event(
+        win,
+        gpui::MouseUpEvent {
+            position: name.center(),
+            button: gpui::MouseButton::Left,
+            modifiers: gpui::Modifiers::none(),
+            click_count: 2,
+        },
+    );
+    cx.run_until_parked();
+    cx.read(|app| {
+        let app = kagi.read(app);
+        let modal = app.plan_modal().expect("double-click checkout plan");
+        assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
+        assert_eq!(modal.plan.predicted.head, "branch: feature");
+    });
+    crate::recovery_operations::press_key(cx, &kagi, win, "escape");
+    // The row click toggles selection; select it again after the double-click.
+    cx.simulate_mouse_move(win, name.center(), None, gpui::Modifiers::none());
+    cx.simulate_click(win, name.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    cx.read(|app| assert_eq!(kagi.read(app).selected, Some(feature_row)));
+    crate::recovery_operations::dispatch_checkout_selected(cx, &kagi, win);
+    cx.read(|app| {
+        let app = kagi.read(app);
+        let modal = app
+            .plan_modal()
+            .expect("selected worktree branch checkout plan");
+        assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
+        assert_eq!(modal.plan.predicted.head, "branch: feature");
+    });
+    crate::recovery_operations::press_key(cx, &kagi, win, "escape");
+    assert_eq!(
+        rev_parse(&fixture.main, "HEAD"),
+        rev_parse(&fixture.main, "main")
+    );
+    assert_eq!(
+        rev_parse(&fixture.linked, "HEAD"),
+        rev_parse(&fixture.main, "feature")
+    );
 
     cx.simulate_mouse_move(win, tree.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();

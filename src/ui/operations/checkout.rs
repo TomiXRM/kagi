@@ -368,7 +368,7 @@ impl KagiApp {
             .refs_here
             .iter()
             .find(|b| matches!(b.kind, BadgeKind::Branch))
-            .map(|b| b.label.to_string());
+            .and_then(context_ref_name);
         match branch {
             Some(name) => self.open_plan_modal(name),
             None => self.open_checkout_commit_modal(id),

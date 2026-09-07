@@ -47,6 +47,9 @@ tab-per-worktree). Two worktree-aware overlays are added on top of it:
 2. **Multi-HEAD markers.** A branch tip checked out in a worktree other than the
    current HEAD gets a 🌲 glyph in its badge (`build_badge_map`), matching the
    🌲 on the worktree WIP-row chips.
+   The marker is presentation-only: double-click, commit-menu checkout and
+   selected-commit checkout use `context_ref_name`, as the badge context menu
+   does, before sending the branch name to the Git backend.
 
 The open repo's WIP row is driven by the *live* working-tree status, not by
 matching a worktree's `is_current` flag, so click-to-commit and the `+/-`

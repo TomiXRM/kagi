@@ -88,26 +88,30 @@ impl KagiApp {
                 )
             }
         };
-        let termination_unknown = matches!(
-            &outcome,
+        let termination_unknown_evidence = match &outcome {
             OpOutcome::Unknown { evidence, .. }
-                if evidence.contains("process termination is unconfirmed")
-        );
+                if evidence.contains("process termination is unconfirmed") =>
+            {
+                Some(evidence.clone())
+            }
+            _ => None,
+        };
+        let termination_unknown = termination_unknown_evidence.is_some();
         match &failure {
             None => klog!("executed: {}", op_name),
-            Some(err_msg) if termination_unknown => {
-                klog!("{} outcome unknown: {}", op_name, err_msg)
-            }
             Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
         }
         self.record_op_persist(&op_name, plan.current.clone(), outcome, &repo_path, cx);
+        if let Some(evidence) = termination_unknown_evidence {
+            self.report_unknown_notice(&repo_path, evidence);
+        }
         if ran {
             // The repository may have moved even without a clean success.
             self.reload(cx);
             self.conflict_detected_for = None;
             self.detect_conflict_mode(cx);
         }
-        if let Some(err_msg) = failure {
+        if let Some(err_msg) = failure.filter(|_| !termination_unknown) {
             self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
         }
         cx.notify();

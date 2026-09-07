@@ -89,6 +89,21 @@ fn log_stash_event(
 }
 
 impl KagiApp {
+    /// Keep the established `footer: ... partially applied` klog contract while
+    /// making an Unknown result explicit in the human-facing footer and toast.
+    pub(crate) fn display_footer_message(
+        op: &str,
+        outcome: &OpOutcome,
+        contract: &SharedString,
+    ) -> SharedString {
+        match outcome {
+            OpOutcome::Unknown { evidence, .. } => {
+                format!("{}: outcome unknown — {}", op, evidence).into()
+            }
+            _ => contract.clone(),
+        }
+    }
+
     fn deliver_stash_result(
         &mut self,
         id: app::OperationId,
@@ -502,6 +517,14 @@ impl KagiApp {
         self.app_notices.push_back(message.into());
         self.present_app_notice();
     }
+    pub(crate) fn report_unknown_notice(&mut self, repo: &Path, evidence: impl Into<String>) {
+        self.app_notices.push_back(modals::AppNotice::from(format!(
+            "{}: {}",
+            repo.display(),
+            evidence.into()
+        )));
+        self.present_app_notice();
+    }
     pub(crate) fn present_app_notice(&mut self) {
         if self.has_active_modal() {
             return;
@@ -568,5 +591,34 @@ impl KagiApp {
             }
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_human_message_does_not_replace_the_contract_footer() {
+        let contract: SharedString =
+            "rebase-skip: partially applied — process state unavailable".into();
+        let outcome = OpOutcome::Unknown {
+            after: StateSummary {
+                head: "unknown".into(),
+                dirty: "unknown".into(),
+            },
+            evidence: "termination unconfirmed — do not retry".into(),
+        };
+
+        let display = KagiApp::display_footer_message("rebase-skip", &outcome, &contract);
+
+        assert_eq!(
+            contract.as_ref(),
+            "rebase-skip: partially applied — process state unavailable"
+        );
+        assert_eq!(
+            display.as_ref(),
+            "rebase-skip: outcome unknown — termination unconfirmed — do not retry"
+        );
     }
 }

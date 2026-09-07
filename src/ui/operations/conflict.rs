@@ -436,11 +436,7 @@ impl KagiApp {
                     Err(e) => {
                         let err_msg = format!("{}", e);
                         let is_unknown = unknown.is_some();
-                        if is_unknown {
-                            klog!("{} outcome unknown: {}", op_name, err_msg);
-                        } else {
-                            klog!("{} failed: {}", op_name, err_msg);
-                        }
+                        klog!("{} failed: {}", op_name, err_msg);
                         let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
                             error: err_msg.clone(),
                         });
@@ -527,17 +523,18 @@ impl KagiApp {
                     OpOutcome::Unknown { evidence, .. } => Some(evidence.clone()),
                     _ => None,
                 });
-                if unknown_evidence.is_some() {
-                    klog!("{} outcome unknown: {}", op_name, err_msg);
-                } else {
-                    klog!("{} failed: {}", op_name, err_msg);
-                }
+                klog!("{} failed: {}", op_name, err_msg);
                 let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
                     error: err_msg.clone(),
                 });
                 self.record_op_persist(&op_name, plan.current.clone(), outcome, &repo_path, cx);
                 if let Some(modal) = self.conflict_continue_modal_mut() {
-                    modal.error = Some(SharedString::from(unknown_evidence.unwrap_or(err_msg)));
+                    modal.error = Some(SharedString::from(
+                        unknown_evidence.clone().unwrap_or(err_msg),
+                    ));
+                }
+                if let Some(evidence) = unknown_evidence {
+                    self.report_unknown_notice(&repo_path, evidence);
                 }
             }
         }
@@ -641,11 +638,7 @@ impl KagiApp {
             Err(e) => {
                 let err_msg = format!("{}", e);
                 let is_unknown = unknown.is_some();
-                if is_unknown {
-                    klog!("{} outcome unknown: {}", op_name, err_msg);
-                } else {
-                    klog!("{} failed: {}", op_name, err_msg);
-                }
+                klog!("{} failed: {}", op_name, err_msg);
                 let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
                     error: err_msg.clone(),
                 });

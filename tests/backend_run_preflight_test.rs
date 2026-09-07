@@ -19,7 +19,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-use kagi_git::{Backend, CommitId, Head, Operation};
+use kagi_git::{Backend, CommitId, Head, Operation, OperationOutcome};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -138,6 +138,37 @@ fn run_rejects_stale_stash_plan() {
         "working tree must be untouched by a refused run"
     );
     assert_eq!(head_sha(d), head_before, "HEAD must be untouched");
+}
+
+#[test]
+fn stash_push_outcome_identifies_the_created_entry_after_index_shift() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path();
+    build_repo(d);
+    write_file(d, "base.txt", "auto-stashed edit\n");
+
+    let mut backend = Backend::open(d).expect("open");
+    let op = Operation::StashPush {
+        message: Some("kagi: auto-stash before pull".to_string()),
+        include_untracked: true,
+    };
+    let plan = backend.plan(&op).expect("plan");
+    let created_oid = match backend.run(&op, &plan).expect("stash push") {
+        OperationOutcome::StashPush { oid } => oid,
+        other => panic!("expected stash-push outcome, got {other:?}"),
+    };
+
+    write_file(d, "base.txt", "concurrent stash\n");
+    git(d, &["stash", "push", "-qm", "concurrent"]);
+
+    assert_eq!(
+        Backend::unique_stash_index(d, &created_oid).expect("resolve created stash"),
+        Some(1),
+        "the returned OID still identifies Kagi's stash after another push"
+    );
 }
 
 // ────────────────────────────────────────────────────────────

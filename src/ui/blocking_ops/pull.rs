@@ -59,25 +59,13 @@ pub(crate) fn pull_blocking(
                 }
             };
             match repo.run(&stash_op, &stash_plan) {
-                Ok(kagi_git::OperationOutcome::Unit) => {
-                    let oid = repo
-                        .plan(&kagi_git::Operation::StashPop { index: 0 })
-                        .ok()
-                        .and_then(|plan| plan.stash_identity)
-                        .and_then(|identity| identity.oids.first().cloned());
-                    match oid {
-                        Some(oid) => stashed_oid = Some(oid),
-                        None => {
-                            return PullBlockingResult::Partial {
-                                error: i18n::auto_stash_identity_unverified().to_string(),
-                                after: verify_after_snapshot(repo_path, plan),
-                            };
-                        }
-                    }
+                Ok(kagi_git::OperationOutcome::StashPush { oid }) => {
+                    stashed_oid = Some(oid);
                 }
                 Ok(_) => {
-                    return PullBlockingResult::Failed {
-                        error: "stash: unexpected outcome".to_string(),
+                    return PullBlockingResult::Partial {
+                        error: i18n::auto_stash_identity_unverified().to_string(),
+                        after: verify_after_snapshot(repo_path, plan),
                     };
                 }
                 Err(error) => {

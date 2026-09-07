@@ -111,7 +111,7 @@ pub fn execute_stash_push(
         None,
     )
     .map(|outcome| match outcome {
-        OperationOutcome::Unit => (),
+        OperationOutcome::StashPush { .. } => (),
         other => panic!("unexpected fixture outcome: {other:?}"),
     });
     refresh_fixture_index(repo, result)

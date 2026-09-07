@@ -1087,7 +1087,7 @@ impl Backend {
         &mut self,
         message: Option<&str>,
         include_untracked: bool,
-    ) -> Result<(), GitError> {
+    ) -> Result<String, GitError> {
         ops::execute_stash_push(&mut self.repo, message, include_untracked)
     }
 

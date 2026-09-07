@@ -156,10 +156,10 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
 pub fn auto_stash_identity_unverified() -> &'static str {
     match lang() {
         Lang::En => {
-            "Auto-stash was created, but its identity could not be verified; Pull was not started."
+            "Your changes are stored in the stash entry named `kagi: auto-stash before pull`, but Kagi could not verify its identity. Pull was not started; inspect the stash before continuing."
         }
         Lang::Ja => {
-            "auto-stash は作成されましたが識別できなかったため、Pull は開始していません。stash を確認してください。"
+            "変更内容は `kagi: auto-stash before pull` という名前の stash に保存されていますが、Kagi はその識別情報を確認できませんでした。Pull は開始していません。続行前に stash を確認してください。"
         }
     }
 }

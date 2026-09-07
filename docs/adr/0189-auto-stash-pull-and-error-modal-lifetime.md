@@ -1,4 +1,4 @@
-# ADR-0186: Auto-stash dirty Pull and persistent failure modal
+# ADR-0189: Auto-stash dirty Pull and persistent failure modal
 
 - Status: Accepted
 - Date: 2026-09-08

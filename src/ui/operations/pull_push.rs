@@ -299,7 +299,7 @@ impl KagiApp {
                     &repo_path,
                     cx,
                 );
-                // #493 / ADR-0186: the failure modal survives watcher reloads
+                // #493 / ADR-0189: the failure modal survives watcher reloads
                 // and remains until the user explicitly dismisses it.
                 self.set_pull_modal(PullPlanModal {
                     plan: modal.plan.clone(),

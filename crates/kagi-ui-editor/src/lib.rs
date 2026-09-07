@@ -25,6 +25,7 @@
 mod blame;
 pub mod markdown;
 mod panes;
+mod save_binding;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -49,6 +50,7 @@ use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
 
 pub(crate) use panes::{render_history_pane, render_snapshot_pane};
+use save_binding::{deliver, dirty_after_save, SaveDelivery};
 
 /// What the Editor Workspace asks of the host app (ADR-0121 C4). Everything
 /// outward-facing that used to be a `WeakEntity<KagiApp>` back-call is one of
@@ -235,6 +237,9 @@ pub enum TreeMenuTarget {
 /// (gpui-component's `set_value` ignores history, so Cmd-Z in tab B would
 /// replay tab A's edits).
 struct EditorBufferState {
+    /// This buffer's identity within the pane (#486) — see
+    /// `EditorWorkspaceView::buf_gen`.
+    generation: u64,
     content: Option<String>,
     content_lang: &'static str,
     content_binary: bool,
@@ -254,6 +259,9 @@ struct EditorBufferState {
 #[derive(Clone, Debug)]
 pub struct EditorSaveRequest {
     path: PathBuf,
+    /// The saving buffer's generation, so the completion can only be applied
+    /// to the buffer it came from (#486).
+    generation: u64,
     full_path: PathBuf,
     text: String,
     snapshot: Option<String>,
@@ -463,6 +471,17 @@ pub struct EditorWorkspaceView {
     /// the user to reload or keep editing. Cleared on save, reload, or
     /// switching away from the file.
     pub external_changed: bool,
+    /// Identity of the ACTIVE buffer (#486): a fresh value from
+    /// `next_buf_gen` every time a buffer is opened from scratch
+    /// (`reset_active_buffer`), carried across tab switches by
+    /// `stash_active`/`open_tab`. A background save captures it and may only
+    /// be applied back to the buffer that still carries it — `open_path`
+    /// alone can't tell a close → re-open of the same path from the buffer
+    /// that started the write.
+    buf_gen: u64,
+    /// Allocator for `buf_gen`. Monotonic, so a generation identifies a
+    /// buffer on its own once the path has been matched.
+    next_buf_gen: u64,
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
@@ -557,6 +576,8 @@ impl EditorWorkspaceView {
             pushed_sig: 0,
             dirty: false,
             external_changed: false,
+            buf_gen: 0,
+            next_buf_gen: 1,
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: new_diff_list_state(),
             show_tree: true,
@@ -714,6 +735,7 @@ impl EditorWorkspaceView {
         klog!("editor-ws: file {}", path.display());
         if let Some(buf) = self.tab_cache.remove(&path) {
             let clean = !buf.dirty;
+            self.buf_gen = buf.generation;
             self.content = buf.content;
             self.content_lang = buf.content_lang;
             self.content_binary = buf.content_binary;
@@ -787,6 +809,7 @@ impl EditorWorkspaceView {
             return;
         };
         let buf = EditorBufferState {
+            generation: self.buf_gen,
             content: self.content.take(),
             content_lang: self.content_lang,
             content_binary: self.content_binary,
@@ -808,6 +831,10 @@ impl EditorWorkspaceView {
     /// Reset every ACTIVE-buffer field to its empty state (fresh open /
     /// close of the active tab). `open_path`/`selected` are the caller's job.
     fn reset_active_buffer(&mut self) {
+        // A fresh buffer, even under a path that was just open: an in-flight
+        // save from the buffer being dropped here must not land on it (#486).
+        self.buf_gen = self.next_buf_gen;
+        self.next_buf_gen = self.next_buf_gen.wrapping_add(1);
         self.content = None;
         self.content_lang = "text";
         self.content_binary = false;
@@ -1607,6 +1634,7 @@ impl EditorWorkspaceView {
 
         cx.emit(EditorWorkspaceEvent::SaveRequested(EditorSaveRequest {
             path,
+            generation: self.buf_gen,
             full_path,
             text,
             snapshot,
@@ -1624,6 +1652,7 @@ impl EditorWorkspaceView {
     ) {
         let EditorSaveRequest {
             path,
+            generation,
             full_path,
             text,
             snapshot,
@@ -1658,28 +1687,31 @@ impl EditorWorkspaceView {
             let _ = view.update(acx, |v, cx| match result {
                 SaveOutcome::Saved(text) => {
                     klog!("editor-ws: saved {}", path.display());
-                    v.dirty = false;
-                    v.external_changed = false;
-                    // Adopt the saved text as the buffer's snapshot NOW —
-                    // and mark it as already pushed (the editor holds this
-                    // exact text), so the disk re-read below computes the
-                    // same sig and never `set_value`s (which would reset
-                    // the cursor/scroll on every save).
-                    let sig = buffer_sig(&path, &text);
-                    v.content = Some(text);
-                    v.content_sig = sig;
-                    v.pushed_sig = sig;
-                    // Refresh the tree badges and the right-pane diff
+                    v.apply_saved(&path, generation, text, cx);
+                    // Refresh the tree badges: the bytes on disk changed
+                    // whichever buffer the completion belongs to
                     // (T-WS-EDITOR-002 spec change: the tree reload is
-                    // highlight-only, so the diff refresh runs explicitly).
+                    // highlight-only, so the diff refresh runs explicitly in
+                    // `apply_saved`).
                     v.start_load(cx);
-                    v.load_selected(cx);
                     cx.notify();
                 }
                 SaveOutcome::Conflict => {
                     // Raise the banner ourselves — the watcher's debounced
-                    // event may still be in flight.
-                    v.external_changed = true;
+                    // event may still be in flight. Bound to the saving
+                    // buffer exactly like the success branch (#486): a
+                    // conflict on A must never banner B.
+                    match v.save_delivery(&path, generation) {
+                        SaveDelivery::Active => v.external_changed = true,
+                        SaveDelivery::Cached => {
+                            if let Some(buf) = v.tab_cache.get_mut(&path) {
+                                buf.external_changed = true;
+                            }
+                        }
+                        SaveDelivery::Dropped => {}
+                    }
+                    // The refusal is always reported: the user asked for this
+                    // save and it did not happen, whichever tab they are on.
                     v.notify_save_blocked(&path, cx);
                 }
                 SaveOutcome::Failed(e) => {
@@ -1696,6 +1728,63 @@ impl EditorWorkspaceView {
             });
         })
         .detach();
+    }
+
+    /// Which buffer a completion for `(path, generation)` belongs to (#486).
+    fn save_delivery(&self, path: &Path, generation: u64) -> SaveDelivery {
+        deliver(
+            (path, generation),
+            self.open_path.as_deref().map(|p| (p, self.buf_gen)),
+            self.tab_cache.get(path).map(|b| b.generation),
+        )
+    }
+
+    /// Apply a completed save to the buffer it was issued from — and to no
+    /// other (#486).
+    ///
+    /// The written text becomes that buffer's snapshot (so the next save's
+    /// disk-vs-snapshot conflict check compares against what we actually
+    /// wrote, not against pre-save bytes), and `dirty` is recomputed from the
+    /// buffer's LIVE text: an edit made after the save started keeps it
+    /// dirty, so the close/reload guards still protect it. `pushed_sig` is
+    /// moved in lockstep with `content_sig` either way — the editor already
+    /// holds text at least as new as the snapshot, so `sync_editor` must not
+    /// push over it (that would reset the cursor, or clobber the newer edit).
+    fn apply_saved(&mut self, path: &Path, generation: u64, text: String, cx: &mut Context<Self>) {
+        let sig = buffer_sig(path, &text);
+        match self.save_delivery(path, generation) {
+            SaveDelivery::Active => {
+                let live = self.editor.as_ref().map(|e| e.read(cx).value().to_string());
+                self.dirty = dirty_after_save(&text, live.as_deref());
+                // The bytes on disk are now ours, so any pending "changed on
+                // disk" banner for this buffer is answered.
+                self.external_changed = false;
+                self.content = Some(text);
+                self.content_sig = sig;
+                self.pushed_sig = sig;
+                // Right-pane WIP diff (the saved file's hunks changed).
+                self.load_selected(cx);
+            }
+            SaveDelivery::Cached => {
+                let live = self
+                    .tab_cache
+                    .get(path)
+                    .and_then(|b| b.editor.as_ref())
+                    .map(|e| e.read(cx).value().to_string());
+                let dirty = dirty_after_save(&text, live.as_deref());
+                if let Some(buf) = self.tab_cache.get_mut(path) {
+                    buf.dirty = dirty;
+                    buf.external_changed = false;
+                    buf.content = Some(text);
+                    buf.content_sig = sig;
+                    buf.pushed_sig = sig;
+                }
+            }
+            // Buffer closed, or re-opened as a new generation: the write
+            // happened (it is logged above and the tree reload picks it up),
+            // but there is nothing left that owns it.
+            SaveDelivery::Dropped => {}
+        }
     }
 
     /// A save was refused because the file changed on disk: log, emit (the

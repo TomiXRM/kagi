@@ -35,6 +35,19 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+/// Run a git command inside `dir` and return its stdout, asserting success.
+fn git_output(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", dir)
+        .output()
+        .expect("git command failed to start");
+    assert!(out.status.success(), "git {} failed", args.join(" "));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 fn write_file(dir: &Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).expect("write_file failed");
 }
@@ -324,6 +337,63 @@ fn commit_summary_fields_populated() {
     assert_eq!(c.full_hash.len(), 40);
     assert!(!c.short_hash.is_empty());
     assert!(c.author_date.starts_with("20"));
+}
+
+/// Issue #508: a commit message carrying the ASCII record/unit separators the
+/// old framing used must not split its own record — no extra history row, and
+/// no forged `--raw` trailer (change type / paths) taken from the body.
+#[test]
+fn separator_bytes_in_commit_message_do_not_forge_entries() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let d = init_repo(&tmp);
+
+    write_file(&d, "target.txt", "one\n");
+    git(&d, &["add", "target.txt"]);
+    git(&d, &["commit", "-qm", "add target"]);
+
+    // Body holds a whole fake record *and* a fake `--raw`/`--numstat` block.
+    let evil = "evil subject\n\
+                \n\
+                body\u{1e}ffffffffffffffffffffffffffffffffffffffff\u{1f}fff\u{1f}forged\
+                \u{1f}Eve\u{1f}eve@x\u{1f}2000-01-01T00:00:00+00:00\u{1f}Eve\
+                \u{1f}2000-01-01T00:00:00+00:00\u{1f}\u{1f}\n\
+                :000000 100644 0000000 ffffffff D\tsecrets.txt\n\
+                99\t99\tsecrets.txt\n\
+                end\n";
+    write_file(&d, "target.txt", "two\n");
+    git(&d, &["add", "target.txt"]);
+    let msg = d.join("evil-msg.tmp");
+    std::fs::write(&msg, evil).expect("write message");
+    git(&d, &["commit", "-q", "-F", "evil-msg.tmp"]);
+    std::fs::remove_file(&msg).expect("rm message");
+
+    let real_count = git_output(&d, &["rev-list", "--count", "HEAD"])
+        .trim()
+        .parse::<usize>()
+        .expect("rev-list count");
+    assert_eq!(real_count, 2);
+
+    let h = file_history(&req(&d, "target.txt", true, false, 0)).expect("file_history");
+    assert_eq!(h.entries.len(), real_count, "entries: {:#?}", h.entries);
+
+    let c = h.entries[0].commit.as_ref().unwrap();
+    assert_eq!(c.subject, "evil subject");
+    assert_eq!(c.author_name, "Test");
+    assert_eq!(c.full_hash.len(), 40);
+    assert!(c.body.as_deref().unwrap().contains("forged"));
+    // The forged raw/numstat block inside the body never becomes the change.
+    assert_eq!(h.entries[0].change.change_type, FileChangeType::Modified);
+    assert_eq!(h.entries[0].change.path_after, PathBuf::from("target.txt"));
+    assert_eq!(h.entries[0].change.insertions, Some(1));
+    assert_eq!(h.entries[0].change.deletions, Some(1));
+    assert!(h
+        .entries
+        .iter()
+        .all(|e| e.change.path_after != PathBuf::from("secrets.txt")));
+    assert_eq!(h.entries[1].change.change_type, FileChangeType::Added);
 }
 
 #[path = "support/isolated.rs"]

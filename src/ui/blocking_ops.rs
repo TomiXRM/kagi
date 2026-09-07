@@ -168,18 +168,30 @@ pub(crate) fn checkout_blocking(
     Ok((summary, after))
 }
 
+/// Reopen the merge plan's worktree without accepting a retargeted locator.
+pub(crate) fn open_merge_backend(
+    owner: &crate::app::Attachment,
+) -> Result<kagi_git::Backend, String> {
+    let repo = open_backend(&owner.path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    if owner.worktree.is_none() || repo.write_worktree_id().ok() != owner.worktree {
+        return Err(i18n::Msg::MergeDestinationChanged.t().to_string());
+    }
+    Ok(repo)
+}
+
 /// Merge `source` into `target` without checking `target` out (ADR-0144).
 ///
 /// Separate from [`merge_blocking`] rather than another arm inside it: this one
 /// takes two branch names and can never enter Conflict Mode, so folding it in
 /// would mean a `kind` that is meaningless for half the callers.
 pub(crate) fn merge_into_branch_blocking(
-    repo_path: &std::path::Path,
+    owner: &crate::app::Attachment,
     plan: &OperationPlan,
     source: &str,
     target: &str,
 ) -> Result<(String, StateSummary), String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let repo_path = owner.path.as_path();
+    let mut repo = open_merge_backend(owner)?;
     let op = kagi_git::Operation::MergeIntoBranch {
         source: source.to_string(),
         target: target.to_string(),
@@ -201,12 +213,13 @@ pub(crate) fn merge_into_branch_blocking(
 }
 
 pub(crate) fn merge_blocking(
-    repo_path: &std::path::Path,
+    owner: &crate::app::Attachment,
     plan: &OperationPlan,
     target: &str,
     kind: &MergeKind,
 ) -> Result<(String, StateSummary), String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let repo_path = owner.path.as_path();
+    let mut repo = open_merge_backend(owner)?;
     // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     match kind {
         MergeKind::Conflicts(_) => {

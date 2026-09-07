@@ -23,7 +23,7 @@ pub mod remove;
 mod run;
 pub use policy::ExecutionPolicy;
 pub mod stash;
-pub use recording::oplog_outcome_from;
+pub use recording::{oplog_outcome_from, recovery_handles};
 
 pub struct Backend {
     repo: Repository,
@@ -1558,7 +1558,7 @@ impl Backend {
     pub fn list_merged_prs(
         &self,
         limit: usize,
-    ) -> Result<Vec<kagi_domain::github::PullRequest>, GitError> {
+    ) -> Result<Vec<kagi_domain::github::PullRequest>, crate::github::PrFetchError> {
         crate::github::list_merged_prs(&self.path, limit)
     }
 

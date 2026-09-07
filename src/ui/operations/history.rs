@@ -476,7 +476,7 @@ impl KagiApp {
                     );
                 }
                 app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "amend: {} → {} (restore: git reset --hard {})",
+                    "amend: {} → {} (restore: git reset --soft {})",
                     old.short(),
                     new.short(),
                     old.short()

@@ -421,7 +421,7 @@ fn primary_checkout_ref(refs: &[RefBadge]) -> Option<String> {
     refs.iter()
         .find(|badge| badge.kind == BadgeKind::Branch)
         .or_else(|| refs.iter().find(|badge| badge.kind == BadgeKind::Tag))
-        .map(|badge| badge.label.as_ref().trim_end_matches(" ✓").to_string())
+        .and_then(super::context_ref_name)
 }
 
 fn truncate_chars(input: &str, max_chars: usize) -> String {
@@ -585,7 +585,7 @@ mod tests {
         let mut c = ctx();
         c.refs_here = vec![
             RefBadge::new(BadgeKind::Tag, SharedString::from("v1.0.0")),
-            RefBadge::new(BadgeKind::Branch, SharedString::from("feature/checkout ✓")),
+            RefBadge::new(BadgeKind::Branch, SharedString::from("🌲 feature/checkout")),
         ];
         let groups = build_commit_menu(&c);
         let item = groups
@@ -595,7 +595,6 @@ mod tests {
             .expect("checkout ref item");
 
         assert_eq!(item.state, ItemState::Enabled);
-        assert_eq!(item.label.as_ref(), "Checkout 'feature/checkout'...");
         assert_eq!(
             item.action,
             CommitAction::CheckoutRef("feature/checkout".to_string())

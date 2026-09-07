@@ -321,7 +321,7 @@ impl HistoryRecovery {
             HistoryRecovery::Amend { sha, blocked: false } => format!(
                 "Amend rewrites history: the new commit gets a NEW SHA and the old commit \
                  {} becomes unreachable from the branch (but stays in the reflog).\n\
-                 To restore the original commit:\n  git reset --hard {}\n\
+                 To restore the original commit without changing the working tree or index:\n  git reset --soft {}\n\
                  The reflog records every HEAD movement:\n  git reflog",
                 sha, sha
             ),
@@ -652,8 +652,14 @@ mod tests {
                 blocked: false
             }
             .message_en(),
-            "Amend rewrites history: the new commit gets a NEW SHA and the old commit a1b2c3d4 becomes unreachable from the branch (but stays in the reflog).\nTo restore the original commit:\n  git reset --hard a1b2c3d4\nThe reflog records every HEAD movement:\n  git reflog"
+            "Amend rewrites history: the new commit gets a NEW SHA and the old commit a1b2c3d4 becomes unreachable from the branch (but stays in the reflog).\nTo restore the original commit without changing the working tree or index:\n  git reset --soft a1b2c3d4\nThe reflog records every HEAD movement:\n  git reflog"
         );
+        assert!(!HistoryRecovery::Amend {
+            sha: "a1b2c3d4".into(),
+            blocked: false,
+        }
+        .message_en()
+        .contains("reset --hard"));
         assert_eq!(
             HistoryRecovery::Amend {
                 sha: String::new(),

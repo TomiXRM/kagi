@@ -55,6 +55,14 @@ pub enum StashNote {
     /// warning (`plan_stash_drop_remote`, SSH): the remote drop cannot be
     /// undone from Kagi.
     RemoteDropIrreversible,
+    /// blocker (`preflight_check_stash`, #606): the entry at the approved
+    /// index is no longer the OID that the plan approved. Another stash now
+    /// occupies that position, so no mutation may start.
+    TargetChanged { index: usize, expected: String },
+    /// blocker (`preflight_check_stash`, #606): the ordered stash list changed
+    /// after planning. This also covers count changes, which are checked
+    /// before comparing the full identity.
+    ListChanged,
 }
 
 impl StashNote {
@@ -116,6 +124,15 @@ impl StashNote {
                  It cannot be undone from Kagi."
                     .to_string()
             }
+            StashNote::TargetChanged { index, expected } => format!(
+                "stash@{{{}}} is no longer the approved entry {}: another stash \
+                 now occupies that position. Nothing was changed — re-plan \
+                 before proceeding.",
+                index, expected
+            ),
+            StashNote::ListChanged => "The stash list changed since planning \
+                 (order or entries differ). Nothing was changed — re-plan before proceeding."
+                .to_string(),
         }
     }
 }
@@ -473,6 +490,22 @@ mod tests {
             StashRecovery::DropRemote.message_en(),
             "A dropped stash commit may remain reachable from the remote's stash reflog until \
              gc, but Kagi does not manage remote recovery."
+        );
+    }
+
+    #[test]
+    fn preflight_identity_notes_explain_no_mutation() {
+        assert_eq!(
+            StashNote::TargetChanged {
+                index: 1,
+                expected: "0123456789abcdef".into(),
+            }
+            .message_en(),
+            "stash@{1} is no longer the approved entry 0123456789abcdef: another stash now occupies that position. Nothing was changed — re-plan before proceeding."
+        );
+        assert_eq!(
+            StashNote::ListChanged.message_en(),
+            "The stash list changed since planning (order or entries differ). Nothing was changed — re-plan before proceeding."
         );
     }
 }

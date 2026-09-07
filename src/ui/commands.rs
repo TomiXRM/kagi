@@ -1447,7 +1447,7 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_write("snapshot", &repo_path, cx) else {
             return;
         };
         let result = lease.run(|| {
@@ -1803,7 +1803,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
             return;
         };
         self.fetch_in_flight = true;

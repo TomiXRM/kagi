@@ -60,6 +60,10 @@ mod app_remove;
 mod app_stash;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/busy_label.rs"]
+mod busy_label;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]
 mod app_writer_admission;
 
@@ -549,8 +553,16 @@ mod macos {
                 Box::new(crate::app_remove::scenario_remove_public_boundary),
             ),
             (
+                "fetch_busy_label",
+                Box::new(crate::busy_label::scenario_fetch_busy_label),
+            ),
+            (
                 "editor_save_admission",
                 Box::new(crate::app_writer_admission::scenario_editor_save_admission),
+            ),
+            (
+                "editor_save_buffer_identity",
+                Box::new(crate::app_writer_admission::scenario_editor_save_buffer_identity),
             ),
             (
                 "conflict_save_boundary",
@@ -621,6 +633,14 @@ mod macos {
             (
                 "remote_source_merge_into",
                 Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
+            ),
+            (
+                "cross_worktree_merge",
+                Box::new(crate::worktree_graph::scenario_cross_worktree_merge),
+            ),
+            (
+                "stage_failure_notice",
+                Box::new(crate::recovery_operations::scenario_stage_failure_notice),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
@@ -1719,18 +1739,15 @@ mod macos {
         // ODB as a blob, and the oplog entry carries its SHA. The worktree
         // shares the open repository's ODB, so the blob resolves from BOTH.
         //
-        // Read from the IN-MEMORY entry deliberately: the persisted entry's
-        // after-state is `plan.predicted` ("N file(s) discarded"), because
-        // ADR-0149 moved the persisted write into `Backend::run`, which only
-        // sees the plan. The blob list reaches `record_op` (this entry) and the
-        // `[kagi] executed: discarded …; backup: <path>=<sha>` line. Unchanged
-        // by #476 — the slice only redirects which repository is named.
-        let (op, repo, dirty) = cx.read(|app| {
+        // The in-memory entry is presentation only — it says which repo the op
+        // named. The recovery material is read from the PERSISTED receipt's
+        // typed `recovery` handles (#500), never by splitting the English
+        // `backup: <path>=<sha>` summary out of `after.dirty`.
+        let (op, repo) = cx.read(|app| {
             let panel = kagi.read(app).op_log.clone().expect("op_log entity");
             let panel = panel.read(app);
             let entry = panel.entries().front().expect("an op-log entry");
-            let (op, repo) = e2e::entry_op_and_repo(entry);
-            (op, repo, e2e::entry_after_dirty(entry))
+            e2e::entry_op_and_repo(entry)
         });
         assert_eq!(op, "discard", "newest op-log entry should be the discard");
         assert_eq!(
@@ -1738,22 +1755,27 @@ mod macos {
             wt_a,
             "the op-log entry's repo must be the WORKTREE's path"
         );
-        let dirty = dirty.expect("a successful discard records an after-state");
-        let blob = dirty
-            .split_once("backup: ")
-            .and_then(|(_, backups)| backups.split(';').next())
-            .and_then(|backups| {
-                backups
-                    .split(", ")
-                    .find_map(|pair| pair.strip_prefix("f.txt="))
-            })
-            .unwrap_or_else(|| panic!("no `f.txt=blob` backup in the oplog entry: {dirty:?}"));
         let receipt = kagi_git::oplog::read_oplog_tail_for_repo(&wt_a, 1)
             .pop()
             .expect("persisted discard receipt");
         assert_eq!(receipt.op, "discard");
         assert_eq!(receipt.backup_refs.len(), 1);
-        let reference = &receipt.backup_refs[0];
+        let handle = receipt
+            .recovery
+            .iter()
+            .find(|h| h.path.as_deref() == Some("f.txt"))
+            .unwrap_or_else(|| panic!("no typed f.txt backup handle: {:?}", receipt.recovery));
+        assert_eq!(handle.kind, kagi_git::oplog::recovery::FILE_BACKUP);
+        let blob = handle.oid.as_str();
+        let reference = handle
+            .reference
+            .as_deref()
+            .expect("a file backup handle names its GC root");
+        assert_eq!(
+            Some(reference),
+            receipt.backup_refs.first().map(String::as_str),
+            "the typed handle's ref must be the receipt's retained root"
+        );
         assert!(reference.starts_with("refs/kagi/backups/"));
         assert_eq!(blob.len(), 40, "expected a 40-hex blob SHA, got {blob:?}");
         for odb in [&wt_a, &repo_path] {

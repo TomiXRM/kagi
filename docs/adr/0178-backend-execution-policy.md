@@ -152,3 +152,17 @@ runner access paths, a frozen D/F owner-trust/drift fixture, and no-diff merge
 finalization coverage. The two-parent oracle is preserved; unresolved conflicts
 and ordinary empty commits remain refused. All migrated fixtures exercise the
 public boundary, except explicit low-level tests compiled inside kagi-git.
+
+## Staging failure delivery (#490)
+
+The synchronous UI staging adapters (single-file, editor path, and panel batch)
+now finalize Failed/Refused receipts through `recording::finalize` exactly once.
+The existing Backend index executors and explicit write admission remain in use.
+The lease terminates before presentation; the attempted receipt and append error
+survive through the common footer/oplog/notice delivery. Refused attempts have no
+modal. Repo-open errors retain their actual cause and the target panel worktree,
+not the active tab's repository. The before HEAD is explicitly unobserved rather
+than borrowed from a different tab. Success recording and the full index-family
+approval/report boundary remain migration work; #490 changes failure delivery.
+A failed append of an already Failed operation does not claim that a mutation
+succeeded: it preserves Failed and adds the recording failure to footer/notice.

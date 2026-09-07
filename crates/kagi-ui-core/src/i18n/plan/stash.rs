@@ -65,6 +65,14 @@ pub fn note_ja(note: &StashNote) -> String {
         StashNote::RemoteDropIrreversible => {
             "remote 上の stash entry を完全に削除します。kagi からは元に戻せません。".to_string()
         }
+        StashNote::TargetChanged { index, expected } => format!(
+            "stash@{{{}}} は承認した entry {} ではなくなりました。別の stash がその位置にあります。何も変更していません。再 plan してください。",
+            index, expected
+        ),
+        StashNote::ListChanged => {
+            "plan 以降に stash 一覧が変化しました(順序または entry が異なります)。何も変更していません。再 plan してください。"
+                .to_string()
+        }
     }
 }
 
@@ -106,5 +114,20 @@ pub fn recovery_ja(recovery: &StashRecovery) -> String {
         StashRecovery::DropRemote => "削除した stash commit は gc まで remote の stash reflog \
              から到達可能な場合がありますが、kagi は remote の復元を管理しません。"
             .to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preflight_identity_notes_are_localized() {
+        assert!(note_ja(&StashNote::TargetChanged {
+            index: 1,
+            expected: "0123456789abcdef".into(),
+        })
+        .contains("何も変更していません"));
+        assert!(note_ja(&StashNote::ListChanged).contains("再 plan してください"));
     }
 }

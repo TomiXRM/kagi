@@ -9,9 +9,12 @@
 //!
 //! One `git log --numstat` invocation with a record separator per commit:
 //!
-//! - `--format=%x1e%at%x1f%ae` prefixes each commit with `\x1e` (record
+//! - `--format=%x00%at%x1f%ae` prefixes each commit with a **NUL** (record
 //!   separator) then the author time (epoch secs), a `\x1f` unit separator, and
-//!   the author email.
+//!   the author email.  NUL is the only byte a commit object cannot carry
+//!   (issue #508, ADR-0186), so no author identity or path can forge a record
+//!   break.  The author email stays last on the header line, so a `\x1f` in it
+//!   cannot shift a field either.
 //! - `--numstat` then lists `<ins>\t<del>\t<path>` rows (`-` for binary).
 //! - `--no-renames` keeps every path plain (a rename reads as delete + add,
 //!   which is fine for churn counting) and avoids the `{old => new}` numstat
@@ -28,8 +31,8 @@ use super::cli::run_git;
 use super::GitError;
 use kagi_domain::hotspot::{CommitChanges, FileChange, RawEcosystem};
 
-/// Record separator emitted by `--format=%x1e…` before each commit.
-const RS: char = '\u{1e}';
+/// Record separator emitted by `--format=%x00…` before each commit.
+const RS: char = '\0';
 /// Unit separator between the author time and author email in the header line.
 const US: char = '\u{1f}';
 
@@ -60,7 +63,7 @@ pub fn repo_ecosystem(req: &EcosystemRequest) -> Result<RawEcosystem, GitError> 
         "log",
         "--no-renames",
         "--numstat",
-        "--format=%x1e%at%x1f%ae",
+        "--format=%x00%at%x1f%ae",
     ];
     if req.limit > 0 {
         limit_arg = format!("-n{}", req.limit);
@@ -102,7 +105,7 @@ fn build_matcher(repo_dir: &Path, patterns: &[String]) -> Gitignore {
     b.build().unwrap_or_else(|_| Gitignore::empty())
 }
 
-/// Parse `git log --numstat --format=%x1e%at` output into per-commit changes.
+/// Parse `git log --numstat --format=%x00%at` output into per-commit changes.
 fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
     let mut commits = Vec::new();
     for record in stdout.split(RS) {

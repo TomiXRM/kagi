@@ -7,7 +7,7 @@ use super::*;
 use kagi_domain::plan::StashPopOutcome;
 use kagi_domain::plan_note::stash::StashDirtyOp;
 use kagi_domain::plan_note::{
-    CommonNote, DirtyParts, OpPhrase, StashNote, StashRecovery, StashTitle,
+    CommonNote, DirtyParts, OpPhrase, PlanNote, StashNote, StashRecovery, StashTitle,
 };
 
 // ────────────────────────────────────────────────────────────
@@ -599,7 +599,19 @@ pub(crate) fn execute_stash_pop_recorded(
             .map_err(|e| GitError::Other(e.to_string()))?;
         }
     }
-    verify_stash_identity(repo, identity)?;
+    // This is the same identity check used before execution, but this pop has
+    // already restored working-tree bytes. Do not surface the preflight note's
+    // "Nothing was changed" promise after mutation.
+    verify_stash_identity(repo, identity).map_err(|error| {
+        if error.blocker().is_some() {
+            GitError::Other(
+                "Stash list changed since planning: full OID/order mismatch. Please re-plan before proceeding."
+                    .into(),
+            )
+        } else {
+            error
+        }
+    })?;
     stash_drop_internal(repo, index)?;
 
     Ok(StashPopOutcome::Applied)
@@ -897,8 +909,8 @@ fn prediction_unavailable(reason: &str) -> PlanNote {
 ///
 /// # Errors
 ///
-/// Returns [`GitError::Other`] when HEAD or stash count has changed, or on
-/// unexpected failures.
+/// Returns a typed [`PlanNote`] blocker when the stash list changed, or
+/// [`GitError::Other`] on unexpected failures.
 pub fn preflight_check_stash(
     repo: &mut Repository,
     plan: &OperationPlan,
@@ -917,17 +929,9 @@ pub fn preflight_check_stash(
     // 3. Stash count check.
     let current_count = count_stashes(repo)?;
     if current_count != expected_stash_count {
-        return Err(GitError::Other(format!(
-            "Stash list changed since planning: expected {} entr{}, \
-             found {}. Please re-plan before proceeding.",
-            expected_stash_count,
-            if expected_stash_count == 1 {
-                "y"
-            } else {
-                "ies"
-            },
-            current_count,
-        )));
+        return Err(GitError::Blocked(Box::new(PlanNote::Stash(
+            StashNote::ListChanged,
+        ))));
     }
     if let Some(expected) = &plan.stash_identity {
         verify_stash_identity(repo, expected)?;
@@ -962,10 +966,25 @@ pub(crate) fn verify_stash_identity(
     repo: &mut Repository,
     expected: &kagi_domain::plan::StashIdentity,
 ) -> Result<(), GitError> {
-    if stash_identity(repo, expected.selected)? != *expected {
-        return Err(GitError::Other("Stash list changed since planning: full OID/order mismatch. Please re-plan before proceeding.".into()));
+    let actual = stash_identity(repo, expected.selected)?;
+    if actual == *expected {
+        return Ok(());
     }
-    Ok(())
+
+    let note = expected
+        .selected
+        .and_then(|index| {
+            expected
+                .oids
+                .get(index)
+                .filter(|oid| actual.oids.get(index) != Some(oid))
+                .map(|oid| StashNote::TargetChanged {
+                    index,
+                    expected: oid.clone(),
+                })
+        })
+        .unwrap_or(StashNote::ListChanged);
+    Err(GitError::Blocked(Box::new(PlanNote::Stash(note))))
 }
 
 // ────────────────────────────────────────────────────────────

@@ -163,7 +163,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(lease) = self.reserve_write(&repo_path, cx) else {
+        let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
             return;
         };
         klog!("fetch-remote-branch: start {}", remote_branch);

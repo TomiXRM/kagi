@@ -98,6 +98,12 @@ consume them are later work.
   the file and `parent` from the previous entry's id; `actor` defaults to
   `Human`; `worktree` to `None`. Verified by a golden test mixing an OLD-format
   and a NEW-format line in one file (`tests/oplog_backend_run_test.rs`).
+- **Bounded reads (#499).** The tail read scans backwards from the end of the
+  file and stops at the requested count, so a read — including the one inside
+  the locked append — no longer costs the whole history. Legacy id-less lines
+  are the exception: their identity *is* their position, so a window holding
+  one (as does a file that is entirely legacy) falls back to the whole-file
+  read above, and the reconstruction rule is unchanged.
 
 ## Explicitly deferred (do NOT implement here)
 

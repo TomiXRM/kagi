@@ -87,6 +87,17 @@ answering **"not a repository"** (a definitive negative → `RepoProbe::not_a_re
 *not* an error), via an ssh-failure-marker heuristic on stderr. So the directory
 picker can grey-out non-repo dirs without treating them as connection errors.
 
+The same rule governs **`repo_summary`** (issue #604). An unborn HEAD makes
+`git log -1` *fail* (exit 128, "your current branch 'master' does not have any
+commits yet") rather than print nothing, so a `run_checked` read reported a
+freshly initialised repository exactly like an unreachable host. Every remote
+read whose empty answer is legitimate goes through `run_lenient`: transport
+failure → `RemoteError`; any other non-zero → the empty answer (`Ok(None)` /
+empty output). Reachability is already established by `probe_repo` before the
+summary read, so a non-transport non-zero cannot be a hidden connection
+problem. Failure and emptiness stay distinguishable — the discipline ADR-0177
+applies to writes and #506 applied to PR fetches.
+
 ## Alternatives considered
 - **Pure-Rust SSH (`russh`)** — full control and no external `ssh` dependency,
   but re-implements auth, `~/.ssh/config`, and `known_hosts`, pulls a large

@@ -14,7 +14,7 @@ use kagi_git::{OpLogEntry, OpOutcome};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::time::Duration;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(feature = "gui-e2e")]
@@ -300,27 +300,23 @@ fn run_frozen(
     let mut remote = vec!["sh", "-c", script, "kagi"];
     remote.extend_from_slice(args);
     argv.push(remote::join_remote_command(&remote));
-    let child = Command::new("ssh")
-        .args(argv)
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut cmd = Command::new("ssh");
+    cmd.args(argv).env("LC_ALL", "C");
+    // The shared runner owns the child, its pipes and its deadline (#507): on
+    // expiry the local ssh client is killed and reaped and we get a
+    // termination-unknown stop, not a fabricated exit status.
+    let run = kagi_git::cli::run_child(&mut cmd, timeout, None)
         .map_err(|e| FrozenRunError::LocalSpawn(e.to_string()))?;
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-    let output = rx
-        .recv_timeout(timeout)
-        .map_err(|_| FrozenRunError::Unconfirmed(RemoteError::Timeout.to_string()))?
-        .map_err(|e| FrozenRunError::Unconfirmed(e.to_string()))?;
-    Ok((
-        output.status.code().unwrap_or(-1),
-        output.stdout,
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    ))
+    let code = match &run.status {
+        Ok(code) => *code,
+        Err(stop) => {
+            return Err(FrozenRunError::Unconfirmed(
+                RemoteError::unknown(stop).to_string(),
+            ))
+        }
+    };
+    let stderr = run.stderr_lossy();
+    Ok((code, run.stdout, stderr))
 }
 
 #[derive(Debug)]

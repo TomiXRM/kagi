@@ -5,11 +5,10 @@
 //! and are re-exported here for stable `kagi::git::message_gen::*` paths.
 
 use std::ffi::OsString;
-use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use git2::{DiffOptions, Repository};
 use kagi_domain::status::{ChangeKind, FileStatus};
@@ -402,9 +401,6 @@ pub fn ollama_list_models(host: &str) -> Vec<String> {
 /// budget is generous; the spinner keeps the UI responsive during the wait.
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Poll interval while waiting for the child to exit.
-const CLI_POLL: Duration = Duration::from_millis(100);
-
 /// Generate a commit message by shelling out to a locally installed agentic CLI
 /// (ADR-0099).
 ///
@@ -443,76 +439,41 @@ fn cli_generate(provider: CliProvider, prompt: &str) -> Result<String, GenError>
     cmd.env("PATH", effective_path());
     match provider {
         CliProvider::ClaudeCode => {
-            cmd.args(["-p", "--output-format", "text"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null());
+            cmd.args(["-p", "--output-format", "text"]);
         }
         CliProvider::Codex => {
             let path = out_file.as_ref().expect("codex out_file set above").path();
             cmd.arg("exec")
                 .args(["-s", "read-only", "--color", "never", "-o"])
                 .arg(path)
-                .arg("-")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
+                .arg("-");
         }
     }
 
-    let mut child = cmd
-        .spawn()
+    // The shared runner (#507) owns the child: it feeds the prompt on stdin
+    // from one thread while draining stdout and stderr on two others — a prompt
+    // or an answer bigger than the OS pipe buffer would otherwise deadlock — and
+    // it kills and reaps the child on the deadline instead of leaving it behind.
+    let run = crate::cli::run_child(&mut cmd, CLI_TIMEOUT, Some(prompt.as_bytes()))
         .map_err(|e| GenError::Http(format!("spawn {}: {e}", provider.binary())))?;
 
-    // Write the prompt from a dedicated thread, then drop stdin to signal EOF.
-    // This avoids a pipe deadlock when the prompt is larger than the OS pipe
-    // buffer and the child is concurrently filling stdout.
-    if let Some(mut stdin) = child.stdin.take() {
-        let prompt_owned = prompt.to_string();
-        std::thread::spawn(move || {
-            let _ = stdin.write_all(prompt_owned.as_bytes());
-            // `stdin` is dropped here → EOF.
-        });
-    }
+    // A cut-short wait is not an exit status: say so rather than reporting a
+    // failure the CLI never returned.
+    let status = *run
+        .status
+        .as_ref()
+        .map_err(|stop| GenError::Http(format!("{} {stop}", provider.binary())))?;
 
-    // Poll for completion with a kill-on-deadline. (We can't both `wait()` and
-    // enforce a timeout without polling, since the std child API has no timed
-    // wait.)
-    let deadline = Instant::now() + CLI_TIMEOUT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(GenError::Http("timeout".to_string()));
-                }
-                std::thread::sleep(CLI_POLL);
-            }
-            Err(e) => return Err(GenError::Http(format!("wait: {e}"))),
-        }
-    };
-
-    if !status.success() {
+    if status != 0 {
         return Err(GenError::Http(format!(
-            "{} exited with {}",
+            "{} exited with status {status}",
             provider.binary(),
-            status
         )));
     }
 
     // Collect the answer: stdout for Claude Code, the `-o` file for Codex.
     let raw = match provider {
-        CliProvider::ClaudeCode => {
-            let mut buf = String::new();
-            if let Some(mut stdout) = child.stdout.take() {
-                stdout
-                    .read_to_string(&mut buf)
-                    .map_err(|e| GenError::Http(format!("read stdout: {e}")))?;
-            }
-            buf
-        }
+        CliProvider::ClaudeCode => run.stdout_lossy(),
         CliProvider::Codex => {
             let file = out_file.expect("codex out_file set above");
             std::fs::read_to_string(file.path())
@@ -588,32 +549,16 @@ fn effective_path() -> OsString {
 #[cfg(unix)]
 fn login_shell_path() -> Option<OsString> {
     let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty())?;
-    let mut child = Command::new(&shell)
-        .args(["-ilc", "printf '__KAGI_PATH__%s__KAGI_END__' \"$PATH\""])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let mut cmd = Command::new(&shell);
+    cmd.args(["-ilc", "printf '__KAGI_PATH__%s__KAGI_END__' \"$PATH\""]);
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                std::thread::sleep(CLI_POLL);
-            }
-            Err(_) => return None,
-        }
-    }
+    // Through the shared runner (#507): an rc file that prints a banner bigger
+    // than the pipe buffer used to deadlock here, because stdout was only read
+    // *after* the child exited. A cut-short wait is `Err` — no PATH, no guess.
+    let run = crate::cli::run_child(&mut cmd, Duration::from_secs(5), None).ok()?;
+    run.status.as_ref().ok()?;
+    let buf = run.stdout_lossy();
 
-    let mut buf = String::new();
-    child.stdout.take()?.read_to_string(&mut buf).ok()?;
     let start = buf.find("__KAGI_PATH__")? + "__KAGI_PATH__".len();
     let rest = &buf[start..];
     let end = rest.find("__KAGI_END__")?;

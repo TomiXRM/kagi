@@ -21,8 +21,7 @@
 //! later phase, never directly from here.
 
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::process::Command;
 use std::time::Duration;
 
 use kagi_domain::refs::Worktree;
@@ -46,22 +45,37 @@ const SSH_COMMAND_TIMEOUT_SECS: u64 = SSH_CONNECT_TIMEOUT_SECS as u64 + 20;
 /// A failure running a remote command over SSH.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteError {
-    /// The `ssh` binary could not be started (not installed, etc.).
+    /// The `ssh` binary could not be started (not installed, etc.). Nothing
+    /// reached the host.
     Spawn(String),
-    /// The command exceeded [`SSH_COMMAND_TIMEOUT_SECS`].
-    Timeout,
+    /// We stopped **waiting** — the deadline expired, or the wait itself broke.
+    /// The local `ssh` client is killed and reaped, but that says nothing about
+    /// the command it had already handed to the host: the outcome is *unknown*,
+    /// never a failure, and must never be auto-retried (issue #507, ADR-0177).
+    TerminationUnknown(String),
     /// ssh / the remote command exited non-zero. `stderr` is the captured
     /// message (e.g. "Host key verification failed", "Permission denied",
     /// "No such file or directory").
     NonZero { code: i32, stderr: String },
 }
 
+impl RemoteError {
+    /// The termination-unknown shape for a cut-short wait, carrying the
+    /// runner's own reason.
+    fn unknown(stop: &kagi_git::cli::ProcStop) -> Self {
+        RemoteError::TerminationUnknown(stop.to_string())
+    }
+}
+
 impl std::fmt::Display for RemoteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RemoteError::Spawn(e) => write!(f, "failed to start ssh: {e}"),
-            RemoteError::Timeout => {
-                write!(f, "ssh command timed out after {SSH_COMMAND_TIMEOUT_SECS}s")
+            RemoteError::TerminationUnknown(reason) => {
+                write!(
+                    f,
+                    "ssh command {reason}; the remote command is not proven stopped"
+                )
             }
             RemoteError::NonZero { code, stderr } => {
                 write!(f, "ssh exited {code}: {}", stderr.trim())
@@ -87,34 +101,32 @@ struct SshOutput {
 ///   [`kagi_domain::remote`] so it survives the remote login shell intact.
 /// - **Non-interactive**: `BatchMode=yes` (from the domain layer) + `LC_ALL=C`
 ///   for stable, parseable output — ssh never blocks on a prompt.
-/// - **Timeout**: a background thread + `recv_timeout` backstop.
+/// - **Timeout / ownership**: the shared `kagi_git::cli::run_child` runner owns
+///   the child, drains both pipes, and kills+reaps on the deadline (#507). A
+///   deadline that expires comes back as [`RemoteError::TerminationUnknown`],
+///   never as an exit code — the local client is gone, the *remote* command is
+///   not proven stopped.
 fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, RemoteError> {
     let args = host.ssh_invocation(remote_tokens);
 
-    let child = Command::new("ssh")
-        .args(&args)
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| RemoteError::Spawn(e.to_string()))?;
+    let mut cmd = Command::new("ssh");
+    cmd.args(&args).env("LC_ALL", "C");
 
-    // `child.wait_with_output()` on a worker thread so we can time out.
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
+    let run = kagi_git::cli::run_child(
+        &mut cmd,
+        Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
+        None,
+    )
+    .map_err(|e| RemoteError::Spawn(e.to_string()))?;
 
-    let output = rx
-        .recv_timeout(Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS))
-        .map_err(|_| RemoteError::Timeout)?
-        .map_err(|e| RemoteError::Spawn(e.to_string()))?;
-
+    let code = match &run.status {
+        Ok(code) => *code,
+        Err(stop) => return Err(RemoteError::unknown(stop)),
+    };
     Ok(SshOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code,
+        stdout: run.stdout_lossy(),
+        stderr: run.stderr_lossy(),
     })
 }
 
@@ -556,19 +568,23 @@ pub fn remote_pull(
             };
             (Err(error), outcome)
         }
-        // The whole-command backstop fired. The child was never reaped, so the
-        // remote command is not proven stopped.
-        Err(RemoteError::Timeout) => (
-            Err(RemoteError::Timeout),
-            OpOutcome::Unknown {
-                after: after("remote pull not proven stopped".into()),
-                evidence: format!(
-                    "{}; the remote git pull may still be running — do not retry \
-                     until the host is checked",
-                    RemoteError::Timeout
-                ),
-            },
-        ),
+        // The whole-command backstop fired (or the wait broke). The local ssh
+        // client is killed and reaped, but the command it handed to the host is
+        // not proven stopped — the runner reports that as its own shape rather
+        // than as an exit (#507).
+        Err(error @ RemoteError::TerminationUnknown(_)) => {
+            let evidence = format!(
+                "{error}; the remote git pull may still be running — do not retry \
+                 until the host is checked"
+            );
+            (
+                Err(error),
+                OpOutcome::Unknown {
+                    after: after("remote pull not proven stopped".into()),
+                    evidence,
+                },
+            )
+        }
         // Pre-spawn: nothing ran.
         Err(error) => {
             let outcome = OpOutcome::Failed {
@@ -624,6 +640,24 @@ mod tests {
             stderr: "fatal: not a git repository (or any of the parent directories): .git".into(),
         };
         assert!(!is_transport_failure(&not_repo));
+    }
+
+    // #507: a deadline that expires is reported as termination-unknown, and the
+    // message says so — it must never read as "the remote command stopped".
+    #[test]
+    fn cut_short_wait_reads_as_unknown() {
+        let stop = kagi_git::cli::ProcStop::Deadline {
+            secs: SSH_COMMAND_TIMEOUT_SECS,
+            reaped: true,
+        };
+        let e = RemoteError::unknown(&stop);
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "ssh command timed out after {SSH_COMMAND_TIMEOUT_SECS}s; \
+                 the remote command is not proven stopped"
+            )
+        );
     }
 
     #[test]

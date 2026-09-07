@@ -14,6 +14,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from kagi_checks.busy_labels import issues as busy_label_issues
+from kagi_checks.busy_labels import selftest as busy_label_selftest
 from kagi_checks.rules import (
     MANIFEST_RULES,
     RATCHETS,
@@ -184,6 +186,16 @@ def check_shell_hygiene() -> int:
     return status | _run_rule(_rule("uv-invocation"))
 
 
+def check_busy_labels() -> int:
+    issues = busy_label_issues(ROOT)
+    if not issues:
+        print("OK: busy-labels — busy operation tags have EN/JA display labels.")
+        return 0
+    for issue in issues:
+        print(f"::error::{issue}")
+    return 1
+
+
 def check_skill_refs() -> int:
     issues = skill_ref_issues(ROOT)
     if not issues:
@@ -295,13 +307,16 @@ def selftest() -> int:
                     f"expected, in the sample:\n{_excerpt(sample)}"
                 )
                 failed = True
+    for issue in busy_label_selftest():
+        print(f"::error::busy-labels selftest: {issue}")
+        failed = True
     for issue in skill_ref_selftest():
         print(f"::error::skill-refs selftest: {issue}")
         failed = True
     if failed:
         return 1
     print(
-        f"OK: {len(RULES) + len(MANIFEST_RULES) + 1} gates match their samples; "
+        f"OK: {len(RULES) + len(MANIFEST_RULES) + 2} gates match their samples; "
         f"{len(RATCHETS)} ratchet counters match their expected counts."
     )
     return 0
@@ -316,6 +331,7 @@ def check_all() -> int:
     for manifest_rule in MANIFEST_RULES:
         status |= _run_manifest_rule(manifest_rule)
     status |= check_skill_refs()
+    status |= check_busy_labels()
     status |= check_ui_lateral()
     for ratchet in RATCHETS:
         status |= _run_ratchet(ratchet, False)

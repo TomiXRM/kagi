@@ -60,6 +60,10 @@ mod app_remove;
 mod app_stash;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/busy_label.rs"]
+mod busy_label;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]
 mod app_writer_admission;
 
@@ -547,6 +551,10 @@ mod macos {
             (
                 "remove_public_boundary",
                 Box::new(crate::app_remove::scenario_remove_public_boundary),
+            ),
+            (
+                "fetch_busy_label",
+                Box::new(crate::busy_label::scenario_fetch_busy_label),
             ),
             (
                 "editor_save_admission",

@@ -394,3 +394,14 @@ refusal. Compile only when PM owns E execution.
 M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
 cause is visible and no success toast appears. If recording also fails, the
 attempted failure stays visible with the recording error; it is not a success.
+
+### Busy snackbar labels (#607)
+
+G covers EN/JA labels, unknown-tag fallback, and lease-mirror settlement without
+clearing legacy plans. `uv run --project ci check-busy-labels` checks literal
+busy tags and finite operation-name producers against the label table.
+Tier A: `KAGI_GUI_E2E_ONLY=fetch_busy_label` in `tests/recovery/busy_label.rs`
+starts a local fetch through `fetch_async`, checks the renderer's snackbar text
+before completion in both languages, and checks release after completion.
+Build only when PM owns execution. For M, verify Fetch, Commit, Stash, Discard,
+branch deletion and editor Save show an operation label, never `app-writer`.

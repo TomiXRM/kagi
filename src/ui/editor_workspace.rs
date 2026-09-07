@@ -130,7 +130,7 @@ impl KagiApp {
         match event {
             EditorWorkspaceEvent::SaveRequested(request) => {
                 let repo_path = view.read(cx).repo_path.clone();
-                let Some(guard) = self.reserve_write(&repo_path, cx) else {
+                let Some(guard) = self.reserve_write("editor-save", &repo_path, cx) else {
                     return;
                 };
                 view.update(cx, |view, cx| {

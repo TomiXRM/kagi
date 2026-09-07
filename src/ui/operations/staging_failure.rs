@@ -131,7 +131,7 @@ impl KagiApp {
                 .write_lease(repo, app::LegacyBusy(self.busy_op.is_some())),
         ) {
             Ok(guard) => {
-                self.busy_op = Some("app-writer");
+                self.mark_write_busy(action.name());
                 Some(guard)
             }
             Err(error) => {

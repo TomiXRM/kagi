@@ -104,10 +104,13 @@ the CLI by spawning the real binary, MCP in-process through its JSON-RPC handler
 
 ## Not covered
 
-Multi-process oplog id assignment is still an unlocked read→write window
-(`append_oplog_receipt`); binding the response to the receipt does not fix
-concurrent numbering, it only stops a frontend from *reading back* someone
-else's entry. The plan JSON stays hand-built rather than serde-derived, since
+Multi-process oplog id assignment was an unlocked read→write window when this
+ADR was written; #568 moved root validation, id/parent assignment, sequence
+reservation and the line append inside the one stable sidecar lock, and #499
+made that tail read bounded instead of a whole-file parse. Binding the response
+to the receipt was never the fix for concurrent numbering — it only stops a
+frontend from *reading back* someone else's entry. The plan JSON stays
+hand-built rather than serde-derived, since
 `kagi-domain` must stay dependency-free. Splitting pure argument mapping from
 the Backend-dependent HEAD default was considered and skipped: one function for
 five operations, with the only Backend touch being `create-branch`'s start

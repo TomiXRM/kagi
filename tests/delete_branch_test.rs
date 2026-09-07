@@ -5,7 +5,7 @@
 //! | # | Name | What it covers |
 //! |---|------|----------------|
 //! | 1 | `test_delete_branch_merged_success` | merged branch deleted successfully |
-//! | 2 | `test_plan_delete_branch_unmerged_blocker` | unmerged branch → plan returns blocker |
+//! | 2 | `test_plan_delete_branch_unmerged_warning` | unmerged branch → warning and double confirmation |
 //! | 3 | `test_plan_delete_branch_current_branch_blocker` | current branch → plan returns blocker |
 //! | 4 | `test_plan_delete_branch_nonexistent_blocker` | non-existent branch → plan returns blocker |
 //! | 5 | `test_delete_branch_recovery_sha` | recovery string contains the tip SHA |
@@ -143,11 +143,11 @@ fn test_delete_branch_merged_success() {
 }
 
 // ────────────────────────────────────────────────────────────
-// Test 2: unmerged branch → plan returns blocker
+// Test 2: unmerged branch → warning and double confirmation
 // ────────────────────────────────────────────────────────────
 
 #[test]
-fn test_plan_delete_branch_unmerged_blocker() {
+fn test_plan_delete_branch_unmerged_warning() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -157,20 +157,20 @@ fn test_plan_delete_branch_unmerged_blocker() {
     let plan = plan_delete_branch(&repo, "unmerged").expect("plan should succeed");
 
     assert!(
-        !plan.blockers.is_empty(),
-        "unmerged branch must be a blocker, got: {:?}",
+        plan.blockers.is_empty(),
+        "unmerged branch must be confirmable, got: {:?}",
         plan.blockers
     );
 
     let msg = plan
-        .blockers
+        .warnings
         .iter()
         .map(|n| n.message_en())
         .collect::<Vec<_>>()
         .join(" ");
     assert!(
         msg.contains("unmerged") || msg.contains("not reachable"),
-        "blocker must mention unmerged/not-reachable: {}",
+        "warning must mention unmerged/not-reachable: {}",
         msg
     );
 }
@@ -497,41 +497,27 @@ fn test_delete_branch_with_duplicated_gh_config_keys() {
 // their branch and git's raw refusal was opaque)
 // ────────────────────────────────────────────────────────────
 
-/// A CLEAN linked worktree pinning the branch: the plan carries a warning
-/// (remove-then-delete), and execute removes the worktree and the branch.
+/// Clean linked worktrees also retain their checked-out branch and directory.
 #[test]
-fn clean_worktree_is_removed_then_branch_deleted() {
+fn clean_worktree_blocks_delete() {
     if !crate::test_support::run_isolated() {
         return;
     }
-    let repo = setup_repo();
-    let wt_path = repo.path.join("wt-merged");
+    let fixture = setup_repo();
+    let wt_path = fixture.path.join("wt-merged");
     git(
-        &repo.path,
+        &fixture.path,
         &["worktree", "add", wt_path.to_str().unwrap(), "merged"],
     );
-
-    let r = git2::Repository::open(&repo.path).unwrap();
-    let plan = plan_delete_branch(&r, "merged").unwrap();
-    assert!(
-        plan.blockers.is_empty(),
-        "clean worktree must not block: {:?}",
-        plan.blockers
-    );
-    assert!(
-        plan.warnings
-            .iter()
-            .any(|w| w.message_en().contains("worktree")),
-        "plan must warn about the worktree removal: {:?}",
-        plan.warnings
-    );
-
-    execute_delete_branch(&r, &plan, "merged").unwrap();
-    assert!(!wt_path.exists(), "worktree dir must be removed");
-    assert!(
-        r.find_branch("merged", git2::BranchType::Local).is_err(),
-        "branch must be deleted"
-    );
+    let repo = Repository::open(&fixture.path).unwrap();
+    let plan = plan_delete_branch(&repo, "merged").unwrap();
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        PlanNote::Branch(BranchNote::DeleteBranchCheckedOut { .. })
+    )));
+    assert!(execute_delete_branch(&repo, &plan, "merged").is_err());
+    assert!(wt_path.exists());
+    assert!(repo.find_branch("merged", git2::BranchType::Local).is_ok());
 }
 
 /// A DIRTY linked worktree blocks the plan with a readable message and
@@ -673,7 +659,7 @@ fn squash_merged_branch_is_deletable_with_a_warning() {
 }
 
 #[test]
-fn a_genuinely_unmerged_branch_is_still_blocked() {
+fn a_genuinely_unmerged_branch_requires_confirmation() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -682,11 +668,11 @@ fn a_genuinely_unmerged_branch_is_still_blocked() {
 
     let plan = plan_delete_branch(&repo, "orphan").expect("plan should succeed");
     assert!(
-        plan.blockers.iter().any(|b| matches!(
+        plan.warnings.iter().any(|b| matches!(
             b,
             PlanNote::Branch(BranchNote::DeleteUnmerged { name, .. }) if name == "orphan"
         )),
-        "an unmerged branch must still be blocked as unmerged — patch-id \
+        "an unmerged branch must require two confirmations — patch-id \
          equivalence must not become a back door to force delete. Got: {:?}",
         plan.blockers
     );
@@ -703,7 +689,7 @@ fn a_genuinely_unmerged_branch_is_still_blocked() {
 /// irreversibly, with no `-D` escape hatch in kagi. Fixture mirrors
 /// `squash_links_test.rs::a_whitespace_only_difference_is_not_a_squash_merge`.
 #[test]
-fn a_whitespace_only_difference_must_not_unblock_the_delete() {
+fn a_whitespace_only_difference_requires_two_confirmations() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -768,12 +754,12 @@ fn a_whitespace_only_difference_must_not_unblock_the_delete() {
 
     let plan = plan_delete_branch(&repo, "ws").expect("plan should succeed");
     assert!(
-        plan.blockers.iter().any(|b| matches!(
+        plan.warnings.iter().any(|b| matches!(
             b,
             PlanNote::Branch(BranchNote::DeleteUnmerged { name, .. }) if name == "ws"
         )),
         "a whitespace-only patch-id collision is NOT a squash merge — the \
-         delete must stay blocked. Got blockers: {:?}, warnings: {:?}",
+         delete must require two confirmations. Got blockers: {:?}, warnings: {:?}",
         plan.blockers,
         plan.warnings
     );
@@ -781,3 +767,506 @@ fn a_whitespace_only_difference_must_not_unblock_the_delete() {
 
 #[path = "support/isolated.rs"]
 mod test_support;
+
+// #584: the same arm transition used by Enter/button, then the public Backend.
+#[test]
+fn unmerged_armed_delete_receipt_gc_restore_and_retirement() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let tip = repo
+        .find_branch("unmerged", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .target()
+        .unwrap();
+    let loose = repo.blob(b"unreachable GC control").unwrap();
+    let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let plan = backend.plan_delete_branch("unmerged").unwrap();
+    assert!(plan.blockers.is_empty());
+    assert!(plan.warnings.iter().any(|w| matches!(
+        w,
+        PlanNote::Branch(BranchNote::DeleteUnmerged { commits: 1, .. })
+    )));
+    let mut modal = kagi::ui::modals::DeleteBranchModal {
+        owner: delete_owner(&fixture.path),
+        branch_name: "unmerged".into(),
+        plan: std::sync::Arc::new(plan),
+        error: None,
+        confirm_armed: false,
+    };
+    assert!(modal.arm_if_required());
+    assert!(repo
+        .find_branch("unmerged", git2::BranchType::Local)
+        .is_ok());
+    assert!(!modal.arm_if_required());
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &modal.plan,
+    );
+    let mut panel = kagi::ui::oplog_panel::OpLogPanel::new();
+    panel.push(kagi::ui::oplog_panel::OpLogPanel::entry_for_recording(
+        &report.recording,
+    ));
+    let entry = panel.entries().front().unwrap().clone();
+    assert_eq!(entry.id, report.recording.entry().id);
+    assert_eq!(entry.backup_refs, report.recording.entry().backup_refs);
+    assert!(matches!(
+        report.recording,
+        kagi_git::backend::recording::Recording::Appended { .. }
+    ));
+    report.result.unwrap();
+    assert_eq!(entry.backup_refs.len(), 1);
+    let reference = &entry.backup_refs[0];
+    assert_eq!(repo.find_reference(reference).unwrap().target(), Some(tip));
+    let kagi_git::oplog::OpOutcome::Success { after } = &entry.outcome else {
+        panic!("{entry:?}");
+    };
+    assert!(after.dirty.contains(&tip.to_string()));
+    let restore = after.dirty.split("; restore: ").nth(1).unwrap();
+    assert_eq!(restore, format!("git branch unmerged {reference}"));
+    git(
+        &fixture.path,
+        &["reflog", "expire", "--expire=now", "--all"],
+    );
+    git(&fixture.path, &["gc", "--prune=now"]);
+    assert!(
+        repo.find_blob(loose).is_err(),
+        "GC must actually prune unrooted objects"
+    );
+    assert!(repo.find_commit(tip).is_ok());
+    // Existing recovery command, now sourced from the persisted backup ref.
+    let persisted = kagi_git::oplog::read_oplog_tail_for_repo(&fixture.path, 10);
+    assert!(persisted
+        .iter()
+        .any(|e| e.id == entry.id && e.backup_refs == entry.backup_refs));
+    let persisted_entry = persisted.iter().find(|e| e.id == entry.id).unwrap();
+    let kagi_git::oplog::OpOutcome::Success {
+        after: persisted_after,
+    } = &persisted_entry.outcome
+    else {
+        panic!("persisted outcome");
+    };
+    let command = persisted_after.dirty.split("; restore: ").nth(1).unwrap();
+    let args = command.split_whitespace().skip(1).collect::<Vec<_>>();
+    git(&fixture.path, &args);
+    assert_eq!(
+        repo.find_branch("unmerged", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .target(),
+        Some(tip)
+    );
+    let retirement = backend.plan_forget_oplog_entry(&entry).unwrap();
+    backend
+        .execute_forget_oplog_entry(&retirement)
+        .result
+        .unwrap();
+    assert!(repo.find_reference(reference).is_err());
+    assert!(
+        repo.find_commit(tip).is_ok(),
+        "restored branch retains the commit"
+    );
+}
+
+#[test]
+fn merged_branch_confirmation_does_not_arm() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let mut modal = kagi::ui::modals::DeleteBranchModal {
+        owner: delete_owner(&fixture.path),
+        branch_name: "merged".into(),
+        plan: std::sync::Arc::new(backend.plan_delete_branch("merged").unwrap()),
+        error: None,
+        confirm_armed: false,
+    };
+    assert!(!modal.arm_if_required());
+    backend
+        .run(
+            &kagi_git::Operation::DeleteBranch {
+                name: "merged".into(),
+            },
+            &modal.plan,
+        )
+        .unwrap();
+    assert!(Repository::open(&fixture.path)
+        .unwrap()
+        .find_branch("merged", git2::BranchType::Local)
+        .is_err());
+}
+
+#[test]
+fn changed_delete_tip_is_refused_without_backup_or_deletion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let plan = backend.plan_delete_branch("unmerged").unwrap();
+    let head = repo.head().unwrap().target().unwrap();
+    repo.reference("refs/heads/unmerged", head, true, "fixture drift")
+        .unwrap();
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &plan,
+    );
+    assert!(report.result.is_err());
+    assert!(report.recording.entry().backup_refs.is_empty());
+    assert_eq!(
+        repo.find_reference("refs/heads/unmerged").unwrap().target(),
+        Some(head)
+    );
+}
+
+#[test]
+fn shared_tip_does_not_overstate_unreachable_count() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    git(&fixture.path, &["branch", "also-keeps-tip", "unmerged"]);
+    let backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let plan = backend.plan_delete_branch("unmerged").unwrap();
+    assert!(plan.warnings.iter().any(|w| matches!(
+        w,
+        PlanNote::Branch(BranchNote::DeleteUnmerged { commits: 0, .. })
+    )));
+}
+
+#[test]
+fn failed_backup_ref_creation_keeps_unmerged_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let plan = backend.plan_delete_branch("unmerged").unwrap();
+    // A file where the namespace directory must be makes exclusive creation fail.
+    std::fs::create_dir_all(repo.path().join("refs/kagi")).unwrap();
+    std::fs::write(
+        repo.path().join("refs/kagi/backups"),
+        repo.head().unwrap().target().unwrap().to_string(),
+    )
+    .unwrap();
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &plan,
+    );
+    assert!(report.result.is_err());
+    assert!(report.recording.entry().backup_refs.is_empty());
+    assert!(repo
+        .find_branch("unmerged", git2::BranchType::Local)
+        .is_ok());
+}
+
+#[test]
+fn failed_recording_keeps_branch_tip_recovery_root() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let plan = backend.plan_delete_branch("unmerged").unwrap();
+    let tip = repo
+        .find_branch("unmerged", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .target()
+        .unwrap();
+    let log = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+    std::fs::create_dir(log.join("operations.jsonl")).unwrap();
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &plan,
+    );
+    assert!(report.result.is_ok());
+    assert!(matches!(
+        report.recording,
+        kagi_git::backend::recording::Recording::Failed { .. }
+    ));
+    let entry = report.recording.entry();
+    assert_eq!(entry.backup_refs.len(), 1);
+    assert_eq!(
+        repo.find_reference(&entry.backup_refs[0]).unwrap().target(),
+        Some(tip)
+    );
+    assert!(
+        backend.read_backup(&entry.backup_refs[0]).is_err(),
+        "blob reader must not reinterpret a commit root"
+    );
+}
+
+fn delete_owner(path: &Path) -> kagi::app::Attachment {
+    let mut sessions = kagi::app::Sessions::default();
+    let session = sessions.attach(path.to_path_buf());
+    sessions.attachment(session).unwrap()
+}
+
+#[test]
+fn linked_worktree_cannot_delete_main_checked_out_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let linked = fixture.path.join("linked");
+    git(
+        &fixture.path,
+        &["worktree", "add", linked.to_str().unwrap(), "merged"],
+    );
+    let repo = Repository::open(&linked).unwrap();
+    let head = head_sha(&fixture.path);
+    let plan = plan_delete_branch(&repo, "main").unwrap();
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        PlanNote::Branch(BranchNote::DeleteBranchCheckedOut { .. })
+    )));
+    assert!(execute_delete_branch(&repo, &plan, "main").is_err());
+    assert_eq!(head_sha(&fixture.path), head);
+    assert_eq!(
+        repo.find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap()
+            .to_string(),
+        head
+    );
+}
+
+#[test]
+fn checkout_in_main_after_linked_plan_refuses_deletion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let linked = fixture.path.join("linked");
+    git(
+        &fixture.path,
+        &["worktree", "add", linked.to_str().unwrap(), "merged"],
+    );
+    let repo = Repository::open(&linked).unwrap();
+    let plan = plan_delete_branch(&repo, "unmerged").unwrap();
+    assert!(plan.blockers.is_empty());
+    git(&fixture.path, &["checkout", "-q", "unmerged"]);
+    let head = head_sha(&fixture.path);
+    assert!(execute_delete_branch(&repo, &plan, "unmerged").is_err());
+    assert_eq!(head_sha(&fixture.path), head);
+    assert!(repo.find_reference("refs/heads/unmerged").is_ok());
+}
+
+#[test]
+fn symbolic_alias_chain_is_not_an_independent_reachability_root() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    repo.reference_symbolic("refs/heads/alias", "refs/heads/unmerged", false, "alias")
+        .unwrap();
+    repo.reference_symbolic(
+        "refs/heads/alias-chain",
+        "refs/heads/alias",
+        false,
+        "alias chain",
+    )
+    .unwrap();
+    let plan = plan_delete_branch(&repo, "unmerged").unwrap();
+    assert!(plan.warnings.iter().any(|note| matches!(
+        note,
+        PlanNote::Branch(BranchNote::DeleteUnmerged { commits: 1, .. })
+    )));
+    execute_delete_branch(&repo, &plan, "unmerged").unwrap();
+    assert!(repo
+        .find_reference("refs/heads/alias-chain")
+        .unwrap()
+        .resolve()
+        .is_err());
+}
+
+#[test]
+fn deleting_branch_removes_its_reflog_before_name_reuse() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let log = repo.path().join("logs/refs/heads/merged");
+    assert!(log.exists());
+    let old = std::fs::read_to_string(&log).unwrap();
+    let plan = plan_delete_branch(&repo, "merged").unwrap();
+    execute_delete_branch(&repo, &plan, "merged").unwrap();
+    assert!(!log.exists());
+    git(&fixture.path, &["branch", "merged", "HEAD"]);
+    let new = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(new.lines().count(), 1);
+    assert_ne!(old, new);
+}
+
+#[test]
+fn main_head_lock_blocks_deletion_from_linked_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let linked = fixture.path.join("linked");
+    git(
+        &fixture.path,
+        &["worktree", "add", linked.to_str().unwrap(), "merged"],
+    );
+    let mut backend = kagi_git::Backend::open(&linked).unwrap();
+    let plan = backend.plan_delete_branch("unmerged").unwrap();
+    assert!(plan.blockers.is_empty());
+    // Model another process changing the main HEAD while the caller is linked.
+    let main = Repository::open(&fixture.path).unwrap();
+    let mut checkout = main.transaction().unwrap();
+    checkout.lock_ref("HEAD").unwrap();
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &plan,
+    );
+    assert!(report.result.is_err());
+    assert!(report.recording.entry().backup_refs.is_empty());
+    assert!(main.find_reference("refs/heads/unmerged").is_ok());
+}
+
+#[test]
+fn departed_delete_plan_releases_busy_and_revisit_can_replan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use kagi::ui::modals::DeleteBranchModal;
+    let a = setup_repo();
+    let b = setup_repo();
+    let mut sessions = kagi::app::Sessions::new();
+    let session_a = sessions.attach(a.path.clone());
+    let session_b = sessions.attach(b.path.clone());
+    let owner = sessions.attachment(session_a).unwrap();
+    let mut busy = Some("delete-branch-plan");
+    sessions.depart(session_a);
+    let current_b = sessions.attachment(session_b).unwrap();
+    assert!(
+        !DeleteBranchModal::settle_plan(&owner, Some(&current_b), false, &mut busy),
+        "A's completion may not install a modal or footer on B"
+    );
+    assert_eq!(busy, None, "departed plan must release its latch");
+    sessions.depart(session_b);
+    let revisited_a = sessions.attachment(session_a).unwrap();
+    assert!(
+        !DeleteBranchModal::settle_plan(&owner, Some(&revisited_a), true, &mut busy),
+        "the old visit cannot restore a modal on A"
+    );
+    assert_eq!(busy, None, "A must be free to re-plan");
+    busy = Some("delete-branch-plan");
+    let fresh_plan = kagi_git::Backend::open(&a.path)
+        .unwrap()
+        .plan_delete_branch("unmerged")
+        .unwrap();
+    assert!(fresh_plan.blockers.is_empty());
+    assert!(DeleteBranchModal::settle_plan(
+        &revisited_a,
+        Some(&revisited_a),
+        true,
+        &mut busy
+    ));
+    assert_eq!(busy, None);
+    busy = Some("checkout");
+    assert!(!DeleteBranchModal::settle_plan(
+        &owner,
+        Some(&current_b),
+        false,
+        &mut busy
+    ));
+    assert_eq!(
+        busy,
+        Some("checkout"),
+        "do not release an unrelated operation"
+    );
+}
+
+#[test]
+fn locked_recording_displays_attempted_partial_with_recovery_metadata() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let mut modal = kagi::ui::modals::DeleteBranchModal {
+        owner: delete_owner(&fixture.path),
+        branch_name: "unmerged".into(),
+        plan: std::sync::Arc::new(backend.plan_delete_branch("unmerged").unwrap()),
+        confirm_armed: false,
+        error: None,
+    };
+    assert!(modal.arm_if_required());
+    assert!(!modal.arm_if_required());
+    let log_dir = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+    let log_path = log_dir.join("operations.jsonl");
+    let before = std::fs::read(&log_path).unwrap_or_default();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(log_dir.join("operations.jsonl.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &modal.plan,
+    );
+    assert!(report.result.is_ok());
+    assert!(matches!(
+        report.recording,
+        kagi_git::backend::recording::Recording::Failed { .. }
+    ));
+    let attempted = report.recording.entry();
+    let mut panel = kagi::ui::oplog_panel::OpLogPanel::new();
+    panel.push(kagi::ui::oplog_panel::OpLogPanel::entry_for_recording(
+        &report.recording,
+    ));
+    let displayed = panel
+        .entries()
+        .front()
+        .expect("attempted receipt must be visible");
+    assert!(matches!(
+        displayed.outcome,
+        kagi_git::oplog::OpOutcome::Partial { .. }
+    ));
+    assert_eq!(
+        displayed.backup_refs, attempted.backup_refs,
+        "display must retain recovery roots"
+    );
+    assert_eq!(displayed.id, attempted.id);
+    assert_eq!(displayed.parent, attempted.parent);
+    assert_eq!(displayed.timestamp, attempted.timestamp);
+    assert_eq!(displayed.actor, attempted.actor);
+    assert_eq!(displayed.worktree, attempted.worktree);
+    assert_eq!(displayed.repo, attempted.repo);
+    assert_eq!(
+        std::fs::read(&log_path).unwrap_or_default(),
+        before,
+        "presentation must not retry append"
+    );
+    drop(lock);
+    let repo = Repository::open(&fixture.path).unwrap();
+    assert!(repo.find_reference(&displayed.backup_refs[0]).is_ok());
+}

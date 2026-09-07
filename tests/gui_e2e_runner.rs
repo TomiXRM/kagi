@@ -517,6 +517,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),
             (
+                "unmerged_branch_delete_armed",
+                Box::new(crate::recovery_operations::scenario_unmerged_branch_delete_armed),
+            ),
+            (
                 "modal_no_fallthrough",
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),

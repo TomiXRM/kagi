@@ -29,7 +29,6 @@ use crate::ui::types::FooterStatus;
 use crate::ui::KagiApp;
 use gpui::{Context, SharedString, Task};
 use kagi_git::backend::recording::Recording;
-use kagi_git::oplog::OpOutcome;
 use std::path::Path;
 
 /// What to do with a finished background op, decided from the join result and
@@ -208,27 +207,11 @@ impl KagiApp {
     /// append failed there is no durable trace at all, so a mutation that DID
     /// happen is presented as "changed but not recorded" — never a clean
     /// success toast (#501). A failure that changed nothing stands as it is.
-    pub(crate) fn present_recorded(
-        &mut self,
-        op: &str,
-        recording: &Recording,
-        repo_path: &Path,
-        cx: &mut Context<Self>,
-    ) {
-        let entry = recording.entry();
-        let outcome = match recording {
-            Recording::Appended { .. } => entry.outcome.clone(),
-            Recording::Failed { error, .. } => match &entry.outcome {
-                OpOutcome::Success { after }
-                | OpOutcome::Partial { after, .. }
-                | OpOutcome::Unknown { after, .. } => OpOutcome::Partial {
-                    after: after.clone(),
-                    error: format!("changed but not recorded: {error}"),
-                },
-                unchanged => unchanged.clone(),
-            },
-        };
-        self.record_op(op, entry.before.clone(), outcome, repo_path, cx);
+    pub(crate) fn present_recorded(&mut self, recording: &Recording, cx: &mut Context<Self>) {
+        // Presentation consumes the attempted receipt, never reconstructs its
+        // structured recovery/owner metadata and never retries persistence.
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        self.record_op_impl(entry, cx, false);
     }
 }
 

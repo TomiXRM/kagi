@@ -29,10 +29,7 @@ pub(crate) fn write_blob(
     content: &[u8],
 ) -> Result<DiscardBackup, GitError> {
     let oid = repo.blob(content).map_err(io)?;
-    // Ordinals avoid interpreting filenames as ref paths or revision syntax.
-    let reference = format!("{PREFIX}{operation_id}/{index}");
-    repo.reference(&reference, oid, false, "kagi mandatory recovery backup")
-        .map_err(io)?;
+    let reference = retain_object(repo, operation_id, index, oid)?;
     // Never unlink on Drop: partial mutation, unwind and failed recording must
     // retain their recovery roots. Explicit oplog retirement owns cleanup.
     Ok(DiscardBackup {
@@ -40,6 +37,19 @@ pub(crate) fn write_blob(
         blob: oid.to_string(),
         reference,
     })
+}
+
+/// Pin a blob or commit before mutation; the receipt owns its retention.
+pub(crate) fn retain_object(
+    repo: &Repository,
+    operation_id: &str,
+    index: usize,
+    oid: git2::Oid,
+) -> Result<String, GitError> {
+    let reference = format!("{PREFIX}{operation_id}/{index}");
+    repo.reference(&reference, oid, false, "kagi mandatory recovery backup")
+        .map_err(io)?;
+    Ok(reference)
 }
 
 pub(crate) fn validate_reference(reference: &str) -> Result<(), GitError> {

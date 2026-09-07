@@ -226,5 +226,11 @@ pub enum OperationOutcome {
     },
     /// A PR review suggestion applied to the working tree (#351).
     Suggestion(SuggestionOutcome),
+    /// Deleted branch tip retained by a mandatory commit recovery ref (#584).
+    DeleteBranch {
+        name: String,
+        tip: String,
+        reference: String,
+    },
     Unit,
 }

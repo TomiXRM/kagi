@@ -98,7 +98,13 @@ pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogP
         let oid = reference
             .target()
             .ok_or_else(|| io("backup ref is symbolic"))?;
-        repo.find_blob(oid).map_err(io)?;
+        let object = repo.find_object(oid, None).map_err(io)?;
+        if !matches!(
+            object.kind(),
+            Some(git2::ObjectType::Blob | git2::ObjectType::Commit)
+        ) {
+            return Err(io("backup is neither a blob nor a commit"));
+        }
         refs.push((name.clone(), oid));
     }
     Ok(ForgetOplogPlan {
@@ -218,7 +224,13 @@ pub(super) fn validate_append_roots(entry: &OpLogEntry) -> Result<(), GitError> 
         let oid = reference
             .target()
             .ok_or_else(|| io("backup ref is symbolic"))?;
-        repo.find_blob(oid).map_err(io)?;
+        let object = repo.find_object(oid, None).map_err(io)?;
+        if !matches!(
+            object.kind(),
+            Some(git2::ObjectType::Blob | git2::ObjectType::Commit)
+        ) {
+            return Err(io("backup is neither a blob nor a commit"));
+        }
     }
     Ok(())
 }

@@ -1558,7 +1558,7 @@ impl Backend {
     pub fn list_merged_prs(
         &self,
         limit: usize,
-    ) -> Result<Vec<kagi_domain::github::PullRequest>, GitError> {
+    ) -> Result<Vec<kagi_domain::github::PullRequest>, crate::github::PrFetchError> {
         crate::github::list_merged_prs(&self.path, limit)
     }
 

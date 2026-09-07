@@ -435,6 +435,13 @@ impl KagiApp {
         self.github_prs.clear();
         self.github_prs_for = None;
         self.github_prs_epoch = self.github_prs_epoch.wrapping_add(1);
+        // #506: the previous repo's fetch verdict says nothing about this one.
+        self.github_error = None;
+        self.github_unavailable = false;
+        // Merged-PR evidence is per repo too, and now that a failed fetch keeps
+        // the previous list it must not survive a tab switch.
+        self.cleanup_prs.clear();
+        self.cleanup_prs_stale = false;
         self.pr_menu = None;
         self.diff_caches.clear();
         self.wip_diffstat = None;

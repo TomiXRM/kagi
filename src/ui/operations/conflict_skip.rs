@@ -40,7 +40,7 @@ impl KagiApp {
             }
         };
         let op_name = format!("{}-skip", mode.session.op.slug());
-        let Some(guard) = self.reserve_write(&repo_path, cx) else {
+        let Some(guard) = self.reserve_write("conflict-skip", &repo_path, cx) else {
             return;
         };
 

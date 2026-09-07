@@ -69,10 +69,17 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## Settings (`settings.json`) rules
 
-- Settings live in `src/ui/settings.rs`, parsed with `serde_json` into the typed
-  `Settings` struct (issue #13 P4 / ADR-0091). On disk it stays a **flat object of
-  string values** (`"auto_fetch": "true"`, `"ui_zoom": "1000"`) — keep writing strings
-  so existing settings files load.
+- Settings live in `crates/kagi-ui-core/src/settings/`, parsed with `serde_json` into
+  the typed `Settings` struct (issue #13 P4 / ADR-0091). On disk it stays a **flat
+  object of string values** (`"auto_fetch": "true"`, `"ui_zoom": "1000"`) — keep
+  writing strings so existing settings files load.
+- `settings/store.rs` is the **only** owner of read-modify-write (#491 / ADR-0188):
+  the parsed document lives in a process-global store, saves are a same-directory
+  temp file + rename, and a `settings.json` that doesn't parse is moved aside to an
+  exclusively reserved `settings.json.corrupt[.N]` instead of being overwritten by
+  an empty default. Never add a second `fs::write` path to `settings.json`. Only a
+  *repeated* write of the same key coalesces (a divider drag); every other write
+  lands immediately. Any new process-exit path must call `settings::flush()`.
 - `write_setting` round-trips the **whole object**, so unknown keys are preserved — no
   `SETTINGS_KEYS` array to maintain, and adding a key needs no registration.
 - Prefer the typed `Settings` accessors (`Settings::load().theme()` / `ui_zoom_permille()`
@@ -183,3 +190,13 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   seven days in every worktree: `cargo sweep --time 7` (requires cargo-sweep).
   Do not routinely clean a worktree target; clean-build benchmarks need an idle
   build window and destroy reusable build artifacts.
+
+## Code Review Rules
+
+### Review language
+
+- Write all user-facing Codex GitHub code-review comments in Japanese.
+- Keep code identifiers, commands, file paths, and established technical terms
+  in English where that is clearer.
+- Write findings, follow-up replies, and approval or no-finding summaries in
+  Japanese.

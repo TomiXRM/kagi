@@ -88,6 +88,7 @@ impl Backend {
             &plan.current,
             outcome,
             backup_refs,
+            recording::recovery_handles(&result),
         );
         recording::RunReport {
             result,
@@ -183,6 +184,7 @@ impl Backend {
         if let Err(e) = preflight {
             if stash::StashAction::from_operation(op).is_some() {
                 evidence.preflight_error = Some(e.to_string());
+                evidence.preflight_note = e.blocker().cloned();
                 evidence.stop = Some(stash::StashStopReason::Preflight);
             }
             // ADR-0149: a preflight refusal is still a failed attempt — record

@@ -130,11 +130,13 @@ impl KagiApp {
             // Merged PRs ride along on the same background thread. The rows are
             // branches that are already merged, so their PRs are never in the
             // sidebar's *open* list — the two questions need two calls. Empty
-            // when `gh` is unavailable, which just leaves the columns blank.
+            // when `gh` is unavailable, which just leaves the columns blank;
+            // a *failed* fetch stays an error (#506) so the blank column is
+            // never read as "this branch was merged without a PR".
             let prs = if kagi_git::github::gh_available() {
-                backend.list_merged_prs(MERGED_PR_LIMIT).unwrap_or_default()
+                backend.list_merged_prs(MERGED_PR_LIMIT)
             } else {
-                Vec::new()
+                Ok(Vec::new())
             };
             Ok::<_, String>((rows, prs))
         });
@@ -151,7 +153,17 @@ impl KagiApp {
                 app.cleanup_scanning = false;
                 match result {
                     Ok((rows, prs)) => {
-                        app.cleanup_prs = prs;
+                        // #506: keep the last good PR evidence when the fetch
+                        // failed, and say so — an empty column must not pass
+                        // for "fetched fine, no PR".
+                        let fetched = kagi_git::github::apply_pr_fetch(&mut app.cleanup_prs, prs);
+                        app.cleanup_prs_stale = match &fetched.error {
+                            Some(e) if !e.is_unavailable() => {
+                                klog!("branch-cleanup: pr evidence stale: {}", e);
+                                true
+                            }
+                            _ => false,
+                        };
                         // Drop ticks for branches that are no longer listed:
                         // a stale name would either do nothing or, worse,
                         // match a re-created branch the user never ticked.
@@ -664,6 +676,13 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 .child(SharedString::from(format!("{}", rows.len()))),
         )
         .child(div().flex_1())
+        // #506: the PR column is last-known data, not this scan's answer.
+        .children(app.cleanup_prs_stale.then(|| {
+            div()
+                .text_xs()
+                .text_color(rgb(theme().color_warning))
+                .child(SharedString::from(Msg::CleanupPrEvidenceStale.t()))
+        }))
         .children(bulk_button)
         .child(copy_all_button)
         .child(close_button);

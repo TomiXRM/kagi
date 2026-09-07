@@ -19,6 +19,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
+use kagi_domain::plan_note::{PlanNote, StashNote};
 use kagi_git::{Backend, CommitId, Head, Operation, OperationOutcome};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -120,11 +121,9 @@ fn run_rejects_stale_stash_plan() {
     let err = backend
         .run(&op, &plan)
         .expect_err("run must refuse a stash plan whose stash list shifted");
-    let msg = format!("{:?}", err);
     assert!(
-        msg.contains("Stash list changed"),
-        "expected the stash preflight error, got: {}",
-        msg
+        matches!(err.blocker(), Some(PlanNote::Stash(StashNote::ListChanged))),
+        "expected the typed stash-list preflight blocker, got: {err:?}"
     );
 
     // Nothing was applied: both stashes are still there and the WT is clean.

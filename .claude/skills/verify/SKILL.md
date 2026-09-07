@@ -61,6 +61,16 @@ The current suite covers:
 - modal and branch-menu Enter isolation from the selected commit checkout;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 
+For worktree-decorated branch checkout, scope
+`KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual
+branch-name hitbox, then dispatches selected-commit checkout after reselecting
+the row. On a clean fixture both plans must resolve the undecorated branch and
+show the typed other-worktree occupancy blocker. Enter must not change either
+worktree's HEAD/index/files; no untracked-file warning may mask auto-execution.
+The existing tree-glyph navigation checks still run. Backend regressions in
+`tests/ops_test.rs` cover main/linked occupancy, occupancy arising after approval,
+and successful checkout after the sibling detaches.
+
 App keybindings, command-registry keybindings, and native menus share their
 installation path with `run_app`; component initialization must precede that
 installation so app bindings keep the same precedence. For menu/Enter routing,
@@ -358,3 +368,40 @@ source and non-HEAD target, including another-worktree occupancy and changed tip
 M: drop a remote chip onto a non-HEAD local row; the plan must show its full ref,
 OID and EN/JA last-fetch warning. Confirm that no local source branch is created
 and no fetch occurs; fetch explicitly beforehand when current remote data is needed.
+
+For a checked-out destination in another worktree, scope
+`KAGI_GUI_E2E_ONLY=cross_worktree_merge`. It drags the fetched remote graph chip
+onto the linked-worktree branch name, checks tab opening/reuse, cancellation,
+late-plan suppression, dirty-editor discard/cancel and external destination
+branch drift. Enter then performs a normal two-parent HEAD merge in the linked
+worktree; its index/files and receipt must agree, while the dirty parent stays
+unchanged. The scenario unmounts its window. Backend coverage in
+`tests/drag_merge_test.rs` also rejects fresh and stale plans against a dirty
+linked destination without touching either worktree.
+
+### Staging failure delivery (#490)
+
+G: `cargo test -p kagi --lib staging_failure` uses real index.lock and oplog
+sidecar lock fixtures in isolated children; it compares single/batch failure
+details in EN/JA and checks that trust refusal records without requesting a modal.
+Use a fresh KAGI_LOG_DIR as with all cargo tests.
+
+Tier A filter: `KAGI_GUI_E2E_ONLY=stage_failure_notice`. The scenario covers editor
+paths, panel file indices and batch buttons under index.lock, including a linked
+worktree panel while the main tab remains active. It asserts footer + notice +
+oplog, the actual owning repo/path, unchanged indexes and no modal on admission
+refusal. Compile only when PM owns E execution.
+M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
+cause is visible and no success toast appears. If recording also fails, the
+attempted failure stays visible with the recording error; it is not a success.
+
+### Busy snackbar labels (#607)
+
+G covers EN/JA labels, unknown-tag fallback, and lease-mirror settlement without
+clearing legacy plans. `uv run --project ci check-busy-labels` checks literal
+busy tags and finite operation-name producers against the label table.
+Tier A: `KAGI_GUI_E2E_ONLY=fetch_busy_label` in `tests/recovery/busy_label.rs`
+starts a local fetch through `fetch_async`, checks the renderer's snackbar text
+before completion in both languages, and checks release after completion.
+Build only when PM owns execution. For M, verify Fetch, Commit, Stash, Discard,
+branch deletion and editor Save show an operation label, never `app-writer`.

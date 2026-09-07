@@ -453,5 +453,65 @@ fn partial_discard_maps_to_partial_outcome() {
     ));
 }
 
+// ── #500: recovery material is recorded typed, not only as prose ──
+
+/// Each family the issue names maps to its own typed handle. MUTATION GUARD:
+/// dropping any arm here leaves that family recoverable only by parsing the
+/// English `after.dirty` sentence, which is the bug.
+#[test]
+fn recovery_handles_cover_every_family() {
+    use kagi_git::oplog::recovery;
+    use kagi_git::{recovery_handles, DiscardBackup};
+
+    let ok = |o: OperationOutcome| -> Result<OperationOutcome, kagi_git::GitError> { Ok(o) };
+    let sha = |c: char| c.to_string().repeat(40);
+
+    let savepoint = recovery_handles(&ok(OperationOutcome::RestoreSnapshot {
+        savepoint: sha('a'),
+    }));
+    assert_eq!(savepoint.len(), 1);
+    assert_eq!(savepoint[0].kind, recovery::SAVEPOINT);
+    assert_eq!(savepoint[0].oid, sha('a'));
+
+    let stash = recovery_handles(&ok(OperationOutcome::StashDrop { oid: sha('b') }));
+    assert_eq!(stash[0].kind, recovery::STASH);
+    assert_eq!(stash[0].oid, sha('b'));
+
+    let deleted = recovery_handles(&ok(OperationOutcome::DeleteBranch {
+        name: "feature".into(),
+        tip: sha('c'),
+        reference: "refs/kagi/backups/attempt/0".into(),
+    }));
+    assert_eq!(deleted[0].kind, recovery::BRANCH_TIP);
+    assert_eq!(deleted[0].oid, sha('c'));
+    assert_eq!(
+        deleted[0].reference.as_deref(),
+        Some("refs/kagi/backups/attempt/0")
+    );
+
+    // A PARTIAL discard is still `Ok` (#281) so the backups are never dropped;
+    // its path→blob map must be typed too, awkward path and all.
+    let partial = recovery_handles(&ok(OperationOutcome::Discard(DiscardOutcome {
+        backups: vec![DiscardBackup {
+            path: "dir=x, y/ファイル.txt".into(),
+            blob: sha('d'),
+            reference: "refs/kagi/backups/attempt/1".into(),
+        }],
+        unverified: vec!["other.txt".into()],
+        error: Some("write failed".into()),
+    })));
+    assert_eq!(partial[0].kind, recovery::FILE_BACKUP);
+    assert_eq!(partial[0].path.as_deref(), Some("dir=x, y/ファイル.txt"));
+    assert_eq!(partial[0].oid, sha('d'));
+    assert_eq!(
+        partial[0].reference.as_deref(),
+        Some("refs/kagi/backups/attempt/1")
+    );
+
+    // A failed attempt claims nothing: its roots, if any, are `backup_refs`.
+    assert!(recovery_handles(&Err(kagi_git::GitError::Other("boom".into()))).is_empty());
+    assert!(recovery_handles(&ok(OperationOutcome::Unit)).is_empty());
+}
+
 #[path = "support/isolated.rs"]
 mod test_support;

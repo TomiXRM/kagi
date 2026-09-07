@@ -209,7 +209,7 @@ impl PullRecovery {
                 "Pull is non-destructive: fast-forward and clean merges do not lose work.\n\
                  Dirty working-tree paths are checked against the fetched update before checkout.\n\
                  If the merge would conflict or overwrite dirty paths, execute is blocked and the repo remains untouched.\n\
-                 To undo a merge commit after execution:\n  git reset --hard HEAD~1\n\
+                 To undo a merge commit after execution without rewriting history:\n  git revert -m 1 HEAD\n\
                  The reflog records every HEAD movement:\n  git reflog"
                     .to_string()
             }
@@ -444,9 +444,10 @@ mod tests {
             "Pull is non-destructive: fast-forward and clean merges do not lose work.\n\
              Dirty working-tree paths are checked against the fetched update before checkout.\n\
              If the merge would conflict or overwrite dirty paths, execute is blocked and the repo remains untouched.\n\
-             To undo a merge commit after execution:\n  git reset --hard HEAD~1\n\
+             To undo a merge commit after execution without rewriting history:\n  git revert -m 1 HEAD\n\
              The reflog records every HEAD movement:\n  git reflog"
         );
+        assert!(!PullRecovery::Pull.message_en().contains("reset --hard"));
     }
 
     #[test]

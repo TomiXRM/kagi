@@ -138,7 +138,12 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        let footer = if let Some(error) = &report.evidence.preflight_error {
+        let footer = if let Some(note) = &report.evidence.preflight_note {
+            i18n::op_failed(
+                i18n::Op::Preflight,
+                kagi_ui_core::i18n::plan_note_text(note),
+            )
+        } else if let Some(error) = &report.evidence.preflight_error {
             i18n::op_failed(i18n::Op::Preflight, error)
         } else if !report.evidence.conflicts.is_empty() {
             format!("{}: {}", name, Msg::StashPopConflictedKept.t())
@@ -182,6 +187,7 @@ impl KagiApp {
     /// Reserve and mirror in the same UI turn, before any writer dispatch.
     pub(crate) fn reserve_write(
         &mut self,
+        name: &'static str,
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
@@ -192,7 +198,7 @@ impl KagiApp {
                 .write_lease(path, LegacyBusy(self.busy_op.is_some())),
         ) {
             Ok(guard) => {
-                self.busy_op = Some("app-writer");
+                self.mark_write_busy(name);
                 Some(guard)
             }
             Err(error) => {
@@ -210,9 +216,11 @@ impl KagiApp {
         }
     }
     pub(crate) fn refresh_write_busy(&mut self) {
-        if self.busy_op == Some("app-writer") && !self.app_sessions.has_leases() {
-            self.busy_op = None;
-        }
+        super::super::busy::settle_write_busy(
+            &mut self.busy_op,
+            &mut self.write_busy_op,
+            self.app_sessions.has_leases(),
+        );
     }
     pub(crate) fn dispatch_job(&mut self, approved: Approved, cx: &mut Context<Self>) {
         let (name, label) = match &approved.prepared {
@@ -261,12 +269,7 @@ impl KagiApp {
                 return;
             }
         };
-        let busy = if name == "remove-worktree" {
-            name
-        } else {
-            "app-writer"
-        };
-        self.busy_op = Some(busy);
+        self.mark_write_busy(name);
         if name.starts_with("conflict-") {
             if let Some(conflict) = self.conflict.clone() {
                 conflict.update(cx, |view, cx| {
@@ -316,9 +319,7 @@ impl KagiApp {
             let completion = task.await;
             let _ = this.update(cx, |app, cx| {
                 let deliveries = app::apply(&mut app.app_sessions, completion);
-                if !app.app_sessions.has_leases() && app.busy_op == Some(busy) {
-                    app.busy_op = None;
-                }
+                app.refresh_write_busy();
                 if name.starts_with("conflict-") {
                     if let Some(conflict) = app.conflict.clone() {
                         conflict.update(cx, |view, cx| {
@@ -649,9 +650,7 @@ impl KagiApp {
         for delivery in self.app_sessions.drain_abandoned() {
             self.deliver_app_result(delivery, cx);
         }
-        if !self.app_sessions.has_leases() && self.busy_op == Some("remove-worktree") {
-            self.busy_op = None;
-        }
+        self.refresh_write_busy();
         // The reload-time attempt may be deferred by an active modal. Retry
         // before queued notices are presented so the fresh drop confirmation
         // is not stranded after its conflict has been continued.

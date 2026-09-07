@@ -171,8 +171,12 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         } else {
                             theme().text_muted
                         }))
+                        // #506: three different empty screens — a failed fetch,
+                        // a repo with no GitHub remote, and a real empty inbox.
                         .child(SharedString::from(if app.github_error.is_some() {
                             Msg::PrFetchFailed.t()
+                        } else if app.github_unavailable {
+                            Msg::PrGithubUnavailable.t()
                         } else {
                             Msg::PrPaneEmpty.t()
                         })),
@@ -187,6 +191,30 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .child(refresh_button(cx)),
         );
     } else {
+        // #506: the list survived a failed fetch, so it is last-known data —
+        // say so above the tiles instead of showing it as fresh.
+        if let Some(detail) = app.github_error.clone() {
+            body = body.child(
+                div()
+                    .px_4()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme().color_warning))
+                            .child(SharedString::from(Msg::PrFetchStale.t())),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(detail),
+                    ),
+            );
+        }
         body = body.child(render_tiles(&buckets));
     }
 

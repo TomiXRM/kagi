@@ -231,6 +231,22 @@ fn test_amend_message_only() {
     let plan = plan_amend(&repo, AmendMode::MessageOnly, Some("reworded message")).unwrap();
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
     assert!(plan.destructive, "amend plan must be destructive");
+    let recovery = plan.recovery.as_ref().expect("amend recovery");
+    assert_eq!(
+        recovery.commands,
+        vec![
+            format!("git reset --soft {}", &old_sha[..8]),
+            "git reflog".to_string(),
+        ]
+    );
+    assert!(
+        recovery
+            .commands
+            .iter()
+            .all(|command| !command.contains("reset --hard")),
+        "structured recovery commands must preserve the worktree: {:?}",
+        recovery.commands
+    );
     // SHA-change must be spelled out in the predicted line (旧 <short>).
     let predicted = format!("{} {}", plan.predicted.head, plan.predicted.dirty);
     assert!(

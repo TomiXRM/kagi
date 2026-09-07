@@ -14,6 +14,7 @@ pub mod badges;
 pub mod blocking_ops;
 pub mod branch_cleanup;
 pub mod branch_menu;
+mod busy;
 pub mod button_style;
 pub mod command_palette;
 pub mod commands;
@@ -398,33 +399,6 @@ const ROW_H_COMPACT: f32 = 22.0; // 18.0 * 1.2 (keeps compact:full ratio)
 #[inline]
 fn row_height(compact: bool) -> f32 {
     theme::scaled(if compact { ROW_H_COMPACT } else { ROW_H_FULL })
-}
-
-/// Friendly present-progressive label for the busy snackbar, keyed by the
-/// `busy_op` tag set when an async op starts.
-fn busy_label(op: &str) -> String {
-    let s = match op {
-        "merge-plan" => "Planning merge…",
-        "merge" => "Merging…",
-        "pull" => "Pulling…",
-        "push" => "Pushing…",
-        "fetch" => "Fetching…",
-        "commit" => "Committing…",
-        "amend" => "Amending commit…",
-        "checkout" => "Checking out…",
-        "cherry-pick" => "Cherry-picking…",
-        "revert" => "Reverting…",
-        "discard" => "Discarding…",
-        "stash" => "Stashing…",
-        "stash-pop" => "Applying stash…",
-        "stash-drop" => "Dropping stash…",
-        "create-worktree" => "Creating worktree…",
-        "delete-branch" => "Deleting branch…",
-        "rename-branch" => "Renaming branch…",
-        "set-upstream" => "Setting upstream…",
-        other => return format!("{other}…"),
-    };
-    s.to_string()
 }
 
 use branch_menu::{
@@ -1227,6 +1201,10 @@ pub struct KagiApp {
     /// Last `gh pr list` failure, cleared by the next success. Rendered by the
     /// PR home screen so a failed fetch is not shown as an empty inbox.
     pub github_error: Option<SharedString>,
+    /// #506: this repository has no GitHub remote (`PrFetchError::Unavailable`).
+    /// A defined "nothing to show" state — distinct from `github_error`, which
+    /// means "we could not find out" and keeps the previous list.
+    pub github_unavailable: bool,
     /// Bumped whenever `github_prs` changes — folded into the sidebar rows
     /// fingerprint so the list rebuilds exactly when the data does.
     pub github_prs_epoch: u64,
@@ -1250,6 +1228,7 @@ pub struct KagiApp {
     /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
     /// and new plan modals are refused so operations never overlap.
     pub busy_op: Option<&'static str>,
+    write_busy_op: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
@@ -1398,6 +1377,10 @@ pub struct KagiApp {
     /// branch for the PR / author columns. App-level like the pane's own open
     /// flag; empty when `gh` is unavailable.
     pub cleanup_prs: Vec<kagi_domain::github::PullRequest>,
+    /// #506: the last merged-PR fetch failed, so `cleanup_prs` is the previous
+    /// scan's data. Without this an empty PR column read as "this branch has no
+    /// pull request" when the truth was "we could not ask".
+    pub cleanup_prs_stale: bool,
     /// Branch names ticked in the cleanup table. Deleting "the selected ones"
     /// is the middle ground between the bulk button and the per-row trash
     /// (user request).
@@ -1558,12 +1541,14 @@ impl KagiApp {
             github_prs_for: None,
             transport_holds: Default::default(),
             github_error: None,
+            github_unavailable: false,
             github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
             pr_mode: None,
             pr_menu: None,
             busy_op: None,
+            write_busy_op: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),
             modal_replan_gen: 0,
@@ -1606,6 +1591,7 @@ impl KagiApp {
             cleanup_gen: 0,
             cleanup_scanning: false,
             cleanup_prs: Vec::new(),
+            cleanup_prs_stale: false,
             cleanup_selected: std::collections::HashSet::new(),
             squash_gen: 0,
             scans_stale: true,
@@ -3462,6 +3448,12 @@ pub fn run_app(app_state: KagiApp) {
             })
             .detach();
         }
+
+        // #491: settings writes coalesce, so the tail of a burst (a divider
+        // drag, or the window_size write above) can still be in memory at quit.
+        // Registered last, and unconditionally — headless persists themes too.
+        cx.on_app_quit(|_cx| async move { settings::flush() })
+            .detach();
 
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);

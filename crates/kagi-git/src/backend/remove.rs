@@ -2,7 +2,7 @@
 use super::recording::finalize as record;
 pub use super::recording::Recording;
 use super::*;
-use crate::oplog::{Actor, OpLogEntry, OpOutcome};
+use crate::oplog::{recovery, Actor, OpLogEntry, OpOutcome, RecoveryHandle};
 use kagi_domain::remove::{RemoveFaultPoint, RemoveProgress};
 use kagi_domain::remove::{RepoId, WorktreeId};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -256,6 +256,18 @@ impl Backend {
             .backups
             .iter()
             .map(|b| b.reference.clone())
+            .collect();
+        // #500: the same handles `recovery_after` renders into prose, as data.
+        entry.recovery = progress
+            .backups
+            .iter()
+            .map(|b| RecoveryHandle::file(&b.path, &b.blob, Some(b.reference.clone())))
+            .chain(
+                progress
+                    .branch_tip
+                    .as_ref()
+                    .map(|tip| RecoveryHandle::oid(recovery::BRANCH_TIP, &tip.0)),
+            )
             .collect();
         entry.actor = actor;
         entry.worktree = Some(plan.target.display().to_string());

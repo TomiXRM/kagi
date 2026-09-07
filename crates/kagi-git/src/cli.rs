@@ -8,15 +8,21 @@
 //!   into a shell string.
 //! - `GIT_TERMINAL_PROMPT=0` and `LC_ALL=C` environment variables set on every
 //!   invocation so authentication prompts never hang the process.
-//! - A 60-second timeout implemented by polling `try_wait`; on timeout the child
-//!   is killed and reaped so no `git` process or pipe-reader thread leaks
-//!   (issue #294).
+//! - A 60-second deadline; on expiry the child is killed and reaped so no `git`
+//!   process or pipe-reader thread leaks (issue #294), and the caller gets
+//!   [`GitError::TerminationUnknown`] rather than something that reads like an
+//!   exit (issue #507).
 //! - Config hardening: [`HARDENING_ARGS`] plus [`repo_local_overrides`] are
 //!   injected as `-c KEY=VALUE` *before* the subcommand so a hostile
 //!   `.git/config` cannot turn `git status`/`git fetch` into code execution
 //!   (issue #290).
 //! - [`check_operand`]: call sites validate remote/ref names read back from the
 //!   repository, and pass `--` before positional operands (issue #291).
+//!
+//! The machinery itself lives in [`crate::proc`]: **the** subprocess runner for
+//! the whole codebase (`git`, `ssh`, worktree `command` steps, the message-gen
+//! CLIs — issue #507). One owner for the child, its three pipes and its
+//! deadline; no caller polls `try_wait` or reads a pipe itself.
 //!
 //! # Usage
 //!
@@ -28,7 +34,9 @@
 //! ```
 
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::proc::run_child;
 
 use super::GitError;
 
@@ -213,118 +221,49 @@ pub fn gh_command() -> std::process::Command {
 ///
 /// # Errors
 ///
-/// Returns [`GitError::Other`] when:
-/// - The `git` binary is not found or fails to start.
-/// - The operation times out after 60 seconds.
+/// Returns [`GitError::Other`] when the `git` binary is not found or fails to
+/// start (nothing ran), and [`GitError::TerminationUnknown`] when the 60-second
+/// deadline expires — the wait was cut short, which is not proof the operation
+/// did not happen (issue #507).
 pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError> {
-    use std::io::Read;
-    use std::process::Stdio;
-
     let mut full: Vec<&str> = HARDENING_ARGS.to_vec();
     let local = repo_local_overrides(repo_dir);
     full.extend_from_slice(&local);
     full.extend_from_slice(args);
 
     let mut cmd = git_command(repo_dir);
-    cmd.args(&full)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(&full);
 
-    let mut child = cmd
-        .spawn()
+    let run = run_child(&mut cmd, Duration::from_secs(GIT_CLI_TIMEOUT_SECS), None)
         .map_err(|e| GitError::Other(format!("failed to start git {}: {}", args.join(" "), e)))?;
 
-    // Drain stdout and stderr on dedicated threads so a child that fills a pipe
-    // buffer can never deadlock while we wait for it to exit (issue #294): the
-    // readers keep draining regardless of what the wait loop is doing.
-    let mut out_pipe = child.stdout.take();
-    let mut err_pipe = child.stderr.take();
-    let out_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(p) = out_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf);
-        }
-        buf
-    });
-    let err_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(p) = err_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    // Wait for the child, killing and reaping it on timeout so no git process
-    // leaks (issue #294). Killing closes the pipes, which unblocks the two
-    // reader threads so they can be joined cleanly.
-    let Some(status) = wait_or_kill(&mut child, Duration::from_secs(GIT_CLI_TIMEOUT_SECS)) else {
-        let _ = out_reader.join();
-        let _ = err_reader.join();
+    // A deadline that expires is not an exit: `git push` may already have moved
+    // the remote. Keep it a `TerminationUnknown` so the app records `Unknown`
+    // and never auto-retries (ADR-0177).
+    let status = run
+        .status
+        .clone()
+        .map_err(|stop| GitError::TerminationUnknown(format!("git {} {}", args.join(" "), stop)))?;
+    // Exit 0 with a truncated capture is not a successful read: the caller
+    // parses this output. Unknown, not success and not a plain failure.
+    if let Err(io) = &run.io {
         return Err(GitError::TerminationUnknown(format!(
-            "git {} timed out after {}s",
-            args.join(" "),
-            GIT_CLI_TIMEOUT_SECS
+            "git {}: {io}",
+            args.join(" ")
         )));
-    };
-
-    let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
-    let stderr = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
+    }
 
     Ok(GitCliOutput {
-        status: status.code().unwrap_or(-1),
-        stdout,
-        stderr,
+        status,
+        stdout: run.stdout_lossy(),
+        stderr: run.stderr_lossy(),
     })
-}
-
-/// Wait up to `timeout` for `child` to exit, polling `try_wait`.
-///
-/// Returns `Some(status)` if it exits in time. On timeout (or a `try_wait`
-/// error) the child is **killed and reaped** and `None` is returned, so a hung
-/// `git` process never leaks (issue #294). The reap is bounded — after a kill,
-/// the child exits promptly — so this never blocks indefinitely.
-pub(crate) fn wait_or_kill(
-    child: &mut std::process::Child,
-    timeout: Duration,
-) -> Option<std::process::ExitStatus> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            // Timed out, or try_wait failed: kill and reap.
-            _ => {
-                let _ = child.kill();
-                // Bounded reap: the child exits promptly once killed.
-                for _ in 0..200 {
-                    match child.try_wait() {
-                        Ok(Some(_)) | Err(_) => break,
-                        Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-                    }
-                }
-                return None;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Command, Stdio};
-
-    /// True if `pid` is still a live (un-reaped) process.
-    fn pid_alive(pid: u32) -> bool {
-        Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
+    use std::process::Command;
 
     /// `Command::get_envs` yields `(key, Some(val))` for each `.env(...)`.
     fn has_env(cmd: &Command, key: &str, val: &str) -> bool {
@@ -346,37 +285,5 @@ mod tests {
             has_env(&gh, "GIT_ADVICE", "0"),
             "gh subprocess must set GIT_ADVICE=0"
         );
-    }
-
-    #[test]
-    fn wait_or_kill_kills_and_reaps_on_timeout() {
-        // A child that would otherwise run for 30s.
-        let mut child = Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("spawn sleep");
-        let pid = child.id();
-        assert!(pid_alive(pid), "sleep should be running before the timeout");
-
-        let start = Instant::now();
-        let result = wait_or_kill(&mut child, Duration::from_millis(200));
-
-        assert!(result.is_none(), "a timed-out child returns None");
-        assert!(
-            start.elapsed() < Duration::from_secs(5),
-            "wait_or_kill must return promptly, not wait out the full sleep"
-        );
-        // The kill()+reap() must have taken effect: the pid is gone.
-        assert!(
-            !pid_alive(pid),
-            "child process leaked: kill()/reap() did not run (issue #294)"
-        );
-    }
-
-    #[test]
-    fn wait_or_kill_returns_status_for_fast_child() {
-        let mut child = Command::new("true").spawn().expect("spawn true");
-        let status = wait_or_kill(&mut child, Duration::from_secs(5));
-        assert_eq!(status.and_then(|s| s.code()), Some(0));
     }
 }

@@ -561,7 +561,7 @@ pub fn plan_amend(
             Vec::new()
         } else {
             vec![
-                format!("git reset --hard {}", old_short),
+                format!("git reset --soft {}", old_short),
                 "git reflog".to_string(),
             ]
         },

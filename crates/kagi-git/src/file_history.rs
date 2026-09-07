@@ -18,12 +18,20 @@
 //!
 //! # Robust parsing
 //!
-//! A single `git log` invocation is used with explicit record / field
-//! separators so the free-form commit body cannot corrupt parsing:
+//! A single `git log` invocation is used with **NUL**-delimited fields so the
+//! free-form commit subject and body cannot corrupt parsing (issue #508,
+//! ADR-0186):
 //!
-//! - Records are separated by `\x1e` (ASCII record separator).
-//! - The leading metadata fields are separated by `\x1f` (ASCII unit
-//!   separator).
+//! - NUL is the only byte a commit object cannot carry — `git commit` and
+//!   `git commit-tree` refuse a message containing one, and
+//!   `git hash-object -w` / `git fsck` reject such an object (`nulInCommit`).
+//!   The ASCII record/unit separators used before are perfectly legal in a
+//!   commit message, so a crafted body could forge a whole history row.
+//! - Each record starts with a NUL and carries [`LOG_FIELDS`] NUL-terminated
+//!   metadata fields; the `--raw`/`--numstat` trailer git appends after the
+//!   format is closed by the *next* record's leading NUL.  So every commit
+//!   contributes exactly [`LOG_CHUNKS`] NUL-separated chunks and the parser
+//!   takes them in fixed groups.
 //! - `--raw` and `--numstat` are requested together.  `--raw` supplies the
 //!   change-type letter (`A`/`M`/`D`/`R###`/`C###`) and clean tab-separated
 //!   paths, while `--numstat` supplies the insertion/deletion counts (`-`
@@ -66,18 +74,26 @@ pub use kagi_domain::file_history::{
 };
 
 // ────────────────────────────────────────────────────────────
-// Record / field separators (must match the --format string).
+// Record / field delimiter (must match the --format string).
 // ────────────────────────────────────────────────────────────
 
-const RS: char = '\u{1e}'; // record separator (between commits)
-const FS: char = '\u{1f}'; // field separator (between metadata fields)
+/// NUL — the only byte a commit message provably cannot contain, hence both the
+/// field and the record delimiter (issue #508; see the module docs).
+const NUL: char = '\0';
 
-/// `--format` placing 9 separator-delimited metadata fields, then a trailing
-/// FS so the body field is unambiguously bounded before the raw/numstat block.
+/// Metadata fields [`LOG_FORMAT`] emits per commit.
+const LOG_FIELDS: usize = 9;
+/// NUL-separated chunks one commit contributes: [`LOG_FIELDS`] metadata fields
+/// plus the trailing `--raw`/`--numstat` block.
+const LOG_CHUNKS: usize = LOG_FIELDS + 1;
+
+/// `--format` emitting a leading NUL (record start) then [`LOG_FIELDS`]
+/// NUL-terminated metadata fields.  Every free-form field (`%s`, `%an`, `%ae`,
+/// `%b`) is bounded by a byte it cannot contain.
 const LOG_FORMAT: &str = concat!(
-    "\u{1e}", // record start
-    "%H", "\u{1f}", "%h", "\u{1f}", "%s", "\u{1f}", "%an", "\u{1f}", "%ae", "\u{1f}", "%aI",
-    "\u{1f}", "%cn", "\u{1f}", "%cI", "\u{1f}", "%b", "\u{1f}",
+    "%x00", // record start
+    "%H", "%x00", "%h", "%x00", "%s", "%x00", "%an", "%x00", "%ae", "%x00", "%aI", "%x00", "%cn",
+    "%x00", "%cI", "%x00", "%b", "%x00",
 );
 
 // ────────────────────────────────────────────────────────────
@@ -155,40 +171,34 @@ pub fn file_history(req: &FileHistoryRequest) -> Result<FileHistory, GitError> {
 /// Parse the `git log --raw --numstat` output into commit entries
 /// (newest-first, matching git log order).
 fn parse_log(stdout: &str, requested: &Path) -> Vec<FileHistoryEntry> {
-    let mut entries = Vec::new();
-
-    // Split into per-commit records on the record separator.  The first split
-    // chunk before the first RS is empty (or whitespace) and is skipped.
-    for record in stdout.split(RS) {
-        if record.trim().is_empty() {
-            continue;
-        }
-        if let Some(entry) = parse_record(record, requested) {
-            entries.push(entry);
-        }
-    }
-
-    entries
+    let chunks: Vec<&str> = stdout.split(NUL).collect();
+    // `chunks[0]` precedes the first record's leading NUL (empty in practice).
+    // `chunks_exact` drops a trailing partial group, so a truncated final
+    // record is skipped rather than half-filled — and because a commit cannot
+    // contain a NUL, no message can add or shift a group.
+    chunks[1..]
+        .chunks_exact(LOG_CHUNKS)
+        .filter_map(|record| parse_record(record, requested))
+        .collect()
 }
 
-/// Parse one commit record: the FS-delimited metadata fields followed by the
-/// `--raw` and `--numstat` lines for the file.
-fn parse_record(record: &str, requested: &Path) -> Option<FileHistoryEntry> {
-    // The format emits exactly 9 metadata fields, each terminated by FS:
-    // H, h, s, an, ae, aI, cn, cI, b — note the body (b) is last and may
-    // contain newlines but never FS/RS, so splitting on FS is safe.
-    let mut parts = record.splitn(10, FS);
-    let full_hash = parts.next()?.trim_start_matches('\n').to_string();
-    let short_hash = parts.next()?.to_string();
-    let subject = parts.next()?.to_string();
-    let author_name = parts.next()?.to_string();
-    let author_email = parts.next()?.to_string();
-    let author_date = parts.next()?.to_string();
-    let committer_name = parts.next()?.to_string();
-    let committer_date = parts.next()?.to_string();
-    let body_raw = parts.next().unwrap_or("");
-    // Remainder (after the 9th FS) holds the raw + numstat lines.
-    let trailer = parts.next().unwrap_or("");
+/// Parse one commit record: [`LOG_FIELDS`] NUL-terminated metadata fields
+/// followed by the `--raw` and `--numstat` lines for the file.
+fn parse_record(f: &[&str], requested: &Path) -> Option<FileHistoryEntry> {
+    let full_hash = f[0].trim().to_string();
+    if full_hash.is_empty() {
+        return None;
+    }
+    let short_hash = f[1].to_string();
+    let subject = f[2].to_string();
+    let author_name = f[3].to_string();
+    let author_email = f[4].to_string();
+    let author_date = f[5].to_string();
+    let committer_name = f[6].to_string();
+    let committer_date = f[7].to_string();
+    let body_raw = f[8];
+    // Everything after the last metadata field: the raw + numstat lines.
+    let trailer = f[9];
 
     let body = {
         let trimmed = body_raw.trim();
@@ -402,23 +412,55 @@ fn wip_change_type(code: &str) -> FileChangeType {
 mod tests {
     use super::*;
 
-    fn rec(meta: &str, trailer: &str) -> String {
-        // Build a record body (without the leading RS, which split() removes).
-        format!("{meta}\n\n{trailer}")
+    /// Build `LOG_FORMAT`-shaped output for one commit: the leading NUL, the
+    /// [`LOG_FIELDS`] NUL-terminated metadata fields (H, h, s, an, ae, aI, cn,
+    /// cI, b), then the raw/numstat block git appends after the format.
+    fn rec(meta: [&str; LOG_FIELDS], trailer: &str) -> String {
+        let mut s = String::from("\0");
+        for field in meta {
+            s.push_str(field);
+            s.push('\0');
+        }
+        s.push_str("\n\n");
+        s.push_str(trailer);
+        s
     }
 
     #[test]
     fn parses_added_modified_in_order() {
         // Two records, newest first, as git log emits them.
-        let meta_new = "h2\u{1f}h2s\u{1f}modify\u{1f}Ann\u{1f}a@x\u{1f}2026-01-02T00:00:00+00:00\u{1f}Bob\u{1f}2026-01-02T00:00:00+00:00\u{1f}\u{1f}";
-        let meta_old = "h1\u{1f}h1s\u{1f}add\u{1f}Ann\u{1f}a@x\u{1f}2026-01-01T00:00:00+00:00\u{1f}Bob\u{1f}2026-01-01T00:00:00+00:00\u{1f}\u{1f}";
+        let meta_new = [
+            "h2",
+            "h2s",
+            "modify",
+            "Ann",
+            "a@x",
+            "2026-01-02T00:00:00+00:00",
+            "Bob",
+            "2026-01-02T00:00:00+00:00",
+            "",
+        ];
+        let meta_old = [
+            "h1",
+            "h1s",
+            "add",
+            "Ann",
+            "a@x",
+            "2026-01-01T00:00:00+00:00",
+            "Bob",
+            "2026-01-01T00:00:00+00:00",
+            "",
+        ];
         let stdout = format!(
-            "{RS}{}{RS}{}",
+            "{}{}",
             rec(
                 meta_new,
-                ":100644 100644 aaa bbb M\tfoo.txt\n12\t4\tfoo.txt"
+                ":100644 100644 aaa bbb M\tfoo.txt\n12\t4\tfoo.txt\n"
             ),
-            rec(meta_old, ":000000 100644 000 aaa A\tfoo.txt\n3\t0\tfoo.txt"),
+            rec(
+                meta_old,
+                ":000000 100644 000 aaa A\tfoo.txt\n3\t0\tfoo.txt\n"
+            ),
         );
 
         let entries = parse_log(&stdout, Path::new("foo.txt"));
@@ -433,13 +475,10 @@ mod tests {
 
     #[test]
     fn parses_rename_paths() {
-        let meta = "h\u{1f}hs\u{1f}rename\u{1f}A\u{1f}a@x\u{1f}d\u{1f}B\u{1f}d\u{1f}\u{1f}";
-        let stdout = format!(
-            "{RS}{}",
-            rec(
-                meta,
-                ":100644 100644 aaa aaa R100\told.txt\tnew.txt\n0\t0\told.txt => new.txt"
-            )
+        let meta = ["h", "hs", "rename", "A", "a@x", "d", "B", "d", ""];
+        let stdout = rec(
+            meta,
+            ":100644 100644 aaa aaa R100\told.txt\tnew.txt\n0\t0\told.txt => new.txt\n",
         );
         let entries = parse_log(&stdout, Path::new("new.txt"));
         assert_eq!(entries[0].change.change_type, FileChangeType::Renamed);
@@ -452,11 +491,8 @@ mod tests {
 
     #[test]
     fn parses_binary_change() {
-        let meta = "h\u{1f}hs\u{1f}bin\u{1f}A\u{1f}a@x\u{1f}d\u{1f}B\u{1f}d\u{1f}\u{1f}";
-        let stdout = format!(
-            "{RS}{}",
-            rec(meta, ":000000 100644 000 ccc A\tbin.dat\n-\t-\tbin.dat")
-        );
+        let meta = ["h", "hs", "bin", "A", "a@x", "d", "B", "d", ""];
+        let stdout = rec(meta, ":000000 100644 000 ccc A\tbin.dat\n-\t-\tbin.dat\n");
         let entries = parse_log(&stdout, Path::new("bin.dat"));
         assert!(entries[0].change.is_binary);
         assert_eq!(entries[0].change.insertions, None);
@@ -465,18 +501,60 @@ mod tests {
 
     #[test]
     fn body_with_newlines_does_not_corrupt() {
-        let meta =
-            "h\u{1f}hs\u{1f}subj\u{1f}A\u{1f}a@x\u{1f}d\u{1f}B\u{1f}d\u{1f}line1\nline2\n\u{1f}";
-        let stdout = format!(
-            "{RS}{}",
-            rec(meta, ":100644 100644 aaa bbb M\tf.txt\n1\t1\tf.txt")
-        );
+        let meta = [
+            "h",
+            "hs",
+            "subj",
+            "A",
+            "a@x",
+            "d",
+            "B",
+            "d",
+            "line1\nline2\n",
+        ];
+        let stdout = rec(meta, ":100644 100644 aaa bbb M\tf.txt\n1\t1\tf.txt\n");
         let entries = parse_log(&stdout, Path::new("f.txt"));
         assert_eq!(
             entries[0].commit.as_ref().unwrap().body,
             Some("line1\nline2".to_string())
         );
         assert_eq!(entries[0].change.change_type, FileChangeType::Modified);
+    }
+
+    /// Regression for issue #508: the old `\x1e`/`\x1f` framing let a crafted
+    /// subject or body split a record — forging an extra history row and a
+    /// bogus `--raw` trailer (change type / paths). NUL framing cannot.
+    #[test]
+    fn old_delimiters_in_subject_and_body_do_not_forge_rows() {
+        let subject = "real\u{1f}:100644 100644 aaa bbb D\tsecrets.txt";
+        let body = "note\u{1e}forged\u{1f}f\u{1f}Eve\u{1f}e@x\u{1f}d\u{1f}Eve\u{1f}d\u{1f}\u{1f}\
+                    \n:000000 100644 000 aaa A\tevil.txt\n9\t9\tevil.txt\n";
+        let meta = ["h", "hs", subject, "Ann", "a@x", "d", "Bob", "d", body];
+        let stdout = rec(meta, ":100644 100644 aaa bbb M\tf.txt\n1\t1\tf.txt\n");
+
+        let entries = parse_log(&stdout, Path::new("f.txt"));
+        assert_eq!(entries.len(), 1);
+        let c = entries[0].commit.as_ref().unwrap();
+        assert_eq!(c.full_hash, "h");
+        assert_eq!(c.subject, subject);
+        assert_eq!(c.author_name, "Ann");
+        assert_eq!(c.body, Some(body.trim().to_string()));
+        // The forged `--raw` line inside the body never reaches parse_change.
+        assert_eq!(entries[0].change.change_type, FileChangeType::Modified);
+        assert_eq!(entries[0].change.path_after, PathBuf::from("f.txt"));
+        assert_eq!(entries[0].change.insertions, Some(1));
+    }
+
+    #[test]
+    fn truncated_final_record_is_dropped() {
+        let meta = ["h1", "hs", "s", "A", "a@x", "d", "B", "d", ""];
+        let stdout = format!(
+            "{}\0h2\0hs2\0",
+            rec(meta, ":100644 100644 aaa bbb M\tf.txt\n1\t1\tf.txt\n")
+        );
+        let entries = parse_log(&stdout, Path::new("f.txt"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].commit.as_ref().unwrap().full_hash, "h1");
     }
 
     #[test]

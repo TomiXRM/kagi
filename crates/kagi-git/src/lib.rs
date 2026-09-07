@@ -42,6 +42,7 @@ mod diffstat;
 pub mod drafts;
 mod file_history;
 pub mod github;
+pub mod github_fetch;
 pub mod github_merge;
 pub mod hotspot;
 mod log;
@@ -49,6 +50,7 @@ pub mod message_gen;
 pub use kagi_domain::message_template; // ADR-0121: was a shim file
 pub mod oplog;
 pub mod ops;
+pub mod proc;
 use kagi_domain::refs; // ADR-0121: was a shim file
 pub mod resolution;
 pub mod ruleset;
@@ -64,7 +66,7 @@ pub mod worktree_ports;
 #[allow(unused_imports)]
 pub use authoring::{load_commit_template, recent_authors, AuthorCandidate};
 #[allow(unused_imports)]
-pub use backend::{oplog_outcome_from, Backend};
+pub use backend::{oplog_outcome_from, recovery_handles, Backend};
 #[allow(unused_imports)]
 pub use blame::{
     blame_file, parse_blame_ignore_revs, BlameLine, BlameResult, IGNORED_MARK, IGNORE_REVS_FILE,
@@ -145,6 +147,7 @@ pub(crate) use ops::{
     execute_stash_apply, execute_stash_drop, execute_stash_push, execute_undo, execute_undo_commit,
     fetch_remote,
 };
+pub use proc::{run_child, ProcIo, ProcRun, ProcStop};
 // PR review "suggested change" local apply (#351, ADR-0172).
 pub use kagi_domain::plan::SuggestionOutcome;
 pub use kagi_domain::suggestion::{parse_suggestion, Suggestion};
@@ -238,6 +241,10 @@ pub enum GitError {
     /// A recorded attempt failed before execution. Display preserves the
     /// underlying error; callers can retain their preflight-specific UI label.
     Preflight(Box<GitError>),
+    /// A refusal that carries the same typed note used by the plan surface.
+    /// Display remains the English plan rendering for oplog and CLI consumers;
+    /// UI delivery can localize the note before displaying it (#606).
+    Blocked(Box<kagi_domain::plan_note::PlanNote>),
     /// CLI timeout/reap uncertainty: admission must not release on this error.
     TerminationUnknown(String),
     /// Any other libgit2 error.
@@ -254,6 +261,15 @@ impl GitError {
     pub fn is_preflight(&self) -> bool {
         matches!(self, GitError::Preflight(_))
     }
+
+    /// Typed plan blocker behind this error, including through preflight.
+    pub fn blocker(&self) -> Option<&kagi_domain::plan_note::PlanNote> {
+        match self {
+            GitError::Blocked(note) => Some(note),
+            GitError::Preflight(error) => error.blocker(),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for GitError {
@@ -268,6 +284,7 @@ impl std::fmt::Display for GitError {
                 p
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
+            GitError::Blocked(note) => f.write_str(&note.message_en()),
             GitError::Other(msg) | GitError::TerminationUnknown(msg) => {
                 write!(f, "git error: {}", msg)
             }

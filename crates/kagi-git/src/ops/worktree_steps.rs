@@ -429,8 +429,7 @@ fn do_command_progress(
     run: &str,
     progress: &mut kagi_domain::remove::RemoveProgress,
 ) -> Result<(), GitError> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
+    use std::process::Command;
 
     // Whitespace argv split — no shell, so there is no quoting/expansion.
     // ponytail: no shell-words parsing; add it if quoted args in `run` are
@@ -441,62 +440,50 @@ fn do_command_progress(
         .ok_or_else(|| GitError::Other("empty command step".to_string()))?;
     let args: Vec<&str> = parts.collect();
 
-    let mut child = Command::new(program)
-        .args(&args)
+    let mut cmd = Command::new(program);
+    cmd.args(&args)
         .current_dir(&env.worktree)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .env("GIT_TERMINAL_PROMPT", "0");
+
+    // The shared runner owns the child, drains both pipes concurrently (so a
+    // command emitting more than one pipe buffer — `npm ci` — cannot deadlock,
+    // issues #294/#403) and kills+reaps on the deadline (#507).
+    //
+    // `Err` here is a spawn failure: the step never started, so `progress` keeps
+    // what the earlier steps recorded and this one is NOT termination-unknown
+    // (#507 review P2-3). Everything after this point ran.
+    let out = crate::proc::run_child(&mut cmd, Duration::from_secs(COMMAND_TIMEOUT_SECS), None)
         .map_err(|e| GitError::Other(format!("failed to start '{program}': {e}")))?;
     progress.termination_unknown = true;
+    let (stdout, stderr) = (out.stdout_lossy(), out.stderr_lossy());
 
-    // Drain stdout and stderr on dedicated threads so a command that emits more
-    // than one pipe buffer (~64 KiB — e.g. `npm ci`) can never deadlock in
-    // write(2) while we wait for it to exit (issues #294/#403): the readers keep
-    // draining regardless of what the wait loop is doing. Mirrors `cli::run_git`.
-    // ponytail: kills only the direct child, not its process group — a `command`
-    // whose grandchildren outlive it (node/docker) can still leak. Killing the
-    // group is a platform-specific follow-up; the deadlock is the P1 here.
-    let mut out_pipe = child.stdout.take();
-    let mut err_pipe = child.stderr.take();
-    let out_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(p) = out_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf);
+    let status = match out.status {
+        Ok(status) => status,
+        // The wait was cut short — not the same as the step having finished, and
+        // not a failure either. `termination_unknown` stays set (#507/ADR-0177).
+        Err(stop) => {
+            return Err(GitError::TerminationUnknown(format!(
+                "command '{run}' {stop}{}",
+                output_tail(&stdout, &stderr)
+            )))
         }
-        buf
-    });
-    let err_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(p) = err_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    // Killing on timeout closes the pipes, which unblocks the reader threads so
-    // they join cleanly.
-    let status = crate::cli::wait_or_kill(&mut child, Duration::from_secs(COMMAND_TIMEOUT_SECS));
-    let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
-    let stderr = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
-
-    let Some(status) = status else {
-        return Err(GitError::Other(format!(
-            "command '{run}' timed out after {COMMAND_TIMEOUT_SECS}s and was killed{}",
+    };
+    // Exit status without complete output: a descendant of the step is still
+    // running (it holds the pipes), so the step is not proven finished either.
+    if let Err(io) = &out.io {
+        return Err(GitError::TerminationUnknown(format!(
+            "command '{run}' exited with status {status} but {io}{}",
             output_tail(&stdout, &stderr)
         )));
-    };
+    }
     progress.termination_unknown = false;
-    if status.success() {
+    if status == 0 {
         Ok(())
     } else {
         Err(GitError::Other(format!(
-            "command '{run}' exited with status {}{}",
-            status.code().unwrap_or(-1),
+            "command '{run}' exited with status {status}{}",
             output_tail(&stdout, &stderr)
         )))
     }
@@ -846,6 +833,41 @@ run = "docker compose down"
         assert!(
             msg.contains("output"),
             "the captured tail must surface: {msg}"
+        );
+    }
+
+    // #507 review: a command that cannot be spawned never started, so it must
+    // not be recorded as termination-unknown (which would promote a known
+    // no-op to `Unknown` and hold the lease). The classification stays Partial
+    // via `progress.started()`.
+    #[test]
+    #[cfg(unix)]
+    fn do_command_spawn_failure_is_not_termination_unknown() {
+        let (_root, main, wt, _outside) = containment_fixture();
+        let env = StepEnv {
+            main_root: main,
+            worktree: wt,
+        };
+        let mut progress = kagi_domain::remove::RemoveProgress {
+            termination_unknown: false,
+            ..Default::default()
+        };
+        progress.observations.push("step 0 started".into());
+
+        let err = do_command_progress(&env, "kagi-no-such-binary-507", &mut progress).unwrap_err();
+
+        assert!(
+            format!("{err:?}").contains("failed to start"),
+            "got: {err:?}"
+        );
+        assert!(
+            !progress.termination_unknown,
+            "a command that never started is not termination-unknown"
+        );
+        assert_eq!(
+            progress.observations.len(),
+            1,
+            "earlier steps' progress must survive a spawn failure"
         );
     }
 

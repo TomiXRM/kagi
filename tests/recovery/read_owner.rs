@@ -331,21 +331,62 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
     // The reload is the read that carries Conflict Mode re-detection and the
     // working-tree baseline; paging only has rows. If paging bumped the
     // revision, the conflict would go unnoticed until something else refreshed.
+    //
+    // Every step here is driven explicitly. The watcher is armed on A, but its
+    // loop sleeps on `background_executor().timer` and `run_until_parked` does
+    // not advance the test clock, so it never ticks: the only reload in this
+    // block is the `reload_external` below, and `load_more_commits` is fully
+    // synchronous, which fixes "paging lands first" without a race.
     kagi.update(cx, |app, cx| {
         app.switch_repo(0, cx); // → A
     });
     cx.run_until_parked();
-    git_expect_conflict(&repo_a, &["merge", "side"]);
-    kagi.update(cx, |app, cx| {
+
+    // Freeze the baseline from the *settled* read, before the repository
+    // changes. (`switch_repo` clears `last_working_status` and the tab load does
+    // not refill it — only a reload does — so the read model is what says what
+    // the app has actually seen.)
+    let baseline_rows = kagi.update(cx, |app, cx| {
+        assert_eq!(
+            app.view().status_summary.conflict_count,
+            0,
+            "the fixture must start un-conflicted",
+        );
+        // One row on screen, so paging below has something to grow.
+        app.commit_limit = 1;
+        app.reload_checked(cx).expect("reload at the smaller limit");
+        app.view().rows.len()
+    });
+    cx.run_until_parked();
+    assert_eq!(baseline_rows, 1, "the page was not truncated");
+    kagi.update(cx, |app, _| {
+        assert_eq!(
+            app.view().status_summary.conflict_count,
+            0,
+            "the baseline read predates the conflict",
+        );
         assert!(
             app.last_working_status
                 .as_ref()
                 .is_some_and(|s| s.conflicted.is_empty()),
-            "the baseline should predate the conflict",
+            "the reload's baseline predates the conflict",
         );
-        app.reload_external(cx); // the watcher's full reload starts
-        app.commit_limit = 1;
-        app.load_more_commits(cx); // and paging lands first
+    });
+
+    // Now the external change, and the two reads racing over it.
+    git_expect_conflict(&repo_a, &["merge", "side"]);
+    kagi.update(cx, |app, cx| {
+        app.reload_external(cx); // the full reload starts (async)
+        app.load_more_commits(cx); // and paging lands first (synchronous)
+        assert!(
+            app.view().rows.len() > baseline_rows,
+            "paging did not grow the page",
+        );
+        assert_eq!(
+            app.view().status_summary.conflict_count,
+            0,
+            "paging has no way to see the conflict — only the reload does",
+        );
     });
     cx.run_until_parked();
     kagi.update(cx, |app, _| {
@@ -358,6 +399,11 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
                 .as_ref()
                 .is_some_and(|s| !s.conflicted.is_empty()),
             "the reload's working-tree baseline never landed",
+        );
+        assert_eq!(
+            app.view().rows.len(),
+            baseline_rows,
+            "the reload read at the limit it captured, so it really is its result",
         );
         assert_rows_consistent(app, "after conflict reload + paging");
     });

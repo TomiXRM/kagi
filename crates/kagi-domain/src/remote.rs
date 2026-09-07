@@ -332,12 +332,12 @@ pub fn parse_repo_probe(stdout: &str) -> RepoProbe {
 }
 
 // ────────────────────────────────────────────────────────────
-// Repository summary (`git log -1 --format=%h%x1f%s%x1f%D`)
+// Repository summary (`git log -1 --format=%h%x1f%D%x1f%s`)
 // ────────────────────────────────────────────────────────────
 
 /// A one-line read-only summary of a remote repository's HEAD, for the detail
 /// panel ("show the remote repo's internals"). Produced by
-/// `git -C <path> log -1 --format=%h%x1f%s%x1f%D`.
+/// `git -C <path> log -1 --format=%h%x1f%D%x1f%s`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteRepoSummary {
     /// Current branch (from `%D`'s `HEAD -> <branch>`), or `None` when detached.
@@ -348,7 +348,13 @@ pub struct RemoteRepoSummary {
     pub summary: String,
 }
 
-/// Parse the single `%h\x1f%s\x1f%D` line emitted by the summary command.
+/// Parse the single `%h\x1f%D\x1f%s` line emitted by the summary command.
+///
+/// The subject (`%s`) is free-form and attacker-controlled in an untrusted
+/// repository, so it is the **last** field and is taken with `splitn` — a
+/// `\x1f` inside it can no longer shift the ref list and forge a branch name
+/// (issue #508). `%h` and `%D` are an oid and refnames, which cannot contain
+/// ASCII control characters.
 ///
 /// Returns `None` for empty output (an unborn/empty repository has no HEAD
 /// commit, so `git log` prints nothing).
@@ -357,10 +363,10 @@ pub fn parse_repo_summary(stdout: &str) -> Option<RemoteRepoSummary> {
     if line.trim().is_empty() {
         return None;
     }
-    let mut fields = line.split('\u{1f}');
+    let mut fields = line.splitn(3, '\u{1f}');
     let head_short = fields.next()?.trim().to_string();
-    let summary = fields.next().unwrap_or("").to_string();
     let refs = fields.next().unwrap_or("");
+    let summary = fields.next().unwrap_or("").to_string();
     let branch = branch_from_refnames(refs);
     Some(RemoteRepoSummary {
         branch,
@@ -523,16 +529,21 @@ mod tests {
 
     #[test]
     fn parse_repo_summary_cases() {
-        let s = parse_repo_summary("a1b2c3d\u{1f}Fix the bug\u{1f}HEAD -> main, origin/main\n")
+        let s = parse_repo_summary("a1b2c3d\u{1f}HEAD -> main, origin/main\u{1f}Fix the bug\n")
             .unwrap();
         assert_eq!(s.branch.as_deref(), Some("main"));
         assert_eq!(s.head_short, "a1b2c3d");
         assert_eq!(s.summary, "Fix the bug");
 
         // Detached HEAD: no "HEAD -> X".
-        let s = parse_repo_summary("deadbee\u{1f}Some commit\u{1f}HEAD, tag: v1.0").unwrap();
+        let s = parse_repo_summary("deadbee\u{1f}HEAD, tag: v1.0\u{1f}Some commit").unwrap();
         assert_eq!(s.branch, None);
         assert_eq!(s.head_short, "deadbee");
+
+        // Issue #508: a `\x1f` in the subject can no longer forge the branch.
+        let s = parse_repo_summary("deadbee\u{1f}HEAD\u{1f}evil\u{1f}HEAD -> pretend").unwrap();
+        assert_eq!(s.branch, None);
+        assert_eq!(s.summary, "evil\u{1f}HEAD -> pretend");
 
         // Empty / unborn repo: no output.
         assert_eq!(parse_repo_summary(""), None);

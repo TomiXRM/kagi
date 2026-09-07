@@ -96,6 +96,8 @@ pub enum MergeNote {
     /// warning — the destination is a remote-tracking ref with no local branch
     /// yet, so one is created at the remote's tip before the merge.
     IntoCreatesLocalBranch { local: String, remote_ref: String },
+    /// Source is a remote-tracking ref, read without fetching or local branch creation.
+    IntoRemoteSource { reference: String, tip: String },
     /// warning — a local branch of that name exists but is not at the remote's
     /// tip, so the merge lands on the local one and the remote is not involved.
     IntoLocalDiffersFromRemote { local: String, remote_ref: String },
@@ -135,6 +137,7 @@ impl MergeNote {
                 "'{}' has no commits of its own, so it fast-forwards to '{}'. Its ref moves; no merge commit is written.",
                 target, source
             ),
+            MergeNote::IntoRemoteSource { reference, tip } => format!("Remote-tracking ref '{reference}' at {tip} reflects the last fetch and may be stale. No fetch is performed; no local source branch is created."),
             MergeNote::IntoCreatesLocalBranch { local, remote_ref } => format!(
                 "There is no local '{}' yet, so one is created at '{}' and the merge lands on it. Nothing is pushed; '{}' on the remote is unchanged.",
                 local, remote_ref, remote_ref

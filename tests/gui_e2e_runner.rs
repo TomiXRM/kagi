@@ -618,6 +618,10 @@ mod macos {
                 "read_owner_ordering",
                 Box::new(crate::read_owner::scenario_read_owner_ordering),
             ),
+            (
+                "remote_source_merge_into",
+                Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
+            ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
                 "graph_copy",

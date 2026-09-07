@@ -74,6 +74,7 @@ pub fn note_ja(note: &MergeNote) -> String {
             "`{}` に固有の commit が無いため `{}` へ fast-forward します。ref が動くだけで merge commit は作られません。",
             target, source
         ),
+        MergeNote::IntoRemoteSource { reference, tip } => format!("remote-tracking ref `{reference}` (tip: {tip}) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。"),
         MergeNote::IntoCreatesLocalBranch { local, remote_ref } => format!(
             "ローカルに `{}` が無いため `{}` の先頭に作成して merge します。push はしません。remote 側の `{}` は変わりません。",
             local, remote_ref, remote_ref

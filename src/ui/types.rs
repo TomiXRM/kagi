@@ -51,12 +51,12 @@ pub use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 // which validates and delegates to the existing `open_merge_modal` pipeline.
 // No git is executed on drop (ADR-0079).
 
-/// Drag payload carrying the dragged local branch name.  Layer 1 (the view)
+/// Drag payload carrying the dragged local or remote-tracking branch name.  Layer 1 (the view)
 /// emits this on `on_drag`; the current-branch drop zone consumes it via
 /// `on_drop::<BranchDrag>` and dispatches it to the action layer.
 #[derive(Clone, Debug)]
 pub struct BranchDrag {
-    /// The dragged local branch name (= merge *source*).
+    /// The dragged local or remote-tracking branch name (= merge *source*).
     pub name: String,
 }
 

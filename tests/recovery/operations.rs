@@ -1103,3 +1103,111 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
     });
     unmount(cx, app, window);
 }
+
+/// #590: deliver actual drag events from a graph remote chip to a non-HEAD
+/// sidebar branch row, then confirm through the shared Enter entry point.
+pub fn scenario_remote_source_merge_into(cx: &mut VisualTestAppContext) {
+    use gpui::{Modifiers, MouseButton};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["config", "user.name", "Test"]);
+    git(dir, &["config", "user.email", "test@example.com"]);
+    std::fs::write(dir.join("base.txt"), "base\n").unwrap();
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+    git(dir, &["branch", "target"]);
+    let source = {
+        let repo = git2::Repository::open(dir).unwrap();
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        let mut tree = repo.treebuilder(Some(&base.tree().unwrap())).unwrap();
+        tree.insert("remote.txt", repo.blob(b"remote\n").unwrap(), 0o100644)
+            .unwrap();
+        let sig = repo.signature().unwrap();
+        let source = repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "remote source",
+                &repo.find_tree(tree.write().unwrap()).unwrap(),
+                &[&base],
+            )
+            .unwrap();
+        repo.reference("refs/remotes/origin/source", source, false, "fixture")
+            .unwrap();
+        source.to_string()
+    };
+    let before = repo_fingerprint(dir);
+    let index = std::fs::read(dir.join(".git/index")).unwrap();
+    let (app, window) = mount(cx, dir);
+    paint(cx, window);
+    let source_box =
+        kagi::ui::e2e::control_bounds(window.window_id(), "graph-remote-origin/source")
+            .expect("remote chip hitbox");
+    let target_box = kagi::ui::e2e::control_bounds(window.window_id(), "sidebar-local-target")
+        .expect("non-HEAD sidebar row hitbox");
+    cx.simulate_mouse_move(window, source_box.center(), None, Modifiers::none());
+    cx.simulate_mouse_down(
+        window,
+        source_box.center(),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.simulate_mouse_move(
+        window,
+        source_box.center() + gpui::point(gpui::px(12.), gpui::px(0.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.simulate_mouse_move(
+        window,
+        target_box.center(),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.simulate_mouse_up(
+        window,
+        target_box.center(),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    wait_idle(cx, &app);
+    cx.read(|cx| {
+        let modal = app.read(cx).merge_modal().expect("drop opens merge plan");
+        assert!(modal.off_branch);
+        assert_eq!(modal.target, "origin/source");
+        assert_eq!(modal.into_branch, "target");
+        assert!(modal.plan.blockers.is_empty());
+        assert!(modal
+            .plan
+            .warnings
+            .iter()
+            .any(|note| note.message_en().contains(&source)
+                && note.message_en().contains("last fetch")));
+    });
+    assert_eq!(repo_fingerprint(dir), before);
+    assert!(records(dir, "merge-into").is_empty());
+    assert_ne!(output(dir, &["rev-parse", "target"]), source);
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    assert_eq!(output(dir, &["rev-parse", "target"]), source);
+    assert_eq!(
+        output(dir, &["rev-parse", "refs/remotes/origin/source"]),
+        source
+    );
+    assert_eq!(repo_fingerprint(dir), before);
+    assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        output(dir, &["for-each-ref", "--format=%(refname)", "refs/heads"]),
+        "refs/heads/main\nrefs/heads/target"
+    );
+    let entries = records(dir, "merge-into");
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    unmount(cx, app, window);
+}

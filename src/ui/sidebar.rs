@@ -1174,7 +1174,7 @@ fn build_local_branch_leaf(
                 cx.notify();
             },
         );
-        div()
+        let row = div()
             .id(SharedString::from(format!(
                 "sidebar-branch-{}",
                 branch_name
@@ -1247,7 +1247,8 @@ fn build_local_branch_leaf(
                     .hover(|s| s.text_color(rgb(theme().color_blocker)))
                     .child(SharedString::from("\u{00d7}")),
             )
-            .into_any()
+            .into_any();
+        super::e2e::measure_control(format!("sidebar-local-{branch_name}"), row)
     }
 }
 

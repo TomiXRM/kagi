@@ -52,13 +52,22 @@ older entry: the response keeps `status: "ok"` (the mutation happened),
 `oplog`. "Changed" and "recorded" stay separately observable, matching
 ADR-0177's `Success + Recording::Failed` rule.
 
+An execution `Err` is also serialized from the complete `RunReport`, rather
+than returned before `confirm_response`: its response keeps `status: "error"`
+and the execution error while still carrying this attempt's `oplog`,
+`backup_refs`, `recorded` and `recording_error`. A recorded `Partial` outcome is
+likewise always an error response, even if the domain result itself is `Ok`.
+This is essential for operations that create a recovery ref before a later
+step fails. CLI exits 1; MCP marks the same structured response `isError: true`
+without replacing it by an error-only object.
+
 ## Contract shape
 
 `plan` (both frontends): `plan_id`, `op`, `args`, `head_at_plan`,
 `stash_count_at_plan`, `worktree_digest`, `plan { title, current, predicted,
 warnings, blockers, recovery, disposition, destructive }`. MCP adds only its own
 `next` hint. `confirm` (both frontends): `status`, `op`, `plan_id`, `outcome`,
-`oplog`, `recorded`, `recording_error`.
+`error`, `oplog`, `recorded`, `recording_error`.
 
 `recorded` and `recording_error` are new; `oplog` is unchanged in shape and now
 always this run's entry. The CLI's exit codes, `--yes` gate and refusal JSON, and

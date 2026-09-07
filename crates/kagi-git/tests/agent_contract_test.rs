@@ -5,7 +5,8 @@
 //! fails here rather than in production under a concurrent writer.
 
 use kagi_domain::plan::StateSummary;
-use kagi_git::{api, Backend, OpLogEntry, OpOutcome, Operation};
+use kagi_git::backend::recording::{Recording, RunReport};
+use kagi_git::{api, Backend, GitError, OpLogEntry, OpOutcome, Operation, OperationOutcome};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Mutex;
@@ -78,13 +79,13 @@ fn confirm_response_names_this_runs_entry_not_the_global_tail() {
     let plan = backend.plan(&op).unwrap();
     let plan_id = plan.plan_id();
     let report = backend.run_recorded(&op, &plan);
-    let outcome = report.result.expect("create-branch should succeed");
+    assert!(report.result.is_ok(), "create-branch should succeed");
 
     // A concurrent writer lands an unrelated entry *after* our run — exactly the
     // window the old `read_oplog_tail(1)` echo lost.
     kagi_git::append_oplog(&foreign_entry("checkout-after")).unwrap();
 
-    let response = api::confirm_response(&op, &plan_id, &outcome, &report.recording);
+    let response = api::confirm_response(&op, &plan_id, &report);
     assert_eq!(response["status"], "ok");
     assert_eq!(response["recorded"], true);
     assert_eq!(response["recording_error"], serde_json::Value::Null);
@@ -122,8 +123,8 @@ fn same_repo_same_op_runs_report_their_own_entries() {
         let plan = backend.plan(&op).unwrap();
         let plan_id = plan.plan_id();
         let report = backend.run_recorded(&op, &plan);
-        let outcome = report.result.unwrap();
-        let response = api::confirm_response(&op, &plan_id, &outcome, &report.recording);
+        assert!(report.result.is_ok());
+        let response = api::confirm_response(&op, &plan_id, &report);
         ids.push(response["oplog"]["id"].clone());
     }
     // A repo+op filter cannot tell these two apart; the receipts can.
@@ -163,8 +164,8 @@ fn a_failed_append_is_reported_as_unrecorded_not_as_an_older_entry() {
     let plan = backend.plan(&op).unwrap();
     let plan_id = plan.plan_id();
     let report = backend.run_recorded(&op, &plan);
-    let outcome = report.result.expect("the branch is still created");
-    let response = api::confirm_response(&op, &plan_id, &outcome, &report.recording);
+    assert!(report.result.is_ok(), "the branch is still created");
+    let response = api::confirm_response(&op, &plan_id, &report);
 
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     std::env::remove_var("KAGI_LOG_DIR");
@@ -189,6 +190,56 @@ fn a_failed_append_is_reported_as_unrecorded_not_as_an_older_entry() {
         "the attempted entry is ours, never the stale tail: {response}"
     );
     assert_ne!(response["oplog"]["op"], "checkout-stale");
+}
+
+#[test]
+fn failed_run_response_keeps_its_recovery_receipt() {
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let recovery_ref = "refs/kagi/backups/delete-branch/feature-tip";
+    let mut entry = OpLogEntry::new(
+        "delete-branch",
+        "/repo",
+        state.clone(),
+        OpOutcome::Partial {
+            after: state,
+            error: "delete failed after backup".into(),
+        },
+    );
+    entry.backup_refs.push(recovery_ref.into());
+    let op = Operation::DeleteBranch {
+        name: "feature".into(),
+    };
+    let recording = Recording::Appended {
+        path: "/logs/operations.jsonl".into(),
+        entry,
+    };
+    let report = RunReport {
+        result: Err(GitError::Other("delete failed after backup".into())),
+        recording: recording.clone(),
+        stash: None,
+    };
+    let response = api::confirm_response(&op, "plan-id", &report);
+
+    assert_eq!(response["status"], "error");
+    assert_eq!(response["error"], "git error: delete failed after backup");
+    assert!(response["outcome"].as_str().unwrap().starts_with("Partial"));
+    assert_eq!(response["oplog"]["backup_refs"][0], recovery_ref);
+    assert_eq!(response["recorded"], true);
+    assert_eq!(response["recording_error"], serde_json::Value::Null);
+
+    // Discard can represent a Partial receipt with an Ok domain outcome. The
+    // recorded outcome remains authoritative for the agent-facing status.
+    let partial = RunReport {
+        result: Ok(OperationOutcome::Unit),
+        recording,
+        stash: None,
+    };
+    let response = api::confirm_response(&op, "plan-id", &partial);
+    assert_eq!(response["status"], "error");
+    assert_eq!(response["oplog"]["backup_refs"][0], recovery_ref);
 }
 
 #[test]

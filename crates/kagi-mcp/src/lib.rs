@@ -153,10 +153,17 @@ impl Server {
         // not as JSON-RPC protocol errors, so the model can see and react to
         // them. Protocol errors are reserved for malformed requests.
         Ok(match outcome {
-            Ok(value) => tool_result(value, false),
+            Ok(value) => {
+                let is_error = tool_value_is_error(&value);
+                tool_result(value, is_error)
+            }
             Err(msg) => tool_result(json!({ "error": msg }), true),
         })
     }
+}
+
+fn tool_value_is_error(value: &Value) -> bool {
+    value.get("status").and_then(Value::as_str) == Some("error")
 }
 
 /// Wrap a tool's structured value as an MCP `tools/call` result. We emit BOTH
@@ -232,6 +239,27 @@ pub fn serve_stdio(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn failed_confirm_receipt_is_a_structured_tool_error() {
+        let receipt = json!({
+            "status": "error",
+            "error": "delete failed after backup",
+            "oplog": {
+                "backup_refs": ["refs/kagi/backup/delete-branch/main"]
+            },
+            "recorded": true
+        });
+
+        let result = tool_result(receipt.clone(), tool_value_is_error(&receipt));
+
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"], receipt);
+        assert_eq!(
+            result["structuredContent"]["oplog"]["backup_refs"][0],
+            "refs/kagi/backup/delete-branch/main"
+        );
+    }
 
     // A throwaway git repo with one commit and a dirty working tree, used to
     // exercise the handler end to end. Uses `git` on PATH (already required by

@@ -126,15 +126,9 @@ pub fn confirm(server: &mut Server, args: &Value) -> ToolResult {
     // the report carries THIS run's receipt, so a concurrently appended entry
     // (another repo, another process) can never be echoed back as ours (#505).
     let report = backend.run_recorded(&op, &fresh);
-    let outcome = report.result.map_err(|e| e.to_string())?;
 
     // Drop the consumed plan so a plan_id can't be replayed.
     server.plans.remove(&plan_id);
 
-    Ok(api::confirm_response(
-        &op,
-        &plan_id,
-        &outcome,
-        &report.recording,
-    ))
+    Ok(api::confirm_response(&op, &plan_id, &report))
 }

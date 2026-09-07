@@ -205,12 +205,10 @@ fn cmd_confirm(args: &[String]) -> Result<i32, String> {
     // the report carries THIS run's oplog receipt — never a global tail read
     // that a concurrent writer could have moved out from under it (#505).
     let report = backend.run_recorded(&op, &fresh);
-    let outcome = report.result.map_err(|e| format!("{}", e))?;
-    println!(
-        "{}",
-        api::confirm_response(&op, &input.plan_id, &outcome, &report.recording)
-    );
-    Ok(0)
+    let response = api::confirm_response(&op, &input.plan_id, &report);
+    let failed = response["status"] == "error";
+    println!("{}", response);
+    Ok(if failed { 1 } else { 0 })
 }
 
 /// Name which staleness dimension(s) moved between the agent's plan (the

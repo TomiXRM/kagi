@@ -1,5 +1,6 @@
 //! Window-free production approval/lease/recording contract for local stash.
 use kagi::app::*;
+use kagi_domain::plan_note::{PlanNote, StashNote};
 use kagi_git::backend::stash::{StashEvent, StashStopReason};
 use kagi_git::oplog::read_oplog_tail;
 use kagi_git::{Backend, OpOutcome};
@@ -164,22 +165,78 @@ fn four_operations_on_three_stashes() {
     }
 }
 #[test]
-fn same_count_replacement_refuses_wrong_entry() {
+fn reordered_stash_list_with_approved_target_unchanged_refuses_list_changed_note() {
     if !crate::test_support::run_isolated() {
         return;
     }
     let f = Fixture::new();
     let mut s = Sessions::new();
     let owner = s.attach(f.repo.clone());
+    let approved = f.ids();
     let job = f.job(&mut s, owner, StashAction::Drop { index: 1 });
-    git(&f.repo, &["stash", "drop", "stash@{0}"]);
-    std::fs::write(f.repo.join("file"), "replacement\n").unwrap();
-    git(&f.repo, &["stash", "push", "-qm", "replacement"]);
+    for _ in 0..approved.len() {
+        git(&f.repo, &["stash", "drop", "stash@{0}"]);
+    }
+    // `stash store` prepends, so inserting in original order reconstructs the
+    // same entries in reverse order without touching the working tree.
+    for oid in &approved {
+        git(&f.repo, &["stash", "store", "-m", "reordered", oid]);
+    }
     let before = f.ids();
+    assert_eq!(
+        before,
+        vec![
+            approved[2].clone(),
+            approved[1].clone(),
+            approved[0].clone()
+        ]
+    );
+    assert_eq!(before[1], approved[1], "approved target stayed in place");
     let c = job.run();
     assert!(matches!(outcome(&c), OpOutcome::Refused { .. }));
+    assert_eq!(
+        c.report().evidence.preflight_note,
+        Some(PlanNote::Stash(StashNote::ListChanged))
+    );
     assert_eq!(before, f.ids());
     assert_eq!(read_oplog_tail(100).len(), 1);
+}
+
+#[test]
+fn replacement_at_approved_index_refuses_with_target_changed_note() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for action in [
+        StashAction::Apply { index: 1 },
+        StashAction::Pop { index: 1 },
+        StashAction::Drop { index: 1 },
+    ] {
+        let f = Fixture::new();
+        let mut s = Sessions::new();
+        let owner = s.attach(f.repo.clone());
+        let approved = f.ids();
+        let bytes = std::fs::read(f.repo.join("file")).unwrap();
+        let job = f.job(&mut s, owner, action.clone());
+        git(&f.repo, &["stash", "drop", "stash@{1}"]);
+        std::fs::write(f.repo.join("file"), "replacement\n").unwrap();
+        git(&f.repo, &["stash", "push", "-qm", "replacement"]);
+        let before = f.ids();
+        assert_eq!(before.len(), approved.len(), "count is restored");
+        assert_ne!(before[1], approved[1], "approved index was replaced");
+        let c = job.run();
+        assert!(matches!(outcome(&c), OpOutcome::Refused { .. }));
+        assert_eq!(
+            c.report().evidence.preflight_note,
+            Some(PlanNote::Stash(StashNote::TargetChanged {
+                index: 1,
+                expected: approved[1].clone(),
+            }))
+        );
+        assert_eq!(before, f.ids());
+        assert_eq!(std::fs::read(f.repo.join("file")).unwrap(), bytes);
+        assert_eq!(read_oplog_tail(100).len(), 1);
+    }
 }
 #[test]
 fn pop_second_step_drift_is_partial_not_refused() {
@@ -201,6 +258,10 @@ fn pop_second_step_drift_is_partial_not_refused() {
         ),
         "{:?}",
         outcome(&c)
+    );
+    assert!(
+        !format!("{:?}", outcome(&c)).contains("Nothing was changed"),
+        "a post-apply drift must not claim the apply made no change"
     );
     assert_eq!(
         std::fs::read_to_string(f.repo.join("file")).unwrap(),
@@ -325,6 +386,10 @@ fn changed_count_and_missing_target_are_refused_before_mutation() {
         let ids = f.ids();
         let c = job.run();
         assert!(matches!(outcome(&c), OpOutcome::Refused { .. }));
+        assert_eq!(
+            c.report().evidence.preflight_note,
+            Some(PlanNote::Stash(StashNote::ListChanged))
+        );
         assert_eq!(f.ids(), ids);
         assert_eq!(read_oplog_tail(100).len(), 1);
     }

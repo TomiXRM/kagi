@@ -69,3 +69,61 @@ pub(super) fn depends_on<'repo>(
 fn error(error: git2::Error) -> GitError {
     GitError::Other(error.to_string())
 }
+
+/// Missing reflogs are already clean. Other failures must remain visible.
+pub(super) fn remove_reflog(
+    repo: &Repository,
+    name: &str,
+) -> Result<kagi_domain::operation::DeleteBranchProgress, GitError> {
+    let existed = repo.reference_has_log(name).map_err(error)?;
+    let reflog_removed = match delete_reflog(repo, name) {
+        Ok(()) => existed,
+        Err(cause) if cause.code() == git2::ErrorCode::NotFound => false,
+        Err(cause) => return Err(error(cause)),
+    };
+    Ok(kagi_domain::operation::DeleteBranchProgress { reflog_removed })
+}
+
+fn delete_reflog(repo: &Repository, name: &str) -> Result<(), git2::Error> {
+    #[cfg(test)]
+    if matches!(
+        FAULT.with(|fault| fault.get()),
+        Some(DeleteFault::ReflogFailure)
+    ) {
+        FAULT.with(|fault| fault.take());
+        return Err(git2::Error::from_str(
+            "injected non-NotFound reflog failure",
+        ));
+    }
+    repo.reflog_delete(name)
+}
+
+pub(super) fn commit(transaction: git2::Transaction<'_>) -> Result<(), GitError> {
+    #[cfg(test)]
+    if matches!(
+        FAULT.with(|fault| fault.take()),
+        Some(DeleteFault::CommitFailure)
+    ) {
+        return Err(GitError::Other(
+            "injected branch ref transaction failure".into(),
+        ));
+    }
+    transaction.commit().map_err(error)
+}
+
+// Same test-only, thread-local, one-shot seam as backend::absorb. Absent from
+// production builds; no environment variable or public mutation bypass.
+#[cfg(test)]
+thread_local! {
+    static FAULT: std::cell::Cell<Option<DeleteFault>> = const { std::cell::Cell::new(None) };
+}
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum DeleteFault {
+    CommitFailure,
+    ReflogFailure,
+}
+
+#[cfg(test)]
+#[path = "branch_delete_release_tests.rs"]
+mod release_tests;

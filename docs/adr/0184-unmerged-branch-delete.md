@@ -27,6 +27,14 @@ exact backup ref, preserving the entire commit ancestry after GC. No new restore
 executor or UI Git access is introduced. The branch reflog is deleted under the
 same branch ref lock before committing removal: cleanup failure leaves the branch
 and recovery root intact, and cleanup never races a recreated same-name ref.
+`Transaction::commit` consumes/releases its ref lock, so cleanup cannot move
+past commit while keeping that same lock. `DeleteBranchProgress.reflog_removed`
+is captured before commit: a later transaction/verification error is recorded
+as Partial with the retained tip/ref and an explicit unverified-deletion state,
+not Failed. The UI presents that receipt without offering a blind deletion
+retry. A missing reflog is already clean (`NotFound` is accepted); every other
+reflog error still propagates. A test-only, one-shot commit fault exercises the
+real Backend finalization boundary.
 
 Commit roots share ADR-0179's retention: indefinite by default, retired only with
 the final referencing oplog entry. Blob readers stay blob-only; retention accepts

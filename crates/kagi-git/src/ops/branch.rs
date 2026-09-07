@@ -787,6 +787,7 @@ pub(crate) fn execute_delete_branch(
     plan: &OperationPlan,
     name: &str,
     backup_refs: &mut Vec<String>,
+    partial_after: &mut Option<StateSummary>,
 ) -> Result<crate::OperationOutcome, GitError> {
     // Lock every existing HEAD, not just the caller's: a concurrent checkout
     // in the main or another linked worktree must fail while deleting the ref.
@@ -851,8 +852,17 @@ pub(crate) fn execute_delete_branch(
     // libgit2 transaction.remove bypasses Branch::delete's reflog cleanup.
     // Do this while the branch is still locked so a recreated ref cannot lose
     // its new reflog. On failure keep the original branch and recovery root.
-    repo.reflog_delete(&branch_ref)
-        .map_err(|e| GitError::Other(e.to_string()))?;
+    let progress = super::branch_delete_safety::remove_reflog(repo, &branch_ref)?;
+    if progress.reflog_removed {
+        // Retain observed progress before any later error can leave this arm.
+        // The ref may still exist: do not claim deletion without verification.
+        *partial_after = Some(StateSummary {
+            head: plan.current.head.clone(),
+            dirty: format!(
+                "branch '{name}' reflog removed; deletion not verified (tip {tip}); restore: git branch {name} {reference}"
+            ),
+        });
+    }
 
     // ── 2.5 Pre-clean the branch's config section ─────────────
     pre_clean_branch_config(repo, name);
@@ -862,9 +872,7 @@ pub(crate) fn execute_delete_branch(
     transaction
         .remove(&branch_ref)
         .map_err(|e| GitError::Other(e.to_string()))?;
-    transaction
-        .commit()
-        .map_err(|e| GitError::Other(e.to_string()))?;
+    super::branch_delete_safety::commit(transaction)?;
 
     // ── 4. Verify the branch is gone ─────────────────────────
     if repo.find_branch(name, BranchType::Local).is_ok() {

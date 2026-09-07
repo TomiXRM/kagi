@@ -1488,8 +1488,9 @@ impl Backend {
         plan: &OperationPlan,
         name: &str,
         backup_refs: &mut Vec<String>,
+        partial_after: &mut Option<ops::StateSummary>,
     ) -> Result<OperationOutcome, GitError> {
-        ops::execute_delete_branch(&self.repo, plan, name, backup_refs)
+        ops::execute_delete_branch(&self.repo, plan, name, backup_refs, partial_after)
     }
 
     pub fn plan_delete_remote_branch(

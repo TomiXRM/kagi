@@ -323,3 +323,12 @@ branch receipt after passing it through the panel. PM runs only
 When execution is prohibited, build it with `--features gui-e2e --no-run` only.
 For M, compare EN/JA warning counts and armed labels, cancel/reopen to reset the
 arm, then use the receipt's `git branch <name> <backup-ref>` recovery command.
+
+### Release review: branch metadata and remove identity (#587)
+
+G in `crates/kagi-git/src/ops/branch_delete_release_tests.rs` injects a test-only
+transaction failure after reflog cleanup and checks the persisted Partial receipt,
+retained branch tip and recovery ref. It also covers disabled reflogs, directly
+written refs and non-NotFound cleanup errors. `backend/remove.rs` unit tests model
+Unsupported creation time and verify all remaining fingerprint fields still
+reject drift. These are fixture/unit checks; no GUI runner execution is needed.

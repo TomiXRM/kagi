@@ -1288,7 +1288,22 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                 };
                 assert!(footer.contains("lock"), "{footer}");
                 assert!(footer.contains("f.txt"));
-                assert!(footer.contains(std::fs::canonicalize(repo).unwrap().to_str().unwrap()));
+                let owner = if entry == "editor" {
+                    state.repo_path.as_ref().expect("editor owner").clone()
+                } else {
+                    state
+                        .commit_panel
+                        .as_ref()
+                        .expect("panel")
+                        .read(cx)
+                        .repo_path
+                        .clone()
+                };
+                assert_eq!(
+                    std::fs::canonicalize(&owner).unwrap(),
+                    std::fs::canonicalize(repo).unwrap()
+                );
+                assert!(footer.contains(owner.to_str().unwrap()), "{footer}");
                 assert!(e2e::app_notice_message(state).unwrap().contains("lock"));
                 let panel = state.op_log.as_ref().unwrap().read(cx);
                 let attempted = panel.entries().front().unwrap();

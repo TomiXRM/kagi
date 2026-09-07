@@ -779,13 +779,18 @@ def adr_stale_allowlist(
 
 
 def adr_selftest() -> list[str]:
-    """Prove the gate flags a duplicate, clears a renumbered set, and honours the allowlist."""
+    """Prove the gate flags a duplicate, clears a renumbered set, and honours the allowlist.
+
+    Fixtures use a synthetic `9000`/`9001` pair, never a real ADR filename: a
+    fixture spelling a moved ADR's old name would keep that name alive in the
+    repository, which is exactly what a renumber has to remove (#620).
+    """
     issues: list[str] = []
     none: dict[str, frozenset[str]] = {}
-    # The #620 collision itself, and the state after renumbering.
-    duplicate = ["0186-nul-framed-git-log.md", "0186-pr-fetch-outcome-contract.md"]
-    renumbered = ["0186-pr-fetch-outcome-contract.md", "0190-nul-framed-git-log.md"]
-    pinned = {"0186": frozenset(duplicate)}
+    # One number held twice, and the same set after the newer ADR moves off it.
+    duplicate = ["9000-first-decision.md", "9000-second-decision.md"]
+    renumbered = ["9000-first-decision.md", "9001-second-decision.md"]
+    pinned = {"9000": frozenset(duplicate)}
     if not adr_duplicate_hits(duplicate, none):
         issues.append(f"no longer flags a duplicate number: {duplicate}")
     if adr_duplicate_hits(renumbered, none):
@@ -794,14 +799,14 @@ def adr_selftest() -> list[str]:
         issues.append("the approved grandfathered pair is reported as a duplicate")
     # The reason the allowlist pins filenames: a third ADR at a grandfathered
     # number is a new collision, not part of the exemption.
-    if not adr_duplicate_hits([*duplicate, "0186-a-third-adr.md"], pinned):
+    if not adr_duplicate_hits([*duplicate, "9000-third-decision.md"], pinned):
         issues.append("a third ADR at a grandfathered number is not flagged")
     # …and so is a rename that leaves the pair no longer the approved one.
-    if not adr_duplicate_hits(["0186-pr-fetch-outcome-contract.md", "0186-renamed.md"], pinned):
+    if not adr_duplicate_hits(["9000-first-decision.md", "9000-renamed.md"], pinned):
         issues.append("a renamed file at a grandfathered number is not flagged")
     if adr_stale_allowlist(duplicate, pinned):
         issues.append("a live duplicate is reported as a stale allowlist entry")
-    if adr_stale_allowlist(renumbered, pinned) != ["0186"]:
+    if adr_stale_allowlist(renumbered, pinned) != ["9000"]:
         issues.append("a resolved duplicate is no longer reported as a stale allowlist entry")
     # And that the real directory is still visible to the gate.
     if not adr_groups(adr_file_names()):

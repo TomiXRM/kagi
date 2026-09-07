@@ -70,6 +70,7 @@ fn escape_all_specials_together() {
 fn json_success_entry_contains_required_fields() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -107,6 +108,7 @@ fn json_success_entry_contains_required_fields() {
 fn json_refused_entry_contains_blockers() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -138,6 +140,7 @@ fn json_refused_entry_contains_blockers() {
 fn json_failed_entry_contains_error() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -162,6 +165,7 @@ fn json_failed_entry_contains_error() {
 fn json_escapes_special_chars_in_repo_path() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -211,6 +215,7 @@ fn append_two_entries_creates_two_jsonl_lines() {
 
     let make_entry = |op: &str, ts: i64| OpLogEntry {
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -269,6 +274,7 @@ fn append_includes_expected_json_fields() {
 
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -329,6 +335,7 @@ fn oplog_filter_scopes_to_bound_repo() {
 
     let mk = |repo: &std::path::Path, op: &str| OpLogEntry {
         backup_refs: Vec::new(),
+        recovery: Vec::new(),
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -457,5 +464,89 @@ fn append_waiting_for_retirement_cannot_publish_a_deleted_root() {
     match previous {
         Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
         None => std::env::remove_var("KAGI_LOG_DIR"),
+    }
+}
+
+// ── recovery handles (#500) ───────────────────────────────
+
+/// A path containing `,`, `=` and non-ASCII is exactly what the comma-joined
+/// `path=blob` summary could not express unambiguously. As JSON string values
+/// it round-trips byte-for-byte, and the display summary is untouched.
+#[test]
+fn recovery_handles_round_trip_with_awkward_paths() {
+    let handles = vec![
+        RecoveryHandle::oid(recovery::SAVEPOINT, "a".repeat(40)),
+        RecoveryHandle::file("dir=x, y/ファイル.txt", "b".repeat(40), None),
+        RecoveryHandle::file("plain.txt", "c".repeat(40), None)
+            .with_reference("refs/kagi/backups/attempt/1"),
+    ];
+    let summary = "discarded 1 file(s); backup: dir=x, y/ファイル.txt=bbb";
+    let mut entry = OpLogEntry::new(
+        "discard",
+        "/tmp/repo",
+        StateSummary {
+            head: "branch: main".to_string(),
+            dirty: "1 modified".to_string(),
+        },
+        OpOutcome::Success {
+            after: StateSummary {
+                head: "branch: main".to_string(),
+                // The human-readable summary the UI shows stays as it was.
+                dirty: summary.to_string(),
+            },
+        },
+    );
+    entry.recovery = handles.clone();
+
+    let json = entry_to_json(&entry);
+    let parsed = parse_oplog_line(&json).expect("a written line must parse");
+    assert_eq!(parsed.recovery, handles);
+    let OpOutcome::Success { after } = &parsed.outcome else {
+        panic!("outcome kind changed")
+    };
+    assert_eq!(
+        after.dirty, summary,
+        "the displayed summary must survive unchanged"
+    );
+}
+
+/// A pre-#500 line carries the prose only. It must still read — and must NOT be
+/// mined for handles: no typed data means "not known to be recoverable".
+#[test]
+fn legacy_line_without_recovery_reads_as_no_typed_data() {
+    let legacy = concat!(
+        r#"{"timestamp":1000,"op":"restore-snapshot","repo":"/tmp/repo","#,
+        r#""before":{"head":"branch: main","dirty":"clean"},"#,
+        r#""outcome":{"kind":"Success","after":{"head":"branch: main","#,
+        r#""dirty":"savepoint 1111111111111111111111111111111111111111"}}}"#,
+    );
+    let entry = parse_oplog_line(legacy).expect("legacy lines must still parse");
+    assert_eq!(entry.op, "restore-snapshot");
+    assert!(entry.backup_refs.is_empty());
+    assert!(
+        entry.recovery.is_empty(),
+        "prose must never be promoted to a typed recovery claim"
+    );
+    let OpOutcome::Success { after } = &entry.outcome else {
+        panic!("legacy outcome must still read")
+    };
+    assert!(after.dirty.starts_with("savepoint "), "prose is preserved");
+}
+
+/// A `recovery` value written by some other tool (wrong type, missing `oid`)
+/// reads as "no typed data" rather than dropping the whole entry.
+#[test]
+fn malformed_recovery_degrades_to_empty_without_losing_the_entry() {
+    for value in [r#""not-an-array""#, r#"[{"kind":"savepoint"}]"#, "[42]"] {
+        let line = format!(
+            concat!(
+                r#"{{"timestamp":1,"op":"discard","repo":"/tmp/repo","#,
+                r#""before":{{"head":"h","dirty":"d"}},"#,
+                r#""outcome":{{"kind":"Failed","error":"e"}},"recovery":{}}}"#,
+            ),
+            value
+        );
+        let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
+        assert!(entry.recovery.is_empty(), "{value}");
     }
 }

@@ -257,20 +257,6 @@ pub fn latest_persisted_op() -> Option<(String, String)> {
         .map(entry_op_and_repo)
 }
 
-/// The after-state's `dirty` line of an op-log entry, or `None` for an outcome
-/// that carries no after-state (`Failed` / `Refused`).
-///
-/// #476 slice 3: for a discard this is `discarded N file(s); backup: <path>=<blob>`
-/// — the ODB backup SHAs that are the user's only handle on the overwritten
-/// content (ADR-0083).
-pub fn entry_after_dirty(entry: &kagi_git::oplog::OpLogEntry) -> Option<String> {
-    match &entry.outcome {
-        kagi_git::oplog::OpOutcome::Success { after }
-        | kagi_git::oplog::OpOutcome::Partial { after, .. } => Some(after.dirty.clone()),
-        _ => None,
-    }
-}
-
 /// The entry the tab's Cmd+Z would apply next, as `(branch, after SHA,
 /// summary)` — `None` when there is nothing to undo.
 ///

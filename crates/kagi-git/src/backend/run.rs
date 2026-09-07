@@ -88,6 +88,7 @@ impl Backend {
             &plan.current,
             outcome,
             backup_refs,
+            recording::recovery_handles(&result),
         );
         recording::RunReport {
             result,

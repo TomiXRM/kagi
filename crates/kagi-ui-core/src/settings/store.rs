@@ -358,6 +358,15 @@ fn rescue(path: &Path) -> Option<PathBuf> {
 /// rename is atomic on every platform kagi ships on; the preceding `sync_all`
 /// makes the *contents* durable before the swap. This is crash-atomic, not a
 /// power-loss guarantee — the containing directory is not fsync'd.
+///
+/// The temp file inherits the mode of the file it replaces, so a settings file
+/// the user tightened (`chmod 600`) does not come back at the default umask
+/// after the next setting change. With no existing file there is nothing to
+/// carry over and the platform default stands — kagi does not invent a mode.
+///
+/// (The `.corrupt` rescue needs no equivalent: its reserved file is *replaced*
+/// by renaming the original onto it, so the rescue keeps the original's inode
+/// and therefore its own mode.)
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut name = std::ffi::OsString::from(".");
     name.push(path.file_name().unwrap_or_default());
@@ -367,6 +376,11 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         f.write_all(bytes)?;
         f.sync_all()
     });
+    if written.is_ok() {
+        if let Ok(md) = std::fs::metadata(path) {
+            let _ = std::fs::set_permissions(&tmp, md.permissions());
+        }
+    }
     let result = written.and_then(|()| std::fs::rename(&tmp, path));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -679,6 +693,57 @@ mod tests {
             std::fs::read_dir(&blocked).expect("read_dir").count(),
             1,
             "a failed atomic write must clean up its temp file"
+        );
+    }
+
+    /// #617 Codex review: the atomic replace must carry the existing file's
+    /// mode over, or a settings file the user tightened silently comes back at
+    /// the default umask after any setting change.
+    #[cfg(unix)]
+    #[test]
+    fn a_tightened_file_keeps_its_mode_across_writes() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("settings.json");
+        let mut s = store(&path);
+
+        // A fresh file keeps whatever the platform default is — the same mode
+        // an ordinary create in this directory would produce.
+        set(&mut s, "theme", "one-dark");
+        assert!(flush_store(&mut s));
+        let reference = tmp.path().join("reference");
+        std::fs::write(&reference, "x").expect("reference file");
+        let mode_of =
+            |p: &Path| std::fs::metadata(p).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(
+            mode_of(&path),
+            mode_of(&reference),
+            "a new settings file must not invent a mode of its own"
+        );
+
+        // Now the user tightens it. Every later write must preserve that.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        set(&mut s, "theme", "gruvbox");
+        assert!(flush_store(&mut s));
+        assert_eq!(
+            mode_of(&path),
+            0o600,
+            "chmod 600 must survive a settings change"
+        );
+        assert_eq!(on_disk(&path, "theme").as_deref(), Some("gruvbox"));
+
+        // …and the rescue of a corrupt file keeps the original's mode too: the
+        // reserved file is replaced by renaming the original onto it.
+        std::fs::write(&path, "{ \"session_repos\": \"/keepme\"").expect("corrupt");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let mut s = store(&path);
+        set(&mut s, "theme", "nord");
+        assert!(flush_store(&mut s));
+        assert_eq!(
+            mode_of(&path.with_extension("json.corrupt")),
+            0o600,
+            "the rescued original must keep its own mode"
         );
     }
 

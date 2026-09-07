@@ -53,6 +53,12 @@ on-disk 形式 (flat な string 値の object、unknown key 保持) は変えな
 directory の fsync はしていないので、これは crash atomicity であって電源断
 耐性ではない。
 
+一時ファイルには**置換先の mode を引き継ぐ**。引き継がないと、ユーザーが
+`chmod 600` で絞った `settings.json` が次の設定変更で umask 既定に戻る。
+置換先が存在しない場合は何もせず platform 既定のままにする (kagi が独自に
+厳しい mode を発明しない)。`.corrupt` の救済は予約した空ファイルの上に原本を
+rename するので、救済ファイルは原本の inode = 原本の mode をそのまま保つ。
+
 ### 3. 外部変更は content で検出し、自分の key だけ replay する
 
 書き込み直前の再読込で、ファイルが**自分が最後に読み書きした bytes と違えば**

@@ -1434,7 +1434,7 @@ fn build_worktree_row(
         let name_for_menu = name.to_string();
         let menu_handler = cx.listener(
             move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                this.open_worktree_menu(name_for_menu.clone(), locked, None, event.position);
+                this.open_worktree_menu(name_for_menu.clone(), locked, false, None, event.position);
                 cx.stop_propagation();
                 cx.notify();
             },

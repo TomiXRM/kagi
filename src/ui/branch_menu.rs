@@ -2,7 +2,7 @@
 
 use gpui::{ClipboardItem, Context, Pixels, Point, SharedString, Window};
 
-use kagi_git::CommitId;
+use kagi_git::{CommitId, Worktree};
 
 use super::{
     context_menu::{ItemState, MenuGroup, MenuItem},
@@ -90,6 +90,25 @@ pub struct BranchMenuContext {
     pub busy: bool,
     pub current_branch: Option<String>,
     pub is_soloed: bool,
+}
+
+/// Resolve the worktree fields shared by the branch context menu and graph
+/// worktree affordances. The current worktree is reported as checked out but
+/// deliberately has no open target because opening it would be a no-op.
+pub fn worktree_paths_for_branch(
+    worktrees: &[Worktree],
+    branch: Option<&str>,
+) -> (Option<String>, Option<std::path::PathBuf>) {
+    let worktree = branch.and_then(|branch| {
+        worktrees
+            .iter()
+            .find(|worktree| worktree.branch.as_deref() == Some(branch))
+    });
+    let checked_out_path = worktree.map(|worktree| worktree.path.display().to_string());
+    let open_path = worktree
+        .filter(|worktree| !worktree.is_current)
+        .map(|worktree| worktree.path.clone());
+    (checked_out_path, open_path)
 }
 
 pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<BranchAction>> {
@@ -700,6 +719,20 @@ fn set_upstream_label(ctx: &BranchMenuContext) -> String {
 mod tests {
     use super::*;
 
+    fn worktree(path: &str, branch: Option<&str>, is_current: bool, is_main: bool) -> Worktree {
+        Worktree {
+            name: path.to_string(),
+            path: path.into(),
+            branch: branch.map(str::to_string),
+            is_current,
+            is_main,
+            wip: None,
+            head: None,
+            locked: false,
+            lock_reason: None,
+        }
+    }
+
     fn ctx() -> BranchMenuContext {
         BranchMenuContext {
             name: "feature/x".to_string(),
@@ -788,6 +821,34 @@ mod tests {
                 .as_ref()
                 .contains("/tmp/wt-ahead"),
             "the item must name the worktree directory"
+        );
+    }
+
+    #[test]
+    fn branch_worktree_paths_cover_main_linked_current_and_detached() {
+        let worktrees = vec![
+            worktree("/repo", Some("main"), false, true),
+            worktree("/repo-linked", Some("feature"), false, false),
+            worktree("/repo-current", Some("current"), true, false),
+            worktree("/repo-detached", None, false, false),
+        ];
+
+        assert_eq!(
+            worktree_paths_for_branch(&worktrees, Some("main")),
+            (Some("/repo".into()), Some("/repo".into()))
+        );
+        assert_eq!(
+            worktree_paths_for_branch(&worktrees, Some("feature")),
+            (Some("/repo-linked".into()), Some("/repo-linked".into()))
+        );
+        assert_eq!(
+            worktree_paths_for_branch(&worktrees, Some("current")),
+            (Some("/repo-current".into()), None)
+        );
+        assert_eq!(
+            worktree_paths_for_branch(&worktrees, None),
+            (None, None),
+            "detached worktrees do not bind to a branch context"
         );
     }
 

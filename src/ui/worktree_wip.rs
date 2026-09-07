@@ -289,7 +289,7 @@ mod tests {
     use super::*;
 
     fn actions(locked: bool, path: Option<&Path>) -> Vec<WorktreeAction> {
-        build_worktree_menu(locked, path)
+        build_worktree_menu(locked, false, path)
             .into_iter()
             .flat_map(|g| g.items.into_iter().map(|i| i.action))
             .collect()
@@ -422,5 +422,21 @@ mod tests {
         assert!(!no_path.contains(&WorktreeAction::Reveal));
         assert!(!no_path.contains(&WorktreeAction::CopyPath));
         assert_eq!(no_path.len(), 6, "sidebar menu grew: {no_path:?}");
+    }
+
+    #[test]
+    fn detached_main_badge_menu_keeps_path_actions_but_not_linked_lifecycle() {
+        let actions: Vec<_> = build_worktree_menu(false, true, Some(Path::new("/main")))
+            .into_iter()
+            .flat_map(|group| group.items.into_iter().map(|item| item.action))
+            .collect();
+        assert!(actions.contains(&WorktreeAction::OpenInNewTab));
+        assert!(actions.contains(&WorktreeAction::Reveal));
+        assert!(actions.contains(&WorktreeAction::CopyPath));
+        assert!(actions.contains(&WorktreeAction::Prune));
+        assert!(!actions.contains(&WorktreeAction::Lock));
+        assert!(!actions.contains(&WorktreeAction::Remove {
+            delete_branch: false,
+        }));
     }
 }

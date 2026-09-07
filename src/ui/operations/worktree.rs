@@ -10,6 +10,13 @@ use crate::ui::blocking_ops::*;
 use crate::ui::*;
 
 impl KagiApp {
+    /// Open a worktree from its graph glyph. `open_repository` owns canonical
+    /// identity and switches to an existing tab instead of duplicating it.
+    pub(crate) fn open_graph_worktree(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        klog!("worktree-open: {}", path.display());
+        self.open_repository(path, cx);
+    }
+
     pub fn open_create_worktree_modal(&mut self, at: CommitId, cx: &mut Context<Self>) {
         self.open_create_worktree_modal_prefilled(at, String::new(), false, cx);
     }
@@ -255,6 +262,7 @@ impl KagiApp {
         &mut self,
         name: String,
         locked: bool,
+        is_main: bool,
         path: Option<std::path::PathBuf>,
         position: gpui::Point<gpui::Pixels>,
     ) {
@@ -264,6 +272,7 @@ impl KagiApp {
         self.worktree_menu = Some(worktree_menu::WorktreeMenuState {
             name: name.clone(),
             locked,
+            is_main,
             path,
             position,
         });

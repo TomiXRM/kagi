@@ -845,7 +845,7 @@ pub fn render_inspector(
         for badge in &by_prio {
             let color = match badge.kind {
                 BadgeKind::HeadBranch => theme().color_head,
-                BadgeKind::Branch => theme().color_branch,
+                BadgeKind::Branch | BadgeKind::Worktree => theme().color_branch,
                 BadgeKind::Remote => theme().color_remote,
                 BadgeKind::Tag => theme().color_tag,
             };

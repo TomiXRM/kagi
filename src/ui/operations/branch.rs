@@ -1405,12 +1405,7 @@ impl KagiApp {
                                 kagi_git::backend::recording::Recording::Failed { .. }
                             )
                         {
-                            app.present_recorded(
-                                "delete-branch",
-                                &report.recording,
-                                &repo_path,
-                                cx,
-                            );
+                            app.present_recorded(&report.recording, cx);
                             app.reload(cx);
                             return;
                         }
@@ -1424,24 +1419,20 @@ impl KagiApp {
                                     return Err("unexpected delete-branch outcome".into());
                                 };
                                 let recovery = format!("git branch {} {reference}", branch_name);
-                                let after = match &report.recording.entry().outcome {
-                                    kagi_git::oplog::OpOutcome::Success { after } => after.clone(),
-                                    _ => return Err("unexpected delete-branch receipt".into()),
-                                };
-                                Ok((after, recovery))
+                                if !matches!(
+                                    report.recording.entry().outcome,
+                                    kagi_git::oplog::OpOutcome::Success { .. }
+                                ) {
+                                    return Err("unexpected delete-branch receipt".into());
+                                }
+                                Ok((report.recording, recovery))
                             })
                     }
                     Err(error) => Err(error),
                 };
                 match result {
-                    Ok((after, recovery_line)) => {
-                        app.record_op(
-                            "delete-branch",
-                            plan.current.clone(),
-                            kagi_git::oplog::OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
+                    Ok((recording, recovery_line)) => {
+                        app.present_recorded(&recording, cx);
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "delete-branch: '{}' deleted (restore: {})",
                             branch_name, recovery_line

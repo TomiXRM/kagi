@@ -42,3 +42,23 @@ Existing klog lines and ordering remain; only a new armed line is added. Success
 execution logs completion even when durable recording fails. The owner notice,
 Partial presentation and suppression of retry remain, without a second append. Recovery
 and warning text and the armed button label have EN/JA representations.
+
+Attempted and appended receipts are delivered intact to the oplog panel. Display
+may convert a failed append's successful/partial/unknown outcome to Partial, but
+retains backup refs, receipt identity and owner/actor metadata. Display never
+re-appends a receipt, including a Refused receipt. The intentionally held sidecar
+lock in the E failure scenario exercises append failure; it is not evidence of
+recursive locking in the backend.
+
+## 保証しないもの — external concurrent worktree creation
+
+The final occupancy/inventory check and deletion commit are not one atomic
+operation with an external `git worktree add`. That command can register a new
+worktree and attach its HEAD to the target after the last check; libgit2's
+worktree-add path does not take the target branch ref lock. Existing HEAD locks
+do not cover a HEAD that does not exist yet. Without a repository-wide lock
+honored by external writers, this concurrent creation can leave the new
+worktree's HEAD dangling after deletion. The mandatory recovery ref still
+retains the tip and permits restoring the branch. PM accepted this explicit
+external-concurrency boundary in the #585 review; ordinary deletion refuses all
+checked-out branches observed in main and registered linked worktrees.

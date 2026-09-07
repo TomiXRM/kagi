@@ -959,6 +959,12 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
             output(repo, &["rev-parse", &entries[0].backup_refs[0]]),
             tip
         );
+        cx.read(|cx| {
+            let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+            let displayed = panel.entries().front().expect("recorded receipt in panel");
+            assert_eq!(displayed.id, entries[0].id);
+            assert_eq!(displayed.backup_refs, entries[0].backup_refs);
+        });
 
         // Merged branches still execute on the first Enter/click.
         app.update(cx, |app, cx| {
@@ -1078,8 +1084,17 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
         let notice = kagi::ui::e2e::app_notice_message(state).unwrap();
         assert!(notice.contains("recording failed") && notice.contains(repo.to_str().unwrap()));
         let panel = state.op_log.as_ref().unwrap().read(cx);
-        let entry = panel.entries().front().unwrap();
+        let entry = panel
+            .entries()
+            .front()
+            .expect("attempted receipt must reach the panel");
         assert!(matches!(entry.outcome, OpOutcome::Partial { .. }));
+        assert_eq!(entry.repo, repo.display().to_string());
+        assert_eq!(
+            entry.backup_refs.len(),
+            1,
+            "Partial presentation must retain the attempted recovery root"
+        );
         assert_eq!(output(repo, &["rev-parse", &entry.backup_refs[0]]), tip);
     });
     unmount(cx, app, window);

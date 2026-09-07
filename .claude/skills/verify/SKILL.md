@@ -315,7 +315,10 @@ starts a plan on A, switches to B before completion, and asserts that B receives
 no delete modal or mutation, releases the plan busy latch, and permits a fresh
 plan on returning to A. It also holds the oplog sidecar lock to force an
 append failure after deletion: expect a retained tip, owner notice and Partial
-entry, no retry modal, and the existing `async: delete-branch finished` log. PM runs only
+entry with its original `backup_refs` and owner metadata, no retry modal, and
+the existing `async: delete-branch finished` log. G exercises this same display
+conversion after a real sidecar-lock failure and retires a successfully recorded
+branch receipt after passing it through the panel. PM runs only
 `KAGI_GUI_E2E_ONLY=unmerged_branch_delete_armed`, with the usual isolated log directory.
 When execution is prohibited, build it with `--features gui-e2e --no-run` only.
 For M, compare EN/JA warning counts and armed labels, cancel/reopen to reset the

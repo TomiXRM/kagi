@@ -331,7 +331,7 @@ impl KagiApp {
                 } else {
                     klog!("pr-merge failed: {}", detail);
                 }
-                app.present_recorded("pr-merge", &report.recording, &repo_path, cx);
+                app.present_recorded(&report.recording, cx);
                 if merged {
                     app.push_toast(
                         ToastKind::Info,

@@ -1936,7 +1936,9 @@ impl KagiApp {
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        self.record_op_impl(op, before, outcome, repo_path, cx, false);
+        let persist = matches!(outcome, OpOutcome::Refused { .. });
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
+        self.record_op_impl(entry, cx, persist);
     }
 
     /// Like [`record_op`] but ALSO persists entries for operations whose
@@ -1951,19 +1953,15 @@ impl KagiApp {
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        self.record_op_impl(op, before, outcome, repo_path, cx, true);
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
+        self.record_op_impl(entry, cx, true);
     }
 
-    fn record_op_impl(
-        &mut self,
-        op: &str,
-        before: StateSummary,
-        outcome: OpOutcome,
-        repo_path: &std::path::Path,
-        cx: &mut Context<Self>,
-        persist_non_run: bool,
-    ) {
-        let (footer_msg, footer_ok) = match &outcome {
+    fn record_op_impl(&mut self, entry: OpLogEntry, cx: &mut Context<Self>, persist: bool) {
+        let op = entry.op.as_str();
+        let before = &entry.before;
+        let outcome = &entry.outcome;
+        let (footer_msg, footer_ok) = match outcome {
             OpOutcome::Success { after } => (
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
                 true,
@@ -1990,7 +1988,7 @@ impl KagiApp {
             ),
         };
 
-        let display_footer_msg = Self::display_footer_message(op, &outcome, &footer_msg);
+        let display_footer_msg = Self::display_footer_message(op, outcome, &footer_msg);
 
         // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
         // outcome (Success / Failed / Refused) becomes a toast.
@@ -2004,15 +2002,9 @@ impl KagiApp {
         // T-BP-004: auto-open bottom panel on Failed.
         let is_failed = matches!(outcome, OpOutcome::Failed { .. });
 
-        let repo_str = repo_path.display().to_string();
-        let entry = OpLogEntry::new(op, &repo_str, before, outcome);
-
-        // ADR-0149: `run` is the sole oplog writer for run-path ops. Here we
-        // persist only (a) `Refused` (never reaches `run`) or (b) non-run ops
-        // that opt in via `record_op_persist`. Otherwise skip to avoid a
-        // double-record; the entry is still shown in the in-memory panel below.
-        let should_persist = persist_non_run || matches!(entry.outcome, OpOutcome::Refused { .. });
-        if should_persist {
+        // Callers choose persistence. Already-recorded/attempted receipts are
+        // presentation-only, including Refused outcomes: never append twice.
+        if persist {
             if let Err(e) = append_oplog(&entry) {
                 klog!("oplog: write failed (non-fatal): {}", e);
             }

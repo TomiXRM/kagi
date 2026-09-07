@@ -808,7 +808,13 @@ fn unmerged_armed_delete_receipt_gc_restore_and_retirement() {
         },
         &modal.plan,
     );
-    let entry = report.recording.entry().clone();
+    let mut panel = kagi::ui::oplog_panel::OpLogPanel::new();
+    panel.push(kagi::ui::oplog_panel::OpLogPanel::entry_for_recording(
+        &report.recording,
+    ));
+    let entry = panel.entries().front().unwrap().clone();
+    assert_eq!(entry.id, report.recording.entry().id);
+    assert_eq!(entry.backup_refs, report.recording.entry().backup_refs);
     assert!(matches!(
         report.recording,
         kagi_git::backend::recording::Recording::Appended { .. }
@@ -1192,4 +1198,75 @@ fn departed_delete_plan_releases_busy_and_revisit_can_replan() {
         Some("checkout"),
         "do not release an unrelated operation"
     );
+}
+
+#[test]
+fn locked_recording_displays_attempted_partial_with_recovery_metadata() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let mut backend = kagi_git::Backend::open(&fixture.path).unwrap();
+    let mut modal = kagi::ui::modals::DeleteBranchModal {
+        owner: delete_owner(&fixture.path),
+        branch_name: "unmerged".into(),
+        plan: std::sync::Arc::new(backend.plan_delete_branch("unmerged").unwrap()),
+        confirm_armed: false,
+        error: None,
+    };
+    assert!(modal.arm_if_required());
+    assert!(!modal.arm_if_required());
+    let log_dir = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+    let log_path = log_dir.join("operations.jsonl");
+    let before = std::fs::read(&log_path).unwrap_or_default();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(log_dir.join("operations.jsonl.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let report = backend.run_recorded(
+        &kagi_git::Operation::DeleteBranch {
+            name: "unmerged".into(),
+        },
+        &modal.plan,
+    );
+    assert!(report.result.is_ok());
+    assert!(matches!(
+        report.recording,
+        kagi_git::backend::recording::Recording::Failed { .. }
+    ));
+    let attempted = report.recording.entry();
+    let mut panel = kagi::ui::oplog_panel::OpLogPanel::new();
+    panel.push(kagi::ui::oplog_panel::OpLogPanel::entry_for_recording(
+        &report.recording,
+    ));
+    let displayed = panel
+        .entries()
+        .front()
+        .expect("attempted receipt must be visible");
+    assert!(matches!(
+        displayed.outcome,
+        kagi_git::oplog::OpOutcome::Partial { .. }
+    ));
+    assert_eq!(
+        displayed.backup_refs, attempted.backup_refs,
+        "display must retain recovery roots"
+    );
+    assert_eq!(displayed.id, attempted.id);
+    assert_eq!(displayed.parent, attempted.parent);
+    assert_eq!(displayed.timestamp, attempted.timestamp);
+    assert_eq!(displayed.actor, attempted.actor);
+    assert_eq!(displayed.worktree, attempted.worktree);
+    assert_eq!(displayed.repo, attempted.repo);
+    assert_eq!(
+        std::fs::read(&log_path).unwrap_or_default(),
+        before,
+        "presentation must not retry append"
+    );
+    drop(lock);
+    let repo = Repository::open(&fixture.path).unwrap();
+    assert!(repo.find_reference(&displayed.backup_refs[0]).is_ok());
 }

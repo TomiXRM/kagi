@@ -156,7 +156,7 @@ impl KagiApp {
                     match &report.result {
                         Ok(summary) => {
                             klog!("async: remote pull finished — {summary}");
-                            app.present_recorded("pull", &report.recording, &oplog_path, cx);
+                            app.present_recorded(&report.recording, cx);
                             // A pull whose record never landed is not a clean
                             // success; the notice above already said so.
                             if recorded_clean {
@@ -169,7 +169,7 @@ impl KagiApp {
                         Err(error) => {
                             let err_msg = error.to_string();
                             klog!("async: remote pull failed — {err_msg}");
-                            app.present_recorded("pull", &report.recording, &oplog_path, cx);
+                            app.present_recorded(&report.recording, cx);
                             // Unknown/Partial changed the host: re-read rather
                             // than re-offering the same pull.
                             app.refresh_remote_view(cx);

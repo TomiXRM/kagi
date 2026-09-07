@@ -22,6 +22,7 @@ pub mod remote_branch;
 pub mod reset;
 pub mod stash;
 pub mod tag;
+pub(crate) mod transport_hold;
 pub mod worktree;
 
 use crate::ui::i18n::Msg;

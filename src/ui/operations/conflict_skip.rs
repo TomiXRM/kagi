@@ -59,6 +59,7 @@ impl KagiApp {
                 let git_said = o.error.map(|e| format!("{}", e)).unwrap_or_default();
                 let (outcome, failure) = match o.progress {
                     SkipProgress::Finished | SkipProgress::Advanced => {
+                        let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
                         (OpOutcome::Success { after: o.after }, None)
                     }
                     SkipProgress::NoProgress => (

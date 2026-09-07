@@ -70,13 +70,13 @@ fn fake_gh(bin: &Path, body: &str) {
 /// `gh pr <subcommand> …` — dispatch on `$2` so one script answers both the
 /// merge and the state re-read the boundary does after a non-zero exit.
 fn gh_script(merge: &str, view: &str) -> String {
-    format!("#!/bin/sh\ncase \"$2\" in\nmerge) {merge} ;;\nview) {view} ;;\nesac\n")
+    format!("#!/bin/sh\ncase \"$2\" in\nmerge) {merge} ;;\nview) test \"$5\" = mergedAt || exit 2; {view} ;;\nesac\n")
 }
 
 const MERGE_OK: &str = "echo '✓ Merged pull request #501'";
 const MERGE_FAILS: &str = "echo 'Head branch was modified' >&2; exit 1";
-const VIEW_MERGED: &str = r#"echo '{"merged":true,"mergedAt":"2026-09-07T00:00:00Z"}'"#;
-const VIEW_OPEN: &str = r#"echo '{"merged":false,"mergedAt":null}'"#;
+const VIEW_MERGED: &str = r#"echo '{"mergedAt":"2026-09-07T00:00:00Z"}'"#;
+const VIEW_OPEN: &str = r#"echo '{"mergedAt":null}'"#;
 const VIEW_UNREACHABLE: &str = "echo 'could not connect to github.com' >&2; exit 1";
 
 fn merge_plan() -> kagi_git::OperationPlan {

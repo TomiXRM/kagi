@@ -546,13 +546,7 @@ pub fn merge_pr(
 /// exit status of the merge command is not.
 fn pr_merged_on_server(workdir: &Path, number: u64) -> Option<bool> {
     let out = crate::cli::gh_command()
-        .args([
-            "pr",
-            "view",
-            &number.to_string(),
-            "--json",
-            "merged,mergedAt",
-        ])
+        .args(["pr", "view", &number.to_string(), "--json", "mergedAt"])
         .current_dir(workdir)
         .output()
         .ok()?;
@@ -561,7 +555,12 @@ fn pr_merged_on_server(workdir: &Path, number: u64) -> Option<bool> {
     }
     let value: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).ok()?;
-    value.get("merged")?.as_bool()
+    let merged_at = value.get("mergedAt")?;
+    if merged_at.is_null() {
+        Some(false)
+    } else {
+        merged_at.as_str().map(|_| true)
+    }
 }
 
 fn merge_pr_transport(

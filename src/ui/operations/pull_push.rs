@@ -19,7 +19,12 @@ impl KagiApp {
         }
         // Remote read-only view (ADR-0089 Phase 3): synthesise the plan from the
         // snapshot's ahead/behind; the pull runs over SSH in `start_pull`.
-        if self.remote_view.is_some() {
+        if let Some(rv) = self.remote_view.clone() {
+            let owner = PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
+            if self.reject_transport_hold(&owner, "pull") {
+                cx.notify();
+                return;
+            }
             let s = &self.view().status_summary;
             let branch = s.branch.clone();
             let behind = s.behind.unwrap_or(0);
@@ -130,6 +135,12 @@ impl KagiApp {
         if let Some(rv) = self.remote_view.clone() {
             let before = modal.plan.current.clone();
             let oplog_path = std::path::PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
+            if self.reject_transport_hold(&oplog_path, "pull") {
+                self.clear_pull_modal();
+                self.present_app_notice();
+                cx.notify();
+                return;
+            }
             self.busy_op = Some("pull");
             self.clear_pull_modal();
             self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
@@ -147,6 +158,7 @@ impl KagiApp {
                 task,
                 move |app, report: &crate::remote::RemotePullReport, _cx| {
                     app.notice_recording_failure("pull", &report.recording, &notice_path);
+                    app.settle_transport(&notice_path, "pull", &report.recording.entry().outcome);
                 },
                 move |app, report, cx| {
                     let recorded_clean = matches!(
@@ -173,10 +185,13 @@ impl KagiApp {
                             // Unknown/Partial changed the host: re-read rather
                             // than re-offering the same pull.
                             app.refresh_remote_view(cx);
-                            app.set_pull_modal(PullPlanModal {
-                                plan: modal.plan.clone(),
-                                error: Some(SharedString::from(err_msg)),
-                            });
+                            if matches!(report.recording.entry().outcome, OpOutcome::Failed { .. })
+                            {
+                                app.set_pull_modal(PullPlanModal {
+                                    plan: modal.plan.clone(),
+                                    error: Some(SharedString::from(err_msg)),
+                                });
+                            }
                         }
                     }
                 },

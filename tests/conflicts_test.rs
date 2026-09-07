@@ -1040,8 +1040,9 @@ fn skip_cherry_pick_drops_current_step() {
     );
     assert!(!content.contains("<<<<<<<"), "no markers should remain");
 
-    // Buffer preserved.
-    assert!(outcome.buffer_preserved_at.is_some());
+    // A finished skip must not offer a draft from the discarded step.
+    assert!(outcome.buffer_preserved_at.is_none());
+    assert!(ResolutionBuffer::load(dir).is_none());
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1726,7 +1727,14 @@ fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
     let repo = Repository::open(dir).unwrap();
     let session = detect_conflict_session(&repo).expect("first rebase conflict");
     assert!(matches!(session.op, ConflictOp::Rebase { .. }));
-    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .set_manual_text(Path::new("file.txt"), "WRONG OLD DRAFT\n")
+        .unwrap();
+    buffer.autosave().unwrap();
+    assert!(ResolutionBuffer::load(dir)
+        .unwrap()
+        .has_resolution(Path::new("file.txt")));
 
     let first = execute_conflict_skip(&repo, &session, &buffer).expect("skip must not error");
     assert_eq!(first.progress, SkipProgress::Advanced);
@@ -1741,7 +1749,12 @@ fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
     assert!(matches!(next.op, ConflictOp::Rebase { .. }));
 
     // Skipping it too leaves nothing to replay: the rebase completes.
-    let buffer2 = ResolutionBuffer::from_repo(&repo2).unwrap();
+    let buffer2 = ResolutionBuffer::from_repo_with_autosave(&repo2).unwrap();
+    assert!(
+        !buffer2.has_resolution(Path::new("file.txt")),
+        "skipped draft must not resolve the next conflict"
+    );
+    assert!(ResolutionBuffer::load(dir).is_none());
     let second = execute_conflict_skip(&repo2, &next, &buffer2).expect("skip must not error");
     assert_eq!(second.progress, SkipProgress::Finished);
     assert!(second.error.is_none(), "a finished sequence exits zero");

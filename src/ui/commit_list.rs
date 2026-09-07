@@ -5,11 +5,10 @@
 
 use std::collections::HashMap;
 
-use gpui::SharedString;
-
 use crate::graph::{layout, EdgeKind, GraphEdge};
+use gpui::SharedString;
 use kagi_git::{Commit, CommitId, Head, RepoSnapshot};
-use kagi_ui_core::settings::CopyTarget;
+use kagi_ui_core::{i18n, settings::CopyTarget};
 
 // ──────────────────────────────────────────────────────────────
 // Helpers
@@ -68,8 +67,9 @@ pub struct RefBadge {
     /// differ). Rendered as a ☁ mark + tooltip instead of a second chip —
     /// `[main][origin/main]` pairs used to eat the whole badge column.
     pub remotes: Vec<SharedString>,
-    /// `Some` only when the tree glyph is an actionable navigation target.
-    pub worktree: Option<BadgeWorktree>,
+    /// One entry per actionable tree glyph; detached worktrees sharing a
+    /// commit are grouped here so none fall into badge overflow.
+    pub worktrees: Vec<BadgeWorktree>,
 }
 
 impl RefBadge {
@@ -78,12 +78,12 @@ impl RefBadge {
             kind,
             label: label.into(),
             remotes: Vec::new(),
-            worktree: None,
+            worktrees: Vec::new(),
         }
     }
 
     fn with_worktree(mut self, worktree: &kagi_git::Worktree) -> Self {
-        self.worktree = Some(BadgeWorktree {
+        self.worktrees.push(BadgeWorktree {
             name: worktree.name.clone(),
             path: worktree.path.clone(),
             locked: worktree.locked,
@@ -191,10 +191,26 @@ pub fn build_badge_map(snap: &RepoSnapshot) -> HashMap<CommitId, Vec<RefBadge>> 
     {
         let Some(head) = &worktree.head else { continue };
         let short = head.0.chars().take(8).collect::<String>();
-        map.entry(head.clone()).or_default().push(
-            RefBadge::new(BadgeKind::Worktree, format!("🌲 detached {short}"))
+        let badges = map.entry(head.clone()).or_default();
+        if let Some(badge) = badges
+            .iter_mut()
+            .find(|badge| badge.kind == BadgeKind::Worktree)
+        {
+            badge.worktrees.push(BadgeWorktree {
+                name: worktree.name.clone(),
+                path: worktree.path.clone(),
+                locked: worktree.locked,
+                is_main: worktree.is_main,
+            });
+        } else {
+            badges.push(
+                RefBadge::new(
+                    BadgeKind::Worktree,
+                    format!("🌲 {}", i18n::graph_detached_worktree_label(&short)),
+                )
                 .with_worktree(worktree),
-        );
+            );
+        }
     }
 
     // Remote-tracking branches. A remote ref at the SAME commit as a local

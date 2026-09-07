@@ -10,7 +10,7 @@
 use git2::{BranchType, Repository};
 
 use super::{
-    log::{commit_log, Commit, CommitId},
+    log::{commit_log_with_roots, Commit, CommitId},
     refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree, WorktreeWip},
     resolve_head,
     status::{working_tree_status, WorkingTreeStatus},
@@ -33,7 +33,8 @@ use super::{
 pub struct RepoSnapshot {
     /// Current HEAD state (attached / detached / unborn).
     pub head: Head,
-    /// All commits reachable from any ref, in topological order.
+    /// Commits reachable from refs plus registered detached-worktree HEADs, in
+    /// topological order.
     pub commits: Vec<Commit>,
     /// Local branches, ordered by name.
     pub branches: Vec<Branch>,
@@ -70,8 +71,9 @@ pub struct RepoSnapshot {
 ///
 /// * `repo`         — A mutable reference to an already-opened [`Repository`].
 ///   `&mut` is required because `stash_foreach` mutably borrows the repo.
-/// * `commit_limit` — Maximum number of commits to include in `commits`.
-///   Pass `10_000` for the MVP.
+/// * `commit_limit` — Ordinary-history budget. Pass `10_000` for the MVP.
+///   Detached-worktree roots are pinned beyond this budget when necessary, so
+///   `commits` can exceed it by at most the number of distinct detached roots.
 ///
 /// # Unborn / empty repositories
 ///
@@ -84,16 +86,20 @@ pub struct RepoSnapshot {
 /// Returns [`GitError::Other`] on unexpected `git2` failures.
 pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapshot, GitError> {
     let head = resolve_head(repo)?;
-    let commits = commit_log(repo, commit_limit)?;
     let status = working_tree_status(repo)?;
+    // Detached linked-worktree HEADs are graph roots even when unreachable
+    // from all named refs and the currently open HEAD (#595).
+    let worktrees = collect_worktrees(repo, &status)?;
+    let detached_roots: Vec<CommitId> = worktrees
+        .iter()
+        .filter(|worktree| !worktree.is_current && worktree.branch.is_none())
+        .filter_map(|worktree| worktree.head.clone())
+        .collect();
+    let commits = commit_log_with_roots(repo, commit_limit, &detached_roots)?;
     let branches = collect_branches(repo, &head)?;
     let remote_branches = collect_remote_branches(repo)?;
     let tags = collect_tags(repo)?;
     let stashes = collect_stashes(repo)?;
-    // `status` is the *current* worktree's status, already paid for above —
-    // handing it over saves `collect_worktrees` from scanning that tree twice
-    // (~150ms on a large repo).
-    let worktrees = collect_worktrees(repo, &status)?;
     // ADR-0128 follow-up (user report 2026-07-22): cleanup classification used
     // to ride along with the snapshot, but it walks main's first-parent
     // history plus one `merge_base` per branch — on repos with many

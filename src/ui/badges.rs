@@ -166,19 +166,78 @@ pub(crate) fn render_badges_column(
         let name: SharedString = SharedString::from(name);
         let tooltip_label: SharedString =
             SharedString::from(super::commit_list::badge_tooltip(badge));
-        let worktree = badge.worktree.clone();
-        let worktree_control = if badge.kind == BadgeKind::Worktree {
-            "graph-worktree-open-detached"
-        } else {
-            "graph-worktree-open-attached"
-        };
+        let worktrees = badge.worktrees.clone();
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
         let name_el = div().min_w(px(0.)).truncate().child(name);
-        let name_el = if badge.kind == BadgeKind::Branch && worktree.is_some() {
+        let name_el = if badge.kind == BadgeKind::Branch && !worktrees.is_empty() {
             super::e2e::measure_control("graph-worktree-branch-name", name_el)
         } else {
             name_el.into_any_element()
+        };
+        let prefix_elements: Vec<gpui::AnyElement> = match prefix_glyph {
+            None => Vec::new(),
+            Some(glyph) if worktrees.is_empty() => vec![div()
+                .flex_shrink_0()
+                .child(SharedString::from(glyph))
+                .into_any_element()],
+            Some(glyph) => worktrees
+                .into_iter()
+                .enumerate()
+                .map(|(worktree_ix, worktree)| {
+                    let open_path = worktree.path.clone();
+                    let menu_worktree = worktree.clone();
+                    let tooltip = SharedString::from(format!(
+                        "{}: {}",
+                        Msg::MenuOpenWorktreeDir.t(),
+                        worktree.path.display()
+                    ));
+                    let control = format!("graph-worktree-open:{}", worktree.path.display());
+                    let glyph = div()
+                        .id(SharedString::from(format!(
+                            "graph-worktree-open-{i}-{worktree_ix}-{}",
+                            row_id.0
+                        )))
+                        .flex_shrink_0()
+                        .px_1()
+                        .cursor_pointer()
+                        .tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                        })
+                        .child(SharedString::from(glyph))
+                        .on_click(cx.listener(
+                            move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
+                                this.open_graph_worktree(open_path.clone(), cx);
+                                cx.stop_propagation();
+                                cx.notify();
+                            },
+                        ));
+                    let glyph = if badge.kind == BadgeKind::Worktree {
+                        glyph.on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(
+                                move |this: &mut KagiApp,
+                                      event: &gpui::MouseDownEvent,
+                                      _window,
+                                      cx| {
+                                    this.open_worktree_menu(
+                                        menu_worktree.name.clone(),
+                                        menu_worktree.locked,
+                                        menu_worktree.is_main,
+                                        Some(menu_worktree.path.clone()),
+                                        event.position,
+                                    );
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                },
+                            ),
+                        )
+                    } else {
+                        glyph
+                    };
+                    super::e2e::measure_control(control, glyph)
+                })
+                .collect(),
         };
         let chip = div()
             // Stable element id so gpui interactivity (drag/drop) works. Keyed
@@ -209,38 +268,7 @@ pub(crate) fn render_badges_column(
             .tooltip(move |window, cx| {
                 gpui_component::tooltip::Tooltip::new(tooltip_label.clone()).build(window, cx)
             })
-            .when_some(prefix_glyph, |c, g| {
-                let glyph = div().flex_shrink_0().child(SharedString::from(g));
-                let Some(worktree) = worktree.clone() else {
-                    return c.child(glyph);
-                };
-                let open_path = worktree.path.clone();
-                let tooltip = SharedString::from(format!(
-                    "{}: {}",
-                    Msg::MenuOpenWorktreeDir.t(),
-                    worktree.path.display()
-                ));
-                let glyph = glyph
-                    .id(SharedString::from(format!(
-                        "graph-worktree-open-{i}-{}",
-                        row_id.0
-                    )))
-                    // The tree owns only its padded box; the adjacent branch
-                    // name remains the row's jump target (#591).
-                    .px_1()
-                    .cursor_pointer()
-                    .tooltip(move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-                    })
-                    .on_click(cx.listener(
-                        move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                            this.open_graph_worktree(open_path.clone(), cx);
-                            cx.stop_propagation();
-                            cx.notify();
-                        },
-                    ));
-                c.child(super::e2e::measure_control(worktree_control, glyph))
-            })
+            .children(prefix_elements)
             .when(is_head, |c| {
                 c.child(div().flex_shrink_0().child(SharedString::from("\u{2713}")))
             })
@@ -383,32 +411,6 @@ pub(crate) fn render_badges_column(
                     },
                 ),
             )
-        } else {
-            chip
-        };
-        // A detached worktree has no branch menu. Its badge reuses the same
-        // worktree menu as WIP/sidebar entries, including path actions.
-        let chip = if badge.kind == BadgeKind::Worktree {
-            if let Some(worktree) = badge.worktree.clone() {
-                chip.on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(
-                        move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                            this.open_worktree_menu(
-                                worktree.name.clone(),
-                                worktree.locked,
-                                worktree.is_main,
-                                Some(worktree.path.clone()),
-                                event.position,
-                            );
-                            cx.stop_propagation();
-                            cx.notify();
-                        },
-                    ),
-                )
-            } else {
-                chip
-            }
         } else {
             chip
         };

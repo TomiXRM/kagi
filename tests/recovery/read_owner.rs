@@ -382,10 +382,18 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
             app.view().rows.len() > baseline_rows,
             "paging did not grow the page",
         );
-        assert_eq!(
-            app.view().status_summary.conflict_count,
-            0,
-            "paging has no way to see the conflict — only the reload does",
+        // NOT asserted here: that the read on screen shows no conflict. Paging
+        // takes a full `snapshot()`, so its own `status_summary` reports the
+        // conflicted working tree — a status count is no evidence about *which*
+        // read produced it. What paging cannot do is the reload's semantic
+        // processing, and `last_working_status` is written by nothing else, so
+        // it is the honest witness that the reload has not applied yet.
+        assert!(
+            app.last_working_status
+                .as_ref()
+                .is_some_and(|s| s.conflicted.is_empty()),
+            "the reload applied before the synchronous paging call — the \
+             ordering this scenario exists to test did not happen",
         );
     });
     cx.run_until_parked();
@@ -400,6 +408,10 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
                 .is_some_and(|s| !s.conflicted.is_empty()),
             "the reload's working-tree baseline never landed",
         );
+        // The reload captured `commit_limit` before paging raised it, so its
+        // page is the small one. Paging's larger page losing to it is the proof
+        // that the surviving read is the reload's — a status count alone could
+        // have come from either.
         assert_eq!(
             app.view().rows.len(),
             baseline_rows,

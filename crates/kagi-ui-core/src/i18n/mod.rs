@@ -731,6 +731,8 @@ pub enum Msg {
     /// Confirm button on the rebase modal, `{}` = branch.
     PlanRebaseOnto,
     /// Delete-remote-branch confirm, and its armed second stage.
+    PlanDeleteBranch,
+    PlanDeleteBranchArmed,
     PlanDeleteRemoteBranch,
     PlanDeleteRemoteBranchArmed,
     /// Reset-current confirm, and its armed second stage.
@@ -1793,6 +1795,10 @@ impl Msg {
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
             (Ja, PlanRebaseOnto) => "{} へ rebase",
+            (En, PlanDeleteBranch) => "Delete",
+            (Ja, PlanDeleteBranch) => "削除",
+            (En, PlanDeleteBranchArmed) => "Really delete — keep recovery ref",
+            (Ja, PlanDeleteBranchArmed) => "本当に削除する — 復元用 ref を保持",
             (En, PlanDeleteRemoteBranch) => "Delete remote branch",
             (Ja, PlanDeleteRemoteBranch) => "remote branch を削除",
             (En, PlanDeleteRemoteBranchArmed) => "\u{26a0} Really delete — cannot be undone",

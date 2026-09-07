@@ -15,11 +15,19 @@ impl Backend {
         mut event: impl FnMut(stash::StashEvent),
     ) -> recording::RunReport {
         let mut partial_after = None;
+        let mut backup_refs = Vec::new();
         let mut evidence = stash::StashEvidence::default();
         let action = stash::StashAction::from_operation(op);
         let result = if let Some(action) = &action {
             let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let result = self.run_execution(op, plan, &mut partial_after, &mut evidence, fault);
+                let result = self.run_execution(
+                    op,
+                    plan,
+                    &mut partial_after,
+                    &mut evidence,
+                    fault,
+                    &mut backup_refs,
+                );
                 if result.is_ok() {
                     event(stash::StashEvent::Executed {
                         action: action.clone(),
@@ -58,19 +66,23 @@ impl Backend {
                 }
             }
         } else {
-            self.run_execution(op, plan, &mut partial_after, &mut evidence, None)
+            self.run_execution(
+                op,
+                plan,
+                &mut partial_after,
+                &mut evidence,
+                None,
+                &mut backup_refs,
+            )
         };
         let outcome = if action.is_some() {
             stash::stash_outcome(&result, plan, &evidence)
         } else {
             oplog_outcome_from(&result, &plan.predicted, partial_after)
         };
-        let backup_refs = match &result {
-            Ok(OperationOutcome::Discard(d)) => {
-                d.backups.iter().map(|b| b.reference.clone()).collect()
-            }
-            _ => Vec::new(),
-        };
+        if let Ok(OperationOutcome::Discard(d)) = &result {
+            backup_refs.extend(d.backups.iter().map(|b| b.reference.clone()));
+        }
         let recording = self.record_run_oplog_with_backups(
             op.oplog_name(),
             &plan.current,
@@ -92,6 +104,7 @@ impl Backend {
         partial_after: &mut Option<ops::StateSummary>,
         evidence: &mut stash::StashEvidence,
         fault: Option<stash::StashFaultPoint>,
+        backup_refs: &mut Vec<String>,
     ) -> Result<OperationOutcome, GitError> {
         // ── Owner-trust gate (ADR-0160). libgit2 does not enforce
         // safe.directory, so a foreign-owned repo opened via git2 reaches here
@@ -362,9 +375,7 @@ impl Backend {
             Operation::Amend { mode, message } => self
                 .execute_amend(*mode, message.as_deref())
                 .map(OperationOutcome::Amend),
-            Operation::DeleteBranch { name } => self
-                .execute_delete_branch(plan, name)
-                .map(|()| OperationOutcome::Unit),
+            Operation::DeleteBranch { name } => self.execute_delete_branch(plan, name, backup_refs),
             Operation::DeleteRemoteBranch { remote_branch } => self
                 .execute_delete_remote_branch(remote_branch)
                 .map(|()| OperationOutcome::Unit),

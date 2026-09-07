@@ -1224,29 +1224,53 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => {
-                klog!("open_delete_branch_modal: no repo_path set");
-                return;
-            }
+        if self.repo_path.is_none() {
+            klog!("open_delete_branch_modal: no repo_path set");
+            return;
+        }
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+            .filter(|owner| owner.worktree.is_some())
+        else {
+            return;
         };
+        let generation = self.switch_generation;
+        let repo_path = owner.path.clone();
         self.busy_op = Some("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
         klog!("async: delete-branch plan started for {}", branch_name);
 
         let bg_path = repo_path.clone();
         let bg_branch = branch_name.clone();
+        let expected_worktree = owner.worktree.clone();
         let task = cx.background_spawn(async move {
             let repo = crate::ui::blocking_ops::open_backend(&bg_path)
                 .map_err(|e| format!("repo open error: {e}"))?;
+            if repo.write_worktree_id().ok() != expected_worktree {
+                return Err("worktree identity changed; reopen the repository".into());
+            }
             repo.plan_delete_branch(&bg_branch)
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
-            let result = task.await;
+            let result = task.fallible().await;
             let _ = this.update(acx, |app, cx| {
-                app.busy_op = None;
+                let current = app
+                    .active_session()
+                    .and_then(|id| app.app_sessions.attachment(id));
+                // Terminalize even stale/failed tasks before the display guard.
+                if !DeleteBranchModal::settle_plan(
+                    &owner,
+                    current.as_ref(),
+                    app.switch_generation == generation,
+                    &mut app.busy_op,
+                ) {
+                    cx.notify();
+                    return;
+                }
+                let result =
+                    result.unwrap_or_else(|| Err("delete-branch plan failed unexpectedly".into()));
                 match result {
                     Ok(plan) => {
                         eprintln!(
@@ -1256,6 +1280,8 @@ impl KagiApp {
                         );
                         app.status_footer = FooterStatus::Idle(SharedString::from(""));
                         app.set_delete_branch_modal(DeleteBranchModal {
+                            owner,
+                            confirm_armed: false,
                             branch_name,
                             plan: std::sync::Arc::new(plan),
                             error: None,
@@ -1283,7 +1309,7 @@ impl KagiApp {
     /// uniform busy/disabled experience). #493: the single delete-branch entry —
     /// the modal button and the root Enter dispatch both land here.
     pub fn start_delete_branch(&mut self, cx: &mut Context<Self>) {
-        let modal = match self.delete_branch_modal().cloned() {
+        let mut modal = match self.delete_branch_modal().cloned() {
             Some(m) => m,
             None => return,
         };
@@ -1291,10 +1317,18 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
+        if self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+            .as_ref()
+            != Some(&modal.owner)
+        {
+            self.clear_delete_branch_modal();
+            cx.notify();
+            return;
+        }
+        let owner = modal.owner.clone();
+        let repo_path = owner.path.clone();
         if !modal.plan.blockers.is_empty() {
             eprintln!(
                 "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
@@ -1314,6 +1348,14 @@ impl KagiApp {
             return;
         }
 
+        if modal.arm_if_required() {
+            self.reset_modal_sections();
+            self.set_delete_branch_modal(modal);
+            klog!("delete-branch: armed (second confirm required — unmerged)");
+            cx.notify();
+            return;
+        }
+
         self.busy_op = Some("delete-branch");
         self.clear_delete_branch_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
@@ -1321,70 +1363,104 @@ impl KagiApp {
 
         let plan = modal.plan.clone();
         let branch_name = modal.branch_name.clone();
-        let bg_path = repo_path.clone();
+        let bg_owner = owner.clone();
         let bg_plan = plan.clone();
         let bg_branch = branch_name.clone();
         let task =
             cx.background_spawn(
-                async move { delete_branch_blocking(&bg_path, &bg_plan, &bg_branch) },
+                async move { delete_branch_blocking(&bg_owner, &bg_plan, &bg_branch) },
             );
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                klog!("async: delete-branch finished");
-                // Worktree-removal plans (clean worktree pinned the branch)
-                // log the cleanup so the headless harness can assert it.
-                // ADR-0129 F-3: matched via the typed note variant, not a
-                // substring search over the rendered EN text.
-                if plan.warnings.iter().any(|w| {
-                    matches!(
+        let notice_path = repo_path.clone();
+        self.finish_op_on_main_settled(
+            cx,
+            task,
+            move |app, result: &Result<kagi_git::backend::recording::RunReport, String>, _cx| {
+                if let Ok(report) = result {
+                    app.notice_recording_failure("delete-branch", &report.recording, &notice_path);
+                }
+            },
+            move |app, result, cx| {
+                let result = match result {
+                    Ok(report) => {
+                        if report.result.is_ok() {
+                            klog!("async: delete-branch finished");
+                            // Worktree-removal plans (clean worktree pinned the branch)
+                            // log the cleanup so the headless harness can assert it.
+                            // ADR-0129 F-3: matched via the typed note variant, not a
+                            // substring search over the rendered EN text.
+                            if plan.warnings.iter().any(|w| {
+                                matches!(
                         w,
                         kagi_git::ops::PlanNote::Branch(
                             kagi_domain::plan_note::BranchNote::DeleteRemovesPinningWorktree { .. }
                         )
                     )
-                }) {
-                    klog!("executed: delete-branch removed pinning worktree");
+                            }) {
+                                klog!("executed: delete-branch removed pinning worktree");
+                            }
+                        }
+                        if report.result.is_ok()
+                            && matches!(
+                                report.recording,
+                                kagi_git::backend::recording::Recording::Failed { .. }
+                            )
+                        {
+                            app.present_recorded(&report.recording, cx);
+                            app.reload(cx);
+                            return;
+                        }
+                        report
+                            .result
+                            .map_err(|e| i18n::op_failed(i18n::Op::Delete, e))
+                            .and_then(|outcome| {
+                                let kagi_git::OperationOutcome::DeleteBranch { reference, .. } =
+                                    outcome
+                                else {
+                                    return Err("unexpected delete-branch outcome".into());
+                                };
+                                let recovery = format!("git branch {} {reference}", branch_name);
+                                if !matches!(
+                                    report.recording.entry().outcome,
+                                    kagi_git::oplog::OpOutcome::Success { .. }
+                                ) {
+                                    return Err("unexpected delete-branch receipt".into());
+                                }
+                                Ok((report.recording, recovery))
+                            })
+                    }
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok((recording, recovery_line)) => {
+                        app.present_recorded(&recording, cx);
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "delete-branch: '{}' deleted (restore: {})",
+                            branch_name, recovery_line
+                        )));
+                        app.reload(cx);
+                    }
+                    Err(err_msg) => {
+                        klog!("async: delete-branch failed — {}", err_msg);
+                        app.record_op(
+                            "delete-branch",
+                            plan.current.clone(),
+                            kagi_git::oplog::OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            },
+                            &repo_path,
+                            cx,
+                        );
+                        app.set_delete_branch_modal(DeleteBranchModal {
+                            owner,
+                            confirm_armed: false,
+                            branch_name: branch_name.clone(),
+                            plan: plan.clone(),
+                            error: Some(SharedString::from(err_msg)),
+                        });
+                    }
                 }
-                // ADR-0129 F-4: the restore command is structured data now —
-                // no more parsing the recovery text's second line.
-                let recovery_line = plan
-                    .recovery
-                    .as_ref()
-                    .and_then(|r| r.commands.first())
-                    .map(String::as_str)
-                    .unwrap_or("git branch …")
-                    .to_string();
-                app.record_op(
-                    "delete-branch",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "delete-branch: '{}' deleted (restore: {})",
-                    branch_name, recovery_line
-                )));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: delete-branch failed — {}", err_msg);
-                app.record_op(
-                    "delete-branch",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_delete_branch_modal(DeleteBranchModal {
-                    branch_name: branch_name.clone(),
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        });
+            },
+        );
     }
 }
 

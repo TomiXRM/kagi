@@ -410,16 +410,56 @@ pub struct RevertModal {
 
 /// State for an in-progress delete-branch confirmation (W2-DELETE).
 ///
-/// The modal shows blockers (unmerged / current branch) and the recovery
-/// `git branch <name> <sha>` string before the user confirms.
+/// Unmerged deletion requires two confirmations; blockers still refuse.
+/// Recovery retains the tip under a mandatory backup ref.
 #[derive(Clone)]
 pub struct DeleteBranchModal {
+    /// Frozen plan owner, including its departure revision.
+    pub owner: crate::app::Attachment,
+    /// First confirmation arms only unmerged deletion; errors/reopening reset it.
+    pub confirm_armed: bool,
     /// The local branch name to delete.
     pub branch_name: String,
     /// The computed plan.
     pub plan: std::sync::Arc<OperationPlan>,
     /// Error message to show if preflight or execute failed.
     pub error: Option<SharedString>,
+}
+
+impl DeleteBranchModal {
+    /// Settle the global plan latch before deciding whether to display its
+    /// result. Tab departure invalidates approval, not completion. An unrelated
+    /// busy tag is never owned by this plan.
+    pub fn settle_plan(
+        owner: &crate::app::Attachment,
+        current: Option<&crate::app::Attachment>,
+        same_generation: bool,
+        busy: &mut Option<&'static str>,
+    ) -> bool {
+        if *busy == Some("delete-branch-plan") {
+            *busy = None;
+        }
+        same_generation && current == Some(owner)
+    }
+
+    /// Returns true when this confirmation only arms; false permits the caller
+    /// to continue through its existing blockers/busy/preflight checks.
+    pub fn arm_if_required(&mut self) -> bool {
+        let unmerged = self.plan.warnings.iter().any(|note| {
+            matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Branch(
+                    kagi_domain::plan_note::BranchNote::DeleteUnmerged { .. }
+                )
+            )
+        });
+        if unmerged && !self.confirm_armed {
+            self.confirm_armed = true;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// State for an in-progress delete-remote-branch confirmation

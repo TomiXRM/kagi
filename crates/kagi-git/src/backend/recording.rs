@@ -76,6 +76,21 @@ pub fn oplog_outcome_from(
                 },
             }
         }
+        (
+            Ok(OperationOutcome::DeleteBranch {
+                name,
+                tip,
+                reference,
+            }),
+            _,
+        ) => crate::oplog::OpOutcome::Success {
+            after: ops::StateSummary {
+                head: predicted.head.clone(),
+                dirty: format!(
+                    "branch '{name}' deleted (tip {tip}); restore: git branch {name} {reference}"
+                ),
+            },
+        },
         (Ok(OperationOutcome::StashDrop { oid }), _) => crate::oplog::OpOutcome::Success {
             after: ops::StateSummary {
                 head: predicted.head.clone(),

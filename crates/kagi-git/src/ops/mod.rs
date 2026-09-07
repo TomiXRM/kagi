@@ -10,7 +10,7 @@
 //! - `stash-pop` (ADR-0009, Destructive-緩和): `plan_stash_pop` / `execute_stash_pop`
 //! - `cherry-pick` (ADR-0004/0005, Guarded class): `plan_cherry_pick` / `execute_cherry_pick`
 //! - `pull` (ADR-0004/0005/0009, Guarded class): `plan_pull` / `execute_pull`
-//! - `delete-branch` (ADR-0014, Safe-class + merged-only guard): `plan_delete_branch` / `execute_delete_branch`
+//! - `delete-branch` (ADR-0014, checked-out guard + retained recovery tip): `plan_delete_branch` / `execute_delete_branch`
 //!
 //! The checkout operation is **always safe-mode only**: `CheckoutBuilder::safe()` is the only
 //! strategy used.  Force-checkout and any reset/clean APIs are intentionally absent.
@@ -27,9 +27,9 @@
 //! **exclusively** for both plan and execute — the working-tree variant `repo.cherrypick()` is
 //! **never used**.  This keeps the repo state clean (no CHERRYPICK state, no abort needed).
 //!
-//! The delete-branch operation uses `Branch::delete()` — a ref-only deletion that does NOT
-//! touch the working tree.  **Force delete is intentionally absent.**  Only branches whose
-//! tip commit is reachable from HEAD (merged) may be deleted; unmerged branches are a blocker.
+//! Delete-branch locks the ref and all existing worktree HEADs, rejects checked-out
+//! branches, and retains the approved tip under a recovery ref before deletion.
+//! Unmerged branches require two GUI confirmations (ADR-0184).
 //!
 //! # Public API
 //!
@@ -53,7 +53,7 @@
 //! - [`execute_cherry_pick`]    — apply a cherry-pick commit (in-memory → commit → checkout_head safe)
 //! - [`plan_pull`]              — generate an [`OperationPlan`] for pull (fetch + merge/fast-forward)
 //! - [`execute_pull`]           — run fetch(CLI) then merge/FF (in-memory, no MERGING state)
-//! - [`plan_delete_branch`]     — generate an [`OperationPlan`] for branch deletion (merged only)
+//! - [`plan_delete_branch`]     — generate an [`OperationPlan`] for branch deletion with recovery
 //! - [`execute_delete_branch`]  — delete the branch ref (no working-tree changes, no force)
 //!
 //! # Environment variables (test / headless use only)
@@ -104,6 +104,7 @@ mod absorb;
 pub(crate) mod backup;
 mod branch;
 mod branch_cleanup;
+mod branch_delete_safety;
 mod checkout;
 mod cherry_revert;
 mod dir_file_conflict;

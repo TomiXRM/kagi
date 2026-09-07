@@ -902,3 +902,204 @@ pub fn scenario_create_branch_replan_error(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS create-branch replan error rejects Enter and the old button coordinate"
     );
 }
+
+/// #584: both real confirm inputs share the unmerged arm transition.
+pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
+    delayed_delete_plan_stays_with_its_owner(cx);
+    delete_recording_failure_does_not_offer_retry(cx);
+    for input in ["enter", "button"] {
+        let fixture = build_fixture();
+        let repo = fixture.path();
+        let head = output(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["branch", "merged-delete", "HEAD~1"]);
+        git(repo, &["checkout", "-q", "-b", "unmerged-delete"]);
+        std::fs::write(
+            repo.join("only-on-branch.txt"),
+            "keep this commit after deletion\n",
+        )
+        .unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-q", "-m", "unmerged work"]);
+        let tip = output(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["checkout", "-q", "main"]);
+        let (app, window) = mount(cx, repo);
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("unmerged-delete", cx)
+        });
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app
+            .read(cx)
+            .delete_branch_modal()
+            .unwrap()
+            .plan
+            .blockers
+            .is_empty()));
+        confirm_branch_delete(cx, &app, window, input);
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().unwrap().confirm_armed));
+        assert_eq!(
+            output(repo, &["rev-parse", "refs/heads/unmerged-delete"]),
+            tip
+        );
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+        assert!(
+            records(repo, "delete-branch").is_empty(),
+            "arming must not record or execute"
+        );
+        confirm_branch_delete(cx, &app, window, input);
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
+        assert_eq!(output(repo, &["branch", "--list", "unmerged-delete"]), "");
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+        let entries = records(repo, "delete-branch");
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+        assert_eq!(entries[0].backup_refs.len(), 1);
+        assert_eq!(
+            output(repo, &["rev-parse", &entries[0].backup_refs[0]]),
+            tip
+        );
+        cx.read(|cx| {
+            let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+            let displayed = panel.entries().front().expect("recorded receipt in panel");
+            assert_eq!(displayed.id, entries[0].id);
+            assert_eq!(displayed.backup_refs, entries[0].backup_refs);
+        });
+
+        // Merged branches still execute on the first Enter/click.
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("merged-delete", cx)
+        });
+        wait_idle(cx, &app);
+        confirm_branch_delete(cx, &app, window, input);
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
+        assert_eq!(output(repo, &["branch", "--list", "merged-delete"]), "");
+        assert_eq!(records(repo, "delete-branch").len(), 2);
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS unmerged_branch_delete_armed: Enter/button arm then execute; merged stays one-stage");
+}
+
+fn confirm_branch_delete(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    input: &str,
+) {
+    if input == "enter" {
+        press_enter(cx, app, window);
+    } else {
+        paint(cx, window);
+        let bounds =
+            kagi::ui::e2e::confirm_bounds(window.window_id()).expect("delete confirm bounds");
+        cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    }
+}
+
+fn delayed_delete_plan_stays_with_its_owner(cx: &mut VisualTestAppContext) {
+    for revisit in [false, true] {
+        let fixture = build_fixture();
+        let other = tempfile::tempdir().unwrap();
+        // Identical commits/HEAD in two distinct owners: preflight cannot be
+        // relied upon to recognize a proposal delivered to the wrong repo.
+        git(
+            other.path(),
+            &["clone", "-q", fixture.path().to_str().unwrap(), "."],
+        );
+        git(fixture.path(), &["branch", "victim", "HEAD~1"]);
+        git(other.path(), &["branch", "victim", "HEAD~1"]);
+        assert_eq!(
+            output(fixture.path(), &["rev-parse", "HEAD"]),
+            output(other.path(), &["rev-parse", "HEAD"])
+        );
+        let before = repo_fingerprint(other.path());
+        let (app, window) = mount(cx, fixture.path());
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("victim", cx);
+            assert!(app.open_repository(other.path().to_path_buf(), cx));
+            if revisit {
+                app.switch_repo(0, cx);
+            }
+        });
+        // run_until_parked also drains the test background executor.
+        cx.run_until_parked();
+        wait_idle(cx, &app);
+        assert!(
+            cx.read(|cx| app.read(cx).delete_branch_modal().is_none()),
+            "a departed owner's delayed plan must not install a modal, including on revisit"
+        );
+        press_enter(cx, &app, window);
+        cx.run_until_parked();
+        assert_eq!(repo_fingerprint(other.path()), before);
+        assert!(records(other.path(), "delete-branch").is_empty());
+        assert!(records(fixture.path(), "delete-branch").is_empty());
+        app.update(cx, |app, cx| {
+            app.switch_repo(0, cx);
+            assert!(app.delete_branch_modal().is_none());
+            assert!(app.busy_op.is_none());
+            app.open_delete_branch_modal("victim", cx);
+        });
+        wait_idle(cx, &app);
+        assert!(
+            cx.read(|cx| app.read(cx).delete_branch_modal().is_some()),
+            "returning to A must permit a fresh plan"
+        );
+        unmount(cx, app, window);
+    }
+}
+
+fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "victim", "HEAD~1"]);
+    let tip = output(repo, &["rev-parse", "victim"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_delete_branch_modal("victim", cx));
+    wait_idle(cx, &app);
+    let log_dir = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+    let log_path = log_dir.join("operations.jsonl");
+    let before = std::fs::read(&log_path).unwrap_or_default();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(log_dir.join("operations.jsonl.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    drop(lock);
+    assert_eq!(output(repo, &["branch", "--list", "victim"]), "");
+    assert_eq!(std::fs::read(&log_path).unwrap_or_default(), before);
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state.delete_branch_modal().is_none(),
+            "completed deletion cannot be retried"
+        );
+        let notice = kagi::ui::e2e::app_notice_message(state).unwrap();
+        assert!(notice.contains("recording failed") && notice.contains(repo.to_str().unwrap()));
+        let panel = state.op_log.as_ref().unwrap().read(cx);
+        let entry = panel
+            .entries()
+            .front()
+            .expect("attempted receipt must reach the panel");
+        assert!(matches!(entry.outcome, OpOutcome::Partial { .. }));
+        assert_eq!(
+            Path::new(&entry.repo).canonicalize().unwrap(),
+            repo.canonicalize().unwrap(),
+            "receipt owner must resolve to the fixture repository"
+        );
+        assert_eq!(
+            entry.backup_refs.len(),
+            1,
+            "Partial presentation must retain the attempted recovery root"
+        );
+        assert_eq!(output(repo, &["rev-parse", &entry.backup_refs[0]]), tip);
+    });
+    unmount(cx, app, window);
+}

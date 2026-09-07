@@ -5,12 +5,24 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-09-08
+
+### Added
+
+- **Pull no longer refuses a dirty working tree.** A dirty current-branch pull offers an explicit Stash & Pull confirmation: staged, unstaged and untracked changes are stashed through the planned Backend operation, the pull runs behind its usual preflight, and that exact stash is popped back by OID. A failed pull restores the stash before reporting, and a restore that conflicts keeps the stash and records the result as partial. The stash OID is written to the operation log, so the work stays findable if Kagi stops mid-pull. A pop restores file contents but not the original staged/unstaged split. (#618, ADR-0189)
+
 ### Fixed
 
+- **A corrupt settings file no longer takes your session with it.** Settings read-modify-write moved into one store: an unparsable file is set aside under a unique name before anything is written, a failed rescue refuses the write entirely, and every save is a temp file renamed into place with the original's permissions. Repeated writes of one key (a column drag) coalesce, while separate settings, including the restored tab set, are written immediately. (#491, ADR-0191)
+- **A subprocess whose wait was cut short is no longer reported as one that exited.** One runner owns every child, its pipes and its deadline; the stop type carries no exit code, so "we stopped waiting" cannot be expressed as "it finished". Output that never arrived is separate typed evidence, so a command that exits 0 with a truncated capture no longer reads as success. A child that cannot be reaped is handed to a janitor rather than abandoned. (#507, ADR-0188)
+- **A failed pull keeps its explanation on screen.** A Pull modal holding an execution error survives the watcher's repository reload and is dismissed explicitly; ordinary confirmation modals still close on reload. (#618, ADR-0189)
+- **Recovery handles are typed data, not prose.** Savepoint, stash, file-backup, branch-tip and history OIDs are recorded as structured fields on the operation log entry instead of being formatted into an English sentence, so anything that restores them no longer parses display text. Existing entries still read. (#500, ADR-0187)
 - A remote repository with no commits yet reads as empty instead of failing: Remote Browse shows "(no commits yet)" for an unborn HEAD, while an unreachable host is still reported as an error. (#604, ADR-0089)
 
 ### Internal
 
+- Operation-log reads take only the tail of `operations.jsonl` instead of parsing every historical line, so recording an operation no longer costs more as the log grows. Legacy id-less logs keep their existing index-based identity, and cross-process appends are covered by a two-process test. Numbering and append were already serialized under the sidecar lock; ADR-0181's text said otherwise and is corrected. (#499, ADR-0149)
+- Added ADR-0187 (typed oplog recovery handles), ADR-0188 (subprocess runner ownership), ADR-0189 (auto-stash pull and error modal lifetime) and ADR-0191 (settings store).
 - Operation-log reads take only the tail of `operations.jsonl` instead of parsing every historical line, so recording an operation no longer costs more as the log grows. Legacy id-less logs keep their existing index-based identity, and cross-process appends are covered by a two-process test. (#499, ADR-0149)
 - **ADR numbers are unique again.** Two parallel merges each landed an ADR on a number another ADR already held; the newer ADR of each pair now lives at **ADR-0190** (NUL-framed `git log`) and **ADR-0191** (settings store), and every reference in `.rs`, `.md` and `AGENTS.md` points at the new number. A new `check-adr-unique-number` gate fails the build on any new duplicate 4-digit ADR number; the six numbers already duplicated are grandfathered by an allowlist that itself fails once an entry goes stale. (#620)
 
@@ -38,6 +50,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- Added ADR-0185 (graph worktree navigation), ADR-0186 (PR fetch outcome contract) and ADR-0190 (NUL-framed git log).
 - Added ADR-0185 (graph worktree navigation), ADR-0186 (PR fetch outcome contract) and ADR-0190 (NUL-framed `git log`).
 - Codex GitHub reviews are requested in Japanese. (AGENTS.md)
 
@@ -55,8 +68,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Remote stash drop now runs as a typed application-layer SSH job with frozen connection identity and explicit recovery evidence. (#572)
 
 ### Fixed
-- Pull now offers a guarded auto-stash workflow for dirty working trees, restores tracked and untracked changes afterward, and keeps the temporary stash when restoration conflicts.
-- Failed Pull details remain visible until explicitly dismissed instead of disappearing during the watcher reload.
 - Release checks require the complete blocking CI aggregate from the target
   commit's newest workflow run and latest attempt, including the gate selftests. (#519)
 - Branch cleanup retains remote recovery OIDs when subsequent local deletion

@@ -15,6 +15,7 @@ pub mod discard;
 pub mod editor_fs;
 pub mod force_lease;
 pub mod history;
+pub mod merge;
 pub mod modal_state;
 pub mod pull_push;
 pub mod rebase;

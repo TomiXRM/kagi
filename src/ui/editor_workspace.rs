@@ -514,6 +514,22 @@ impl KagiApp {
                 self.close_editor_workspace();
                 self.switch_repo_by_path(&path, cx);
             }
+            EditorPendingIntent::MergeInWorktree {
+                source,
+                target,
+                path,
+                owner,
+            } => {
+                if self
+                    .active_session()
+                    .and_then(|session| self.app_sessions.attachment(session))
+                    .as_ref()
+                    == Some(&owner)
+                {
+                    self.close_editor_workspace();
+                    self.open_merge_in_worktree(source, target, path, cx);
+                }
+            }
             EditorPendingIntent::CloseRepoTab(session) => {
                 self.close_editor_workspace();
                 self.close_tab_by_session(session, cx);

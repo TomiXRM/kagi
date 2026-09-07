@@ -1089,7 +1089,11 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
             .front()
             .expect("attempted receipt must reach the panel");
         assert!(matches!(entry.outcome, OpOutcome::Partial { .. }));
-        assert_eq!(entry.repo, repo.display().to_string());
+        assert_eq!(
+            Path::new(&entry.repo).canonicalize().unwrap(),
+            repo.canonicalize().unwrap(),
+            "receipt owner must resolve to the fixture repository"
+        );
         assert_eq!(
             entry.backup_refs.len(),
             1,

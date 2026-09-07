@@ -292,7 +292,7 @@ pub(crate) fn render_amend_modal(
                 .child(
                     div().text_xs().text_color(rgb(current_theme().text_sub)).overflow_hidden()
                         .child(SharedString::from(
-                            "The current commit's SHA will be replaced. The old commit becomes unreachable from the branch (recoverable via git reflog / reset --hard <old>).",
+                            "The current commit's SHA will be replaced. The old commit becomes unreachable from the branch (recoverable via git reflog / reset --soft <old>).",
                         )),
                 ),
         );

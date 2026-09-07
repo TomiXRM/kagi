@@ -163,6 +163,10 @@ def check_plan_verbatim() -> int:
     return _run_rule(_rule("plan-verbatim"))
 
 
+def check_recovery_safe_advice() -> int:
+    return _run_rule(_rule("recovery-safe-advice"))
+
+
 def check_modal_lists() -> int:
     return _run_rule(_rule("modal-lists"))
 

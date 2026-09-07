@@ -1227,6 +1227,10 @@ pub struct KagiApp {
     /// Last `gh pr list` failure, cleared by the next success. Rendered by the
     /// PR home screen so a failed fetch is not shown as an empty inbox.
     pub github_error: Option<SharedString>,
+    /// #506: this repository has no GitHub remote (`PrFetchError::Unavailable`).
+    /// A defined "nothing to show" state — distinct from `github_error`, which
+    /// means "we could not find out" and keeps the previous list.
+    pub github_unavailable: bool,
     /// Bumped whenever `github_prs` changes — folded into the sidebar rows
     /// fingerprint so the list rebuilds exactly when the data does.
     pub github_prs_epoch: u64,
@@ -1398,6 +1402,10 @@ pub struct KagiApp {
     /// branch for the PR / author columns. App-level like the pane's own open
     /// flag; empty when `gh` is unavailable.
     pub cleanup_prs: Vec<kagi_domain::github::PullRequest>,
+    /// #506: the last merged-PR fetch failed, so `cleanup_prs` is the previous
+    /// scan's data. Without this an empty PR column read as "this branch has no
+    /// pull request" when the truth was "we could not ask".
+    pub cleanup_prs_stale: bool,
     /// Branch names ticked in the cleanup table. Deleting "the selected ones"
     /// is the middle ground between the bulk button and the per-row trash
     /// (user request).
@@ -1558,6 +1566,7 @@ impl KagiApp {
             github_prs_for: None,
             transport_holds: Default::default(),
             github_error: None,
+            github_unavailable: false,
             github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
@@ -1606,6 +1615,7 @@ impl KagiApp {
             cleanup_gen: 0,
             cleanup_scanning: false,
             cleanup_prs: Vec::new(),
+            cleanup_prs_stale: false,
             cleanup_selected: std::collections::HashSet::new(),
             squash_gen: 0,
             scans_stale: true,

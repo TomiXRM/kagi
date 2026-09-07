@@ -21,9 +21,35 @@
 //!
 //! `theme.rs` and the other UI modules read through the typed [`Settings`]
 //! accessors or the thin [`read_setting`]/[`write_setting`] string API here.
+//!
+//! What changed in #491: one owner for read-modify-write, in the [`store`]
+//! submodule. The parsed document lives in a process-global store instead of
+//! being re-read from disk for every key, saves go through a temp file +
+//! rename instead of a truncating write, and a file that does not parse is
+//! *kept* — moved aside under a reserved `settings.json.corrupt` name before a
+//! fresh file is written, so a malformed file can no longer silently swallow
+//! every other key (including `session_repos`, the restored tab set). A
+//! *repeated* write of one key (a column-divider drag) updates memory and is
+//! collapsed into one file write; every other write still lands immediately.
+
+mod store;
+#[cfg(test)]
+mod store_env_tests;
+
+pub use store::flush;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// The legacy scalar coercion: kagi writes strings, but tolerate bool/number.
+fn scalar_to_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
 
 /// What Cmd+C copies from the selected Graph row (`graph_copy_target`;
 /// ADR-0170). Default [`CopyTarget::Hash`] — every commit has a hash, but not
@@ -45,44 +71,21 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Load and parse `settings.json`. A missing or unparsable file yields
-    /// `Settings::default()` (empty) — settings are always best-effort.
+    /// Snapshot of the live settings document. Served from the store — no read
+    /// or parse unless the file changed behind our back (#491). A missing file
+    /// yields `Settings::default()` (empty); an *unparsable* one also reads as
+    /// empty, but the original is kept on disk and moved aside rather than
+    /// overwritten.
     pub fn load() -> Self {
-        let Some(path) = settings_path() else {
-            return Self::default();
-        };
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return Self::default();
-        };
-        serde_json::from_str(&text).unwrap_or_default()
-    }
-
-    /// Persist the whole object to `settings.json` (pretty, trailing newline),
-    /// creating the parent directory if needed. Best-effort; failures are logged.
-    pub fn save(&self) {
-        let Some(path) = settings_path() else { return };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match serde_json::to_string_pretty(self) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&path, format!("{json}\n")) {
-                    klog!("settings: write failed (non-fatal): {e}");
-                }
-            }
-            Err(e) => klog!("settings: serialize failed (non-fatal): {e}"),
+        Self {
+            raw: store::snapshot(),
         }
     }
 
     /// Raw string value for `key`, coercing the legacy scalar encodings (every
     /// value kagi writes is a JSON string, but tolerate bool/number too).
     pub fn get_str(&self, key: &str) -> Option<String> {
-        match self.raw.get(key)? {
-            serde_json::Value::String(s) => Some(s.clone()),
-            serde_json::Value::Bool(b) => Some(b.to_string()),
-            serde_json::Value::Number(n) => Some(n.to_string()),
-            _ => None,
-        }
+        scalar_to_string(self.raw.get(key)?)
     }
 
     /// Upsert `key` with a string value.
@@ -336,19 +339,14 @@ pub fn settings_path() -> Option<PathBuf> {
 
 /// Read a single string-valued setting from `settings.json`.
 pub fn read_setting(key: &str) -> Option<String> {
-    Settings::load().get_str(key)
+    store::read(key)
 }
 
 /// Persist (or remove with `value = None`) one string-valued setting in
 /// `settings.json`, **preserving every other key** — including ones this build
 /// doesn't know about. Best-effort; failures are logged but non-fatal.
 pub fn write_setting(key: &str, value: Option<&str>) {
-    let mut settings = Settings::load();
-    match value {
-        Some(v) => settings.set_str(key, v),
-        None => settings.remove(key),
-    }
-    settings.save();
+    store::write(key, value);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

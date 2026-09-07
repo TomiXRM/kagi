@@ -93,10 +93,15 @@ commits yet") rather than print nothing, so a `run_checked` read reported a
 freshly initialised repository exactly like an unreachable host. Every remote
 read whose empty answer is legitimate goes through `run_lenient`: transport
 failure → `RemoteError`; any other non-zero → the empty answer (`Ok(None)` /
-empty output). Reachability is already established by `probe_repo` before the
-summary read, so a non-transport non-zero cannot be a hidden connection
-problem. Failure and emptiness stay distinguishable — the discipline ADR-0177
-applies to writes and #506 applied to PR fetches.
+empty output). The classification rests on the **same stderr heuristic** as
+`probe_repo`, not on a prior reachability check: each of these functions is
+callable on its own, so each carries the split itself (Remote Browse happens to
+call `probe_repo` first, but nothing in the contract depends on that order).
+The heuristic's bias is deliberate and shared with `probe_repo`: an ssh failure
+whose banner matches no known marker degrades to "empty", never to a silent
+*success* with forged content — so adding a marker is the fix when a new
+transport error appears. Failure and emptiness stay distinguishable — the
+discipline ADR-0177 applies to writes and #506 applied to PR fetches.
 
 ## Alternatives considered
 - **Pure-Rust SSH (`russh`)** — full control and no external `ssh` dependency,

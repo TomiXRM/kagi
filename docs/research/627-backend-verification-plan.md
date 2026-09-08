@@ -28,6 +28,12 @@ Kagi の git backend を「どの操作を libgit2 に残し、どの操作を G
 段 6 の判断基準を段 5 より先に固定するのが本書の主目的である。測ってから基準を
 決めると、どちらの backend にも寄せられる数字が出たときに議論が終わらない。
 
+本文は依頼項目に合わせて A→F の順に並べるが、**実行順は C → E → B → A → D → F**
+とする。C で予測経路の候補を先に確定し、E で CLI 候補の版・hardening 前提を落とし、
+B で意味論を確認してから速度を測る。C で予測を libgit2 に残すと確定した場合も、
+A は読み経路を CLI に寄せるか、libgit2 のまま最適化するかを決める独立材料なので
+省略しない。
+
 ## 1. 理解 — 決めたいこと
 
 決めるのは **操作ごとの backend 帰属規則**。単一 backend への全面移行は候補ではない
@@ -208,9 +214,9 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
 
 ### 4.6 閾値の根拠
 
-- 50 ms: watcher 1 回の処理として UI 応答への寄与が小さいと扱う境界。
-- 150 ms: backend 移行の恒久コストを正当化する、知覚可能な絶対差。
-- 200 ms: watcher 起因の reload が操作の連続性を阻害し始める優先対応境界。
+- 50 / 150 / 200 ms: watcher 1 回の低影響 / 移行を正当化する絶対差 / 優先対応境界。
+- 100 / 200 ms/s: 1 秒 bucket あたりの累積 read 時間の低影響 / 優先対応境界。
+- 500 / 1,000 ms/60 s: 1 分あたりの累積 read 時間の低影響 / 優先対応境界。
 - 1.5 倍: OS と cache のばらつきだけで移行しないための相対差。
 - 0 件 / 0 writes / 0 watcher events: 意味論と予測の安全性は許容誤差を置けない。
 - git 2.38: 既知候補 `merge-tree --write-tree` の導入版。2026-09-09 時点の採用上限を
@@ -226,26 +232,36 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
 
 ### A. 常時走る読み経路の速度
 
-#### A0 — watcher tick あたりの実測コスト
+#### A0 — watcher の発火頻度・累積コスト・1 tick コスト
 
-- **問い**: 読み経路の総コストは、backend 差が UI の待ち時間に占める割合を判断できる
-  規模か。
-- **手順**: `KAGI_BENCH_READ=1` の診断出力で reload 1 回あたりの `snapshot` /
-  `working_tree_status` の時間を取り、M と L で watcher 発火 20 回分の分布を得る。
-  fixture の tracked file を 1 個だけ更新して watcher を 20 回発火させ、各回は reload
-  完了を待ってから次を更新する。測定 PR の GUI E2E scenario
-  `backend_read_watcher` を次で単独実行する:
+- **問い**: 現実的な操作で watcher は何回発火し、読み経路の単位時間あたりの累積
+  コストは backend 選定を動かす規模か。
+- **手順**: 測定 PR の GUI E2E scenario `backend_read_watcher` に次の 3 case を作る。
+  各 case を M と L で 5 回実行し、case 間ではアプリを再起動する。
+  1. **連続保存**: 同じ tracked file を 500 ms 間隔で 60 s、計 120 回保存する。
+  2. **ブランチ切り替え**: 1,000 path の内容が異なる 2 branch を 1 s 間隔で 10 往復し、
+     各切り替え後に reload 完了を待つ。
+  3. **大きな pull**: 同一ディスク上の bare remote に 5,000 path を変える 1 commit を
+     用意して 1 回 pull し、開始から完了 10 s 後まで観測する。
+
+  `KAGI_BENCH_READ=1` の診断出力で raw filesystem event、debounce 後の watcher tick、
+  reload 回数、tick ごとの `snapshot` / `working_tree_status` 時間を記録する:
 
   ```sh
   KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='backend_read_watcher' \
     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
   ```
 
-- **値**: ms（median / p95）、reload 1 回あたりの内訳（%）。
-- **判断基準**: L の p95 < 50 ms → 読み経路の移行優先度を下げる。p95 ≥ 200 ms →
-  読み経路を最優先候補にする。**A1・A2 はいずれの場合も実施する**（依頼 A の
-  libgit2 / CLI 比較を省略しない）。
-- **交絡**: watcher の debounce 間隔、UI スレッドとの競合、背景タブの読み。
+- **値**: raw event 数、watcher tick 数、reload 数（回 / case、回 / s）、1 tick の
+  ms（median / p95）、最も重い 1 s bucket の累積 read ms、60 s 換算の累積 read ms。
+- **判断基準**:
+  - 第 1 段（1 tick）: p95 < 50 ms は低影響、p95 ≥ 200 ms は優先対応。
+  - 第 2 段（頻度込み）: 最重 1 s < 100 ms **かつ**累積 < 500 ms/60 s は低影響。
+    最重 1 s ≥ 200 ms **または**累積 ≥ 1,000 ms/60 s は優先対応。
+  - 2 段のどちらかが優先対応なら A1 / A2 の CLI 候補を評価する。両段が低影響なら
+    tie-break により現状維持。中間も現状維持。
+- **交絡**: watcher の debounce 間隔、エディタの atomic save、UI スレッドとの競合、
+  branch / pull 自体の時間、背景タブの読み。
 - **決まらないこと**: どちらの backend が速いか。それは A1・A2。
 
 #### A1 — `working_tree_status` と `git status` の比較
@@ -265,8 +281,9 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
   - 意味が一致しない → 速度は測らず、差異を B3 / B4 に回す。
   - 一致し、L の median で libgit2 が CLI の **1.5 倍以上遅く、かつ絶対差 150 ms 以上**
     → CLI 候補。
-  - 絶対差が **50 ms 未満** → libgit2 据え置き（プロセス起動と parse の恒久コストを
-    買う理由がない）。
+  - A0 の実測頻度を掛けた 60 s 累積で CLI が **500 ms 以上かつ 30%以上削減**する
+    → 1 tick の絶対差が 150 ms 未満でも CLI 候補。
+  - 1 tick の絶対差 < 50 ms **かつ**累積削減 < 500 ms/60 s → libgit2 据え置き。
   - その間 → A3 の傾きで決める。
 - **交絡**: fsmonitor / untracked cache（§4.5）、index の stat cache の warm 状態、
   rename 検出の閾値差、ファイル名の非 UTF-8 と大文字小文字の扱い。
@@ -287,8 +304,9 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
   `FETCH_HEAD` の mtime（これは現行もファイルの mtime を見ている）。段ごとに時間を
   取り、合計と最も重い段を出す。
 - **値**: プロセス数（個）、合計 ms、段ごとの ms、取得できた情報の欠落項目。
-- **判断基準**: 合計が libgit2 の **0.7 倍以下**かつ情報等価 → CLI 候補。**1.0 倍超**
-  → libgit2 据え置き確定。0.7–1.0 倍 → 全置換はせず、最も重い段だけを CLI に寄せる
+- **判断基準**: 合計が libgit2 の **0.7 倍以下**かつ情報等価、または A0 の頻度を
+  掛けた累積を **500 ms/60 s 以上かつ 30%以上削減** → CLI 候補。合計が **1.0 倍超**
+  → libgit2 据え置き確定。それ以外は全置換せず、最も重い段だけを CLI に寄せる
   部分判定に落とす。
 - **交絡**: ahead/behind を 1 コマンドで取る `for-each-ref` の atom は git の版要求を
   上げる可能性がある（E2 で版を確定させること）。detached linked worktree を graph root
@@ -314,13 +332,14 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
 `backend_probe --operation semantic-matrix --backend libgit2|cli` を各 3 回実行する。
 probe は backend 固有出力を次の canonical JSON に正規化する: path は `/` 区切り、
 status は Kagi の `ChangeKind`、内容は生バイトの SHA-256、plan は blocker の型と対象
-path。時刻、表示順、backend 固有メッセージは比較対象から除く。**生の porcelain と
-Rust struct を直接 byte compare しない。**
+path、oplog は recovery handle の `kind / oid / path / reference` と OID から読める
+object bytes の SHA-256。時刻、表示順、backend 固有メッセージは比較対象から除く。
+**生の porcelain と Rust struct を直接 byte compare しない。**
 
 scenario 生成コマンド:
 
 ```sh
-for scenario in clean-smudge autocrlf ignore submodule sparse partial-clone unrelated-histories; do
+for scenario in clean-smudge autocrlf ignore submodule sparse partial-clone unrelated-histories recovery-handles; do
   cargo run -p kagi-git --release --example backend_fixture -- \
     --out "$FIXTURE_ROOT/semantic-$scenario" --scenario "$scenario" --seed 627
 done
@@ -334,9 +353,14 @@ fixture 内の固定済み補助 executable だけを呼び、PATH・標準入�
 共通の判断基準:
 
 - canonical JSON の差異が (i) 画面に表示される内容 hash、(ii) stage / commit される
-  内容 hash、(iii) plan の blocker 型または対象 path のいずれかを変える → 差異件数
-  **1 件以上で不合格**。その経路は git 本体に合わせる（CLI に寄せる、または
-  libgit2 側で同じ設定を再現できることを実証する）。
+  内容 hash、(iii) plan の blocker 型または対象 path、(iv) oplog の recovery handle
+  の指す object / ref / 復元後内容 のいずれかを変える → 差異件数 **1 件以上で不合格**。
+  その経路は git 本体に合わせる（CLI に寄せる、または libgit2 側で同じ設定を再現する）。
+- recovery handle は backend 間で文字列 OID が同じかだけを見ない。各実行で記録 OID が
+  実際に作成・drop・backup した object と同一で、object が存在し、handle から復元した
+  worktree / index の canonical hash が事前状態と一致することを要求する。固定した
+  author / committer / timestamp / parent topology でも stash OID が異なる場合は不合格。
+  backup blob は同じ bytes なら OID も一致しなければ不合格。
 - 差異 **0 件** → 意味論は backend 選定を動かさない。
 - 時刻や表示順だけの差異 → 据え置き。ただし「既知の差異」として §9 に記録する。
 
@@ -349,12 +373,14 @@ fixture 内の固定済み補助 executable だけを呼び、PATH・標準入�
 | B5 | `sparse` | cone / non-cone / sparse index の 3 条件、未展開 path の status | 未 checkout の path を削除と表示し、discard が対象にする |
 | B6 | `partial-clone` | 欠落 blob の status / diff / blame / file history、fetch 禁止時の error class | diff / blame / file history が失敗する。エラーが oplog とモーダルの両方に出ない場合は error handling が壊れる |
 | B7 | `unrelated-histories` | `merge_commits` と git 本体の blocker 型 | `UnrelatedHistories` blocker（`plan_note/merge.rs:61`）の根拠が崩れる |
+| B8 | `recovery-handles` | stash push / drop と file backup を同一入力・固定時刻で両 backend 実行。記録 OID、object 存在、ref、復元後 worktree / index hash を照合 | oplog は残るが OID が別 object または不存在を指し、stash / backup blob を復元できない |
 
 B7 を足す理由: 既に製品仕様（blocker）の根拠になっている差異なので、根拠が実測で
 正しいことは規則の前提である。誤っていれば blocker 側を直す作業が発生する。
 
 - **値**: scenario / OS / git 版ごとの canonical JSON 不一致件数、内容 hash、
-  blocker 型、不一致が到達する Kagi 機能。
+  blocker 型、recovery handle の OID / ref / object bytes hash / 復元後 state hash、
+  不一致が到達する Kagi 機能。
 - **交絡**: filter executable、global config、改行、path の大小文字、欠落 object の
   lazy fetch。probe は `GIT_CONFIG_GLOBAL` と `GIT_CONFIG_SYSTEM` を隔離し、fixture
   manifest に必要な config だけを再現する。
@@ -454,6 +480,46 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
 #625 の再発防止条件そのものだからである。C1 の表を文献だけで埋めると、
 `merge-tree --write-tree` のような「worktree も index も無変更なのに object が増える」
 ケースを Yes と書いてしまう。
+
+#### C4 — 予測非書き込み規則の継続 enforcement
+
+- **問い**: backend 規則の決定後も、plan 経路の書き込みを PR 時点で確実に検出できるか。
+- **手順**:
+  1. git layer の integration test `tests/plan_non_write_test.rs` を測定後の実装 PR で
+     作る。pure domain では ODB / index / worktree を観測できず、ops 単位の unit test
+     では `Backend::plan` の dispatch を漏らすため、この layer に置く。
+  2. `Operation` の exhaustive match で全 variant を fixture へ対応させ、public な
+     `Backend::plan` と、Backend dispatch 外の public `plan_*` entrypoint をすべて
+     実行する。成功・blocker・error のどの場合も、前後で (a) ODB の全 OID set と
+     `repo.commondir()/objects`（main worktree では `.git/objects`）の相対 path /
+     file 数、(b) index bytes、(c) refs、(d) worktree bytes が同一であることを
+     assert する。新しい `Operation` variant は match が非網羅になり、test 更新なしでは
+     compile できない形にする。
+  3. detector 自体の self-test として、test fixture から sentinel blob を 1 個書き、
+     object 差分を **1/1 回検出する**ことを assert する。
+  4. `ci/` の `Rule` 候補は、既知の書き込み API の plan 内直接呼び出しと、helper を
+     1 段介した呼び出しの 2 sample で評価する。現行 `Rule` はファイル全体への regex
+     で、Rust の nested block と call graph を解釈しないため、helper 経由を証明できない。
+     両 sample を捕捉できない限り、静的 Rule は主 enforcement に採らない。採る場合も
+     direct call の defense-in-depth と明記し、dynamic test を置き換えない。
+
+  ```sh
+  cargo test -p kagi --test plan_non_write_test
+  uv run --project ci check-all
+  ```
+
+- **値**: plan entrypoint coverage（対象 / 全数）、前後差分件数、sentinel 検出数、
+  static Rule の direct / helper sample 検出数、現行 source の false positive 数。
+- **判断基準**: dynamic test は coverage **100%**、通常 plan の差分 **0 件**、
+  sentinel 検出 **1/1** が必須。1 つでも欠ければ規則を実装完了としない。static Rule は
+  direct + helper **2/2**、false positive **0 件**のときだけ追加する。それ以外は
+  call graph を扱えないため不採用と記録する。
+- **交絡**: linked worktree の private gitdir / commondir、git auto-maintenance、
+  index stat cache、error 経路で一時作成後に削除される object 以外のファイル。
+- **決まらないこと**: どちらの backend を選ぶか。C4 は決定済み規則の維持だけを担う。
+
+検知主体は local の当該 test と、PR ごとに `cargo test --workspace` を実行する CI。
+規則違反は test failure として変更者・reviewer の両方に届く。
 
 ### D. 実行経路で libgit2 が遅い／危ういもの
 
@@ -644,9 +710,11 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
 | B5 | — | — | — | — |
 | B6 | — | — | — | — |
 | B7 | — | — | — | — |
+| B8 | — | — | — | — |
 | C1 | — | — | — | — |
 | C2 | — | — | — | — |
 | C3 | — | — | — | — |
+| C4 | — | — | — | — |
 | D1 | — | — | — | — |
 | D2 | — | — | — | — |
 | E1 | — | — | — | — |
@@ -661,16 +729,16 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
 | --- | --- | --- | --- | --- |
 | `working_tree_status` | 読み | libgit2 | — | A0 / A1 / A3 / E1 |
 | `snapshot` | 読み | libgit2 | — | A0 / A2 / E1 |
-| merge 予測 | 予測 | libgit2 | — | C1 / C2 / C3 |
-| cherry-pick・revert 予測 | 予測 | libgit2 | — | C1 / C2 / C3 |
-| 三方向の内容 merge | 予測 | libgit2 | — | C1 / C2 / C3 |
-| diff 各種（tree / index / workdir） | 予測・読み | libgit2 | — | C1 / C2 / B1 / B2 |
-| stash push | 実行 | CLI（#622/#623） | 据え置き（回帰させない） | — |
-| stash apply / pop / drop | 実行 | libgit2 | — | D1 / D2 / F |
+| merge 予測 | 予測 | libgit2 | — | C1 / C2 / C3 / C4 |
+| cherry-pick・revert 予測 | 予測 | libgit2 | — | C1 / C2 / C3 / C4 |
+| 三方向の内容 merge | 予測 | libgit2 | — | C1 / C2 / C3 / C4 |
+| diff 各種（tree / index / workdir） | 予測・読み | libgit2 | — | C1 / C2 / C4 / B1 / B2 |
+| stash push | 実行 | CLI（#622/#623） | 据え置き（回帰させない） | B8 |
+| stash apply / pop / drop | 実行 | libgit2 | — | B8 / D1 / D2 / F |
 | rebase・sequencer continue | 実行 | CLI（ADR-0131） | 据え置き | — |
 | fetch / pull / push | 実行 | CLI | 据え置き | — |
 | switch / checkout | 実行 | 混在 | — | B5 / D1 / F |
-| discard | 実行 | libgit2 | — | B3 / B5 / D1 |
+| discard | 実行 | libgit2 | — | B3 / B5 / B8 / D1 |
 
 **tie-break 規則**: 測定値が閾値の間に落ちた場合は**現状維持**（libgit2 据え置き、
 CLI 済みは CLI 据え置き）。移行は「閾値を超えた」ことを示せた操作にだけ行う。
@@ -689,11 +757,24 @@ CLI 済みは CLI 据え置き）。移行は「閾値を超えた」ことを�
      cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
    ```
 
-5. 予測経路を触った場合は、C2 の拡張 fingerprint による非書き込み回帰テストを
-   `tests/` に足す（#625 の再発条件を直接押さえる）。
-6. backend を移した操作には `plan_/preflight_/execute_/verify_` の整合と、oplog への
+5. C4 の `tests/plan_non_write_test.rs` は一時的な実験ではなく、規則を守らせる恒久
+   integration test として残す。全 `Operation` variant / public plan entrypoint の
+   coverage 100%、plan 前後の ODB OID set・`repo.commondir()/objects` file 数・index・
+   refs・worktree 差分 0、sentinel object 書き込みの検出 1/1 を固定する。次の test file
+   全体を実行する:
+
+   ```sh
+   cargo test -p kagi --test plan_non_write_test
+   ```
+
+   静的 `ci/ Rule` は C4 の direct + helper sample 2/2・false positive 0 の基準を
+   満たす場合だけ defense-in-depth として追加する。現行 regex Rule は call graph を
+   追えないため、満たさなければ追加せず、その理由を ADR に残す。
+6. B8 の stash / backup recovery handle は、記録 OID の object 存在、ref、復元後
+   worktree / index hash を統合テストで固定する。文字列が残るだけの test では不可。
+7. backend を移した操作には `plan_/preflight_/execute_/verify_` の整合と、oplog への
    記録が残ることを確認する統合テストを足す。
-7. 一度に走らせる cargo コマンドは 1 本（AGENTS.md の build hygiene）。
+8. 一度に走らせる cargo コマンドは 1 本（AGENTS.md の build hygiene）。
 
 ## 9. 知識化（段 10、決定後）
 
@@ -711,6 +792,8 @@ CLI 済みは CLI 据え置き）。移行は「閾値を超えた」ことを�
 - [Issue #627 — Git backend 候補・Kagi の現状・VS Code Git 拡張](https://github.com/TomiXRM/kagi/issues/627)
 - [Issue #622](https://github.com/TomiXRM/kagi/issues/622) /
   [#623](https://github.com/TomiXRM/kagi/issues/623) — stash push の原因特定と CLI 移行
+- [Issue #624](https://github.com/TomiXRM/kagi/issues/624) — oplog recovery handle の
+  OID / backup blob 同一性
 - [Issue #625](https://github.com/TomiXRM/kagi/issues/625) — plan 中の書き込みによる
   watcher / reload / modal 消失
 - [`docs/adr/0131-sequencer-continue-and-rebase-current-onto.md`](../adr/0131-sequencer-continue-and-rebase-current-onto.md)

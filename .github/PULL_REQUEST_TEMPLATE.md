@@ -32,12 +32,26 @@ Verified — 何を走らせたか — は既に多くの PR が書いている�
 <!--
 ✓ だけでは証拠にならない。各行に走らせたコマンドと結果の数字を書く。
 走らせていない行は消さず、「未実行」と書いて残す。消すと読む側から見えなくなる。
+
+Tier A は環境変数を省いた形を書かない。通常の workspace test では runner が
+コンパイルすらされず、実行には `--features gui-e2e` と `KAGI_GUI_E2E=1` の両方が
+要る。省略形は「一度も走らせていない」と区別が付かないので、コマンドを丸ごと残す。
+
+`KAGI_GUI_E2E_ONLY` は必ず付ける。絞らない実行はシナリオごとに実ウィンドウを開き、
+約 1,400 窓で macOS が落ちる (#549)。絞っていない実行例をこの repo の markdown に
+書き残さないこと (verify skill Tier A)。
 -->
 
 - [ ] `cargo fmt --all --check` / `cargo clippy --workspace` / `KAGI_LOG_DIR=$(mktemp -d) cargo test -j 8 --workspace` (N tests, 0 failed)
 - [ ] `uv run --project ci check-all`
 - [ ] fixture / headless: <走らせたコマンドと、確認した `[kagi]` 行>
-- [ ] Tier A (GUI E2E runner): `KAGI_GUI_E2E_ONLY=<substr>` (<scenario> PASS)
+- [ ] Tier A (GUI E2E runner): `<scenario>` PASS / `<N>` 件。走らせた形をそのまま貼る
+
+  ```sh
+  KAGI_LOG_DIR=$(mktemp -d) KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY=<substr> \
+    cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+  ```
+
 - [ ] Tier B (実機 GUI / pidclick): <どのウィンドウで何を押し、何が見えたか>
 
 ## Not verified — needs a human

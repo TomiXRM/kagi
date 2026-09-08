@@ -24,6 +24,8 @@ ignore = "0.4"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 libc = "0.2"
+# Symlink timestamp restoration for benchmark fixtures. Already in Cargo.lock
+# via notify, so this adds no new download.
 filetime = "0.2"
 # Typed `.kagi/worktree.toml` parsing + repository-level trust keying by content
 # hash (issue #341 / ADR-0161). All three are already in Cargo.lock, so they add

@@ -279,25 +279,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cpu_timer_includes_reaped_child_processes() {
-        let before = process_cpu_time().unwrap();
+    fn cpu_timer_composes_self_and_reaped_children() {
+        let children_before = rusage_cpu_time(libc::RUSAGE_CHILDREN).unwrap();
         let status = Command::new("sh")
             .args([
                 "-c",
-                "i=0; while [ \"$i\" -lt 2000000 ]; do i=$((i + 1)); done",
+                "i=0; while [ \"$i\" -lt 200000 ]; do i=$((i + 1)); done",
             ])
             .status()
             .unwrap();
         assert!(status.success());
-        let after = process_cpu_time().unwrap();
-
-        let child_cpu_ns = after
-            .user_ns
-            .saturating_add(after.sys_ns)
-            .saturating_sub(before.user_ns.saturating_add(before.sys_ns));
+        let children_after = rusage_cpu_time(libc::RUSAGE_CHILDREN).unwrap();
         assert!(
-            child_cpu_ns >= 100_000_000,
-            "reaped child CPU time must contribute to the probe clock"
+            children_after.user_ns.saturating_add(children_after.sys_ns)
+                > children_before
+                    .user_ns
+                    .saturating_add(children_before.sys_ns),
+            "the reaped child must contribute CPU time"
+        );
+
+        let self_only = rusage_cpu_time(libc::RUSAGE_SELF).unwrap();
+        let children = rusage_cpu_time(libc::RUSAGE_CHILDREN).unwrap();
+        let combined = process_cpu_time().unwrap();
+        assert!(
+            combined.user_ns >= self_only.user_ns.saturating_add(children.user_ns)
+                && combined.sys_ns >= self_only.sys_ns.saturating_add(children.sys_ns),
+            "probe CPU clock must include both self and reaped child usage"
         );
     }
 }

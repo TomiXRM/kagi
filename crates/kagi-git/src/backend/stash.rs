@@ -43,16 +43,39 @@ impl Backend {
             if expected.has_conflicts() {
                 return Err(git2::Error::from_str("expected merge still has conflicts"));
             }
-            let diff = self.repo.diff_index_to_workdir(Some(&expected), None)?;
-            if diff
-                .deltas()
-                .any(|delta| delta.status() != git2::Delta::Unmodified)
-            {
-                return Err(git2::Error::from_str(
-                    "restored tracked bytes differ from stash merge",
-                ));
-            }
             let stash = self.repo.find_commit(oid)?;
+            let base = stash.parent(0)?.tree()?;
+            let stashed = stash.tree()?;
+            let tracked_delta = self
+                .repo
+                .diff_tree_to_tree(Some(&base), Some(&stashed), None)?;
+            let mut restored_paths = std::collections::BTreeSet::new();
+            for delta in tracked_delta.deltas() {
+                if let Some(path) = delta.old_file().path_bytes() {
+                    restored_paths.insert(path.to_vec());
+                }
+                if let Some(path) = delta.new_file().path_bytes() {
+                    restored_paths.insert(path.to_vec());
+                }
+            }
+            if !restored_paths.is_empty() {
+                let mut options = git2::DiffOptions::new();
+                options.disable_pathspec_match(true);
+                for path in &restored_paths {
+                    options.pathspec(path.as_slice());
+                }
+                let diff = self
+                    .repo
+                    .diff_index_to_workdir(Some(&expected), Some(&mut options))?;
+                if diff
+                    .deltas()
+                    .any(|delta| delta.status() != git2::Delta::Unmodified)
+                {
+                    return Err(git2::Error::from_str(
+                        "restored tracked bytes differ from stash merge",
+                    ));
+                }
+            }
             if stash.parent_count() > 2 {
                 let tree = stash.parent(2)?.tree()?;
                 let diff = self.repo.diff_tree_to_workdir(Some(&tree), None)?;

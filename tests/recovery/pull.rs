@@ -45,6 +45,11 @@ fn assert_stash_push_recovery(repo: &Path) {
 pub fn scenario_pull_auto_stash_success(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
+    let gitlink_path = "PCB/EM2/SM20/SteppingDriverBoard_L/.history";
+    let cacheinfo = format!("160000,7489b69c1ec9e5763a469d9b367deac0aee76bc4,{gitlink_path}");
+    git(repo, &["update-index", "--add", "--cacheinfo", &cacheinfo]);
+    git(repo, &["commit", "-qm", "add unpopulated gitlink"]);
+    std::fs::create_dir_all(repo.join(gitlink_path)).unwrap();
     let remote_root = tempfile::tempdir().expect("remote root");
     let bare = remote_root.path().join("origin.git");
     let other = remote_root.path().join("other");

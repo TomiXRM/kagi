@@ -164,6 +164,39 @@ fn four_operations_on_three_stashes() {
         assert!(s.is_stale(s.worktree_of(owner).unwrap()));
     }
 }
+
+#[test]
+fn pop_verification_ignores_unrelated_unpopulated_gitlink() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let gitlink_path = "PCB/EM2/SM20/SteppingDriverBoard_L/.history";
+    let cacheinfo = format!("160000,7489b69c1ec9e5763a469d9b367deac0aee76bc4,{gitlink_path}");
+    git(
+        &f.repo,
+        &["update-index", "--add", "--cacheinfo", &cacheinfo],
+    );
+    git(&f.repo, &["commit", "-qm", "add unpopulated gitlink"]);
+    std::fs::create_dir_all(f.repo.join(gitlink_path)).unwrap();
+
+    let mut sessions = Sessions::new();
+    let owner = sessions.attach(f.repo.clone());
+    let completion = f
+        .job(&mut sessions, owner, StashAction::Pop { index: 0 })
+        .run();
+
+    assert!(
+        matches!(outcome(&completion), OpOutcome::Success { .. }),
+        "{:?}",
+        outcome(&completion)
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("file")).unwrap(),
+        "three\n"
+    );
+    assert_eq!(f.ids().len(), 2);
+}
 #[test]
 fn reordered_stash_list_with_approved_target_unchanged_refuses_list_changed_note() {
     if !crate::test_support::run_isolated() {

@@ -136,11 +136,15 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   Clippy do not compile the runner or enable `gpui/test-support`. On macOS use:
 
   ```sh
-  KAGI_GUI_E2E=1 \
+  KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \
     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
   ```
 
   The feature enables compilation; `KAGI_GUI_E2E=1` permits native execution.
+  `KAGI_GUI_E2E_ONLY` is **not optional** — name the scenarios you want, as a
+  comma-separated list of substrings. Without it the runner opens a window per
+  scenario; an unfiltered run once opened roughly 1,400 windows and crashed
+  macOS, so no unfiltered command is written down here to copy.
 - **Before committing/pushing, run `cargo fmt --all`.** CI's `fmt + clippy` job is
   advisory (non-blocking) but `cargo fmt --check` exits non-zero on any diff, which
   turns the job red. Run `cargo fmt --check` to confirm clean. Also run

@@ -4,7 +4,7 @@
 
 # Kagi 🔑
 
-### The Git GUI that shows you what will happen — and can't wreck your repo.
+### The Git GUI that shows you what will happen — and can't wreck your repo
 
 [![Release](https://img.shields.io/github/v/release/TomiXRM/kagi?include_prereleases)](https://github.com/TomiXRM/kagi/releases)
 [![Stars](https://img.shields.io/github/stars/TomiXRM/kagi?style=flat)](https://github.com/TomiXRM/kagi/stargazers)
@@ -38,7 +38,7 @@ The commands that lose work — `push --force`, `reset --hard`, `git clean` — 
 Every write opens a **plan** first — current → predicted state, warnings, blockers, and a plain-language recovery recipe. When a blocker is present, there is no execute button to click. This isn't an "are you sure?" dialog bolted on top; it's the only way operations run.
 
 | What Kagi guarantees | How it's enforced |
-|---|---|
+| --- | --- |
 | **You see the outcome first** | Every operation shows a plan: current → predicted state, warnings, blockers, and a recovery recipe. With a blocker present, the execute button isn't even rendered. |
 | **Destructive commands don't exist** | `push --force`, `reset --hard`, and `git clean` are **not implemented anywhere** — enforced by a CI grep gate, not by discipline. |
 | **Conflicts are predicted, not discovered** | Cherry-pick / revert / merge / checkout conflicts are found by in-memory `libgit2` dry-runs; your working tree is untouched when a conflict is foreseen. |
@@ -120,7 +120,7 @@ A configurable ignore list (gitignore syntax, edited in Settings) keeps binaries
 Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi/releases). Each release ships `SHA256SUMS-*.txt` — please verify your download. From v0.3.4 on, Kagi can also check for and install updates from within the app.
 
 | OS | Asset |
-|----|-------|
+| ---- | ------- |
 | macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
 | Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz` (binary + `.desktop` + icon), or the AppImage zip `kagi_Linux-AppImage_<arch>.zip` |
 | Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` — extract and run `kagi.exe` (self-contained) |
@@ -132,6 +132,7 @@ Kagi is **not yet notarized by Apple** (ad-hoc signature only — no Apple Devel
 
 1. **Right-click `Kagi.app` → Open → Open** (once; afterwards it opens normally), or
 2. Remove the quarantine attribute:
+
    ```sh
    xattr -dr com.apple.quarantine /Applications/Kagi.app
    ```
@@ -145,6 +146,7 @@ Signing + notarization is planned once an Apple Developer Program membership is 
 ```sh
 unzip kagi_Linux-AppImage_<arch>.zip && bash install_linux_desktop.sh
 ```
+
 registers it under `~/.local` (icon + `.desktop` entry, fully offline).
 </details>
 
@@ -163,6 +165,7 @@ Rust stable (rustup), plus:
 
 - **macOS** — **Xcode Command Line Tools only** (no full Xcode; Kagi uses GPUI's `runtime_shaders`).
 - **Linux** — GPUI's native build deps. On Debian/Ubuntu:
+
   ```sh
   sudo apt-get install -y \
     libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
@@ -179,18 +182,22 @@ cargo run --release -- /path/to/your/repo
 First build takes a few minutes (gpui / libgit2); afterwards it's seconds. Bare repositories are not supported (point it at a normal repo with a working tree).
 
 **Install the `kagi` command** onto your `PATH`:
+
 ```sh
 cargo install --path .          # installs `kagi` to ~/.cargo/bin
 kagi /path/to/your/repo         # open Kagi on that repo
 kagi                            # no arg → Welcome screen
 ```
+
 The binary embeds all its assets, so it's self-contained.
 
 **Try it without touching your repos:**
+
 ```sh
 REPO=$(bash scripts/make_fixture.sh)   # branches, a merge, a remote, tags, a stash, a dirty tree
 cargo run -- "$REPO"
 ```
+
 </details>
 
 ## 🧑‍💻 Development
@@ -205,6 +212,7 @@ cargo test --workspace
 - Design docs: [docs/requirements.md](docs/requirements.md) · [docs/architecture.md](docs/architecture.md) · [ADRs](docs/adr/)
 - **Never test against a real repository** — use `scripts/make_fixture.sh` / tempdirs. The `KAGI_*` env vars are headless-testing tools only.
 - Kagi is being re-architected into a layered Cargo workspace so the safety-first design is enforced by the type system, not by convention — details in [docs/rearch/](docs/rearch/) and [ADRs 0072+](docs/adr/). The core invariant: the UI never touches `git2` directly — all Git work flows through the `plan → confirm → preflight → execute → verify → log` pipeline (enforced by a CI grep gate).
+
 </details>
 
 ## 📄 License

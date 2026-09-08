@@ -1,6 +1,6 @@
 ---
 name: kagi-verify
-description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository.
+description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer or the foreground: Tier B uses scripts/pidclick.swift (CGEventPostToPid). cliclick is banned for new validation.
 ---
 
 # Kagi verification recipe
@@ -14,16 +14,41 @@ Choose the smallest evidence lane that proves the change. Tier A is deterministi
 native UI state coverage, Tier B is a real running application, and Tier C creates
 the Git states needed to exercise safety-sensitive flows.
 
+**Read this before driving the GUI.** Two rules are load-bearing and easy to miss by
+skimming, so they are stated here as well as where they apply:
+
+- **Never use `cliclick` for new validation.** It moves the user's pointer and targets
+  the frontmost application, so it takes the machine away from the user and aims at
+  whatever happens to be in front. Tier B's `scripts/pidclick.swift` posts events
+  straight to the process with `CGEventPostToPid`: the pointer does not move, the
+  foreground application does not change, and the target is the window you named. The
+  user can keep working while a scenario runs.
+- **Never run the full `gui_e2e_runner`.** Always scope it with `KAGI_GUI_E2E_ONLY`.
+  An unfiltered run once opened roughly 1,400 windows and crashed macOS.
+
+| Need | Lane |
+| --- | --- |
+| Deterministic assertions on real UI state, no windows on the user's screen | Tier A runner (`KAGI_GUI_E2E_ONLY` always) |
+| A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` |
+| Git states for safety-sensitive flows | Tier C fixtures |
+
 ## Tier A — native GUI E2E runner
 
 `tests/gui_e2e_runner.rs` is an opt-in macOS main-thread runner. It needs both the
 `gui-e2e` feature and `KAGI_GUI_E2E=1`; use an exclusive target directory:
 
+`KAGI_GUI_E2E_ONLY` is not optional — every invocation names the scenarios it
+wants. There is deliberately no unfiltered example here to copy: without the
+filter the runner opens a window per scenario, which is the ~1,400-window path
+that crashed macOS.
+
 ```bash
-KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 CARGO_TARGET_DIR="$PWD/target" \
+# One scenario: the substring the scenario name contains.
+KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \
+  CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 
-# Run only scenarios whose names contain either substring.
+# Several: comma-separated substrings, any of which may match.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph_copy' \
   CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture

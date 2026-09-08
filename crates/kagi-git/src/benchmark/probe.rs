@@ -130,8 +130,15 @@ pub fn run_probe(
     let mut expected_before: Option<Fingerprint> = None;
 
     if operation.requires_pristine_copy_per_iteration() {
+        let copy = scratch.path().join("run");
         for iteration in 0..request.iterations {
-            let copy = scratch.path().join(format!("run-{iteration}"));
+            if copy.exists() {
+                fs::remove_dir_all(&copy).map_err(|error| HarnessError::io(&copy, error))?;
+            }
+            let storage = scratch.path().join(".run.kagi-git");
+            if storage.exists() {
+                fs::remove_dir_all(&storage).map_err(|error| HarnessError::io(&storage, error))?;
+            }
             materialize_pristine(&template, &copy)?;
             iterations.push(run_one(
                 operation,

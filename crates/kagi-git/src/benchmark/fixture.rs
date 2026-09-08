@@ -151,13 +151,33 @@ fn materialize_linked_worktree_storage(
     }
     copy_tree(source_repo.path(), &private)?;
 
+    let source_private = source_repo.path();
+    let source_worktree = source_repo
+        .workdir()
+        .ok_or_else(|| HarnessError::new("linked worktree has no workdir"))?;
     fs::write(private.join("commondir"), "../common\n")
         .map_err(|error| HarnessError::io(&private, error))?;
-    let gitdir = format!("gitdir: ../../{}/.git\n", name.to_string_lossy());
+    set_copy_modified_time(
+        &private.join("commondir"),
+        &fs::symlink_metadata(source_private.join("commondir"))
+            .map_err(|error| HarnessError::io(source_private, error))?,
+    )?;
+    let gitdir = format!("../../{}/.git\n", name.to_string_lossy());
     fs::write(private.join("gitdir"), gitdir).map_err(|error| HarnessError::io(&private, error))?;
+    set_copy_modified_time(
+        &private.join("gitdir"),
+        &fs::symlink_metadata(source_private.join("gitdir"))
+            .map_err(|error| HarnessError::io(source_private, error))?,
+    )?;
     let git_entry = format!("gitdir: ../.{}.kagi-git/private\n", name.to_string_lossy());
-    fs::write(destination.join(".git"), git_entry)
-        .map_err(|error| HarnessError::io(destination, error))
+    let destination_git_entry = destination.join(".git");
+    fs::write(&destination_git_entry, git_entry)
+        .map_err(|error| HarnessError::io(destination, error))?;
+    set_copy_modified_time(
+        &destination_git_entry,
+        &fs::symlink_metadata(source_worktree.join(".git"))
+            .map_err(|error| HarnessError::io(source_worktree, error))?,
+    )
 }
 
 fn validate_request(request: &FixtureRequest) -> Result<(), HarnessError> {
@@ -227,7 +247,14 @@ fn fixture_git_command(repo: &Path) -> Command {
         .current_dir(repo)
         .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", empty_global_config());
+        .env("GIT_CONFIG_GLOBAL", empty_global_config())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_CONFIG_COUNT");
     command
 }
 

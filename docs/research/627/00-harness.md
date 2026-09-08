@@ -53,14 +53,26 @@ integration owner が wave 後に直列で行う。operation 実装は common co
 6. `pristine_copies_preserve_symlink_fingerprint_metadata`
    - fixed modified time を持つ relative symlink を template に追加し、別 directory の二 copy の完全 fingerprint が一致することを確認する。
 
+7. `detects_worktree_root_mode_change`
+   - worktree root 自身の mode 変更が fingerprint 差分になることを確認する。
+8. `manifest_counts_root_directory_and_width`
+   - `.git` を除く fixture root を `dirs` と最大 directory width に含めることを確認する。
+9. `linked_worktree_copy_uses_independent_relative_git_storage`
+   - copied linked worktree の Git storage が sibling にあり、元 worktree を変更せずに利用できることを確認する。
+10. `write_detection_operations_receive_pristine_copies`
+   - 変更を期待しない C2/C3-style operation でも反復ごとの pristine copy を要求できることを確認する。
+11. `records_resolved_git2_version_and_process_load`
+   - resolved `git2` patch version と host load が environment metadata に入ることを確認する。
+
 これらは harness self-test であり、backend 選定用の測定結果ではない。`docs/research/627-backend-verification-plan.md` の §6 / §7 は更新していない。
 
 ## Self-test 監査
 
-- reviewer は fingerprint 3 本と fixture 2 本を実際の mutation で failure することを確認した。root identifier、`modified_ns`、SHA-256、mode、hardlink、symlink timestamp の検出はその review 結果であり、本修正では再実行していない。
-- 本修正では、`git_version` が引数を無視して PATH の `git` を実行する mutation で `records_the_selected_git_executable_version` が失敗することを実行者が確認した。
-- 本修正では、`probe.rs` に残る全 `RUSAGE_CHILDREN` を `RUSAGE_SELF` に置換する mutation で inner test と outer test が失敗することを実行者が確認した。child CPU test は nested test process で child 前後の `process_cpu_time()` だけを比較し、test 側は `RUSAGE_CHILDREN` を直接参照しない。
-- 本修正では、inner test の `#[ignore]` を除去する mutation で outer test が失敗することを実行者が確認した。nested runner は stdout の `1 passed` と `0 failed` を要求するため、filter が zero test に一致しても成功扱いにならない。
+- reviewer が確認した fingerprint / fixture mutation と、本修正で実行した mutation を区別して記録する。
+- 本修正で `scan_tree` の root entry を除去すると root mode test が失敗した。root `dirs` / width を 0 から始める mutation でも manifest test が失敗した。
+- linked worktree 判定を false にすると relative Git storage test が失敗し、fresh-copy policy を `mutates_fixture` に戻すと C2-style detector は二回目の pristine mismatch で失敗した。
+- `git2` version を `0.21`、host load を null にする mutation は environment metadata test を失敗させた。
+- current CPU implementation で全 `RUSAGE_CHILDREN` を `RUSAGE_SELF` に置換すると inner と outer CPU test の両方が失敗した。inner `#[ignore]` の除去も outer test を失敗させる。
 
 ## Owner 境界
 

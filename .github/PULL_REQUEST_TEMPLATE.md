@@ -40,6 +40,14 @@ Tier A は環境変数を省いた形を書かない。通常の workspace test 
 `KAGI_GUI_E2E_ONLY` は必ず付ける。絞らない実行はシナリオごとに実ウィンドウを開き、
 約 1,400 窓で macOS が落ちる (#549)。絞っていない実行例をこの repo の markdown に
 書き残さないこと (verify skill Tier A)。
+
+Tier B も起動コマンドをそのまま貼る。unique な `USER` と `KAGI_NO_ACTIVATE=1` /
+`KAGI_NO_RESTORE=1` / `KAGI_LOG_DIR` を欠いた起動は、ユーザーの最前面アプリ・
+session・settings・trust・oplog を実際に書き換える。操作内容だけの報告では、
+その 4 つが付いていたか証跡から確認できない (verify skill Tier B)。
+
+`cliclick` は書かない。ポインタと最前面を奪うので新規検証では禁止で、
+`pidclick` (`CGEventPostToPid`) はどちらも奪わない。
 -->
 
 - [ ] `cargo fmt --all --check` / `cargo clippy --workspace` / `KAGI_LOG_DIR=$(mktemp -d) cargo test -j 8 --workspace` (N tests, 0 failed)
@@ -52,7 +60,13 @@ Tier A は環境変数を省いた形を書かない。通常の workspace test 
     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
   ```
 
-- [ ] Tier B (実機 GUI / pidclick): <どのウィンドウで何を押し、何が見えたか>
+- [ ] Tier B (実機 GUI / pidclick): 押した座標と、見えたもの (screenshot / `[kagi]` 行 / `operations.jsonl`)。起動と操作をそのまま貼る
+
+  ```sh
+  USER=kagi-verify-$RANDOM KAGI_NO_ACTIVATE=1 KAGI_NO_RESTORE=1 KAGI_LOG_DIR=$(mktemp -d) \
+    ./target/debug/kagi <fixture> 2><log> &
+  /tmp/pidclick --pid <PID> --window-id <WID> click <x> <y>
+  ```
 
 ## Not verified — needs a human
 

@@ -1,6 +1,6 @@
 ---
 name: kagi-verify
-description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository.
+description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer or the foreground: Tier B uses scripts/pidclick.swift (CGEventPostToPid). cliclick is banned for new validation.
 ---
 
 # Kagi verification recipe
@@ -13,6 +13,24 @@ this skill and state `skill 更新済み` in the PR body (see Maintenance).
 Choose the smallest evidence lane that proves the change. Tier A is deterministic
 native UI state coverage, Tier B is a real running application, and Tier C creates
 the Git states needed to exercise safety-sensitive flows.
+
+**Read this before driving the GUI.** Two rules are load-bearing and easy to miss by
+skimming, so they are stated here as well as where they apply:
+
+- **Never use `cliclick` for new validation.** It moves the user's pointer and targets
+  the frontmost application, so it takes the machine away from the user and aims at
+  whatever happens to be in front. Tier B's `scripts/pidclick.swift` posts events
+  straight to the process with `CGEventPostToPid`: the pointer does not move, the
+  foreground application does not change, and the target is the window you named. The
+  user can keep working while a scenario runs.
+- **Never run the full `gui_e2e_runner`.** Always scope it with `KAGI_GUI_E2E_ONLY`.
+  An unfiltered run once opened roughly 1,400 windows and crashed macOS.
+
+| Need | Lane |
+| --- | --- |
+| Deterministic assertions on real UI state, no windows on the user's screen | Tier A runner (`KAGI_GUI_E2E_ONLY` always) |
+| A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` |
+| Git states for safety-sensitive flows | Tier C fixtures |
 
 ## Tier A — native GUI E2E runner
 

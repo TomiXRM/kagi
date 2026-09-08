@@ -3413,10 +3413,13 @@ version = "0.3.11"
 name = "kagi-git"
 version = "0.1.0"
 dependencies = [
+ "filetime",
  "git2",
  "hex",
  "ignore",
  "kagi-domain",
+ "libc",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

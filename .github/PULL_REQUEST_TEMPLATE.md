@@ -46,8 +46,9 @@ Tier B も起動コマンドをそのまま貼る。unique な `USER` と `KAGI_
 session・settings・trust・oplog を実際に書き換える。操作内容だけの報告では、
 その 4 つが付いていたか証跡から確認できない (verify skill Tier B)。
 
-`cliclick` は書かない。ポインタと最前面を奪うので新規検証では禁止で、
-`pidclick` (`CGEventPostToPid`) はどちらも奪わない。
+実 GUI の操作は `pidclick` で行う。`CGEventPostToPid` で名指しした窓に直接送るので、
+ユーザーのポインタも最前面アプリも奪わない。ポインタや最前面を奪う操作ツールは
+新規検証では使わない (verify skill Tier B)。
 -->
 
 - [ ] `cargo fmt --all --check` / `cargo clippy --workspace` / `KAGI_LOG_DIR=$(mktemp -d) cargo test -j 8 --workspace` (N tests, 0 failed)

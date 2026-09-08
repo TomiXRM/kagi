@@ -56,7 +56,21 @@ impl Backend {
                 result
             }));
             match attempted {
-                Ok(result) => result,
+                Ok(result) => {
+                    // Both carry "the mutation may/did happen but kagi cannot
+                    // account for it": an unconfirmed termination (#507) and a
+                    // stash whose entry a concurrent push made ambiguous
+                    // (#623). Same receipt, same reconcile requirement.
+                    if let Err(
+                        GitError::TerminationUnknown(reason)
+                        | GitError::StashIdentityUnverified(reason),
+                    ) = &result
+                    {
+                        evidence.unknown = true;
+                        evidence.observations.push(reason.clone());
+                    }
+                    result
+                }
                 Err(_) => {
                     evidence.unknown = evidence.started;
                     evidence
@@ -308,7 +322,14 @@ impl Backend {
                 include_untracked,
             } => self
                 .execute_stash_push(message.as_deref(), *include_untracked)
-                .map(|oid| OperationOutcome::StashPush { oid }),
+                .map(|oid| {
+                    // #623: the entry the executor *identified* is what the
+                    // receipt, the #500 recovery handle and verification must
+                    // use. Re-reading the `refs/stash` tip later would pick up
+                    // whatever an external push left on top.
+                    evidence.oid = Some(oid.clone());
+                    OperationOutcome::StashPush { oid }
+                }),
             Operation::StashApply { index } => self.execute_stash_apply(*index).map(|()| {
                 evidence.applied = true;
                 OperationOutcome::Unit

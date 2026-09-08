@@ -432,9 +432,16 @@ impl WriteGuard {
         self.complete();
         result
     }
-    /// CLI errors with unconfirmed process termination must retain the lease.
+    /// CLI errors with unconfirmed process termination must retain the lease —
+    /// and so must a stash whose entry could not be identified (#623): the
+    /// repository did change, kagi just cannot name the entry, so the scope
+    /// stays reserved until the user reconciles.
     pub fn complete_git<R>(self, result: &Result<R, kagi_git::GitError>) {
-        if !matches!(result, Err(kagi_git::GitError::TerminationUnknown(_))) {
+        if !matches!(
+            result,
+            Err(kagi_git::GitError::TerminationUnknown(_)
+                | kagi_git::GitError::StashIdentityUnverified(_))
+        ) {
             self.complete();
         }
     }

@@ -247,6 +247,16 @@ pub enum GitError {
     Blocked(Box<kagi_domain::plan_note::PlanNote>),
     /// CLI timeout/reap uncertainty: admission must not release on this error.
     TerminationUnknown(String),
+    /// A stash **was created** but its entry could not be identified, because a
+    /// concurrent external `git stash push` made it indistinguishable from
+    /// kagi's own (#623). Treated exactly like [`GitError::TerminationUnknown`]
+    /// by admission and the oplog — Unknown receipt, lease retained,
+    /// reconciliation required, never an automatic retry — but kept a separate
+    /// variant because the user situation differs: the work *is* saved, and the
+    /// UI says so (`i18n::auto_stash_identity_unverified`). A marker inside the
+    /// message would not do: the message embeds the user's own stash text, so a
+    /// stash message could forge it.
+    StashIdentityUnverified(String),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -285,7 +295,9 @@ impl std::fmt::Display for GitError {
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
             GitError::Blocked(note) => f.write_str(&note.message_en()),
-            GitError::Other(msg) | GitError::TerminationUnknown(msg) => {
+            GitError::Other(msg)
+            | GitError::TerminationUnknown(msg)
+            | GitError::StashIdentityUnverified(msg) => {
                 write!(f, "git error: {}", msg)
             }
         }

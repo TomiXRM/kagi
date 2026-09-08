@@ -342,4 +342,52 @@ mod tests {
             "gh subprocess must set GIT_ADVICE=0"
         );
     }
+
+    /// `get_envs` yields `(key, None)` for each `.env_remove(...)`.
+    fn clears_env(cmd: &Command, key: &str) -> bool {
+        cmd.get_envs()
+            .any(|(k, v)| k == std::ffi::OsStr::new(key) && v.is_none())
+    }
+
+    // #623: the hardening is only worth anything if it is on the *shared*
+    // builder, so assert the whole set on both builders rather than trusting
+    // one operation's end-to-end test. A variable quietly dropped from
+    // REPO_LOCAL_ENV would otherwise re-expose every git caller at once.
+    #[test]
+    fn subprocess_builders_clear_every_repository_local_var() {
+        let git = git_command(std::path::Path::new("/tmp"));
+        let gh = gh_command();
+        for var in REPO_LOCAL_ENV {
+            assert!(clears_env(&git, var), "git subprocess must clear {var}");
+            assert!(clears_env(&gh, var), "gh subprocess must clear {var}");
+        }
+        // The ones that actually redirect a repository, named explicitly so a
+        // shortened list cannot pass this test by shrinking.
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_NAMESPACE",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_PREFIX",
+            "GIT_CONFIG",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+        ] {
+            assert!(
+                REPO_LOCAL_ENV.contains(&var),
+                "{var} must stay in REPO_LOCAL_ENV"
+            );
+            assert!(clears_env(&git, var), "git subprocess must clear {var}");
+        }
+        // Clearing must not have taken the non-interactive hardening with it.
+        assert!(has_env(&git, "GIT_TERMINAL_PROMPT", "0"));
+        assert!(has_env(&git, "GIT_ASKPASS", "/bin/false"));
+        assert!(has_env(&git, "LC_ALL", "C"));
+    }
 }

@@ -187,18 +187,24 @@ fn stash_depth(repo: &Repository) -> Result<usize, GitError> {
     }
 }
 
-/// Does `commit` carry exactly the message git writes for *this* push?
+/// Is `stored` the message git writes for *this* push?
 ///
 /// Verified against git 2.50.1: `git stash push -m X` stores `On <label>: X`
-/// byte-for-byte (no normalisation, multi-line and trailing spaces included),
-/// and `<label>` is `(no branch)` while detached. Without `-m` git generates
-/// `WIP on <label>: <abbrev> <subject>`, whose abbreviation length depends on
-/// `core.abbrev`, so only the generated prefix can be matched exactly — the
-/// first-parent test and the single-candidate rule still pin the entry.
-fn stash_message_matches(commit: &git2::Commit<'_>, message: Option<&str>, label: &str) -> bool {
-    let stored = commit.message().unwrap_or_default().trim_end_matches('\n');
+/// verbatim — multi-line bodies, trailing spaces *and* trailing newlines are
+/// all preserved — and `<label>` is `(no branch)` while detached. Trailing
+/// newlines are therefore normalised on **both** sides: comparing a trimmed
+/// stored message against an untrimmed expected one would make a message that
+/// ends in a newline unable to identify its own stash.
+///
+/// Without `-m`, git generates `WIP on <label>: <abbrev> <subject>`, whose
+/// abbreviation length follows `core.abbrev`, so only the generated prefix can
+/// be matched — the first-parent test and the single-candidate rule still pin
+/// the entry.
+fn stash_message_matches(stored: &str, message: Option<&str>, label: &str) -> bool {
     match message {
-        Some(passed) => stored == format!("On {label}: {passed}"),
+        Some(passed) => {
+            stored.trim_end_matches('\n') == format!("On {label}: {passed}").trim_end_matches('\n')
+        }
         None => stored.starts_with(&format!("WIP on {label}: ")),
     }
 }
@@ -259,7 +265,7 @@ fn identify_created_stash(
         if commit.parent_id(0).ok() != Some(before.head) {
             continue;
         }
-        if !stash_message_matches(&commit, message, &before.label) {
+        if !stash_message_matches(commit.message().unwrap_or_default(), message, &before.label) {
             continue;
         }
         matched += 1;
@@ -385,4 +391,89 @@ fn stash_ref_label(repo: &Repository) -> Result<String, GitError> {
         .head()
         .map_err(|e| GitError::Other(format!("stash push: cannot read HEAD: {}", e.message())))?;
     Ok(head.shorthand().unwrap_or("(no branch)").to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stash_message_matches;
+
+    /// The shapes git actually stores (verified against git 2.50.1), including
+    /// the trailing-newline case a trimmed-vs-untrimmed comparison broke: a
+    /// message ending in `\n` could not identify its own stash, so every such
+    /// push reported an unverified identity.
+    #[test]
+    fn explicit_message_matches_what_git_stores() {
+        assert!(stash_message_matches("On main: work", Some("work"), "main"));
+        assert!(stash_message_matches(
+            "On main: work\n",
+            Some("work"),
+            "main"
+        ));
+        assert!(stash_message_matches(
+            "On main: work\n",
+            Some("work\n"),
+            "main"
+        ));
+        assert!(stash_message_matches(
+            "On main: first\nsecond\n",
+            Some("first\nsecond\n"),
+            "main"
+        ));
+        // Trailing spaces are content, not framing: git keeps them.
+        assert!(stash_message_matches(
+            "On main: work  ",
+            Some("work  "),
+            "main"
+        ));
+        // Detached HEAD writes the same shape with git's own label.
+        assert!(stash_message_matches(
+            "On (no branch): work",
+            Some("work"),
+            "(no branch)"
+        ));
+    }
+
+    #[test]
+    fn another_pushs_message_or_branch_does_not_match() {
+        assert!(!stash_message_matches(
+            "On main: theirs",
+            Some("work"),
+            "main"
+        ));
+        assert!(!stash_message_matches(
+            "On other: work",
+            Some("work"),
+            "main"
+        ));
+        // A generated message is not an explicit one, and vice versa.
+        assert!(!stash_message_matches(
+            "WIP on main: 0123abc base",
+            Some("work"),
+            "main"
+        ));
+        assert!(!stash_message_matches("On main: work", None, "main"));
+        assert!(!stash_message_matches("", Some("work"), "main"));
+    }
+
+    /// Without `-m` the abbreviation length follows `core.abbrev`, so only the
+    /// generated prefix is matched — the first-parent and single-candidate
+    /// rules carry the rest.
+    #[test]
+    fn generated_message_matches_on_its_prefix_only() {
+        assert!(stash_message_matches(
+            "WIP on main: 0123abc base commit",
+            None,
+            "main"
+        ));
+        assert!(stash_message_matches(
+            "WIP on (no branch): 0123abcdef1 base",
+            None,
+            "(no branch)"
+        ));
+        assert!(!stash_message_matches(
+            "WIP on feature: 0123abc base",
+            None,
+            "main"
+        ));
+    }
 }

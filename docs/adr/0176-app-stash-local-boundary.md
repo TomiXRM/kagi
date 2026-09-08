@@ -72,8 +72,12 @@ HEAD、第二が index tree、`-u` の第三が untracked tree）。したがっ
 
 識別は次の 3 条件で行う: (1) 実行前に控えた reflog 件数より後に増えた entry のみを候補に
 する、(2) commit の第一親が plan 時の HEAD である、(3) stash message が Kagi が渡した
-文字列と完全一致する（`On <label>: <message>`。message 無指定時は git 生成の
-`WIP on <label>: ` prefix）。候補がちょうど 1 件なら自分のもの。0 件または 2 件以上は
+文字列と一致する。git は `-m X` を `On <label>: X` として**逐語的に**格納する（多行・
+末尾空白・末尾改行すべて保持。git 2.50.1 で実測）ので、比較は末尾改行のみ**両辺**で
+正規化する。片側だけ trim すると、末尾が改行の message は自分の stash を永久に識別
+できず、毎回 identity 未確認になる。message 無指定時は git 生成の
+`WIP on <label>: ` prefix（abbrev 長は `core.abbrev` 依存なので prefix までしか
+一致判定できない）。候補がちょうど 1 件なら自分のもの。0 件または 2 件以上は
 `GitError::StashIdentityUnverified` とし、`TerminationUnknown` と同じく evidence.unknown /
 Unknown receipt / lease 保持 / reconcile 要求に載せる。**OID は推測しない。**
 forgeable な message marker ではなく型で区別するのは、`TerminationUnknown` の文面が

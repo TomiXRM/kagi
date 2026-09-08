@@ -553,6 +553,10 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_overlap_preview),
             ),
             (
+                "pull_confirm_survives_other_tab_read",
+                Box::new(crate::recovery_pull::scenario_pull_confirm_survives_other_tab_read),
+            ),
+            (
                 "pull_auto_stash_failure_restores",
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
             ),

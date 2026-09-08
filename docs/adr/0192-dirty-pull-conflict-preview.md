@@ -109,6 +109,40 @@ diverged 時に「local commit だけが変えたパス」（逆方向の差分�
 summary は `Msg::PlanRestoreConflictSummary`（EN/JA）で件数だけを持ち、パスは行に出る。
 `message_en` / `note_ja` の本文はそのまま CLI・oplog・テスト用の fallback として残る。
 
+**予測は実際に merge して確かめる（#626 review）。** 「同じパスが両側で変更された」は
+conflict ではない。upstream が先頭行、ローカルが末尾行を触った場合、`git stash pop` は
+自動 merge に成功する（実 git で確認）。それを「conflict します」と断定すると当たらない
+警告になり、ユーザーは警告を読まなくなる — #625 で直した信頼が別の形で壊れる。
+
+重なった各パスについて `git2::merge_file` で 3-way content merge を実行する。
+ancestor = HEAD の blob（ユーザーの編集の基準）、ours = upstream tip の blob
+（pull が working tree に置くもの）、theirs = working tree のバイト列。`merge_file` は
+メモリ上で完結し、loose object も ref も書かない — plan が object を書くと watcher が
+発火し、今回直した「モーダルが消える」を再発させる。
+
+判定は 3 分岐:
+
+| 判定 | 条件 | note |
+|---|---|---|
+| clean | `is_automergeable()` | note を出さない |
+| conflict | merge が conflict marker を生む | `RestoreConflict`（断定） |
+| 不明 | binary、blob が取れない、**mode 変更（upstream 側も working tree 側も。`chmod +x` は content merge では判定できない）**、type 変更（symlink 化など）、片側の追加/削除（add/add・delete vs edit は content merge ではなく pop 自体が拒否する） | `RestoreConflictPossible`（可能性） |
+
+EN/JA とも断定と可能性で文面を分ける（"will conflict" / "may conflict"、
+「conflict します」/「conflict する可能性があります」）。modal の summary も別 `Msg`。
+
+**保留中の Pull 確認は `SessionId` で持つ（#626 review）。** 素の bool では tab A が fetch を
+待っている間に tab B の reload がそれを消し、「押しても何も起きない」が別経路で再発する
+（CLAUDE.md の state ルール: タブ固有の状態は SessionId で持つ）。`pending_pull_confirm:
+Option<SessionId>` を、要求した tab が表示されているときだけ消費する。reload 側はこの状態に
+一切触らない（触る必要が無くなった: モーダルは fetch の継続で即開き、以降の reload は replan）。
+
+**確認前 fetch の失敗は modal + oplog に残す（#626 review）。** footer と toast だけでは
+消えると何が起きたか分からない。CLAUDE.md の「User-facing errors must surface via the oplog
+and a modal」に従い、`AppNotice`（ユーザーが閉じるまで残り、reload で消えない唯一の modal）で
+伝え、ADR-0149 の non-run op 経路で `fetch` の `Failed` を oplog に永続化する。Pull の確認
+モーダルは出さない — 更新に失敗した知識に対して確定させてはいけないため。
+
 ### 3. execute 側の fetch は残す
 
 `execute_pull` の step 2 の fetch はそのまま。dirty Pull では二重 fetch になるが、

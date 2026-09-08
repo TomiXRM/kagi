@@ -1188,11 +1188,14 @@ pub struct KagiApp {
     /// True while a background fetch is in flight (refresh / auto-fetch),
     /// so we never stack concurrent fetches.
     pub fetch_in_flight: bool,
-    /// #625: a dirty Pull asked for a fetch before its confirmation modal, so
-    /// the plan can name the paths whose auto-stash restore would conflict
-    /// (ADR-0192). The in-flight fetch opens the modal when it finishes; a
-    /// failed fetch clears this and leaves the fetch's own footer error.
-    pub pull_modal_after_fetch: bool,
+    /// #625: the tab whose dirty Pull asked for a fetch before its
+    /// confirmation modal, so the plan can name the paths whose auto-stash
+    /// restore would conflict (ADR-0192).
+    ///
+    /// Keyed by `SessionId`, never a bare bool: the request belongs to *one*
+    /// tab, and a bool let another tab's reload drop it — which is the "press
+    /// Pull, nothing happens" bug in a second costume (#626 review).
+    pub pending_pull_confirm: Option<crate::app::SessionId>,
     /// True while the periodic background auto-fetch ticker task is alive
     /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
     pub auto_fetch_ticker_alive: bool,
@@ -1541,7 +1544,7 @@ impl KagiApp {
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
             fetch_in_flight: false,
-            pull_modal_after_fetch: false,
+            pending_pull_confirm: None,
             auto_fetch_ticker_alive: false,
             github_prs: Vec::new(),
             github_prs_for: None,

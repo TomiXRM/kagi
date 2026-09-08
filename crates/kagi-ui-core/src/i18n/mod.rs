@@ -741,6 +741,9 @@ pub enum Msg {
     /// #625: the summary line above the list of paths whose auto-stash restore
     /// would conflict, so the paths render as rows instead of a comma wall.
     PlanRestoreConflictSummary,
+    /// #625: same, for the paths kagi could **not** decide in advance — the
+    /// wording says *may* conflict and must stay distinct.
+    PlanRestoreConflictMaybeSummary,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -1832,9 +1835,13 @@ impl Msg {
             }
             (Ja, PlanOverlapSummary) => "切り替え先も変更する {} 件のファイルに変更があります。先に stash か commit してください。",
             (En, PlanRestoreConflictSummary) => {
-                "{} path(s) changed here and by the incoming update. Restoring the stash after the pull will conflict; the stash is kept."
+                "{} path(s) whose stash restore conflicts: Kagi merged your edit with the incoming change and it does not merge. The stash is kept."
             }
-            (Ja, PlanRestoreConflictSummary) => "ローカルと incoming の両方で変更された {} 件のパスです。pull 後の stash 復元は conflict します(stash は保持されます)。",
+            (Ja, PlanRestoreConflictSummary) => "stash 復元が conflict する {} 件のパスです。あなたの編集と incoming の変更は merge できません(stash は保持されます)。",
+            (En, PlanRestoreConflictMaybeSummary) => {
+                "{} path(s) changed on both sides that Kagi could not merge in advance — the stash restore may conflict. The stash is kept."
+            }
+            (Ja, PlanRestoreConflictMaybeSummary) => "両方で変更され、事前に merge を判定できなかった {} 件のパスです。stash 復元は conflict する可能性があります(stash は保持されます)。",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",

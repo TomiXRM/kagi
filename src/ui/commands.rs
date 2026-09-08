@@ -1836,13 +1836,9 @@ impl KagiApp {
                 // silencing the fetch-age warning (ADR-0127) for a repo that
                 // was never fetched, and closing that tab's commit panel.
                 if app.repo_path.as_deref() != Some(repo_path_guard.as_path()) {
-                    // #625: the Pull this fetch was for belongs to the tab the
-                    // user left, so its modal must not open over another repo.
-                    app.pull_modal_after_fetch = false;
                     return;
                 }
-                let fetch_reloads = matches!(&result, Ok(outcome) if outcome.changed);
-                let fetch_failed = result.is_err();
+                let fetch_error = result.as_ref().err().cloned();
                 match result {
                     Ok(outcome) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the
@@ -1886,20 +1882,33 @@ impl KagiApp {
                 // to this fetch, so the plan can name the paths whose auto-stash
                 // restore would conflict.
                 //
-                // Who opens it depends on whether the fetch moved a ref.
-                // `reload` is asynchronous and its apply *clears confirmation
-                // modals* (ADR-0189) — so a modal opened here would be planned
-                // correctly and then erased seconds later. When a reload is
-                // coming, the flag stays set and the reload apply opens the
-                // modal from the read model it just installed.
+                // Opened right here, not handed to the reload this fetch may
+                // have started. An earlier revision handed the request to
+                // `apply_reload_data` because the reload's sweep cleared
+                // confirmation modals — but that made the modal depend on
+                // *which* read happened to apply, and a superseded read then
+                // dropped the request and Pull did nothing again. The sweep no
+                // longer clears this modal: an open auto-stash confirmation is
+                // re-planned by every apply instead, so opening it immediately
+                // is both simpler and race-free — the reload that follows
+                // refreshes its contents rather than racing it.
                 //
-                // A failed fetch opens nothing: the footer error above is the
-                // answer, and confirming against knowledge kagi just failed to
-                // refresh is the surprise this defers the modal to avoid.
-                if app.pull_modal_after_fetch && (fetch_failed || !fetch_reloads) {
-                    app.pull_modal_after_fetch = false;
-                    if !fetch_failed {
-                        app.plan_and_open_pull_modal(cx);
+                // The request is honoured only for the tab that made it (it is
+                // keyed by `SessionId`), and a failed fetch still owes the user
+                // an answer: a notice modal plus an oplog entry, not a toast
+                // that scrolls away.
+                if app.pending_pull_confirm.is_some()
+                    && app.pending_pull_confirm == app.active_session()
+                {
+                    app.pending_pull_confirm = None;
+                    match &fetch_error {
+                        Some(error) => {
+                            let error = error.clone();
+                            app.report_pull_fetch_failure(&error, cx);
+                        }
+                        None => {
+                            app.plan_and_open_pull_modal(cx);
+                        }
                     }
                 }
                 cx.notify();

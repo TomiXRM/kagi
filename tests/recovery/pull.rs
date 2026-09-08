@@ -182,21 +182,15 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
     );
 }
 
-/// #625: a dirty Pull whose dirty path is also changed upstream must name that
-/// path in the confirmation modal — *before* the user confirms.
+/// A repository whose working tree edits the same line `origin/main` moved:
+/// `shared.txt` collides, and the collision is a real content conflict.
 ///
-/// This repository never fetches: `origin/main` is unknown to it when the Pull
-/// button is pressed, and the pull itself is a fast-forward, so neither the
-/// behind count nor `MergePrediction` can see the collision. The path can
-/// therefore only appear if the UI fetched first and the plan intersected the
-/// dirty set with the incoming change (ADR-0192) — which is exactly what used
-/// to be discovered after confirming, when the auto-stash failed to restore.
-pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
-    let fixture = build_fixture();
-    let repo = fixture.path();
-    let remote_root = tempfile::tempdir().expect("remote root");
-    let bare = remote_root.path().join("origin.git");
-    let other = remote_root.path().join("other");
+/// Deliberately **not** fetched: `origin/main` is unknown to the repository
+/// when the Pull button is pressed, so a path can only be named if the UI
+/// fetched first (ADR-0192).
+fn overlap_fixture(repo: &Path, remote_root: &Path) {
+    let bare = remote_root.join("origin.git");
+    let other = remote_root.join("other");
     let bare_path = bare.to_str().unwrap();
     let other_path = other.to_str().unwrap();
 
@@ -206,7 +200,7 @@ pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
     git(repo, &["init", "--bare", "-q", bare_path]);
     git(repo, &["remote", "add", "origin", bare_path]);
     git(repo, &["push", "-q", "-u", "origin", "main"]);
-    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
+    git(remote_root, &["clone", "-q", bare_path, other_path]);
     std::fs::write(other.join("shared.txt"), "base\nupstream edit\n").unwrap();
     git(&other, &["add", "shared.txt"]);
     git(
@@ -214,9 +208,23 @@ pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
         &["commit", "-q", "-m", "upstream touches shared.txt"],
     );
     git(&other, &["push", "-q", "origin", "main"]);
-
-    // The same path, edited here and not committed: the restore will conflict.
+    // The same line, edited here and not committed: the restore conflicts.
     std::fs::write(repo.join("shared.txt"), "base\nlocal edit\n").unwrap();
+}
+
+/// #625: a dirty Pull whose dirty path is also changed upstream must name that
+/// path in the confirmation modal — *before* the user confirms.
+///
+/// The pull is a fast-forward, so neither the behind count nor
+/// `MergePrediction` can see the collision: the path appears only because the
+/// UI fetched first and the plan merged the two sides in memory (ADR-0192) —
+/// exactly what used to surface after confirming, when the auto-stash failed
+/// to restore.
+pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
 
     let (app, window) = mount(cx, repo);
     app.update(cx, |app, cx| app.open_pull_modal(cx));
@@ -296,5 +304,88 @@ pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS pull_auto_stash_overlap_preview: the modal names the colliding path and survives reloads"
+    );
+}
+
+/// #625 P1-a: the pending Pull confirmation belongs to **one tab**.
+///
+/// A background tab's read used to clear it — the request was a bare bool, and
+/// `apply_reload_data` dropped it whatever session the read belonged to. Tab A
+/// pressed Pull, tab B's read landed, and A's fetch finished with nothing left
+/// to honour: "press Pull, nothing happens" again (#626 review).
+///
+/// The request is armed the way the dirty-Pull path arms it (keyed by the
+/// requesting tab), then a reload is started **for tab B** and tab A selected
+/// again, so B's read reaches the apply while A is the active session. That is
+/// the exact path that used to clear it. No timers and no blocked subprocess:
+/// the assertion is on the request itself, so the ordering is whatever
+/// `run_until_parked` produces and the test still cannot pass with the old
+/// unconditional clear in place.
+pub fn scenario_pull_confirm_survives_other_tab_read(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+    let other_tab = build_fixture();
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_tab.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+
+    let tab_a = app.update(cx, |app, cx| {
+        let tab_a = app.tabs[0].session;
+        assert_eq!(
+            app.active_session(),
+            Some(tab_a),
+            "tab A must be the one on screen"
+        );
+        // Exactly what `open_pull_modal` does for a dirty Pull while its fetch
+        // is in flight.
+        app.pending_pull_confirm = Some(tab_a);
+        // A reload that belongs to B, then straight back to A: B's read
+        // applies with A on screen.
+        app.switch_repo(1, cx);
+        app.reload_external(cx);
+        app.switch_repo(0, cx);
+        tab_a
+    });
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        assert_eq!(
+            app.read(cx).pending_pull_confirm,
+            Some(tab_a),
+            "another tab's read must not drop tab A's pending Pull confirmation"
+        );
+    });
+
+    // And Pull still resolves into the confirmation, through the public entry
+    // point, now that nothing is holding the fetch.
+    app.update(cx, |app, cx| {
+        app.pending_pull_confirm = None;
+        app.open_pull_modal(cx);
+    });
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let modal = app.read(cx).pull_modal().expect("Pull confirmation");
+        let shown: String = modal
+            .plan
+            .warnings
+            .iter()
+            .map(|note| note.message_en())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(shown.contains("shared.txt"), "{shown}");
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_confirm_survives_other_tab_read: a background tab's read keeps tab A's pending Pull"
     );
 }

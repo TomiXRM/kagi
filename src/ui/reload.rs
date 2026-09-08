@@ -162,12 +162,6 @@ impl KagiApp {
         // the first load leaves the status bar Busy forever.
         let first_read = !self.reads.has_read(session);
         if !self.accept_tab_view(key, view) {
-            // A superseded read must not leave a deferred Pull confirmation
-            // armed (#625): the flag is consumed at the end of a *successful*
-            // apply, so leaving it set here would let an unrelated later reload
-            // pop the modal open. The fetch's own reload is the one that opens
-            // it, and this read is not it.
-            self.pull_modal_after_fetch = false;
             return;
         }
         self.app_sessions.read_applied(session);
@@ -175,10 +169,6 @@ impl KagiApp {
         // the display folding below (modals, selection, conflict, panels)
         // belongs to it.
         if self.active_session() != Some(session) {
-            // …including a Pull confirmation deferred to a fetch (#625): the
-            // user is looking at another tab now, so drop the request rather
-            // than opening it over that one later.
-            self.pull_modal_after_fetch = false;
             return;
         }
 
@@ -334,19 +324,14 @@ impl KagiApp {
         // modal — no further reload.
         self.present_stash_followup(cx);
 
-        // #625 / ADR-0192: the same shape as the #309 follow-up above, for the
-        // same reason. A dirty Pull deferred its confirmation modal to a fetch,
-        // and that fetch moved a ref — so this reload *is* that fetch's. Plan
-        // the modal here: after the modal-clearing sweep, which would otherwise
-        // erase it, and from the read model this reload just installed, so the
-        // paths it names are the ones the fetch revealed.
-        if std::mem::take(&mut self.pull_modal_after_fetch) {
-            self.plan_and_open_pull_modal(cx);
-        } else if replan_dirty_pull {
-            // An already-open dirty-Pull confirmation: the sweep left it alone,
-            // so refresh its contents against the state just installed. Every
-            // later reload (the watcher firing again, a manual Cmd+R) takes this
-            // path too, so the modal cannot be outrun by its own fetch.
+        // #625 / ADR-0192: an open dirty-Pull confirmation was spared by the
+        // sweep above (`replan_dirty_pull`); refresh its contents against the
+        // state this reload just installed. The fetch such a confirmation was
+        // planned from wakes the watcher, so this reload is usually that
+        // fetch's own — clearing the modal here is what made Pull look dead.
+        // Every later reload (the watcher firing again, a manual Cmd+R) takes
+        // this path too, so the modal cannot be outrun.
+        if replan_dirty_pull {
             self.replan_pull_modal();
         }
 

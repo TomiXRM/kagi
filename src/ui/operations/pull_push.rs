@@ -76,19 +76,51 @@ impl KagiApp {
         // minutes old and promise a clean restore that then fails. Fetch first
         // (a read that never touches the working tree), then plan.
         if self.view().is_dirty {
-            self.pull_modal_after_fetch = true;
-            self.fetch_async(false, cx);
-            if !self.fetch_in_flight {
-                // Nothing is fetching and nothing started (no lease, or no
-                // remote): plan on local knowledge rather than swallowing the
-                // user's click. The plan is still the honest one — just as
-                // fresh as kagi's last fetch.
-                self.pull_modal_after_fetch = false;
-                self.plan_and_open_pull_modal(cx);
+            if let Some(session) = self.active_session() {
+                self.pending_pull_confirm = Some(session);
+                self.fetch_async(false, cx);
+                if !self.fetch_in_flight {
+                    // Nothing is fetching and nothing started (no lease, or no
+                    // remote): plan on local knowledge rather than swallowing
+                    // the user's click. The plan is still the honest one — just
+                    // as fresh as kagi's last fetch.
+                    self.pending_pull_confirm = None;
+                    self.plan_and_open_pull_modal(cx);
+                }
+                return;
             }
-            return;
         }
         self.plan_and_open_pull_modal(cx);
+    }
+
+    /// #625: a fetch run *for* a Pull confirmation failed, so there is no
+    /// confirmation to show — but the user pressed Pull and is owed an answer
+    /// that outlives a toast (CLAUDE.md: user-facing errors surface via the
+    /// oplog **and** a modal).
+    ///
+    /// A notice, not the Pull confirmation: there is nothing to confirm, and a
+    /// plan built on knowledge kagi just failed to refresh must not be
+    /// confirmable. The notice is dismissed by the user, never by a reload.
+    pub(crate) fn report_pull_fetch_failure(&mut self, error: &str, cx: &mut Context<Self>) {
+        let message = i18n::op_failed(i18n::Op::Fetch, error);
+        if let Some(repo_path) = self.repo_path.clone() {
+            // The fetch has no OperationController boundary that records it, so
+            // it takes ADR-0149's "non-run op" path and is persisted here.
+            let before = StateSummary {
+                head: format!("branch: {}", self.view().status_summary.branch),
+                dirty: "unchanged".to_string(),
+            };
+            self.record_op_persist(
+                "fetch",
+                before,
+                kagi_git::oplog::OpOutcome::Failed {
+                    error: message.clone(),
+                },
+                &repo_path,
+                cx,
+            );
+        }
+        self.set_app_notice(message.into());
     }
 
     /// Plan a local pull and open (or skip) its confirmation modal. `true` when

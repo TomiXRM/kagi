@@ -623,6 +623,12 @@ pub(crate) fn note_path_list(
                 .replace("{}", &paths.len().to_string()),
             paths.clone(),
         )),
+        PlanNote::Pull(PullNote::RestoreConflictPossible { paths }) => Some((
+            super::i18n::Msg::PlanRestoreConflictMaybeSummary
+                .t()
+                .replace("{}", &paths.len().to_string()),
+            paths.clone(),
+        )),
         _ => None,
     }
 }

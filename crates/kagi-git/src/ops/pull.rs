@@ -226,9 +226,21 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         // out when the auto-stash failed to restore *after* confirming. Name
         // the paths here instead. Same local knowledge as the prediction
         // beside it; the UI fetches first for a dirty pull (ADR-0192).
-        if let Ok(paths) = plan_pull_restore_conflicts(repo, &branch_name, &remote_name) {
-            if !paths.is_empty() {
-                warnings.push(PlanNote::Pull(PullNote::RestoreConflict { paths }));
+        //
+        // Two notes, never merged into one: what kagi proved by running the
+        // three-way merge is asserted, what it could not decide only *may*
+        // conflict. A warning that does not come true is how a prediction
+        // feature loses the user.
+        if let Ok(prediction) = plan_pull_restore_conflicts(repo, &branch_name, &remote_name) {
+            if !prediction.conflicting.is_empty() {
+                warnings.push(PlanNote::Pull(PullNote::RestoreConflict {
+                    paths: prediction.conflicting,
+                }));
+            }
+            if !prediction.unpredictable.is_empty() {
+                warnings.push(PlanNote::Pull(PullNote::RestoreConflictPossible {
+                    paths: prediction.unpredictable,
+                }));
             }
         }
     }

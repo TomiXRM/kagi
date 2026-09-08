@@ -18,6 +18,21 @@ fn parts_ja(parts: &DirtyParts) -> String {
     out.join("、")
 }
 
+/// `<要約>` + 1 行 1 パス + `<助言>`。両方の restore note が共有する形。
+fn path_note_ja(summary: &str, advice: &str, paths: &[String]) -> String {
+    let (shown, extra) = restore_conflict_paths(paths);
+    let mut out = String::from(summary);
+    for path in shown {
+        out.push_str("\n  - ");
+        out.push_str(path);
+    }
+    if extra > 0 {
+        out.push_str(&format!("\n  - 他 {extra} 件"));
+    }
+    out.push_str(advice);
+    out
+}
+
 /// Japanese rendering of one pull note.
 pub fn note_ja(note: &PullNote) -> String {
     match note {
@@ -48,21 +63,16 @@ pub fn note_ja(note: &PullNote) -> String {
              fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。"
                 .to_string()
         }
-        PullNote::RestoreConflict { paths } => {
-            let (shown, extra) = restore_conflict_paths(paths);
-            let mut out = String::from(
-                "pull 後の stash 復元は conflict します。次のパスはローカルでも upstream でも変更されています:",
-            );
-            for path in shown {
-                out.push_str("\n  - ");
-                out.push_str(path);
-            }
-            if extra > 0 {
-                out.push_str(&format!("\n  - 他 {extra} 件"));
-            }
-            out.push_str("\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。");
-            out
-        }
+        PullNote::RestoreConflict { paths } => path_note_ja(
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:",
+            "\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。",
+            paths,
+        ),
+        PullNote::RestoreConflictPossible { paths } => path_note_ja(
+            "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):",
+            "\n復元は試行されます。conflict した場合、stash は保持されます。",
+            paths,
+        ),
         PullNote::ConflictedRefOnly { count } => format!(
             "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。",
             count
@@ -187,6 +197,22 @@ mod tests {
         let text = note_ja(&PullNote::RestoreConflict { paths });
         assert!(text.contains("\n  - f0.txt"), "{text}");
         assert!(text.contains("他 3 件"), "{text}");
+    }
+
+    /// #625 (review): JA must keep the same distinction — 断定 と 可能性.
+    #[test]
+    fn restore_conflict_ja_separates_certain_from_possible() {
+        let paths = vec!["shared.txt".to_string()];
+        let certain = note_ja(&PullNote::RestoreConflict {
+            paths: paths.clone(),
+        });
+        let possible = note_ja(&PullNote::RestoreConflictPossible { paths });
+
+        assert!(certain.contains("conflict します"), "{certain}");
+        assert!(!certain.contains("可能性"), "{certain}");
+        assert!(possible.contains("可能性があります"), "{possible}");
+        assert!(certain.contains("\n  - shared.txt"), "{certain}");
+        assert!(possible.contains("\n  - shared.txt"), "{possible}");
     }
     #[test]
     fn pull_recovery_reverts_without_rewriting_history() {

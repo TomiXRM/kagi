@@ -587,7 +587,7 @@ fn test_pull_merge_keeps_unrelated_dirty_file() {
     );
 }
 
-/// The colliding paths a `RestoreConflict` warning names, if the plan has one.
+/// The paths a `RestoreConflict` warning **asserts** will conflict.
 fn restore_conflict_paths(plan: &kagi_git::OperationPlan) -> Option<Vec<String>> {
     plan.warnings.iter().find_map(|note| match note {
         kagi_domain::plan_note::PlanNote::Pull(
@@ -597,11 +597,21 @@ fn restore_conflict_paths(plan: &kagi_git::OperationPlan) -> Option<Vec<String>>
     })
 }
 
+/// The paths kagi could not decide in advance — reported as *may* conflict.
+fn restore_possible_paths(plan: &kagi_git::OperationPlan) -> Option<Vec<String>> {
+    plan.warnings.iter().find_map(|note| match note {
+        kagi_domain::plan_note::PlanNote::Pull(
+            kagi_domain::plan_note::PullNote::RestoreConflictPossible { paths },
+        ) => Some(paths.clone()),
+        _ => None,
+    })
+}
+
 /// #625: a dirty pull whose paths the incoming update also changes. The merge
 /// prediction beside this stays silent — the pull is a fast-forward, so nothing
 /// conflicts commit-to-commit — and the collision only appeared when the
 /// auto-stash failed to restore, *after* the user confirmed. The plan must name
-/// the paths instead.
+/// the paths instead, and must say which of them it *proved*.
 #[test]
 fn test_plan_pull_names_paths_whose_restore_would_conflict() {
     if !crate::test_support::run_isolated() {
@@ -620,8 +630,8 @@ fn test_plan_pull_names_paths_whose_restore_would_conflict() {
         "upstream scratch\n",
         "upstream: add scratch",
     );
-    // Tracked-and-edited, staged-but-untouched-upstream, and an untracked file
-    // whose name the update introduces.
+    // Tracked-and-edited on the same line, staged-but-untouched-upstream, and
+    // an untracked file whose name the update introduces.
     write_file(&r.local, "base.txt", "base\nlocal edit\n");
     write_file(&r.local, "staged.txt", "staged\n");
     git(&r.local, &["add", "staged.txt"]);
@@ -636,15 +646,26 @@ fn test_plan_pull_names_paths_whose_restore_would_conflict() {
         "a dirty pull is confirmable, not blocked: {:?}",
         plan.blockers
     );
-    let paths = restore_conflict_paths(&plan).expect("restore-conflict warning");
     assert_eq!(
-        paths,
-        vec!["base.txt".to_string(), "scratch.txt".to_string()],
-        "both the edited tracked file and the untracked collision are named"
+        restore_conflict_paths(&plan),
+        Some(vec!["base.txt".to_string()]),
+        "the three-way merge of base.txt fails, so it is asserted: {:?}",
+        plan.warnings
     );
+    assert_eq!(
+        restore_possible_paths(&plan),
+        Some(vec!["scratch.txt".to_string()]),
+        "an add/add is not a content merge, so it is only possible: {:?}",
+        plan.warnings
+    );
+    let named: Vec<String> = restore_conflict_paths(&plan)
+        .into_iter()
+        .chain(restore_possible_paths(&plan))
+        .flatten()
+        .collect();
     assert!(
-        !paths.contains(&"staged.txt".to_string()),
-        "a dirty path the update does not touch must not be named: {paths:?}"
+        !named.contains(&"staged.txt".to_string()),
+        "a dirty path the update does not touch must not be named: {named:?}"
     );
     // The modal renders the note, so the path has to survive into the text.
     let text = plan
@@ -654,6 +675,136 @@ fn test_plan_pull_names_paths_whose_restore_would_conflict() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(text.contains("base.txt"), "{text}");
+}
+
+/// #625 (review): "changed on both sides" is not "conflicts". An upstream edit
+/// to the first line and a local edit to the last merge cleanly — real `git
+/// stash pop` restores them silently — so asserting a conflict there would be
+/// a warning that never comes true, which is how users learn to ignore
+/// warnings.
+#[test]
+fn test_plan_pull_does_not_assert_conflict_for_an_automergeable_overlap() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    let base = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n";
+    write_file(&r.local, "shared.txt", base);
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "add shared.txt"]);
+    git(&r.local, &["push", "-q", "origin", "main"]);
+    git(&r.other, &["pull", "-q", "origin", "main"]);
+    // Upstream touches the first line…
+    remote_commit(
+        &r,
+        "shared.txt",
+        "UPSTREAM HEAD\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n",
+        "upstream: first line",
+    );
+    // …the working tree touches the last.
+    write_file(
+        &r.local,
+        "shared.txt",
+        "line1\nline2\nline3\nline4\nline5\nline6\nline7\nLOCAL TAIL\n",
+    );
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("plan should succeed");
+
+    assert_eq!(
+        restore_conflict_paths(&plan),
+        None,
+        "an automergeable overlap must not be asserted as a conflict: {:?}",
+        plan.warnings
+    );
+    assert_eq!(
+        restore_possible_paths(&plan),
+        None,
+        "…and it is decidable, so it is not 'possible' either: {:?}",
+        plan.warnings
+    );
+}
+
+/// A **local** mode change is not decidable from content either: `chmod +x`
+/// here against an upstream text edit merges cleanly as text while the mode
+/// still has to be reconciled, so it belongs in the *may* conflict list rather
+/// than being called clean (#626 review).
+#[cfg(unix)]
+#[test]
+fn test_plan_pull_reports_local_mode_change_as_possible_only() {
+    use std::os::unix::fs::PermissionsExt;
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    let base = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n";
+    write_file(&r.local, "script.sh", base);
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "add script.sh"]);
+    git(&r.local, &["push", "-q", "origin", "main"]);
+    git(&r.other, &["pull", "-q", "origin", "main"]);
+    // Upstream edits the first line — as text this merges with anything below.
+    remote_commit(
+        &r,
+        "script.sh",
+        "UPSTREAM HEAD\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n",
+        "upstream: first line",
+    );
+    // Locally only the mode changes: the bytes stay exactly HEAD's.
+    let path = r.local.join("script.sh");
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("plan should succeed");
+
+    assert_eq!(
+        restore_conflict_paths(&plan),
+        None,
+        "a mode change is not a proven content conflict: {:?}",
+        plan.warnings
+    );
+    assert_eq!(
+        restore_possible_paths(&plan),
+        Some(vec!["script.sh".to_string()]),
+        "…but it must not be silently called clean: {:?}",
+        plan.warnings
+    );
+}
+
+/// Binary content cannot be three-way merged, so the overlap is reported as
+/// *may* conflict rather than asserted.
+#[test]
+fn test_plan_pull_reports_binary_overlap_as_possible_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    std::fs::write(r.local.join("blob.bin"), b"\x00\x01base\x00").unwrap();
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "add blob.bin"]);
+    git(&r.local, &["push", "-q", "origin", "main"]);
+    git(&r.other, &["pull", "-q", "origin", "main"]);
+    std::fs::write(r.other.join("blob.bin"), b"\x00\x01upstream\x00").unwrap();
+    git(&r.other, &["add", "-A"]);
+    git(&r.other, &["commit", "-qm", "upstream: binary"]);
+    git(&r.other, &["push", "-q", "origin", "main"]);
+    std::fs::write(r.local.join("blob.bin"), b"\x00\x01local\x00").unwrap();
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("plan should succeed");
+
+    assert_eq!(restore_conflict_paths(&plan), None, "{:?}", plan.warnings);
+    assert_eq!(
+        restore_possible_paths(&plan),
+        Some(vec!["blob.bin".to_string()]),
+        "{:?}",
+        plan.warnings
+    );
 }
 
 /// The mirror case: dirty, behind, but nothing in common. No conflict note, so

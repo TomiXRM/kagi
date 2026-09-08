@@ -109,8 +109,9 @@ watcher が発火し、reload がその plan の埋めるはずのモーダル�
    15 個。ADR-0131 は sequencer continue API が libgit2 に無いことを CLI 採用理由と
    して記録している。
 5. **git の同梱は採らない方針**。同梱しても OS 3 つ分の差異を自分が持つだけで差異は
-   消えない。Kagi は現在 git の版チェックも同梱もしていない。`merge-tree --write-tree`
-   は git 2.38 以降なので、CLI 依存を広げるなら最低版要求が必要になる。
+   消えない。Kagi の git 版 check / bundled Git の現状は**未確認**であり、CLI 依存を
+   広げる前に実験 E2 で実際の振る舞いを確定する。`merge-tree --write-tree` は git 2.38
+   以降なので、CLI 依存を広げるなら最低版要求が必要になる。
 6. **`run_git` の hardening（ADR-0146）は repo-local config がコマンドを実行させ得る
    ために存在する**。同梱してもこの危険は消えない。開いた repo の設定は攻撃者の管理下
    のままである。
@@ -153,6 +154,31 @@ watcher が発火し、reload がその plan の埋めるはずのモーダル�
   反復・判定の作法はこれに合わせる。`crates/kagi-git/examples/conflict_timing.rs` が
   既にあるので、libgit2 側の計測は新しい bench framework を入れずに example で足りる。
 - 手元の git は 2.50.1（Apple Git-155）。最低版の議論は実験 E2。
+
+### 2.2 現行実装への照合（2026-09-09）
+
+本書で「現行」「既存」と呼ぶ Kagi 実装を全て照合した。§2.1 の 39 呼び出し式と
+`run_git` 15 file は `main = 491f3de7` に固定した**履歴上の観測値**であり、現在値とは
+主張しない。実験開始時に C1 / D1 の inventory を取り直す。
+
+| 本書の現行実装に関する記述 | 照合結果 | 根拠 |
+| --- | --- | --- |
+| `working_tree_status` の option | `include_ignored(false)`、untracked 再帰、HEAD→index rename 検出 | [`status.rs:51-56`](../../crates/kagi-git/src/status.rs#L51-L56) |
+| untracked の定義 | `WT_NEW` でも nested repo / linked worktree（`.git` directory **又は file**）は除外 | [`status.rs:150-163`](../../crates/kagi-git/src/status.rs#L150-L163)、[`status.rs:206-213`](../../crates/kagi-git/src/status.rs#L206-L213) |
+| `snapshot` の構成 | head / status / worktrees / commits / refs / stashes / `FETCH_HEAD` mtime を読む | [`snapshot.rs:87-127`](../../crates/kagi-git/src/snapshot.rs#L87-L127) |
+| linked worktree の layout | worktree root の `.git` は file、private gitdir は `repo.path()`、ODB / shared refs は `repo.commondir()` | [`status.rs:206-213`](../../crates/kagi-git/src/status.rs#L206-L213)、[`backend.rs:42-57`](../../crates/kagi-git/src/backend.rs#L42-L57)、[`snapshot.rs:134-142`](../../crates/kagi-git/src/snapshot.rs#L134-L142) |
+| existing `repo_fingerprint` | HEAD と porcelain status の 2 値だけ | [`gui_e2e_runner.rs:449-464`](../../tests/gui_e2e_runner.rs#L449-L464) |
+| GUI perf precedent | warm-up 1 回を破棄して 7 回 median、前後 fingerprint 比較 | [`oplog_detail.rs:46-102`](../../tests/perf/oplog_detail.rs#L46-L102) |
+| unrelated histories blocker | real Git は拒否、libgit2 `merge_commits` は空 base merge | [`merge.rs:60-63`](../../crates/kagi-domain/src/plan_note/merge.rs#L60-L63) |
+| stash family の現行混在 | push は `run_git`、apply / pop / drop は libgit2 | [`stash_push.rs:340-378`](../../crates/kagi-git/src/ops/stash_push.rs#L340-L378)、[`stash.rs:153-168`](../../crates/kagi-git/src/ops/stash.rs#L153-L168)、[`stash.rs:356-399`](../../crates/kagi-git/src/ops/stash.rs#L356-L399)、[`stash.rs:593-613`](../../crates/kagi-git/src/ops/stash.rs#L593-L613) |
+| CLI executable seam / hardening | PATH の `git` を起動し、`run_git` は hardening args / local override を prepend する | [`cli.rs:231-242`](../../crates/kagi-git/src/cli.rs#L231-L242)、[`cli.rs:259-294`](../../crates/kagi-git/src/cli.rs#L259-L294) |
+| watcher / platform CI | `start_git_watcher` は `notify` recursive watcher、`DEBOUNCE` は 500 ms。CI は macOS test blocking、Linux test / Windows build advisory | [`watcher.rs:149-211`](../../src/ui/watcher.rs#L149-L211)、[`.github/workflows/ci.yml:105-168`](../../.github/workflows/ci.yml#L105-L168) |
+| 予測 API | merge / cherry-pick / content merge / diff は in-memory libgit2 API を呼ぶ | [`ops/merge.rs:200-204`](../../crates/kagi-git/src/ops/merge.rs#L200-L204)、[`ops/cherry_revert.rs:209-215`](../../crates/kagi-git/src/ops/cherry_revert.rs#L209-L215)、[`resolution.rs:777-780`](../../crates/kagi-git/src/resolution.rs#L777-L780)、[`diff.rs:87-89`](../../crates/kagi-git/src/diff.rs#L87-L89) |
+| fetch / pull / push | fetch と push は CLI。pull は CLI fetch の後に libgit2 graph / checkout を行う混在 | [`fetch.rs:40-54`](../../crates/kagi-git/src/ops/fetch.rs#L40-L54)、[`pull.rs:340-407`](../../crates/kagi-git/src/ops/pull.rs#L340-L407)、[`push.rs:384-397`](../../crates/kagi-git/src/ops/push.rs#L384-L397) |
+| rebase / switch / checkout / discard | rebase は CLI。switch は remote fetch で CLI を使い checkout は libgit2。checkout / discard は libgit2 | [`rebase.rs:121-132`](../../crates/kagi-git/src/ops/rebase.rs#L121-L132)、[`switch.rs:140-145`](../../crates/kagi-git/src/ops/switch.rs#L140-L145)、[`switch.rs:342-344`](../../crates/kagi-git/src/ops/switch.rs#L342-L344)、[`checkout.rs:235-286`](../../crates/kagi-git/src/ops/checkout.rs#L235-L286)、[`discard.rs:232-253`](../../crates/kagi-git/src/ops/discard.rs#L232-L253) |
+
+この表に無い将来実装（`backend_fixture` / `backend_probe` / C4 test / headless watcher
+probe / GUI scenario）は**未確認**であり、P0–P6 の実装 PR で初めて確認する対象である。
 
 ## 3. 仮説
 
@@ -232,7 +258,7 @@ stash を消し、stage と checkout は初回後は適用済みになり、back
 
 | 実験 | fixture を変更するか | pristine の単位 | 変更の中身 |
 | --- | --- | --- | --- |
-| A0 | する | case ごと（case 間でアプリ再起動） | 保存 120 回、branch 往復、pull |
+| A0 | する | fixture × case × 反復ごと | 保存 120 回、branch 往復、pull |
 | A1 | しない | backend ごとの 1 系列 | 読みのみ。index stat cache の書き戻しが出たら C2 の対象に回す |
 | A2 | しない | backend ごとの 1 系列 | 読みのみ |
 | A3 | しない | 規模 × backend ごとの 1 系列 | 読みのみ |
@@ -301,7 +327,7 @@ hyperfine --warmup 1 --runs 10 \
 
 ### 4.5 結果に必ず添える環境メタ
 
-OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファイルシステム /
+OS と版 / arch / `git --version` / `git2` crate 版 / ファイルシステム /
 `core.fsmonitor` と `core.untrackedCache` の値 / index 版 / fixture manifest /
 測定中の他プロセス負荷。これが無い数字は §6 に載せない。
 
@@ -340,7 +366,8 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
 - **問い**: 現実的な操作で watcher は何回発火し、読み経路の単位時間あたりの累積
   コストは backend 選定を動かす規模か。
 - **手順**: 測定 PR の GUI E2E scenario `backend_read_watcher` に次の 3 case を作る。
-  各 case を M と L で 5 回実行し、case 間ではアプリを再起動する。
+  M / L × case ごとに 5 回実行する。**各回の fixture lifecycle は §4.3 に従う。**
+  アプリ再起動は case 間の UI state 隔離だけに使い、repo reset の代替にしない。
   1. **連続保存**: 同じ tracked file を 500 ms 間隔で 60 s、計 120 回保存する。
   2. **ブランチ切り替え**: 1,000 path の内容が異なる 2 branch を 1 s 間隔で 10 往復し、
      各切り替え後に reload 完了を待つ。
@@ -376,13 +403,18 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
 - **手順**:
   1. まず**情報等価性**を確認する。現行は `include_ignored(false)` /
      `include_untracked(true)` / `recurse_untracked_dirs(true)` /
-     `renames_head_to_index(true)`（`crates/kagi-git/src/status.rs:52-56`）。CLI 側の
-     等価は `git status --porcelain=v2 -z --untracked-files=all` に rename 検出の
-     指定を足した形。両者の出力を同一 fixture で突き合わせ、行数と分類の一致件数を
-     数える。
+     `renames_head_to_index(true)`で、さらに `WT_NEW` の nested repository / linked
+     worktree（`.git` directory 又は file）を untracked から除外する
+     （[`status.rs:51-56`](../../crates/kagi-git/src/status.rs#L51-L56)、
+     [`status.rs:150-163`](../../crates/kagi-git/src/status.rs#L150-L163)）。CLI は
+     `git status --porcelain=v2 -z --untracked-files=all --renames` を parse した後に同じ除外を適用する。
+     `(group, path, rename-from, ChangeKind)` の canonical **集合**を比較し、双方の key が
+     一意であることも確認する。missing / extra / value-mismatch / duplicate がいずれも
+     0 の組み合わせだけを等価とする。
   2. 一致した組み合わせだけで S / M / L × warm / process-cold を測る。CLI 側は parse 込みの
      時間で測る（Kagi は構造化データを必要とするため、生の出力時間では比較にならない）。
-- **値**: ms（median / p95）、出力行数、不一致件数。
+- **値**: ms（median / p95）、canonical status 集合の missing / extra / value-mismatch /
+  duplicate 件数。
 - **判断基準**:
   - 意味が一致しない → 速度は測らず、差異を B3 / B4 に回す。
   - 一致し、L の median で libgit2 が CLI の **1.5 倍以上遅く、かつ絶対差 150 ms 以上**
@@ -434,17 +466,14 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
 
 ### B. 意味論の一致
 
-共通手順: 測定 PR の `backend_fixture --scenario <name>` で独立 fixture を作り、
+共通手順: 測定 PR の `backend_fixture --scenario <name>` で fixture を materialize し、
 `backend_probe --operation semantic-matrix --backend libgit2|cli` を各 3 回実行する。
-probe は backend 固有出力を次の canonical JSON に正規化する: path は `/` 区切り、
-status は Kagi の `ChangeKind`、内容は生バイトの SHA-256、plan は blocker の型と対象
-path、oplog は recovery handle の `kind / oid / path / reference` と OID から読める
-object bytes の SHA-256。時刻、表示順、backend 固有メッセージは比較対象から除く。
-**生の porcelain と Rust struct を直接 byte compare しない。**
-
-fixture の作成・copy・開始 fingerprint の検証は §4.3 の P0 共通契約に従う。B 固有の
-copy 実装を持たず、B1–B8 の変更する cell は backend ごと、かつ反復ごとに独立 copy を
-使う。
+**fixture lifecycle、反復、開始 fingerprint は §4.3 に従う。** probe は backend 固有出力を
+次の canonical JSON に正規化する: path は `/` 区切り、status は Kagi の `ChangeKind`、
+内容は生バイトの SHA-256、plan は blocker の型と対象 path、oplog は recovery handle の
+`kind / oid / path / reference` と OID から読める object bytes の SHA-256。時刻、表示順、
+backend 固有メッセージは比較対象から除く。**生の porcelain と Rust struct を直接 byte
+compare しない。**
 
 scenario 生成コマンド:
 
@@ -522,18 +551,18 @@ pop へ流用しない。stash 以外の CLI 実装は、それぞれに対応�
   あるか。
 - **手順**:
   1. 対象 commit で、§2.1 と同じ数え方により**全呼び出し式を 1 行ずつ列挙する**。
-     LSP references で API ごとに引き、
-     `api / file:line / 呼び出し元 symbol / Kagi 用途 / 必要な戻り値` の CSV を作る。
-     **LSP references で数えた呼び出し式の件数と inventory の行数が API 別・合計とも
-     一致しなければ C1 を開始しない。** 開始条件に固定件数は置かない。
+     LSP references から API ごとに引き、`api / file:line / 呼び出し元 symbol / Kagi 用途 /
+     必要な戻り値` の CSV を作る。LSP の call expression 集合と CSV の
+     `(api, file:line, caller)` 集合が API 別・全体とも完全一致し、CSV key の重複が 0
+     でなければ C1 を開始しない。件数だけは比較しない。開始条件に固定件数は置かない。
   2. 用途を群にまとめる。群は最低でも次の 8 つ: merge 予測 / cherry-pick・revert 予測 /
      三方向の内容 merge / tree↔tree diff / tree↔index diff / index↔workdir diff /
      tree↔workdir diff / tree merge。
   3. 各 CSV 行に CLI 候補 argv と予想する出力 schema を記し、C2 のハーネスで
      **書くかどうか**、C3 で watcher を実測する。
   4. 元 API と CLI 候補の canonical JSON を conflict fixture（clean / text conflict /
-     binary / symlink / file-directory / rename-rename）で各 3 回比較する。
-     情報の欠落を書く。「速いが情報が足りない」は代替ではない。
+     binary / symlink / file-directory / rename-rename）で各 3 回比較する。fixture lifecycle
+     は §4.3 に従う。情報の欠落を書く。「速いが情報が足りない」は代替ではない。
 - **値**: inventory の各行の Yes / No / 条件付き、欠落する field 数、必要な git 最低版。
 - **判断基準**: 1 呼び出し単位で (a) C2 が非書き込み、(b) C3 が watcher 0 回、
   (c) canonical JSON の欠落 field 0・値の不一致 0 → CLI 代替可能。同じ用途群の
@@ -559,21 +588,22 @@ pop へ流用しない。stash 以外の CLI 実装は、それぞれに対応�
 
 #### C2 — 非書き込みの判定ハーネス
 
-- **問い**: ある CLI コマンドは本当に何も書かないか。
 - **手順**: 拡張 fingerprint を定義して前後で比較する。既存の `repo_fingerprint`
-  （HEAD + porcelain status）では `merge-tree --write-tree` の object 増加を検出でき
-  ないため、次を含める:
-  1. ODB の全 OID set と、loose object / pack 関連ファイルごとの
-     (relative path, size, mtime, mode, SHA-256)、
-  2. `.git/index` の (size, mtime, mode, SHA-256)、
-  3. `packed-refs` と `refs/` 配下の file / directory ごとの
-     (relative path, size, mtime, mode, SHA-256。directory は hash なし)、
-  4. 作業ツリーの全 file / directory ごとの
-     (relative path, size, mtime, mode, SHA-256。directory は hash なし)、
-  5. `.git/` 直下の一時ファイル（`*.lock`、`MERGE_*`、`CHERRY_PICK_HEAD` など）の有無。
-  各候補コマンドを、§4.3 に従い**反復ごとに新しい独立 copy**で 3 回実行する。
-  初回だけ書くケースも各 copy の前後比較で捕まえる。`--no-optional-locks` の有無でも比較する
-  （§4.6）:
+  （HEAD + porcelain status）では `merge-tree --write-tree` の object 増加を検出できない。
+  repository handle ごとに canonical path を取り、main / linked worktree の同一 root は
+  一度だけ走査して次を含める（file は `(relative path, size, mtime, mode, SHA-256)`、
+  directory は `(relative path, mtime, mode)`）:
+  1. worktree root（`.git` entry 以外）、
+  2. worktree root の `.git` entry 自体（linked worktree では gitdir を指す file）、
+  3. private gitdir `repo.path()`（`index` と worktree-private `HEAD` を含む）、
+  4. common dir `repo.commondir()`（ODB、`packed-refs`、shared `refs/` を含む）。
+
+  linked worktree の root / private gitdir / commondir を混同しない。layout の根拠は
+  [`status.rs:206-213`](../../crates/kagi-git/src/status.rs#L206-L213)、
+  [`backend.rs:42-57`](../../crates/kagi-git/src/backend.rs#L42-L57)、
+  [`snapshot.rs:134-142`](../../crates/kagi-git/src/snapshot.rs#L134-L142)。
+  候補コマンドの反復と fixture lifecycle は §4.3 に従う。`--no-optional-locks` の有無でも
+  比較する（§4.6）:
 
   ```sh
   ./target/release/examples/backend_probe \
@@ -594,7 +624,8 @@ pop へ流用しない。stash 以外の CLI 実装は、それぞれに対応�
 - **問い**: 候補コマンドは Kagi の watcher を起こすか。
 - **手順**: 測定 PR に GUI E2E scenario `backend_prediction_watcher` を足す。
   scenario は実際の watcher を起動し、C2 の候補 argv を 1 回実行し、debounce の
-  2 倍以上待って reload counter を読む。候補 1 件ずつ次の形で絞って実行する:
+  2 倍以上待って reload counter を読む。候補ごとの fixture lifecycle は §4.3 に従う。
+  次の形で絞って実行する:
 
   ```sh
   KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='backend_prediction_watcher' \
@@ -620,22 +651,18 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
 
 - **問い**: backend 規則の決定後も、plan / preflight 経路の書き込みと entrypoint の
   列挙漏れを PR 時点で確実に検出できるか。
-- **手順**:
   1. git layer の integration test `tests/prediction_non_write_test.rs` を測定後の実装
-     PR で作る。pure domain では ODB / index / worktree を観測できず、ops 単位の unit
-     test では Backend dispatch や public entrypoint を漏らすため、この layer に置く。
+     PR で作る。通常の plan / preflight 実行 fixture lifecycle は §4.3 に従う。pure domain
+     では ODB / index / worktree を観測できず、ops 単位の unit test では Backend dispatch や
+     public entrypoint を漏らすため、この layer に置く。
   2. `Operation` の exhaustive match で全 variant を fixture へ対応させ、public な
      `Backend::plan` と Backend dispatch 外の public `plan_*` entrypoint に加え、
      `Backend` 経由と直接公開された **全 public `preflight_*` entrypoint** を実行する。
-     現行 inventory には `Backend::{preflight_check,preflight_check_stash}`、
-     `preflight_check`、`preflight_check_stash`、`preflight_absorb`、
-     `preflight_dir_file_resolution`、`preflight_restore_snapshot`、
-     `preflight_apply_suggestion` がある。成功・blocker・error のどの場合も、前後で
-     ODB / index / refs / gitdir・commondir / worktree を比較する。file は
-     `(relative path, size, mtime, mode, SHA-256)`、directory は
-     `(relative path, mtime, mode)` を比較し、内容が同じ touch / chmod / rename も差分に
-     する。ODB はこれに全 OID set と object file 数を加える。新しい `Operation` variant
-     は match が非網羅になり、test 更新なしでは compile できない形にする。
+     成功・blocker・error のどの場合も、前後で C2 と同じ fingerprint を比較する。
+     linked worktree では worktree root、`.git` file、private gitdir `repo.path()`、
+     common dir `repo.commondir()` を別 root として扱い、canonical path が同じ root は
+     一度だけ走査する。新しい `Operation` variant は match が非網羅になり、test 更新なし
+     では compile できない形にする。
   3. detector 自体の self-test として、test fixture から sentinel blob を 1 個書き、
      object 差分を **1/1 回検出する**ことを assert する。さらに内容不変の touch と mode
      変更も各 **1/1 回検出する**ことを assert する。
@@ -645,28 +672,30 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
      helper 経由を証明できない。4 sample 全てを捕捉できない限り、静的 Rule は主
      enforcement に採らない。採る場合も direct call の defense-in-depth と明記し、
      dynamic test を置き換えない。
-  5. **entrypoint inventory ratchet を CI に置く。** `ci/` の既存 `Ratchet` と同じ形で
-     `check-prediction-entrypoints` を追加し、`crates/kagi-git/src/**/*.rs` の public
-     `plan_*` / `preflight_*` 定義数を `ci/prediction-entrypoints-baseline.txt` と比較する。
-     counter は `pub fn plan_x(`、`pub async fn preflight_y(` を各 1 と数え、非 public
-     `fn plan_x(` と `pub fn planner(` を 0 とする sample を持ち、`check-all --selftest`
-     で毎回証明する。追加で count が増えれば baseline 未更新で CI を失敗させる。
-  6. `prediction_non_write_test` は baseline の合計と、その test の `Entrypoint` table
-     （1 entry = 1 public `plan_*` / `preflight_*` を実際に呼ぶ dispatch arm）の長さが
-     一致することを assert する。新関数を足すと ratchet が失敗し、baseline を更新しても
-     table が短いため test が失敗する。table に直接 symbol を追加して初めて通る。削除・
-     rename は table の直接参照が compile error になる。
+  5. **entrypoint inventory は名前集合で CI に置く。** `ci/` に
+     `check-prediction-entrypoints` を追加し、`crates/kagi-git/src/**/*.rs` の各 public
+     `plan_*` / `preflight_*` 定義を `repo-relative-path:function-name` key として集める。
+     source key の重複を拒否し、その集合とソート済みの
+     `ci/prediction-entrypoints-baseline.txt` の key 集合を完全一致させる。missing / extra
+     key はどちら向きでも CI failure とする。`pub fn plan_x(`、`pub async fn preflight_y(`
+     を含み、非 public `fn plan_x(` と `pub fn planner(` を含まない positive / negative
+     sample を `check-all --selftest` で毎回証明する。
+  6. `prediction_non_write_test` は `Entrypoint { key, dispatch }` table を持ち、table key
+     の**集合**と baseline key の集合が完全一致し、かつ table key に重複がないことを
+     assert する。各 dispatch arm は対応 symbol を直接呼ぶ。新関数追加は CI の source
+     set 差分で、baseline 更新後の table 漏れは test の set 差分で、削除・rename は
+     direct symbol の compile error で失敗する。
 
-     これを test 側の source scan ではなく `ci/` ratchet にする。repo は既に
-     `check-loc` / `check-klog` で「増加を review に可視化する」仕組みを持ち、counter の
-     sample が 0 件への退化を止める。Rust test が source を走査すると `cfg(test)`、
-     macro、module 解決を別実装で再現することになり、observable contract ではなく source
-     text を検査する恒久 test になる。dynamic test は挙動を、ratchet は inventory 増加を
-     それぞれ一つずつ担う。
+     既存 `Ratchet` は per-file 数値用
+     （[`cli.py:85-131`](../../ci/src/kagi_checks/cli.py#L85-L131)）なので名前集合を表せない。
+     同じ `ci/` project / `check-all --selftest` / baseline update workflow を使う custom
+     check にする。静的 `Rule` は whole-text regex で call graph を解釈しない
+     （[`rules.py:66-116`](../../ci/src/kagi_checks/rules.py#L66-L116)）。Rust test が source を
+     走査する案は `cfg(test)`、macro、module 解決を別実装で再現する source-text test に
+     なるため採らない。dynamic test は非書き込み挙動、CI check は entrypoint 集合を担う。
 
-     ratchet の更新 command、`ci/pyproject.toml` の `check-prediction-entrypoints` entry、
-     workflow matrix の一行を同じ実装 PR に含める。baseline 更新時の guidance は
-     「`Entrypoint` table を追加して test を通してから
+     `ci/pyproject.toml` の entry、workflow matrix、baseline を同じ実装 PR に含める。
+     guidance は「`Entrypoint` table を追加して test を通してから
      `uv run --project ci check-prediction-entrypoints --write-baseline`」とする。
 
   ```sh
@@ -675,22 +704,22 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
   uv run --project ci check-all
   ```
 
-- **値**: plan / preflight entrypoint coverage（対象 / 全数）、ratchet の source count /
-  baseline count / `Entrypoint` table count、bytes / path / mtime / mode ごとの前後差分件数、
+- **値**: plan / preflight の source key 集合、baseline key 集合、`Entrypoint` table key
+  集合、それぞれの missing / extra / duplicate、bytes / path / mtime / mode ごとの前後差分、
   sentinel / touch / mode 検出数、static Rule の direct / helper sample 検出数、現行 source
   の false positive 数。
-- **判断基準**: dynamic test は plan / preflight coverage **100%**、ratchet source count =
-  baseline count = `Entrypoint` table count、通常経路の差分 **0 件**、sentinel / touch / mode
-  検出が各 **1/1** 必須。1 つでも欠ければ規則を実装完了としない。static Rule は 4 sample
-  **4/4**、false positive **0 件**のときだけ追加する。それ以外は call graph を扱えない
-  ため不採用と記録する。
+- **判断基準**: dynamic test は plan / preflight coverage **100%**、3 key 集合が完全一致、
+  table duplicate **0 件**、通常経路の差分 **0 件**、sentinel / touch / mode 検出が各
+  **1/1** 必須。1 つでも欠ければ規則を実装完了としない。static Rule は 4 sample **4/4**、
+  false positive **0 件**のときだけ追加する。それ以外は call graph を扱えないため不採用と
+  記録する。
 - **交絡**: linked worktree の private gitdir / commondir、git auto-maintenance、
   index stat cache、error 経路で一時作成後に削除される object 以外のファイル。
 - **決まらないこと**: どちらの backend を選ぶか。C4 は決定済み規則の維持だけを担う。
 
 検知主体は local の当該 test と `check-prediction-entrypoints`、PR ごとの
 `cargo test --workspace` と `uv run --project ci check-all` を実行する CI である。
-規則違反は test または ratchet failure として変更者・reviewer の両方に届く。
+規則違反は test または entrypoint-set check failure として変更者・reviewer の両方に届く。
 
 ### D. 実行経路で libgit2 が遅い／危ういもの
 
@@ -705,9 +734,8 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
      pop の CLI 実装は B8 の同一操作・clean / conflict 両条件で、他の操作の CLI 実装は
      B の該当 scenario で意味論に合格したものだけ性能比較へ進める。
   3. 変更ファイル数を 2 に固定し、未変更 tracked ファイルを 1k / 5k / 20k / 50k と
-     増やす。§4.3 に従い backend ごと、かつ 11 反復ごとに同じ manifest から独立 copy を
-     作り、copy 作成時間を除外して libgit2 と合格済み CLI 実装を測る。両 backend の
-     傾きと L の median を比較する。
+     増やして libgit2 と合格済み CLI 実装を測り、両 backend の傾きと L の median を
+     比較する。**fixture lifecycle、反復、copy の計時除外は §4.3 に従う。**
 
      ```sh
      ./target/release/examples/backend_probe \
@@ -736,9 +764,9 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
 - **問い**: 傾きの原因は本当に「未変更ファイルの読み直し」で、CLI 実装はそれを
   解消するか。
 - **手順**: D1 で傾きが出た API と、stash apply / pop なら B8 の同一操作・clean /
-  conflict 両条件で、それ以外なら B の該当 scenario で意味論に合格した対応 CLI 実装を、
-  §4.3 の trace 1 回ごとの独立 pristine copy で測る。Linux は次の形で open / read の
-  syscall 数を取り、macOS は `fs_usage`、Windows は `Operation is ReadFile` /
+  conflict 両条件で、それ以外なら B の該当 scenario で意味論に合格した対応 CLI 実装を
+  測る。**fixture lifecycle は §4.3 に従う。** Linux は次の形で open / read の syscall
+  数を取り、macOS は `fs_usage`、Windows は `Operation is ReadFile` /
   `Path begins with <fixture>` filter で同じ値を取る。
 
   ```sh
@@ -813,11 +841,14 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
      ```
 
   2. **UI delivery（Tier A、macOS）**: probe とは別に GUI E2E scenario
-     `backend_cli_capability_modal` を測定 PR で追加する。`git_command` が `PATH` を
-     解決する既存 seam を使い、(a) git を含まない PATH、(b) `git --version` に 2.37 を
-     返す executable shim だけの PATH の 2 条件で KagiApp を mount し、CLI 依存操作を
-     起動する。`active_modal` の capability error、`KAGI_LOG_DIR` の oplog failure record、
-     HEAD / index / worktree 不変を assert する。実行は必ず次で絞る:
+     `backend_cli_capability_modal` を測定 PR で追加する。`git_command` が PATH の `git`
+     を起動し `run_git` がそれを使う既存 seam
+     （[`cli.rs:231-242`](../../crates/kagi-git/src/cli.rs#L231-L242)、
+     [`cli.rs:284-294`](../../crates/kagi-git/src/cli.rs#L284-L294)）を使い、(a) git を
+     含まない PATH、(b) `git --version` に 2.37 を返す executable shim だけの PATH の
+     2 条件で KagiApp を mount し、CLI 依存操作を起動する。`active_modal` の capability
+     error、`KAGI_LOG_DIR` の oplog failure record、HEAD / index / worktree 不変を assert
+     する。実行は必ず次で絞る:
 
      ```sh
      KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='backend_cli_capability_modal' \
@@ -847,9 +878,9 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
 - **問い**: CLI 経路を増やすと ADR-0146 の対策範囲は足りるか。
 - **手順**: 新たに CLI へ寄せる候補コマンドについて、repo-local config で挙動を変え
   られる項目（`core.*` の外部コマンド系、`filter.*`、`diff.external`、`credential.*`
-  など）を列挙し、`run_git` の既存対策で覆えているかを 1 件ずつ突き合わせる。
-  候補ごとの悪性 config fixture を既存 hardening test に追加し、その test file 全体を
-  次で実行する:
+  など）を列挙し、`run_git` の既存対策で覆えているかを 1 件ずつ突き合わせる。候補ごとの
+  悪性 config fixture lifecycle は §4.3 に従い、既存 hardening test に追加してその file
+  全体を次で実行する:
 
   ```sh
   cargo test -p kagi --test cli_hardening_test
@@ -873,14 +904,14 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
   | headless fixture / probe | A1–A3、B1–B8、C2、D1、E1、E2 capability、E3、F | 実行可 | hosted runner で実行可 | hosted runner で実行可 | 採用候補は 3 OS 必須 |
   | 恒久 integration test | C4 | 実行可 | advisory test job で実行可 | 現 CI は build のみ。測定 PR で test job を追加 | backend 実装完了条件。3 OS の回帰監視 |
   | native GUI E2E / Tier B | A0 の実 UI、C3 の reload、E2 の capability modal、実機 GUI | Tier A / `pidclick` で実行可 | 現 runner では実行不可 | 現 runner では実行不可 | macOS の統合確認。E2 modal は Tier A gate、単独では OS 非依存採用の根拠にしない |
-  | OS watcher probe | A0 の event/tick、C3 の発火有無 | GUI E2E と照合 | production `start_git_watcher` と同じ `notify` watcher / `DEBOUNCE` coalescing を使う headless probe を追加 | 同じ headless probe を追加 | C3 は 3 OS 必須。A0 は後述 |
-  | syscall trace | D2 | `fs_usage` | `strace` | Process Monitor は hosted CI で安定自動化できない | 原因診断。採否 gate にはしない |
+  | OS watcher probe | A0 の event/tick、C3 の発火有無 | GUI E2E と照合 | `start_git_watcher` と同じ `notify` recursive watcher / `DEBOUNCE` 500 ms を使う headless probe を追加 | 同じ headless probe を追加 | C3 は 3 OS 必須。A0 は後述 |
 
-  現 CI は macOS test だけが blocking、Linux test と Windows build は advisory であり、
-  Windows test job と実験 job はまだ無い。測定 PR で `workflow_dispatch` の
-  macOS / Ubuntu / Windows matrix を追加し、headless probe の JSON artifact を保存する。
-  performance は backend を同一 runner 内で交互に測り、runner image / CPU / 負荷を
-  §4.5 の環境メタへ残す。advisory か blocking かは証拠の有無と分けて扱う。
+  現 CI は macOS test だけが blocking、Linux test と Windows build は advisory
+  （[`.github/workflows/ci.yml:105-168`](../../.github/workflows/ci.yml#L105-L168)）。Windows
+  test job と実験 job はまだ無い。測定 PR で `workflow_dispatch` の macOS / Ubuntu /
+  Windows matrix を追加し、headless probe の JSON artifact を保存する。performance は backend
+  を同一 runner 内で交互に測り、runner image / CPU / 負荷を §4.5 の環境メタへ残す。
+  advisory か blocking かは証拠の有無と分けて扱う。
 - **判断基準**:
   - OS ごとに backend を変える規則は採らない。新しい backend を採る操作は、関連する
     headless の意味論・安全性・性能 gate を **3 OS 全て**で満たし、最悪値でも各節の
@@ -912,7 +943,8 @@ C3 だけを 3 OS 必須**にする。macOS 専用 GUI と OS 固有 trace は�
 - **手順**: 既に混在している stash family（push だけ CLI、apply / pop / drop は
   libgit2）を実例として、plan と execute の前提が食い違う条件を列挙する。少なくとも
   「libgit2 の予測が通ったのに CLI の実行が別の結果になる／逆」の fixture を
-  `backend_fixture --scenario mixed-stash` で作り、各条件を 3 回再現する:
+  `backend_fixture --scenario mixed-stash` で作り、各条件を 3 回再現する。fixture
+  lifecycle は §4.3 に従う:
 
   ```sh
   cargo run -p kagi-git --release --example backend_fixture -- \
@@ -973,20 +1005,28 @@ C3 だけを 3 OS 必須**にする。macOS 専用 GUI と OS 固有 trace は�
 
 ## 7. 決定表（未確定）
 
-| 操作群 | 区分 | 現行 | 決定 | 根拠実験 |
+| 操作群 | 区分 | 調査時点の現行（根拠は §2.2） | 決定 | 直接測る根拠実験 |
 | --- | --- | --- | --- | --- |
-| `working_tree_status` | 読み | libgit2 | — | A0 / A1 / A3 / E1 |
-| `snapshot` | 読み | libgit2 | — | A0 / A2 / E1 |
-| merge 予測 | 予測 | libgit2 | — | C1 / C2 / C3 / C4 |
-| cherry-pick・revert 予測 | 予測 | libgit2 | — | C1 / C2 / C3 / C4 |
-| 三方向の内容 merge | 予測 | libgit2 | — | C1 / C2 / C3 / C4 |
-| diff 各種（tree / index / workdir） | 予測・読み | libgit2 | — | C1 / C2 / C4 / B1 / B2 |
-| stash push | 実行 | CLI（#622/#623） | 据え置き（回帰させない） | B8 |
-| stash apply / pop / drop | 実行 | libgit2 | — | B8 / D1 / D2 / F |
-| rebase・sequencer continue | 実行 | CLI（ADR-0131） | 据え置き | — |
-| fetch / pull / push | 実行 | CLI | 据え置き | — |
-| switch / checkout | 実行 | 混在 | — | B5 / D1 / F |
-| discard | 実行 | libgit2 | — | B3 / B5 / B8 / D1 |
+| `working_tree_status` | 読み | libgit2 | — | A0（watcher tick）、A1（等価性・時間）、A3（file 数傾き）、E1（起動費） |
+| `snapshot` | 読み | libgit2 | — | A0（watcher tick）、A2（9 段合成）、E1（起動費） |
+| merge 予測 | 予測 | libgit2 | — | C1（用途集合）、C2（write）、C3（watcher）、C4（恒久 enforcement） |
+| cherry-pick・revert 予測 | 予測 | libgit2 | — | C1（用途集合）、C2、C3、C4 |
+| 三方向の内容 merge | 予測 | libgit2 | — | C1（用途集合）、C2、C3、C4 |
+| diff 各種（tree / index / workdir） | 予測・読み | libgit2 | — | C1（全用途）、C2、C4、B1 / B2（filter / 改行意味論） |
+| stash push | 実行 | CLI（#622/#623） | 据え置き（回帰させない） | B8（push recovery / state） |
+| stash apply / pop / drop | 実行 | libgit2 | — | B8（各操作意味論）、D1（傾き）、D2（read/open）、F（mixed-stash） |
+| rebase・sequencer continue | 実行 | CLI（ADR-0131） | 据え置き | —（移行候補でない。実験の採否対象外） |
+| fetch | 実行 | CLI | 据え置き | —（移行候補でない。実験の採否対象外） |
+| pull | 実行 | CLI fetch + libgit2 統合 | 据え置き | —（A0 は pull 後の読取負荷だけを測り、pull backend は決めない） |
+| push | 実行 | CLI | 据え置き | —（移行候補でない。実験の採否対象外） |
+| switch | 実行 | 混在 | 据え置き | —（移行候補でない。checkout 実験を流用しない） |
+| checkout | 実行 | libgit2 | — | B5（sparse checkout blocker）、D1（`ops/checkout.rs` 傾き）。**F は stash 専用で根拠に使わない。** |
+| discard | 実行 | libgit2 | — | B1（filter content）、B3（ignore）、B5（sparse）、D1（傾き） |
+
+**根拠範囲の監査**: 上表の 15 行を手順本文と照合した。F を checkout から外した。さらに
+pull / switch は現行 backend を変える実験が無いので、A0 / checkout の結果を根拠に流用
+しない。ほかに操作を直接測らない実験を根拠へ置く行はない。`—` は既存 backend を据え置く
+行であり、新規 backend 決定に使わない。
 
 **tie-break 規則**: 測定値が閾値の間に落ちた場合は**現状維持**（libgit2 据え置き、
 CLI 済みは CLI 据え置き）。移行は「閾値を超えた」ことを示せた操作にだけ行う。
@@ -1007,12 +1047,11 @@ CLI 済みは CLI 据え置き）。移行は「閾値を超えた」ことを�
 
 5. C4 の `tests/prediction_non_write_test.rs` は一時的な実験ではなく、規則を守らせる
    恒久 integration test として残す。全 `Operation` variant / public plan /
-   public preflight entrypoint の coverage 100%、通常経路前後の ODB・index・refs・
-   gitdir / commondir・worktree の bytes / path / mtime / mode 差分 0、sentinel object /
-   touch / mode 変更の検出各 1/1、`Entrypoint` table count =
-   `ci/prediction-entrypoints-baseline.txt` の合計を固定する。新しい public `plan_*` /
-   `preflight_*` は CI ratchet が先に落とし、baseline 更新後も table への実呼び出し追加
-   なしには test を通さない。次の test file / gate 全体を実行する:
+   public preflight entrypoint の coverage 100%、通常経路前後の C2 fingerprint 差分 0、
+   sentinel object / touch / mode 変更の検出各 1/1、source / baseline / `Entrypoint`
+   table の**名前集合完全一致**、table key 重複 0 を固定する。新しい public `plan_*` /
+   `preflight_*` は CI の source-set check が先に落とし、baseline 更新後も table への
+   実呼び出し追加なしには test を通さない。次の test file / gate 全体を実行する:
 
    ```sh
    cargo test -p kagi --test prediction_non_write_test

@@ -274,37 +274,48 @@ fn process_cpu_time() -> Option<CpuTime> {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::env;
     use std::process::Command;
 
     use super::*;
 
     #[test]
-    fn cpu_timer_composes_self_and_reaped_children() {
-        let children_before = rusage_cpu_time(libc::RUSAGE_CHILDREN).unwrap();
+    fn cpu_timer_includes_reaped_children_in_isolated_process() {
+        let test_binary = env::current_exe().unwrap();
+        let status = Command::new(test_binary)
+            .args([
+                "--exact",
+                "benchmark::probe::tests::isolated_process_cpu_timer",
+                "--ignored",
+            ])
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "isolated process CPU timer assertion must pass"
+        );
+    }
+
+    #[test]
+    #[ignore = "runs only through cpu_timer_includes_reaped_children_in_isolated_process"]
+    fn isolated_process_cpu_timer() {
+        let before = process_cpu_time().unwrap();
         let status = Command::new("sh")
             .args([
                 "-c",
-                "i=0; while [ \"$i\" -lt 200000 ]; do i=$((i + 1)); done",
+                "i=0; while [ \"$i\" -lt 2000000 ]; do i=$((i + 1)); done",
             ])
             .status()
             .unwrap();
         assert!(status.success());
-        let children_after = rusage_cpu_time(libc::RUSAGE_CHILDREN).unwrap();
+        let after = process_cpu_time().unwrap();
+        let elapsed_cpu_ns = after
+            .user_ns
+            .saturating_add(after.sys_ns)
+            .saturating_sub(before.user_ns.saturating_add(before.sys_ns));
         assert!(
-            children_after.user_ns.saturating_add(children_after.sys_ns)
-                > children_before
-                    .user_ns
-                    .saturating_add(children_before.sys_ns),
-            "the reaped child must contribute CPU time"
-        );
-
-        let self_only = rusage_cpu_time(libc::RUSAGE_SELF).unwrap();
-        let children = rusage_cpu_time(libc::RUSAGE_CHILDREN).unwrap();
-        let combined = process_cpu_time().unwrap();
-        assert!(
-            combined.user_ns >= self_only.user_ns.saturating_add(children.user_ns)
-                && combined.sys_ns >= self_only.sys_ns.saturating_add(children.sys_ns),
-            "probe CPU clock must include both self and reaped child usage"
+            elapsed_cpu_ns >= 100_000_000,
+            "probe clock must include the CPU time consumed by its reaped child"
         );
     }
 }

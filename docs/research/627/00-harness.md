@@ -46,8 +46,8 @@ integration owner が wave 後に直列で行う。operation 実装は common co
    - content 不変の touch、mode 変更、同一 size の別内容への書換えをそれぞれ fingerprint 差分として検出する。
 3. `linked_worktree_records_complete_logical_roots`
    - linked worktree で worktree、`.git` file、private gitdir の `gitdir` / `commondir`、common dir の `objects` / `refs` が fingerprint に入ることを確認する。
-4. `cpu_timer_composes_self_and_reaped_children`
-   - child process の `RUSAGE_CHILDREN` 増分が正であることを確認し、probe clock が直前に採取した `RUSAGE_SELF + RUSAGE_CHILDREN` の各 component 以上であることを確認する。
+4. `cpu_timer_includes_reaped_children_in_isolated_process`
+   - isolated test process で child を終了まで待ち、child 前後の `process_cpu_time()` 増分だけを検証する。test 本体は `RUSAGE_CHILDREN` を直接参照しない。
 5. `records_the_selected_git_executable_version`
    - fixture executable を `--git-executable` 相当で渡し、その executable が出した version が environment JSON に入ることを確認する。
 6. `pristine_copies_preserve_symlink_fingerprint_metadata`
@@ -57,12 +57,9 @@ integration owner が wave 後に直列で行う。operation 実装は common co
 
 ## Self-test 監査
 
-- copy の完全一致 assertion は root に copy 固有 path を戻す、または file / directory の modified time を復元しない実装で失敗する。後者は `set_copy_modified_time` を no-op にする mutation で実際に失敗を確認した。
-- copy 独立性 assertion は hardlink 化で失敗する。inode と、片方の書換え後のもう一方および template の不変性をともに確認する。
-- symlink copy は link 自身の timestamp を固定した fixture で検証する。`set_symlink_file_times` を除去する mutation で完全 fingerprint assertion が実際に失敗した。
-- touch / rewrite / mode はそれぞれ `modified_ns` / SHA-256 / mode を fingerprint から外すと失敗する。
-- linked worktree は role だけを列挙して entries を走査しない実装で失敗する。
-- child CPU は child の `RUSAGE_CHILDREN` 増分と、`process_cpu_time()` の self / children component 合成を別々に assertion する。`RUSAGE_SELF` のみへの mutation が実際に失敗することを確認した。selected executable version は PATH 上の `git --version` を固定で呼ぶ実装で失敗する。
+- fingerprint 3 本と fixture 2 本は、reviewer が実際の mutation で failure を確認した。root identifier、`modified_ns`、SHA-256、mode、hardlink、symlink timestamp の各検出は、いずれも対象の public harness function を経由する。
+- selected executable version は `git_version` が引数を無視して PATH の `git` を実行する mutation で `records_the_selected_git_executable_version` が実際に失敗した。
+- child CPU は nested test process で child 前後の `process_cpu_time()` だけを比較する。test 側は `RUSAGE_CHILDREN` を直接参照しない。`probe.rs` に残る全 `RUSAGE_CHILDREN` を `RUSAGE_SELF` に置換する mutation で inner test と outer test の両方が実際に失敗した。
 
 ## Owner 境界
 

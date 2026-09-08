@@ -1,8 +1,8 @@
 //! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar / T023: pane resize / T-BP-002: bottom panel open/close + resize / T-BP-007: terminal
 //!
-//! Invariant (ADR-0078): `src/ui` uses [`kagi_git::Backend`], not Git bindings
-//! or direct repository opens; bypassing it breaks the layer boundary. This
-//! binary-only module stays out of `src/lib.rs`, keeping domain tests GPUI-free.
+//! Invariant (ADR-0078): `src/ui` routes Git access through
+//! [`kagi_git::Backend`] or `kagi_git` free functions, never Git bindings
+//! directly; bypassing this boundary breaks layering and GPUI-free domain tests.
 
 pub mod activity_view;
 pub mod assets;

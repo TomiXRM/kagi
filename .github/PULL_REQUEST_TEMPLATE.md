@@ -46,6 +46,12 @@ Tier B も起動コマンドをそのまま貼る。unique な `USER` と `KAGI_
 session・settings・trust・oplog を実際に書き換える。操作内容だけの報告では、
 その 4 つが付いていたか証跡から確認できない (verify skill Tier B)。
 
+Tier B の起動行には `KAGI_LOG_DIR=$(mktemp -d)` を直接書かない。その値は Kagi の
+子プロセスにしか渡らず親 shell に残らないので、後から `operations.jsonl` も
+`kagi.stderr` も screenshot の置き場所も辿れない。先に `VERIFY_LOG_DIR` へ代入し、
+起動・stderr・証跡確認で同じ値を使う (verify skill Tier B の canonical recipe)。
+cargo test と runner の行は走らせたら読まないので、その場限りの `$(mktemp -d)` でよい。
+
 実 GUI の操作は `pidclick` で行う。`CGEventPostToPid` で名指しした窓に直接送るので、
 ユーザーのポインタも最前面アプリも奪わない。ポインタや最前面を奪う操作ツールは
 新規検証では使わない (verify skill Tier B)。
@@ -61,12 +67,22 @@ session・settings・trust・oplog を実際に書き換える。操作内容だ
     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
   ```
 
-- [ ] Tier B (実機 GUI / pidclick): 押した座標と、見えたもの (screenshot / `[kagi]` 行 / `operations.jsonl`)。起動と操作をそのまま貼る
+- [ ] Tier B (実機 GUI / pidclick): 押した座標と、見えたもの (screenshot / `[kagi]` 行 / `operations.jsonl`)。起動から証跡確認までそのまま貼る
 
   ```sh
-  USER=kagi-verify-$RANDOM KAGI_NO_ACTIVATE=1 KAGI_NO_RESTORE=1 KAGI_LOG_DIR=$(mktemp -d) \
-    ./target/debug/kagi <fixture> 2><log> &
-  /tmp/pidclick --pid <PID> --window-id <WID> click <x> <y>
+  swiftc scripts/pidclick.swift -o /tmp/pidclick
+  VERIFY_USER="kagi-verify-$RANDOM"
+  VERIFY_LOG_DIR="$(mktemp -d)"
+  USER="$VERIFY_USER" KAGI_NO_ACTIVATE=1 KAGI_NO_RESTORE=1 \
+    KAGI_LOG_DIR="$VERIFY_LOG_DIR" ./target/debug/kagi <fixture> \
+    2>"$VERIFY_LOG_DIR/kagi.stderr" &
+  PID=$!
+  /tmp/pidclick windows --pid "$PID"   # 一覧から layer-0 の窓を選び、その ID を入れる
+  WID=<窓 ID>
+  /tmp/pidclick --pid "$PID" --window-id "$WID" click <x> <y>
+  screencapture -x -o -l"$WID" "$VERIFY_LOG_DIR/window.png"
+  tail -n 40 "$VERIFY_LOG_DIR/kagi.stderr"   # [kagi] 行
+  cat "$VERIFY_LOG_DIR/operations.jsonl"     # 記録された操作
   ```
 
 ## Not verified — needs a human

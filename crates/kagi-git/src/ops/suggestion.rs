@@ -1,3 +1,7 @@
+//! This module owns apply-suggestion's `plan_*`, `preflight_*`, and `execute_*`.
+//! Keep them aligned here: drift can splice a suggestion into content different
+//! from the lines the user confirmed.
+//!
 use super::*;
 use kagi_domain::plan::SuggestionOutcome;
 use kagi_domain::plan_note::{GithubNote, GithubRecovery, GithubTitle};

@@ -1,5 +1,9 @@
 //! Blocking operation cores (extracted from mod.rs, ADR-0112 / Phase D).
 //!
+//! Invariant (ADR-0078): these UI-side workers use [`kagi_git::Backend`] rather
+//! than opening repositories directly; using Git bindings here would bypass
+//! centralized preflight, verification, and oplog recording.
+//!
 //! These free functions are the synchronous "blocking" backends for each
 //! mutating operation. They take a repo path + plan, open a Backend, run the
 //! operation, and return a result. The UI's `start_*` handlers call them via

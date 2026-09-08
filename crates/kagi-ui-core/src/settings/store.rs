@@ -1,8 +1,8 @@
 //! The settings store (#491): one owner for `settings.json` read-modify-write.
 //!
-//! Every read and write in the process goes through a parsed document guarded
-//! by [`STORES`], so a burst of setting changes (a column-divider drag firing
-//! per half-pixel) no longer costs a full read+parse+write per key.
+//! Every read and write goes through the document guarded by [`STORES`]; a second
+//! owner can overwrite corrupt-file rescues, concurrent unknown keys, and session
+//! tabs restored at launch. Repeated divider updates still avoid per-key disk I/O.
 //!
 //! What this module exists to guarantee:
 //!

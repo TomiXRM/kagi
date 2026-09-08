@@ -1,9 +1,9 @@
+//! This module owns stash apply/pop/drop plans and execution; sibling
+//! `stash_push.rs` owns push planning/execution. [`preflight_check_stash`] guards
+//! all four `Operation` variants, including `StashPush`, inside `Backend::run`.
+//! Splitting those boundaries can validate a different stash operation than executes.
 use super::*;
 
-// ADR-0129 Phase 2: this file's plan text is now structured (`StashNote` /
-// `StashTitle` / `StashRecovery`), not English prose. `message_en()` in
-// kagi-domain renders the exact legacy strings for oplog/klog/EN display
-// (golden-tested there); JA lives in `kagi-ui-core::i18n::plan::stash`.
 use kagi_domain::plan::StashPopOutcome;
 use kagi_domain::plan_note::stash::StashDirtyOp;
 use kagi_domain::plan_note::{

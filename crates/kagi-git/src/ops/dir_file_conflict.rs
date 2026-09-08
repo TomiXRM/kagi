@@ -1,5 +1,9 @@
 //! Directory/file conflict resolution (#320 / ADR-0164).
 //!
+//! Keep this module's `plan_*`, `preflight_*`, and `execute_*` checks aligned:
+//! drift can replace the file namespace when the confirmed plan chose the
+//! directory namespace, or vice versa.
+//!
 //! A directory/file ("D/F") conflict is a path that one side committed as a
 //! **file** and the other as a **directory** (entries under `path/`). libgit2's
 //! `repo.merge` records it (both merge directions, verified) as:

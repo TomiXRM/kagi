@@ -1,8 +1,8 @@
 //! UI module — T008: GPUI commit list / T009: commit graph lane / T010: commit selection + detail panel / T011: changed files list / T012: file diff viewer / T013: checkout plan modal + sidebar / T023: pane resize / T-BP-002: bottom panel open/close + resize / T-BP-007: terminal
 //!
-//! This module lives in the binary crate (`main.rs` does `mod ui;`).
-//! It must not be added to `src/lib.rs` so that domain tests stay
-//! independent of GPUI.
+//! Invariant (ADR-0078): `src/ui` uses [`kagi_git::Backend`] or `kagi_git` free
+//! functions, never Git bindings directly; bypassing that boundary breaks layering.
+//! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
 pub mod activity_view;
 pub mod assets;

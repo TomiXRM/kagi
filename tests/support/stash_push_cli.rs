@@ -188,3 +188,104 @@ fn incomplete_push_capture_records_unknown_and_requires_reconcile() {
         .complete();
     assert_eq!(read_oplog_tail(100).len(), 1);
 }
+
+/// #623: when a concurrent external push is indistinguishable from kagi's own
+/// (same HEAD, same message), the push reports the stash as unidentified. The
+/// receipt must be `Unknown` and hold the repository for reconciliation — the
+/// stash exists, so nothing is lost, but no OID may be invented for it.
+#[cfg(unix)]
+#[test]
+fn unidentifiable_push_records_unknown_and_requires_reconcile() {
+    use std::os::unix::fs::PermissionsExt;
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let before = f.ids();
+    std::fs::write(f.repo.join("file"), "kagi work\n").unwrap();
+    let mut s = Sessions::new();
+    let owner = s.attach(f.repo.clone());
+    let job = f.job(
+        &mut s,
+        owner,
+        StashAction::Push {
+            message: Some("duplicate".into()),
+            include_untracked: true,
+        },
+    );
+    let id = job.id();
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real_git = String::from_utf8(real_git.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    // Outside the worktree: an untracked helper inside it would be swept into
+    // the `--include-untracked` push under test.
+    let bin = f._dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let wrapper = bin.join("git");
+    std::fs::write(
+        &wrapper,
+        format!(
+            r#"#!/bin/sh
+real='{real}'
+repo='{repo}'
+marker='{marker}'
+case " $* " in
+    *" stash "*)
+        if [ ! -e "$marker" ]; then
+            : > "$marker"
+            echo theirs > "$repo/other.txt"
+            "$real" -C "$repo" add other.txt
+            "$real" -C "$repo" stash push -q -m duplicate -- other.txt
+        fi
+        ;;
+esac
+exec "$real" "$@"
+"#,
+            real = real_git,
+            repo = f.repo.display(),
+            marker = bin.join("interfered").display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let old_path = std::env::var_os("PATH").unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&old_path));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    let c = job.run();
+    std::env::set_var("PATH", old_path);
+
+    assert!(
+        matches!(outcome(&c), OpOutcome::Unknown { .. }),
+        "{:?}",
+        outcome(&c)
+    );
+    assert!(c.report().evidence.unknown);
+    assert!(!c.report().evidence.verified);
+    // Both stashes are on the stack: the user's work was saved either way.
+    assert_eq!(f.ids().len(), before.len() + 2, "{:?}", f.ids());
+    assert_eq!(
+        f.ids()
+            .iter()
+            .filter(|oid| git(&f.repo, &["show", &format!("{oid}:file")]) == "kagi work\n")
+            .count(),
+        1,
+        "exactly one stash entry must hold the work kagi saved",
+    );
+    // The scope stays reserved until the user reconciles.
+    s.apply(c);
+    assert!(matches!(
+        s.write_lease(&f.repo, LegacyBusy(false)),
+        Err(AdmissionError::NeedsReconcile)
+    ));
+    let read = prepare_reconcile(&s, id).unwrap().run().unwrap();
+    acknowledge(&mut s, read).unwrap();
+    s.write_lease(&f.repo, LegacyBusy(false))
+        .unwrap()
+        .complete();
+}

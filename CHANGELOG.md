@@ -8,6 +8,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Stash push no longer rereads every unchanged tracked file while saving untracked files. It uses the hardened Git runner while retaining approval, preflight, stash/index verification and operation logging; an uncertain subprocess result requires reconciliation rather than retry. A two-file large-repository fixture improved from 12.5 seconds to 0.93 seconds. (#622, ADR-0176)
+- Git subprocesses no longer inherit the repository-local Git environment. A `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or config redirect exported into Kagi used to override the repository each command names, so an operation planned against one repository could be executed against another; every git and `gh` child now starts with that environment cleared. (#623)
+- A stash push identifies the entry it created instead of reading whichever stash is on top afterwards. An external `git stash push` racing Kagi's own could hand back a stranger's OID, which is what resolves the pop target for a dirty pull and what the operation log records as the recovery handle. When two entries are genuinely indistinguishable, the result is reported as unverified — the work is saved, and reconciliation is requested — rather than guessing. (#623, #618, #500)
 
 ## [0.36.0] — 2026-09-08
 

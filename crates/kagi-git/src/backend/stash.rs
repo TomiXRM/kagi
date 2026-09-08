@@ -24,6 +24,16 @@ pub struct StashReport {
     pub evidence: StashEvidence,
 }
 
+/// Are all of `needles` still present in `haystack`, in the same relative
+/// order? Used to verify a stash push left every pre-existing entry alone
+/// while tolerating entries a *third party* pushed concurrently (#623).
+fn retains_in_order(needles: &[String], haystack: &[String]) -> bool {
+    let mut rest = haystack.iter();
+    needles
+        .iter()
+        .all(|needle| rest.any(|candidate| candidate == needle))
+}
+
 impl Backend {
     fn verify_restored_stash(&self, oid: &str) -> Result<(), GitError> {
         let check = || -> Result<(), git2::Error> {
@@ -282,12 +292,29 @@ impl Backend {
             StashAction::Push {
                 include_untracked, ..
             } => {
-                if actual.oids.len() != remaining.len() + 1 || actual.oids[1..] != remaining {
+                // #623: an external `git stash push` can add entries kagi never
+                // made, so "exactly one longer, ours on top" is not the
+                // invariant — it failed a correctly identified push just
+                // because someone else stashed in the same second, and it also
+                // *replaced* the identified OID with whatever sat on top. What
+                // must hold is narrower and true: the entry the executor
+                // identified is on the stack exactly once, and nothing that was
+                // there when kagi planned has gone.
+                let created = evidence.oid.clone().ok_or_else(|| {
+                    GitError::Other("stash push recorded no created stash".into())
+                })?;
+                let mut others = actual.oids.clone();
+                let Some(at) = others.iter().position(|oid| *oid == created) else {
+                    return Err(GitError::Other(
+                        "stash push list verification failed".into(),
+                    ));
+                };
+                others.remove(at);
+                if others.contains(&created) || !retains_in_order(&remaining, &others) {
                     return Err(GitError::Other(
                         "stash push list verification failed".into(),
                     ));
                 }
-                evidence.oid = actual.oids.first().cloned();
                 let mut expected_untracked = if *include_untracked {
                     vec![]
                 } else {

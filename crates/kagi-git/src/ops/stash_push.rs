@@ -150,6 +150,135 @@ pub fn plan_stash_push(
 // execute_stash_push
 // ────────────────────────────────────────────────────────────
 
+/// What the stash stack looked like before the CLI ran, so the entry this call
+/// creates can be identified afterwards.
+///
+/// Reading the tip again afterwards is not identification: `refs/stash` is a
+/// stack whose top is whatever pushed *last*, and an external `git stash push`
+/// (a terminal, a hook, another tool — the app-layer write lease does not bind
+/// them) between kagi's push and the read hands back **someone else's** OID.
+/// The returned OID resolves the pop target for auto-stash pull (#618) and is
+/// the recovery handle in the oplog (#500), so a wrong one pops another
+/// person's work.
+struct StashStackBefore {
+    /// `refs/stash`, or `None` when no stash exists yet.
+    tip: Option<git2::Oid>,
+    /// Stack depth = `refs/stash` reflog entries. The stack is the reflog, not
+    /// a parent chain: a stash commit's first parent is HEAD, its second the
+    /// index tree and its third (with `-u`) the untracked tree.
+    depth: usize,
+    /// HEAD when kagi planned. Every stash kagi's push creates has it as first
+    /// parent; a stash pushed from a different HEAD cannot be ours.
+    head: git2::Oid,
+    /// The ref label git writes into the stash message — the branch shorthand,
+    /// or `(no branch)` while detached.
+    label: String,
+}
+
+/// Reflog depth of `refs/stash`; a missing ref is depth 0, not an error.
+fn stash_depth(repo: &Repository) -> Result<usize, GitError> {
+    match repo.reflog("refs/stash") {
+        Ok(reflog) => Ok(reflog.len()),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(0),
+        Err(e) => Err(GitError::Other(format!(
+            "stash push: cannot read the refs/stash reflog: {}",
+            e.message()
+        ))),
+    }
+}
+
+/// Does `commit` carry exactly the message git writes for *this* push?
+///
+/// Verified against git 2.50.1: `git stash push -m X` stores `On <label>: X`
+/// byte-for-byte (no normalisation, multi-line and trailing spaces included),
+/// and `<label>` is `(no branch)` while detached. Without `-m` git generates
+/// `WIP on <label>: <abbrev> <subject>`, whose abbreviation length depends on
+/// `core.abbrev`, so only the generated prefix can be matched exactly — the
+/// first-parent test and the single-candidate rule still pin the entry.
+fn stash_message_matches(commit: &git2::Commit<'_>, message: Option<&str>, label: &str) -> bool {
+    let stored = commit.message().unwrap_or_default().trim_end_matches('\n');
+    match message {
+        Some(passed) => stored == format!("On {label}: {passed}"),
+        None => stored.starts_with(&format!("WIP on {label}: ")),
+    }
+}
+
+/// The OID of the stash *this* call created, or an error that never guesses.
+///
+/// Only entries appended to the `refs/stash` reflog since [`StashStackBefore`]
+/// are considered, and of those only ones whose commit has kagi's planned HEAD
+/// as first parent and carries exactly the message kagi passed. Exactly one
+/// survivor is ours; zero or several means an external push cannot be told
+/// apart from kagi's, which is reported as unknown — the stash exists, so the
+/// user's work is safe, but no OID is invented for it.
+fn identify_created_stash(
+    repo: &Repository,
+    before: &StashStackBefore,
+    message: Option<&str>,
+) -> Result<git2::Oid, GitError> {
+    let unknown = |detail: String| GitError::StashIdentityUnverified(detail);
+    let reflog = repo.reflog("refs/stash").map_err(|e| {
+        unknown(format!(
+            "the refs/stash reflog is unreadable: {}",
+            e.message()
+        ))
+    })?;
+    let Some(added) = reflog.len().checked_sub(before.depth) else {
+        // The stack got shorter: an external drop rewrote the reflog while
+        // kagi's push ran, so "entries added since" no longer bounds anything.
+        return Err(unknown(format!(
+            "the refs/stash reflog shrank from {} to {} entries during the push",
+            before.depth,
+            reflog.len()
+        )));
+    };
+    if added == 0 {
+        let tip = match repo.refname_to_id("refs/stash") {
+            Ok(oid) => Some(oid),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => None,
+            Err(e) => return Err(unknown(format!("refs/stash unreadable: {}", e.message()))),
+        };
+        if tip == before.tip {
+            return Err(GitError::Other(
+                "stash push did not create a new stash".into(),
+            ));
+        }
+        return Err(unknown(
+            "refs/stash moved without a new reflog entry".to_string(),
+        ));
+    }
+    let mut mine: Option<git2::Oid> = None;
+    let mut matched = 0usize;
+    // Reflog index 0 is the newest entry, so this is exactly the window of
+    // pushes that landed after kagi's snapshot — kagi's own among them.
+    for entry in reflog.iter().take(added) {
+        let oid = entry.id_new();
+        let Ok(commit) = repo.find_commit(oid) else {
+            continue;
+        };
+        if commit.parent_id(0).ok() != Some(before.head) {
+            continue;
+        }
+        if !stash_message_matches(&commit, message, &before.label) {
+            continue;
+        }
+        matched += 1;
+        mine = Some(oid);
+    }
+    match (matched, mine) {
+        (1, Some(oid)) => Ok(oid),
+        (0, _) => Err(unknown(format!(
+            "none of the {added} stash entries added during the push has HEAD {} as first parent \
+             with kagi's message",
+            before.head
+        ))),
+        (n, _) => Err(unknown(format!(
+            "{n} of the {added} stash entries added during the push are indistinguishable from \
+             kagi's (same HEAD and message)"
+        ))),
+    }
+}
+
 /// Execute a stash push: save local modifications to a new stash entry.
 ///
 /// Uses the hardened Git CLI to avoid libgit2's full tracked-content scan when
@@ -161,12 +290,16 @@ pub fn plan_stash_push(
 ///
 /// External filters stay disabled, matching libgit2's built-in-only filters.
 ///
-/// Returns the created stash commit OID as a hex string.
+/// Returns the created stash commit OID as a hex string, identified by
+/// [`identify_created_stash`] rather than by re-reading the `refs/stash` tip
+/// (#623).
 ///
 /// # Errors
 ///
-/// Returns [`GitError::TerminationUnknown`] if subprocess completion is uncertain,
-/// or [`GitError::Other`] if execution or the resulting ref/index read fails.
+/// Returns [`GitError::TerminationUnknown`] if subprocess completion is
+/// uncertain, or if the created stash cannot be told apart from a concurrent
+/// external push ([`GitError::StashIdentityUnverified`]), and
+/// [`GitError::Other`] if execution or the resulting ref/index read fails.
 pub(crate) fn execute_stash_push(
     repo: &mut Repository,
     message: Option<&str>,
@@ -177,11 +310,6 @@ pub(crate) fn execute_stash_push(
     let root = repo
         .workdir()
         .ok_or_else(|| GitError::Other("stash push requires a worktree".into()))?;
-    let before = match repo.refname_to_id("refs/stash") {
-        Ok(oid) => Some(oid),
-        Err(e) if e.code() == git2::ErrorCode::NotFound => None,
-        Err(e) => return Err(error(e)),
-    };
     let mut args = vec![
         "-c".to_owned(),
         format!("user.name={}", sig.name().unwrap_or("kagi")),
@@ -210,6 +338,27 @@ pub(crate) fn execute_stash_push(
     if let Some(message) = message {
         args.extend(["--message".to_owned(), message.to_owned()]);
     }
+    // Snapshotted last, so the window an external push can slip into before
+    // kagi's own is the spawn itself rather than the config scan as well.
+    let before = StashStackBefore {
+        tip: match repo.refname_to_id("refs/stash") {
+            Ok(oid) => Some(oid),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => None,
+            Err(e) => return Err(error(e)),
+        },
+        depth: stash_depth(repo)?,
+        head: repo
+            .head()
+            .and_then(|head| head.peel_to_commit())
+            .map(|commit| commit.id())
+            .map_err(|e| {
+                GitError::Other(format!(
+                    "stash push requires a HEAD commit: {}",
+                    e.message()
+                ))
+            })?,
+        label: stash_ref_label(repo)?,
+    };
     let output = run_git(root, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
     if output.status != 0 {
         return Err(GitError::Other(format!(
@@ -220,11 +369,20 @@ pub(crate) fn execute_stash_push(
     // The subprocess replaced the index; later libgit2 verification must not
     // see the pre-execution index cached by plan/preflight.
     repo.index().map_err(error)?.read(true).map_err(error)?;
-    let oid = repo.refname_to_id("refs/stash").map_err(error)?;
-    if Some(oid) == before {
-        return Err(GitError::Other(
-            "stash push did not create a new stash".into(),
-        ));
+    Ok(identify_created_stash(repo, &before, message)?.to_string())
+}
+
+/// The label git puts in a stash message: the branch shorthand, `(no branch)`
+/// when HEAD is detached.
+fn stash_ref_label(repo: &Repository) -> Result<String, GitError> {
+    let detached = repo
+        .head_detached()
+        .map_err(|e| GitError::Other(format!("stash push: cannot read HEAD: {}", e.message())))?;
+    if detached {
+        return Ok("(no branch)".to_string());
     }
-    Ok(oid.to_string())
+    let head = repo
+        .head()
+        .map_err(|e| GitError::Other(format!("stash push: cannot read HEAD: {}", e.message())))?;
+    Ok(head.shorthand().unwrap_or("(no branch)").to_string())
 }

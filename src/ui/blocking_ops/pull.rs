@@ -68,6 +68,17 @@ pub(crate) fn pull_blocking(
                         after: verify_after_snapshot(repo_path, plan),
                     };
                 }
+                // #623: the stash exists but a concurrent external push made it
+                // indistinguishable, so no OID came back. Same user situation as
+                // the arm above — work is saved, pull must not start, and the
+                // Unknown receipt already asks for reconciliation — so it gets
+                // the same guidance rather than a generic "stash failed".
+                Err(kagi_git::GitError::StashIdentityUnverified(_)) => {
+                    return PullBlockingResult::Partial {
+                        error: i18n::auto_stash_identity_unverified().to_string(),
+                        after: verify_after_snapshot(repo_path, plan),
+                    };
+                }
                 Err(error) => {
                     return PullBlockingResult::Failed {
                         error: i18n::op_failed(i18n::Op::Stash, error),

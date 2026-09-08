@@ -55,11 +55,44 @@ push のみ既存 `cli::run_git` の hardened `git stash push` を使う。libgi
 untracked tree 構築は変更していない tracked bytes まで tree→workdir diff で
 再走査し、2ファイルの独立cloneで約12.5秒（Git CLI は351ms）を要した。
 plan/preflight/verify/recording は変更しない。CLI 後は libgit2 の cached index を
-再読込する。stdout の文言ではなく `refs/stash` の新OIDと既存 verify で結果を確定する。
+再読込する。stdout の文言では結果を確定しない。
 署名は従来の config/fallback を渡し、repo hooks は既存 runner が無効化する。
 external clean/smudge/process filters は libgit2 と同じく実行しないよう無効化する。
 期限切れ・不完全capture の `TerminationUnknown` は family evidence に伝播し、
 receipt/GUI/admission 全てで Unknown として read→ack を要求する。自動再試行しない。
+
+### #623: どの stash を作ったかと、どの repository を触るか
+
+`refs/stash` は親チェーンではなく **reflog のスタック**である（stash commit の第一親は
+HEAD、第二が index tree、`-u` の第三が untracked tree）。したがって実行後に tip を
+読み直す方式では、外部プロセス（端末・hook・他ツール。app lease は外部 Git を排他しない）が
+間に stash を積むと**他人の OID** を返す。この OID は #618 の auto-stash pull の pop 対象
+解決と #500 の recovery handle に使われるため、誤りは「他人の stash を pop して消す」に
+直結する。
+
+識別は次の 3 条件で行う: (1) 実行前に控えた reflog 件数より後に増えた entry のみを候補に
+する、(2) commit の第一親が plan 時の HEAD である、(3) stash message が Kagi が渡した
+文字列と完全一致する（`On <label>: <message>`。message 無指定時は git 生成の
+`WIP on <label>: ` prefix）。候補がちょうど 1 件なら自分のもの。0 件または 2 件以上は
+`GitError::StashIdentityUnverified` とし、`TerminationUnknown` と同じく evidence.unknown /
+Unknown receipt / lease 保持 / reconcile 要求に載せる。**OID は推測しない。**
+forgeable な message marker ではなく型で区別するのは、`TerminationUnknown` の文面が
+ユーザーの stash message を含むため、message で marker を偽装できてしまうからである。
+この場合でも stash 自体は作成済みなので、UI は #618 の
+`auto_stash_identity_unverified`（「変更は stash に保存済み、entry を特定できず」）に合流する。
+
+verify も tip 依存を止めた。旧 check は「list が既存 +1 で先頭が新規」を要求したため、
+正しく識別できた push を「外部が同時に stash した」だけで失敗させ、さらに
+`evidence.oid` を tip で上書きしていた。現在は executor が識別した OID が list に
+ちょうど 1 件あり、plan 時の既存 entry が順序を保って残っていることを要求する。
+第三者の追加 entry は許容し、既存 entry の消失は失敗のままとする。
+
+`cli::git_command` / `gh_command` は repository-local Git 環境変数
+（`git rev-parse --local-env-vars` + `GIT_NAMESPACE` / `GIT_CEILING_DIRECTORIES` /
+`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM`）を **env_remove** する。`-C` と `current_dir` で
+repository を明示していても、継承した `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` が
+それを上書きするため、plan した repo とは別の repo/index を変更し得た（#623 Codex review）。
+除去は全 git CLI caller（fetch/push 等）に効く。
 
 ## GUI と conflict 継続
 

@@ -37,11 +37,18 @@ skimming, so they are stated here as well as where they apply:
 `tests/gui_e2e_runner.rs` is an opt-in macOS main-thread runner. It needs both the
 `gui-e2e` feature and `KAGI_GUI_E2E=1`; use an exclusive target directory:
 
+`KAGI_GUI_E2E_ONLY` is not optional — every invocation names the scenarios it
+wants. There is deliberately no unfiltered example here to copy: without the
+filter the runner opens a window per scenario, which is the ~1,400-window path
+that crashed macOS.
+
 ```bash
-KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 CARGO_TARGET_DIR="$PWD/target" \
+# One scenario: the substring the scenario name contains.
+KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \
+  CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 
-# Run only scenarios whose names contain either substring.
+# Several: comma-separated substrings, any of which may match.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph_copy' \
   CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture

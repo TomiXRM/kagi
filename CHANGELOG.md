@@ -5,13 +5,21 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-09-08
+
 ### Fixed
 
 - Stash push no longer rereads every unchanged tracked file while saving untracked files. It uses the hardened Git runner while retaining approval, preflight, stash/index verification and operation logging; an uncertain subprocess result requires reconciliation rather than retry. A two-file large-repository fixture improved from 12.5 seconds to 0.93 seconds. (#622, ADR-0176)
 - Git subprocesses no longer inherit the repository-local Git environment. A `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or config redirect exported into Kagi used to override the repository each command names, so an operation planned against one repository could be executed against another; every git and `gh` child now starts with that environment cleared. (#623)
 - A stash push identifies the entry it created instead of reading whichever stash is on top afterwards. An external `git stash push` racing Kagi's own could hand back a stranger's OID, which is what resolves the pop target for a dirty pull and what the operation log records as the recovery handle. When two entries are genuinely indistinguishable, the result is reported as unverified — the work is saved, and reconciliation is requested — rather than guessing. (#623, #618, #500)
-- **Stash & Pull no longer reports a false restore failure for repositories containing unpopulated gitlinks.** Restore verification now compares only paths carried by the stash instead of scanning every tracked path, so unrelated unreadable gitlinks cannot turn a successful restore into a Partial result and large repositories avoid the unnecessary full-worktree comparison.
+- **Stash & Pull no longer reports a false restore failure for repositories containing unpopulated gitlinks.** Restore verification now compares only paths carried by the stash instead of scanning every tracked path, so unrelated unreadable gitlinks cannot turn a successful restore into a Partial result and large repositories avoid the unnecessary full-worktree comparison. The comparison follows the paths the restore actually writes, so a file the current HEAD renamed after the stash was taken is verified where its content lands rather than at a path nobody wrote. (#624)
 - **Stash & Pull names the paths whose restore would conflict, before you confirm.** A dirty Pull now fetches first, then merges your edit with the incoming change in memory and lists the paths that genuinely fail to merge — a fast-forward pull cannot conflict commit-to-commit, which is why the existing merge prediction stayed silent for exactly this case and the collision only appeared when the stash failed to restore. Paths it cannot decide in advance (binary content, a mode change, a file added or removed on one side) are listed separately as *may* conflict, so the confirmation never asserts what it has not proven. On a diverged branch the prediction runs against the merge of your branch and the upstream — what the pull actually installs — not the raw upstream tree. The confirmation is delivered to the tab that asked for it even if you switch tabs while it fetches, never replaces a modal you opened in the meantime, and is refused rather than applied if the working tree changed after it was shown. A failed pre-Pull fetch opens no confirmation and reports itself in a dismissible modal and the operation log. (#625, ADR-0192)
+
+### Internal
+
+- Added ADR-0176 (application-layer stash boundary) and ADR-0192 (dirty-Pull conflict preview).
+- The restore-conflict preview and the execute-time refusal read one calculation in `ops/pull_conflict.rs`, so the two cannot drift apart.
+- The dirty-Pull confirmation's delivery states are enumerated in one place: fetch failed, tab on screen, tab absent, another modal open, tab closed.
 
 ## [0.36.0] — 2026-09-08
 

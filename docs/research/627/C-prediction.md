@@ -55,8 +55,7 @@ C2 で `git merge-tree --write-tree` は完全 fingerprint を変化させた。
 実行: `cargo test -p kagi-git --test prediction_side_effects_test`。
 
 ## C3 — Kagi watcher
-
-**未検証。** 計画が要求する `backend_prediction_watcher` GUI E2E scenario は存在せず、§0.1 は `tests/gui_e2e_runner.rs` の変更を integration owner 専有にしている。P1 は共有ハーネスおよび GUI runner を変更しないという依頼制約に従った。C2 で `merge-tree --write-tree` は既に不合格であり、watcher 結果でこれを覆せない。
+**現状観測不能。** `start_git_watcher` は raw event receiver を返すため candidate command の raw event は観測できる。しかし C3 が要求する debounce 後の reload 到達回数を読む counter / test hook は存在しない。KagiApp は watcher event から reload を起動するが、外部 scenario が構造化された reload count を取得できない。従って counter または test-only observation surface を追加するまで、C3 の event count と reload reached は実測不能である。`objects` は watcher が skip するので、`merge-tree --write-tree` は C2 write と C3 raw event 0 が両立し得る。C3 は C2 の安全性判定を代替しない。
 
 ## C4 — 恒久 enforcement
 

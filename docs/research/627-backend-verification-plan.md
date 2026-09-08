@@ -54,9 +54,8 @@ watcher が発火し、reload がその plan の埋めるはずのモーダル�
 
 1. **libgit2 を使う唯一の理由は予測**。作業ツリーにも index にも object database にも
    書かずに結果をデータとして受け取れること。確定前の予測がこれに依存する。現行の
-   呼び出しは `merge_commits` 17 / `diff_tree_to_tree` 17 / `diff_tree_to_index` 10 /
-   `diff_index_to_workdir` 7 / `cherrypick_commit` 7 / `diff_tree_to_workdir` 6 /
-   `merge_file` 4 / `merge_trees` 3 = 計 **71 箇所**。
+   呼び出し式の inventory は、文字列出現数ではなく LSP references で採った §2.1 を
+   正とする。
 2. **`git merge-tree --write-tree` は object を書く**。git 2.50.1 実測で作業ツリーと
    index は無変更、object が 2 個増える。#625 の事故があるため、予測経路が書くことは
    許容できない。`git cherry-pick -n` は index と作業ツリーを変更するので予測ではない。
@@ -77,22 +76,28 @@ watcher が発火し、reload がその plan の埋めるはずのモーダル�
 
 ### 2.1 本書のために取った repo 実測（2026-09-09 / `main` = `491f3de7`）
 
-- 予測 API 名の出現箇所を module 別に集計すると下表になる。合計は doc comment や
-  wrapper 関数名を含む出現数で、§2-1 の呼び出し箇所数とは一致しない（同名の doc
-  comment が 2 件、`crates/kagi-domain/src/plan_note/{pull,merge}.rs` にある）。
-  実験 C1 は**呼び出し箇所の列挙から始める**こと。出現数だけで表を埋めてはいけない。
+- `crates/kagi-git/src` 配下の production code を対象に、各 git2 API の定義へ解決される
+  LSP references を取得し、構文上の call expression / method call expression だけを
+  1 呼び出し 1 件として数えた。レシーバが `repo` / `self.repo` / 一時値のどれか、
+  1 行か複数行かは問わない。
+- comment・doc comment・文字列リテラル、wrapper の定義名、re-export、test helper と
+  `#[cfg(test)]` 内の test-only call、`examples/`・`tests/`・依存 crate 内の reference
+  は除外する。wrapper 本体が対象 API を呼ぶ場合、その内側の call expression 自体は
+  含める。この定義での実測は次の **39 呼び出し式**:
 
-  | module | 出現する予測 API |
-  | --- | --- |
-  | `crates/kagi-git/src/resolution.rs` | `merge_file` |
-  | `crates/kagi-git/src/ops/cherry_revert.rs` | `cherrypick_commit`, `diff_tree_to_tree` |
-  | `crates/kagi-git/src/ops/merge.rs`, `ops/merge_into.rs` | `merge_commits` |
-  | `crates/kagi-git/src/ops/pull.rs`, `ops/pull_conflict.rs` | `merge_commits`, `merge_file`, `diff_tree_to_tree`, `diff_tree_to_index` |
-  | `crates/kagi-git/src/ops/pr_conflict.rs` | `merge_commits`, `merge_file` |
-  | `crates/kagi-git/src/ops/stash.rs` | `merge_commits`, `merge_trees` |
-  | `crates/kagi-git/src/ops/absorb.rs`, `ops/squash_merge.rs`, `ops/checkout.rs`, `ops/mod.rs` | 各種 diff、`cherrypick_commit` |
-  | `crates/kagi-git/src/{diff,diffstat,staging,conflicts,message_gen}.rs`, `backend/stash.rs` | 各種 diff、`merge_trees` |
+  | API | LSP references から数えた呼び出し式 |
+  | --- | ---: |
+  | `merge_commits` | 7 |
+  | `merge_trees` | 2 |
+  | `cherrypick_commit` | 2 |
+  | `merge_file` | 2 |
+  | `diff_tree_to_tree` | 12 |
+  | `diff_tree_to_index` | 8 |
+  | `diff_index_to_workdir` | 4 |
+  | `diff_tree_to_workdir` | 2 |
 
+  この値は `main` の指定 commit に対する事前 inventory であり、C1 の固定期待値ではない。
+  C1 実行時は対象 commit で同じ定義の LSP references を取り直す。
 - **既知の意味論差異がコードに書かれている**: `crates/kagi-domain/src/plan_note/merge.rs:61-63`
   は「real git は unrelated histories を `--allow-unrelated-histories` なしに拒否するが、
   libgit2 の `merge_commits` は空の base に対して黙って merge する」と記録し、その差異が
@@ -336,6 +341,13 @@ path、oplog は recovery handle の `kind / oid / path / reference` と OID か
 object bytes の SHA-256。時刻、表示順、backend 固有メッセージは比較対象から除く。
 **生の porcelain と Rust struct を直接 byte compare しない。**
 
+`backend_fixture` が作る scenario repo は読み取り専用の pristine template とする。
+`backend_probe` は **backend ごと、かつ反復ごと**に template から byte-for-byte 同一の
+独立した一時 copy を作り、その copy だけを変更して破棄する。hardlink / reflink による
+mutable file の共有は禁止する。特に `recovery-handles` の stash push / drop / restore と
+file backup は repo を使い回さない。全 backend・全反復が同じ manifest と canonical
+事前 fingerprint から始まらなければ、その比較結果は無効とする。
+
 scenario 生成コマンド:
 
 ```sh
@@ -388,18 +400,19 @@ B7 を足す理由: 既に製品仕様（blocker）の根拠になっている�
 
 ### C. 予測 API の代替可能性
 
-**ここが規則の骨格。** 71 箇所の用途それぞれについて、CLI で書かずに同じ情報が取れるかを
-確定させる。取れないものは取れないと明記する。
+**ここが規則の骨格。** LSP references で inventory 化した全用途について、CLI で書かずに
+同じ情報が取れるかを確定させる。取れないものは取れないと明記する。
 
 #### C1 — 用途ごとの代替可能性表
 
 - **問い**: 各予測用途に、object を増やさず index も worktree も変えない CLI 手段が
   あるか。
 - **手順**:
-  1. まず**71 呼び出し箇所を 1 行ずつ列挙する**。LSP references で API ごとに引き、
+  1. 対象 commit で、§2.1 と同じ数え方により**全呼び出し式を 1 行ずつ列挙する**。
+     LSP references で API ごとに引き、
      `api / file:line / 呼び出し元 symbol / Kagi 用途 / 必要な戻り値` の CSV を作る。
-     行数が API 別に 17 / 17 / 10 / 7 / 7 / 6 / 4 / 3、総数 71 と一致しなければ
-     C1 を開始しない。comment、wrapper 定義、test helper は行数に含めない。
+     **LSP references で数えた呼び出し式の件数と inventory の行数が API 別・合計とも
+     一致しなければ C1 を開始しない。** 開始条件に固定件数は置かない。
   2. 用途を群にまとめる。群は最低でも次の 8 つ: merge 予測 / cherry-pick・revert 予測 /
      三方向の内容 merge / tree↔tree diff / tree↔index diff / index↔workdir diff /
      tree↔workdir diff / tree merge。
@@ -408,7 +421,7 @@ B7 を足す理由: 既に製品仕様（blocker）の根拠になっている�
   4. 元 API と CLI 候補の canonical JSON を conflict fixture（clean / text conflict /
      binary / symlink / file-directory / rename-rename）で各 3 回比較する。
      情報の欠落を書く。「速いが情報が足りない」は代替ではない。
-- **値**: 71 行それぞれの Yes / No / 条件付き、欠落する field 数、必要な git 最低版。
+- **値**: inventory の各行の Yes / No / 条件付き、欠落する field 数、必要な git 最低版。
 - **判断基準**: 1 呼び出し単位で (a) C2 が非書き込み、(b) C3 が watcher 0 回、
   (c) canonical JSON の欠落 field 0・値の不一致 0 → CLI 代替可能。同じ用途群の
   **全呼び出しが合格したときだけ**その群を CLI 候補にする。1 行でも欠ければ当該群は
@@ -437,10 +450,13 @@ B7 を足す理由: 既に製品仕様（blocker）の根拠になっている�
 - **手順**: 拡張 fingerprint を定義して前後で比較する。既存の `repo_fingerprint`
   （HEAD + porcelain status）では `merge-tree --write-tree` の object 増加を検出でき
   ないため、次を含める:
-  1. loose object 数と pack 内 object 数、
-  2. `.git/index` の mtime と内容ハッシュ、
-  3. `packed-refs` と `refs/` 配下全ファイルの内容ハッシュ、
-  4. 作業ツリー全ファイルの (path, size, mtime)、
+  1. ODB の全 OID set と、loose object / pack 関連ファイルごとの
+     (relative path, size, mtime, mode, SHA-256)、
+  2. `.git/index` の (size, mtime, mode, SHA-256)、
+  3. `packed-refs` と `refs/` 配下の file / directory ごとの
+     (relative path, size, mtime, mode, SHA-256。directory は hash なし)、
+  4. 作業ツリーの全 file / directory ごとの
+     (relative path, size, mtime, mode, SHA-256。directory は hash なし)、
   5. `.git/` 直下の一時ファイル（`*.lock`、`MERGE_*`、`CHERRY_PICK_HEAD` など）の有無。
   各候補コマンドを 3 回実行し（初回だけ書くケースを捕まえるため）、毎回比較する。
   `--no-optional-locks` の有無でも比較する（§4.5）:
@@ -450,9 +466,11 @@ B7 を足す理由: 既に製品仕様（blocker）の根拠になっている�
     --repo "$FIXTURE" --operation prediction-side-effects --backend cli \
     --candidate "$CANDIDATE" --iterations 3 --format json
   ```
-- **値**: 項目ごとの delta（object 個数、変化したファイル数）。
-- **判断基準**: **object delta 0 かつ index 不変 かつ worktree 不変 かつ 一時ファイル
-  なし**のみ「予測に使える」。1 項目でも動けば予測不可（実行経路の候補にはなり得る）。
+- **値**: fingerprint 項目ごとの delta（OID、path、size、mtime、mode、SHA-256、
+  一時ファイル）。
+- **判断基準**: **ODB・index・refs・worktree の content と metadata が全て不変、かつ
+  一時ファイルなし**のみ「予測に使える」。1 項目でも動けば予測不可
+  （実行経路の候補にはなり得る）。
 - **交絡**: gc / auto-maintenance の自動起動、`core.fsmonitor` のデーモン、
   index の stat cache 書き戻し、ファイルシステムの mtime 粒度。
 - **決まらないこと**: 書かなくても watcher が発火するか。それは C3。
@@ -483,37 +501,47 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
 
 #### C4 — 予測非書き込み規則の継続 enforcement
 
-- **問い**: backend 規則の決定後も、plan 経路の書き込みを PR 時点で確実に検出できるか。
+- **問い**: backend 規則の決定後も、plan / preflight 経路の書き込みを PR 時点で
+  確実に検出できるか。
 - **手順**:
-  1. git layer の integration test `tests/plan_non_write_test.rs` を測定後の実装 PR で
-     作る。pure domain では ODB / index / worktree を観測できず、ops 単位の unit test
-     では `Backend::plan` の dispatch を漏らすため、この layer に置く。
+  1. git layer の integration test `tests/prediction_non_write_test.rs` を測定後の実装
+     PR で作る。pure domain では ODB / index / worktree を観測できず、ops 単位の unit
+     test では Backend dispatch や public entrypoint を漏らすため、この layer に置く。
   2. `Operation` の exhaustive match で全 variant を fixture へ対応させ、public な
-     `Backend::plan` と、Backend dispatch 外の public `plan_*` entrypoint をすべて
-     実行する。成功・blocker・error のどの場合も、前後で (a) ODB の全 OID set と
-     `repo.commondir()/objects`（main worktree では `.git/objects`）の相対 path /
-     file 数、(b) index bytes、(c) refs、(d) worktree bytes が同一であることを
-     assert する。新しい `Operation` variant は match が非網羅になり、test 更新なしでは
-     compile できない形にする。
+     `Backend::plan` と Backend dispatch 外の public `plan_*` entrypoint に加え、
+     `Backend` 経由と直接公開された **全 public `preflight_*` entrypoint** を実行する。
+     現行 inventory には `Backend::{preflight_check,preflight_check_stash}`、
+     `preflight_check`、`preflight_check_stash`、`preflight_absorb`、
+     `preflight_dir_file_resolution`、`preflight_restore_snapshot`、
+     `preflight_apply_suggestion` がある。実装時に LSP symbols / references で取り直し、
+     symbol の追加時に coverage が落ちれば失敗させる。成功・blocker・error のどの場合も、
+     前後で ODB / index / refs / gitdir・commondir / worktree を比較する。file は
+     `(relative path, size, mtime, mode, SHA-256)`、directory は
+     `(relative path, mtime, mode)` を比較し、内容が同じ touch / chmod / rename も差分に
+     する。ODB はこれに全 OID set と object file 数を加える。新しい `Operation` variant
+     は match が非網羅になり、test 更新なしでは compile できない形にする。
   3. detector 自体の self-test として、test fixture から sentinel blob を 1 個書き、
-     object 差分を **1/1 回検出する**ことを assert する。
-  4. `ci/` の `Rule` 候補は、既知の書き込み API の plan 内直接呼び出しと、helper を
-     1 段介した呼び出しの 2 sample で評価する。現行 `Rule` はファイル全体への regex
-     で、Rust の nested block と call graph を解釈しないため、helper 経由を証明できない。
-     両 sample を捕捉できない限り、静的 Rule は主 enforcement に採らない。採る場合も
-     direct call の defense-in-depth と明記し、dynamic test を置き換えない。
+     object 差分を **1/1 回検出する**ことを assert する。さらに内容不変の touch と mode
+     変更も各 **1/1 回検出する**ことを assert する。
+  4. `ci/` の `Rule` 候補は、既知の書き込み API の plan 内 direct / helper 経由と、
+     preflight 内 direct / helper 経由の **4 sample** で評価する。現行 `Rule` は
+     ファイル全体への regex で、Rust の nested block と call graph を解釈しないため、
+     helper 経由を証明できない。4 sample 全てを捕捉できない限り、静的 Rule は主
+     enforcement に採らない。採る場合も direct call の defense-in-depth と明記し、
+     dynamic test を置き換えない。
 
   ```sh
-  cargo test -p kagi --test plan_non_write_test
+  cargo test -p kagi --test prediction_non_write_test
   uv run --project ci check-all
   ```
 
-- **値**: plan entrypoint coverage（対象 / 全数）、前後差分件数、sentinel 検出数、
-  static Rule の direct / helper sample 検出数、現行 source の false positive 数。
-- **判断基準**: dynamic test は coverage **100%**、通常 plan の差分 **0 件**、
-  sentinel 検出 **1/1** が必須。1 つでも欠ければ規則を実装完了としない。static Rule は
-  direct + helper **2/2**、false positive **0 件**のときだけ追加する。それ以外は
-  call graph を扱えないため不採用と記録する。
+- **値**: plan / preflight entrypoint coverage（対象 / 全数）、bytes / path / mtime / mode
+  ごとの前後差分件数、sentinel / touch / mode 検出数、static Rule の direct / helper
+  sample 検出数、現行 source の false positive 数。
+- **判断基準**: dynamic test は plan / preflight coverage **100%**、通常経路の差分
+  **0 件**、sentinel / touch / mode 検出が各 **1/1** 必須。1 つでも欠ければ規則を
+  実装完了としない。static Rule は 4 sample **4/4**、false positive **0 件**のときだけ
+  追加する。それ以外は call graph を扱えないため不採用と記録する。
 - **交絡**: linked worktree の private gitdir / commondir、git auto-maintenance、
   index stat cache、error 経路で一時作成後に削除される object 以外のファイル。
 - **決まらないこと**: どちらの backend を選ぶか。C4 は決定済み規則の維持だけを担う。
@@ -530,13 +558,18 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
   1. `crates/kagi-git/src/ops/`、`staging.rs`、`backend/` にある libgit2 の
      worktree / index 書き込み API を LSP references で 1 行ずつ inventory 化する。
   2. 各 API について「入力に workdir / index を渡すか」「pathspec を限定できるか」
-     「内部で status / diff を作るか」を libgit2 1.9.1 の API 文書で分類する。
+     「内部で status / diff を作るか」を libgit2 1.9.1 の API 文書で分類する。同じ操作の
+     CLI 実装は B の該当 scenario で意味論に合格したものだけ性能比較へ進める。
   3. 変更ファイル数を 2 に固定し、未変更 tracked ファイルを
-     1k / 5k / 20k / 50k と増やして、分類した各 API を次の形で測る。
+     1k / 5k / 20k / 50k と増やす。同じ pristine fixture から libgit2 と合格済み CLI
+     実装を次の形で測り、両 backend の傾きと L の median を比較する。
 
      ```sh
      ./target/release/examples/backend_probe \
        --repo "$FIXTURE" --operation "$OPERATION" --backend libgit2 \
+       --iterations 11 --format json
+     ./target/release/examples/backend_probe \
+       --repo "$FIXTURE" --operation "$OPERATION" --backend cli \
        --iterations 11 --format json
      ```
 
@@ -544,18 +577,22 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
      staging の index 書き込み、`ops/checkout.rs`、`ops/discard.rs`、
      `working_tree_status`、`diff_index_to_workdir`。inventory で見つかった API を
      この列挙より優先し、候補を黙って落とさない。
-- **値**: API ごとの傾き（ms / 未変更 1k files）、切片（ms）。
-- **判断基準**: 傾き **≥ 0.5 ms / 1k files** → 「`stash_save2` 型」に分類し CLI 等価物を
-  検討。**< 0.1 ms / 1k files** → 据え置き。中間は D2 で裏を取る。
+- **値**: backend・API ごとの傾き（ms / 未変更 1k files）、切片（ms）、L の median。
+- **判断基準**: libgit2 の傾き **≥ 0.5 ms / 1k files** なら「`stash_save2` 型」の疑い。
+  CLI 採用候補にするのは、意味論合格に加え、L で libgit2 が CLI の **1.5 倍以上遅く、
+  かつ絶対差 150 ms 以上**の場合だけ。libgit2 の傾き **< 0.1 ms / 1k files**、
+  または相対差・絶対差の片方でも未達なら据え置く。中間は D2 で原因を確認する。
 - **交絡**: 未変更判定に使う stat cache の状態、ファイルサイズ分布（1 MiB blob を
   含めること）、ファイルシステム、他プロセスの I/O。
 - **決まらないこと**: 遅い理由。それは D2。
 
 #### D2 — 分類の裏取り（未変更 path への読み取り回数）
 
-- **問い**: 傾きの原因は本当に「未変更ファイルの読み直し」か。
-- **手順**: D1 で傾きが出た API だけを対象にする。Linux は次の形で open / read の
-  syscall 数を取り、macOS は `fs_usage`、Windows は Process Monitor の
+- **問い**: 傾きの原因は本当に「未変更ファイルの読み直し」で、CLI 実装はそれを
+  解消するか。
+- **手順**: D1 で傾きが出た API と、B で意味論に合格した対応 CLI 実装を同じ pristine
+  fixture で測る。Linux は次の形で open / read の syscall 数を取り、macOS は
+  `fs_usage`、Windows は Process Monitor の
   `Operation is ReadFile` / `Path begins with <fixture>` filter で同じ値を取る。
 
   ```sh
@@ -563,14 +600,20 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
     ./target/release/examples/backend_probe \
     --repo "$FIXTURE" --operation "$OPERATION" --backend libgit2 \
     --iterations 1 --format json
+  strace -f -c -e trace=openat,read -- \
+    ./target/release/examples/backend_probe \
+    --repo "$FIXTURE" --operation "$OPERATION" --backend cli \
+    --iterations 1 --format json
   ```
 
-- **値**: open 回数、read 回数、read バイト数、未変更ファイル数との比。
-- **判断基準**: file 数 1k→50k で open または read 回数が **0.9 以上の相関係数**で
-  増え、かつ未変更 1 file あたり **0.9 回以上** → 「読み直し」と分類確定。
-  どちらか未満 → 別原因なので CLI 化では直らないと判定する。
-- **交絡**: トレース自体のオーバーヘッド、libgit2 内部のキャッシュ、OS の readahead。
-- **決まらないこと**: CLI 化で直るか。D2 は原因の分類だけを確定する。
+- **値**: backend ごとの open 回数、read 回数、read バイト数、未変更ファイル数との比。
+- **判断基準**: file 数 1k→50k で libgit2 の open または read 回数が **0.9 以上の
+  相関係数**で増え、かつ未変更 1 file あたり **0.9 回以上**なら「読み直し」と分類する。
+  CLI が同じ原因を解消したとするには、対応値が libgit2 の **50% 以下**かつ未変更
+  1 file あたりの絶対差 **0.5 回以上**を要求する。さらに D1 の相対時間差と絶対時間差を
+  満たした場合だけ CLI 採用候補にする。いずれか未達なら CLI 化の根拠にせず据え置く。
+- **交絡**: トレース自体のオーバーヘッド、backend 内部のキャッシュ、OS の readahead。
+- **決まらないこと**: 意味論の一致。それは B の合格を前提とする。
 
 D の優先順: **stash family（apply / pop / drop）を最初に見る**。push だけが CLI に
 移った状態（#622/#623）は同一 family 内で backend が分かれているので、残りが同型なら
@@ -650,16 +693,20 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
 #### E4 — Windows と Linux の差
 
 - **問い**: OS 差で規則を変える必要があるか。
-- **手順**: A1・B2・B3・E1 を Windows と Linux で同じ fixture seed と probe commit
-  で再実行し、macOS の結果と並べる。
-- **値**: OS ごとの ms と canonical JSON 不一致件数。
-- **判断基準**: **OS ごとに backend を変える規則は採らない。** 3 OS のうち最悪の
-  結果で判定する。ある OS だけで閾値を割るなら、その操作は libgit2 に残す。
+- **手順**: macOS で候補を絞った後、§7 の採用判断に根拠として使う**全ての実行可能な
+  決定実験**を Windows と Linux でも、同じ fixture seed・probe commit・backend 候補で
+  再実行し、macOS と並べる。対象は候補に関係する A0–A3、B、C2–C4、D1–D2、E1–E3、F。
+  C1 の source inventory と E2 の一次資料による導入版調査は同一 commit に対して 1 回
+  行い、OS 固有の capability 実行だけ 3 OS で行う。
+- **値**: OS・実験ごとの規定値、canonical JSON 不一致件数、各閾値への pass / fail。
+- **判断基準**: **OS ごとに backend を変える規則は採らない。** 採用候補に関係する決定
+  実験が 3 OS で揃わなければ決定を保留する。3 OS のうち最悪の結果で判定し、ある OS
+  だけでも意味論・安全性・性能閾値を割るなら、その操作は libgit2 に残す。
 - **交絡**: 改行変換（B2）、パスの大文字小文字、パス長制限、権限モデル。
 - **決まらないこと**: 各 OS で個別最適な backend。OS 別分岐を採らないため測らない。
 
 理由: OS 別分岐は plan / verify の意味論を OS ごとに分けることになり、ADR で管理する
-規則としては維持できない。最悪値で決めるほうが安い。
+規則としては維持できない。採用に使う実験を全 OS で揃え、最悪値で決める。
 
 ### F. 混在のコスト（追加）
 
@@ -678,12 +725,15 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
   ```
 
 - **値**: 食い違う条件の件数、再現できたもの／できなかったもの。
-- **判断基準**: 食い違いが 1 件でも再現する → **予測と実行で backend が異なる family
-  には verify 段を必須**とする（`verify_X` で実行後の状態を読み直して plan の前提と
-  突き合わせる）。0 件 → family 内分割を無条件に許可する。
+- **判断基準**: write 操作は F の結果に関係なく、常に
+  **plan → confirm → preflight → execute → verify → oplog** を実装条件とする。これは
+  backend 混在時だけの追加条件ではなく、全 write に対する不変条件である。食い違いが
+  1 件でも再現する場合は、`verify_X` が実行後の状態を読み直して plan の予測との差を
+  検出・報告できるまで family 内分割を許可しない。0 件なら family 内分割を許可するが、
+  `verify_X` を省略・弱化してはならない。
 - **交絡**: 実行時の repo 状態変化（TOCTOU）、oplog に残る記録の形。
-- **決まらないこと**: どちらが速いか・正しいか。F は「分けたときに何を足す必要があるか」
-  だけを決める。
+- **決まらないこと**: verify の要否。全 write で必須と既に決まっている。F は
+  backend を分けた場合に verify が照合すべき追加条件だけを決める。
 
 ### 実施しない領域とその理由
 
@@ -757,19 +807,19 @@ CLI 済みは CLI 据え置き）。移行は「閾値を超えた」ことを�
      cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
    ```
 
-5. C4 の `tests/plan_non_write_test.rs` は一時的な実験ではなく、規則を守らせる恒久
-   integration test として残す。全 `Operation` variant / public plan entrypoint の
-   coverage 100%、plan 前後の ODB OID set・`repo.commondir()/objects` file 数・index・
-   refs・worktree 差分 0、sentinel object 書き込みの検出 1/1 を固定する。次の test file
-   全体を実行する:
+5. C4 の `tests/prediction_non_write_test.rs` は一時的な実験ではなく、規則を守らせる
+   恒久 integration test として残す。全 `Operation` variant / public plan /
+   public preflight entrypoint の coverage 100%、通常経路前後の ODB・index・refs・
+   gitdir / commondir・worktree の bytes / path / mtime / mode 差分 0、sentinel object /
+   touch / mode 変更の検出各 1/1 を固定する。次の test file 全体を実行する:
 
    ```sh
-   cargo test -p kagi --test plan_non_write_test
+   cargo test -p kagi --test prediction_non_write_test
    ```
 
-   静的 `ci/ Rule` は C4 の direct + helper sample 2/2・false positive 0 の基準を
-   満たす場合だけ defense-in-depth として追加する。現行 regex Rule は call graph を
-   追えないため、満たさなければ追加せず、その理由を ADR に残す。
+   静的 `ci/ Rule` は C4 の plan / preflight の direct / helper sample **4/4**・
+   false positive 0 の基準を満たす場合だけ defense-in-depth として追加する。現行 regex
+   Rule は call graph を追えないため、満たさなければ追加せず、その理由を ADR に残す。
 6. B8 の stash / backup recovery handle は、記録 OID の object 存在、ref、復元後
    worktree / index hash を統合テストで固定する。文字列が残るだけの test では不可。
 7. backend を移した操作には `plan_/preflight_/execute_/verify_` の整合と、oplog への

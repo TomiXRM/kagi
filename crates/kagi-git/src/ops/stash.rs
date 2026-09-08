@@ -1,7 +1,7 @@
-//! This module owns stash apply/pop/drop plans and execution plus their shared
-//! [`preflight_check_stash`]; sibling `stash_push.rs` owns push planning/execution.
-//! Mixing those boundaries can make `Backend::run` validate a different operation.
-//! ADR-0129 keeps structured plan text rendered by `message_en()` and UI i18n.
+//! This module owns stash apply/pop/drop plans and execution; sibling
+//! `stash_push.rs` owns push planning/execution. [`preflight_check_stash`] guards
+//! all four `Operation` variants, including `StashPush`, inside `Backend::run`.
+//! Splitting those boundaries can validate a different stash operation than executes.
 use super::*;
 
 use kagi_domain::plan::StashPopOutcome;

@@ -290,9 +290,11 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), HarnessError> {
             copy_tree(&entry.path(), &destination.join(entry.file_name()))?;
         }
         set_copy_permissions(destination, &metadata)?;
+        set_copy_modified_time(destination, &metadata)?;
     } else if metadata.is_file() {
         copy_file(source, destination)?;
         set_copy_permissions(destination, &metadata)?;
+        set_copy_modified_time(destination, &metadata)?;
     } else if metadata.file_type().is_symlink() {
         copy_symlink(source, destination)?;
     } else {
@@ -344,6 +346,16 @@ fn set_copy_permissions(path: &Path, _source: &fs::Metadata) -> Result<(), Harne
         .permissions();
     permissions.set_readonly(false);
     fs::set_permissions(path, permissions).map_err(|error| HarnessError::io(path, error))
+}
+
+fn set_copy_modified_time(path: &Path, source: &fs::Metadata) -> Result<(), HarnessError> {
+    let Ok(modified) = source.modified() else {
+        return Ok(());
+    };
+    File::open(path)
+        .map_err(|error| HarnessError::io(path, error))?
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .map_err(|error| HarnessError::io(path, error))
 }
 
 fn make_template_read_only(root: &Path) -> Result<(), HarnessError> {
@@ -418,7 +430,12 @@ mod tests {
         let second = root.path().join("second");
         materialize_pristine(&template, &first).unwrap();
         materialize_pristine(&template, &second).unwrap();
+        let first_before = fingerprint_repository(&first).unwrap();
         let second_before = fingerprint_repository(&second).unwrap();
+        assert_eq!(
+            first_before, second_before,
+            "copies from one manifest must have identical fingerprints"
+        );
         let source_before = fs::read(template.join("d00-00/file-000000.bin")).unwrap();
 
         #[cfg(unix)]

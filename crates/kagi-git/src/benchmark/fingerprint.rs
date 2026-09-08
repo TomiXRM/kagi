@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::HarnessError;
 
-/// A named root in the full repository fingerprint.
+/// A stable logical role in the full repository fingerprint.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FingerprintKind {
@@ -19,12 +19,12 @@ pub enum FingerprintKind {
     CommonDir,
 }
 
-/// One recursively scanned root. `kinds` has more than one value when a main
+/// One recursively scanned root. `roles` has more than one value when a main
 /// worktree's private gitdir and commondir resolve to the same canonical path.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FingerprintRoot {
-    pub kinds: Vec<FingerprintKind>,
-    pub path: String,
+    /// Stable logical identifiers; never copy-specific filesystem paths.
+    pub roles: Vec<FingerprintKind>,
     pub entries: Vec<FingerprintEntry>,
 }
 
@@ -65,16 +65,14 @@ pub fn fingerprint_repository(repo_path: &Path) -> Result<Fingerprint, HarnessEr
         .map_err(|error| HarnessError::io(repo_path, error))?;
 
     let mut roots = vec![FingerprintRoot {
-        kinds: vec![FingerprintKind::Worktree],
-        path: display_path(&worktree),
+        roles: vec![FingerprintKind::Worktree],
         entries: scan_tree(&worktree, true)?,
     }];
 
     let git_entry = worktree.join(".git");
     if git_entry.exists() || fs::symlink_metadata(&git_entry).is_ok() {
         roots.push(FingerprintRoot {
-            kinds: vec![FingerprintKind::GitEntry],
-            path: display_path(&git_entry),
+            roles: vec![FingerprintKind::GitEntry],
             entries: vec![fingerprint_entry(&git_entry, Path::new("."))?],
         });
     }
@@ -89,10 +87,9 @@ pub fn fingerprint_repository(repo_path: &Path) -> Result<Fingerprint, HarnessEr
             .map_err(|error| HarnessError::io(path, error))?;
         git_roots.entry(canonical).or_default().push(kind);
     }
-    for (path, kinds) in git_roots {
+    for (path, roles) in git_roots {
         roots.push(FingerprintRoot {
-            kinds,
-            path: display_path(&path),
+            roles,
             entries: scan_tree(&path, false)?,
         });
     }
@@ -272,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_worktree_records_worktree_git_entry_private_and_common_roots() {
+    fn linked_worktree_records_complete_logical_roots() {
         let root = fixture();
         let repo = root.path().join("repo");
         for args in [
@@ -303,23 +300,34 @@ mod tests {
         assert!(status.success());
 
         let fingerprint = fingerprint_repository(&linked).unwrap();
-        assert!(fingerprint
-            .roots
-            .iter()
-            .any(|root| root.kinds.contains(&FingerprintKind::Worktree)));
-        let git_entry = fingerprint
-            .roots
-            .iter()
-            .find(|root| root.kinds.contains(&FingerprintKind::GitEntry))
-            .unwrap();
+        let root_for = |kind| {
+            fingerprint
+                .roots
+                .iter()
+                .find(|root| root.roles.contains(&kind))
+                .unwrap()
+        };
+        assert!(!root_for(FingerprintKind::Worktree).entries.is_empty());
+        let git_entry = root_for(FingerprintKind::GitEntry);
+        assert_eq!(git_entry.entries.len(), 1);
         assert_eq!(git_entry.entries[0].entry_type, "file");
-        assert!(fingerprint
-            .roots
+        let private = root_for(FingerprintKind::PrivateGitDir);
+        assert!(private
+            .entries
             .iter()
-            .any(|root| root.kinds.contains(&FingerprintKind::PrivateGitDir)));
-        assert!(fingerprint
-            .roots
+            .any(|entry| entry.relative_path == "gitdir"));
+        assert!(private
+            .entries
             .iter()
-            .any(|root| root.kinds.contains(&FingerprintKind::CommonDir)));
+            .any(|entry| entry.relative_path == "commondir"));
+        let common = root_for(FingerprintKind::CommonDir);
+        assert!(common
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == "objects"));
+        assert!(common
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == "refs"));
     }
 }

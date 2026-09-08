@@ -10,16 +10,16 @@
 - `crates/kagi-git/src/benchmark/fixture.rs`
   - seed 固定の synthetic Git template を作る `backend_fixture`。
   - `<fixture>.manifest.json` に schema version、seed、tracked file / commit 数、depth、総 byte 数、最大 directory width、HEAD を出す。
-  - template は read-only にし、`materialize_pristine` は `File::create` + byte copy で writable copy を作る。hardlink / reflink を使わない。
+  - template は read-only にし、`materialize_pristine` は `File::create` + byte copy で writable copy を作る。hardlink / reflink を使わず、entry の modified time も template から復元する。
 - `crates/kagi-git/src/benchmark/fingerprint.rs`
   - regular file の content SHA-256 と、全 entry の `relative_path / size / modified_ns / mode` を記録する canonical fingerprint。
-  - worktree（`.git` を除く）、`.git` entry、`repo.path()` private gitdir、`repo.commondir()` を別 root として記録する。同じ canonical gitdir は root label を併記して一度だけ走査する。
+  - worktree（`.git` を除く）、`.git` entry、`repo.path()` private gitdir、`repo.commondir()` を固定 role として記録する。copy 固有の絶対 path は fingerprint に含めない。同じ canonical gitdir は role を併記して一度だけ走査する。
 - `crates/kagi-git/src/benchmark/probe.rs`
   - `ProbeOperation` trait、copy lifecycle、計時、前後 fingerprint、canonical JSON envelope を提供する。
-  - mutable operation は iteration ごとに materialize し、copy と fingerprint は timer の外側に置く。read-only operation は一 copy を warm series として使う。
+  - CPU 時間は同一 process と reaped child process の合算であり、CLI と libgit2 で同じ範囲を記録する。mutable operation は iteration ごとに materialize し、copy と fingerprint は timer の外側に置く。read-only operation は一 copy を warm series として使う。
   - `backend_probe` は registry dispatcher。P0 は smoke 用 `noop` を登録する。
 - `crates/kagi-git/src/benchmark/environment.rs`
-  - OS/version、arch、Git / git2 version、filesystem、`core.fsmonitor`、`core.untrackedCache`、index version、fixture manifest、other-process-load field を JSON envelope に付ける。取得不能値は偽の default ではなく `null`。
+  - OS/version、arch、実際に `--git-executable` で選択した Git の version、git2 version、filesystem、`core.fsmonitor`、`core.untrackedCache`、index version、fixture manifest、other-process-load field を JSON envelope に付ける。取得不能値は偽の default ではなく `null`。
 
 ## 後続 owner の使い方
 
@@ -41,13 +41,25 @@ integration owner が wave 後に直列で行う。operation 実装は common co
 `cargo test -p kagi-git benchmark` を実行し、次を通した。
 
 1. `pristine_copies_are_independent_after_one_is_mutated`
-   - 同一 template から二 copy を materialize し、一方だけを書き換えた後、もう一方の完全 fingerprint と template bytes が不変であることを確認する。Unix では source / copy の inode も別であることを固定する。
+   - 同一 manifest から別 directory に materialize した二 copy の完全 fingerprint が一致することを先に確認する。続けて一方だけを書き換え、もう一方の fingerprint と template bytes が不変であることを確認する。Unix では source / copy の inode も別であることを固定する。
 2. `detects_touch_same_size_rewrite_and_mode_change`
    - content 不変の touch、mode 変更、同一 size の別内容への書換えをそれぞれ fingerprint 差分として検出する。
-3. `linked_worktree_records_worktree_git_entry_private_and_common_roots`
-   - linked worktree で worktree / `.git` file / private gitdir / common dir の各 root が記録されることを確認する。
+3. `linked_worktree_records_complete_logical_roots`
+   - linked worktree で worktree、`.git` file、private gitdir の `gitdir` / `commondir`、common dir の `objects` / `refs` が fingerprint に入ることを確認する。
+4. `cpu_timer_includes_reaped_child_processes`
+   - CPU を消費する child process の終了後、probe clock が少なくとも 1 ms 増えることを確認する。
+5. `records_the_selected_git_executable_version`
+   - fixture executable を `--git-executable` 相当で渡し、その executable が出した version が environment JSON に入ることを確認する。
 
 これらは harness self-test であり、backend 選定用の測定結果ではない。`docs/research/627-backend-verification-plan.md` の §6 / §7 は更新していない。
+
+## Self-test 監査
+
+- copy の完全一致 assertion は root に copy 固有 path を戻す、または modified time を復元しない実装で失敗する。
+- copy 独立性 assertion は hardlink 化で失敗する。inode と、片方の書換え後のもう一方および template の不変性をともに確認する。
+- touch / rewrite / mode はそれぞれ `modified_ns` / SHA-256 / mode を fingerprint から外すと失敗する。
+- linked worktree は role だけを列挙して entries を走査しない実装で失敗する。
+- child CPU と selected executable version は、それぞれ `RUSAGE_CHILDREN` を除外する実装、PATH 上の `git --version` を固定で呼ぶ実装で失敗する。
 
 ## Owner 境界
 

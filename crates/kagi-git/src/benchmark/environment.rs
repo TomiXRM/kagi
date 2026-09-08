@@ -29,6 +29,7 @@ type RepositorySettings = (Option<String>, Option<String>, Option<u32>);
 pub fn collect_environment(
     repo_path: Option<&Path>,
     fixture_manifest: Option<FixtureManifest>,
+    git_executable: Option<&Path>,
 ) -> Result<EnvironmentMeta, HarnessError> {
     let (fsmonitor, untracked_cache, index_version) = match repo_path {
         Some(path) => repository_settings(path)?,
@@ -38,7 +39,7 @@ pub fn collect_environment(
         os: std::env::consts::OS.to_owned(),
         os_version: os_version(),
         arch: std::env::consts::ARCH.to_owned(),
-        git_version: command_stdout("git", &["--version"], None),
+        git_version: git_version(git_executable),
         // This is the direct dependency in crates/kagi-git/Cargo.toml. Keeping
         // it visible in each artifact is more useful than libgit2's ABI version.
         git2_crate_version: "0.21".to_owned(),
@@ -130,7 +131,19 @@ fn macos_filesystem_kind(path: &Path) -> Option<String> {
         .map(|(_, kind)| kind.to_owned())
 }
 
-fn command_stdout(program: &str, args: &[&str], cwd: Option<&Path>) -> Option<String> {
+fn git_version(git_executable: Option<&Path>) -> Option<String> {
+    command_stdout(
+        git_executable.unwrap_or_else(|| Path::new("git")),
+        &["--version"],
+        None,
+    )
+}
+
+fn command_stdout(
+    program: impl AsRef<std::ffi::OsStr>,
+    args: &[&str],
+    cwd: Option<&Path>,
+) -> Option<String> {
     let mut command = Command::new(program);
     command.args(args);
     if let Some(cwd) = cwd {
@@ -142,4 +155,24 @@ fn command_stdout(program: &str, args: &[&str], cwd: Option<&Path>) -> Option<St
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    #[test]
+    fn records_the_selected_git_executable_version() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("git-fixture");
+        fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' 'fixture git 9.9'\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let environment = collect_environment(None, None, Some(&executable)).unwrap();
+
+        assert_eq!(environment.git_version.as_deref(), Some("fixture git 9.9"));
+    }
 }

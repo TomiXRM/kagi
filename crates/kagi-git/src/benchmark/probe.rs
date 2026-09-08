@@ -55,7 +55,8 @@ impl<'a> ProbeContext<'a> {
     }
 }
 
-/// Process timing. CPU fields are `null` only where the OS cannot report them.
+/// Process timing includes this process and reaped child processes. CPU fields
+/// are `null` only where the OS cannot report them.
 #[derive(Clone, Debug, Serialize)]
 pub struct Timing {
     pub wall_ns: u128,
@@ -110,8 +111,14 @@ pub fn run_probe(
         .canonicalize()
         .map_err(|error| HarnessError::io(&request.repo, error))?;
     let manifest = read_manifest(&template)?;
-    let environment = collect_environment(Some(&template), manifest.clone())?;
     let scratch = tempfile::tempdir().map_err(|error| HarnessError::new(error.to_string()))?;
+    let environment_copy = scratch.path().join("environment");
+    materialize_pristine(&template, &environment_copy)?;
+    let environment = collect_environment(
+        Some(&environment_copy),
+        manifest.clone(),
+        request.git_executable.as_deref(),
+    )?;
     let mut iterations = Vec::with_capacity(request.iterations);
     let mut expected_before: Option<Fingerprint> = None;
 
@@ -192,8 +199,14 @@ fn run_one(
         iteration,
         timing: Timing {
             wall_ns,
-            user_ns: delta(cpu_before.map(|time| time.0), cpu_after.map(|time| time.0)),
-            sys_ns: delta(cpu_before.map(|time| time.1), cpu_after.map(|time| time.1)),
+            user_ns: delta(
+                cpu_before.map(|time| time.user_ns),
+                cpu_after.map(|time| time.user_ns),
+            ),
+            sys_ns: delta(
+                cpu_before.map(|time| time.sys_ns),
+                cpu_after.map(|time| time.sys_ns),
+            ),
         },
         before,
         after,
@@ -216,17 +229,36 @@ fn delta(before: Option<u128>, after: Option<u128>) -> Option<u128> {
         .map(|(after, before)| after.saturating_sub(before))
 }
 
+#[derive(Clone, Copy)]
+struct CpuTime {
+    user_ns: u128,
+    sys_ns: u128,
+}
+
 #[cfg(unix)]
-fn process_cpu_time() -> Option<(u128, u128)> {
+fn process_cpu_time() -> Option<CpuTime> {
+    let self_time = rusage_cpu_time(libc::RUSAGE_SELF)?;
+    let child_time = rusage_cpu_time(libc::RUSAGE_CHILDREN)?;
+    Some(CpuTime {
+        user_ns: self_time.user_ns.saturating_add(child_time.user_ns),
+        sys_ns: self_time.sys_ns.saturating_add(child_time.sys_ns),
+    })
+}
+
+#[cfg(unix)]
+fn rusage_cpu_time(who: libc::c_int) -> Option<CpuTime> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     // SAFETY: `usage` points to writable storage with the exact C layout.
-    let status = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    let status = unsafe { libc::getrusage(who, usage.as_mut_ptr()) };
     if status != 0 {
         return None;
     }
     // SAFETY: getrusage returned success and initialized `usage`.
     let usage = unsafe { usage.assume_init() };
-    Some((timeval_ns(usage.ru_utime), timeval_ns(usage.ru_stime)))
+    Some(CpuTime {
+        user_ns: timeval_ns(usage.ru_utime),
+        sys_ns: timeval_ns(usage.ru_stime),
+    })
 }
 
 #[cfg(unix)]
@@ -236,6 +268,36 @@ fn timeval_ns(time: libc::timeval) -> u128 {
 }
 
 #[cfg(not(unix))]
-fn process_cpu_time() -> Option<(u128, u128)> {
+fn process_cpu_time() -> Option<CpuTime> {
     None
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::process::Command;
+
+    use super::*;
+
+    #[test]
+    fn cpu_timer_includes_reaped_child_processes() {
+        let before = process_cpu_time().unwrap();
+        let status = Command::new("sh")
+            .args([
+                "-c",
+                "i=0; while [ \"$i\" -lt 200000 ]; do i=$((i + 1)); done",
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let after = process_cpu_time().unwrap();
+
+        let child_cpu_ns = after
+            .user_ns
+            .saturating_add(after.sys_ns)
+            .saturating_sub(before.user_ns.saturating_add(before.sys_ns));
+        assert!(
+            child_cpu_ns >= 1_000_000,
+            "reaped child CPU time must contribute to the probe clock"
+        );
+    }
 }

@@ -28,11 +28,52 @@ Kagi の git backend を「どの操作を libgit2 に残し、どの操作を G
 段 6 の判断基準を段 5 より先に固定するのが本書の主目的である。測ってから基準を
 決めると、どちらの backend にも寄せられる数字が出たときに議論が終わらない。
 
-本文は依頼項目に合わせて A→F の順に並べるが、**実行順は C → E → B → A → D → F**
-とする。C で予測経路の候補を先に確定し、E で CLI 候補の版・hardening 前提を落とし、
-B で意味論を確認してから速度を測る。C で予測を libgit2 に残すと確定した場合も、
-A は読み経路を CLI に寄せるか、libgit2 のまま最適化するかを決める独立材料なので
-省略しない。
+本文は依頼項目に合わせて A→F の順に並べる。論理依存は
+**C・E → B → A・D → F → E4** とし、実行 wave は §0.1 の単位に固定する。
+C で予測経路の候補を、E で CLI 候補の版・hardening 前提を先に確定し、B の意味論を
+確認してから速度を採用根拠にする。C で予測を libgit2 に残すと確定した場合も、A は
+読み経路を CLI に寄せるか、libgit2 のまま最適化するかを決める独立材料なので省略しない。
+
+### 0.1 実行 PR と subagent の分割
+
+実験段は **7 個の work package** に分ける。共有ハーネスを先に固定し、その後も依存を
+満たす wave だけを並列化する。各 package は `docs/research/627/` に固有 report を持ち、
+他 package の report と source module を編集しない。
+
+| package | report | 担当 | 前提 / wave |
+| --- | --- | --- | --- |
+| P0 共通ハーネス | `00-harness.md` | fixture manifest、pristine copy、canonical JSON、fingerprint、probe の共通 CLI | なし。**最初に 1 本だけ** |
+| P1 予測 | `C-prediction.md` | C1–C4、予測候補、非書き込み、watcher | P0 後。P2 と並列可 |
+| P2 CLI 環境 | `E-cli-environment.md` | E1–E3、git 最低版、hardening | P0 後。P1 と並列可 |
+| P3 意味論 | `B-semantics.md` | B1–B8、recovery handle | P1・P2 後 |
+| P4 読み経路 | `A-read-paths.md` | A0–A3 | P3 後。P5 と並列可 |
+| P5 実行・混在 | `D-execution-F-mixed.md` | D1–D2 と F。stash fixture の owner を 1 人に固定 | P3 後。P4 と並列可 |
+| P6 platform matrix | `E4-platform-matrix.md` | E4、3 OS の証拠集約、候補ごとの採否 | P4・P5 後。最後に 1 本 |
+
+実行 wave は **P0 → (P1 ∥ P2) → P3 → (P4 ∥ P5) → P6**。C と E を通す前に
+B の CLI 候補を確定せず、B の意味論に合格する前に A / D の速度を採用根拠にしない。
+F は C・B・D の結果を使うため P5 の末尾で行う。これが本文の論理順
+`C → E → B → A → D → F` を、依存を壊さず並列化できる最小の分割である。
+
+source ownership は次で固定する:
+
+- P0 owner だけが `backend_probe.rs` / `backend_fixture.rs` の root dispatcher、共通 schema、
+  共通 fixture / copy / fingerprint 実装を変更する。各実験 owner は
+  `backend_probe/{a,b,c,d_f,e}.rs`、`backend_fixture/{a,b,c,d_f,e}.rs` の自分の module と
+  自分の report だけを持つ。
+- dispatcher への module 登録は各 wave 後に integration owner が直列で行う。実験 owner
+  が同じ root file を並行編集しない。`tests/gui_e2e_runner.rs` と workflow も
+  integration owner が単独で統合する。GUI scenario、verification flag、runner feature
+  を追加した場合は同じ owner が `.claude/skills/verify/SKILL.md` も更新する。
+- `docs/research/627-backend-verification-plan.md` の §6・§7、ADR、PR 本文は integration
+  owner だけが更新する。subagent は共有結果表を直接編集せず、自分の report に raw JSON
+  artifact の場所、commit、環境メタ、判定を書く。
+- P0 の schema / fixture manifest を変える必要が出た場合は downstream で独自拡張せず、
+  P0 owner に戻して版を上げてから全 package を同じ版へ揃える。
+
+7 未満にまとめると共通ハーネスまたは stash / platform の ownership が競合し、7 より
+細かくすると B の 8 scenario と C の API 群で schema 調整 PR が増える。並列実行は
+最大 2 package に留めるのが安全である。
 
 ## 1. 理解 — 決めたいこと
 
@@ -256,6 +297,9 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
   KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='backend_read_watcher' \
     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
   ```
+
+  この native GUI scenario は macOS 専用。A0 の累積値を採用根拠に使う場合は、E4 の
+  Linux / Windows headless watcher probe でも同じ workload の event / tick を測る。
 
 - **値**: raw event 数、watcher tick 数、reload 数（回 / case、回 / s）、1 tick の
   ms（median / p95）、最も重い 1 s bucket の累積 read ms、60 s 換算の累積 read ms。
@@ -487,6 +531,9 @@ B7 を足す理由: 既に製品仕様（blocker）の根拠になっている�
     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
   ```
 
+  この GUI scenario は macOS 専用。Linux / Windows は E4 の headless watcher probe で
+  同じ候補 argv の raw event を測り、3 OS のいずれかで 1 回でも発火すれば不合格とする。
+
 - **値**: 発火回数（回 / コマンド 1 回）、reload 到達の有無。
 - **決まらないこと**: 候補が返す情報の完全性。それは C1。
 - **判断基準**: **1 回でも発火 → 予測経路では使わない。** 0 回のみ可。
@@ -692,21 +739,47 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
 
 #### E4 — Windows と Linux の差
 
-- **問い**: OS 差で規則を変える必要があるか。
-- **手順**: macOS で候補を絞った後、§7 の採用判断に根拠として使う**全ての実行可能な
-  決定実験**を Windows と Linux でも、同じ fixture seed・probe commit・backend 候補で
-  再実行し、macOS と並べる。対象は候補に関係する A0–A3、B、C2–C4、D1–D2、E1–E3、F。
-  C1 の source inventory と E2 の一次資料による導入版調査は同一 commit に対して 1 回
-  行い、OS 固有の capability 実行だけ 3 OS で行う。
-- **値**: OS・実験ごとの規定値、canonical JSON 不一致件数、各閾値への pass / fail。
-- **判断基準**: **OS ごとに backend を変える規則は採らない。** 採用候補に関係する決定
-  実験が 3 OS で揃わなければ決定を保留する。3 OS のうち最悪の結果で判定し、ある OS
-  だけでも意味論・安全性・性能閾値を割るなら、その操作は libgit2 に残す。
-- **交絡**: 改行変換（B2）、パスの大文字小文字、パス長制限、権限モデル。
+- **問い**: 現在の CI / GUI 制約の下で、OS 非依存の backend 規則をどの証拠から決めるか。
+- **実行環境**:
+
+  | 種類 | 対象 | macOS | Linux | Windows | 規則への使い方 |
+  | --- | --- | --- | --- | --- | --- |
+  | source / 一次資料 | C1、E2 の導入版調査 | 実行可 | 再実行不要 | 再実行不要 | 同一 commit なら 1 回 |
+  | headless fixture / probe | A1–A3、B1–B8、C2、D1、E1、E2 capability、E3、F | 実行可 | hosted runner で実行可 | hosted runner で実行可 | 採用候補は 3 OS 必須 |
+  | 恒久 integration test | C4 | 実行可 | advisory test job で実行可 | 現 CI は build のみ。測定 PR で test job を追加 | backend 実装完了条件。3 OS の回帰監視 |
+  | native GUI E2E / Tier B | A0 の実 UI、C3 の reload、実機 GUI | Tier A / `pidclick` で実行可 | 現 runner では実行不可 | 現 runner では実行不可 | macOS の統合確認。単独では OS 非依存採用の根拠にしない |
+  | OS watcher probe | A0 の event/tick、C3 の発火有無 | GUI E2E と照合 | production `start_git_watcher` と同じ `notify` watcher / `DEBOUNCE` coalescing を使う headless probe を追加 | 同じ headless probe を追加 | C3 は 3 OS 必須。A0 は後述 |
+  | syscall trace | D2 | `fs_usage` | `strace` | Process Monitor は hosted CI で安定自動化できない | 原因診断。採否 gate にはしない |
+
+  現 CI は macOS test だけが blocking、Linux test と Windows build は advisory であり、
+  Windows test job と実験 job はまだ無い。測定 PR で `workflow_dispatch` の
+  macOS / Ubuntu / Windows matrix を追加し、headless probe の JSON artifact を保存する。
+  performance は backend を同一 runner 内で交互に測り、runner image / CPU / 負荷を
+  §4.4 の環境メタへ残す。advisory か blocking かは証拠の有無と分けて扱う。
+- **判断基準**:
+  - OS ごとに backend を変える規則は採らない。新しい backend を採る操作は、関連する
+    headless の意味論・安全性・性能 gate を **3 OS 全て**で満たし、最悪値でも各節の
+    閾値を満たすこと。
+  - 3 OS の証拠が揃わない場合は計画全体を永久保留にせず、**その操作だけ現行 backend に
+    据え置く**。証拠が追加された時点で再判定する。既存 CLI 操作を差し戻す理由にはしない。
+  - 予測経路を CLI に移す候補は C3 の watcher 0 回を 3 OS で要求する。Linux / Windows
+    の headless watcher probe が用意できなければ、その候補は libgit2 に残す。
+  - A0 の macOS GUI 値は読み経路の優先順位付けと実 UI 回帰に使う。A0 の累積削減条件を
+    採用根拠に使う場合だけ、Linux / Windows の headless event/tick probe も必須にする。
+    それを用意できない場合でも、A1–A3 の OS 別絶対・相対閾値だけで採否を決められる。
+  - D2 は原因説明を強める診断であり、Windows Process Monitor の未実施だけでは候補を
+    保留しない。採否は B、D1、E1–E3、F の 3 OS gate で決め、D2 が意味論上の危険を
+    示した場合は不合格側へ倒す。
+- **値**: OS・実験ごとの規定値、canonical JSON 不一致件数、各 gate の pass / fail、
+  実行不能だった lane と代替 probe。
+- **交絡**: hosted runner の CPU / I/O 変動、改行変換（B2）、パスの大文字小文字、
+  パス長制限、権限モデル、watcher backend（FSEvents / inotify / ReadDirectoryChangesW）。
 - **決まらないこと**: 各 OS で個別最適な backend。OS 別分岐を採らないため測らない。
 
-理由: OS 別分岐は plan / verify の意味論を OS ごとに分けることになり、ADR で管理する
-規則としては維持できない。採用に使う実験を全 OS で揃え、最悪値で決める。
+この方針は「全実験を無条件に 3 OS」ではなく、**backend 採用を動かす portable gate と
+C3 だけを 3 OS 必須**にする。macOS 専用 GUI と OS 固有 trace は統合確認・原因診断・
+採用後の回帰監視に限定する。現在存在しない GUI runner や対話的 Process Monitor を
+必須条件にして永久保留を作らず、安全証拠が不足した操作は保守的に据え置く。
 
 ### F. 混在のコスト（追加）
 

@@ -10,7 +10,7 @@
 - `crates/kagi-git/src/benchmark/fixture.rs`
   - seed 固定の synthetic Git template を作る `backend_fixture`。
   - `<fixture>.manifest.json` に schema version、seed、tracked file / commit 数、depth、総 byte 数、最大 directory width、HEAD を出す。
-  - template は read-only にし、`materialize_pristine` は `File::create` + byte copy で writable copy を作る。hardlink / reflink を使わず、entry の modified time も template から復元する。
+  - template は read-only にし、`materialize_pristine` は `File::create` + byte copy で writable copy を作る。hardlink / reflink を使わず、file / directory / symlink の modified time を template から復元する。
 - `crates/kagi-git/src/benchmark/fingerprint.rs`
   - regular file の content SHA-256 と、全 entry の `relative_path / size / modified_ns / mode` を記録する canonical fingerprint。
   - worktree（`.git` を除く）、`.git` entry、`repo.path()` private gitdir、`repo.commondir()` を固定 role として記録する。copy 固有の絶対 path は fingerprint に含めない。同じ canonical gitdir は role を併記して一度だけ走査する。
@@ -47,19 +47,22 @@ integration owner が wave 後に直列で行う。operation 実装は common co
 3. `linked_worktree_records_complete_logical_roots`
    - linked worktree で worktree、`.git` file、private gitdir の `gitdir` / `commondir`、common dir の `objects` / `refs` が fingerprint に入ることを確認する。
 4. `cpu_timer_includes_reaped_child_processes`
-   - CPU を消費する child process の終了後、probe clock が少なくとも 1 ms 増えることを確認する。
+   - CPU を消費する child process の終了後、probe clock が少なくとも 100 ms 増えることを確認する。
 5. `records_the_selected_git_executable_version`
    - fixture executable を `--git-executable` 相当で渡し、その executable が出した version が environment JSON に入ることを確認する。
+6. `pristine_copies_preserve_symlink_fingerprint_metadata`
+   - fixed modified time を持つ relative symlink を template に追加し、別 directory の二 copy の完全 fingerprint が一致することを確認する。
 
 これらは harness self-test であり、backend 選定用の測定結果ではない。`docs/research/627-backend-verification-plan.md` の §6 / §7 は更新していない。
 
 ## Self-test 監査
 
-- copy の完全一致 assertion は root に copy 固有 path を戻す、または modified time を復元しない実装で失敗する。
+- copy の完全一致 assertion は root に copy 固有 path を戻す、または file / directory の modified time を復元しない実装で失敗する。後者は `set_copy_modified_time` を no-op にする mutation で実際に失敗を確認した。
 - copy 独立性 assertion は hardlink 化で失敗する。inode と、片方の書換え後のもう一方および template の不変性をともに確認する。
+- symlink copy は link 自身の timestamp を固定した fixture で検証する。`set_symlink_file_times` を除去する mutation で完全 fingerprint assertion が実際に失敗した。
 - touch / rewrite / mode はそれぞれ `modified_ns` / SHA-256 / mode を fingerprint から外すと失敗する。
 - linked worktree は role だけを列挙して entries を走査しない実装で失敗する。
-- child CPU と selected executable version は、それぞれ `RUSAGE_CHILDREN` を除外する実装、PATH 上の `git --version` を固定で呼ぶ実装で失敗する。
+- child CPU は、当初の 1 ms threshold では `RUSAGE_CHILDREN` を除去しても失敗しなかったため、workload を増やして 100 ms に引き上げた。`RUSAGE_SELF` のみへの mutation が実際に失敗することを確認した。selected executable version は PATH 上の `git --version` を固定で呼ぶ実装で失敗する。
 
 ## Owner 境界
 

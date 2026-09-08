@@ -296,7 +296,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), HarnessError> {
         set_copy_permissions(destination, &metadata)?;
         set_copy_modified_time(destination, &metadata)?;
     } else if metadata.file_type().is_symlink() {
-        copy_symlink(source, destination)?;
+        copy_symlink(source, destination, &metadata)?;
     } else {
         return Err(HarnessError::new(format!(
             "unsupported fixture entry: {}",
@@ -317,14 +317,29 @@ fn copy_file(source: &Path, destination: &Path) -> Result<(), HarnessError> {
 }
 
 #[cfg(unix)]
-fn copy_symlink(source: &Path, destination: &Path) -> Result<(), HarnessError> {
+fn copy_symlink(
+    source: &Path,
+    destination: &Path,
+    source_metadata: &fs::Metadata,
+) -> Result<(), HarnessError> {
     use std::os::unix::fs::symlink;
+
     let target = fs::read_link(source).map_err(|error| HarnessError::io(source, error))?;
-    symlink(target, destination).map_err(|error| HarnessError::io(destination, error))
+    symlink(target, destination).map_err(|error| HarnessError::io(destination, error))?;
+    filetime::set_symlink_file_times(
+        destination,
+        filetime::FileTime::from_last_access_time(source_metadata),
+        filetime::FileTime::from_last_modification_time(source_metadata),
+    )
+    .map_err(|error| HarnessError::io(destination, error))
 }
 
 #[cfg(not(unix))]
-fn copy_symlink(source: &Path, _destination: &Path) -> Result<(), HarnessError> {
+fn copy_symlink(
+    source: &Path,
+    _destination: &Path,
+    _source_metadata: &fs::Metadata,
+) -> Result<(), HarnessError> {
     Err(HarnessError::new(format!(
         "copying symlink fixtures is unavailable on this platform: {}",
         source.display()
@@ -466,6 +481,42 @@ mod tests {
         assert_eq!(
             fs::read(template.join("d00-00/file-000000.bin")).unwrap(),
             source_before
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pristine_copies_preserve_symlink_fingerprint_metadata() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let root = tempfile::tempdir().unwrap();
+        let template = root.path().join("template");
+        generate_fixture(&FixtureRequest {
+            output: template.clone(),
+            files: 1,
+            commits: 1,
+            depth: 1,
+            seed: 627,
+            scenario: Some("synthetic".into()),
+        })
+        .unwrap();
+        let mode = fs::metadata(&template).unwrap().permissions().mode();
+        fs::set_permissions(&template, fs::Permissions::from_mode(mode | 0o200)).unwrap();
+        let link = template.join("tracked-link");
+        symlink("d00-00/file-000000.bin", &link).unwrap();
+        let fixture_time = filetime::FileTime::from_unix_time(1_704_067_200, 123_456_789);
+        filetime::set_symlink_file_times(&link, fixture_time, fixture_time).unwrap();
+        make_template_read_only(&template).unwrap();
+
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        materialize_pristine(&template, &first).unwrap();
+        materialize_pristine(&template, &second).unwrap();
+
+        assert_eq!(
+            fingerprint_repository(&first).unwrap(),
+            fingerprint_repository(&second).unwrap(),
+            "symlink metadata must not make pristine copies diverge"
         );
     }
 }

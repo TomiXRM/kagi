@@ -284,7 +284,7 @@ mod tests {
         let status = Command::new("sh")
             .args([
                 "-c",
-                "i=0; while [ \"$i\" -lt 200000 ]; do i=$((i + 1)); done",
+                "i=0; while [ \"$i\" -lt 2000000 ]; do i=$((i + 1)); done",
             ])
             .status()
             .unwrap();
@@ -296,7 +296,7 @@ mod tests {
             .saturating_add(after.sys_ns)
             .saturating_sub(before.user_ns.saturating_add(before.sys_ns));
         assert!(
-            child_cpu_ns >= 1_000_000,
+            child_cpu_ns >= 100_000_000,
             "reaped child CPU time must contribute to the probe clock"
         );
     }

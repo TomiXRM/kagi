@@ -1,6 +1,6 @@
-//! This module owns existing-local-branch and detached-commit checkout planning/execution
-//! plus their shared [`preflight_check`]; tracking-branch checkout lives in `switch.rs`.
-//! Mixing those boundaries can execute a checkout different from the confirmed plan.
+//! This module owns existing-local-branch and detached-commit checkout plan/execute;
+//! tracking checkout lives in `switch.rs`. [`preflight_check`] is the generic HEAD
+//! guard for every non-stash `Backend::run` operation; narrowing it permits stale execution.
 //!
 use super::*;
 use kagi_domain::plan_note::{

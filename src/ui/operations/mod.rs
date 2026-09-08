@@ -29,6 +29,17 @@ pub mod worktree;
 
 use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;
+
+/// A Pull confirmation that could not be delivered when its fetch finished,
+/// waiting for the tab that asked for it (#625, ADR-0192).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PullConfirmDelivery {
+    /// Plan and open the confirmation.
+    Confirm,
+    /// The pre-Pull fetch failed; show the notice (the oplog entry was already
+    /// written when the fetch completed).
+    FetchFailed(String),
+}
 use crate::ui::KagiApp;
 use gpui::{Context, SharedString, Task};
 use kagi_git::backend::recording::Recording;

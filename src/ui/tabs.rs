@@ -276,6 +276,13 @@ impl KagiApp {
 
         // Background (re)load to refresh / fill the cache.
         self.load_repo_async(tab.session, tab.path.clone(), tab.name.clone(), cx);
+
+        // #625 / ADR-0192: this tab may have pressed Pull, waited for its
+        // pre-confirmation fetch, and been left while it ran. The answer
+        // belongs to *this* tab, so it was parked rather than shown over
+        // another repository — deliver it now that the tab is back on screen.
+        // After `reset_per_repo_ui` above, so nothing clears it again.
+        self.deliver_parked_pull_confirm(cx);
     }
 
     /// The read model on screen changed owner. Same UI reaction as publishing a
@@ -601,6 +608,11 @@ impl KagiApp {
         }
         let closed = self.tabs.remove(index);
         self.release_session(closed.session);
+        // #625: a Pull confirmation parked for this tab dies with it — there is
+        // no tab left to show it on, and a request must never outlive its owner.
+        self.pending_pull_confirm.remove(&closed.session);
+        self.fetch_pull_confirm_waiters
+            .retain(|session| *session != closed.session);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
 

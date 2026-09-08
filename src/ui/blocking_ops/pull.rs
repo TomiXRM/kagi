@@ -3,6 +3,28 @@ use kagi_git::{OperationPlan, PullOutcome, StashPopOutcome, StateSummary};
 use super::{open_backend, verify_after_snapshot};
 use crate::ui::i18n;
 
+/// The restore-prediction notes a pull plan carries, in plan order.
+///
+/// The comparison that decides whether a confirmation is still honest (#625):
+/// the dirty digest catches a path joining or leaving the set, and these notes
+/// catch the prediction itself changing — a path that was mergeable becoming a
+/// conflict. The UI's auto-stash rewrite replaces the two generic dirty
+/// warnings and leaves these untouched, so a UI-owned plan and a freshly built
+/// one are comparable here.
+fn restore_notes(plan: &OperationPlan) -> Vec<&kagi_domain::plan_note::PullNote> {
+    use kagi_domain::plan_note::{PlanNote, PullNote};
+    plan.warnings
+        .iter()
+        .filter_map(|note| match note {
+            PlanNote::Pull(
+                inner @ (PullNote::RestoreConflict { .. }
+                | PullNote::RestoreConflictPossible { .. }),
+            ) => Some(inner),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Result of the local Pull workflow. `Partial` means Pull or stash restoration
 /// changed repository state but the complete confirmed workflow did not finish.
 pub(crate) enum PullBlockingResult {
@@ -25,6 +47,7 @@ pub(crate) fn pull_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     auto_stash: bool,
+    promised_dirty: Option<kagi_domain::status::WorktreeDigest>,
 ) -> PullBlockingResult {
     let mut repo = match open_backend(repo_path) {
         Ok(repo) => repo,
@@ -45,7 +68,40 @@ pub(crate) fn pull_blocking(
                 };
             }
         };
+        // #625 / ADR-0192: the confirmation named what would be stashed and
+        // what the restore would do to it. Between confirming and here the
+        // working tree can move — an editor saves another path the update also
+        // touches — and nothing downstream would notice: this stashes first, so
+        // `Backend::run`'s preflight and the execute-time dirty-path guard both
+        // see a clean tree and wave the pull through, leaving only the restore
+        // to conflict with no warning ever shown (#626 review).
+        //
+        // So the promise is checked here, before anything is stashed: re-plan
+        // and refuse if the dirty set or the restore prediction moved. Refusing
+        // costs the user one more click on an accurate confirmation; stashing
+        // blind costs them the surprise this whole change exists to remove.
         if dirty {
+            let now = match repo.working_tree_status() {
+                Ok(status) => status.digest(),
+                Err(error) => {
+                    return PullBlockingResult::Failed {
+                        error: i18n::op_failed(i18n::Op::Stash, error),
+                    };
+                }
+            };
+            let fresh = match repo.plan_pull() {
+                Ok(fresh) => fresh,
+                Err(error) => {
+                    return PullBlockingResult::Failed {
+                        error: i18n::op_plan_failed(i18n::Op::Pull, error),
+                    };
+                }
+            };
+            if promised_dirty != Some(now) || restore_notes(&fresh) != restore_notes(plan) {
+                return PullBlockingResult::Failed {
+                    error: i18n::auto_stash_plan_stale().to_string(),
+                };
+            }
             let stash_op = kagi_git::Operation::StashPush {
                 message: Some("kagi: auto-stash before pull".to_string()),
                 include_untracked: true,

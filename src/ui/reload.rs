@@ -182,9 +182,21 @@ impl KagiApp {
         // ADR-0189: fetch fires the watcher before a failed Pull can finish
         // presenting its error. Preserve only the error state; an ordinary
         // confirmation plan is still invalidated by repository reload.
+        //
+        // #625 is the one exception, and it is not an exemption: a dirty Pull
+        // fetches *before* confirming, so the reload landing here is the one
+        // that fetch caused, and clearing the modal made Pull look dead — the
+        // user pressed it and nothing appeared. Such a confirmation is
+        // re-planned below (`replan_pull_modal`) instead, which keeps both
+        // halves of the rule: the modal the user asked for stays until they act
+        // on it, and what they confirm is never the stale plan.
         let keep_pull_error = self.pull_modal().is_some_and(|modal| modal.error.is_some());
+        let replan_dirty_pull = self.busy_op.is_none()
+            && self
+                .pull_modal()
+                .is_some_and(|modal| modal.error.is_none() && modal.auto_stash);
         self.clear_plan_modal();
-        if !keep_pull_error {
+        if !keep_pull_error && !replan_dirty_pull {
             self.clear_pull_modal();
         }
         self.clear_amend_modal();
@@ -194,8 +206,17 @@ impl KagiApp {
         self.clear_set_upstream_modal();
         self.clear_rename_branch_modal();
         self.clear_discard_modal();
-        self.clear_create_branch_modal();
-        self.clear_create_worktree_modal();
+        // #625 (#626 review): `CreateBranch` and `CreateWorktree` are pure
+        // input — a name, a start point, a path — with no plan preview to go
+        // stale, so a repository reload does not invalidate them and clearing
+        // them threw away what the user was typing. That mattered little while
+        // reloads followed the user's own actions; a dirty Pull now fetches
+        // before confirming, so kagi's own fetch (and the watcher it wakes)
+        // would delete a branch name typed while it ran. What a reload
+        // invalidates is a *plan*: every plan-carrying modal above is still
+        // swept, and confirming an input modal re-plans and re-preflights
+        // through `Backend::run` anyway. `reset_per_repo_ui` still clears these
+        // on a tab or repository switch, where the input no longer applies.
         self.modal_focus = None;
         self.clear_stash_push_modal();
         self.clear_stash_apply_modal();
@@ -311,6 +332,17 @@ impl KagiApp {
         // would have it wiped by `clear_stash_drop_modal`). Just plans + sets the
         // modal — no further reload.
         self.present_stash_followup(cx);
+
+        // #625 / ADR-0192: an open dirty-Pull confirmation was spared by the
+        // sweep above (`replan_dirty_pull`); refresh its contents against the
+        // state this reload just installed. The fetch such a confirmation was
+        // planned from wakes the watcher, so this reload is usually that
+        // fetch's own — clearing the modal here is what made Pull look dead.
+        // Every later reload (the watcher firing again, a manual Cmd+R) takes
+        // this path too, so the modal cannot be outrun.
+        if replan_dirty_pull {
+            self.replan_pull_modal();
+        }
 
         cx.notify();
     }

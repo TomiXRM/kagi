@@ -116,6 +116,7 @@ mod merge;
 mod merge_into;
 mod pr_conflict;
 mod pull;
+mod pull_conflict;
 mod push;
 mod rebase;
 mod remote_branch;

@@ -257,7 +257,10 @@ mod tests {
 
     #[test]
     fn classifies_option_failures_without_matching_localised_text() {
-        assert_eq!(classify_stderr("error: unknown option `write-tree'"), "unsupported-option");
+        assert_eq!(
+            classify_stderr("error: unknown option `write-tree'"),
+            "unsupported-option"
+        );
         assert_eq!(classify_stderr("usage: git merge-tree"), "usage");
     }
 }

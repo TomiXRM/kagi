@@ -1,7 +1,7 @@
-//! This module owns stash's `plan_*`, `preflight_*`, and `execute_*`; drift can
-//! act on a stash other than the one confirmed. ADR-0129 keeps plan text structured
-//! as `StashNote` / `StashTitle` / `StashRecovery`, rendered in EN by the golden-tested
-//! `message_en()` and in JA by `kagi-ui-core::i18n::plan::stash`.
+//! This module owns stash apply/pop/drop plans and execution plus their shared
+//! [`preflight_check_stash`]; sibling `stash_push.rs` owns push planning/execution.
+//! Mixing those boundaries can make `Backend::run` validate a different operation.
+//! ADR-0129 keeps structured plan text rendered by `message_en()` and UI i18n.
 use super::*;
 
 use kagi_domain::plan::StashPopOutcome;

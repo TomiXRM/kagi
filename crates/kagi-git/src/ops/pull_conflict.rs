@@ -1,21 +1,19 @@
-//! What a pull would collide with — the plan-time preview and the execute-time
-//! guard, computed once (#625).
+//! What a pull would collide with — plan-time preview and execute-time guard
+//! with one definition of locally dirty paths (#625 / ADR-0192).
 //!
-//! Invariant (#625 / ADR-0192): plan and execute must both call the shared
-//! conflict calculation here; duplicated logic can label Stash & Pull safe,
-//! then discover a conflict only while restoring the stash after confirmation.
+//! Invariant: [`dirty_paths`] is the only definition of local dirt. Plan-time
+//! prediction intersects it with the post-pull [`Incoming::changed_paths`];
+//! execute-time refusal intersects it with the fetched tree delta through
+//! [`pull_dirty_overlap`]. Those incoming calculations intentionally differ,
+//! but duplicating dirty-path collection lets the preview and refusal disagree.
 //!
 //! Split out of `ops/pull.rs` (which was already over the 800-line target) on a
 //! feature boundary: everything here answers "would this pull run into what the
 //! user has locally?", and nothing here mutates the repository.
 //!
 //! The overlap that matters is *not* commit-to-commit. A fast-forward pull
-//! cannot conflict between commits, so [`predict_merge_conflict`] correctly
-//! reports nothing for one; what conflicts is the **working-tree content**
-//! against the incoming content, which surfaces when the auto-stash is restored
-//! after the pull. [`pull_dirty_overlap`] is that calculation, and both the
-//! plan (before the user confirms) and execute (as a refusal) read it from
-//! here, so the two can never drift apart.
+//! cannot conflict between commits; the collision is working-tree content
+//! against incoming content when the auto-stash is restored after the pull.
 
 use super::remote_common::resolve_upstream_oid;
 use super::*;
@@ -30,23 +28,14 @@ pub(super) fn pull_dirty_overlap(
     old_tree: &git2::Tree<'_>,
     new_tree: &git2::Tree<'_>,
 ) -> Result<Vec<String>, GitError> {
-    let status = working_tree_status(repo)?;
-    if status.staged.is_empty() && status.unstaged.is_empty() && status.untracked.is_empty() {
+    let dirty = dirty_paths(repo)?;
+    if dirty.is_empty() {
         return Ok(Vec::new());
-    }
-
-    let mut dirty_paths: std::collections::HashSet<PathBuf> =
-        status.untracked.iter().cloned().collect();
-    for file in status.staged.iter().chain(status.unstaged.iter()) {
-        dirty_paths.insert(file.path.clone());
-        if let ChangeKind::Renamed { from } = &file.change {
-            dirty_paths.insert(from.clone());
-        }
     }
 
     let mut overlapping: Vec<String> = pull_changed_paths_between_trees(repo, old_tree, new_tree)?
         .into_iter()
-        .filter(|path| dirty_paths.contains(path))
+        .filter(|path| dirty.contains(path))
         .map(|path| path.display().to_string())
         .collect();
     overlapping.sort();

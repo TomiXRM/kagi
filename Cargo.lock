@@ -3417,6 +3417,8 @@ dependencies = [
  "hex",
  "ignore",
  "kagi-domain",
+ "libc",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

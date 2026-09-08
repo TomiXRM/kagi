@@ -33,6 +33,7 @@
 pub mod api;
 pub mod authoring;
 pub mod backend;
+pub mod benchmark;
 pub mod blame;
 mod checklist;
 pub mod cli;

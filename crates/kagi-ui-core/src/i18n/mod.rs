@@ -738,6 +738,9 @@ pub enum Msg {
     /// paths themselves are rendered as a list under this line, not joined
     /// into the sentence (40 paths used to fill the whole card).
     PlanOverlapSummary,
+    /// #625: the summary line above the list of paths whose auto-stash restore
+    /// would conflict, so the paths render as rows instead of a comma wall.
+    PlanRestoreConflictSummary,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -1828,6 +1831,10 @@ impl Msg {
                 "{} file(s) also modified by the target. Stash or commit them first."
             }
             (Ja, PlanOverlapSummary) => "切り替え先も変更する {} 件のファイルに変更があります。先に stash か commit してください。",
+            (En, PlanRestoreConflictSummary) => {
+                "{} path(s) changed here and by the incoming update. Restoring the stash after the pull will conflict; the stash is kept."
+            }
+            (Ja, PlanRestoreConflictSummary) => "ローカルと incoming の両方で変更された {} 件のパスです。pull 後の stash 復元は conflict します(stash は保持されます)。",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",

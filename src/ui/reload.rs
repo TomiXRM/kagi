@@ -162,6 +162,12 @@ impl KagiApp {
         // the first load leaves the status bar Busy forever.
         let first_read = !self.reads.has_read(session);
         if !self.accept_tab_view(key, view) {
+            // A superseded read must not leave a deferred Pull confirmation
+            // armed (#625): the flag is consumed at the end of a *successful*
+            // apply, so leaving it set here would let an unrelated later reload
+            // pop the modal open. The fetch's own reload is the one that opens
+            // it, and this read is not it.
+            self.pull_modal_after_fetch = false;
             return;
         }
         self.app_sessions.read_applied(session);
@@ -186,9 +192,21 @@ impl KagiApp {
         // ADR-0189: fetch fires the watcher before a failed Pull can finish
         // presenting its error. Preserve only the error state; an ordinary
         // confirmation plan is still invalidated by repository reload.
+        //
+        // #625 is the one exception, and it is not an exemption: a dirty Pull
+        // fetches *before* confirming, so the reload landing here is the one
+        // that fetch caused, and clearing the modal made Pull look dead — the
+        // user pressed it and nothing appeared. Such a confirmation is
+        // re-planned below (`replan_pull_modal`) instead, which keeps both
+        // halves of the rule: the modal the user asked for stays until they act
+        // on it, and what they confirm is never the stale plan.
         let keep_pull_error = self.pull_modal().is_some_and(|modal| modal.error.is_some());
+        let replan_dirty_pull = self.busy_op.is_none()
+            && self
+                .pull_modal()
+                .is_some_and(|modal| modal.error.is_none() && modal.auto_stash);
         self.clear_plan_modal();
-        if !keep_pull_error {
+        if !keep_pull_error && !replan_dirty_pull {
             self.clear_pull_modal();
         }
         self.clear_amend_modal();
@@ -324,6 +342,12 @@ impl KagiApp {
         // paths it names are the ones the fetch revealed.
         if std::mem::take(&mut self.pull_modal_after_fetch) {
             self.plan_and_open_pull_modal(cx);
+        } else if replan_dirty_pull {
+            // An already-open dirty-Pull confirmation: the sweep left it alone,
+            // so refresh its contents against the state just installed. Every
+            // later reload (the watcher firing again, a manual Cmd+R) takes this
+            // path too, so the modal cannot be outrun by its own fetch.
+            self.replan_pull_modal();
         }
 
         cx.notify();

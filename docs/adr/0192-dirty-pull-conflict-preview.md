@@ -79,6 +79,36 @@ E2E で実際に踏んだ。よって ref が動いたときはフラグを残�
 **後**で開く（#309 の stash follow-up と同じ形）。ref が動かなければ reload は来ないので
 その場で開く。tab が切り替わっていたらフラグを捨てる。
 
+**開いた後の reload では replan して残す。** 上の「掃除の後で開く」だけでは足りなかった。
+watcher は fetch の書き込みを検知して**別の** reload を後から届け、その apply が開いたばかりの
+モーダルを消す。実測（PM の実 GUI 差し戻し、#626 review）:
+
+```
+[kagi] fetch: start
+[kagi] plan: pull blockers=0 warnings=2      ← モーダルはここで開く
+[kagi] refreshed (external change)           ← 約 0.5 秒後にここで消える
+```
+
+押しても何も出ないのは Pull が実行不能なのと同じである。よって **auto-stash 確認が開いている
+間の reload は、掃除せず `replan_pull_modal` で内容を作り直す**。ADR-0189 の意図（無効化された
+plan を confirm させない）は replan で満たす — 消すのではなく最新にする。plan が「もう pull する
+ものが無い」または失敗を返した場合も既存モーダルを**残す**（ユーザーのカーソル下で窓を空に
+しない）。実行時の安全は `Backend::run` の preflight が担保する。ユーザーが Cancel か
+Stash & Pull を押すまで消えない。
+
+error 状態のモーダル（ADR-0189）はこれまでどおり保持し、clean な Pull の確認は従来どおり
+reload で無効化する（clean な Pull は fetch しないので自分で reload を起こさない）。
+
+**incoming の定義は `merge-base..upstream`。** HEAD の tree を upstream の tree に直接 diff すると、
+diverged 時に「local commit だけが変えたパス」（逆方向の差分）も incoming として数え、upstream が
+持ち込んでいない衝突を警告してしまう（実測: `RestoreConflict { paths: ["mine.txt"] }`)。fast-forward
+では merge-base == HEAD なので挙動は同じ。merge-base が無い（無関係な履歴）場合は HEAD に落とす。
+
+**表示は `note_path_list` + localized summary。** パスは prose のカンマ列ではなく行として描く
+（#454 が checkout overlap で入れた仕組みに合流）。warning 側の描画も blocker と同じ分岐にした。
+summary は `Msg::PlanRestoreConflictSummary`（EN/JA）で件数だけを持ち、パスは行に出る。
+`message_en` / `note_ja` の本文はそのまま CLI・oplog・テスト用の fallback として残る。
+
 ### 3. execute 側の fetch は残す
 
 `execute_pull` の step 2 の fetch はそのまま。dirty Pull では二重 fetch になるが、

@@ -695,5 +695,42 @@ fn test_plan_pull_without_overlap_has_no_restore_conflict_note() {
     );
 }
 
+/// "Incoming" means `HEAD..upstream`. On a diverged branch, diffing HEAD
+/// straight to the upstream tip also reports the paths only *local* commits
+/// changed — the reverse delta — which would warn about a collision the
+/// upstream never introduced. The base of the diff is the merge base.
+#[test]
+fn test_plan_pull_ignores_paths_only_local_commits_changed() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    // Upstream moves one file…
+    remote_commit(
+        &r,
+        "remote_only.txt",
+        "upstream\n",
+        "upstream: add remote_only.txt",
+    );
+    // …while this branch commits a different one, so the branches diverge.
+    write_file(&r.local, "mine.txt", "committed locally\n");
+    git(&r.local, &["add", "mine.txt"]);
+    git(&r.local, &["commit", "-qm", "local: add mine.txt"]);
+    // The dirty path is the one only the *local* commit touched: it appears in
+    // a HEAD-to-upstream tree diff, but nothing is incoming for it.
+    write_file(&r.local, "mine.txt", "committed locally\nand now edited\n");
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("plan should succeed");
+
+    assert_eq!(
+        restore_conflict_paths(&plan),
+        None,
+        "a path only local commits changed is not incoming: {:?}",
+        plan.warnings
+    );
+}
+
 #[path = "support/isolated.rs"]
 mod test_support;

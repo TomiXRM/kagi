@@ -67,8 +67,16 @@ pub(super) fn ensure_pull_does_not_touch_dirty_paths(
     }
 }
 
-/// Plan-time preview (#625): dirty paths the **current** upstream tip also
-/// changes, for the confirmation modal.
+/// Plan-time preview (#625): dirty paths the **incoming** update also changes,
+/// for the confirmation modal.
+///
+/// "Incoming" is `HEAD..upstream`, so the base of the diff is the **merge
+/// base**, not HEAD. On a fast-forward the two are the same commit; on a
+/// diverged branch they are not, and diffing HEAD directly to the upstream tip
+/// would also report every path only *local* commits changed — the reverse
+/// delta — and warn about a collision the upstream never introduced. A merge
+/// base that cannot be found (unrelated histories) falls back to HEAD: the
+/// whole upstream tree is then genuinely incoming.
 ///
 /// Local knowledge, like [`predict_merge_conflict`] beside it — `plan_pull`
 /// does not fetch. The UI closes that freshness gap by fetching before it opens
@@ -102,9 +110,10 @@ pub(super) fn plan_pull_restore_conflicts(
                 ))
             })
     };
-    let head_tree = tree_of(head_oid)?;
+    let base_oid = repo.merge_base(head_oid, upstream_oid).unwrap_or(head_oid);
+    let base_tree = tree_of(base_oid)?;
     let upstream_tree = tree_of(upstream_oid)?;
-    pull_dirty_overlap(repo, &head_tree, &upstream_tree)
+    pull_dirty_overlap(repo, &base_tree, &upstream_tree)
 }
 
 /// Every path either side of each delta between two trees.

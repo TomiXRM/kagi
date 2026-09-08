@@ -601,20 +601,27 @@ pub(crate) fn modal_change_summary(kinds: &[ChangeKind]) -> Option<gpui::Div> {
 /// #454: does this note carry a path **list** the card should render as a
 /// list instead of a comma wall inside the sentence?
 ///
-/// Returns the summary line (no paths) plus the paths. Only the checkout
-/// overlap blocker qualifies today — it is the one note whose producer builds
-/// a `Vec<String>` of paths (`predict_checkout_conflict`), and with 40
-/// overlapping files the joined form filled the whole confirmation card.
+/// Returns the summary line (no paths) plus the paths. The checkout overlap
+/// blocker was the first — with 40 overlapping files the joined form filled
+/// the whole confirmation card — and the dirty-Pull restore collision (#625)
+/// is the second: it exists to name paths, so those paths have to read as
+/// rows, in the user's language, not as prose.
 pub(crate) fn note_path_list(
     note: &kagi_domain::plan_note::PlanNote,
 ) -> Option<(String, Vec<String>)> {
-    use kagi_domain::plan_note::{checkout::CheckoutNote, PlanNote};
+    use kagi_domain::plan_note::{checkout::CheckoutNote, PlanNote, PullNote};
     match note {
         PlanNote::Checkout(CheckoutNote::CheckoutOverlap { count, files }) => Some((
             super::i18n::Msg::PlanOverlapSummary
                 .t()
                 .replace("{}", &count.to_string()),
             files.clone(),
+        )),
+        PlanNote::Pull(PullNote::RestoreConflict { paths }) => Some((
+            super::i18n::Msg::PlanRestoreConflictSummary
+                .t()
+                .replace("{}", &paths.len().to_string()),
+            paths.clone(),
         )),
         _ => None,
     }

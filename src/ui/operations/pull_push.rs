@@ -91,90 +91,128 @@ impl KagiApp {
         self.plan_and_open_pull_modal(cx);
     }
 
-    /// Plan a local pull and open (or skip) its confirmation modal.
+    /// Plan a local pull and open (or skip) its confirmation modal. `true` when
+    /// a confirmation is now on screen.
     ///
     /// Split from [`Self::open_pull_modal`] so the dirty path can run it after
     /// its fetch completes (#625) without duplicating the plan handling.
-    pub(crate) fn plan_and_open_pull_modal(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn plan_and_open_pull_modal(&mut self, cx: &mut Context<Self>) -> bool {
+        match self.build_pull_modal() {
+            Ok(Some(modal)) => {
+                eprintln!(
+                    "[kagi] plan: pull blockers={} warnings={}",
+                    modal.plan.blockers.len(),
+                    modal.plan.warnings.len()
+                );
+                self.set_pull_modal(modal);
+                true
+            }
+            // Already-up-to-date pull (nothing to pull by local knowledge)
+            // is not worth a blocking popup (user request): snackbar instead.
+            Ok(None) => {
+                self.push_toast(
+                    ToastKind::Sync,
+                    SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                    cx,
+                );
+                self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                false
+            }
+            Err(error) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(error));
+                false
+            }
+        }
+    }
+
+    /// Refresh an open dirty-Pull confirmation against reloaded repository
+    /// state (#625, ADR-0192).
+    ///
+    /// A dirty Pull fetches before confirming, and that fetch fires the FS
+    /// watcher — whose reload clears confirmation modals (ADR-0189), because a
+    /// plan invalidated by a repository change must not be confirmable. Both
+    /// halves of that hold here: the confirmation the user asked for **stays on
+    /// screen until they act on it**, and it is re-planned so what they confirm
+    /// is never the stale plan.
+    ///
+    /// A plan that now has nothing to confirm (someone else pulled meanwhile)
+    /// or that fails to build leaves the existing modal in place rather than
+    /// making the window empty under the user's cursor; `Backend::run`'s
+    /// preflight is what refuses a stale confirmation at execute time.
+    pub(crate) fn replan_pull_modal(&mut self) {
+        match self.build_pull_modal() {
+            Ok(Some(modal)) => {
+                klog!(
+                    "replan: pull blockers={} warnings={}",
+                    modal.plan.blockers.len(),
+                    modal.plan.warnings.len()
+                );
+                self.set_pull_modal(modal);
+            }
+            Ok(None) => klog!("replan: pull nothing to pull; keeping the confirmation"),
+            Err(error) => klog!("replan: pull failed: {error}"),
+        }
+    }
+
+    /// The confirmation a local pull would show: `Ok(None)` when there is
+    /// nothing to pull, `Err` when the plan could not be built.
+    fn build_pull_modal(&mut self) -> Result<Option<PullPlanModal>, String> {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("pull: repo session unavailable"));
-                return;
-            }
+            None => return Err("pull: repo session unavailable".to_string()),
         };
-        match repo.plan_pull() {
-            Ok(mut plan) => {
-                let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
-                if auto_stash {
-                    let status = &self.view().status_summary;
-                    // Auto-stash makes the two generic dirty warnings wrong —
-                    // kagi is about to stash, not refuse — so they are replaced
-                    // by `AutoStash` below. Only those two: every other note
-                    // stays, and `RestoreConflict` (#625) in particular must,
-                    // since naming the colliding paths before the user confirms
-                    // is the whole point of that note.
-                    plan.warnings.retain(|note| {
-                        !matches!(
-                            note,
-                            PlanNote::Pull(PullNote::DirtyPullGuard { .. })
-                                | PlanNote::Common(CommonNote::UntrackedRemain {
-                                    ctx: UntrackedCtx::PullFetchMayTouch,
-                                    ..
-                                })
-                        )
-                    });
-                    plan.warnings.push(PlanNote::Pull(PullNote::AutoStash {
-                        parts: DirtyParts {
-                            staged: status.staged,
-                            modified: status.unstaged,
-                        },
-                        untracked: status.untracked,
-                    }));
-                    plan.recovery = Some(PlanRecovery {
-                        kind: RecoveryKind::Pull(PullRecovery::PullAutoStash),
-                        commands: Vec::new(),
-                    });
-                }
-                eprintln!(
-                    "[kagi] plan: pull blockers={} warnings={}",
-                    plan.blockers.len(),
-                    plan.warnings.len()
-                );
-                // Already-up-to-date pull (nothing to pull by local knowledge)
-                // is not worth a blocking popup (user request): snackbar instead.
-                // Background auto-fetch keeps the behind count fresh;
-                // ops::plan_pull sets NoOp(PullUpToDate) when behind == 0
-                // (ADR-0129 F-1: no string-parsing of the title).
-                if plan.blockers.is_empty()
-                    && plan.warnings.is_empty()
-                    && matches!(
-                        plan.disposition,
-                        kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PullUpToDate)
-                    )
-                {
-                    self.push_toast(
-                        ToastKind::Sync,
-                        SharedString::from(Msg::AlreadyUpToDatePull.t()),
-                        cx,
-                    );
-                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
-                    return;
-                }
-                self.set_pull_modal(PullPlanModal {
-                    plan: std::sync::Arc::new(plan),
-                    auto_stash,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Pull, e),
-                ));
-            }
+        let mut plan = repo
+            .plan_pull()
+            .map_err(|e| i18n::op_plan_failed(i18n::Op::Pull, e))?;
+        let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
+        if auto_stash {
+            let status = &self.view().status_summary;
+            // Auto-stash makes the two generic dirty warnings wrong —
+            // kagi is about to stash, not refuse — so they are replaced
+            // by `AutoStash` below. Only those two: every other note
+            // stays, and `RestoreConflict` (#625) in particular must,
+            // since naming the colliding paths before the user confirms
+            // is the whole point of that note.
+            plan.warnings.retain(|note| {
+                !matches!(
+                    note,
+                    PlanNote::Pull(PullNote::DirtyPullGuard { .. })
+                        | PlanNote::Common(CommonNote::UntrackedRemain {
+                            ctx: UntrackedCtx::PullFetchMayTouch,
+                            ..
+                        })
+                )
+            });
+            plan.warnings.push(PlanNote::Pull(PullNote::AutoStash {
+                parts: DirtyParts {
+                    staged: status.staged,
+                    modified: status.unstaged,
+                },
+                untracked: status.untracked,
+            }));
+            plan.recovery = Some(PlanRecovery {
+                kind: RecoveryKind::Pull(PullRecovery::PullAutoStash),
+                commands: Vec::new(),
+            });
         }
+        // Background auto-fetch keeps the behind count fresh; ops::plan_pull
+        // sets NoOp(PullUpToDate) when behind == 0 (ADR-0129 F-1: no
+        // string-parsing of the title).
+        if plan.blockers.is_empty()
+            && plan.warnings.is_empty()
+            && matches!(
+                plan.disposition,
+                kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PullUpToDate)
+            )
+        {
+            return Ok(None);
+        }
+        Ok(Some(PullPlanModal {
+            plan: std::sync::Arc::new(plan),
+            auto_stash,
+            error: None,
+        }))
     }
 
     /// Close the pull modal without executing.

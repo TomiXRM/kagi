@@ -262,8 +262,39 @@ pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
         );
     });
 
+    // The regression PM caught: the confirmation opens and then a reload lands
+    // on top of it. That reload is *caused by kagi's own fetch* (the watcher
+    // sees `.git` change), and the modal-clearing sweep in `apply_reload_data`
+    // wiped it ~0.5s later — Pull looked dead: pressed, nothing on screen.
+    // Drive the same external reload twice, since the watcher can fire more
+    // than once, and require the confirmation to still be there and still name
+    // the path.
+    for round in 1..=2 {
+        app.update(cx, |app, cx| app.reload_external(cx));
+        cx.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let modal = app
+                .read(cx)
+                .pull_modal()
+                .unwrap_or_else(|| panic!("reload {round} closed the Pull confirmation"));
+            assert!(modal.auto_stash, "round {round}");
+            let shown: String = modal
+                .plan
+                .warnings
+                .iter()
+                .map(|note| note.message_en())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                shown.contains("shared.txt"),
+                "reload {round} must keep the colliding path named:\n{shown}"
+            );
+        });
+    }
+
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_auto_stash_overlap_preview: the modal names the colliding path before confirmation"
+        "[gui-e2e] PASS pull_auto_stash_overlap_preview: the modal names the colliding path and survives reloads"
     );
 }

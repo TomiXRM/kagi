@@ -81,10 +81,7 @@ fn cherry_pick_no_commit_changes_the_complete_repository_fingerprint() {
     git(root.path(), &["cherry-pick", "--no-commit", "topic"]);
 
     let after = fingerprint_repository(root.path()).unwrap();
-    assert_ne!(
-        before, after,
-        "--no-commit must be rejected for prediction"
-    );
+    assert_ne!(before, after, "--no-commit must be rejected for prediction");
 }
 
 #[test]

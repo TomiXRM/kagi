@@ -134,10 +134,7 @@ fn auto_stash_pull_restores_tracked_and_untracked_changes() {
     // #625: the confirmation's promise — the dirty set it was shown for. The UI
     // captures it when the modal opens; here the plan was just built, so it is
     // the tree as it stands.
-    let promised = backend
-        .working_tree_status()
-        .expect("status")
-        .digest();
+    let promised = backend.working_tree_status().expect("status").digest();
     let result = pull_blocking(&repos.local, &plan, true, Some(promised));
 
     assert!(
@@ -177,10 +174,7 @@ fn auto_stash_pull_keeps_stash_when_restore_conflicts() {
     // #625: the confirmation's promise — the dirty set it was shown for. The UI
     // captures it when the modal opens; here the plan was just built, so it is
     // the tree as it stands.
-    let promised = backend
-        .working_tree_status()
-        .expect("status")
-        .digest();
+    let promised = backend.working_tree_status().expect("status").digest();
     let result = pull_blocking(&repos.local, &plan, true, Some(promised));
 
     match result {

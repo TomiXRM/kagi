@@ -73,7 +73,7 @@
 
 pub(crate) use std::path::{Path, PathBuf};
 
-pub(crate) use git2::{BranchType, Repository, StashFlags, WorktreeAddOptions};
+pub(crate) use git2::{BranchType, Repository, WorktreeAddOptions};
 pub(crate) use kagi_domain::head::Head;
 
 pub(crate) use super::cli::{check_operand, is_flag_like, run_git};
@@ -116,6 +116,7 @@ mod merge;
 mod merge_into;
 mod pr_conflict;
 mod pull;
+mod pull_conflict;
 mod push;
 mod rebase;
 mod remote_branch;
@@ -124,6 +125,7 @@ mod reset;
 mod snapshot;
 mod squash_merge;
 mod stash;
+mod stash_push;
 mod suggestion;
 mod switch;
 mod tag;
@@ -154,6 +156,7 @@ pub use reset::*;
 pub use snapshot::*;
 pub use squash_merge::*;
 pub use stash::*;
+pub use stash_push::*;
 pub use suggestion::*;
 pub use switch::*;
 pub use tag::*;

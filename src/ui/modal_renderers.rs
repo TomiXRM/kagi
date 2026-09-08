@@ -495,15 +495,32 @@ fn render_plan_modal_card_styled(
     );
 
     // ── Warnings ─────────────────────────────────────────
+    // #625: a warning carrying a path list renders as sentence + list, the
+    // same way the blocker block below does. The dirty-Pull restore collision
+    // is a *warning* (the user may still proceed), and it exists to name
+    // paths — a comma wall inside the sentence is what it replaced.
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
         for w in &plan.warnings {
-            warn_col = warn_col.child(render_note_row(
-                "\u{26a0}",
-                current_theme().color_warning,
-                &plan_note_text(w),
-                accent.is_some(),
-            ));
+            match note_path_list(w) {
+                Some((summary, files)) => {
+                    warn_col = warn_col.child(render_note_row(
+                        "\u{26a0}",
+                        current_theme().color_warning,
+                        &summary,
+                        accent.is_some(),
+                    ));
+                    warn_col = warn_col.child(note_path_list_element(&files));
+                }
+                None => {
+                    warn_col = warn_col.child(render_note_row(
+                        "\u{26a0}",
+                        current_theme().color_warning,
+                        &plan_note_text(w),
+                        accent.is_some(),
+                    ));
+                }
+            }
         }
         body = body.child(warn_col.flex_shrink_0());
     }

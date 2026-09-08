@@ -176,13 +176,63 @@ pub fn check_operand(kind: &str, name: &str) -> Result<(), GitError> {
     Ok(())
 }
 
+/// Repository-local Git environment variables, cleared on every child process.
+///
+/// Kagi always names the repository explicitly (`current_dir`, plus `-C` where
+/// a call site needs it), but naming it is not enough: an inherited `GIT_DIR` /
+/// `GIT_WORK_TREE` / `GIT_INDEX_FILE` **overrides** both. `GIT_DIR=<b>/.git
+/// GIT_WORK_TREE=<b> git -C <a> stash push` writes the stash into `b` — so a
+/// kagi started from a shell (or editor, or hook) that exported them would
+/// plan and preflight against one repository and mutate another, which no
+/// amount of verification downstream can undo (#623, Codex review).
+///
+/// The list is `git rev-parse --local-env-vars` (git 2.50.1 — git's own
+/// definition of "repository-local", the set it strips when it recurses into a
+/// submodule) plus four more it does not list: `GIT_NAMESPACE`,
+/// `GIT_CEILING_DIRECTORIES`, and the `GIT_CONFIG_GLOBAL` /
+/// `GIT_CONFIG_SYSTEM` file redirects. Removing `GIT_CONFIG_COUNT` also
+/// neutralises any `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` pairs, since
+/// git reads them only up to the count.
+///
+/// This is a removal, not an override, so kagi's own `-c` hardening
+/// ([`HARDENING_ARGS`], [`repo_local_overrides`]) stays the only configuration
+/// kagi injects.
+const REPO_LOCAL_ENV: &[&str] = &[
+    // git rev-parse --local-env-vars
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    // Not listed by git, same class of redirect.
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+];
+
 /// A `git` subprocess command with kagi's standard hardened environment.
 ///
 /// `GIT_ADVICE=0` suppresses git's own advice text on subprocess paths (#353):
 /// kagi already writes its own human-facing guidance in the UI, so git's advice
-/// would only double up. The other vars keep the child non-interactive.
+/// would only double up. The other vars keep the child non-interactive, and
+/// [`REPO_LOCAL_ENV`] is cleared so the child cannot be pointed at a different
+/// repository than the one this command names (#623).
 pub fn git_command(repo_dir: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new("git");
+    for var in REPO_LOCAL_ENV {
+        cmd.env_remove(var);
+    }
     cmd.current_dir(repo_dir)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ADVICE", "0")
@@ -194,8 +244,14 @@ pub fn git_command(repo_dir: &Path) -> std::process::Command {
 
 /// A `gh` (GitHub CLI) subprocess command with `GIT_ADVICE=0` set (#353), so
 /// the git advice `gh` shells out to does not double up with kagi's own UI.
+///
+/// `gh` runs `git` itself, so it inherits the same exposure and gets the same
+/// [`REPO_LOCAL_ENV`] clearing (#623).
 pub fn gh_command() -> std::process::Command {
     let mut cmd = std::process::Command::new("gh");
+    for var in REPO_LOCAL_ENV {
+        cmd.env_remove(var);
+    }
     cmd.env("GIT_ADVICE", "0");
     cmd
 }
@@ -285,5 +341,53 @@ mod tests {
             has_env(&gh, "GIT_ADVICE", "0"),
             "gh subprocess must set GIT_ADVICE=0"
         );
+    }
+
+    /// `get_envs` yields `(key, None)` for each `.env_remove(...)`.
+    fn clears_env(cmd: &Command, key: &str) -> bool {
+        cmd.get_envs()
+            .any(|(k, v)| k == std::ffi::OsStr::new(key) && v.is_none())
+    }
+
+    // #623: the hardening is only worth anything if it is on the *shared*
+    // builder, so assert the whole set on both builders rather than trusting
+    // one operation's end-to-end test. A variable quietly dropped from
+    // REPO_LOCAL_ENV would otherwise re-expose every git caller at once.
+    #[test]
+    fn subprocess_builders_clear_every_repository_local_var() {
+        let git = git_command(std::path::Path::new("/tmp"));
+        let gh = gh_command();
+        for var in REPO_LOCAL_ENV {
+            assert!(clears_env(&git, var), "git subprocess must clear {var}");
+            assert!(clears_env(&gh, var), "gh subprocess must clear {var}");
+        }
+        // The ones that actually redirect a repository, named explicitly so a
+        // shortened list cannot pass this test by shrinking.
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_NAMESPACE",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_PREFIX",
+            "GIT_CONFIG",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+        ] {
+            assert!(
+                REPO_LOCAL_ENV.contains(&var),
+                "{var} must stay in REPO_LOCAL_ENV"
+            );
+            assert!(clears_env(&git, var), "git subprocess must clear {var}");
+        }
+        // Clearing must not have taken the non-interactive hardening with it.
+        assert!(has_env(&git, "GIT_TERMINAL_PROMPT", "0"));
+        assert!(has_env(&git, "GIT_ASKPASS", "/bin/false"));
+        assert!(has_env(&git, "LC_ALL", "C"));
     }
 }

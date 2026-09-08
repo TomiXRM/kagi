@@ -24,6 +24,30 @@ pub enum PullNote {
     /// warning (`plan_pull`, via the `predict_merge_conflict` helper):
     /// plan-time in-memory merge predicts a conflict with the upstream tip.
     MergePrediction,
+    /// warning (`plan_pull`): paths whose auto-stash restore **will** conflict,
+    /// named before the user confirms (#625).
+    ///
+    /// A fast-forward pull cannot conflict commit-to-commit, so
+    /// [`PullNote::MergePrediction`] stays silent for it — what conflicts is
+    /// the working-tree content against the incoming content, which only shows
+    /// up when the auto-stash is restored *after* the pull has run. Listing the
+    /// paths at plan time is what keeps "a confirmed operation does not
+    /// surprise you" true for a dirty pull.
+    ///
+    /// Asserted, not guessed: the producer runs the same three-way content
+    /// merge the restore would (`git2::merge_file`, in memory) and lists only
+    /// the paths that actually fail it. "Changed on both sides" is *not*
+    /// enough — an upstream edit to the first line and a local edit to the
+    /// last merge cleanly, and a warning that does not come true teaches the
+    /// user to stop reading warnings.
+    RestoreConflict { paths: Vec<String> },
+    /// warning (`plan_pull`): paths that both sides changed and whose restore
+    /// kagi could **not** decide in advance — binary content, a mode change, a
+    /// delete against an edit, or a path added on both sides (#625).
+    ///
+    /// Deliberately separate wording from [`PullNote::RestoreConflict`]: this
+    /// one says *may*.
+    RestoreConflictPossible { paths: Vec<String> },
     /// warning (`plan_pull_branch_ff`): conflicted files exist; this
     /// ref-only pull will not touch the working tree regardless.
     ConflictedRefOnly { count: usize },
@@ -50,6 +74,46 @@ pub enum PullNote {
     /// warning (`plan_pull_remote`, SSH): the remote working tree has
     /// uncommitted changes.
     RemoteDirty,
+}
+
+/// How many colliding paths a [`PullNote::RestoreConflict`] spells out before
+/// it counts the rest.
+///
+/// A plan note is a confirmation aid, not a file listing: an unbounded list
+/// would push the modal's own buttons out of reach. Twelve is enough to name
+/// the realistic overlap while keeping the note a paragraph.
+pub const RESTORE_CONFLICT_PATH_LIMIT: usize = 12;
+
+/// `(the paths to spell out, how many are left over)`.
+///
+/// Shared by the EN and JA renderings so they can never disagree about which
+/// paths are shown or how many are hidden.
+pub fn restore_conflict_paths(paths: &[String]) -> (&[String], usize) {
+    if paths.len() <= RESTORE_CONFLICT_PATH_LIMIT {
+        (paths, 0)
+    } else {
+        (
+            &paths[..RESTORE_CONFLICT_PATH_LIMIT],
+            paths.len() - RESTORE_CONFLICT_PATH_LIMIT,
+        )
+    }
+}
+
+/// `<summary>` + one path per line + `<advice>`, the shape both restore notes
+/// share. The modal renders the paths as rows from the note's own data; this is
+/// the plain-text form the CLI, the oplog and the tests read.
+fn path_note_en(summary: &str, advice: &str, paths: &[String]) -> String {
+    let (shown, extra) = restore_conflict_paths(paths);
+    let mut out = String::from(summary);
+    for path in shown {
+        out.push_str("\n  - ");
+        out.push_str(path);
+    }
+    if extra > 0 {
+        out.push_str(&format!("\n  - … and {extra} more"));
+    }
+    out.push_str(advice);
+    out
 }
 
 impl PullNote {
@@ -84,6 +148,20 @@ impl PullNote {
                  upstream has not changed, execute will fail safely leaving the repo untouched."
                     .to_string()
             }
+            PullNote::RestoreConflict { paths } => path_note_en(
+                "Restoring the stash after this pull will conflict. Kagi merged your edit with \
+                 the incoming change and these paths do not merge:",
+                "\nCommit or stash those paths yourself first, or resolve the conflict after the \
+                 pull — the stash is kept either way.",
+                paths,
+            ),
+            PullNote::RestoreConflictPossible { paths } => path_note_en(
+                "Restoring the stash after this pull may conflict. Both sides changed these \
+                 paths and Kagi could not merge them in advance (binary content, a mode change, \
+                 or a file added or removed on one side):",
+                "\nThe restore is attempted anyway; if it conflicts, the stash is kept.",
+                paths,
+            ),
             PullNote::ConflictedRefOnly { count } => format!(
                 "Repository has {} conflicted file(s); this ref-only pull will not touch the working tree.",
                 count
@@ -276,6 +354,71 @@ mod tests {
             .message_en(),
             "Working tree has 2 staged, 1 modified, 3 untracked. Kagi will stash these changes, pull, then restore them. If restoration conflicts, the stash is kept."
         );
+    }
+
+    /// #625: the note exists to name paths, so the paths must be *in the text*
+    /// — a count would leave the user exactly as surprised as before.
+    #[test]
+    fn restore_conflict_names_every_colliding_path() {
+        let text = PullNote::RestoreConflict {
+            paths: vec!["shared.txt".into(), "src/lib.rs".into()],
+        }
+        .message_en();
+        assert!(text.contains("\n  - shared.txt"), "{text}");
+        assert!(text.contains("\n  - src/lib.rs"), "{text}");
+        assert!(text.contains("the stash is kept"), "{text}");
+        assert!(!text.contains("more"), "nothing was truncated: {text}");
+    }
+
+    /// #625 (review): the two restore notes must not read alike. One is
+    /// proven by running the merge, the other is "kagi could not tell" — a
+    /// prediction feature that asserts what it has not proven stops being read.
+    #[test]
+    fn restore_conflict_asserts_while_possible_only_warns() {
+        let paths = vec!["shared.txt".to_string()];
+        let certain = PullNote::RestoreConflict {
+            paths: paths.clone(),
+        }
+        .message_en();
+        let possible = PullNote::RestoreConflictPossible { paths }.message_en();
+
+        assert!(certain.contains("will conflict"), "{certain}");
+        assert!(!certain.contains("may conflict"), "{certain}");
+        assert!(possible.contains("may conflict"), "{possible}");
+        assert!(!possible.contains("will conflict"), "{possible}");
+        // Both still name the path — that is the point of either note.
+        assert!(certain.contains("\n  - shared.txt"), "{certain}");
+        assert!(possible.contains("\n  - shared.txt"), "{possible}");
+    }
+
+    /// A working tree can collide on hundreds of paths; the note stays a
+    /// paragraph and accounts for the remainder instead of listing them all.
+    #[test]
+    fn restore_conflict_truncates_past_the_limit_and_counts_the_rest() {
+        let paths: Vec<String> = (0..RESTORE_CONFLICT_PATH_LIMIT + 3)
+            .map(|i| format!("file{i}.txt"))
+            .collect();
+        let text = PullNote::RestoreConflict {
+            paths: paths.clone(),
+        }
+        .message_en();
+        assert!(text.contains("\n  - file0.txt"), "{text}");
+        assert!(
+            text.contains(&format!(
+                "\n  - file{}.txt",
+                RESTORE_CONFLICT_PATH_LIMIT - 1
+            )),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&format!("- file{RESTORE_CONFLICT_PATH_LIMIT}.txt")),
+            "{text}"
+        );
+        assert!(text.contains("… and 3 more"), "{text}");
+        // The split is shared with the JA rendering, so lock it directly too.
+        let (shown, extra) = restore_conflict_paths(&paths);
+        assert_eq!(shown.len(), RESTORE_CONFLICT_PATH_LIMIT);
+        assert_eq!(extra, 3);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! JA strings for `PullNote` (ADR-0129 appendix §B-4).
 
-use kagi_domain::plan_note::{DirtyParts, PullNote, PullRecovery, PullTitle};
+use kagi_domain::plan_note::{
+    restore_conflict_paths, DirtyParts, PullNote, PullRecovery, PullTitle,
+};
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; pull has its own module so it stays
@@ -14,6 +16,21 @@ fn parts_ja(parts: &DirtyParts) -> String {
         out.push(format!("変更 {} 件", parts.modified));
     }
     out.join("、")
+}
+
+/// `<要約>` + 1 行 1 パス + `<助言>`。両方の restore note が共有する形。
+fn path_note_ja(summary: &str, advice: &str, paths: &[String]) -> String {
+    let (shown, extra) = restore_conflict_paths(paths);
+    let mut out = String::from(summary);
+    for path in shown {
+        out.push_str("\n  - ");
+        out.push_str(path);
+    }
+    if extra > 0 {
+        out.push_str(&format!("\n  - 他 {extra} 件"));
+    }
+    out.push_str(advice);
+    out
 }
 
 /// Japanese rendering of one pull note.
@@ -46,6 +63,16 @@ pub fn note_ja(note: &PullNote) -> String {
              fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。"
                 .to_string()
         }
+        PullNote::RestoreConflict { paths } => path_note_ja(
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:",
+            "\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。",
+            paths,
+        ),
+        PullNote::RestoreConflictPossible { paths } => path_note_ja(
+            "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):",
+            "\n復元は試行されます。conflict した場合、stash は保持されます。",
+            paths,
+        ),
         PullNote::ConflictedRefOnly { count } => format!(
             "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。",
             count
@@ -153,6 +180,40 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
 mod tests {
     use super::*;
 
+    /// #625: JA must name the paths too — a localized count is still a count.
+    #[test]
+    fn restore_conflict_ja_names_the_paths() {
+        let text = note_ja(&PullNote::RestoreConflict {
+            paths: vec!["shared.txt".into(), "src/lib.rs".into()],
+        });
+        assert!(text.contains("\n  - shared.txt"), "{text}");
+        assert!(text.contains("\n  - src/lib.rs"), "{text}");
+        assert!(text.contains("conflict"), "{text}");
+    }
+
+    #[test]
+    fn restore_conflict_ja_counts_what_it_truncates() {
+        let paths: Vec<String> = (0..15).map(|i| format!("f{i}.txt")).collect();
+        let text = note_ja(&PullNote::RestoreConflict { paths });
+        assert!(text.contains("\n  - f0.txt"), "{text}");
+        assert!(text.contains("他 3 件"), "{text}");
+    }
+
+    /// #625 (review): JA must keep the same distinction — 断定 と 可能性.
+    #[test]
+    fn restore_conflict_ja_separates_certain_from_possible() {
+        let paths = vec!["shared.txt".to_string()];
+        let certain = note_ja(&PullNote::RestoreConflict {
+            paths: paths.clone(),
+        });
+        let possible = note_ja(&PullNote::RestoreConflictPossible { paths });
+
+        assert!(certain.contains("conflict します"), "{certain}");
+        assert!(!certain.contains("可能性"), "{certain}");
+        assert!(possible.contains("可能性があります"), "{possible}");
+        assert!(certain.contains("\n  - shared.txt"), "{certain}");
+        assert!(possible.contains("\n  - shared.txt"), "{possible}");
+    }
     #[test]
     fn pull_recovery_reverts_without_rewriting_history() {
         let text = recovery_ja(&PullRecovery::Pull);

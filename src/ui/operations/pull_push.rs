@@ -11,6 +11,7 @@ use kagi_domain::plan_note::{
     UntrackedCtx,
 };
 
+use crate::ui::operations::PullConfirmDelivery;
 use crate::ui::*;
 
 impl KagiApp {
@@ -62,6 +63,8 @@ impl KagiApp {
                 plan: std::sync::Arc::new(plan),
                 auto_stash: false,
                 error: None,
+                // A remote pull stashes nothing locally.
+                dirty_digest: None,
             });
             return;
         }
@@ -69,79 +72,280 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
+        // #625 / ADR-0192: a dirty Pull auto-stashes and restores, so its plan
+        // must name the paths whose restore would conflict — and `plan_pull`
+        // only knows the origin refs kagi already has. Auto-fetch runs every
+        // 180s, so the modal could easily be planned against an upstream tip
+        // minutes old and promise a clean restore that then fails. Fetch first
+        // (a read that never touches the working tree), then plan.
+        if self.view().is_dirty {
+            if let Some(session) = self.active_session() {
+                // The request rides *inside* this fetch's task (#626 review):
+                // no global flag, so no unrelated fetch can consume it later
+                // and no reload can drop it. Delivery rules live in
+                // `deliver_pull_confirm`.
+                // `false` means no fetch took the request: nothing started
+                // and nothing in flight is refreshing this repo.
+                if !self.fetch_async_for(false, Some(session), cx) {
+                    // Plan on local knowledge rather than swallowing the
+                    // user's click (no lease, no remote, or a fetch running for
+                    // another repo). The plan is still the honest one — just as
+                    // fresh as kagi's last fetch.
+                    self.plan_and_open_pull_modal(cx);
+                }
+                return;
+            }
+        }
+        self.plan_and_open_pull_modal(cx);
+    }
+
+    /// Deliver the confirmation a dirty Pull asked for when *its* fetch task
+    /// finishes (#625, ADR-0192; #626 review).
+    ///
+    /// Every case is decided here rather than at the call site, because the
+    /// three earlier attempts each fixed one branch and left another:
+    ///
+    /// | state at completion | delivery |
+    /// |---|---|
+    /// | fetch failed | oplog entry always; notice modal now if the tab is on screen, else parked |
+    /// | ok, tab on screen, no other modal | plan and open the confirmation |
+    /// | ok, tab **not** on screen | parked; opened when that tab is next activated |
+    /// | ok, another modal open | request cancelled — the user's newer modal wins |
+    /// | requesting tab closed | dropped with the tab |
+    ///
+    /// Parking is what makes "press Pull, switch tabs, come back" work: the
+    /// answer belongs to the tab that asked, so it waits for that tab instead
+    /// of being lost (or opening over a different repository).
+    pub(crate) fn deliver_pull_confirm(
+        &mut self,
+        session: crate::app::SessionId,
+        fetch_error: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.app_sessions.is_attached(session) {
+            klog!("pull-confirm: dropped (tab closed)");
+            return;
+        }
+        if let Some(error) = fetch_error {
+            // Persisted first: the oplog entry must exist even when the modal
+            // has to wait for its tab.
+            self.record_pull_fetch_failure(session, &error, cx);
+            if self.active_session() == Some(session) {
+                self.set_app_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
+            } else {
+                self.pending_pull_confirm
+                    .insert(session, PullConfirmDelivery::FetchFailed(error));
+            }
+            return;
+        }
+        if self.active_session() != Some(session) {
+            self.pending_pull_confirm
+                .insert(session, PullConfirmDelivery::Confirm);
+            klog!("pull-confirm: parked for its tab");
+            return;
+        }
+        // "One modal at a time" is structural (ADR-0093). A confirmation that
+        // opened while the fetch ran belongs to a newer decision and may hold
+        // half-typed input, so this request yields instead of replacing it.
+        if self.foreign_modal_open() {
+            klog!("pull-confirm: cancelled (another modal is open)");
+            return;
+        }
+        self.plan_and_open_pull_modal(cx);
+    }
+
+    /// Deliver a parked Pull confirmation to the tab that asked for it, now
+    /// that it is on screen again.
+    pub(crate) fn deliver_parked_pull_confirm(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        let Some(parked) = self.pending_pull_confirm.remove(&session) else {
+            return;
+        };
+        if self.foreign_modal_open() {
+            klog!("pull-confirm: cancelled (another modal is open)");
+            return;
+        }
+        match parked {
+            PullConfirmDelivery::Confirm => {
+                klog!("pull-confirm: delivered on tab activation");
+                self.plan_and_open_pull_modal(cx);
+            }
+            PullConfirmDelivery::FetchFailed(error) => {
+                self.set_app_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
+            }
+        }
+    }
+
+    /// Is a modal other than a Pull confirmation on screen?
+    fn foreign_modal_open(&self) -> bool {
+        self.has_active_modal() && self.pull_modal().is_none()
+    }
+
+    /// #625: a fetch run *for* a Pull confirmation failed, so there is no
+    /// confirmation to show — but the user pressed Pull and is owed an answer
+    /// that outlives a toast (CLAUDE.md: user-facing errors surface via the
+    /// oplog **and** a modal).
+    ///
+    /// This half is the durable one and always runs, even when the modal has to
+    /// wait for the tab that asked. The modal half is a notice, not the Pull
+    /// confirmation: there is nothing to confirm, and a plan built on knowledge
+    /// kagi just failed to refresh must not be confirmable. A notice is
+    /// dismissed by the user, never by a reload.
+    fn record_pull_fetch_failure(
+        &mut self,
+        session: crate::app::SessionId,
+        error: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(owner) = self.app_sessions.attachment(session) else {
+            return;
+        };
+        let repo_path = owner.path.clone();
+        // The fetch has no OperationController boundary that records it, so it
+        // takes ADR-0149's "non-run op" path and is persisted here.
+        let before = StateSummary {
+            head: format!("branch: {}", self.view().status_summary.branch),
+            dirty: "unchanged".to_string(),
+        };
+        self.record_op_persist(
+            "fetch",
+            before,
+            kagi_git::oplog::OpOutcome::Failed {
+                error: i18n::op_failed(i18n::Op::Fetch, error),
+            },
+            &repo_path,
+            cx,
+        );
+    }
+
+    /// Plan a local pull and open (or skip) its confirmation modal. `true` when
+    /// a confirmation is now on screen.
+    ///
+    /// Split from [`Self::open_pull_modal`] so the dirty path can run it after
+    /// its fetch completes (#625) without duplicating the plan handling.
+    pub(crate) fn plan_and_open_pull_modal(&mut self, cx: &mut Context<Self>) -> bool {
+        match self.build_pull_modal() {
+            Ok(Some(modal)) => {
+                eprintln!(
+                    "[kagi] plan: pull blockers={} warnings={}",
+                    modal.plan.blockers.len(),
+                    modal.plan.warnings.len()
+                );
+                self.set_pull_modal(modal);
+                true
+            }
+            // Already-up-to-date pull (nothing to pull by local knowledge)
+            // is not worth a blocking popup (user request): snackbar instead.
+            Ok(None) => {
+                self.push_toast(
+                    ToastKind::Sync,
+                    SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                    cx,
+                );
+                self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                false
+            }
+            Err(error) => {
+                self.status_footer = FooterStatus::Failed(SharedString::from(error));
+                false
+            }
+        }
+    }
+
+    /// Refresh an open dirty-Pull confirmation against reloaded repository
+    /// state (#625, ADR-0192).
+    ///
+    /// A dirty Pull fetches before confirming, and that fetch fires the FS
+    /// watcher — whose reload clears confirmation modals (ADR-0189), because a
+    /// plan invalidated by a repository change must not be confirmable. Both
+    /// halves of that hold here: the confirmation the user asked for **stays on
+    /// screen until they act on it**, and it is re-planned so what they confirm
+    /// is never the stale plan.
+    ///
+    /// A plan that now has nothing to confirm (someone else pulled meanwhile)
+    /// or that fails to build leaves the existing modal in place rather than
+    /// making the window empty under the user's cursor; `Backend::run`'s
+    /// preflight is what refuses a stale confirmation at execute time.
+    pub(crate) fn replan_pull_modal(&mut self) {
+        match self.build_pull_modal() {
+            Ok(Some(modal)) => {
+                klog!(
+                    "replan: pull blockers={} warnings={}",
+                    modal.plan.blockers.len(),
+                    modal.plan.warnings.len()
+                );
+                self.set_pull_modal(modal);
+            }
+            Ok(None) => klog!("replan: pull nothing to pull; keeping the confirmation"),
+            Err(error) => klog!("replan: pull failed: {error}"),
+        }
+    }
+
+    /// The confirmation a local pull would show: `Ok(None)` when there is
+    /// nothing to pull, `Err` when the plan could not be built.
+    fn build_pull_modal(&mut self) -> Result<Option<PullPlanModal>, String> {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
-            None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("pull: repo session unavailable"));
-                return;
-            }
+            None => return Err("pull: repo session unavailable".to_string()),
         };
-        match repo.plan_pull() {
-            Ok(mut plan) => {
-                let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
-                if auto_stash {
-                    let status = &self.view().status_summary;
-                    plan.warnings.retain(|note| {
-                        !matches!(
-                            note,
-                            PlanNote::Pull(PullNote::DirtyPullGuard { .. })
-                                | PlanNote::Common(CommonNote::UntrackedRemain {
-                                    ctx: UntrackedCtx::PullFetchMayTouch,
-                                    ..
-                                })
-                        )
-                    });
-                    plan.warnings.push(PlanNote::Pull(PullNote::AutoStash {
-                        parts: DirtyParts {
-                            staged: status.staged,
-                            modified: status.unstaged,
-                        },
-                        untracked: status.untracked,
-                    }));
-                    plan.recovery = Some(PlanRecovery {
-                        kind: RecoveryKind::Pull(PullRecovery::PullAutoStash),
-                        commands: Vec::new(),
-                    });
-                }
-                eprintln!(
-                    "[kagi] plan: pull blockers={} warnings={}",
-                    plan.blockers.len(),
-                    plan.warnings.len()
-                );
-                // Already-up-to-date pull (nothing to pull by local knowledge)
-                // is not worth a blocking popup (user request): snackbar instead.
-                // Background auto-fetch keeps the behind count fresh;
-                // ops::plan_pull sets NoOp(PullUpToDate) when behind == 0
-                // (ADR-0129 F-1: no string-parsing of the title).
-                if plan.blockers.is_empty()
-                    && plan.warnings.is_empty()
-                    && matches!(
-                        plan.disposition,
-                        kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PullUpToDate)
-                    )
-                {
-                    self.push_toast(
-                        ToastKind::Sync,
-                        SharedString::from(Msg::AlreadyUpToDatePull.t()),
-                        cx,
-                    );
-                    self.status_footer = FooterStatus::Idle(SharedString::from(""));
-                    return;
-                }
-                self.set_pull_modal(PullPlanModal {
-                    plan: std::sync::Arc::new(plan),
-                    auto_stash,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Pull, e),
-                ));
-            }
+        let mut plan = repo
+            .plan_pull()
+            .map_err(|e| i18n::op_plan_failed(i18n::Op::Pull, e))?;
+        let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
+        if auto_stash {
+            let status = &self.view().status_summary;
+            // Auto-stash makes the two generic dirty warnings wrong —
+            // kagi is about to stash, not refuse — so they are replaced
+            // by `AutoStash` below. Only those two: every other note
+            // stays, and `RestoreConflict` (#625) in particular must,
+            // since naming the colliding paths before the user confirms
+            // is the whole point of that note.
+            plan.warnings.retain(|note| {
+                !matches!(
+                    note,
+                    PlanNote::Pull(PullNote::DirtyPullGuard { .. })
+                        | PlanNote::Common(CommonNote::UntrackedRemain {
+                            ctx: UntrackedCtx::PullFetchMayTouch,
+                            ..
+                        })
+                )
+            });
+            plan.warnings.push(PlanNote::Pull(PullNote::AutoStash {
+                parts: DirtyParts {
+                    staged: status.staged,
+                    modified: status.unstaged,
+                },
+                untracked: status.untracked,
+            }));
+            plan.recovery = Some(PlanRecovery {
+                kind: RecoveryKind::Pull(PullRecovery::PullAutoStash),
+                commands: Vec::new(),
+            });
         }
+        // Background auto-fetch keeps the behind count fresh; ops::plan_pull
+        // sets NoOp(PullUpToDate) when behind == 0 (ADR-0129 F-1: no
+        // string-parsing of the title).
+        if plan.blockers.is_empty()
+            && plan.warnings.is_empty()
+            && matches!(
+                plan.disposition,
+                kagi_git::ops::PlanDisposition::NoOp(kagi_git::ops::NoOpKind::PullUpToDate)
+            )
+        {
+            return Ok(None);
+        }
+        Ok(Some(PullPlanModal {
+            plan: std::sync::Arc::new(plan),
+            auto_stash,
+            error: None,
+            dirty_digest: repo
+                .working_tree_status()
+                .ok()
+                .map(|status| status.digest()),
+        }))
     }
 
     /// Close the pull modal without executing.
@@ -222,6 +426,7 @@ impl KagiApp {
                                     plan: modal.plan.clone(),
                                     auto_stash: false,
                                     error: Some(SharedString::from(err_msg)),
+                                    dirty_digest: modal.dirty_digest,
                                 });
                             }
                         }
@@ -259,7 +464,10 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let auto_stash = modal.auto_stash;
         let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move { pull_blocking(&bg_path, &plan, auto_stash) });
+        let promised_dirty = modal.dirty_digest;
+        let task = cx.background_spawn(async move {
+            pull_blocking(&bg_path, &plan, auto_stash, promised_dirty)
+        });
         self.finish_op_on_main(cx, task, move |app, result, cx| {
             app.finish_pull(result, modal, repo_path, cx);
         });
@@ -305,6 +513,7 @@ impl KagiApp {
                     plan: modal.plan.clone(),
                     auto_stash: modal.auto_stash,
                     error: Some(SharedString::from(error)),
+                    dirty_digest: modal.dirty_digest,
                 });
             }
             PullBlockingResult::Partial { error, after } => {
@@ -323,6 +532,7 @@ impl KagiApp {
                     plan: modal.plan.clone(),
                     auto_stash: modal.auto_stash,
                     error: Some(SharedString::from(error)),
+                    dirty_digest: modal.dirty_digest,
                 });
                 self.reload_async(false, cx);
             }

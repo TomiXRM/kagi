@@ -1,7 +1,7 @@
 //! StashNote / StashTitle / StashRecovery — ADR-0129 appendix §B-7
 //! (+ §A conflicted-files cross-op, §C title row, §D recovery row).
 //!
-//! Covers the five plan producers in `crates/kagi-git/src/ops/stash.rs`:
+//! Covers the five plan producers in `crates/kagi-git/src/ops/{stash,stash_push}.rs`:
 //! `plan_stash_push`, `plan_stash_apply`, `plan_stash_pop`,
 //! `plan_stash_drop_remote` (SSH), and `plan_stash_drop`. Cross-op notes
 //! (conflicted files) are NOT duplicated here — `plan_stash_push` /

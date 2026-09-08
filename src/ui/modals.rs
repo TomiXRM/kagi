@@ -48,6 +48,14 @@ pub struct PullPlanModal {
     pub plan: std::sync::Arc<OperationPlan>,
     pub auto_stash: bool,
     pub error: Option<SharedString>,
+    /// #625 / ADR-0192: the dirty set this confirmation was built from.
+    ///
+    /// The promise the modal makes — these paths get stashed, and restoring
+    /// them does *this* — is only true for that working tree. `pull_blocking`
+    /// re-checks it before stashing and refuses a stale confirmation, because
+    /// stashing first hides any later change from every downstream guard.
+    /// `None` for a remote pull, which stashes nothing.
+    pub dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
 }
 
 /// State for an in-progress operation-history Undo/Redo confirmation

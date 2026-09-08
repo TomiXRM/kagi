@@ -24,6 +24,53 @@ pub struct StashReport {
     pub evidence: StashEvidence,
 }
 
+/// Are all of `needles` still present in `haystack`, in the same relative
+/// order? Used to verify a stash push left every pre-existing entry alone
+/// while tolerating entries a *third party* pushed concurrently (#623).
+fn retains_in_order(needles: &[String], haystack: &[String]) -> bool {
+    let mut rest = haystack.iter();
+    needles
+        .iter()
+        .all(|needle| rest.any(|candidate| candidate == needle))
+}
+
+/// The tracked paths a stash restore is expected to write — the exact set the
+/// verification compares after a pop (#624).
+///
+/// Taken from the diff between the **current** HEAD tree and `expected`, the
+/// merged index libgit2 produced for this apply, so it names the paths the
+/// restore actually lands on. It deliberately is *not* the diff of the stash
+/// against the HEAD it was made from: that HEAD can have moved since (an
+/// auto-stash pull moves it by design), and libgit2's merge follows renames.
+/// If HEAD renamed `a` to `b` after the stash was taken, the stashed change to
+/// `a` is restored at `b`, and verifying `a` would compare a path nobody wrote
+/// and call the restore proven.
+///
+/// Paths are raw bytes (`path_bytes`), never `String`: a path that is not valid
+/// UTF-8 must survive verbatim rather than be replaced with U+FFFD, or the
+/// pathspec would no longer name the file. Callers must pair this with
+/// `DiffOptions::disable_pathspec_match(true)` so a filename containing glob
+/// characters (`a[1].txt`) is matched literally instead of as a pattern.
+fn expected_restore_paths(
+    repo: &git2::Repository,
+    head: &git2::Tree<'_>,
+    expected: &git2::Index,
+) -> Result<std::collections::BTreeSet<Vec<u8>>, git2::Error> {
+    let delta = repo.diff_tree_to_index(Some(head), Some(expected), None)?;
+    let mut paths = std::collections::BTreeSet::new();
+    for d in delta.deltas() {
+        // Both sides: a delete names the path that must be gone from the
+        // working tree, an add the path that must have appeared.
+        if let Some(path) = d.old_file().path_bytes() {
+            paths.insert(path.to_vec());
+        }
+        if let Some(path) = d.new_file().path_bytes() {
+            paths.insert(path.to_vec());
+        }
+    }
+    Ok(paths)
+}
+
 impl Backend {
     fn verify_restored_stash(&self, oid: &str) -> Result<(), GitError> {
         let check = || -> Result<(), git2::Error> {
@@ -33,16 +80,27 @@ impl Backend {
             if expected.has_conflicts() {
                 return Err(git2::Error::from_str("expected merge still has conflicts"));
             }
-            let diff = self.repo.diff_index_to_workdir(Some(&expected), None)?;
-            if diff
-                .deltas()
-                .any(|delta| delta.status() != git2::Delta::Unmodified)
-            {
-                return Err(git2::Error::from_str(
-                    "restored tracked bytes differ from stash merge",
-                ));
-            }
             let stash = self.repo.find_commit(oid)?;
+            let head_tree = self.repo.find_commit(head)?.tree()?;
+            let restored_paths = expected_restore_paths(&self.repo, &head_tree, &expected)?;
+            if !restored_paths.is_empty() {
+                let mut options = git2::DiffOptions::new();
+                options.disable_pathspec_match(true);
+                for path in &restored_paths {
+                    options.pathspec(path.as_slice());
+                }
+                let diff = self
+                    .repo
+                    .diff_index_to_workdir(Some(&expected), Some(&mut options))?;
+                if diff
+                    .deltas()
+                    .any(|delta| delta.status() != git2::Delta::Unmodified)
+                {
+                    return Err(git2::Error::from_str(
+                        "restored tracked bytes differ from stash merge",
+                    ));
+                }
+            }
             if stash.parent_count() > 2 {
                 let tree = stash.parent(2)?.tree()?;
                 let diff = self.repo.diff_tree_to_workdir(Some(&tree), None)?;
@@ -282,12 +340,29 @@ impl Backend {
             StashAction::Push {
                 include_untracked, ..
             } => {
-                if actual.oids.len() != remaining.len() + 1 || actual.oids[1..] != remaining {
+                // #623: an external `git stash push` can add entries kagi never
+                // made, so "exactly one longer, ours on top" is not the
+                // invariant — it failed a correctly identified push just
+                // because someone else stashed in the same second, and it also
+                // *replaced* the identified OID with whatever sat on top. What
+                // must hold is narrower and true: the entry the executor
+                // identified is on the stack exactly once, and nothing that was
+                // there when kagi planned has gone.
+                let created = evidence.oid.clone().ok_or_else(|| {
+                    GitError::Other("stash push recorded no created stash".into())
+                })?;
+                let mut others = actual.oids.clone();
+                let Some(at) = others.iter().position(|oid| *oid == created) else {
+                    return Err(GitError::Other(
+                        "stash push list verification failed".into(),
+                    ));
+                };
+                others.remove(at);
+                if others.contains(&created) || !retains_in_order(&remaining, &others) {
                     return Err(GitError::Other(
                         "stash push list verification failed".into(),
                     ));
                 }
-                evidence.oid = actual.oids.first().cloned();
                 let mut expected_untracked = if *include_untracked {
                     vec![]
                 } else {
@@ -439,4 +514,154 @@ pub(super) fn stash_outcome(
         after.dirty = format!("stash entry deleted (oid {oid})");
     }
     OpOutcome::Success { after }
+}
+
+#[cfg(test)]
+mod expected_restore_paths_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        repo: git2::Repository,
+        root: std::path::PathBuf,
+    }
+
+    impl Fixture {
+        /// A repo whose HEAD commit holds `files`, with an identity configured
+        /// so `stash_save2` can sign the stash commit.
+        fn new(files: &[(&str, &str)]) -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let root = dir.path().to_path_buf();
+            let repo = git2::Repository::init(&root).expect("init");
+            let mut config = repo.config().expect("config");
+            config.set_str("user.name", "kagi test").expect("name");
+            config.set_str("user.email", "test@kagi").expect("email");
+            let mut fixture = Self {
+                _dir: dir,
+                repo,
+                root,
+            };
+            for (path, body) in files {
+                fixture.write(path, body);
+            }
+            fixture.commit("init");
+            fixture
+        }
+
+        fn write(&self, path: &str, body: &str) {
+            std::fs::write(self.root.join(path), body).expect("write");
+        }
+
+        /// Commit the whole working tree, so a rename or a delete staged by the
+        /// caller lands in the new HEAD.
+        fn commit(&mut self, message: &str) {
+            let mut index = self.repo.index().expect("index");
+            index
+                .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+                .expect("add all");
+            index.write().expect("write index");
+            let tree = self
+                .repo
+                .find_tree(index.write_tree().expect("write tree"))
+                .expect("tree");
+            let sig = self.repo.signature().expect("signature");
+            let parents = match self.repo.head() {
+                Ok(head) => vec![head.peel_to_commit().expect("head commit")],
+                Err(_) => Vec::new(),
+            };
+            let parents: Vec<&git2::Commit<'_>> = parents.iter().collect();
+            self.repo
+                .commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+                .expect("commit");
+        }
+
+        fn stash(&mut self) -> git2::Oid {
+            let sig = self.repo.signature().expect("signature");
+            self.repo.stash_save2(&sig, None, None).expect("stash")
+        }
+
+        /// The paths the restore of `stash` is expected to write against the
+        /// current HEAD — exactly what `verify_restored_stash` scopes by.
+        fn restore_paths(&self, stash: git2::Oid) -> BTreeSet<Vec<u8>> {
+            let head = self.repo.head().unwrap().peel_to_commit().unwrap().id();
+            let expected = ops::stash_apply_dry_run(&self.repo, head, stash).expect("dry run");
+            let head_tree = self.repo.find_commit(head).unwrap().tree().unwrap();
+            expected_restore_paths(&self.repo, &head_tree, &expected).expect("collect paths")
+        }
+    }
+
+    /// HEAD can move between the stash and the pop — an auto-stash pull moves it
+    /// by design — and libgit2's merge follows renames. When HEAD renames the
+    /// stashed file, the restore lands at the new path, so that is the path the
+    /// verification has to compare. Scoping by what the stash touched instead
+    /// would check a path nobody wrote and call an unverified restore proven.
+    #[test]
+    fn rename_in_head_moves_verification_to_the_restored_path() {
+        let mut fixture = Fixture::new(&[("a.txt", "one\ntwo\nthree\n")]);
+        fixture.write("a.txt", "one\ntwo\nthree\nstashed\n");
+        let stash = fixture.stash();
+
+        std::fs::rename(fixture.root.join("a.txt"), fixture.root.join("b.txt")).expect("rename");
+        fixture.commit("head renames a.txt to b.txt");
+
+        let paths = fixture.restore_paths(stash);
+        assert!(
+            paths.contains(&b"b.txt".to_vec()),
+            "the restore lands at b.txt, so b.txt must be verified; got {paths:?}"
+        );
+    }
+
+    /// The set stays narrow: a tracked file the restore does not write is not
+    /// compared, so unrelated dirty work is not a false mismatch.
+    #[test]
+    fn untouched_tracked_files_stay_out() {
+        let mut fixture = Fixture::new(&[("a.txt", "one\n"), ("keep.txt", "keep\n")]);
+        fixture.write("a.txt", "changed\n");
+        let stash = fixture.stash();
+
+        assert_eq!(
+            fixture.restore_paths(stash),
+            BTreeSet::from([b"a.txt".to_vec()]),
+            "keep.txt is untouched by the restore and must not be compared"
+        );
+    }
+
+    /// A filename carrying glob metacharacters is collected verbatim, and the
+    /// pathspecs built from it select only that file — which holds only because
+    /// the caller disables pathspec pattern matching.
+    #[test]
+    fn glob_character_filename_is_matched_literally() {
+        let mut fixture = Fixture::new(&[("a[1].txt", "one\n"), ("a1.txt", "decoy\n")]);
+        fixture.write("a[1].txt", "changed\n");
+        let stash = fixture.stash();
+
+        let collected = fixture.restore_paths(stash);
+        assert_eq!(
+            collected,
+            BTreeSet::from([b"a[1].txt".to_vec()]),
+            "only the restored path belongs in the set"
+        );
+
+        // `a1.txt` is what `a[1].txt` selects when read as a glob. Dirty it, then
+        // scope a diff by the collected paths the way the restore check does:
+        // with literal matching the decoy is invisible and the diff is empty.
+        fixture.write("a1.txt", "dirty\n");
+        let head = fixture.repo.head().unwrap().peel_to_tree().unwrap();
+        let mut options = git2::DiffOptions::new();
+        options.disable_pathspec_match(true);
+        for path in &collected {
+            options.pathspec(path.as_slice());
+        }
+        let diff = fixture
+            .repo
+            .diff_tree_to_workdir(Some(&head), Some(&mut options))
+            .expect("diff");
+        assert_eq!(
+            diff.deltas().count(),
+            0,
+            "a[1].txt must not be read as a pattern that pulls in a1.txt"
+        );
+    }
 }

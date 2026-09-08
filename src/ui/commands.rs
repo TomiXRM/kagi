@@ -1836,8 +1836,13 @@ impl KagiApp {
                 // silencing the fetch-age warning (ADR-0127) for a repo that
                 // was never fetched, and closing that tab's commit panel.
                 if app.repo_path.as_deref() != Some(repo_path_guard.as_path()) {
+                    // #625: the Pull this fetch was for belongs to the tab the
+                    // user left, so its modal must not open over another repo.
+                    app.pull_modal_after_fetch = false;
                     return;
                 }
+                let fetch_reloads = matches!(&result, Ok(outcome) if outcome.changed);
+                let fetch_failed = result.is_err();
                 match result {
                     Ok(outcome) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the
@@ -1875,6 +1880,26 @@ impl KagiApp {
                             )));
                             app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"), cx);
                         }
+                    }
+                }
+                // #625 / ADR-0192: a dirty Pull deferred its confirmation modal
+                // to this fetch, so the plan can name the paths whose auto-stash
+                // restore would conflict.
+                //
+                // Who opens it depends on whether the fetch moved a ref.
+                // `reload` is asynchronous and its apply *clears confirmation
+                // modals* (ADR-0189) — so a modal opened here would be planned
+                // correctly and then erased seconds later. When a reload is
+                // coming, the flag stays set and the reload apply opens the
+                // modal from the read model it just installed.
+                //
+                // A failed fetch opens nothing: the footer error above is the
+                // answer, and confirming against knowledge kagi just failed to
+                // refresh is the surprise this defers the modal to avoid.
+                if app.pull_modal_after_fetch && (fetch_failed || !fetch_reloads) {
+                    app.pull_modal_after_fetch = false;
+                    if !fetch_failed {
+                        app.plan_and_open_pull_modal(cx);
                     }
                 }
                 cx.notify();

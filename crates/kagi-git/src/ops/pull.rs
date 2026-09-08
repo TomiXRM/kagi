@@ -9,6 +9,9 @@
 //! remote pull plan (`plan_pull_remote`). The closely-related tracking-branch
 //! checkout and switch-to-latest flows live in the sibling `switch.rs`.
 
+use super::pull_conflict::{
+    ensure_pull_does_not_touch_dirty_paths, plan_pull_restore_conflicts, predict_merge_conflict,
+};
 use super::remote_common::{
     local_branch_oid, resolve_upstream_info, resolve_upstream_oid, short_oid_string,
 };
@@ -214,6 +217,18 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         if let Ok(has_conflict) = predict_merge_conflict(repo, &branch_name, &remote_name) {
             if has_conflict {
                 warnings.push(PlanNote::Pull(PullNote::MergePrediction));
+            }
+        }
+
+        // #625: the merge prediction above compares commits, so a
+        // fast-forward pull looks harmless to it — what collides is the
+        // working tree against the incoming content, and the user only found
+        // out when the auto-stash failed to restore *after* confirming. Name
+        // the paths here instead. Same local knowledge as the prediction
+        // beside it; the UI fetches first for a dirty pull (ADR-0192).
+        if let Ok(paths) = plan_pull_restore_conflicts(repo, &branch_name, &remote_name) {
+            if !paths.is_empty() {
+                warnings.push(PlanNote::Pull(PullNote::RestoreConflict { paths }));
             }
         }
     }
@@ -491,120 +506,6 @@ pub(crate) fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOu
     Ok(PullOutcome::Merged {
         commit: CommitId(new_oid.to_string()),
     })
-}
-
-// ────────────────────────────────────────────────────────────
-// Internal helpers (pull)
-// ────────────────────────────────────────────────────────────
-
-fn ensure_pull_does_not_touch_dirty_paths(
-    repo: &Repository,
-    old_tree: &git2::Tree<'_>,
-    new_tree: &git2::Tree<'_>,
-) -> Result<(), GitError> {
-    let status = working_tree_status(repo)?;
-    if status.staged.is_empty() && status.unstaged.is_empty() && status.untracked.is_empty() {
-        return Ok(());
-    }
-
-    let mut dirty_paths: std::collections::HashSet<PathBuf> =
-        status.untracked.iter().cloned().collect();
-    for file in status.staged.iter().chain(status.unstaged.iter()) {
-        dirty_paths.insert(file.path.clone());
-        if let ChangeKind::Renamed { from } = &file.change {
-            dirty_paths.insert(from.clone());
-        }
-    }
-
-    let changed_paths = pull_changed_paths_between_trees(repo, old_tree, new_tree)?;
-    let mut overlapping: Vec<String> = changed_paths
-        .into_iter()
-        .filter(|path| dirty_paths.contains(path))
-        .map(|path| path.display().to_string())
-        .collect();
-    overlapping.sort();
-    overlapping.dedup();
-
-    if overlapping.is_empty() {
-        Ok(())
-    } else {
-        Err(GitError::Other(format!(
-            "pull would overwrite dirty path(s): {}. Stash or commit those paths, then pull again.",
-            overlapping.join(", ")
-        )))
-    }
-}
-
-fn pull_changed_paths_between_trees(
-    repo: &Repository,
-    old_tree: &git2::Tree<'_>,
-    new_tree: &git2::Tree<'_>,
-) -> Result<Vec<PathBuf>, GitError> {
-    let diff = repo
-        .diff_tree_to_tree(Some(old_tree), Some(new_tree), None)
-        .map_err(|e| {
-            GitError::Other(format!(
-                "diff_tree_to_tree for pull safety failed: {}",
-                e.message()
-            ))
-        })?;
-
-    let mut paths = Vec::new();
-    for delta in diff.deltas() {
-        if let Some(path) = delta.old_file().path() {
-            paths.push(path.to_path_buf());
-        }
-        if let Some(path) = delta.new_file().path() {
-            paths.push(path.to_path_buf());
-        }
-    }
-    Ok(paths)
-}
-
-/// Attempt an in-memory merge with the current upstream tip to predict conflicts.
-///
-/// Returns `Ok(true)` if a conflict is predicted, `Ok(false)` if the merge
-/// would be clean (or fast-forward), or `Err(...)` if the prediction itself
-/// failed (non-fatal — caller ignores and treats as no warning).
-fn predict_merge_conflict(
-    repo: &Repository,
-    branch_name: &str,
-    remote_name: &str,
-) -> Result<bool, GitError> {
-    let head_oid = repo.head().ok().and_then(|r| r.target());
-    let upstream_oid = resolve_upstream_oid(repo, branch_name, remote_name).ok();
-
-    let (head_oid, upstream_oid) = match (head_oid, upstream_oid) {
-        (Some(h), Some(u)) => (h, u),
-        _ => return Ok(false),
-    };
-
-    // If already fast-forward or up-to-date, no conflict possible.
-    if head_oid == upstream_oid {
-        return Ok(false);
-    }
-    if repo
-        .graph_descendant_of(head_oid, upstream_oid)
-        .unwrap_or(false)
-        || repo
-            .graph_descendant_of(upstream_oid, head_oid)
-            .unwrap_or(false)
-    {
-        return Ok(false);
-    }
-
-    let head_commit = repo
-        .find_commit(head_oid)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let upstream_commit = repo
-        .find_commit(upstream_oid)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-    let index = repo
-        .merge_commits(&head_commit, &upstream_commit, None)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-    Ok(index.has_conflicts())
 }
 
 // ────────────────────────────────────────────────────────────

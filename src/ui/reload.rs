@@ -169,6 +169,10 @@ impl KagiApp {
         // the display folding below (modals, selection, conflict, panels)
         // belongs to it.
         if self.active_session() != Some(session) {
+            // …including a Pull confirmation deferred to a fetch (#625): the
+            // user is looking at another tab now, so drop the request rather
+            // than opening it over that one later.
+            self.pull_modal_after_fetch = false;
             return;
         }
 
@@ -311,6 +315,16 @@ impl KagiApp {
         // would have it wiped by `clear_stash_drop_modal`). Just plans + sets the
         // modal — no further reload.
         self.present_stash_followup(cx);
+
+        // #625 / ADR-0192: the same shape as the #309 follow-up above, for the
+        // same reason. A dirty Pull deferred its confirmation modal to a fetch,
+        // and that fetch moved a ref — so this reload *is* that fetch's. Plan
+        // the modal here: after the modal-clearing sweep, which would otherwise
+        // erase it, and from the read model this reload just installed, so the
+        // paths it names are the ones the fetch revealed.
+        if std::mem::take(&mut self.pull_modal_after_fetch) {
+            self.plan_and_open_pull_modal(cx);
+        }
 
         cx.notify();
     }

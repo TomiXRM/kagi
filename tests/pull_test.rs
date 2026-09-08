@@ -587,5 +587,113 @@ fn test_pull_merge_keeps_unrelated_dirty_file() {
     );
 }
 
+/// The colliding paths a `RestoreConflict` warning names, if the plan has one.
+fn restore_conflict_paths(plan: &kagi_git::OperationPlan) -> Option<Vec<String>> {
+    plan.warnings.iter().find_map(|note| match note {
+        kagi_domain::plan_note::PlanNote::Pull(
+            kagi_domain::plan_note::PullNote::RestoreConflict { paths },
+        ) => Some(paths.clone()),
+        _ => None,
+    })
+}
+
+/// #625: a dirty pull whose paths the incoming update also changes. The merge
+/// prediction beside this stays silent — the pull is a fast-forward, so nothing
+/// conflicts commit-to-commit — and the collision only appeared when the
+/// auto-stash failed to restore, *after* the user confirmed. The plan must name
+/// the paths instead.
+#[test]
+fn test_plan_pull_names_paths_whose_restore_would_conflict() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    remote_commit(
+        &r,
+        "base.txt",
+        "base\nupstream edit\n",
+        "upstream: touch base.txt",
+    );
+    remote_commit(
+        &r,
+        "scratch.txt",
+        "upstream scratch\n",
+        "upstream: add scratch",
+    );
+    // Tracked-and-edited, staged-but-untouched-upstream, and an untracked file
+    // whose name the update introduces.
+    write_file(&r.local, "base.txt", "base\nlocal edit\n");
+    write_file(&r.local, "staged.txt", "staged\n");
+    git(&r.local, &["add", "staged.txt"]);
+    write_file(&r.local, "scratch.txt", "local scratch\n");
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("plan should succeed");
+
+    assert!(
+        plan.blockers.is_empty(),
+        "a dirty pull is confirmable, not blocked: {:?}",
+        plan.blockers
+    );
+    let paths = restore_conflict_paths(&plan).expect("restore-conflict warning");
+    assert_eq!(
+        paths,
+        vec!["base.txt".to_string(), "scratch.txt".to_string()],
+        "both the edited tracked file and the untracked collision are named"
+    );
+    assert!(
+        !paths.contains(&"staged.txt".to_string()),
+        "a dirty path the update does not touch must not be named: {paths:?}"
+    );
+    // The modal renders the note, so the path has to survive into the text.
+    let text = plan
+        .warnings
+        .iter()
+        .map(|note| note.message_en())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("base.txt"), "{text}");
+}
+
+/// The mirror case: dirty, behind, but nothing in common. No conflict note, so
+/// the modal stays the plain Stash & Pull confirmation.
+#[test]
+fn test_plan_pull_without_overlap_has_no_restore_conflict_note() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    remote_commit(
+        &r,
+        "remote_only.txt",
+        "upstream\n",
+        "upstream: add remote_only.txt",
+    );
+    write_file(&r.local, "base.txt", "base\nlocal edit\n");
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("plan should succeed");
+
+    assert!(
+        restore_conflict_paths(&plan).is_none(),
+        "no overlap must not warn: {:?}",
+        plan.warnings
+    );
+    // …and the plan still saw the dirt, so the absence is a real answer rather
+    // than a plan that never looked.
+    assert!(
+        plan.warnings.iter().any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Pull(
+                kagi_domain::plan_note::PullNote::DirtyPullGuard { .. }
+            )
+        )),
+        "{:?}",
+        plan.warnings
+    );
+}
+
 #[path = "support/isolated.rs"]
 mod test_support;

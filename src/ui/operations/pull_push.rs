@@ -69,6 +69,33 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
+        // #625 / ADR-0192: a dirty Pull auto-stashes and restores, so its plan
+        // must name the paths whose restore would conflict — and `plan_pull`
+        // only knows the origin refs kagi already has. Auto-fetch runs every
+        // 180s, so the modal could easily be planned against an upstream tip
+        // minutes old and promise a clean restore that then fails. Fetch first
+        // (a read that never touches the working tree), then plan.
+        if self.view().is_dirty {
+            self.pull_modal_after_fetch = true;
+            self.fetch_async(false, cx);
+            if !self.fetch_in_flight {
+                // Nothing is fetching and nothing started (no lease, or no
+                // remote): plan on local knowledge rather than swallowing the
+                // user's click. The plan is still the honest one — just as
+                // fresh as kagi's last fetch.
+                self.pull_modal_after_fetch = false;
+                self.plan_and_open_pull_modal(cx);
+            }
+            return;
+        }
+        self.plan_and_open_pull_modal(cx);
+    }
+
+    /// Plan a local pull and open (or skip) its confirmation modal.
+    ///
+    /// Split from [`Self::open_pull_modal`] so the dirty path can run it after
+    /// its fetch completes (#625) without duplicating the plan handling.
+    pub(crate) fn plan_and_open_pull_modal(&mut self, cx: &mut Context<Self>) {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.repo_session.as_ref() {
             Some(s) => s.backend(),
@@ -83,6 +110,12 @@ impl KagiApp {
                 let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
                 if auto_stash {
                     let status = &self.view().status_summary;
+                    // Auto-stash makes the two generic dirty warnings wrong —
+                    // kagi is about to stash, not refuse — so they are replaced
+                    // by `AutoStash` below. Only those two: every other note
+                    // stays, and `RestoreConflict` (#625) in particular must,
+                    // since naming the colliding paths before the user confirms
+                    // is the whole point of that note.
                     plan.warnings.retain(|note| {
                         !matches!(
                             note,

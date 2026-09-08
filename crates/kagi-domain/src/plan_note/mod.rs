@@ -54,7 +54,9 @@ pub use force_lease::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle};
 pub use github::{GithubNote, GithubRecovery, GithubTitle};
 pub use history::{HistoryMoveDir, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use merge::{InProgressOp, MergeNote, MergeRecovery, MergeTitle};
-pub use pull::{PullNote, PullRecovery, PullTitle};
+pub use pull::{
+    restore_conflict_paths, PullNote, PullRecovery, PullTitle, RESTORE_CONFLICT_PATH_LIMIT,
+};
 pub use push::{PushNote, PushRecovery, PushTitle};
 pub use rebase::{RebaseNote, RebaseRecovery, RebaseTitle};
 pub use remote_branch::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};

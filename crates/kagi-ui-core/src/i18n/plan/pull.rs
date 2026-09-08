@@ -1,6 +1,8 @@
 //! JA strings for `PullNote` (ADR-0129 appendix §B-4).
 
-use kagi_domain::plan_note::{DirtyParts, PullNote, PullRecovery, PullTitle};
+use kagi_domain::plan_note::{
+    restore_conflict_paths, DirtyParts, PullNote, PullRecovery, PullTitle,
+};
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; pull has its own module so it stays
@@ -45,6 +47,21 @@ pub fn note_ja(note: &PullNote) -> String {
             "merge 予測: 現在の upstream の先端は HEAD と conflict します。\
              fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。"
                 .to_string()
+        }
+        PullNote::RestoreConflict { paths } => {
+            let (shown, extra) = restore_conflict_paths(paths);
+            let mut out = String::from(
+                "pull 後の stash 復元は conflict します。次のパスはローカルでも upstream でも変更されています:",
+            );
+            for path in shown {
+                out.push_str("\n  - ");
+                out.push_str(path);
+            }
+            if extra > 0 {
+                out.push_str(&format!("\n  - 他 {extra} 件"));
+            }
+            out.push_str("\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。");
+            out
         }
         PullNote::ConflictedRefOnly { count } => format!(
             "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。",
@@ -153,6 +170,24 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
 mod tests {
     use super::*;
 
+    /// #625: JA must name the paths too — a localized count is still a count.
+    #[test]
+    fn restore_conflict_ja_names_the_paths() {
+        let text = note_ja(&PullNote::RestoreConflict {
+            paths: vec!["shared.txt".into(), "src/lib.rs".into()],
+        });
+        assert!(text.contains("\n  - shared.txt"), "{text}");
+        assert!(text.contains("\n  - src/lib.rs"), "{text}");
+        assert!(text.contains("conflict"), "{text}");
+    }
+
+    #[test]
+    fn restore_conflict_ja_counts_what_it_truncates() {
+        let paths: Vec<String> = (0..15).map(|i| format!("f{i}.txt")).collect();
+        let text = note_ja(&PullNote::RestoreConflict { paths });
+        assert!(text.contains("\n  - f0.txt"), "{text}");
+        assert!(text.contains("他 3 件"), "{text}");
+    }
     #[test]
     fn pull_recovery_reverts_without_rewriting_history() {
         let text = recovery_ja(&PullRecovery::Pull);

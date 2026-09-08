@@ -549,6 +549,10 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_success),
             ),
             (
+                "pull_auto_stash_overlap_preview",
+                Box::new(crate::recovery_pull::scenario_pull_auto_stash_overlap_preview),
+            ),
+            (
                 "pull_auto_stash_failure_restores",
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
             ),

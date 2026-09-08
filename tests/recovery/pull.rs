@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use gpui::VisualTestAppContext;
+use kagi_domain::plan_note::{PlanNote, PullNote};
 use kagi_git::oplog::{read_oplog_tail_for_repo, recovery, OpOutcome};
 
 use crate::macos::{build_fixture, git, mount, unmount};
@@ -123,7 +124,6 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
     git(repo, &["init", "--bare", "-q", bare_path]);
     git(repo, &["remote", "add", "origin", bare_path]);
     git(repo, &["push", "-q", "-u", "origin", "main"]);
-    std::fs::remove_dir_all(&bare).unwrap();
     std::fs::write(repo.join("README.md"), "restore after failed Pull\n").unwrap();
     std::fs::write(repo.join("scratch.txt"), "restore untracked\n").unwrap();
     git(repo, &["add", "README.md"]);
@@ -139,6 +139,13 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
             "failure must come from execution"
         );
     });
+
+    // The remote disappears only after the confirmation exists: since #625 a
+    // dirty Pull fetches *before* it opens the modal (ADR-0192), so removing it
+    // up front would fail that fetch and there would be no modal to confirm —
+    // a different scenario. Execution's own fetch is the one that must fail
+    // here.
+    std::fs::remove_dir_all(&bare).unwrap();
 
     press_enter(cx, &app, window);
     wait_idle(cx, &app);
@@ -172,5 +179,91 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS pull_auto_stash_failure_restores: failed Pull restores changes and keeps its modal"
+    );
+}
+
+/// #625: a dirty Pull whose dirty path is also changed upstream must name that
+/// path in the confirmation modal — *before* the user confirms.
+///
+/// This repository never fetches: `origin/main` is unknown to it when the Pull
+/// button is pressed, and the pull itself is a fast-forward, so neither the
+/// behind count nor `MergePrediction` can see the collision. The path can
+/// therefore only appear if the UI fetched first and the plan intersected the
+/// dirty set with the incoming change (ADR-0192) — which is exactly what used
+/// to be discovered after confirming, when the auto-stash failed to restore.
+pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    let bare = remote_root.path().join("origin.git");
+    let other = remote_root.path().join("other");
+    let bare_path = bare.to_str().unwrap();
+    let other_path = other.to_str().unwrap();
+
+    std::fs::write(repo.join("shared.txt"), "base\n").unwrap();
+    git(repo, &["add", "shared.txt"]);
+    git(repo, &["commit", "-qm", "add shared.txt"]);
+    git(repo, &["init", "--bare", "-q", bare_path]);
+    git(repo, &["remote", "add", "origin", bare_path]);
+    git(repo, &["push", "-q", "-u", "origin", "main"]);
+    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
+    std::fs::write(other.join("shared.txt"), "base\nupstream edit\n").unwrap();
+    git(&other, &["add", "shared.txt"]);
+    git(
+        &other,
+        &["commit", "-q", "-m", "upstream touches shared.txt"],
+    );
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    // The same path, edited here and not committed: the restore will conflict.
+    std::fs::write(repo.join("shared.txt"), "base\nlocal edit\n").unwrap();
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_pull_modal(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let modal = app.read(cx).pull_modal().expect("dirty Pull confirmation");
+        assert!(modal.auto_stash, "dirty Pull must confirm auto-stash");
+        assert!(
+            modal.plan.blockers.is_empty(),
+            "the collision is a warning, not a refusal: {:?}",
+            modal.plan.blockers
+        );
+        let shown: String = modal
+            .plan
+            .blockers
+            .iter()
+            .chain(modal.plan.warnings.iter())
+            .map(|note| note.message_en())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            shown.contains("shared.txt"),
+            "the modal must name the colliding path before confirmation:\n{shown}"
+        );
+        assert!(
+            modal
+                .plan
+                .warnings
+                .iter()
+                .any(|note| matches!(note, PlanNote::Pull(PullNote::RestoreConflict { .. }))),
+            "the collision must travel as a typed note: {:?}",
+            modal.plan.warnings
+        );
+        // The auto-stash swap must not have dropped it (#625 Part 3).
+        assert!(
+            modal
+                .plan
+                .warnings
+                .iter()
+                .any(|note| matches!(note, PlanNote::Pull(PullNote::AutoStash { .. }))),
+            "the auto-stash summary still belongs in the modal: {:?}",
+            modal.plan.warnings
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_auto_stash_overlap_preview: the modal names the colliding path before confirmation"
     );
 }

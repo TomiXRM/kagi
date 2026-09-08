@@ -1,6 +1,6 @@
-//! This module owns checkout's `plan_*`, `preflight_*`, and `execute_*` checks.
-//! Keep them aligned here: drift can execute against repository state that the
-//! confirmed plan did not describe, breaking the plan → confirm safety boundary.
+//! This module owns existing-local-branch and detached-commit checkout planning/execution
+//! plus their shared [`preflight_check`]; tracking-branch checkout lives in `switch.rs`.
+//! Mixing those boundaries can execute a checkout different from the confirmed plan.
 //!
 use super::*;
 use kagi_domain::plan_note::{

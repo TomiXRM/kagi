@@ -32,8 +32,9 @@ pub use busy::busy_label;
 pub mod op;
 pub mod plan;
 pub use op::{
-    auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
-    auto_stash_restore_failed, op_failed, op_plan_failed, pull_failed_stash_restored, Op,
+    auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
+    auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
+    pull_failed_stash_restored, Op,
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 

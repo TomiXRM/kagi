@@ -143,6 +143,50 @@ and a modal」に従い、`AppNotice`（ユーザーが閉じるまで残り、r
 伝え、ADR-0149 の non-run op 経路で `fetch` の `Failed` を oplog に永続化する。Pull の確認
 モーダルは出さない — 更新に失敗した知識に対して確定させてはいけないため。
 
+### 2b. 保留中の確認は「その fetch task」に配送する（#626 review 3 周目）
+
+3 度「押しても何も起きない」を再発させたので、分岐を塞ぐのをやめて状態を列挙した。
+
+要求は `open_pull_modal` で作られ、**その fetch task のクロージャの中**を旅する
+(`fetch_async_for(silent, pull_confirm, cx)`)。global flag は持たない — 無関係な fetch が
+消費することも、reload が落とすこともできない。fetch が既に走っている場合だけは例外で、
+**同じ repo を更新している in-flight fetch** に相乗りする（別 repo の fetch に相乗りすると
+「fetch してから確認」が嘘になる）。相乗り先が無ければローカル知識で即 plan する。
+
+完了時の配送規則（全ケースを 1 箇所で決める）:
+
+| 完了時の状態 | 配送 |
+|---|---|
+| fetch 失敗 | oplog に `fetch` Failed を必ず記録。要求元 tab が表示中なら notice modal、そうでなければ park |
+| 成功・要求元 tab 表示中・他の modal 無し | plan して確認モーダルを開く |
+| 成功・要求元 tab が**非表示** | その tab 用に park し、次にその tab がアクティブになった時に配送 |
+| 成功・別の modal が開いている | 要求を取り消す（新しいユーザー操作が勝つ）|
+| 要求元 tab が閉じられた | tab と一緒に破棄 |
+
+park は `pending_pull_confirm: HashMap<SessionId, PullConfirmDelivery>`。「Pull を押して
+tab を離れ、戻ってくる」が成立するのはこれのため。答えは要求した tab のものなので、
+別 repo の上に開かずに待つ。
+
+### 2c. 確認の約束は stash の前に照合する（#626 review 3 周目）
+
+モーダル表示後に外部 editor が別の重なるパスを保存すると、`pull_blocking` は先に stash
+するため `Backend::run` の preflight も execute 時の `ensure_pull_does_not_touch_dirty_paths`
+も**空の tree** を見て素通りし、復元だけが事前表示なしで conflict していた。
+
+`PullPlanModal::dirty_digest`（表示時の `WorktreeDigest`）を確認に束縛し、stash の**前**に
+再取得した digest と再 plan した restore note 集合を照合する。どちらかが動いていれば
+`auto_stash_plan_stale`（EN/JA）で拒否し、stash も pull もしない。plan 側の
+`worktree_digest` は使わない — あれは「execute 時に tree が動いていたら拒否」の意味で、
+stash-first の pull は意図的に tree を空にするため（checkout の preflight が誤発火した）。
+
+### 2d. reload は plan を無効化するが、入力は無効化しない（#626 review 3 周目）
+
+`apply_reload_data` の掃除は `CreateBranch` / `CreateWorktree`（plan preview を持たない
+純粋な入力モーダル）を消さないようにした。dirty Pull が確認前に fetch する以上、kagi 自身の
+fetch とそれが起こす watcher reload が「入力中の branch 名」を消してしまう。reload が
+無効化するのは *plan* であり、ユーザーが打っている文字ではない。plan を持つモーダルは
+従来どおり全て掃除する。tab / repo 切替時は `reset_per_repo_ui` が引き続き消す。
+
 ### 3. execute 側の fetch は残す
 
 `execute_pull` の step 2 の fetch はそのまま。dirty Pull では二重 fetch になるが、

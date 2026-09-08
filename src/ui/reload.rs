@@ -206,8 +206,17 @@ impl KagiApp {
         self.clear_set_upstream_modal();
         self.clear_rename_branch_modal();
         self.clear_discard_modal();
-        self.clear_create_branch_modal();
-        self.clear_create_worktree_modal();
+        // #625 (#626 review): `CreateBranch` and `CreateWorktree` are pure
+        // input — a name, a start point, a path — with no plan preview to go
+        // stale, so a repository reload does not invalidate them and clearing
+        // them threw away what the user was typing. That mattered little while
+        // reloads followed the user's own actions; a dirty Pull now fetches
+        // before confirming, so kagi's own fetch (and the watcher it wakes)
+        // would delete a branch name typed while it ran. What a reload
+        // invalidates is a *plan*: every plan-carrying modal above is still
+        // swept, and confirming an input modal re-plans and re-preflights
+        // through `Backend::run` anyway. `reset_per_repo_ui` still clears these
+        // on a tab or repository switch, where the input no longer applies.
         self.modal_focus = None;
         self.clear_stash_push_modal();
         self.clear_stash_apply_modal();

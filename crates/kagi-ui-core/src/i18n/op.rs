@@ -159,6 +159,20 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
     }
 }
 
+/// #625: the working tree moved between the Stash & Pull confirmation and the
+/// stash, so what the user approved is no longer what would happen. Nothing
+/// was stashed and nothing was pulled.
+pub fn auto_stash_plan_stale() -> &'static str {
+    match lang() {
+        Lang::En => {
+            "The working tree changed after this confirmation was shown, so the paths Kagi would stash — and what restoring them would do — are no longer the ones you approved. Nothing was stashed or pulled; press Pull again for a fresh confirmation."
+        }
+        Lang::Ja => {
+            "確認を表示した後に作業ツリーが変わったため、stash 対象と復元結果が承認内容と一致しません。stash も pull も実行していません。Pull をもう一度押すと最新の確認を表示します。"
+        }
+    }
+}
+
 pub fn auto_stash_identity_unverified() -> &'static str {
     match lang() {
         Lang::En => {

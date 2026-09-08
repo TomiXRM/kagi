@@ -307,21 +307,14 @@ pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
     );
 }
 
-/// #625 P1-a: the pending Pull confirmation belongs to **one tab**.
+/// #625 P1-a: a Pull confirmation is delivered to the tab that asked for it,
+/// even when that tab is not on screen while the fetch finishes.
 ///
-/// A background tab's read used to clear it — the request was a bare bool, and
-/// `apply_reload_data` dropped it whatever session the read belonged to. Tab A
-/// pressed Pull, tab B's read landed, and A's fetch finished with nothing left
-/// to honour: "press Pull, nothing happens" again (#626 review).
-///
-/// The request is armed the way the dirty-Pull path arms it (keyed by the
-/// requesting tab), then a reload is started **for tab B** and tab A selected
-/// again, so B's read reaches the apply while A is the active session. That is
-/// the exact path that used to clear it. No timers and no blocked subprocess:
-/// the assertion is on the request itself, so the ordering is whatever
-/// `run_until_parked` produces and the test still cannot pass with the old
-/// unconditional clear in place.
-pub fn scenario_pull_confirm_survives_other_tab_read(cx: &mut VisualTestAppContext) {
+/// Three earlier attempts fixed one branch each and left another: a bare flag
+/// was cleared by a background tab's reload, then consumed only while the tab
+/// was active, so "press Pull, switch tabs, come back" showed nothing at all.
+/// The request now travels inside its own fetch task and parks for its tab.
+pub fn scenario_pull_confirm_parks_for_its_tab(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
     let remote_root = tempfile::tempdir().expect("remote root");
@@ -336,44 +329,41 @@ pub fn scenario_pull_confirm_survives_other_tab_read(cx: &mut VisualTestAppConte
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
 
-    let tab_a = app.update(cx, |app, cx| {
-        let tab_a = app.tabs[0].session;
-        assert_eq!(
-            app.active_session(),
-            Some(tab_a),
-            "tab A must be the one on screen"
-        );
-        // Exactly what `open_pull_modal` does for a dirty Pull while its fetch
-        // is in flight.
-        app.pending_pull_confirm = Some(tab_a);
-        // A reload that belongs to B, then straight back to A: B's read
-        // applies with A on screen.
-        app.switch_repo(1, cx);
-        app.reload_external(cx);
-        app.switch_repo(0, cx);
-        tab_a
-    });
-    cx.advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-
-    cx.read(|cx| {
-        assert_eq!(
-            app.read(cx).pending_pull_confirm,
-            Some(tab_a),
-            "another tab's read must not drop tab A's pending Pull confirmation"
-        );
-    });
-
-    // And Pull still resolves into the confirmation, through the public entry
-    // point, now that nothing is holding the fetch.
+    // Tab A presses Pull, then the user leaves for tab B — both synchronous, so
+    // the fetch task is queued and has not run yet. The executor is driven only
+    // after the switch, which is what makes "the fetch finishes while another
+    // tab is on screen" the certain order rather than a hoped-for one.
     app.update(cx, |app, cx| {
-        app.pending_pull_confirm = None;
         app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight,
+            "the confirmation must be waiting on a fetch"
+        );
+        app.switch_repo(1, cx);
     });
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
+
     cx.read(|cx| {
-        let modal = app.read(cx).pull_modal().expect("Pull confirmation");
+        assert!(
+            app.read(cx).pull_modal().is_none(),
+            "tab A's confirmation must not open over tab B"
+        );
+        assert!(
+            !app.read(cx).pending_pull_confirm.is_empty(),
+            "it must be parked for the tab that asked, not dropped"
+        );
+    });
+
+    // Coming back to tab A delivers it.
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .pull_modal()
+            .expect("returning to tab A must show the confirmation it asked for");
         let shown: String = modal
             .plan
             .warnings
@@ -382,10 +372,132 @@ pub fn scenario_pull_confirm_survives_other_tab_read(cx: &mut VisualTestAppConte
             .collect::<Vec<_>>()
             .join("\n");
         assert!(shown.contains("shared.txt"), "{shown}");
+        assert!(
+            app.read(cx).pending_pull_confirm.is_empty(),
+            "delivery consumes the parked request"
+        );
     });
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_confirm_survives_other_tab_read: a background tab's read keeps tab A's pending Pull"
+        "[gui-e2e] PASS pull_confirm_parks_for_its_tab: the confirmation waits for the tab that asked"
+    );
+}
+
+/// #625 P2: a modal opened while the pre-Pull fetch runs must not be replaced.
+///
+/// "One modal at a time" is structural (ADR-0093), so the completion cannot
+/// simply set its own: the branch-name the user is typing would vanish.
+pub fn scenario_pull_confirm_yields_to_another_modal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+
+    let (app, window) = mount(cx, repo);
+    let head = output(repo, &["rev-parse", "HEAD"]);
+    // Pull, then a different modal — both before the executor runs the fetch,
+    // so the completion certainly lands with the other modal already open.
+    app.update(cx, |app, cx| {
+        app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight,
+            "the confirmation must be waiting on a fetch"
+        );
+        app.open_create_branch_modal(kagi_git::CommitId(head.clone()), cx);
+    });
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        // Both halves of "one modal at a time": the request yields instead of
+        // replacing what the user opened, and what the user opened is still
+        // there — the fetch's own reload no longer sweeps a pure-input modal.
+        assert!(
+            app.read(cx).create_branch_modal().is_some(),
+            "the modal opened during the fetch must still be on screen"
+        );
+        assert!(
+            app.read(cx).pull_modal().is_none(),
+            "the Pull confirmation must not take over the modal slot"
+        );
+        assert!(
+            app.read(cx).pending_pull_confirm.is_empty(),
+            "a request for the tab on screen is cancelled, not parked"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_confirm_yields_to_another_modal: a modal opened during the fetch is kept"
+    );
+}
+
+/// #625 P1: the confirmation's promise is checked before anything is stashed.
+///
+/// After the modal is on screen an editor saves *another* path the update also
+/// changes. Stashing first would hide it from every downstream guard — the
+/// preflight and the execute-time dirty-path check both see a clean tree — and
+/// only the restore would conflict, unannounced. The run must refuse instead.
+pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+    // A second path the upstream also changed, still clean at confirmation time.
+    let other = remote_root.path().join("other");
+    std::fs::write(other.join("second.txt"), "upstream second\n").unwrap();
+    git(&other, &["add", "second.txt"]);
+    git(&other, &["commit", "-q", "-m", "upstream adds second.txt"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_pull_modal(cx));
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).pull_modal().is_some(),
+            "the confirmation must be on screen first"
+        );
+    });
+
+    // The promise goes stale: an editor writes a path the modal never named.
+    std::fs::write(repo.join("second.txt"), "local second\n").unwrap();
+
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert!(
+        output(repo, &["stash", "list"]).is_empty(),
+        "nothing may be stashed once the confirmation is stale"
+    );
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        output(repo, &["rev-parse", "HEAD@{0}"]),
+        "and nothing may be pulled"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("second.txt")).unwrap(),
+        "local second\n",
+        "the work the user did after confirming is untouched"
+    );
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .pull_modal()
+            .expect("the modal stays, carrying the refusal");
+        let error = modal.error.clone().expect("a refusal message");
+        assert!(
+            error.contains("changed after this confirmation"),
+            "the refusal must say why: {error}"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_refuses_when_the_dirty_set_moved: a stale confirmation stashes nothing"
     );
 }

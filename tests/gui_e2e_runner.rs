@@ -553,8 +553,16 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_overlap_preview),
             ),
             (
-                "pull_confirm_survives_other_tab_read",
-                Box::new(crate::recovery_pull::scenario_pull_confirm_survives_other_tab_read),
+                "pull_confirm_parks_for_its_tab",
+                Box::new(crate::recovery_pull::scenario_pull_confirm_parks_for_its_tab),
+            ),
+            (
+                "pull_confirm_yields_to_another_modal",
+                Box::new(crate::recovery_pull::scenario_pull_confirm_yields_to_another_modal),
+            ),
+            (
+                "pull_refuses_when_the_dirty_set_moved",
+                Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),
             (
                 "pull_auto_stash_failure_restores",

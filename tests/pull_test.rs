@@ -726,6 +726,64 @@ fn test_plan_pull_does_not_assert_conflict_for_an_automergeable_overlap() {
     );
 }
 
+/// #626 review: on a **diverged** branch the stash is restored on top of the
+/// *merge* of HEAD and upstream, not on the raw upstream tree. Predicting
+/// against the raw tree reported a conflict for content the pull never
+/// installs: a local commit to the last line, an upstream commit to the first,
+/// and a further local edit to the last line pull and restore clean (verified
+/// with real git), yet the raw comparison called it a certain conflict.
+#[test]
+fn test_plan_pull_diverged_predicts_against_the_merged_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    let base = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n";
+    write_file(&r.local, "shared.txt", base);
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "add shared.txt"]);
+    git(&r.local, &["push", "-q", "origin", "main"]);
+    git(&r.other, &["pull", "-q", "origin", "main"]);
+    // Upstream moves the first line…
+    remote_commit(
+        &r,
+        "shared.txt",
+        "UPSTREAM HEAD\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n",
+        "upstream: first line",
+    );
+    // …this branch commits the last line, so the two have diverged…
+    write_file(
+        &r.local,
+        "shared.txt",
+        "line1\nline2\nline3\nline4\nline5\nline6\nline7\nCOMMITTED TAIL\n",
+    );
+    git(&r.local, &["commit", "-qam", "local: commit the tail"]);
+    // …and the working tree edits that same last line again.
+    write_file(
+        &r.local,
+        "shared.txt",
+        "line1\nline2\nline3\nline4\nline5\nline6\nline7\nWORKING TAIL\n",
+    );
+    git(&r.local, &["fetch", "-q", "origin"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("plan should succeed");
+
+    assert_eq!(
+        restore_conflict_paths(&plan),
+        None,
+        "the merge of HEAD and upstream keeps the committed tail, so the working \
+         tree's tail edit restores cleanly: {:?}",
+        plan.warnings
+    );
+    assert_eq!(
+        restore_possible_paths(&plan),
+        None,
+        "and it is decidable: {:?}",
+        plan.warnings
+    );
+}
+
 /// A **local** mode change is not decidable from content either: `chmod +x`
 /// here against an upstream text edit merges cleanly as text while the mode
 /// still has to be reconciled, so it belongs in the *may* conflict list rather

@@ -1188,14 +1188,23 @@ pub struct KagiApp {
     /// True while a background fetch is in flight (refresh / auto-fetch),
     /// so we never stack concurrent fetches.
     pub fetch_in_flight: bool,
-    /// #625: the tab whose dirty Pull asked for a fetch before its
-    /// confirmation modal, so the plan can name the paths whose auto-stash
-    /// restore would conflict (ADR-0192).
+    /// Which repository the in-flight fetch is refreshing (#625): a Pull
+    /// confirmation may only attach to a fetch that is refreshing its own repo.
+    pub fetch_in_flight_repo: Option<PathBuf>,
+    /// Tabs whose dirty Pull attached to the fetch already in flight instead of
+    /// starting another one. Drained by that fetch's completion (#626 review).
+    pub fetch_pull_confirm_waiters: Vec<crate::app::SessionId>,
+    /// #625: Pull confirmations whose fetch finished while their tab was not
+    /// on screen, waiting for that tab to come back (ADR-0192).
     ///
-    /// Keyed by `SessionId`, never a bare bool: the request belongs to *one*
-    /// tab, and a bool let another tab's reload drop it — which is the "press
-    /// Pull, nothing happens" bug in a second costume (#626 review).
-    pub pending_pull_confirm: Option<crate::app::SessionId>,
+    /// Keyed by `SessionId` and *parked*, never a bare flag: the request
+    /// belongs to one tab, so a bool let another tab's reload drop it and an
+    /// unrelated fetch consume it — the "press Pull, nothing happens" bug,
+    /// twice over (#626 review). The live request itself is not here at all:
+    /// it rides inside its own fetch task and only lands here when it cannot
+    /// be delivered immediately.
+    pub pending_pull_confirm:
+        std::collections::HashMap<crate::app::SessionId, operations::PullConfirmDelivery>,
     /// True while the periodic background auto-fetch ticker task is alive
     /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
     pub auto_fetch_ticker_alive: bool,
@@ -1544,7 +1553,9 @@ impl KagiApp {
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
             fetch_in_flight: false,
-            pending_pull_confirm: None,
+            fetch_in_flight_repo: None,
+            fetch_pull_confirm_waiters: Vec::new(),
+            pending_pull_confirm: Default::default(),
             auto_fetch_ticker_alive: false,
             github_prs: Vec::new(),
             github_prs_for: None,

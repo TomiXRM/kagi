@@ -281,6 +281,11 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        // Deliberately None: `worktree_digest` on a plan means "refuse at
+        // execute if the tree moved" (see `preflight_check`), and a dirty pull
+        // empties the tree on purpose by stashing first. The confirmation's own
+        // promise is bound in the UI instead (`PullPlanModal::dirty_digest`,
+        // #625 / ADR-0192).
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

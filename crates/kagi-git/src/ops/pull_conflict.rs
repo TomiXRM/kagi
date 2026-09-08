@@ -84,24 +84,38 @@ pub(super) struct RestorePrediction {
 }
 
 /// Plan-time preview (#625): what restoring the auto-stash would do to the
-/// paths the **incoming** update also changes, for the confirmation modal.
+/// paths the pull is about to change in the working tree.
 ///
-/// "Incoming" is `HEAD..upstream`, so the base of the overlap diff is the
-/// **merge base**, not HEAD. On a fast-forward the two are the same commit; on
-/// a diverged branch they are not, and diffing HEAD directly to the upstream
-/// tip would also report every path only *local* commits changed — the reverse
-/// delta — and warn about a collision the upstream never introduced. A merge
-/// base that cannot be found (unrelated histories) falls back to HEAD: the
-/// whole upstream tree is then genuinely incoming.
+/// The comparison is `HEAD` against the **post-pull** content, because that is
+/// what the stash is restored on top of:
+///
+/// | pull shape | post-pull content |
+/// |---|---|
+/// | fast-forward | the upstream tree |
+/// | diverged | the in-memory merge of HEAD and upstream |
+///
+/// Using the raw upstream tree for a diverged branch was wrong in both
+/// directions (#626 review): it reported paths only *local* commits changed —
+/// the reverse delta — and it compared the working tree against content the
+/// pull never installs, so a local first-line commit, an upstream last-line
+/// commit and a further first-line edit here were called a conflict when the
+/// real pull and restore finish clean. Diffing HEAD against the post-pull
+/// content needs no merge base and is right for both shapes.
+///
+/// Nothing is written: the diverged case reads the merged **index** git2 builds
+/// in memory (`diff_tree_to_index`, stage-0 blobs), never a tree. A plan that
+/// wrote a loose object would wake the watcher and reload the confirmation this
+/// preview exists to fill (ADR-0192).
 ///
 /// Local knowledge, like [`predict_merge_conflict`] beside it — `plan_pull`
 /// does not fetch. The UI closes that freshness gap by fetching before it opens
-/// the dirty-pull confirmation (ADR-0192), which is what makes this preview
-/// trustworthy in the flow the user actually sees.
+/// the dirty-pull confirmation (ADR-0192).
 ///
-/// An unresolvable upstream, an unborn HEAD or an upstream equal to HEAD all
-/// mean "nothing incoming", i.e. an empty prediction rather than an error: a
-/// preview that cannot be computed must not fail the plan.
+/// An unresolvable upstream, an unborn HEAD, an upstream equal to HEAD, or a
+/// commit-level merge conflict (the pull itself then refuses and nothing lands,
+/// so the restore is onto an unchanged tree) all mean "nothing incoming": an
+/// empty prediction rather than an error, because a preview that cannot be
+/// computed must not fail the plan.
 pub(super) fn plan_pull_restore_conflicts(
     repo: &Repository,
     branch_name: &str,
@@ -126,11 +140,40 @@ pub(super) fn plan_pull_restore_conflicts(
                 ))
             })
     };
-    let base_oid = repo.merge_base(head_oid, upstream_oid).unwrap_or(head_oid);
-    let base_tree = tree_of(base_oid)?;
     let head_tree = tree_of(head_oid)?;
-    let upstream_tree = tree_of(upstream_oid)?;
-    let overlap = pull_dirty_overlap(repo, &base_tree, &upstream_tree)?;
+    let fast_forward = repo
+        .graph_descendant_of(upstream_oid, head_oid)
+        .unwrap_or(false);
+    let incoming = if fast_forward {
+        Incoming::Tree(tree_of(upstream_oid)?)
+    } else {
+        let (Ok(head_commit), Ok(upstream_commit)) =
+            (repo.find_commit(head_oid), repo.find_commit(upstream_oid))
+        else {
+            return Ok(RestorePrediction::default());
+        };
+        match repo.merge_commits(&head_commit, &upstream_commit, None) {
+            // A commit-level conflict means the pull refuses before writing
+            // anything, so the stash is restored onto an unchanged HEAD.
+            Ok(index) if index.has_conflicts() => return Ok(RestorePrediction::default()),
+            Ok(index) => Incoming::Merged(index),
+            Err(_) => return Ok(RestorePrediction::default()),
+        }
+    };
+
+    let dirty = dirty_paths(repo)?;
+    if dirty.is_empty() {
+        return Ok(RestorePrediction::default());
+    }
+    let mut overlap: Vec<String> = incoming
+        .changed_paths(repo, &head_tree)?
+        .into_iter()
+        .filter(|path| dirty.contains(path))
+        .map(|path| path.display().to_string())
+        .collect();
+    overlap.sort();
+    overlap.dedup();
+
     let Some(workdir) = repo.workdir().map(|dir| dir.to_path_buf()) else {
         // Bare repository: nothing is restorable, so nothing is predictable.
         return Ok(RestorePrediction {
@@ -141,13 +184,81 @@ pub(super) fn plan_pull_restore_conflicts(
 
     let mut prediction = RestorePrediction::default();
     for path in overlap {
-        match restore_verdict(repo, &head_tree, &upstream_tree, &workdir, &path) {
+        match restore_verdict(repo, &head_tree, &incoming, &workdir, &path) {
             Verdict::Clean => {}
             Verdict::Conflicts => prediction.conflicting.push(path),
             Verdict::Unknown => prediction.unpredictable.push(path),
         }
     }
     Ok(prediction)
+}
+
+/// The content the pull will leave in the working tree.
+enum Incoming<'repo> {
+    /// Fast-forward: exactly the upstream tree.
+    Tree(git2::Tree<'repo>),
+    /// Diverged: the merge git2 built in memory. Never written out.
+    Merged(git2::Index),
+}
+
+impl Incoming<'_> {
+    /// Paths this pull changes relative to `head_tree`.
+    fn changed_paths(
+        &self,
+        repo: &Repository,
+        head_tree: &git2::Tree<'_>,
+    ) -> Result<Vec<PathBuf>, GitError> {
+        let diff = match self {
+            Incoming::Tree(tree) => repo.diff_tree_to_tree(Some(head_tree), Some(tree), None),
+            Incoming::Merged(index) => repo.diff_tree_to_index(Some(head_tree), Some(index), None),
+        }
+        .map_err(|e| {
+            GitError::Other(format!(
+                "pull restore preview: diff failed: {}",
+                e.message()
+            ))
+        })?;
+        let mut paths = Vec::new();
+        for delta in diff.deltas() {
+            if let Some(path) = delta.old_file().path() {
+                paths.push(path.to_path_buf());
+            }
+            if let Some(path) = delta.new_file().path() {
+                paths.push(path.to_path_buf());
+            }
+        }
+        Ok(paths)
+    }
+
+    /// `(content, filemode)` this pull will install at `path`, if it is a
+    /// mergeable text blob.
+    fn blob_at(&self, repo: &Repository, path: &str) -> Option<(Vec<u8>, i32)> {
+        let (oid, mode) = match self {
+            Incoming::Tree(tree) => {
+                let entry = tree.get_path(Path::new(path)).ok()?;
+                (entry.id(), entry.filemode())
+            }
+            Incoming::Merged(index) => {
+                let entry = index.get_path(Path::new(path), 0)?;
+                (entry.id, entry.mode as i32)
+            }
+        };
+        let blob = repo.find_blob(oid).ok()?;
+        (!blob.is_binary()).then(|| (blob.content().to_vec(), mode))
+    }
+}
+
+/// Every path the working tree has changed, renames counted under both names.
+fn dirty_paths(repo: &Repository) -> Result<std::collections::HashSet<PathBuf>, GitError> {
+    let status = working_tree_status(repo)?;
+    let mut paths: std::collections::HashSet<PathBuf> = status.untracked.iter().cloned().collect();
+    for file in status.staged.iter().chain(status.unstaged.iter()) {
+        paths.insert(file.path.clone());
+        if let ChangeKind::Renamed { from } = &file.change {
+            paths.insert(from.clone());
+        }
+    }
+    Ok(paths)
 }
 
 enum Verdict {
@@ -163,8 +274,9 @@ enum Verdict {
 /// `git stash pop` would.
 ///
 /// The sides are the ones the restore actually merges: **ancestor** is the blob
-/// at HEAD (what the user's edit was made against), **ours** is the blob the
-/// pull is about to put in the working tree (the upstream tip), and **theirs**
+/// at HEAD (what the user's edit was made against), **ours** is the content the
+/// pull is about to put in the working tree ([`Incoming`] — the upstream blob
+/// on a fast-forward, the merged one when the branch diverged), and **theirs**
 /// is the bytes currently on disk.
 ///
 /// [`git2::merge_file`] does this entirely in memory: it writes no loose
@@ -174,11 +286,11 @@ enum Verdict {
 fn restore_verdict(
     repo: &Repository,
     head_tree: &git2::Tree<'_>,
-    upstream_tree: &git2::Tree<'_>,
+    incoming: &Incoming<'_>,
     workdir: &Path,
     path: &str,
 ) -> Verdict {
-    let as_blob = |tree: &git2::Tree<'_>| -> Option<(Vec<u8>, i32)> {
+    let head_blob = |tree: &git2::Tree<'_>| -> Option<(Vec<u8>, i32)> {
         let entry = tree.get_path(Path::new(path)).ok()?;
         if entry.kind() != Some(git2::ObjectType::Blob) {
             return None;
@@ -192,12 +304,12 @@ fn restore_verdict(
     // A path missing on either side is an add/add or a delete against an edit:
     // `git stash pop` refuses those instead of merging content, so they are
     // reported as possible rather than asserted.
-    let (Some((ancestor, head_mode)), Some((ours, upstream_mode))) =
-        (as_blob(head_tree), as_blob(upstream_tree))
+    let (Some((ancestor, head_mode)), Some((ours, incoming_mode))) =
+        (head_blob(head_tree), incoming.blob_at(repo, path))
     else {
         return Verdict::Unknown;
     };
-    if head_mode != upstream_mode {
+    if head_mode != incoming_mode {
         return Verdict::Unknown;
     }
     // The local side changes mode and type too, and a content merge says

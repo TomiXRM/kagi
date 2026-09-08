@@ -198,7 +198,64 @@ H1 と H2 の判定結果により、同じ family 内で「plan は libgit2、e
 - 1 回だけの数字は結果として記録しない。#627 の 8 s / 300 ms がその形で、条件が
   分からないため一般化できなかった。
 
-### 4.3 ハーネスと共通コマンド
+### 4.3 pristine copy 契約（fixture を変更する全実験に適用）
+
+**これは P0 共通ハーネスの契約であり、特定実験の特例ではない。** B8 だけの規定に
+していた版では D1 が同じ repo に書き込み操作を 11 回反復し、`stash_drop` は初回で
+stash を消し、stage と checkout は初回後は適用済みになり、backend の実行順で結果が
+偏っていた。2 回目以降は対象操作を測っていない。
+
+- `backend_fixture` が作る fixture は **読み取り専用の pristine template** とする。
+  `backend_probe` は template を直接開かない。
+- **測定単位ごと**に、同一 manifest から byte-for-byte 同一の独立 copy を作り、その
+  copy だけを変更して破棄する。hardlink / reflink による mutable file の共有は禁止する。
+- 測定単位は fixture を変更するかで決める。
+  - **変更する操作**: backend ごと、かつ反復ごとに 1 copy。11 反復なら backend ごとに
+    11 copy。C2 / C3 のように「書いたか」を判定する操作も、候補・反復ごとに新しい
+    copy を使い、前後 fingerprint を比較する。
+  - **変更しない操作**: 1 backend の 1 系列 = 1 copy。warm（§4.2）は「同じ open 済み
+    repository を反復する」ことが定義なので、反復ごとに copy を作ると warm 条件自体が
+    消える。
+- copy の作成と破棄は計時の外側に置き、各回の wall / user / sys に含めない。
+- fixture を変更する操作の warm は **process-warm** と読み替える。プロセスは維持するが
+  repository は copy ごとに open し直すため libgit2 の object cache は毎回冷える。両
+  backend が同条件なので比較は成立するが、この読み替えを §4.5 の環境メタに明記する。
+- 全 backend・全測定単位が同じ manifest と同じ事前 fingerprint（C2 の拡張 fingerprint）
+  から始まったことを probe が記録する。**一致しない測定は無効**とし §6 に載せない。
+- backend の実行順が結果を動かしてはならない。契約が効いていることの実証として、
+  fixture を変更する各実験は `libgit2 → cli` と `cli → libgit2` の両順で 1 系列ずつ
+  実行し、判定に使う統計量が閾値の範囲で一致することを確認する。一致しなければ
+  copy 契約の実装不良として、数字を採用せず P0 に差し戻す。
+
+どの実験が fixture を変更するかを漏れなく列挙する。新しい実験を足すときはこの表に
+行を足すまで実行しない。
+
+| 実験 | fixture を変更するか | pristine の単位 | 変更の中身 |
+| --- | --- | --- | --- |
+| A0 | する | case ごと（case 間でアプリ再起動） | 保存 120 回、branch 往復、pull |
+| A1 | しない | backend ごとの 1 系列 | 読みのみ。index stat cache の書き戻しが出たら C2 の対象に回す |
+| A2 | しない | backend ごとの 1 系列 | 読みのみ |
+| A3 | しない | 規模 × backend ごとの 1 系列 | 読みのみ |
+| B1 | する | 反復ごと（3 回 = 3 copy） | filter 経由の stage / discard |
+| B2 | する | 反復ごと | 改行変換後の stage |
+| B3 | しない | scenario ごと | 一覧取得のみ。discard を測る場合は反復ごとに変更 |
+| B4 | しない | scenario ごと | status / diff のみ |
+| B5 | しない | scenario ごと | status のみ。discard を含める場合は反復ごとに変更 |
+| B6 | する可能性 | 反復ごと | lazy fetch が object を増やし得る |
+| B7 | する | 反復ごと | CLI 側 `merge-tree --write-tree` が object を書く（§2-2） |
+| B8 | する | 操作 × backend × 反復ごと | stash push / drop（通常条件）、stash apply / pop（clean / conflict）、file backup |
+| C1 | しない | repo を使わない | source inventory のみ |
+| C2 | 変更の有無が判定対象 | 候補 × 反復ごと（3 回 = 3 copy） | 各 copy の前後比較で「初回だけ書く」を含む全書き込みを検出する |
+| C3 | 変更の有無が判定対象 | 候補 × 実行ごと | watcher 観測前後の fingerprint を比較する |
+| D1 | する | **反復ごと（11 反復 = 11 copy）** | stash apply / pop / drop、staging の index 書き込み、checkout、discard |
+| D2 | する | trace 1 回ごと | D1 と同じ操作を 1 反復ずつ |
+| E1 | しない | S fixture 1 個 | `git --version` と status |
+| E2 | しない | repo 非依存。UI scenario は自前 fixture | capability probe |
+| E3 | する | test ごと | 悪性 config fixture。cargo test が管理 |
+| E4 | 各実験に従う | 各実験の単位 | 3 OS で同じ契約を適用する |
+| F | する | 条件 × 反復ごと（3 回 = 3 copy） | mixed-stash の plan と execute |
+
+### 4.4 ハーネスと共通コマンド
 
 測定 PR は次の 2 example を実装する。本書のコマンドはその CLI 契約を固定するもので、
 本 PR では example を作らない。
@@ -242,13 +299,13 @@ hyperfine --warmup 1 --runs 10 \
 `KAGI_BENCH_READ=1` のときだけ出る診断出力を足す。**既存の `[kagi]` 契約行は
 変更・追加しない**（AGENTS.md の logging rules）。
 
-### 4.4 結果に必ず添える環境メタ
+### 4.5 結果に必ず添える環境メタ
 
 OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファイルシステム /
 `core.fsmonitor` と `core.untrackedCache` の値 / index 版 / fixture manifest /
 測定中の他プロセス負荷。これが無い数字は §6 に載せない。
 
-### 4.5 全実験に共通する交絡
+### 4.6 全実験に共通する交絡
 
 - **fsmonitor / untracked cache は CLI 側にしか効かない**。有効・無効の両条件で測る。
   片方だけの数字で backend を決めてはいけない。
@@ -258,7 +315,7 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
   （APFS / ext4 / NTFS、ネットワーク FS は対象外と明記）。
 - 同一マシンで cargo build が走っていないこと（AGENTS.md の build hygiene）。
 
-### 4.6 閾値の根拠
+### 4.7 閾値の根拠
 
 - 50 / 150 / 200 ms: watcher 1 回の低影響 / 移行を正当化する絶対差 / 優先対応境界。
 - 100 / 200 ms/s: 1 秒 bucket あたりの累積 read 時間の低影響 / 優先対応境界。
@@ -334,7 +391,7 @@ OS と版 / arch / `git --version` / `git2` crate 版（現行 0.21） / ファ�
     → 1 tick の絶対差が 150 ms 未満でも CLI 候補。
   - 1 tick の絶対差 < 50 ms **かつ**累積削減 < 500 ms/60 s → libgit2 据え置き。
   - その間 → A3 の傾きで決める。
-- **交絡**: fsmonitor / untracked cache（§4.5）、index の stat cache の warm 状態、
+- **交絡**: fsmonitor / untracked cache（§4.6）、index の stat cache の warm 状態、
   rename 検出の閾値差、ファイル名の非 UTF-8 と大文字小文字の扱い。
 - **決まらないこと**: 表示される内容が正しいか。それは B。
 
@@ -385,12 +442,9 @@ path、oplog は recovery handle の `kind / oid / path / reference` と OID か
 object bytes の SHA-256。時刻、表示順、backend 固有メッセージは比較対象から除く。
 **生の porcelain と Rust struct を直接 byte compare しない。**
 
-`backend_fixture` が作る scenario repo は読み取り専用の pristine template とする。
-`backend_probe` は **backend ごと、かつ反復ごと**に template から byte-for-byte 同一の
-独立した一時 copy を作り、その copy だけを変更して破棄する。hardlink / reflink による
-mutable file の共有は禁止する。特に `recovery-handles` の stash push / drop / restore と
-file backup は repo を使い回さない。全 backend・全反復が同じ manifest と canonical
-事前 fingerprint から始まらなければ、その比較結果は無効とする。
+fixture の作成・copy・開始 fingerprint の検証は §4.3 の P0 共通契約に従う。B 固有の
+copy 実装を持たず、B1–B8 の変更する cell は backend ごと、かつ反復ごとに独立 copy を
+使う。
 
 scenario 生成コマンド:
 
@@ -429,10 +483,25 @@ fixture 内の固定済み補助 executable だけを呼び、PATH・標準入�
 | B5 | `sparse` | cone / non-cone / sparse index の 3 条件、未展開 path の status | 未 checkout の path を削除と表示し、discard が対象にする |
 | B6 | `partial-clone` | 欠落 blob の status / diff / blame / file history、fetch 禁止時の error class | diff / blame / file history が失敗する。エラーが oplog とモーダルの両方に出ない場合は error handling が壊れる |
 | B7 | `unrelated-histories` | `merge_commits` と git 本体の blocker 型 | `UnrelatedHistories` blocker（`plan_note/merge.rs:61`）の根拠が崩れる |
-| B8 | `recovery-handles` | stash push / drop と file backup を同一入力・固定時刻で両 backend 実行。記録 OID、object 存在、ref、復元後 worktree / index hash を照合 | oplog は残るが OID が別 object または不存在を指し、stash / backup blob を復元できない |
+| B8 | `recovery-handles` | stash push / drop は通常条件、stash apply / pop は clean と conflict の両条件で、同一入力・固定時刻に両 backend 実行。記録 OID、object 存在、ref、実行後 worktree / index hash、stash entry の残留 / 削除を照合 | oplog は残るが OID が別 object または不存在を指す。apply / pop の conflict 後に worktree / index が違う、または残すべき stash を消す／消すべき stash を残す |
 
 B7 を足す理由: 既に製品仕様（blocker）の根拠になっている差異なので、根拠が実測で
 正しいことは規則の前提である。誤っていれば blocker 側を直す作業が発生する。
+
+**B8 の stash matrix は push / drop の通常条件と、apply / pop の各 clean / conflict 条件を
+両 backend で測る 12 cell**とする。`apply` と `pop` を push / drop の合格から推測しない。
+各 cell は exit class / `GitError` 分類、worktree content hash、index の staged / unstaged
+canonical state、stash entry の存在、recovery handle の OID / ref / object bytes hash、
+handle から復元した state を記録して比較する。`apply` は成功・conflict とも stash を残し、
+`pop` は clean 成功時だけ stash を消し conflict 時は残す、`drop` は対象 entry だけを消す
+ことを Git 本体の期待値として固定する。実装がこの条件または両 backend 間の値を 1 件でも
+満たさなければ B8 不合格であり、速度に関係なく CLI 候補に採らない。これは #624 / #625
+で実際に問題になった recovery と state 遷移の軸である。
+
+D1 / D2 が性能比較できる stash apply / pop CLI 実装は、測る**同じ操作**について B8 の
+clean と conflict の両 cell に合格したものだけとする。push / drop の B8 合格を apply /
+pop へ流用しない。stash 以外の CLI 実装は、それぞれに対応する B scenario の意味論合格
+を要件とする。
 
 - **値**: scenario / OS / git 版ごとの canonical JSON 不一致件数、内容 hash、
   blocker 型、recovery handle の OID / ref / object bytes hash / 復元後 state hash、
@@ -502,8 +571,9 @@ B7 を足す理由: 既に製品仕様（blocker）の根拠になっている�
   4. 作業ツリーの全 file / directory ごとの
      (relative path, size, mtime, mode, SHA-256。directory は hash なし)、
   5. `.git/` 直下の一時ファイル（`*.lock`、`MERGE_*`、`CHERRY_PICK_HEAD` など）の有無。
-  各候補コマンドを 3 回実行し（初回だけ書くケースを捕まえるため）、毎回比較する。
-  `--no-optional-locks` の有無でも比較する（§4.5）:
+  各候補コマンドを、§4.3 に従い**反復ごとに新しい独立 copy**で 3 回実行する。
+  初回だけ書くケースも各 copy の前後比較で捕まえる。`--no-optional-locks` の有無でも比較する
+  （§4.6）:
 
   ```sh
   ./target/release/examples/backend_probe \
@@ -548,8 +618,8 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
 
 #### C4 — 予測非書き込み規則の継続 enforcement
 
-- **問い**: backend 規則の決定後も、plan / preflight 経路の書き込みを PR 時点で
-  確実に検出できるか。
+- **問い**: backend 規則の決定後も、plan / preflight 経路の書き込みと entrypoint の
+  列挙漏れを PR 時点で確実に検出できるか。
 - **手順**:
   1. git layer の integration test `tests/prediction_non_write_test.rs` を測定後の実装
      PR で作る。pure domain では ODB / index / worktree を観測できず、ops 単位の unit
@@ -560,9 +630,8 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
      現行 inventory には `Backend::{preflight_check,preflight_check_stash}`、
      `preflight_check`、`preflight_check_stash`、`preflight_absorb`、
      `preflight_dir_file_resolution`、`preflight_restore_snapshot`、
-     `preflight_apply_suggestion` がある。実装時に LSP symbols / references で取り直し、
-     symbol の追加時に coverage が落ちれば失敗させる。成功・blocker・error のどの場合も、
-     前後で ODB / index / refs / gitdir・commondir / worktree を比較する。file は
+     `preflight_apply_suggestion` がある。成功・blocker・error のどの場合も、前後で
+     ODB / index / refs / gitdir・commondir / worktree を比較する。file は
      `(relative path, size, mtime, mode, SHA-256)`、directory は
      `(relative path, mtime, mode)` を比較し、内容が同じ touch / chmod / rename も差分に
      する。ODB はこれに全 OID set と object file 数を加える。新しい `Operation` variant
@@ -576,25 +645,52 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
      helper 経由を証明できない。4 sample 全てを捕捉できない限り、静的 Rule は主
      enforcement に採らない。採る場合も direct call の defense-in-depth と明記し、
      dynamic test を置き換えない。
+  5. **entrypoint inventory ratchet を CI に置く。** `ci/` の既存 `Ratchet` と同じ形で
+     `check-prediction-entrypoints` を追加し、`crates/kagi-git/src/**/*.rs` の public
+     `plan_*` / `preflight_*` 定義数を `ci/prediction-entrypoints-baseline.txt` と比較する。
+     counter は `pub fn plan_x(`、`pub async fn preflight_y(` を各 1 と数え、非 public
+     `fn plan_x(` と `pub fn planner(` を 0 とする sample を持ち、`check-all --selftest`
+     で毎回証明する。追加で count が増えれば baseline 未更新で CI を失敗させる。
+  6. `prediction_non_write_test` は baseline の合計と、その test の `Entrypoint` table
+     （1 entry = 1 public `plan_*` / `preflight_*` を実際に呼ぶ dispatch arm）の長さが
+     一致することを assert する。新関数を足すと ratchet が失敗し、baseline を更新しても
+     table が短いため test が失敗する。table に直接 symbol を追加して初めて通る。削除・
+     rename は table の直接参照が compile error になる。
+
+     これを test 側の source scan ではなく `ci/` ratchet にする。repo は既に
+     `check-loc` / `check-klog` で「増加を review に可視化する」仕組みを持ち、counter の
+     sample が 0 件への退化を止める。Rust test が source を走査すると `cfg(test)`、
+     macro、module 解決を別実装で再現することになり、observable contract ではなく source
+     text を検査する恒久 test になる。dynamic test は挙動を、ratchet は inventory 増加を
+     それぞれ一つずつ担う。
+
+     ratchet の更新 command、`ci/pyproject.toml` の `check-prediction-entrypoints` entry、
+     workflow matrix の一行を同じ実装 PR に含める。baseline 更新時の guidance は
+     「`Entrypoint` table を追加して test を通してから
+     `uv run --project ci check-prediction-entrypoints --write-baseline`」とする。
 
   ```sh
   cargo test -p kagi --test prediction_non_write_test
+  uv run --project ci check-prediction-entrypoints
   uv run --project ci check-all
   ```
 
-- **値**: plan / preflight entrypoint coverage（対象 / 全数）、bytes / path / mtime / mode
-  ごとの前後差分件数、sentinel / touch / mode 検出数、static Rule の direct / helper
-  sample 検出数、現行 source の false positive 数。
-- **判断基準**: dynamic test は plan / preflight coverage **100%**、通常経路の差分
-  **0 件**、sentinel / touch / mode 検出が各 **1/1** 必須。1 つでも欠ければ規則を
-  実装完了としない。static Rule は 4 sample **4/4**、false positive **0 件**のときだけ
-  追加する。それ以外は call graph を扱えないため不採用と記録する。
+- **値**: plan / preflight entrypoint coverage（対象 / 全数）、ratchet の source count /
+  baseline count / `Entrypoint` table count、bytes / path / mtime / mode ごとの前後差分件数、
+  sentinel / touch / mode 検出数、static Rule の direct / helper sample 検出数、現行 source
+  の false positive 数。
+- **判断基準**: dynamic test は plan / preflight coverage **100%**、ratchet source count =
+  baseline count = `Entrypoint` table count、通常経路の差分 **0 件**、sentinel / touch / mode
+  検出が各 **1/1** 必須。1 つでも欠ければ規則を実装完了としない。static Rule は 4 sample
+  **4/4**、false positive **0 件**のときだけ追加する。それ以外は call graph を扱えない
+  ため不採用と記録する。
 - **交絡**: linked worktree の private gitdir / commondir、git auto-maintenance、
   index stat cache、error 経路で一時作成後に削除される object 以外のファイル。
 - **決まらないこと**: どちらの backend を選ぶか。C4 は決定済み規則の維持だけを担う。
 
-検知主体は local の当該 test と、PR ごとに `cargo test --workspace` を実行する CI。
-規則違反は test failure として変更者・reviewer の両方に届く。
+検知主体は local の当該 test と `check-prediction-entrypoints`、PR ごとの
+`cargo test --workspace` と `uv run --project ci check-all` を実行する CI である。
+規則違反は test または ratchet failure として変更者・reviewer の両方に届く。
 
 ### D. 実行経路で libgit2 が遅い／危ういもの
 
@@ -605,11 +701,13 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
   1. `crates/kagi-git/src/ops/`、`staging.rs`、`backend/` にある libgit2 の
      worktree / index 書き込み API を LSP references で 1 行ずつ inventory 化する。
   2. 各 API について「入力に workdir / index を渡すか」「pathspec を限定できるか」
-     「内部で status / diff を作るか」を libgit2 1.9.1 の API 文書で分類する。同じ操作の
-     CLI 実装は B の該当 scenario で意味論に合格したものだけ性能比較へ進める。
-  3. 変更ファイル数を 2 に固定し、未変更 tracked ファイルを
-     1k / 5k / 20k / 50k と増やす。同じ pristine fixture から libgit2 と合格済み CLI
-     実装を次の形で測り、両 backend の傾きと L の median を比較する。
+     「内部で status / diff を作るか」を libgit2 1.9.1 の API 文書で分類する。stash apply /
+     pop の CLI 実装は B8 の同一操作・clean / conflict 両条件で、他の操作の CLI 実装は
+     B の該当 scenario で意味論に合格したものだけ性能比較へ進める。
+  3. 変更ファイル数を 2 に固定し、未変更 tracked ファイルを 1k / 5k / 20k / 50k と
+     増やす。§4.3 に従い backend ごと、かつ 11 反復ごとに同じ manifest から独立 copy を
+     作り、copy 作成時間を除外して libgit2 と合格済み CLI 実装を測る。両 backend の
+     傾きと L の median を比較する。
 
      ```sh
      ./target/release/examples/backend_probe \
@@ -620,10 +718,10 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
        --iterations 11 --format json
      ```
 
-     最低対象は `stash_apply` / `stash_drop`（stash push 以外は現在も libgit2）、
-     staging の index 書き込み、`ops/checkout.rs`、`ops/discard.rs`、
-     `working_tree_status`、`diff_index_to_workdir`。inventory で見つかった API を
-     この列挙より優先し、候補を黙って落とさない。
+     最低対象は `stash_apply` / `stash_pop` / `stash_drop`（stash push 以外は現在も
+     libgit2）、staging の index 書き込み、`ops/checkout.rs`、`ops/discard.rs`、
+     `working_tree_status`、`diff_index_to_workdir`。inventory で見つかった API をこの
+     列挙より優先し、候補を黙って落とさない。
 - **値**: backend・API ごとの傾き（ms / 未変更 1k files）、切片（ms）、L の median。
 - **判断基準**: libgit2 の傾き **≥ 0.5 ms / 1k files** なら「`stash_save2` 型」の疑い。
   CLI 採用候補にするのは、意味論合格に加え、L で libgit2 が CLI の **1.5 倍以上遅く、
@@ -637,10 +735,11 @@ C2・C3 を独立の実験として立てる理由: この 2 つが C1 の答え
 
 - **問い**: 傾きの原因は本当に「未変更ファイルの読み直し」で、CLI 実装はそれを
   解消するか。
-- **手順**: D1 で傾きが出た API と、B で意味論に合格した対応 CLI 実装を同じ pristine
-  fixture で測る。Linux は次の形で open / read の syscall 数を取り、macOS は
-  `fs_usage`、Windows は Process Monitor の
-  `Operation is ReadFile` / `Path begins with <fixture>` filter で同じ値を取る。
+- **手順**: D1 で傾きが出た API と、stash apply / pop なら B8 の同一操作・clean /
+  conflict 両条件で、それ以外なら B の該当 scenario で意味論に合格した対応 CLI 実装を、
+  §4.3 の trace 1 回ごとの独立 pristine copy で測る。Linux は次の形で open / read の
+  syscall 数を取り、macOS は `fs_usage`、Windows は `Operation is ReadFile` /
+  `Path begins with <fixture>` filter で同じ値を取る。
 
   ```sh
   strace -f -c -e trace=openat,read -- \
@@ -696,23 +795,49 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
 - **手順**: 規則が使うことになった各コマンド／オプションについて導入版を一次資料で
   確定する（`merge-tree --write-tree` = 2.38、`status --porcelain=v2`、
   `for-each-ref` の ahead/behind atom、`--no-optional-locks` など）。最も新しい要求が
-  最低版になる。`backend_probe --operation cli-capability` に git executable を渡し、
-  git 不在 / 2.37 / 2.38 / 2.50.1 / 最新安定版を各 3 回実行する:
+  最低版になる。
 
-  ```sh
-  ./target/release/examples/backend_probe \
-    --operation cli-capability --git-executable /missing/git --iterations 3 --format json
-  ./target/release/examples/backend_probe \
-    --operation cli-capability --git-executable "$GIT_237" --iterations 3 --format json
-  ./target/release/examples/backend_probe \
-    --operation cli-capability --git-executable "$GIT_238" --iterations 3 --format json
-  ```
+  1. **standalone probe（3 OS）**: `backend_probe --operation cli-capability` に git
+     executable を渡し、git 不在 / 2.37 / 2.38 / 2.50.1 / 最新安定版を各 3 回実行する。
+     probe は `KagiApp` を起動しないため、ここで測る値は exit class、`GitError` variant /
+     stable error code、検出した version text と parse 結果、stderr 分類、panic / hang
+     なしだけとする。
 
-- **値**: 機能ごとの導入版、算出した最低版、各版の exit class、Kagi での oplog と
-  モーダルの有無。
+     ```sh
+     ./target/release/examples/backend_probe \
+       --operation cli-capability --git-executable /missing/git --iterations 3 --format json
+     ./target/release/examples/backend_probe \
+       --operation cli-capability --git-executable "$GIT_237" --iterations 3 --format json
+     ./target/release/examples/backend_probe \
+       --operation cli-capability --git-executable "$GIT_238" --iterations 3 --format json
+     ```
+
+  2. **UI delivery（Tier A、macOS）**: probe とは別に GUI E2E scenario
+     `backend_cli_capability_modal` を測定 PR で追加する。`git_command` が `PATH` を
+     解決する既存 seam を使い、(a) git を含まない PATH、(b) `git --version` に 2.37 を
+     返す executable shim だけの PATH の 2 条件で KagiApp を mount し、CLI 依存操作を
+     起動する。`active_modal` の capability error、`KAGI_LOG_DIR` の oplog failure record、
+     HEAD / index / worktree 不変を assert する。実行は必ず次で絞る:
+
+     ```sh
+     KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='backend_cli_capability_modal' \
+       cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+     ```
+
+     Tier B `pidclick` ではなく Tier A を gate にする。modal slot と oplog record を
+     deterministic に assert でき、実機 click の可視確認を必要としないためである。scenario
+     を追加する integration owner は `.claude/skills/verify/SKILL.md` の Tier A inventory
+     も同じ PR で更新する。
+
+- **値**: standalone probe は機能ごとの導入版、算出した最低版、各版の exit class /
+  `GitError` variant / stable error code / version parse / panic・hang の有無。Tier A は
+  missing / old の各条件で capability modal、oplog failure record、repo fingerprint
+  不変の pass / fail。
 - **判断基準**: **最低版の上限を 2.38 とする。** これを超える版を要求する規則は採らない
-  （代替コマンドを使うか、その操作を libgit2 に残す）。最低版を宣言する場合は、起動時
-  検出と、git 不在 / 旧版を oplog + モーダルで通知することを実装条件に含める。
+  （代替コマンドを使うか、その操作を libgit2 に残す）。最低版を宣言する実装は、
+  standalone probe で missing / old を安定した `GitError` として返し、Tier A の
+  `backend_cli_capability_modal` で git 不在 / 旧版の **両条件**について oplog + modal
+  を確認できることを必須とする。片方でも欠ければ CLI 依存を広げない。
 - **交絡**: ディストリの古い git、macOS 同梱の Apple Git の版差、企業環境の固定版、
   `PATH` 上の別 executable。
 - **決まらないこと**: 最低版を満たす環境での速度・意味論。それぞれ A・B で決める。
@@ -747,7 +872,7 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
   | source / 一次資料 | C1、E2 の導入版調査 | 実行可 | 再実行不要 | 再実行不要 | 同一 commit なら 1 回 |
   | headless fixture / probe | A1–A3、B1–B8、C2、D1、E1、E2 capability、E3、F | 実行可 | hosted runner で実行可 | hosted runner で実行可 | 採用候補は 3 OS 必須 |
   | 恒久 integration test | C4 | 実行可 | advisory test job で実行可 | 現 CI は build のみ。測定 PR で test job を追加 | backend 実装完了条件。3 OS の回帰監視 |
-  | native GUI E2E / Tier B | A0 の実 UI、C3 の reload、実機 GUI | Tier A / `pidclick` で実行可 | 現 runner では実行不可 | 現 runner では実行不可 | macOS の統合確認。単独では OS 非依存採用の根拠にしない |
+  | native GUI E2E / Tier B | A0 の実 UI、C3 の reload、E2 の capability modal、実機 GUI | Tier A / `pidclick` で実行可 | 現 runner では実行不可 | 現 runner では実行不可 | macOS の統合確認。E2 modal は Tier A gate、単独では OS 非依存採用の根拠にしない |
   | OS watcher probe | A0 の event/tick、C3 の発火有無 | GUI E2E と照合 | production `start_git_watcher` と同じ `notify` watcher / `DEBOUNCE` coalescing を使う headless probe を追加 | 同じ headless probe を追加 | C3 は 3 OS 必須。A0 は後述 |
   | syscall trace | D2 | `fs_usage` | `strace` | Process Monitor は hosted CI で安定自動化できない | 原因診断。採否 gate にはしない |
 
@@ -755,7 +880,7 @@ D の優先順: **stash family（apply / pop / drop）を最初に見る**。pus
   Windows test job と実験 job はまだ無い。測定 PR で `workflow_dispatch` の
   macOS / Ubuntu / Windows matrix を追加し、headless probe の JSON artifact を保存する。
   performance は backend を同一 runner 内で交互に測り、runner image / CPU / 負荷を
-  §4.4 の環境メタへ残す。advisory か blocking かは証拠の有無と分けて扱う。
+  §4.5 の環境メタへ残す。advisory か blocking かは証拠の有無と分けて扱う。
 - **判断基準**:
   - OS ごとに backend を変える規則は採らない。新しい backend を採る操作は、関連する
     headless の意味論・安全性・性能 gate を **3 OS 全て**で満たし、最悪値でも各節の
@@ -884,17 +1009,22 @@ CLI 済みは CLI 据え置き）。移行は「閾値を超えた」ことを�
    恒久 integration test として残す。全 `Operation` variant / public plan /
    public preflight entrypoint の coverage 100%、通常経路前後の ODB・index・refs・
    gitdir / commondir・worktree の bytes / path / mtime / mode 差分 0、sentinel object /
-   touch / mode 変更の検出各 1/1 を固定する。次の test file 全体を実行する:
+   touch / mode 変更の検出各 1/1、`Entrypoint` table count =
+   `ci/prediction-entrypoints-baseline.txt` の合計を固定する。新しい public `plan_*` /
+   `preflight_*` は CI ratchet が先に落とし、baseline 更新後も table への実呼び出し追加
+   なしには test を通さない。次の test file / gate 全体を実行する:
 
    ```sh
    cargo test -p kagi --test prediction_non_write_test
+   uv run --project ci check-prediction-entrypoints
    ```
 
    静的 `ci/ Rule` は C4 の plan / preflight の direct / helper sample **4/4**・
    false positive 0 の基準を満たす場合だけ defense-in-depth として追加する。現行 regex
    Rule は call graph を追えないため、満たさなければ追加せず、その理由を ADR に残す。
-6. B8 の stash / backup recovery handle は、記録 OID の object 存在、ref、復元後
-   worktree / index hash を統合テストで固定する。文字列が残るだけの test では不可。
+6. B8 の stash / backup recovery handle は、push / drop の通常条件と apply / pop の
+   clean / conflict 全 cell で、記録 OID の object 存在、ref、worktree / index hash、
+   stash entry の残留 / 削除を統合テストで固定する。文字列が残るだけの test では不可。
 7. backend を移した操作には `plan_/preflight_/execute_/verify_` の整合と、oplog への
    記録が残ることを確認する統合テストを足す。
 8. 一度に走らせる cargo コマンドは 1 本（AGENTS.md の build hygiene）。

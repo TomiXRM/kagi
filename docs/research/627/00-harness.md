@@ -57,9 +57,10 @@ integration owner が wave 後に直列で行う。operation 実装は common co
 
 ## Self-test 監査
 
-- fingerprint 3 本と fixture 2 本は、reviewer が実際の mutation で failure を確認した。root identifier、`modified_ns`、SHA-256、mode、hardlink、symlink timestamp の各検出は、いずれも対象の public harness function を経由する。
-- selected executable version は `git_version` が引数を無視して PATH の `git` を実行する mutation で `records_the_selected_git_executable_version` が実際に失敗した。
-- child CPU は nested test process で child 前後の `process_cpu_time()` だけを比較する。test 側は `RUSAGE_CHILDREN` を直接参照しない。`probe.rs` に残る全 `RUSAGE_CHILDREN` を `RUSAGE_SELF` に置換する mutation で inner test と outer test の両方が実際に失敗した。
+- reviewer は fingerprint 3 本と fixture 2 本を実際の mutation で failure することを確認した。root identifier、`modified_ns`、SHA-256、mode、hardlink、symlink timestamp の検出はその review 結果であり、本修正では再実行していない。
+- 本修正では、`git_version` が引数を無視して PATH の `git` を実行する mutation で `records_the_selected_git_executable_version` が失敗することを実行者が確認した。
+- 本修正では、`probe.rs` に残る全 `RUSAGE_CHILDREN` を `RUSAGE_SELF` に置換する mutation で inner test と outer test が失敗することを実行者が確認した。child CPU test は nested test process で child 前後の `process_cpu_time()` だけを比較し、test 側は `RUSAGE_CHILDREN` を直接参照しない。
+- 本修正では、inner test の `#[ignore]` を除去する mutation で outer test が失敗することを実行者が確認した。nested runner は stdout の `1 passed` と `0 failed` を要求するため、filter が zero test に一致しても成功扱いにならない。
 
 ## Owner 境界
 

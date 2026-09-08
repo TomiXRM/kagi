@@ -25,7 +25,14 @@ pub struct ProbeRequest {
 /// Adding an operation changes only its own module plus the dispatcher's registry.
 pub trait ProbeOperation: Sync {
     fn name(&self) -> &'static str;
+    /// Whether the operation is expected to leave a fingerprint delta.
     fn mutates_fixture(&self) -> bool;
+    /// Whether every iteration needs a new pristine copy. This is distinct from
+    /// `mutates_fixture` for C2/C3-style operations that must prove they do not
+    /// write, including only-once writes.
+    fn requires_pristine_copy_per_iteration(&self) -> bool {
+        self.mutates_fixture()
+    }
     fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError>;
 }
 
@@ -122,7 +129,7 @@ pub fn run_probe(
     let mut iterations = Vec::with_capacity(request.iterations);
     let mut expected_before: Option<Fingerprint> = None;
 
-    if operation.mutates_fixture() {
+    if operation.requires_pristine_copy_per_iteration() {
         for iteration in 0..request.iterations {
             let copy = scratch.path().join(format!("run-{iteration}"));
             materialize_pristine(&template, &copy)?;
@@ -282,17 +289,18 @@ mod tests {
     #[test]
     fn cpu_timer_includes_reaped_children_in_isolated_process() {
         let test_binary = env::current_exe().unwrap();
-        let status = Command::new(test_binary)
+        let output = Command::new(test_binary)
             .args([
                 "--exact",
                 "benchmark::probe::tests::isolated_process_cpu_timer",
                 "--ignored",
             ])
-            .status()
+            .output()
             .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            status.success(),
-            "isolated process CPU timer assertion must pass"
+            output.status.success() && stdout.contains("1 passed") && stdout.contains("0 failed"),
+            "isolated test must run exactly once and pass: {stdout}"
         );
     }
 
@@ -317,5 +325,54 @@ mod tests {
             elapsed_cpu_ns >= 100_000_000,
             "probe clock must include the CPU time consumed by its reaped child"
         );
+    }
+    struct WriteDetector;
+
+    impl ProbeOperation for WriteDetector {
+        fn name(&self) -> &'static str {
+            "write-detector"
+        }
+
+        fn mutates_fixture(&self) -> bool {
+            false
+        }
+
+        fn requires_pristine_copy_per_iteration(&self) -> bool {
+            true
+        }
+
+        fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+            std::fs::write(context.repo().join("unexpected-write"), b"detected")
+                .map_err(|error| HarnessError::io(context.repo(), error))?;
+            Ok(Value::Null)
+        }
+    }
+
+    #[test]
+    fn write_detection_operations_receive_pristine_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let template = root.path().join("template");
+        super::super::generate_fixture(&super::super::FixtureRequest {
+            output: template.clone(),
+            files: 1,
+            commits: 1,
+            depth: 1,
+            seed: 627,
+            scenario: Some("synthetic".into()),
+        })
+        .unwrap();
+        let request = ProbeRequest {
+            repo: template,
+            operation: "write-detector".to_owned(),
+            backend: "test".to_owned(),
+            candidate: None,
+            git_executable: None,
+            iterations: 2,
+        };
+
+        let report = run_probe(&request, &[&WriteDetector]).unwrap();
+        assert_eq!(report.iterations[0].before, report.iterations[1].before);
+        assert_ne!(report.iterations[0].before, report.iterations[0].after);
+        assert_ne!(report.iterations[1].before, report.iterations[1].after);
     }
 }

@@ -40,15 +40,13 @@ pub fn collect_environment(
         os_version: os_version(),
         arch: std::env::consts::ARCH.to_owned(),
         git_version: git_version(git_executable),
-        // This is the direct dependency in crates/kagi-git/Cargo.toml. Keeping
-        // it visible in each artifact is more useful than libgit2's ABI version.
-        git2_crate_version: "0.21".to_owned(),
+        git2_crate_version: env!("KAGI_GIT2_CRATE_VERSION").to_owned(),
         filesystem: repo_path.and_then(filesystem_kind),
         fsmonitor,
         untracked_cache,
         index_version,
         fixture_manifest,
-        other_process_load: None,
+        other_process_load: other_process_load(),
     })
 }
 
@@ -84,6 +82,34 @@ fn os_version() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         return command_stdout("cmd", &["/C", "ver"], None);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+fn other_process_load() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        return command_stdout("sysctl", &["-n", "vm.loadavg"], None);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return fs::read_to_string("/proc/loadavg")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return command_stdout(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average",
+            ],
+            None,
+        );
     }
     #[allow(unreachable_code)]
     None
@@ -174,5 +200,14 @@ mod tests {
         let environment = collect_environment(None, None, Some(&executable)).unwrap();
 
         assert_eq!(environment.git_version.as_deref(), Some("fixture git 9.9"));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn records_resolved_git2_version_and_process_load() {
+        let environment = collect_environment(None, None, None).unwrap();
+
+        assert_eq!(environment.git2_crate_version, "0.21.0");
+        assert!(environment.other_process_load.is_some());
     }
 }

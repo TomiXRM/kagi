@@ -101,7 +101,7 @@ pub fn fingerprint_repository(repo_path: &Path) -> Result<Fingerprint, HarnessEr
 }
 
 fn scan_tree(root: &Path, exclude_git_entry: bool) -> Result<Vec<FingerprintEntry>, HarnessError> {
-    let mut entries = Vec::new();
+    let mut entries = vec![fingerprint_entry(root, Path::new("."))?];
     walk(root, root, exclude_git_entry, &mut entries)?;
     entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(entries)
@@ -268,6 +268,21 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn detects_worktree_root_mode_change() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = fixture();
+        let repo = root.path().join("repo");
+        let before = fingerprint_repository(&repo).unwrap();
+        fs::set_permissions(&repo, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            fingerprint_repository(&repo).unwrap().changed_from(&before),
+            "the worktree root itself must be fingerprinted"
+        );
+    }
+
     #[test]
     fn linked_worktree_records_complete_logical_roots() {
         let root = fixture();
@@ -307,6 +322,13 @@ mod tests {
                 .find(|root| root.roles.contains(&kind))
                 .unwrap()
         };
+        for kind in [
+            FingerprintKind::Worktree,
+            FingerprintKind::PrivateGitDir,
+            FingerprintKind::CommonDir,
+        ] {
+            assert_eq!(root_for(kind).entries[0].relative_path, ".");
+        }
         assert!(!root_for(FingerprintKind::Worktree).entries.is_empty());
         let git_entry = root_for(FingerprintKind::GitEntry);
         assert_eq!(git_entry.entries.len(), 1);

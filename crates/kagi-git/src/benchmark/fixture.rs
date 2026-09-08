@@ -26,6 +26,7 @@ pub struct FixtureManifest {
     pub scenario: Option<String>,
     pub tracked_files: usize,
     pub commits: usize,
+    pub dirs: usize,
     pub depth: usize,
     pub total_bytes: u64,
     pub max_directory_width: usize,
@@ -79,6 +80,7 @@ pub fn generate_fixture(request: &FixtureRequest) -> Result<FixtureManifest, Har
         scenario: request.scenario.clone(),
         tracked_files: request.files,
         commits: request.commits,
+        dirs: worktree_dirs(&request.output)?,
         depth: request.depth,
         total_bytes: worktree_bytes(&request.output)?,
         max_directory_width: max_directory_width(&request.output)?,
@@ -91,8 +93,9 @@ pub fn generate_fixture(request: &FixtureRequest) -> Result<FixtureManifest, Har
     Ok(manifest)
 }
 
-/// Copy a pristine template without hardlinks or reflinks. The destination is
-/// made owner-writable; this function is called before the timed interval.
+/// Copy a pristine template without hardlinks or reflinks. Linked worktrees get
+/// a sibling Git storage copy and relative gitdir/commondir links, so neither
+/// the copy nor its Git metadata points back into the template.
 pub fn materialize_pristine(template: &Path, destination: &Path) -> Result<(), HarnessError> {
     if destination.exists() {
         return Err(HarnessError::new(format!(
@@ -103,7 +106,14 @@ pub fn materialize_pristine(template: &Path, destination: &Path) -> Result<(), H
     let source = template
         .canonicalize()
         .map_err(|error| HarnessError::io(template, error))?;
+    let source_repo = git2::Repository::open(&source)?;
+    let linked_worktree = fs::symlink_metadata(source.join(".git"))
+        .map_err(|error| HarnessError::io(&source, error))?
+        .is_file();
     copy_tree(&source, destination)?;
+    if linked_worktree {
+        materialize_linked_worktree_storage(&source_repo, destination)?;
+    }
     Ok(())
 }
 
@@ -111,6 +121,43 @@ pub fn manifest_path(template: &Path) -> PathBuf {
     let mut path = template.as_os_str().to_os_string();
     path.push(".manifest.json");
     PathBuf::from(path)
+}
+
+fn materialize_linked_worktree_storage(
+    source_repo: &git2::Repository,
+    destination: &Path,
+) -> Result<(), HarnessError> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| HarnessError::new("linked worktree destination has no parent"))?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| HarnessError::new("linked worktree destination has no file name"))?;
+    let storage = parent.join(format!(".{}.kagi-git", name.to_string_lossy()));
+    if storage.exists() {
+        return Err(HarnessError::new(format!(
+            "linked worktree storage already exists: {}",
+            storage.display()
+        )));
+    }
+    fs::create_dir(&storage).map_err(|error| HarnessError::io(&storage, error))?;
+    let private = storage.join("private");
+    let common = storage.join("common");
+    copy_tree(source_repo.commondir(), &common)?;
+    let copied_worktrees = common.join("worktrees");
+    if copied_worktrees.exists() {
+        fs::remove_dir_all(&copied_worktrees)
+            .map_err(|error| HarnessError::io(&copied_worktrees, error))?;
+    }
+    copy_tree(source_repo.path(), &private)?;
+
+    fs::write(private.join("commondir"), "../common\n")
+        .map_err(|error| HarnessError::io(&private, error))?;
+    let gitdir = format!("gitdir: ../../{}/.git\n", name.to_string_lossy());
+    fs::write(private.join("gitdir"), gitdir).map_err(|error| HarnessError::io(&private, error))?;
+    let git_entry = format!("gitdir: ../.{}.kagi-git/private\n", name.to_string_lossy());
+    fs::write(destination.join(".git"), git_entry)
+        .map_err(|error| HarnessError::io(destination, error))
 }
 
 fn validate_request(request: &FixtureRequest) -> Result<(), HarnessError> {
@@ -174,12 +221,29 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), HarnessError> {
     fs::write(path, bytes).map_err(|error| HarnessError::io(path, error))
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<(), HarnessError> {
-    let status = Command::new("git")
+fn fixture_git_command(repo: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .current_dir(repo)
         .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
-        .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", empty_global_config());
+    command
+}
+
+#[cfg(windows)]
+fn empty_global_config() -> &'static str {
+    "NUL"
+}
+
+#[cfg(not(windows))]
+fn empty_global_config() -> &'static str {
+    "/dev/null"
+}
+
+fn git(repo: &Path, args: &[&str]) -> Result<(), HarnessError> {
+    let status = fixture_git_command(repo)
+        .args(args)
         .status()
         .map_err(|error| HarnessError::io(repo, error))?;
     if status.success() {
@@ -194,11 +258,8 @@ fn git(repo: &Path, args: &[&str]) -> Result<(), HarnessError> {
 }
 
 fn git_stdout(repo: &Path, args: &[&str]) -> Result<String, HarnessError> {
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
+    let output = fixture_git_command(repo)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .map_err(|error| HarnessError::io(repo, error))?;
     if !output.status.success() {
@@ -214,11 +275,8 @@ fn git_stdout(repo: &Path, args: &[&str]) -> Result<String, HarnessError> {
 fn commit(repo: &Path, index: usize, message: &str) -> Result<(), HarnessError> {
     let timestamp = 1_704_067_200_i64 + index as i64;
     let date = format!("{timestamp} +0000");
-    let status = Command::new("git")
-        .current_dir(repo)
-        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
+    let status = fixture_git_command(repo)
         .args(["commit", "-q", "-m", message])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_DATE", &date)
         .env("GIT_COMMITTER_DATE", &date)
         .status()
@@ -247,22 +305,43 @@ fn worktree_bytes(root: &Path) -> Result<u64, HarnessError> {
     Ok(total)
 }
 
-fn max_directory_width(root: &Path) -> Result<usize, HarnessError> {
-    let mut maximum = 0_usize;
+fn worktree_dirs(root: &Path) -> Result<usize, HarnessError> {
+    let mut total = 1_usize;
     visit(root, &mut |path, metadata| {
         if path.file_name().is_some_and(|name| name == ".git") {
             return Ok(false);
         }
         if metadata.is_dir() {
-            let width = fs::read_dir(path)
-                .map_err(|error| HarnessError::io(path, error))?
-                .count();
-            maximum = maximum.max(width);
+            total = total.saturating_add(1);
+            return Ok(true);
+        }
+        Ok(false)
+    })?;
+    Ok(total)
+}
+
+fn max_directory_width(root: &Path) -> Result<usize, HarnessError> {
+    let mut maximum = directory_width(root)?;
+    visit(root, &mut |path, metadata| {
+        if path.file_name().is_some_and(|name| name == ".git") {
+            return Ok(false);
+        }
+        if metadata.is_dir() {
+            maximum = maximum.max(directory_width(path)?);
             return Ok(true);
         }
         Ok(false)
     })?;
     Ok(maximum)
+}
+
+fn directory_width(path: &Path) -> Result<usize, HarnessError> {
+    fs::read_dir(path)
+        .map_err(|error| HarnessError::io(path, error))?
+        .try_fold(0_usize, |width, entry| {
+            let entry = entry.map_err(|error| HarnessError::io(path, error))?;
+            Ok::<_, HarnessError>(width.saturating_add(usize::from(entry.file_name() != ".git")))
+        })
 }
 
 fn visit(
@@ -334,7 +413,26 @@ fn copy_symlink(
     .map_err(|error| HarnessError::io(destination, error))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn copy_symlink(
+    source: &Path,
+    destination: &Path,
+    _source_metadata: &fs::Metadata,
+) -> Result<(), HarnessError> {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    let target = fs::read_link(source).map_err(|error| HarnessError::io(source, error))?;
+    if fs::metadata(source)
+        .map_err(|error| HarnessError::io(source, error))?
+        .is_dir()
+    {
+        symlink_dir(target, destination).map_err(|error| HarnessError::io(destination, error))
+    } else {
+        symlink_file(target, destination).map_err(|error| HarnessError::io(destination, error))
+    }
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn copy_symlink(
     source: &Path,
     _destination: &Path,
@@ -518,5 +616,63 @@ mod tests {
             fingerprint_repository(&second).unwrap(),
             "symlink metadata must not make pristine copies diverge"
         );
+    }
+
+    #[test]
+    fn manifest_counts_root_directory_and_width() {
+        let root = tempfile::tempdir().unwrap();
+        let template = root.path().join("template");
+        let manifest = generate_fixture(&FixtureRequest {
+            output: template,
+            files: 3,
+            commits: 1,
+            depth: 1,
+            seed: 627,
+            scenario: Some("synthetic".into()),
+        })
+        .unwrap();
+
+        assert_eq!(manifest.dirs, 1);
+        assert_eq!(manifest.max_directory_width, 3);
+    }
+
+    #[test]
+    fn linked_worktree_copy_uses_independent_relative_git_storage() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("main");
+        fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]).unwrap();
+        git(&main, &["config", "user.name", "Fixture"]).unwrap();
+        git(&main, &["config", "user.email", "fixture@example.test"]).unwrap();
+        fs::write(main.join("tracked.txt"), b"base\n").unwrap();
+        git(&main, &["add", "tracked.txt"]).unwrap();
+        commit(&main, 0, "base").unwrap();
+
+        let linked = root.path().join("linked");
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked",
+                linked.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let copy = root.path().join("copy");
+        materialize_pristine(&linked, &copy).unwrap();
+
+        let copy_gitfile = fs::read_to_string(copy.join(".git")).unwrap();
+        assert!(copy_gitfile.starts_with("gitdir: ../.copy.kagi-git/private"));
+        assert!(git_stdout(&copy, &["status", "--porcelain"])
+            .unwrap()
+            .is_empty());
+        fs::write(copy.join("copy-only.txt"), b"copy\n").unwrap();
+        git(&copy, &["add", "copy-only.txt"]).unwrap();
+        assert!(git_stdout(&linked, &["status", "--porcelain"])
+            .unwrap()
+            .is_empty());
     }
 }

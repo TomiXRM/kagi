@@ -1,6 +1,10 @@
 //! Repository reload / refresh paths (ADR-0121 Phase A: behaviour-preserving
 //! relocation out of `mod.rs`).
 //!
+//! Invariant (ADR-0078): repository reads enter through [`kagi_git::Backend`],
+//! never Git bindings or direct repository opens; otherwise refresh logic leaks
+//! Git I/O across the UI/backend boundary and trips the architecture gate.
+//!
 //! Sync (`reload` / `reload_checked`), pre-launch (`reload_prelaunch`),
 //! background (`reload_async` / `reload_external`, ADR-0104), the cheap
 //! working-tree-only refresh (`refresh_working_tree_external`), the

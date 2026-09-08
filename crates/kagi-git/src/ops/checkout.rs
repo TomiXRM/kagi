@@ -1,3 +1,7 @@
+//! This module owns checkout's `plan_*`, `preflight_*`, and `execute_*` checks.
+//! Keep them aligned here: drift can execute against repository state that the
+//! confirmed plan did not describe, breaking the plan → confirm safety boundary.
+//!
 use super::*;
 use kagi_domain::plan_note::{
     CheckoutNote, CheckoutRecovery, CheckoutTitle, CommonNote, DirtyParts, OpPhrase, UntrackedCtx,

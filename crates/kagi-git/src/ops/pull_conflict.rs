@@ -1,6 +1,10 @@
 //! What a pull would collide with — the plan-time preview and the execute-time
 //! guard, computed once (#625).
 //!
+//! Invariant (#625 / ADR-0192): plan and execute must both call the shared
+//! conflict calculation here; duplicated logic can label Stash & Pull safe,
+//! then discover a conflict only while restoring the stash after confirmation.
+//!
 //! Split out of `ops/pull.rs` (which was already over the 800-line target) on a
 //! feature boundary: everything here answers "would this pull run into what the
 //! user has locally?", and nothing here mutates the repository.

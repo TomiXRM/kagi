@@ -1,5 +1,9 @@
 //! Working-tree snapshots — savepoints under `refs/kagi/snapshots/` (ADR-0154).
 //!
+//! Keep restore's `plan_*`, `preflight_*`, and `execute_*` checks aligned here:
+//! drift can restore a snapshot or working-tree state different from the one
+//! the user confirmed.
+//!
 //! A snapshot is a **real commit** of the working tree + index, written to the
 //! ODB and pointed at by a ref under `refs/kagi/snapshots/<id>`. Because it is
 //! a ref (not an unreachable blob like the discard backup, ADR-0046/0083), the

@@ -1,5 +1,8 @@
 //! Headless test-contract logging (`[kagi] …`) — issue #13 Low-1 / ADR-0096.
 //!
+//! Invariant (ADR-0096): never change the wording or ordering of existing
+//! `[kagi]` lines; headless scenarios match stderr exactly as behavior evidence.
+//!
 //! Every `[kagi] …` line printed to stderr is part of the `KAGI_*` headless
 //! test contract: `src/headless.rs` and the integration tests grep stderr for
 //! these exact lines, so their format and wording must not change casually

@@ -1,5 +1,8 @@
 //! Absorb operation pipeline (issue #345, ADR-0151).
 //!
+//! Keep the `plan_*`, `preflight_*`, and `execute_*` checks aligned here: drift
+//! can rewrite a commit range different from the one the user confirmed.
+//!
 //! `absorb` folds each uncommitted working-tree hunk into the **mutable**
 //! ancestor commit that last touched those lines, leaving ambiguous hunks in
 //! the working tree. It is the `git-absorb` / `jj absorb` idea, self-implemented

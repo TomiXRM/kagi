@@ -1,9 +1,9 @@
+//! This module owns stash's `plan_*`, `preflight_*`, and `execute_*`; drift can
+//! act on a stash other than the one confirmed. ADR-0129 keeps plan text structured
+//! as `StashNote` / `StashTitle` / `StashRecovery`, rendered in EN by the golden-tested
+//! `message_en()` and in JA by `kagi-ui-core::i18n::plan::stash`.
 use super::*;
 
-// ADR-0129 Phase 2: this file's plan text is now structured (`StashNote` /
-// `StashTitle` / `StashRecovery`), not English prose. `message_en()` in
-// kagi-domain renders the exact legacy strings for oplog/klog/EN display
-// (golden-tested there); JA lives in `kagi-ui-core::i18n::plan::stash`.
 use kagi_domain::plan::StashPopOutcome;
 use kagi_domain::plan_note::stash::StashDirtyOp;
 use kagi_domain::plan_note::{

@@ -28,14 +28,27 @@ pub struct HarnessError {
 }
 
 impl HarnessError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
+    /// Public because every downstream probe module (`backend_probe/{b,e,…}.rs`)
+    /// is an *example* target, i.e. a separate crate: `pub(crate)` puts the only
+    /// way to report a harness failure out of their reach (#627 P3).
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
     }
 
-    pub(crate) fn io(path: &std::path::Path, error: std::io::Error) -> Self {
+    /// Public for the same reason as [`HarnessError::new`].
+    pub fn io(path: &std::path::Path, error: std::io::Error) -> Self {
         Self::new(format!("{}: {error}", path.display()))
+    }
+}
+
+/// Probes drive real `Backend` operations, so a `GitError` is the ordinary way a
+/// measurement fails. Without this the `?` operator is unavailable to every
+/// downstream probe module and each one grows its own `map_err` (#627 P3).
+impl From<crate::GitError> for HarnessError {
+    fn from(error: crate::GitError) -> Self {
+        Self::new(error.to_string())
     }
 }
 

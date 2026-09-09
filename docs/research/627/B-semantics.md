@@ -109,6 +109,8 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 
 bare Git CLI は repository config の filter を実行する。一方、測定した libgit2 の 4 経路は外部 filter を実行しない。
 
+これは #627 の backend 選定に直接関係する。予測を libgit2 に残す設計は書き込みを避けるだけでなく、repository config を経由する任意コード実行を構造的に回避する。CLI へ寄せる場合は同じ経路を許すため、E3 と [#649](https://github.com/TomiXRM/kagi/issues/649) の対になるリスクとして扱う。
+
 ## 未実測ケースと打ち切り理由
 
 | ケース | 状態 | 打ち切り理由 |

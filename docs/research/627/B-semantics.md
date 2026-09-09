@@ -71,6 +71,8 @@ fixture の tracked file を stash push 後に別内容へ変更して commit �
 
 apply は完了扱いになり、競合 path は `StashEvidence` に記録された。stash entry は残る。OID は in-process `StashEvidence` に存在するが oplog recovery handle には残らないため、第 4 軸は **比較不能**。
 
+`plan_stash_apply` は conflict fixture を作成した**後**に実行した。`ops/stash.rs` の実装は `warnings: Vec::new()` を固定しており、三者マージによる conflict 予測を実施しない。一方 `plan_stash_pop` は同じ状態で `will conflict` warning を出す。したがって apply の warning 欠落は probe の実行順序ではなく、apply planner に予測機構がない現行挙動である。
+
 ## B8 — Stash pop、競合
 
 **状態:** libgit2/Kagi backend で実測済み。direct Git CLI との比較は未実施。

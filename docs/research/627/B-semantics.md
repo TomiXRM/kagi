@@ -1,0 +1,43 @@
+# #627 P3 — Backend semantic matrix
+
+## Scope
+
+This report compares direct Git CLI behavior with Kagi's libgit2 backend across the B1–B8 semantic cases. A row is recorded only after the committed `backend_probe` builds and the listed probe command completes.
+
+The comparison axes are: displayed-content hash, staged/committed-content hash, plan blocker and target path, and persisted oplog recovery handle. Direct Git CLI does not create a Kagi oplog; its recovery-handle axis is therefore observational context, not a backend semantic mismatch.
+
+## B8 — Stash apply, clean worktree
+
+**Status:** measured for the libgit2/Kagi backend. Direct CLI comparison pending.
+
+### Reproduction
+
+```sh
+cargo build -p kagi-git --example backend_probe
+d=$(mktemp -d)
+cargo run -q -p kagi-git --example backend_fixture -- \
+  --out "$d/repo" --files 1 --commits 1 --depth 1 --seed 627
+cargo run -q -p kagi-git --example backend_probe -- \
+  --repo "$d/repo" --operation semantic-matrix --backend libgit2 \
+  --candidate b8-clean-apply --iterations 1 --format json
+```
+
+### Observation
+
+| Axis | Observed value |
+|---|---|
+| stash push recovery handles | `1` |
+| clean apply recovery handles | `0` |
+| clean apply stash OID | present in `StashEvidence` |
+| clean apply status | `started=true`, `applied=true`, `verified=true`, no conflicts |
+| stash entries after apply | `1` |
+
+`apply_recovery_handles: 0` does **not** mean the stash OID is unknown: the OID is present in the in-process `StashEvidence`, but clean apply does not persist it as an oplog recovery handle. The fourth comparison axis is consequently **not comparable** for clean apply. The retained stash entry confirms that apply preserves the source stash.
+
+### Impact
+
+A future CLI implementation must retain the source stash OID/reference somewhere durable if Kagi needs recovery from a completed clean apply. Matching only Git state is insufficient to match Kagi's recovery information. This is an observation, not yet a decision to add a recovery record.
+
+## Remaining cases
+
+B1 clean/smudge filters; B2 `core.autocrlf`; B3 ignore; B4 submodule; B5 sparse checkout; B6 partial clone; B7 unrelated histories; and the remaining B8 apply/pop clean/conflict cells are unmeasured.

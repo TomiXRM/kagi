@@ -73,6 +73,8 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 
 `plan_stash_apply` は conflict fixture を作成した**後**に実行した。`ops/stash.rs` の実装は `warnings: Vec::new()` を固定しており、三者マージによる conflict 予測を実施しない。一方 `plan_stash_pop` は同じ状態で `will conflict` warning を出す。したがって apply の warning 欠落は probe の実行順序ではなく、apply planner に予測機構がない現行挙動である。
 
+この欠落は libgit2 と Git CLI の意味論差ではなく Kagi の apply planner 実装差である。backend 選定の結論からは除外する。追跡: [#652](https://github.com/TomiXRM/kagi/issues/652)。
+
 ## B8 — Stash pop、競合
 
 **状態:** libgit2/Kagi backend で実測済み。direct Git CLI との比較は未実施。

@@ -68,6 +68,7 @@ impl ProbeOperation for SemanticMatrix {
                 &["commit", "--no-gpg-sign", "-m", "B8 divergent HEAD change"],
             )?;
         }
+        let mut backend = Backend::open(p)?;
         let mut raw = git2::Repository::open(p)?;
         let (action_plan, action) = match candidate {
             "b8-clean-apply" | "b8-conflict-apply" => (

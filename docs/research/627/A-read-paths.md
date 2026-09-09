@@ -42,6 +42,18 @@ P0 runner は nonmutating warm series に `prepare_series` / `finish_series` lif
 | CLI | `--no-optional-locks` | 26.042 / 26.367 / 13.851 | — | 1 | `[]` / 不変 |
 
 3 回は lifecycle・backend 分岐・fingerprint の確認だけであり、性能結論に使わない。修正後の S/M/L 11 iteration warm、process-cold を改めて実行する。
+### 修正後の clean warm 規模系列
+
+reusable repository を用い、11 回の最初を warm-up として破棄した。S は generator fixture（200 tracked files）、M は Kagi source clone（1,194 tracked files）、L は generator fixture（50,000 tracked files）である。
+
+| size | files | libgit2 open ms（timer 外） | libgit2 median ms | CLI median ms | CLI / libgit2 | libgit2 min–max ms | CLI min–max ms |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| S | 200 | 0.196 | 19.021 | 24.543 | 1.29 | 11.676–20.170 | 22.525–26.222 |
+| M | 1,194 | 0.172 | 228.355 | 215.559 | 0.94 | 225.579–249.411 | 208.234–229.545 |
+| L | 50,000 | 0.219 | 4,153.127 | 1,317.064 | 0.32 | 3,793.953–5,455.873 | 1,235.606–1,476.294 |
+
+`Repository::open` は全規模で 0.219 ms 以下の timer 外コストだった。S では CLI が遅く、M でほぼ同等、L では CLI が 0.32 倍で性能閾値 0.7 を満たした。この APFS / Git 2.50.1 / git2 0.21.0 の clean series では規模増加に対する libgit2 の傾きが CLI より急である。ただし dirty L、process-cold、cache 条件の S/L、A2 snapshot 情報量が未完であり、production backend の結論にはしない。
+
 
 ### `--git-executable` と fsmonitor 条件
 
@@ -81,9 +93,15 @@ M fixture の R100、Git が R63 と報告する内容変更 rename、rename 非
 | M cache on / libgit2 reusable repository / 3 | `/tmp/kagi-627-p4/results/a1-M-cache-on-libgit2-3-reuse.json` |
 | M untracked cache on, fsmonitor disabled / CLI / 3 | `/tmp/kagi-627-p4/results/a1-M-untracked-cache-cli-3-reuse.json` |
 | M built-in fsmonitor / CLI / 1 | `/tmp/kagi-627-p4/results/a1-M-cache-on-cli-1-reuse.json` |
+| S clean reusable repository / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-S-clean-libgit2-11-reuse.json` |
+| S clean reusable repository / CLI / 11 warm | `/tmp/kagi-627-p4/results/a1-S-clean-cli-11-reuse.json` |
+| M clean reusable repository / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-M-clean-libgit2-11-reuse.json` |
+| M clean reusable repository / CLI / 11 warm | `/tmp/kagi-627-p4/results/a1-M-clean-cli-11-reuse.json` |
+| L clean reusable repository / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-L-clean-libgit2-11-reuse.json` |
+| L clean reusable repository / CLI / 11 warm | `/tmp/kagi-627-p4/results/a1-L-clean-cli-11-reuse.json` |
 
 ## 次の測定
-1. reusable repository で clean S / M / L の 11 iteration warm と process-cold を再測定する。
+1. reusable repository で clean S / M / L の process-cold を測定する。
 2. dirty / rename / untracked の L case。
 3. fsmonitor disabled / untracked cache enabled 条件を S / L に広げる。built-in fsmonitor は P0 fingerprint を変えたため、watcher candidate から除外する。
 4. A2 の libgit2 `snapshot` と CLI 合成の段別 process / time / 情報欠落。

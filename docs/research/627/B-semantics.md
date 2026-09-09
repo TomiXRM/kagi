@@ -71,6 +71,24 @@ fixture の tracked file を stash push 後に別内容へ変更して commit �
 
 apply は完了扱いになり、競合 path は `StashEvidence` に記録された。stash entry は残る。OID は in-process `StashEvidence` に存在するが oplog recovery handle には残らないため、第 4 軸は **比較不能**。
 
-## Remaining cases
+## B8 — Stash pop、競合
 
-B1 clean/smudge filters、B2 `core.autocrlf`、B3 ignore、B4 submodule、B5 sparse checkout、B6 partial clone、B7 unrelated histories、B8 conflict pop は未実測。
+**状態:** libgit2/Kagi backend で実測済み。direct Git CLI との比較は未実施。
+
+同じ divergence fixture で `--candidate b8-conflict-pop` を実行した。
+
+| 軸 | 観測値 |
+|---|---|
+| action error | `null` |
+| plan blocker | なし |
+| plan warning | `Stash pop will conflict ... The stash entry will be KEPT` |
+| `StashEvidence.conflicts` | `d00-00/d01-00/file-000000.bin` |
+| stash push recovery handles | `1` |
+| conflict pop recovery handles | `0` |
+| stash entries after pop | `1` |
+
+競合 pop は stash entry を削除しない。apply と同じく、stash OID は in-process evidence にある一方、oplog recovery handle は残らない。
+
+## 未実測ケース
+
+B1 clean/smudge filters、B2 `core.autocrlf`、B3 ignore、B4 submodule、B5 sparse checkout、B6 partial clone、B7 unrelated histories。

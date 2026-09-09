@@ -36,26 +36,44 @@ impl ProbeOperation for SemanticMatrix {
         let mut content = fs::read(&changed).map_err(|e| HarnessError::io(&changed, e))?;
         content.extend_from_slice(b"\nB8 clean apply\n");
         fs::write(&changed, content).map_err(|e| HarnessError::io(&changed, e))?;
-        let mut raw = git2::Repository::open(p)?;
-        let push_plan = plan_stash_push(&mut raw, None, false)?;
-        if !push_plan.blockers.is_empty() {
-            return Err(HarnessError::new(format!(
-                "stash push blocked after modifying {}: {:?}",
-                changed.display(),
-                push_plan.blockers
-            )));
+        let backend_kind = c.backend();
+        if !matches!(backend_kind, "libgit2" | "cli") {
+            return Err(HarnessError::new("backend must be libgit2 or cli"));
         }
-        let mut backend = Backend::open(p)?;
-        let push = backend.run_recorded(
-            &Operation::StashPush {
-                message: None,
-                include_untracked: false,
-            },
-            &push_plan,
-        );
-        push.result
-            .as_ref()
-            .map_err(|error| HarnessError::new(error.to_string()))?;
+
+        let (push_recovery_handles, push_evidence) = if backend_kind == "libgit2" {
+            let mut raw = git2::Repository::open(p)?;
+            let push_plan = plan_stash_push(&mut raw, None, false)?;
+            if !push_plan.blockers.is_empty() {
+                return Err(HarnessError::new(format!(
+                    "stash push blocked after modifying {}: {:?}",
+                    changed.display(),
+                    push_plan.blockers
+                )));
+            }
+            let mut backend = Backend::open(p)?;
+            let push = backend.run_recorded(
+                &Operation::StashPush {
+                    message: None,
+                    include_untracked: false,
+                },
+                &push_plan,
+            );
+            push.result
+                .as_ref()
+                .map_err(|error| HarnessError::new(error.to_string()))?;
+            (
+                json!(push.recording.entry().recovery.len()),
+                json!({
+                    "oid": push.stash.as_ref().and_then(|evidence| evidence.oid.as_deref()),
+                    "verified": push.stash.as_ref().is_some_and(|evidence| evidence.verified),
+                }),
+            )
+        } else {
+            run_git(&workdir, &["stash", "push", "--quiet"])?;
+            (Value::Null, json!({"oplog": "not-recorded-by-direct-cli"}))
+        };
+
         if matches!(candidate, "b8-conflict-apply" | "b8-conflict-pop") {
             fs::write(&changed, b"B8 divergent HEAD change\n")
                 .map_err(|error| HarnessError::io(&changed, error))?;
@@ -68,34 +86,59 @@ impl ProbeOperation for SemanticMatrix {
                 &["commit", "--no-gpg-sign", "-m", "B8 divergent HEAD change"],
             )?;
         }
-        let mut backend = Backend::open(p)?;
-        let mut raw = git2::Repository::open(p)?;
-        let (action_plan, action) = match candidate {
-            "b8-clean-apply" | "b8-conflict-apply" => (
-                plan_stash_apply(&mut raw, 0)?,
-                Operation::StashApply { index: 0 },
-            ),
-            "b8-clean-pop" | "b8-conflict-pop" => (
-                plan_stash_pop(&mut raw, 0)?,
-                Operation::StashPop { index: 0 },
-            ),
-            _ => unreachable!("candidate was validated"),
+
+        let (action_error, action_recovery_handles, action_plan) = if backend_kind == "libgit2" {
+            let mut backend = Backend::open(p)?;
+            let mut raw = git2::Repository::open(p)?;
+            let (plan, action) = match candidate {
+                "b8-clean-apply" | "b8-conflict-apply" => (
+                    plan_stash_apply(&mut raw, 0)?,
+                    Operation::StashApply { index: 0 },
+                ),
+                "b8-clean-pop" | "b8-conflict-pop" => (
+                    plan_stash_pop(&mut raw, 0)?,
+                    Operation::StashPop { index: 0 },
+                ),
+                _ => unreachable!("candidate was validated"),
+            };
+            let report = backend.run_recorded(&action, &plan);
+            (
+                report.result.as_ref().err().map(ToString::to_string),
+                json!(report.recording.entry().recovery.len()),
+                json!({
+                    "blockers": plan.blockers.iter().map(|note| note.message_en()).collect::<Vec<_>>(),
+                    "warnings": plan.warnings.iter().map(|note| note.message_en()).collect::<Vec<_>>(),
+                    "stash_oid": report.stash.as_ref().and_then(|evidence| evidence.oid.as_deref()),
+                    "conflicts": report.stash.as_ref().map(|evidence| &evidence.conflicts),
+                }),
+            )
+        } else {
+            let command = match candidate {
+                "b8-clean-apply" | "b8-conflict-apply" => ["stash", "apply", "stash@{0}"],
+                "b8-clean-pop" | "b8-conflict-pop" => ["stash", "pop", "stash@{0}"],
+                _ => unreachable!("candidate was validated"),
+            };
+            let output = run_git_output(&workdir, &command)?;
+            let action_error = (!output.status.success()).then(|| {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                format!("{}{}", stderr, stdout).trim().to_string()
+            });
+            (
+                action_error,
+                Value::Null,
+                json!({"oplog": "not-recorded-by-direct-cli"}),
+            )
         };
-        let action_report = backend.run_recorded(&action, &action_plan);
-        let action_error = action_report.result.as_ref().err().map(ToString::to_string);
-        if action_error.is_some() && !candidate.contains("conflict") {
-            return Err(HarnessError::new(action_error.unwrap()));
-        }
         Ok(json!({
+            "backend": backend_kind,
             "scenario": candidate,
             "action_error": action_error,
-            "action_plan_blockers": action_plan.blockers.iter().map(|blocker| blocker.message_en()).collect::<Vec<_>>(),
-            "action_plan_warnings": action_plan.warnings.iter().map(|warning| warning.message_en()).collect::<Vec<_>>(),
-            "stash_entries_after_action": stash_count(p),
-            "push_recovery_handles": push.recording.entry().recovery.len(),
-            "action_recovery_handles": action_report.recording.entry().recovery.len(),
-            "push_stash_evidence": format!("{:?}", push.stash),
-            "action_stash_evidence": format!("{:?}", action_report.stash),
+            "action": action_plan,
+            "stash_entries_after_action": stash_count(p)?,
+            "push_recovery_handles": push_recovery_handles,
+            "action_recovery_handles": action_recovery_handles,
+            "push": push_evidence,
         }))
     }
 }
@@ -115,11 +158,7 @@ fn first_tracked_path(repo: &git2::Repository) -> Result<std::path::PathBuf, Har
 }
 
 fn run_git(repo: &std::path::Path, args: &[&str]) -> Result<(), HarnessError> {
-    let output = Command::new("git")
-        .args(["-C", &repo.to_string_lossy()])
-        .args(args)
-        .output()
-        .map_err(|error| HarnessError::new(error.to_string()))?;
+    let output = run_git_output(repo, args)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -130,14 +169,25 @@ fn run_git(repo: &std::path::Path, args: &[&str]) -> Result<(), HarnessError> {
         )))
     }
 }
-fn stash_count(p: &std::path::Path) -> usize {
-    let mut n = 0;
-    git2::Repository::open(p)
-        .unwrap()
-        .stash_foreach(|_, _, _| {
-            n += 1;
-            true
-        })
-        .unwrap();
-    n
+
+fn run_git_output(
+    repo: &std::path::Path,
+    args: &[&str],
+) -> Result<std::process::Output, HarnessError> {
+    Command::new("git")
+        .args(["-C", &repo.to_string_lossy()])
+        .args(args)
+        .output()
+        .map_err(|error| HarnessError::new(error.to_string()))
+}
+
+fn stash_count(p: &std::path::Path) -> Result<usize, HarnessError> {
+    let mut count = 0;
+    let mut repo = git2::Repository::open(p)?;
+    repo.stash_foreach(|_, _, _| {
+        count += 1;
+        true
+    })
+    .map_err(|error| HarnessError::new(error.to_string()))?;
+    Ok(count)
 }

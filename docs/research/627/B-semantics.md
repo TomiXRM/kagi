@@ -1,25 +1,28 @@
 # #627 P3 — Backend semantic matrix
 
-## Scope
+## 範囲
 
-This report compares direct Git CLI behavior with Kagi's libgit2 backend across the B1–B8 semantic cases. A row is recorded only after the committed `backend_probe` builds and the listed probe command completes.
+この report は B1–B8 の意味論を記録する。backend 比較として成立する行は、`backend_probe` が `--backend libgit2` と `--backend cli` で別経路を実行し、各 backend で `--iterations 3` を完走したものだけである。過去の B8 4 cell は libgit2/Kagi backend の観測であり、CLI 比較ではない。
 
-The comparison axes are: displayed-content hash, staged/committed-content hash, plan blocker and target path, and persisted oplog recovery handle. Direct Git CLI does not create a Kagi oplog; its recovery-handle axis is therefore observational context, not a backend semantic mismatch.
+比較軸は表示内容、stage/commit 内容、plan blocker と target path、oplog recovery handle とする。direct Git CLI は Kagi oplog を作らないため、recovery handle は `null` / `not-recorded-by-direct-cli` と明示し、一致とは扱わない。
 
 ## B8 — Stash apply, clean worktree
 
-**Status:** measured for the libgit2/Kagi backend. Direct CLI comparison pending.
+**状態:** libgit2/Kagi backend と direct Git CLI の clean apply を比較済み。pop と conflict の CLI 比較は未実施。
 
-### Reproduction
+### 再現
 
 ```sh
 cargo build -p kagi-git --example backend_probe
 d=$(mktemp -d)
 cargo run -q -p kagi-git --example backend_fixture -- \
-  --out "$d/repo" --files 1 --commits 1 --depth 1 --seed 627
-cargo run -q -p kagi-git --example backend_probe -- \
+  --out "$d/repo" --files 5 --commits 2 --seed 7
+KAGI_LOG_DIR="$d/oplog-libgit2" cargo run -q -p kagi-git --example backend_probe -- \
   --repo "$d/repo" --operation semantic-matrix --backend libgit2 \
-  --candidate b8-clean-apply --iterations 1 --format json
+  --candidate b8-clean-apply --iterations 3 --format json
+KAGI_LOG_DIR="$d/oplog-cli" cargo run -q -p kagi-git --example backend_probe -- \
+  --repo "$d/repo" --operation semantic-matrix --backend cli \
+  --candidate b8-clean-apply --iterations 3 --format json
 ```
 
 ### Observation
@@ -33,6 +36,19 @@ cargo run -q -p kagi-git --example backend_probe -- \
 | stash entries after apply | `1` |
 
 `apply_recovery_handles: 0` does **not** mean the stash OID is unknown: the OID is present in the in-process `StashEvidence`, but clean apply does not persist it as an oplog recovery handle. The fourth comparison axis is consequently **not comparable** for clean apply. The retained stash entry confirms that apply preserves the source stash.
+
+### direct Git CLI 比較
+
+3 iteration とも、direct Git CLI の clean apply は成功し `stash_entries_after_action: 1` だった。state transition は libgit2/Kagi backend と同じく source stash を保持する。
+
+| 軸 | libgit2/Kagi backend | direct Git CLI |
+|---|---|---|
+| stash entries after apply | `1` | `1` |
+| push recovery handles | `1` | `null` |
+| apply recovery handles | `0` | `null` |
+| stash OID / recovery handle | `StashEvidence` に OID、oplog に apply handle なし | direct CLI は Kagi oplog を記録しない |
+
+clean apply の Git state は一致した。recovery-handle 軸は CLI 側に Kagi oplog がないため **比較不能** であり、同一とは結論しない。
 
 ## B8 — Stash pop, clean worktree
 
@@ -77,7 +93,8 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 
 ## B8 — Stash pop、競合
 
-**状態:** libgit2/Kagi backend で実測済み。direct Git CLI との比較は未実施。
+
+**状態:** libgit2/Kagi backend と direct Git CLI で比較済み。詳細は後続の「B8 — direct Git CLI 比較」。
 
 同じ divergence fixture で `--candidate b8-conflict-pop` を実行した。
 
@@ -92,6 +109,21 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 | stash entries after pop | `1` |
 
 競合 pop は stash entry を削除しない。apply と同じく、stash OID は in-process evidence にある一方、oplog recovery handle は残らない。
+
+## B8 — direct Git CLI 比較
+
+各 scenario を backend ごとに `--iterations 3` で実行した。CLI では `git stash push` と `git stash apply` / `git stash pop` を直接実行した。`KAGI_LOG_DIR` は backend ごと・実行ごとの temp directory に設定した。
+
+| scenario | libgit2/Kagi: stash entries | direct Git CLI: stash entries | 状態遷移 |
+|---|---:|---:|---|
+| clean apply | `1` | `1` | 一致 |
+| clean pop | `0` | `0` | 一致 |
+| conflict apply | `1` | `1` | 一致。CLI は non-zero exit と conflict message を返す |
+| conflict pop | `1` | `1` | 一致。CLI は non-zero exit と `The stash entry is kept` を返す |
+
+libgit2/Kagi backend は conflict を `StashEvidence.conflicts` に記録して `RunReport.result` を成功として返す。direct Git CLI は同じ Git state に対して non-zero exit と診断 text を返す。この error delivery の違いは、CLI write path で user-facing error と oplog を明示的に変換する必要があることを示す。
+
+direct Git CLI は Kagi oplog を作らないため、recovery handle は 4 scenario すべて `null` である。libgit2/Kagi backend は push で `1` handle、apply/pop で `0` handle だった。handle 軸は **比較不能** であり、state transition 一致から recovery 同値を導かない。
 
 ## B1 — `.gitattributes` filter
 

@@ -14,6 +14,10 @@ impl ProbeOperation for ExecutionMixed {
         "execution-mixed"
     }
 
+    fn mutates_fixture(&self) -> bool {
+        false
+    }
+
     fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
         if context.candidate() != Some("d1-working-tree-status") {
             return Err(HarnessError::new(
@@ -23,8 +27,11 @@ impl ProbeOperation for ExecutionMixed {
 
         match context.backend() {
             "libgit2" => {
-                let backend = Backend::open(context.repo())?;
-                let status = backend.working_tree_status()?;
+                let backend = Backend::open(context.repo())
+                    .map_err(|error| HarnessError::new(error.to_string()))?;
+                let status = backend
+                    .working_tree_status()
+                    .map_err(|error| HarnessError::new(error.to_string()))?;
                 Ok(json!({
                     "backend": "libgit2",
                     "executor": "Backend::working_tree_status",
@@ -38,11 +45,12 @@ impl ProbeOperation for ExecutionMixed {
                 let output = run_git(
                     context.repo(),
                     &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
-                )?;
-                if !output.status.success() {
+                )
+                .map_err(|error| HarnessError::new(error.to_string()))?;
+                if output.status != 0 {
                     return Err(HarnessError::new(format!(
-                        "git status exited {:?}: {}",
-                        output.status.code(),
+                        "git status exited {}: {}",
+                        output.status,
                         output.stderr.trim()
                     )));
                 }

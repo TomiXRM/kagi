@@ -1,6 +1,6 @@
 # 627 P4 — 読み経路の測定
 
-> 状態: 実行中。A1 の最初の S fixture 確認まで完了。A0 / A2 / A3、S/M/L 本測定、backend 選定は未確定。
+> 状態: 実行中。A1 clean の S/M/L warm 規模系列と M の rename 境界を測定済み。A0 / A2、process-cold、cache 条件、dirty L、backend 選定は未確定。
 >
 > branch: `exp/627-p4-read-paths`
 >
@@ -61,16 +61,38 @@ canonical status は両 backend の全 3 iteration で一致した。
 
 この値は §5 A1 の性能判断に使わない。S/M/L、warm / process-cold、fsmonitor / untracked cache の有効・無効、情報等価性の全ケースが未完了である。
 
-## A1 warm — M / rename 100%
+## A1 warm — M / rename
 
-M fixture は repository source clone を独立 clone し、`Cargo.toml` を unstaged modified、`docs/rearch/architecture.md` を内容を変えず staged rename、`p4-untracked.txt` を untracked とした。11 回のうち最初の warm-up を破棄した 10 値である。
+M fixture は repository source clone を独立 clone し、`Cargo.toml` を unstaged modified、`docs/rearch/architecture.md` を staged rename、`p4-untracked.txt` を untracked とした。registered `backend_probe --operation working-tree-status` により、11 回の最初を warm-up として破棄した。
+
+### 内容不変 R100
 
 | backend | candidate | 破棄値 ms | warm 10 回 median ms | min–max ms | Git process | canonical / fingerprint |
 | --- | --- | ---: | ---: | --- | ---: | --- |
-| libgit2 | — | 267.757 | 275.730 | 256.714–301.396 | 0 | 3 status と `rename_from` が一致 / 不変 |
-| CLI | `--no-optional-locks` | 229.146 | 227.928 | 193.305–260.921 | 1 | 同上 / 不変 |
+| libgit2 | — | 214.924 | 214.093 | 211.327–226.399 | 0 | 3 status と `rename_from` が一致 / 不変 |
+| CLI | `--no-optional-locks` | 193.639 | 190.983 | 184.532–197.503 | 1 | 同上 / 不変 |
 
-この case は内容不変の R100 rename である。両 backend は `docs/rearch/architecture-renamed.md` と `docs/rearch/architecture.md` の同じ `rename_from` を返した。性能比較の結論には使わない。process-cold、clean case、fsmonitor / untracked cache 条件、内容を大きく変えた threshold 近傍 rename、および S / L が未完了である。
+両 backend は `docs/rearch/architecture-renamed.md` と `docs/rearch/architecture.md` の同じ `rename_from` を返した。
+
+### 内容変更 rename の境界
+
+3 iteration の情報等価性確認では、文書の非空行の約 1/3 を変更した staged rename（Git の `--find-renames` が R63 と表示）でも、両 backend は全回で同じ `renamed` と同じ `rename_from` を返し、fingerprint も不変だった。半数を変更した fixture は Git が rename を検出せず add + delete になり、両 backend も全回で同じ add + delete を返した。
+
+R100、R63、rename 非検出の三状態で同じ canonical status を返したことは、M fixture の rename 境界を跨いだ積極的な情報等価性の証拠である。ただし similarity 50% 近傍または S / L の意味等価性は未確認である。
+
+M の warm median は CLI / libgit2 = 190.983 / 214.093 = 0.89 で、CLI がやや速い。しかし backend 選定の性能閾値 0.7 には届かず、速度を理由に CLI へ寄せる根拠にはならない。process-cold、clean case、fsmonitor / untracked cache 条件、S / L が未完了のため、性能結論は保留する。
+
+## A1 clean warm — S / M / L 規模系列
+
+各 fixture は clean status、CLI は `--no-optional-locks`、11 回の最初を warm-up として破棄した。S は generator fixture（200 tracked files）、M は Kagi source clone（1,194 tracked files）、L は generator fixture（50,000 tracked files）である。
+
+| size | files | libgit2 median ms | CLI median ms | CLI / libgit2 | libgit2 min–max ms | CLI min–max ms |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| S | 200 | 10.402 | 16.068 | 1.54 | 10.044–10.905 | 14.353–26.447 |
+| M | 1,194 | 225.314 | 199.974 | 0.89 | 223.697–232.302 | 195.061–210.928 |
+| L | 50,000 | 3,321.855 | 1,145.869 | 0.34 | 3,255.121–4,087.412 | 1,087.308–1,198.862 |
+
+S では CLI が遅く、M で逆転し、L では CLI が 0.34 倍だった。従って少なくともこの APFS / Git 2.50.1 / git2 0.21.0 の clean status 系列では、規模増加に対する libgit2 側の傾きが CLI より急である。この条件では L が性能閾値 0.7 を満たすが、dirty status、process-cold、fsmonitor / untracked cache、別 filesystem、A2 の snapshot 情報量が未測定であり、production backend の選定結論にはしない。
 
 ## Raw JSON
 
@@ -81,13 +103,22 @@ M fixture は repository source clone を独立 clone し、`Cargo.toml` を uns
 | S clean / CLI `--no-optional-locks` / 3 | `/tmp/kagi-627-p4/results/a1-S-cli-no-optional-locks-3.json` |
 | S dirty / libgit2 / 3 | `/tmp/kagi-627-p4/results/a1-S-status-libgit2-3.json` |
 | S dirty / CLI `--no-optional-locks` / 3 | `/tmp/kagi-627-p4/results/a1-S-status-cli-3.json` |
-| M R100 rename / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-M-status-libgit2-11.json` |
-| M R100 rename / CLI `--no-optional-locks` / 11 warm | `/tmp/kagi-627-p4/results/a1-M-status-cli-11.json` |
+| M R100 registered / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-M-status-libgit2-11-registered.json` |
+| M R100 registered / CLI `--no-optional-locks` / 11 warm | `/tmp/kagi-627-p4/results/a1-M-status-cli-11-registered.json` |
+| M R63 registered / libgit2 / 3 | `/tmp/kagi-627-p4/results/a1-M-near-threshold-libgit2-3-registered.json` |
+| M R63 registered / CLI `--no-optional-locks` / 3 | `/tmp/kagi-627-p4/results/a1-M-near-threshold-cli-3-registered.json` |
+| M nonrename registered / libgit2 / 3 | `/tmp/kagi-627-p4/results/a1-M-threshold-libgit2-3-registered.json` |
+| M nonrename registered / CLI `--no-optional-locks` / 3 | `/tmp/kagi-627-p4/results/a1-M-threshold-cli-3-registered.json` |
+| S clean registered / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-S-clean-libgit2-11-registered.json` |
+| S clean registered / CLI `--no-optional-locks` / 11 warm | `/tmp/kagi-627-p4/results/a1-S-clean-cli-11-registered.json` |
+| M clean registered / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-M-clean-libgit2-11-registered.json` |
+| M clean registered / CLI `--no-optional-locks` / 11 warm | `/tmp/kagi-627-p4/results/a1-M-clean-cli-11-registered.json` |
+| L clean registered / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-L-clean-libgit2-11-registered.json` |
+| L clean registered / CLI `--no-optional-locks` / 11 warm | `/tmp/kagi-627-p4/results/a1-L-clean-cli-11-registered.json` |
 
 ## 次の測定
-
-1. S / M / L に対する A1 の 11 iteration warm と process-cold。
-2. `core.fsmonitor` と `core.untrackedCache` の有効・無効条件。
+1. clean S / M / L の process-cold、続いて `core.fsmonitor` と `core.untrackedCache` の有効・無効条件。
+2. dirty / rename / untracked の L case。
 3. A2 の libgit2 `snapshot` と CLI 合成の段別 process / time / 情報欠落。
 4. A3 の `1k` / `5k` / `20k` / `50k` fixture における傾き。
 5. A0 の GUI watcher scenario。`KAGI_BENCH_READ=1` の raw event、debounce 後 tick、reload、`snapshot` / `working_tree_status` 時間を記録する。

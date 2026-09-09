@@ -166,8 +166,8 @@ fn rebase_blocking(
         onto: onto.to_string(),
     };
     let outcome = repo.run(&op, plan).map_err(|error| match error {
-        kagi_git::GitError::RebaseCannotStartFiltersDisabled(_) => {
-            i18n::rebase_filters_disabled_cannot_start().to_string()
+        kagi_git::GitError::RebaseCannotStartWithRepoSettingsDisabled(_) => {
+            i18n::rebase_repository_settings_may_block_start().to_string()
         }
         other => i18n::op_failed(i18n::Op::Rebase, other),
     })?;

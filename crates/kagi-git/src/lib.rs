@@ -258,10 +258,10 @@ pub enum GitError {
     /// message would not do: the message embeds the user's own stash text, so a
     /// stash message could forge it.
     StashIdentityUnverified(String),
-    /// Rebase could not start for unstaged changes after Kagi neutralised
-    /// repository-defined filters. Kept typed so the UI and oplog can identify
-    /// the security/working-tree interaction without parsing prose (#649).
-    RebaseCannotStartFiltersDisabled(String),
+    /// Rebase did not start after Kagi neutralised dynamically named
+    /// repository settings. The underlying Git failure is retained for oplog
+    /// and CLI consumers; presentation must not attribute a specific cause.
+    RebaseCannotStartWithRepoSettingsDisabled(String),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -303,7 +303,7 @@ impl std::fmt::Display for GitError {
             GitError::Other(msg)
             | GitError::TerminationUnknown(msg)
             | GitError::StashIdentityUnverified(msg)
-            | GitError::RebaseCannotStartFiltersDisabled(msg) => {
+            | GitError::RebaseCannotStartWithRepoSettingsDisabled(msg) => {
                 write!(f, "git error: {}", msg)
             }
         }

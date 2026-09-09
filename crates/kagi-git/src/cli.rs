@@ -52,8 +52,9 @@ pub struct GitCliOutput {
     pub stdout: String,
     /// Captured stderr (UTF-8 lossy).
     pub stderr: String,
-    /// True when repo-local/worktree filter settings were neutralised.
-    pub repo_filters_disabled: bool,
+    /// True when the invocation neutralised a dynamically named repository
+    /// setting selected from local or worktree config.
+    pub repo_dynamic_settings_disabled: bool,
 }
 
 /// `-c KEY=VALUE` overrides injected **before** the subcommand on every
@@ -97,7 +98,12 @@ const HARDENING_ARGS: &[&str] = &[
 /// If Kagi cannot inspect an untrusted config level, it refuses to start Git.
 /// Running an operation after a failed inspection would make the hardening
 /// conditional on the attacker-controlled input being readable.
-fn repo_local_overrides(repo_dir: &Path) -> Result<Vec<String>, GitError> {
+struct RepoLocalOverrides {
+    args: Vec<String>,
+    dynamic_settings_disabled: bool,
+}
+
+fn repo_local_overrides(repo_dir: &Path) -> Result<RepoLocalOverrides, GitError> {
     let repo = git2::Repository::discover(repo_dir)
         .map_err(|error| GitError::Other(format!("cannot inspect repository config: {error}")))?;
     let cfg = repo
@@ -157,17 +163,21 @@ fn repo_local_overrides(repo_dir: &Path) -> Result<Vec<String>, GitError> {
         }
     }
 
-    let mut out = Vec::new();
+    let dynamic_settings_disabled = !dynamic_overrides.is_empty();
+    let mut args = Vec::new();
     if ssh {
-        out.extend(["-c".to_owned(), "core.sshCommand=ssh".to_owned()]);
+        args.extend(["-c".to_owned(), "core.sshCommand=ssh".to_owned()]);
     }
     if cred {
-        out.extend(["-c".to_owned(), "credential.helper=".to_owned()]);
+        args.extend(["-c".to_owned(), "credential.helper=".to_owned()]);
     }
     for value in dynamic_overrides {
-        out.extend(["-c".to_owned(), value]);
+        args.extend(["-c".to_owned(), value]);
     }
-    Ok(out)
+    Ok(RepoLocalOverrides {
+        args,
+        dynamic_settings_disabled,
+    })
 }
 
 /// Return the case-preserving `<name>` in `merge.<name>.driver`.
@@ -355,14 +365,9 @@ pub fn gh_command() -> std::process::Command {
 /// deadline expires — the wait was cut short, which is not proof the operation
 /// did not happen (issue #507).
 pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError> {
-    let local = repo_local_overrides(repo_dir)?;
-    let repo_filters_disabled = local.iter().any(|value| {
-        value
-            .get(.."filter.".len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("filter."))
-    });
+    let local_overrides = repo_local_overrides(repo_dir)?;
     let mut full: Vec<&str> = HARDENING_ARGS.to_vec();
-    full.extend(local.iter().map(String::as_str));
+    full.extend(local_overrides.args.iter().map(String::as_str));
     full.extend_from_slice(args);
 
     let mut cmd = git_command(repo_dir);
@@ -391,7 +396,7 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
         status,
         stdout: run.stdout_lossy(),
         stderr: run.stderr_lossy(),
-        repo_filters_disabled,
+        repo_dynamic_settings_disabled: local_overrides.dynamic_settings_disabled,
     })
 }
 

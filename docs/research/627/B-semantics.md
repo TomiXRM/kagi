@@ -91,8 +91,24 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 | conflict pop recovery handles | `0` |
 | stash entries after pop | `1` |
 
-競合 pop は stash entry を削除しない。apply と同じく、stash OID は in-process evidence にある一方、oplog recovery handle は残らない。
+## B1 — `.gitattributes` filter
+
+**状態:** PM の独立測定。Kagi backend probe の測定値ではない。
+
+同一 fixture（`.gitattributes`: `*.txt filter=evil`、repository config に clean/smudge filter）で、filter が marker file を作るかを確認した。
+
+| 経路 | filter 実行 |
+|---|---|
+| bare Git CLI `git add` | `true` |
+| libgit2 `Repository::statuses` | `false` |
+| libgit2 `diff_index_to_workdir` | `false` |
+| libgit2 `Index::add_path` | `false` |
+| libgit2 `checkout_tree` | `false` |
+
+bare Git CLI は repository config の filter を実行する。一方、測定した libgit2 の 4 経路は外部 filter を実行しない。
+
+これは #627 の backend 選定に直接関係する。予測を libgit2 に残す設計は書き込みを避けるだけでなく、repository config を経由する任意コード実行を構造的に回避する。CLI へ寄せる場合は同じ経路を許すため、E3 と [#649](https://github.com/TomiXRM/kagi/issues/649) の対になるリスクとして扱う。
 
 ## 未実測ケース
 
-B1 clean/smudge filters、B2 `core.autocrlf`、B3 ignore、B4 submodule、B5 sparse checkout、B6 partial clone、B7 unrelated histories。
+B2 `core.autocrlf`、B3 ignore、B4 submodule、B5 sparse checkout、B6 partial clone、B7 unrelated histories。

@@ -149,6 +149,79 @@ fn ssh_command_does_not_run_under_run_git() {
 }
 
 // ────────────────────────────────────────────────────────────
+// #647 — dynamic merge drivers
+// ────────────────────────────────────────────────────────────
+
+/// A repo-local `merge.<name>.driver` is selected by `.gitattributes` and runs
+/// arbitrary code during `merge-tree --write-tree`. `run_git` must scan the
+/// untrusted config level and disable every discovered driver name.
+///
+/// Mutation check: make `merge_driver_name` always return `None`; the final
+/// assertion fires because the marker script runs under `run_git`.
+#[test]
+fn merge_driver_does_not_run_under_run_git() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo = fixture(&tmp);
+    std::fs::write(repo.join(".gitattributes"), "f.txt merge=evil\n").unwrap();
+    std::fs::write(repo.join("f.txt"), "base\n").unwrap();
+    git(&repo, &["add", ".gitattributes", "f.txt"]);
+    git(&repo, &["commit", "-qm", "add merge driver fixture"]);
+
+    git(&repo, &["checkout", "-qb", "topic"]);
+    std::fs::write(repo.join("f.txt"), "topic\n").unwrap();
+    git(&repo, &["commit", "-am", "topic"]);
+    git(&repo, &["checkout", "main"]);
+    std::fs::write(repo.join("f.txt"), "main\n").unwrap();
+    git(&repo, &["commit", "-am", "main"]);
+
+    let marker = tmp.path().join("PWNED_MERGE_DRIVER");
+    let script = marker_script(&tmp.path().join("merge-driver.sh"), &marker);
+    git(&repo, &["config", "merge.evil.driver", &script]);
+
+    // Positive control: the repository-selected driver runs through bare Git.
+    let raw = Command::new("git")
+        .args(["merge-tree", "--write-tree", "topic", "main"])
+        .current_dir(&repo)
+        .output()
+        .expect("bare git merge-tree");
+    assert_eq!(raw.status.code(), Some(1), "bare merge-tree must conflict");
+    assert!(
+        marker.exists(),
+        "fixture is inert: bare git merge-tree did not run merge.evil.driver"
+    );
+    std::fs::remove_file(&marker).unwrap();
+
+    let out = run_git(&repo, &["merge-tree", "--write-tree", "topic", "main"])
+        .expect("run_git merge-tree");
+    assert_eq!(out.status, 1, "merge-tree must still report the conflict");
+    assert!(!marker.exists(), "merge.evil.driver ran under run_git");
+
+    // The empty `-c merge.evil.driver=` override, not an incidental Git
+    // behavior difference, is the mechanism preventing execution.
+    let seen = run_git(&repo, &["config", "--get", "merge.evil.driver"]).unwrap();
+    assert_eq!(seen.stdout.trim(), "");
+}
+
+/// Config inspection is a hard precondition: an unreadable local config must
+/// return an error before `run_git` can start a child process.
+#[test]
+fn malformed_local_config_refuses_run_git() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo = fixture(&tmp);
+    std::fs::write(repo.join(".git/config"), "[merge\n").unwrap();
+
+    assert!(
+        run_git(&repo, &["status", "--porcelain=v1"]).is_err(),
+        "run_git must not execute after repository config inspection fails"
+    );
+}
+// ────────────────────────────────────────────────────────────
 // #291 — remote name that is really a flag
 // ────────────────────────────────────────────────────────────
 

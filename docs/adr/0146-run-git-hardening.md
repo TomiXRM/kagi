@@ -54,6 +54,38 @@ the app and its tests use at top level — still work. It will block a
 submodule-triggered fetch over an exotic transport, which is the hardening
 working as intended.
 
+### Dynamic driver keys (#647)
+
+An attribute can select an arbitrary merge driver name:
+`f.txt merge=evil` selects `merge.evil.driver`. The name is not a fixed
+allowlist value, and the driver value is an executable command. The initial
+hardening only neutralised fixed keys, so a repository could define a new
+driver name and execute it through `git merge-tree --write-tree`.
+
+Before every `run_git` child starts, Kagi opens the repository config and scans
+the **local** and **worktree** levels. For every key matching
+`merge.<name>.driver`, it prepends `-c merge.<name>.driver=`. It does not parse
+`.gitattributes`: an attribute that names a driver with no matching config
+definition has no executable command, while the config scan finds every
+executable definition irrespective of its attribute spelling. A driver defined
+only in global or system config remains available; the untrusted repository did
+not define it.
+
+Config inspection is a security precondition. An absent local/worktree config is
+normal, but any other discovery, read, or enumeration failure aborts `run_git`
+before it starts a child. Continuing after a failed scan would turn a malformed
+or unreadable attacker-controlled config into a hardening bypass.
+
+This establishes the general rule: **when the executable setting has a
+repository-chosen key name, scan the untrusted config level; never rely on a
+fixed key list.** The adjacent dynamic families `diff.<name>.command` /
+`.textconv` and `filter.<name>.clean` / `.smudge` / `.process` have the same
+shape. Filters can run during check-in/check-out conversion; with
+`merge.renormalize`, a three-way merge also performs those conversions. They
+are not covered by this merge-driver fix. No production `run_git` caller runs
+`merge-tree` yet, so a future adoption must make and document a separate
+filter-hardening decision before it can use the command.
+
 ### Argument injection (#291) — two independent layers
 
 1. **A `--` separator** at every site where git accepts one

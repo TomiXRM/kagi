@@ -1,6 +1,8 @@
 //! P3 semantic-matrix probe for #627.
 use kagi_git::benchmark::{HarnessError, ProbeContext, ProbeOperation};
-use kagi_git::{plan_stash_apply, plan_stash_pop, plan_stash_push, Backend, Operation};
+use kagi_git::{
+    plan_stash_apply, plan_stash_drop, plan_stash_pop, plan_stash_push, Backend, Operation,
+};
 use serde_json::{json, Value};
 use std::{fs, path::Path, process::Command};
 pub struct SemanticMatrix;
@@ -20,7 +22,12 @@ impl ProbeOperation for SemanticMatrix {
             .ok_or_else(|| HarnessError::new("candidate is required"))?;
         if !matches!(
             candidate,
-            "b8-clean-apply" | "b8-clean-pop" | "b8-conflict-apply" | "b8-conflict-pop"
+            "b8-push"
+                | "b8-drop"
+                | "b8-clean-apply"
+                | "b8-clean-pop"
+                | "b8-conflict-apply"
+                | "b8-conflict-pop"
         ) {
             return Err(HarnessError::new(
                 "candidate must be a supported B8 stash scenario",
@@ -86,6 +93,19 @@ impl ProbeOperation for SemanticMatrix {
             (Value::Null, json!({"oplog": "not-recorded-by-direct-cli"}))
         };
 
+        if candidate == "b8-push" {
+            return Ok(json!({
+                "backend": backend_kind,
+                "scenario": candidate,
+                "action_error": Value::Null,
+                "action": {"operation": "stash-push"},
+                "stash_entries_after_action": stash_count(p)?,
+                "push_recovery_handles": push_recovery_handles,
+                "action_recovery_handles": Value::Null,
+                "push": push_evidence,
+            }));
+        }
+
         if matches!(candidate, "b8-conflict-apply" | "b8-conflict-pop") {
             fs::write(&changed, b"B8 divergent HEAD change\n")
                 .map_err(|error| HarnessError::io(&changed, error))?;
@@ -111,6 +131,10 @@ impl ProbeOperation for SemanticMatrix {
                 "b8-clean-pop" | "b8-conflict-pop" => (
                     plan_stash_pop(&mut raw, 0)?,
                     Operation::StashPop { index: 0 },
+                ),
+                "b8-drop" => (
+                    plan_stash_drop(&mut raw, 0)?,
+                    Operation::StashDrop { index: 0 },
                 ),
                 _ => unreachable!("candidate was validated"),
             };
@@ -140,6 +164,7 @@ impl ProbeOperation for SemanticMatrix {
             let command = match candidate {
                 "b8-clean-apply" | "b8-conflict-apply" => ["stash", "apply", "stash@{0}"],
                 "b8-clean-pop" | "b8-conflict-pop" => ["stash", "pop", "stash@{0}"],
+                "b8-drop" => ["stash", "drop", "stash@{0}"],
                 _ => unreachable!("candidate was validated"),
             };
             let output = run_git_output(git, &workdir, &command)?;

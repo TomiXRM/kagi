@@ -45,6 +45,8 @@ impl ProbeOperation for ExecutionMixed {
                     "unstaged": status.unstaged.len(),
                     "untracked": status.untracked.len(),
                     "conflicted": status.conflicted.len(),
+                    "porcelain_entries": Value::Null,
+                    "repo_dynamic_settings_disabled": Value::Null,
                 }))
             }
             "cli" => {
@@ -60,10 +62,15 @@ impl ProbeOperation for ExecutionMixed {
                         output.stderr.trim()
                     )));
                 }
+                let counts = parse_porcelain_v2(&output.stdout);
                 Ok(json!({
                     "backend": "cli",
                     "executor": "run_git status --porcelain=v2 -z",
-                    "porcelain_entries": output.stdout.split('\0').filter(|entry| !entry.is_empty()).count(),
+                    "staged": counts.staged,
+                    "unstaged": counts.unstaged,
+                    "untracked": counts.untracked,
+                    "conflicted": counts.conflicted,
+                    "porcelain_entries": counts.entries,
                     "repo_dynamic_settings_disabled": output.repo_dynamic_settings_disabled,
                 }))
             }
@@ -72,4 +79,35 @@ impl ProbeOperation for ExecutionMixed {
             ))),
         }
     }
+}
+
+#[derive(Default)]
+struct PorcelainCounts {
+    staged: usize,
+    unstaged: usize,
+    untracked: usize,
+    conflicted: usize,
+    entries: usize,
+}
+
+fn parse_porcelain_v2(output: &str) -> PorcelainCounts {
+    let mut counts = PorcelainCounts::default();
+    for record in output.split('\0').filter(|record| !record.is_empty()) {
+        counts.entries += 1;
+        match record.as_bytes().first() {
+            Some(b'1' | b'2') => {
+                let xy = record
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .as_bytes();
+                counts.staged += usize::from(xy.first().is_some_and(|code| *code != b'.'));
+                counts.unstaged += usize::from(xy.get(1).is_some_and(|code| *code != b'.'));
+            }
+            Some(b'u') => counts.conflicted += 1,
+            Some(b'?') => counts.untracked += 1,
+            _ => {}
+        }
+    }
+    counts
 }

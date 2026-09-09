@@ -109,8 +109,20 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 
 bare Git CLI は repository config の filter を実行する。一方、測定した libgit2 の 4 経路は外部 filter を実行しない。
 
-これは #627 の backend 選定に直接関係する。予測を libgit2 に残す設計は書き込みを避けるだけでなく、repository config を経由する任意コード実行を構造的に回避する。CLI へ寄せる場合は同じ経路を許すため、E3 と [#649](https://github.com/TomiXRM/kagi/issues/649) の対になるリスクとして扱う。
+## 未実測ケースと打ち切り理由
 
-## 未実測ケース
+| ケース | 状態 | 打ち切り理由 |
+|---|---|---|
+| B2 `core.autocrlf` | 未実測 | 現行の結論を変えない。予測は libgit2 に残し、CLI の write path は既存の plan/preflight 経路で扱う。 |
+| B3 ignore | 未実測 | 同上。 |
+| B4 submodule | 未実測 | libgit2 は `Repository::submodules`、`submodule_status`、`Submodule::clone` API を持つ。Kagi の backend 選定を変える「予測時に CLI 必須」という根拠は未発見。 |
+| B5 sparse checkout | 未実測 | Kagi は sparse checkout の設定・provisioning を実装対象にしていない。読み取り予測の backend 選定を変えない。 |
+| B6 partial clone | 未実測 | Kagi は partial clone を作成・管理しない。既存 repository の object availability error は Git backend の通常エラーとして扱う。 |
+| B7 unrelated histories | 未実測 | merge 予測を libgit2 に残す結論は B1 の filter 安全性と E3 の CLI 実行リスクで既に支持される。 |
 
-B2 `core.autocrlf`、B3 ignore、B4 submodule、B5 sparse checkout、B6 partial clone、B7 unrelated histories。
+未実測は「差なし」を意味しない。ここでは #627 の backend 選定を変えないため、P3 の実験範囲から除外した。
+
+## P3 結論
+
+予測・読み取りは libgit2 に残す。B1 で、repository config の executable filter を libgit2 の測定済み 4 経路が実行しないことを確認した。B8 は recovery evidence の差を示すが、clean/conflict apply/pop の動作を backend 選定で CLI に移す根拠にはならない。CLI は既存の明示的な write path に限定し、`plan → confirm → preflight → execute → verify → oplog` を維持する。
+

@@ -63,7 +63,18 @@ impl ProbeOperation for SemanticMatrix {
                 .as_ref()
                 .map_err(|error| HarnessError::new(error.to_string()))?;
             (
-                json!(push.recording.entry().recovery.len()),
+                json!(push
+                    .recording
+                    .entry()
+                    .recovery
+                    .iter()
+                    .map(|handle| json!({
+                        "kind": handle.kind,
+                        "oid": handle.oid,
+                        "path": handle.path,
+                        "reference": handle.reference,
+                    }))
+                    .collect::<Vec<_>>()),
                 json!({
                     "oid": push.stash.as_ref().and_then(|evidence| evidence.oid.as_deref()),
                     "verified": push.stash.as_ref().is_some_and(|evidence| evidence.verified),
@@ -104,7 +115,18 @@ impl ProbeOperation for SemanticMatrix {
             let report = backend.run_recorded(&action, &plan);
             (
                 report.result.as_ref().err().map(ToString::to_string),
-                json!(report.recording.entry().recovery.len()),
+                json!(report
+                    .recording
+                    .entry()
+                    .recovery
+                    .iter()
+                    .map(|handle| json!({
+                        "kind": handle.kind,
+                        "oid": handle.oid,
+                        "path": handle.path,
+                        "reference": handle.reference,
+                    }))
+                    .collect::<Vec<_>>()),
                 json!({
                     "blockers": plan.blockers.iter().map(|note| note.message_en()).collect::<Vec<_>>(),
                     "warnings": plan.warnings.iter().map(|note| note.message_en()).collect::<Vec<_>>(),

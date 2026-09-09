@@ -123,6 +123,8 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 
 libgit2/Kagi backend は conflict を `StashEvidence.conflicts` に記録して `RunReport.result` を成功として返す。direct Git CLI は同じ Git state に対して non-zero exit と診断 text を返す。この error delivery の違いは、CLI write path で user-facing error と oplog を明示的に変換する必要があることを示す。
 
+
+libgit2/Kagi backend の push handle は `{ kind: "stash", oid: "<40-hex>", path: null, reference: null }` であり、action handle は空配列だった。probe は `Debug` text ではなくこの structured field を出力する。
 direct Git CLI は Kagi oplog を作らないため、recovery handle は 4 scenario すべて `null` である。libgit2/Kagi backend は push で `1` handle、apply/pop で `0` handle だった。handle 軸は **比較不能** であり、state transition 一致から recovery 同値を導かない。
 
 ## B1 — `.gitattributes` filter

@@ -4,18 +4,23 @@
 
 - macOS arm64
 - release binary: `target/release/examples/p5_driver`
-- fixture: synthetic、tracked files `1,000`、commits `3`、depth `3`、seed `627`
+- fixture: synthetic、commits `3`、depth `3`、seed `627`
+- tracked files: `1,000` / `5,000` / `20,000` / `50,000`
 - backend ごとに `KAGI_LOG_DIR` を別 temporary directory に設定
-- `working_tree_status` は hardened CLI `git status` が index stat cache を書き戻すため、両 backend で iteration ごとに pristine copy を作成
-- `--iterations 3`。warm-up は未実施。D1 の最終統計には計画どおり 11 iteration が必要
+- hardened CLI `git status` は index stat cache を書き戻すため、両 backend を iteration ごとの pristine copy へ揃えた
+- `--iterations 12`。先頭 1 回を warm-up として破棄し、残り 11 回の median を採用
 
-## D1 — `working_tree_status`、1k files
+## D1 — `working_tree_status`、file 数傾き
 
-| backend | 実行経路 | wall time (ms) | status 結果 |
-|---|---|---|---|
-| libgit2 | `Backend::working_tree_status` | `63.642`, `96.644`, `60.691` | clean (`staged/unstaged/untracked/conflicted = 0`) |
-| CLI | hardened `run_git status --porcelain=v2 -z` | `28.651`, `107.031`, `30.728` | clean (`porcelain_entries = 0`) |
+| tracked files | libgit2 median (ms) | CLI median (ms) |
+|---:|---:|---:|
+| 1,000 | `55.536` | `39.238` |
+| 5,000 | `278.294` | `115.417` |
+| 20,000 | `1,113.757` | `423.117` |
+| 50,000 | `2,906.703` | `3,078.617` |
 
-最初の dual-backend probe で別 executor が実行されたことを確認した。CLI は `run_git` を通るため、#649 hardening override が有効である。
+libgit2 の 1k→50k median は `+2,851.167 ms`、傾きは約 `58.2 ms / 1k files` である。D1 の `0.5 ms / 1k files` 基準を大きく超え、未変更 tracked file を読み直す `stash_save2` 型の疑いとして D2 の対象にする。
 
-3 sample は外れ値を含み、1k/5k/20k/50k の傾き・11 iteration median をまだ算出していない。したがって `0.5 ms / 1k files` の D1 判定、CLI 採用閾値、D2 syscall 分類はいずれも未判定。
+L（50k）では libgit2 は CLI より `171.913 ms` 速い。CLI 採用基準である「libgit2 が 1.5 倍以上遅く、絶対差 150 ms 以上」を満たさないため、`working_tree_status` を CLI 採用候補にはしない。
+
+CLI の 50k median は 3 秒台までばらついた。両 backend とも fresh copy を使う process-warm 条件であり、D1 の傾きは検出できたが cache / filesystem の交絡を含む。D2 は macOS `fs_usage` で open/read 原因を調べる。

@@ -19,10 +19,20 @@ impl ProbeOperation for SemanticMatrix {
             return Err(HarnessError::new("candidate must be b8-clean-apply"));
         }
         let p = c.repo();
-        let changed = p.join("file-000000.bin");
-        fs::write(&changed, b"B8 clean apply\n").map_err(|e| HarnessError::io(&changed, e))?;
+        let raw = git2::Repository::open(p)?;
+        let changed = first_tracked_path(&raw)?;
+        let mut content = fs::read(&changed).map_err(|e| HarnessError::io(&changed, e))?;
+        content.extend_from_slice(b"\nB8 clean apply\n");
+        fs::write(&changed, content).map_err(|e| HarnessError::io(&changed, e))?;
         let mut raw = git2::Repository::open(p)?;
         let push_plan = plan_stash_push(&mut raw, None, false)?;
+        if !push_plan.blockers.is_empty() {
+            return Err(HarnessError::new(format!(
+                "stash push blocked after modifying {}: {:?}",
+                changed.display(),
+                push_plan.blockers
+            )));
+        }
         let mut backend = Backend::open(p)?;
         let push = backend.run_recorded(
             &Operation::StashPush {
@@ -45,6 +55,20 @@ impl ProbeOperation for SemanticMatrix {
             json!({"scenario":"b8-clean-apply","stash_entries_after_apply":stash_count(p),"push_recovery_handles":push.recording.entry().recovery.len(),"apply_recovery_handles":apply.recording.entry().recovery.len(),"push_stash_evidence":format!("{:?}",push.stash),"apply_stash_evidence":format!("{:?}",apply.stash)}),
         )
     }
+}
+
+fn first_tracked_path(repo: &git2::Repository) -> Result<std::path::PathBuf, HarnessError> {
+    let index = repo.index()?;
+    let entry = index
+        .iter()
+        .next()
+        .ok_or_else(|| HarnessError::new("fixture has no tracked file"))?;
+    let path = std::str::from_utf8(&entry.path)
+        .map_err(|error| HarnessError::new(format!("fixture path is not UTF-8: {error}")))?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| HarnessError::new("fixture is bare"))?;
+    Ok(workdir.join(path))
 }
 fn stash_count(p: &std::path::Path) -> usize {
     let mut n = 0;

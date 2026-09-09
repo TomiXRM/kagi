@@ -46,13 +46,17 @@ P0 runner は nonmutating warm series に `prepare_series` / `finish_series` lif
 
 reusable repository を用い、11 回の最初を warm-up として破棄した。S は generator fixture（200 tracked files）、M は Kagi source clone（1,194 tracked files）、L は generator fixture（50,000 tracked files）である。
 
-| size | files | libgit2 open ms（timer 外） | libgit2 median ms | CLI median ms | CLI / libgit2 | libgit2 min–max ms | CLI min–max ms |
-| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| S | 200 | 0.196 | 19.021 | 24.543 | 1.29 | 11.676–20.170 | 22.525–26.222 |
-| M | 1,194 | 0.172 | 228.355 | 215.559 | 0.94 | 225.579–249.411 | 208.234–229.545 |
-| L | 50,000 | 0.219 | 4,153.127 | 1,317.064 | 0.32 | 3,793.953–5,455.873 | 1,235.606–1,476.294 |
+| size | files | libgit2 open ms（timer 外） | libgit2 median / p95 ms | CLI median / p95 ms | CLI / libgit2 | libgit2 min–max ms | CLI min–max ms |
+| --- | ---: | ---: | --- | --- | ---: | --- | --- |
+| S | 200 | 0.196 | 19.021 / 20.170 | 24.543 / 26.222 | 1.29 | 11.676–20.170 | 22.525–26.222 |
+| M | 1,194 | 0.172 | 228.355 / 249.411 | 215.559 / 229.545 | 0.94 | 225.579–249.411 | 208.234–229.545 |
+| L | 50,000 | 0.219 | 4,153.127 / 5,455.873 | 1,317.064 / 1,476.294 | 0.32（非採用） | 3,793.953–5,455.873 | 1,235.606–1,476.294 |
 
-`Repository::open` は全規模で 0.219 ms 以下の timer 外コストだった。S では CLI が遅く、M でほぼ同等、L では CLI が 0.32 倍で性能閾値 0.7 を満たした。この APFS / Git 2.50.1 / git2 0.21.0 の clean series では規模増加に対する libgit2 の傾きが CLI より急である。ただし dirty L、process-cold、cache 条件の S/L、A2 snapshot 情報量が未完であり、production backend の結論にはしない。
+p95 は warm-up を除いた n=10 の nearest-rank 値であり、n=10 では最大値と同じである。`Repository::open` は全規模で 0.219 ms 以下の timer 外コストだった。S/M はこの series 内では相対的に安定し、S では CLI が遅く、M はほぼ同等だった。
+
+L は libgit2 の range が 1,662 ms と大きい。P5 D1 は同じ 50,000 files で libgit2 が 172 ms 速い逆の中央値を得ており、PM の CLI 単独 5 回も 1,892–5,246 ms（2.8 倍）に揺れた。したがって L の `0.32` は測定事実として残すが、backend 選定・傾き・性能閾値 0.7 の根拠には使わない。50k は 20–30 iteration と state 制御を伴う再設計まで判定不能とする。
+
+backend 選定は、安定している 20k 以下の規模系列を主軸にし、dirty L、process-cold、cache 条件の S/L、A2 snapshot 情報量と併せて判断する。
 
 
 ### `--git-executable` と fsmonitor 条件

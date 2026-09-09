@@ -91,6 +91,8 @@ apply は完了扱いになり、競合 path は `StashEvidence` に記録され
 | conflict pop recovery handles | `0` |
 | stash entries after pop | `1` |
 
+競合 pop は stash entry を削除しない。apply と同じく、stash OID は in-process evidence にある一方、oplog recovery handle は残らない。
+
 ## B1 — `.gitattributes` filter
 
 **状態:** PM の独立測定。Kagi backend probe の測定値ではない。

@@ -31,11 +31,16 @@ impl ProbeOperation for SemanticMatrix {
             },
             &push_plan,
         );
-        push.result.as_ref()?;
+        push.result
+            .as_ref()
+            .map_err(|error| HarnessError::new(error.to_string()))?;
         let mut raw = git2::Repository::open(p)?;
         let apply_plan = plan_stash_apply(&mut raw, 0)?;
         let apply = backend.run_recorded(&Operation::StashApply { index: 0 }, &apply_plan);
-        apply.result.as_ref()?;
+        apply
+            .result
+            .as_ref()
+            .map_err(|error| HarnessError::new(error.to_string()))?;
         Ok(
             json!({"scenario":"b8-clean-apply","stash_entries_after_apply":stash_count(p),"push_recovery_handles":push.recording.entry().recovery.len(),"apply_recovery_handles":apply.recording.entry().recovery.len(),"push_stash_evidence":format!("{:?}",push.stash),"apply_stash_evidence":format!("{:?}",apply.stash)}),
         )

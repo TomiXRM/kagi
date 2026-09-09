@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 mod backend_probe {
     //! P2 owns `e`; the registry below is the only place it is wired in.
+    pub mod d_f;
     pub mod e;
 }
 
@@ -43,7 +44,11 @@ fn main() {
         Ok(request) => request,
         Err(error) => exit_error(&error),
     };
-    let operations: [&dyn ProbeOperation; 2] = [&Noop, &backend_probe::e::CliCapability];
+    let operations: [&dyn ProbeOperation; 3] = [
+        &Noop,
+        &backend_probe::d_f::ExecutionMixed,
+        &backend_probe::e::CliCapability,
+    ];
     match run_probe(&request, &operations) {
         Ok(report) => println!("{}", serde_json::to_string_pretty(&report).unwrap()),
         Err(error) => exit_error(&error.to_string()),

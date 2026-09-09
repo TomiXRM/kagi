@@ -61,6 +61,17 @@ canonical status は両 backend の全 3 iteration で一致した。
 
 この値は §5 A1 の性能判断に使わない。S/M/L、warm / process-cold、fsmonitor / untracked cache の有効・無効、情報等価性の全ケースが未完了である。
 
+## A1 warm — M / rename 100%
+
+M fixture は repository source clone を独立 clone し、`Cargo.toml` を unstaged modified、`docs/rearch/architecture.md` を内容を変えず staged rename、`p4-untracked.txt` を untracked とした。11 回のうち最初の warm-up を破棄した 10 値である。
+
+| backend | candidate | 破棄値 ms | warm 10 回 median ms | min–max ms | Git process | canonical / fingerprint |
+| --- | --- | ---: | ---: | --- | ---: | --- |
+| libgit2 | — | 267.757 | 275.730 | 256.714–301.396 | 0 | 3 status と `rename_from` が一致 / 不変 |
+| CLI | `--no-optional-locks` | 229.146 | 227.928 | 193.305–260.921 | 1 | 同上 / 不変 |
+
+この case は内容不変の R100 rename である。両 backend は `docs/rearch/architecture-renamed.md` と `docs/rearch/architecture.md` の同じ `rename_from` を返した。性能比較の結論には使わない。process-cold、clean case、fsmonitor / untracked cache 条件、内容を大きく変えた threshold 近傍 rename、および S / L が未完了である。
+
 ## Raw JSON
 
 | case | JSON |
@@ -70,6 +81,8 @@ canonical status は両 backend の全 3 iteration で一致した。
 | S clean / CLI `--no-optional-locks` / 3 | `/tmp/kagi-627-p4/results/a1-S-cli-no-optional-locks-3.json` |
 | S dirty / libgit2 / 3 | `/tmp/kagi-627-p4/results/a1-S-status-libgit2-3.json` |
 | S dirty / CLI `--no-optional-locks` / 3 | `/tmp/kagi-627-p4/results/a1-S-status-cli-3.json` |
+| M R100 rename / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-M-status-libgit2-11.json` |
+| M R100 rename / CLI `--no-optional-locks` / 11 warm | `/tmp/kagi-627-p4/results/a1-M-status-cli-11.json` |
 
 ## 次の測定
 

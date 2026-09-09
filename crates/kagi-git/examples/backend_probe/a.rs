@@ -1,19 +1,29 @@
 //! P4 read-path probes for #627.
 //!
-//! This module remains outside the root dispatcher until the integration owner
-//! registers it. The implementation is nevertheless complete and compiled
-//! through a temporary wrapper before measurements begin.
+//! The registry owns dispatch. This operation owns its read-path comparison and
+//! retains the libgit2 handle for one timed warm series.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 use git2::Repository;
-use kagi_git::{
-    run_git, working_tree_status, ChangeKind, FileStatus, WorkingTreeStatus as DomainWorkingTreeStatus,
-};
 use kagi_git::benchmark::{HarnessError, ProbeContext, ProbeOperation};
+use kagi_git::{
+    run_git_with_options, working_tree_status, ChangeKind, FileStatus, FsmonitorMode,
+    GitCliOptions, WorkingTreeStatus as DomainWorkingTreeStatus,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
+
+struct PreparedRepository {
+    path: PathBuf,
+    repository: Repository,
+}
+
+static PREPARED_REPOSITORY: LazyLock<Mutex<Option<PreparedRepository>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// A1: compare Kagi's libgit2 status read against parsed porcelain v2 output.
 pub struct WorkingTreeStatus;
@@ -25,6 +35,30 @@ impl ProbeOperation for WorkingTreeStatus {
 
     fn mutates_fixture(&self) -> bool {
         false
+    }
+
+    fn prepare_series(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+        if context.backend() != "libgit2" {
+            return Ok(Value::Null);
+        }
+        require_log_dir()?;
+        let start = Instant::now();
+        let repository = Repository::open(context.repo())?;
+        let repository_open_ns = start.elapsed().as_nanos();
+        let mut prepared = PREPARED_REPOSITORY
+            .lock()
+            .map_err(|_| harness_error("libgit2 warm-series repository lock poisoned"))?;
+        *prepared = Some(PreparedRepository {
+            path: context.repo().to_path_buf(),
+            repository,
+        });
+        Ok(json!({ "repository_open_ns": repository_open_ns }))
+    }
+
+    fn finish_series(&self) {
+        if let Ok(mut prepared) = PREPARED_REPOSITORY.lock() {
+            *prepared = None;
+        }
     }
 
     fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
@@ -40,8 +74,14 @@ impl ProbeOperation for WorkingTreeStatus {
 
 fn execute_libgit2(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
     require_log_dir()?;
-    let repo = Repository::open(context.repo())?;
-    let status = working_tree_status(&repo).map_err(git_error)?;
+    let prepared = PREPARED_REPOSITORY
+        .lock()
+        .map_err(|_| harness_error("libgit2 warm-series repository lock poisoned"))?;
+    let repository = prepared
+        .as_ref()
+        .filter(|prepared| prepared.path == context.repo())
+        .ok_or_else(|| harness_error("libgit2 warm-series repository does not match probe copy"))?;
+    let status = working_tree_status(&repository.repository).map_err(git_error)?;
     Ok(json!({
         "backend_path": "libgit2",
         "git_processes": 0,
@@ -53,15 +93,22 @@ fn execute_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
     require_log_dir()?;
     let candidate = context.candidate().unwrap_or("no-optional-locks");
     let mut args = Vec::new();
-    match candidate {
-        "no-optional-locks" => args.push("--no-optional-locks"),
-        "bare" => {}
+    let fsmonitor = match candidate {
+        "no-optional-locks" => {
+            args.push("--no-optional-locks");
+            FsmonitorMode::Disabled
+        }
+        "no-optional-locks-fsmonitor" => {
+            args.push("--no-optional-locks");
+            FsmonitorMode::EnabledBuiltin
+        }
+        "bare" => FsmonitorMode::Disabled,
         _ => {
             return Err(harness_error(format!(
                 "working-tree-status has no CLI candidate {candidate:?}"
             )));
         }
-    }
+    };
     args.extend([
         "status",
         "--porcelain=v2",
@@ -69,7 +116,15 @@ fn execute_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
         "--untracked-files=all",
         "--renames",
     ]);
-    let out = run_git(context.repo(), &args).map_err(git_error)?;
+    let out = run_git_with_options(
+        context.repo(),
+        &args,
+        GitCliOptions {
+            executable: context.git_executable(),
+            fsmonitor,
+        },
+    )
+    .map_err(git_error)?;
     if out.status != 0 {
         return Err(harness_error(format!(
             "git status exited {}: {}",
@@ -81,6 +136,10 @@ fn execute_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
         "backend_path": "cli",
         "git_processes": 1,
         "candidate": candidate,
+        "fsmonitor": match fsmonitor {
+            FsmonitorMode::Disabled => "disabled",
+            FsmonitorMode::EnabledBuiltin => "builtin",
+        },
         "canonical": parse_porcelain_v2(context.repo(), &out.stdout)?,
     }))
 }
@@ -140,10 +199,9 @@ fn file_entry(group: &'static str, file: &FileStatus) -> StatusEntry {
         ChangeKind::Added => ("added", None),
         ChangeKind::Modified => ("modified", None),
         ChangeKind::Deleted => ("deleted", None),
-        ChangeKind::Renamed { from } => (
-            "renamed",
-            Some(from.to_string_lossy().replace('\\', "/")),
-        ),
+        ChangeKind::Renamed { from } => {
+            ("renamed", Some(from.to_string_lossy().replace('\\', "/")))
+        }
         ChangeKind::TypeChange => ("type-change", None),
     };
     StatusEntry {
@@ -206,7 +264,11 @@ fn parse_porcelain_v2(repo: &Path, output: &str) -> Result<Value, HarnessError> 
     canonical_entries(entries)
 }
 
-fn split_fields<'a>(record: &'a str, path_index: usize, kind: &str) -> Result<Vec<&'a str>, HarnessError> {
+fn split_fields<'a>(
+    record: &'a str,
+    path_index: usize,
+    kind: &str,
+) -> Result<Vec<&'a str>, HarnessError> {
     let fields: Vec<_> = record.splitn(path_index + 1, ' ').collect();
     (fields.len() == path_index + 1)
         .then_some(fields)
@@ -242,7 +304,10 @@ fn add_xy_entries(
     Ok(())
 }
 
-fn status_kind(code: u8, rename_from: Option<String>) -> Result<Option<(&'static str, Option<String>)>, HarnessError> {
+fn status_kind(
+    code: u8,
+    rename_from: Option<String>,
+) -> Result<Option<(&'static str, Option<String>)>, HarnessError> {
     match code {
         b'.' => Ok(None),
         b'A' => Ok(Some(("added", None))),
@@ -251,7 +316,9 @@ fn status_kind(code: u8, rename_from: Option<String>) -> Result<Option<(&'static
         b'T' => Ok(Some(("type-change", None))),
         b'R' => Ok(Some(("renamed", rename_from))),
         b'C' => Ok(Some(("added", None))),
-        _ => Err(harness_error(format!("unsupported porcelain status code: {code}"))),
+        _ => Err(harness_error(format!(
+            "unsupported porcelain status code: {code}"
+        ))),
     }
 }
 

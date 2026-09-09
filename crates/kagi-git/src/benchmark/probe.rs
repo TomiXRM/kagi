@@ -33,6 +33,15 @@ pub trait ProbeOperation: Sync {
     fn requires_pristine_copy_per_iteration(&self) -> bool {
         self.mutates_fixture()
     }
+    /// Prepare resources shared by every timed iteration of a warm series.
+    ///
+    /// The runner invokes this after materializing the warm copy and before
+    /// starting any timer. Operations that need no preparation return null.
+    fn prepare_series(&self, _context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+        Ok(Value::Null)
+    }
+    /// Drop resources retained by [`Self::prepare_series`] after the series.
+    fn finish_series(&self) {}
     fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError>;
 }
 
@@ -92,6 +101,8 @@ pub struct ProbeReport {
     pub environment: EnvironmentMeta,
     pub mutates_fixture: bool,
     pub iterations: Vec<ProbeIteration>,
+    /// Untimed setup facts for a reusable warm series.
+    pub series_setup: Value,
 }
 
 /// Run a registered operation without ever opening the template itself. Copy,
@@ -126,11 +137,10 @@ pub fn run_probe(
         manifest.clone(),
         request.git_executable.as_deref(),
     )?;
-    let mut iterations = Vec::with_capacity(request.iterations);
-    let mut expected_before: Option<Fingerprint> = None;
-
-    if operation.requires_pristine_copy_per_iteration() {
+    let (iterations, series_setup) = if operation.requires_pristine_copy_per_iteration() {
         let copy = scratch.path().join("run");
+        let mut iterations = Vec::with_capacity(request.iterations);
+        let mut expected_before = None;
         for iteration in 0..request.iterations {
             if copy.exists() {
                 fs::remove_dir_all(&copy).map_err(|error| HarnessError::io(&copy, error))?;
@@ -148,19 +158,34 @@ pub fn run_probe(
                 &mut expected_before,
             )?);
         }
+        (iterations, Value::Null)
     } else {
         let copy = scratch.path().join("warm-series");
         materialize_pristine(&template, &copy)?;
-        for iteration in 0..request.iterations {
-            iterations.push(run_one(
-                operation,
-                request,
-                &copy,
-                iteration,
-                &mut expected_before,
-            )?);
-        }
-    }
+        let context = ProbeContext {
+            repo: &copy,
+            backend: &request.backend,
+            candidate: request.candidate.as_deref(),
+            git_executable: request.git_executable.as_deref(),
+        };
+        let series_setup = operation.prepare_series(&context)?;
+        let result: Result<Vec<ProbeIteration>, HarnessError> = (|| {
+            let mut iterations = Vec::with_capacity(request.iterations);
+            let mut expected_before = None;
+            for iteration in 0..request.iterations {
+                iterations.push(run_one(
+                    operation,
+                    request,
+                    &copy,
+                    iteration,
+                    &mut expected_before,
+                )?);
+            }
+            Ok(iterations)
+        })();
+        operation.finish_series();
+        (result?, series_setup)
+    };
 
     Ok(ProbeReport {
         schema_version: 1,
@@ -174,6 +199,7 @@ pub fn run_probe(
         fixture_manifest: manifest,
         environment,
         mutates_fixture: operation.mutates_fixture(),
+        series_setup,
         iterations,
     })
 }
@@ -333,6 +359,77 @@ mod tests {
             "probe clock must include the CPU time consumed by its reaped child"
         );
     }
+    struct SeriesLifecycle {
+        prepared: std::sync::atomic::AtomicUsize,
+        finished: std::sync::atomic::AtomicUsize,
+    }
+
+    impl ProbeOperation for SeriesLifecycle {
+        fn name(&self) -> &'static str {
+            "series-lifecycle"
+        }
+
+        fn mutates_fixture(&self) -> bool {
+            false
+        }
+
+        fn prepare_series(&self, _context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+            self.prepared
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(serde_json::json!({ "opened_before_timer": true }))
+        }
+
+        fn finish_series(&self) {
+            self.finished
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn execute(&self, _context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+            Ok(Value::Null)
+        }
+    }
+
+    #[test]
+    fn warm_series_prepares_and_finishes_once_outside_timing() {
+        let root = tempfile::tempdir().unwrap();
+        let template = root.path().join("template");
+        super::super::generate_fixture(&super::super::FixtureRequest {
+            output: template.clone(),
+            files: 1,
+            commits: 1,
+            depth: 1,
+            seed: 627,
+            scenario: Some("synthetic".into()),
+        })
+        .unwrap();
+        let operation = SeriesLifecycle {
+            prepared: std::sync::atomic::AtomicUsize::new(0),
+            finished: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let request = ProbeRequest {
+            repo: template,
+            operation: operation.name().to_owned(),
+            backend: "test".to_owned(),
+            candidate: None,
+            git_executable: None,
+            iterations: 2,
+        };
+
+        let report = run_probe(&request, &[&operation]).unwrap();
+        assert_eq!(
+            operation.prepared.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            operation.finished.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            report.series_setup,
+            serde_json::json!({ "opened_before_timer": true })
+        );
+    }
+
     struct WriteDetector;
 
     impl ProbeOperation for WriteDetector {

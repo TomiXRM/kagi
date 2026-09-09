@@ -74,14 +74,45 @@ pub struct GitCliOutput {
 const HARDENING_ARGS: &[&str] = &[
     "--no-pager",
     "-c",
-    "core.fsmonitor=",
-    "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "core.askPass=",
     "-c",
     "protocol.allow=user",
 ];
+
+/// The only fsmonitor values a hardened CLI invocation may select.
+///
+/// `EnabledBuiltin` forces Git's built-in monitor rather than honoring a
+/// repository-defined executable command.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FsmonitorMode {
+    #[default]
+    Disabled,
+    EnabledBuiltin,
+}
+
+/// Explicit process settings for a hardened Git CLI invocation.
+///
+/// Production callers use [`run_git`]'s default: the system `git` and a
+/// disabled fsmonitor. Probes may select a binary and built-in fsmonitor mode
+/// without weakening repository-config hardening.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GitCliOptions<'a> {
+    pub executable: Option<&'a Path>,
+    pub fsmonitor: FsmonitorMode,
+}
+
+fn hardening_args(fsmonitor: FsmonitorMode) -> Vec<&'static str> {
+    let fsmonitor = match fsmonitor {
+        FsmonitorMode::Disabled => "core.fsmonitor=",
+        FsmonitorMode::EnabledBuiltin => "core.fsmonitor=true",
+    };
+    let mut args = Vec::with_capacity(HARDENING_ARGS.len() + 2);
+    args.extend(["--no-pager", "-c", fsmonitor]);
+    args.extend_from_slice(&HARDENING_ARGS[1..]);
+    args
+}
 
 /// `-c` overrides for dangerous keys that can legitimately be configured
 /// globally, applied only when the **repo-local** or worktree config sets them
@@ -272,7 +303,11 @@ const REPO_LOCAL_ENV: &[&str] = &[
 /// [`REPO_LOCAL_ENV`] is cleared so the child cannot be pointed at a different
 /// repository than the one this command names (#623).
 pub fn git_command(repo_dir: &Path) -> std::process::Command {
-    let mut cmd = std::process::Command::new("git");
+    git_command_with_executable(repo_dir, Path::new("git"))
+}
+
+fn git_command_with_executable(repo_dir: &Path, executable: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(executable);
     for var in REPO_LOCAL_ENV {
         cmd.env_remove(var);
     }
@@ -325,12 +360,26 @@ pub fn gh_command() -> std::process::Command {
 /// deadline expires — the wait was cut short, which is not proof the operation
 /// did not happen (issue #507).
 pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError> {
+    run_git_with_options(repo_dir, args, GitCliOptions::default())
+}
+
+/// Run a hardened Git command with an explicit executable and fsmonitor mode.
+///
+/// This is for measurement code that must report the exact Git binary and
+/// built-in fsmonitor setting it invoked. It still applies every other
+/// repository-config override that [`run_git`] does.
+pub fn run_git_with_options(
+    repo_dir: &Path,
+    args: &[&str],
+    options: GitCliOptions<'_>,
+) -> Result<GitCliOutput, GitError> {
     let local = repo_local_overrides(repo_dir)?;
-    let mut full: Vec<&str> = HARDENING_ARGS.to_vec();
+    let mut full = hardening_args(options.fsmonitor);
     full.extend(local.iter().map(String::as_str));
     full.extend_from_slice(args);
 
-    let mut cmd = git_command(repo_dir);
+    let executable = options.executable.unwrap_or_else(|| Path::new("git"));
+    let mut cmd = git_command_with_executable(repo_dir, executable);
     cmd.args(&full);
 
     let run = run_child(&mut cmd, Duration::from_secs(GIT_CLI_TIMEOUT_SECS), None)
@@ -432,5 +481,21 @@ mod tests {
         assert!(has_env(&git, "GIT_TERMINAL_PROMPT", "0"));
         assert!(has_env(&git, "GIT_ASKPASS", "/bin/false"));
         assert!(has_env(&git, "LC_ALL", "C"));
+    }
+    #[test]
+    fn explicit_cli_options_preserve_hardening_and_select_the_binary() {
+        assert_eq!(
+            &hardening_args(FsmonitorMode::Disabled)[..3],
+            ["--no-pager", "-c", "core.fsmonitor="]
+        );
+        assert_eq!(
+            &hardening_args(FsmonitorMode::EnabledBuiltin)[..3],
+            ["--no-pager", "-c", "core.fsmonitor=true"]
+        );
+
+        let executable = std::path::Path::new("/custom/git");
+        let command = git_command_with_executable(std::path::Path::new("/tmp"), executable);
+        assert_eq!(command.get_program(), executable);
+        assert!(has_env(&command, "GIT_TERMINAL_PROMPT", "0"));
     }
 }

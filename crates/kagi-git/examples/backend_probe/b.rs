@@ -2,7 +2,7 @@
 use kagi_git::benchmark::{HarnessError, ProbeContext, ProbeOperation};
 use kagi_git::{plan_stash_apply, plan_stash_pop, plan_stash_push, Backend, Operation};
 use serde_json::{json, Value};
-use std::{fs, process::Command};
+use std::{fs, path::Path, process::Command};
 pub struct SemanticMatrix;
 impl ProbeOperation for SemanticMatrix {
     fn name(&self) -> &'static str {
@@ -27,6 +27,7 @@ impl ProbeOperation for SemanticMatrix {
             ));
         }
         let p = c.repo();
+        let git = c.git_executable().unwrap_or_else(|| Path::new("git"));
         let raw = git2::Repository::open(p)?;
         let workdir = raw
             .workdir()
@@ -81,7 +82,7 @@ impl ProbeOperation for SemanticMatrix {
                 }),
             )
         } else {
-            run_git(&workdir, &["stash", "push", "--quiet"])?;
+            run_git(git, &workdir, &["stash", "push", "--quiet"])?;
             (Value::Null, json!({"oplog": "not-recorded-by-direct-cli"}))
         };
 
@@ -91,8 +92,9 @@ impl ProbeOperation for SemanticMatrix {
             let relative = changed
                 .strip_prefix(&workdir)
                 .map_err(|error| HarnessError::new(error.to_string()))?;
-            run_git(&workdir, &["add", &relative.to_string_lossy()])?;
+            run_git(git, &workdir, &["add", &relative.to_string_lossy()])?;
             run_git(
+                git,
                 &workdir,
                 &["commit", "--no-gpg-sign", "-m", "B8 divergent HEAD change"],
             )?;
@@ -140,7 +142,7 @@ impl ProbeOperation for SemanticMatrix {
                 "b8-clean-pop" | "b8-conflict-pop" => ["stash", "pop", "stash@{0}"],
                 _ => unreachable!("candidate was validated"),
             };
-            let output = run_git_output(&workdir, &command)?;
+            let output = run_git_output(git, &workdir, &command)?;
             let action_error = (!output.status.success()).then(|| {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -179,8 +181,8 @@ fn first_tracked_path(repo: &git2::Repository) -> Result<std::path::PathBuf, Har
     Ok(workdir.join(path))
 }
 
-fn run_git(repo: &std::path::Path, args: &[&str]) -> Result<(), HarnessError> {
-    let output = run_git_output(repo, args)?;
+fn run_git(git: &Path, repo: &std::path::Path, args: &[&str]) -> Result<(), HarnessError> {
+    let output = run_git_output(git, repo, args)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -193,10 +195,11 @@ fn run_git(repo: &std::path::Path, args: &[&str]) -> Result<(), HarnessError> {
 }
 
 fn run_git_output(
+    git: &Path,
     repo: &std::path::Path,
     args: &[&str],
 ) -> Result<std::process::Output, HarnessError> {
-    Command::new("git")
+    Command::new(git)
         .args(["-C", &repo.to_string_lossy()])
         .args(args)
         .output()

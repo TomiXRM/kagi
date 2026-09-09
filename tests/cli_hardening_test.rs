@@ -10,7 +10,7 @@
 
 #[path = "support/backend_ops.rs"]
 mod backend_ops;
-use backend_ops::{fetch_remote, fetch_remote_branch};
+use backend_ops::{execute_stash_push, fetch_remote, fetch_remote_branch};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -220,6 +220,268 @@ fn malformed_local_config_refuses_run_git() {
         run_git(&repo, &["status", "--porcelain=v1"]).is_err(),
         "run_git must not execute after repository config inspection fails"
     );
+}
+
+// ────────────────────────────────────────────────────────────
+// #649 — dynamic filter and diff drivers
+// ────────────────────────────────────────────────────────────
+
+/// Rebase can invoke a repository-selected filter process. The shared scanner
+/// must disable the process and its `required` flag before starting Git.
+///
+/// Mutation check: omit either `filter.<name>.process=` or
+/// `filter.<name>.required=false`; the hardened rebase fails or creates the
+/// marker, and the final assertions catch the mutation.
+#[test]
+fn rebase_does_not_run_filter_process() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo = fixture(&tmp);
+    std::fs::write(
+        repo.join(".gitattributes"),
+        "filtered.txt filter=RebaseProbe\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("filtered.txt"), "base\n").unwrap();
+    git(&repo, &["add", ".gitattributes", "filtered.txt"]);
+    git(&repo, &["commit", "-qm", "filter fixture"]);
+    git(&repo, &["checkout", "-qb", "topic"]);
+    std::fs::write(repo.join("filtered.txt"), "topic\n").unwrap();
+    git(&repo, &["commit", "-am", "topic"]);
+    git(&repo, &["checkout", "main"]);
+    std::fs::write(repo.join("main.txt"), "main\n").unwrap();
+    git(&repo, &["add", "main.txt"]);
+    git(&repo, &["commit", "-qm", "main"]);
+    git(&repo, &["checkout", "topic"]);
+
+    let hardened = tmp.path().join("hardened-rebase");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            repo.to_str().unwrap(),
+            hardened.to_str().unwrap(),
+        ],
+    );
+    git(&hardened, &["branch", "main", "origin/main"]);
+    git(&hardened, &["config", "user.name", "Test"]);
+    git(&hardened, &["config", "user.email", "test@example.com"]);
+    git(&hardened, &["config", "commit.gpgsign", "false"]);
+    let raw_marker = tmp.path().join("PWNED_REBASE_RAW");
+    let raw_script = marker_script(&tmp.path().join("rebase-raw.sh"), &raw_marker);
+    git(
+        &repo,
+        &["config", "filter.RebaseProbe.process", &raw_script],
+    );
+    git(&repo, &["config", "filter.RebaseProbe.required", "true"]);
+    git(&repo, &["config", "merge.renormalize", "false"]);
+
+    // Positive control: bare rebase starts the configured filter process.
+    let _ = raw_git(&repo, &["rebase", "main"]);
+    assert!(
+        raw_marker.exists(),
+        "fixture is inert: bare git rebase did not run the filter process"
+    );
+
+    let marker = tmp.path().join("PWNED_REBASE_HARDENED");
+    let script = marker_script(&tmp.path().join("rebase-hardened.sh"), &marker);
+    git(
+        &hardened,
+        &["config", "filter.RebaseProbe.process", &script],
+    );
+    git(
+        &hardened,
+        &["config", "filter.RebaseProbe.required", "true"],
+    );
+    git(&hardened, &["config", "merge.renormalize", "false"]);
+    let out = run_git(&hardened, &["rebase", "--", "main"]).expect("run_git rebase");
+    assert_eq!(out.status, 0, "hardened rebase failed: {}", out.stderr);
+    assert!(!marker.exists(), "filter process ran under run_git rebase");
+    let seen = run_git(
+        &hardened,
+        &["config", "--get", "filter.RebaseProbe.required"],
+    )
+    .unwrap();
+    assert_eq!(seen.stdout.trim(), "false");
+    let renormalize = run_git(&hardened, &["config", "--get", "merge.renormalize"]).unwrap();
+    assert_eq!(
+        renormalize.stdout.trim(),
+        "false",
+        "run_git must not override merge.renormalize"
+    );
+}
+
+/// Both executable diff driver forms are selected by `.gitattributes`.
+///
+/// Mutation check: removing either dynamic suffix from the scanner makes the
+/// corresponding marker assertion fail; the config reads pin the empty
+/// overrides rather than accepting an incidental lack of diff output.
+#[test]
+fn diff_command_and_textconv_do_not_run_under_run_git() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo = fixture(&tmp);
+    std::fs::write(
+        repo.join(".gitattributes"),
+        "command.txt diff=CommandProbe\ntextconv.txt diff=TextconvProbe\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("command.txt"), "base\n").unwrap();
+    std::fs::write(repo.join("textconv.txt"), "base\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-qm", "diff fixtures"]);
+    std::fs::write(repo.join("command.txt"), "changed\n").unwrap();
+    std::fs::write(repo.join("textconv.txt"), "changed\n").unwrap();
+
+    for (driver, suffix, path) in [
+        ("CommandProbe", "command", "command.txt"),
+        ("TextconvProbe", "textconv", "textconv.txt"),
+    ] {
+        let marker = tmp.path().join(format!("PWNED_DIFF_{suffix}"));
+        let script = marker_script(&tmp.path().join(format!("diff-{suffix}.sh")), &marker);
+        let key = format!("diff.{driver}.{suffix}");
+        git(&repo, &["config", &key, &script]);
+        let args = match suffix {
+            "command" => vec!["diff", "--ext-diff", "--", path],
+            "textconv" => vec!["diff", "--textconv", "--", path],
+            _ => unreachable!(),
+        };
+
+        // Positive control: bare diff selects this exact configured driver.
+        let _ = raw_git(&repo, &args);
+        assert!(
+            marker.exists(),
+            "fixture is inert: bare git diff did not run {key}"
+        );
+        std::fs::remove_file(&marker).unwrap();
+
+        let _ = run_git(&repo, &args).expect("run_git diff");
+        assert!(!marker.exists(), "{key} ran under run_git");
+        let seen = run_git(&repo, &["config", "--get", &key]).unwrap();
+        assert_eq!(seen.stdout.trim(), "", "{key} was not overridden");
+    }
+}
+
+/// Clean, smudge, and long-running process filters are independently
+/// executable, and `required=true` turns an empty command into a failure.
+///
+/// Mutation check: each driver has its own positive control and marker, while
+/// successful hardened commands plus explicit `required=false` reads catch
+/// removal of any one override.
+#[test]
+fn filter_clean_smudge_and_process_do_not_run_under_run_git() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo = fixture(&tmp);
+    std::fs::write(
+        repo.join(".gitattributes"),
+        "clean.txt filter=CleanProbe\nsmudge.txt filter=SmudgeProbe\nprocess.txt filter=ProcessProbe\n",
+    )
+    .unwrap();
+    for path in ["clean.txt", "smudge.txt", "process.txt"] {
+        std::fs::write(repo.join(path), "base\n").unwrap();
+    }
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-qm", "filter fixtures"]);
+
+    for (name, suffix) in [
+        ("CleanProbe", "clean"),
+        ("SmudgeProbe", "smudge"),
+        ("ProcessProbe", "process"),
+    ] {
+        let marker = tmp.path().join(format!("PWNED_FILTER_{suffix}"));
+        let script = marker_script(&tmp.path().join(format!("filter-{suffix}.sh")), &marker);
+        git(
+            &repo,
+            &["config", &format!("filter.{name}.{suffix}"), &script],
+        );
+        git(
+            &repo,
+            &["config", &format!("filter.{name}.required"), "true"],
+        );
+
+        let path = format!("{suffix}.txt");
+        if suffix == "smudge" {
+            std::fs::remove_file(repo.join(&path)).unwrap();
+        } else {
+            std::fs::write(repo.join(&path), "changed\n").unwrap();
+        }
+        let args = if suffix == "smudge" {
+            vec!["checkout-index", "-f", "--", path.as_str()]
+        } else {
+            vec!["add", "--", path.as_str()]
+        };
+
+        // Positive control: bare Git starts this exact filter implementation.
+        let _ = raw_git(&repo, &args);
+        assert!(
+            marker.exists(),
+            "fixture is inert: bare git did not run filter.{name}.{suffix}"
+        );
+        std::fs::remove_file(&marker).unwrap();
+        if suffix == "smudge" {
+            let _ = std::fs::remove_file(repo.join(&path));
+        }
+
+        let out = run_git(&repo, &args).expect("run_git filter operation");
+        assert_eq!(
+            out.status, 0,
+            "hardened filter operation failed: {}",
+            out.stderr
+        );
+        assert!(!marker.exists(), "filter.{name}.{suffix} ran under run_git");
+        let required = format!("filter.{name}.required");
+        let seen = run_git(&repo, &["config", "--get", &required]).unwrap();
+        assert_eq!(seen.stdout.trim(), "false", "{required} was not overridden");
+    }
+}
+
+/// Stash push retains its filter defense after its private config scan is
+/// removed because execution delegates to the hardened `run_git`.
+///
+/// Mutation check: bypassing `run_git` in stash push or removing the shared
+/// clean-filter override creates the marker; a bare `stash create` proves the
+/// same repository configuration is executable first.
+#[test]
+fn stash_push_uses_shared_filter_hardening() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo_dir = fixture(&tmp);
+    std::fs::write(repo_dir.join(".gitattributes"), "a.txt filter=StashProbe\n").unwrap();
+    git(&repo_dir, &["add", ".gitattributes"]);
+    git(&repo_dir, &["commit", "-qm", "stash filter fixture"]);
+    let marker = tmp.path().join("PWNED_STASH_FILTER");
+    let script = marker_script(&tmp.path().join("stash-filter.sh"), &marker);
+    git(&repo_dir, &["config", "filter.StashProbe.clean", &script]);
+    git(&repo_dir, &["config", "filter.StashProbe.required", "true"]);
+    std::fs::write(repo_dir.join("a.txt"), "stash me\n").unwrap();
+
+    // Positive control: bare stash plumbing runs the configured clean filter.
+    let _ = raw_git(&repo_dir, &["stash", "create"]);
+    assert!(
+        marker.exists(),
+        "fixture is inert: bare git stash create did not run the clean filter"
+    );
+    std::fs::remove_file(&marker).unwrap();
+
+    let mut repo = Repository::open(&repo_dir).unwrap();
+    execute_stash_push(&mut repo, Some("hardened"), false).expect("hardened stash push");
+    assert!(!marker.exists(), "stash push ran filter.StashProbe.clean");
+    let seen = run_git(
+        &repo_dir,
+        &["config", "--get", "filter.StashProbe.required"],
+    )
+    .unwrap();
+    assert_eq!(seen.stdout.trim(), "false");
 }
 // ────────────────────────────────────────────────────────────
 // #291 — remote name that is really a flag

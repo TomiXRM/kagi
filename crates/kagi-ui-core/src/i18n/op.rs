@@ -158,6 +158,18 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
         Lang::Ja => format!("{} の plan に失敗しました: {}", op.t(), err),
     }
 }
+/// Rebase failed before starting while Kagi had neutralised dynamically named
+/// repository settings.
+pub fn rebase_repository_settings_may_block_start() -> &'static str {
+    match lang() {
+        Lang::En => {
+            "Rebase did not start. Run `git status` in a terminal. If it is clean, Kagi disabling some repository settings for safety may be involved. If you trust the repository, run `git rebase` in a terminal."
+        }
+        Lang::Ja => {
+            "rebase を開始できませんでした。ターミナルで `git status` を確認してください。clean なら、Kagi が安全のため一部の repository 設定を無効化したことが影響している可能性があります。repository を信頼する場合は、ターミナルで `git rebase` を実行してください。"
+        }
+    }
+}
 
 /// #625: the working tree moved between the Stash & Pull confirmation and the
 /// stash, so what the user approved is no longer what would happen. Nothing

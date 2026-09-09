@@ -54,6 +54,23 @@ Unlike clean apply, clean pop removes the stash entry. The pop `StashEvidence` h
 
 A future CLI implementation must retain the source stash OID/reference somewhere durable if Kagi needs recovery from a completed clean apply. Matching only Git state is insufficient to match Kagi's recovery information. This is an observation, not yet a decision to add a recovery record.
 
+## B8 — Stash apply、競合
+
+**状態:** libgit2/Kagi backend で実測済み。direct Git CLI との比較は未実施。
+
+fixture の tracked file を stash push 後に別内容へ変更して commit し、`--candidate b8-conflict-apply` を実行した。
+
+| 軸 | 観測値 |
+|---|---|
+| action error | `null` |
+| plan blockers / warnings | ともに空 |
+| `StashEvidence.conflicts` | `d00-00/d01-00/file-000000.bin` |
+| stash push recovery handles | `1` |
+| conflict apply recovery handles | `0` |
+| stash entries after apply | `1` |
+
+apply は完了扱いになり、競合 path は `StashEvidence` に記録された。stash entry は残る。OID は in-process `StashEvidence` に存在するが oplog recovery handle には残らないため、第 4 軸は **比較不能**。
+
 ## Remaining cases
 
-B1 clean/smudge filters; B2 `core.autocrlf`; B3 ignore; B4 submodule; B5 sparse checkout; B6 partial clone; B7 unrelated histories; and the B8 conflict apply/pop cells are unmeasured.
+B1 clean/smudge filters、B2 `core.autocrlf`、B3 ignore、B4 submodule、B5 sparse checkout、B6 partial clone、B7 unrelated histories、B8 conflict pop は未実測。

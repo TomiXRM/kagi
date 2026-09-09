@@ -128,14 +128,21 @@ pub(crate) fn execute_rebase_current_onto(
 ) -> Result<RebaseOutcome, GitError> {
     check_operand("upstream", onto)?;
 
-    let out = run_git(repo_path, &["rebase", "--", onto])
-        .map_err(|e| GitError::Other(format!("rebase failed to start: {}", e)))?;
+    let out = run_git(repo_path, &["rebase", "--", onto]).map_err(|error| match error {
+        GitError::RebaseCannotStartFiltersDisabled(_) => error,
+        other => GitError::Other(format!("rebase failed to start: {other}")),
+    })?;
 
     if !matches!(repo.state(), git2::RepositoryState::Clean) {
         return Ok(RebaseOutcome::Conflicted);
     }
 
     if out.status != 0 {
+        if out.repo_filters_disabled {
+            return Err(GitError::RebaseCannotStartFiltersDisabled(
+                out.stderr.trim().to_owned(),
+            ));
+        }
         return Err(GitError::Other(format!(
             "rebase failed (exit {}): {}",
             out.status,

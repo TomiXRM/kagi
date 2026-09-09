@@ -159,6 +159,18 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
     }
 }
 
+/// Rebase failed to start while Kagi had disabled repository-defined filters.
+pub fn rebase_filters_disabled_cannot_start() -> &'static str {
+    match lang() {
+        Lang::En => {
+            "Rebase did not start. Run `git status` in a terminal: if it is clean, Kagi's safety filter disablement may make this filtered worktree appear changed. If you trust the filters, run `git rebase` in a terminal."
+        }
+        Lang::Ja => {
+            "rebase を開始できませんでした。ターミナルで `git status` を確認してください。clean なら、Kagi が config によるコード実行を防ぐため filter を無効にした結果、filter 済みの worktree が変更ありと扱われている可能性があります。filter を信頼する場合は、ターミナルで `git rebase` を実行してください。"
+        }
+    }
+}
+
 /// #625: the working tree moved between the Stash & Pull confirmation and the
 /// stash, so what the user approved is no longer what would happen. Nothing
 /// was stashed and nothing was pulled.

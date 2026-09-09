@@ -294,7 +294,8 @@ fn identify_created_stash(
 /// The signature is read from the repository config (`user.name` / `user.email`);
 /// if either is absent, falls back to `"kagi <kagi@local>"`.
 ///
-/// External filters stay disabled, matching libgit2's built-in-only filters.
+/// External filters are disabled by the shared [`run_git`] config hardening,
+/// matching libgit2's built-in-only filters.
 ///
 /// Returns the created stash commit OID as a hex string, identified by
 /// [`identify_created_stash`] rather than by re-reading the `refs/stash` tip
@@ -322,21 +323,6 @@ pub(crate) fn execute_stash_push(
         "-c".to_owned(),
         format!("user.email={}", sig.email().unwrap_or("kagi@local")),
     ];
-    // Git CLI supports executable filters that libgit2 never runs. Do not
-    // introduce repository-config code execution by changing the engine.
-    let config = repo.config().map_err(error)?;
-    let mut entries = config.entries(None).map_err(error)?;
-    while let Some(entry) = entries.next() {
-        let entry = entry.map_err(error)?;
-        let key = entry.name().map_err(error)?;
-        if key.starts_with("filter.") {
-            if key.ends_with(".clean") || key.ends_with(".smudge") || key.ends_with(".process") {
-                args.extend(["-c".to_owned(), format!("{key}=")]);
-            } else if key.ends_with(".required") {
-                args.extend(["-c".to_owned(), format!("{key}=false")]);
-            }
-        }
-    }
     args.extend(["stash".to_owned(), "push".to_owned()]);
     if include_untracked {
         args.push("--include-untracked".to_owned());
@@ -345,7 +331,7 @@ pub(crate) fn execute_stash_push(
         args.extend(["--message".to_owned(), message.to_owned()]);
     }
     // Snapshotted last, so the window an external push can slip into before
-    // kagi's own is the spawn itself rather than the config scan as well.
+    // kagi's own is only the hardened child startup.
     let before = StashStackBefore {
         tip: match repo.refname_to_id("refs/stash") {
             Ok(oid) => Some(oid),

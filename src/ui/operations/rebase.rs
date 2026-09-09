@@ -165,9 +165,12 @@ fn rebase_blocking(
     let op = kagi_git::Operation::RebaseCurrentOnto {
         onto: onto.to_string(),
     };
-    let outcome = repo
-        .run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Rebase, e))?;
+    let outcome = repo.run(&op, plan).map_err(|error| match error {
+        kagi_git::GitError::RebaseCannotStartFiltersDisabled(_) => {
+            i18n::rebase_filters_disabled_cannot_start().to_string()
+        }
+        other => i18n::op_failed(i18n::Op::Rebase, other),
+    })?;
     match outcome {
         kagi_git::OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Completed { head }) => {
             klog!(

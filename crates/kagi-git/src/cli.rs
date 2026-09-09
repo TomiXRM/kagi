@@ -52,6 +52,8 @@ pub struct GitCliOutput {
     pub stdout: String,
     /// Captured stderr (UTF-8 lossy).
     pub stderr: String,
+    /// True when repo-local/worktree filter settings were neutralised.
+    pub repo_filters_disabled: bool,
 }
 
 /// `-c KEY=VALUE` overrides injected **before** the subcommand on every
@@ -85,13 +87,12 @@ const HARDENING_ARGS: &[&str] = &[
 
 /// `-c` overrides for dangerous keys that can legitimately be configured
 /// globally, applied only when the **repo-local** or worktree config sets them
-/// (issues #290, #647).
+/// (issues #290, #647, #649).
 ///
-/// `core.sshCommand` and `credential.helper` deliberately retain a legitimate
-/// user-level configuration. `merge.<name>.driver` is similarly dynamic: an
-/// attribute may select any driver name, but only a matching config entry gives
-/// it an executable command. Scan the untrusted config levels for those entries
-/// and disable each discovered driver, while leaving global-only drivers intact.
+/// `core.sshCommand` and `credential.helper` deliberately retain legitimate
+/// user-level configuration. Executable merge, filter, and diff settings have
+/// repository-chosen names, so the untrusted config levels are scanned once and
+/// each discovered key is disabled while global-only settings remain intact.
 ///
 /// If Kagi cannot inspect an untrusted config level, it refuses to start Git.
 /// Running an operation after a failed inspection would make the hardening
@@ -104,7 +105,7 @@ fn repo_local_overrides(repo_dir: &Path) -> Result<Vec<String>, GitError> {
         .map_err(|error| GitError::Other(format!("cannot read repository config: {error}")))?;
 
     let (mut ssh, mut cred) = (false, false);
-    let mut merge_drivers = std::collections::BTreeSet::new();
+    let mut dynamic_overrides = std::collections::BTreeSet::new();
     for level in [git2::ConfigLevel::Local, git2::ConfigLevel::Worktree] {
         let snapshot = match cfg.open_level(level) {
             Ok(snapshot) => snapshot,
@@ -140,8 +141,8 @@ fn repo_local_overrides(repo_dir: &Path) -> Result<Vec<String>, GitError> {
                 {
                     cred = true;
                 }
-                if let Some(driver) = merge_driver_name(name) {
-                    merge_drivers.insert(driver.to_owned());
+                if let Some(value) = dynamic_config_override(name) {
+                    dynamic_overrides.insert(value);
                 }
             })
             .map_err(|error| {
@@ -163,8 +164,8 @@ fn repo_local_overrides(repo_dir: &Path) -> Result<Vec<String>, GitError> {
     if cred {
         out.extend(["-c".to_owned(), "credential.helper=".to_owned()]);
     }
-    for driver in merge_drivers {
-        out.extend(["-c".to_owned(), format!("merge.{driver}.driver=")]);
+    for value in dynamic_overrides {
+        out.extend(["-c".to_owned(), value]);
     }
     Ok(out)
 }
@@ -184,6 +185,35 @@ fn merge_driver_name(key: &str) -> Option<&str> {
         return None;
     }
     Some(&key[PREFIX.len()..driver_end])
+}
+
+/// Override for a repo-selected executable merge, filter, or diff setting.
+///
+/// The original key spelling is retained because subsection names are
+/// case-sensitive. Fixed section/variable names are matched case-insensitively,
+/// as Git does.
+fn dynamic_config_override(key: &str) -> Option<String> {
+    if merge_driver_name(key).is_some() {
+        return Some(format!("{key}="));
+    }
+
+    let lowercase = key.to_ascii_lowercase();
+    for (prefix, suffix, value) in [
+        ("filter.", ".clean", ""),
+        ("filter.", ".smudge", ""),
+        ("filter.", ".process", ""),
+        ("filter.", ".required", "false"),
+        ("diff.", ".command", ""),
+        ("diff.", ".textconv", ""),
+    ] {
+        if lowercase.len() > prefix.len() + suffix.len()
+            && lowercase.starts_with(prefix)
+            && lowercase.ends_with(suffix)
+        {
+            return Some(format!("{key}={value}"));
+        }
+    }
+    None
 }
 
 /// True when `name` would be read by git as a command-line option instead of an
@@ -326,6 +356,11 @@ pub fn gh_command() -> std::process::Command {
 /// did not happen (issue #507).
 pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError> {
     let local = repo_local_overrides(repo_dir)?;
+    let repo_filters_disabled = local.iter().any(|value| {
+        value
+            .get(.."filter.".len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("filter."))
+    });
     let mut full: Vec<&str> = HARDENING_ARGS.to_vec();
     full.extend(local.iter().map(String::as_str));
     full.extend_from_slice(args);
@@ -356,6 +391,7 @@ pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError>
         status,
         stdout: run.stdout_lossy(),
         stderr: run.stderr_lossy(),
+        repo_filters_disabled,
     })
 }
 

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-02
-- Closes: #290, #291 (owner gate deferred to a follow-up)
+- Closes: #290, #291, #647, #649 (owner gate deferred to a follow-up)
 
 ## Context
 
@@ -54,37 +54,55 @@ the app and its tests use at top level — still work. It will block a
 submodule-triggered fetch over an exotic transport, which is the hardening
 working as intended.
 
-### Dynamic driver keys (#647)
+### Dynamic executable keys (#647, #649)
 
-An attribute can select an arbitrary merge driver name:
-`f.txt merge=evil` selects `merge.evil.driver`. The name is not a fixed
-allowlist value, and the driver value is an executable command. The initial
-hardening only neutralised fixed keys, so a repository could define a new
-driver name and execute it through `git merge-tree --write-tree`.
+Attributes can select arbitrary merge, filter, and diff driver names. For
+example, `f.txt merge=evil` selects `merge.evil.driver`, while
+`f.txt filter=evil diff=evil` selects the corresponding `filter.evil.*` and
+`diff.evil.*` settings. The names are not fixed allowlist values, and the
+configuration values are executable commands.
 
 Before every `run_git` child starts, Kagi opens the repository config and scans
-the **local** and **worktree** levels. For every key matching
-`merge.<name>.driver`, it prepends `-c merge.<name>.driver=`. It does not parse
+the **local** and **worktree** levels once. It prepends an override for every
+matching key:
+
+- `merge.<name>.driver=`
+- `filter.<name>.clean=`, `.smudge=`, and `.process=`
+- `filter.<name>.required=false`
+- `diff.<name>.command=` and `.textconv=`
+
+The original key spelling is retained in the override. Kagi does not parse
 `.gitattributes`: an attribute that names a driver with no matching config
 definition has no executable command, while the config scan finds every
-executable definition irrespective of its attribute spelling. A driver defined
-only in global or system config remains available; the untrusted repository did
-not define it.
+executable definition irrespective of its attribute spelling. A setting
+defined only in global or system config remains available; the untrusted
+repository did not define it.
 
-Config inspection is a security precondition. An absent local/worktree config is
-normal, but any other discovery, read, or enumeration failure aborts `run_git`
-before it starts a child. Continuing after a failed scan would turn a malformed
-or unreadable attacker-controlled config into a hardening bypass.
+Config inspection is a security precondition. An absent local/worktree config
+is normal, but any other discovery, read, or enumeration failure aborts
+`run_git` before it starts a child. Continuing after a failed scan would turn a
+malformed or unreadable attacker-controlled config into a hardening bypass.
 
-This establishes the general rule: **when the executable setting has a
-repository-chosen key name, scan the untrusted config level; never rely on a
-fixed key list.** The adjacent dynamic families `diff.<name>.command` /
-`.textconv` and `filter.<name>.clean` / `.smudge` / `.process` have the same
-shape. Filters can run during check-in/check-out conversion; with
-`merge.renormalize`, a three-way merge also performs those conversions. They
-are not covered by this merge-driver fix. No production `run_git` caller runs
-`merge-tree` yet, so a future adoption must make and document a separate
-filter-hardening decision before it can use the command.
+This establishes the general rule: **when an executable setting has a
+repository-chosen key name, scan the untrusted config levels once; never rely
+on a fixed key list or operation-specific scan.** Stash push consequently uses
+the same shared scanner as rebase, diff, and every other current or future
+`run_git` caller.
+
+Rebase behavior was measured separately because Git's conversion path is not
+obvious: a repository-selected filter process still executes during rebase
+when `merge.renormalize=false`. Setting that key alone does not stop execution.
+Kagi therefore neutralises the executable filter keys themselves and does
+**not** override `merge.renormalize`; legitimate global/system behavior for
+that non-executable setting is preserved.
+
+If rebase then reports unstaged changes, the backend retains a typed
+`RebaseCannotStartFiltersDisabled` error and the UI explains the safety
+trade-off in the selected language, including the option to run `git rebase`
+in a terminal when the repository's filters are trusted. This follows the
+stash-push #623 precedent: preserve security-relevant identity as a type until
+the presentation boundary rather than asking UI or oplog code to infer it from
+human-readable error prose.
 
 ### Argument injection (#291) — two independent layers
 

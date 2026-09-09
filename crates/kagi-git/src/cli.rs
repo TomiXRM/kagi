@@ -83,64 +83,107 @@ const HARDENING_ARGS: &[&str] = &[
     "protocol.allow=user",
 ];
 
-/// `-c` overrides for the two dangerous keys that also have a *legitimate*
-/// user-level configuration, applied only when the **repo-local** config sets
-/// them (issue #290).
+/// `-c` overrides for dangerous keys that can legitimately be configured
+/// globally, applied only when the **repo-local** or worktree config sets them
+/// (issues #290, #647).
 ///
-/// `core.sshCommand` and `credential.helper` are the two keys #290 lists that a
-/// user may reasonably set globally: a per-identity `ssh -i …`, and — on stock
-/// macOS — `credential.helper = osxkeychain`, which ships in the *system*
-/// config. Clearing them unconditionally (as #290's prescription does, and as
-/// `GIT_CONFIG_NOSYSTEM=1` also does) was measured to break `git credential
-/// fill` outright, i.e. every HTTPS remote, which is the exact capability this
-/// module exists to provide (ADR-0009 §3). So they are neutralised only when
-/// the untrusted side — the repository's own local/worktree config — sets them.
+/// `core.sshCommand` and `credential.helper` deliberately retain a legitimate
+/// user-level configuration. `merge.<name>.driver` is similarly dynamic: an
+/// attribute may select any driver name, but only a matching config entry gives
+/// it an executable command. Scan the untrusted config levels for those entries
+/// and disable each discovered driver, while leaving global-only drivers intact.
 ///
-/// A repo that legitimately sets a *local* helper or sshCommand loses it inside
-/// kagi and falls back to nothing (the empty `-c` resets the whole list); the
-/// operation then fails loudly rather than silently executing repo-supplied
-/// commands.
-// ponytail: presence check only, no attempt to re-add the user's global helpers
-// after the reset. Add that if local-credential.helper repos turn out common.
-fn repo_local_overrides(repo_dir: &Path) -> Vec<&'static str> {
-    let Ok(repo) = git2::Repository::discover(repo_dir) else {
-        return Vec::new();
-    };
-    let Ok(cfg) = repo.config() else {
-        return Vec::new();
-    };
+/// If Kagi cannot inspect an untrusted config level, it refuses to start Git.
+/// Running an operation after a failed inspection would make the hardening
+/// conditional on the attacker-controlled input being readable.
+fn repo_local_overrides(repo_dir: &Path) -> Result<Vec<String>, GitError> {
+    let repo = git2::Repository::discover(repo_dir)
+        .map_err(|error| GitError::Other(format!("cannot inspect repository config: {error}")))?;
+    let cfg = repo
+        .config()
+        .map_err(|error| GitError::Other(format!("cannot read repository config: {error}")))?;
 
     let (mut ssh, mut cred) = (false, false);
+    let mut merge_drivers = std::collections::BTreeSet::new();
     for level in [git2::ConfigLevel::Local, git2::ConfigLevel::Worktree] {
-        let Ok(snapshot) = cfg.open_level(level) else {
-            continue;
-        };
-        let Ok(entries) = snapshot.entries(None) else {
-            continue;
-        };
-        let _ = entries.for_each(|e| {
-            let Ok(name) = e.name() else { return };
-            let name = name.to_ascii_lowercase();
-            if name == "core.sshcommand" {
-                ssh = true;
+        let snapshot = match cfg.open_level(level) {
+            Ok(snapshot) => snapshot,
+            Err(error) if error.code() == git2::ErrorCode::NotFound => continue,
+            Err(error) => {
+                return Err(GitError::Other(format!(
+                    "cannot inspect {level:?} repository config: {error}"
+                )));
             }
-            // `credential.helper` and the per-URL `credential.<url>.helper`.
-            if name == "credential.helper"
-                || (name.starts_with("credential.") && name.ends_with(".helper"))
-            {
-                cred = true;
-            }
-        });
+        };
+        let entries = snapshot.entries(None).map_err(|error| {
+            GitError::Other(format!(
+                "cannot enumerate {level:?} repository config: {error}"
+            ))
+        })?;
+        let mut entry_error = None;
+        entries
+            .for_each(|entry| {
+                let name = match entry.name() {
+                    Ok(name) => name,
+                    Err(error) => {
+                        entry_error = Some(error.message().to_owned());
+                        return;
+                    }
+                };
+                let lowercase = name.to_ascii_lowercase();
+                if lowercase == "core.sshcommand" {
+                    ssh = true;
+                }
+                // `credential.helper` and the per-URL `credential.<url>.helper`.
+                if lowercase == "credential.helper"
+                    || (lowercase.starts_with("credential.") && lowercase.ends_with(".helper"))
+                {
+                    cred = true;
+                }
+                if let Some(driver) = merge_driver_name(name) {
+                    merge_drivers.insert(driver.to_owned());
+                }
+            })
+            .map_err(|error| {
+                GitError::Other(format!(
+                    "cannot enumerate {level:?} repository config: {error}"
+                ))
+            })?;
+        if let Some(error) = entry_error {
+            return Err(GitError::Other(format!(
+                "cannot inspect {level:?} repository config entry: {error}"
+            )));
+        }
     }
 
     let mut out = Vec::new();
     if ssh {
-        out.extend_from_slice(&["-c", "core.sshCommand=ssh"]);
+        out.extend(["-c".to_owned(), "core.sshCommand=ssh".to_owned()]);
     }
     if cred {
-        out.extend_from_slice(&["-c", "credential.helper="]);
+        out.extend(["-c".to_owned(), "credential.helper=".to_owned()]);
     }
-    out
+    for driver in merge_drivers {
+        out.extend(["-c".to_owned(), format!("merge.{driver}.driver=")]);
+    }
+    Ok(out)
+}
+
+/// Return the case-preserving `<name>` in `merge.<name>.driver`.
+///
+/// Git configuration section and variable names are case-insensitive, while
+/// the driver subsection remains the value selected by `.gitattributes`.
+fn merge_driver_name(key: &str) -> Option<&str> {
+    const PREFIX: &str = "merge.";
+    const SUFFIX: &str = ".driver";
+    let driver_end = key.len().checked_sub(SUFFIX.len())?;
+    if key.len() <= PREFIX.len() + SUFFIX.len()
+        || !key[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
+        || !key[driver_end..].eq_ignore_ascii_case(SUFFIX)
+    {
+        return None;
+    }
+    Some(&key[PREFIX.len()..driver_end])
 }
 
 /// True when `name` would be read by git as a command-line option instead of an
@@ -282,9 +325,9 @@ pub fn gh_command() -> std::process::Command {
 /// deadline expires — the wait was cut short, which is not proof the operation
 /// did not happen (issue #507).
 pub fn run_git(repo_dir: &Path, args: &[&str]) -> Result<GitCliOutput, GitError> {
+    let local = repo_local_overrides(repo_dir)?;
     let mut full: Vec<&str> = HARDENING_ARGS.to_vec();
-    let local = repo_local_overrides(repo_dir);
-    full.extend_from_slice(&local);
+    full.extend(local.iter().map(String::as_str));
     full.extend_from_slice(args);
 
     let mut cmd = git_command(repo_dir);

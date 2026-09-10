@@ -4,7 +4,7 @@
 >
 > branch: `exp/627-p6-platform-matrix`
 >
-> この文書は P4 PR [#664](https://github.com/TomiXRM/kagi/pull/664)、P5 execution / mixed report、owner が実施した `.gitattributes` filter 実測を入力にする。未 merge PR の数値は source-of-truth を置き換えず、P6 の判断入力として引用する。
+> この文書は main に merge 済みの P4 PR [#664](https://github.com/TomiXRM/kagi/pull/664) の `docs/research/627/A-read-paths.md`、P5 execution / mixed report、owner が実施した `.gitattributes` filter と実機値を入力にする。
 
 ## 結論
 
@@ -27,32 +27,32 @@ copy → writable copy → timer 外 hardened plain status
 - timed CLI status は `--no-optional-locks`、libgit2 は open 済み repository handle を使う。
 - 各値の `a / b` は `libgit2 → CLI / CLI → libgit2` の順序反転 series。p95 は各表に明記した nearest-rank 値。
 - P4 formal series は timed fingerprint 不変を確認した。index prime は timer 外であり、read timing に write を混ぜない。
-- 以下で条件を持たない owner 実機値は、A series の統計値と直接比較しない。
+- owner 値は条件を併記した local measurement または 1 回の end-to-end 確認であり、P4 formal series の統計値と直接比較しない。
 ## 出典と条件 ID
 
-- **[P4-A2]** P4 PR [#664](https://github.com/TomiXRM/kagi/pull/664) の `docs/research/627/A-read-paths.md`、`A2 — snapshot と CLI 合成`。P0 index-prime、2 warm-up 除外、30 measured、両順序の formal series。
-- **[P4-A3]** 同 report の `A3 — 規模の傾き`。同じ P0 index-prime と両順序の 1k / 5k / 20k / 50k series。
-- **[P4-cache]** 同 report の `cache / dirty L`。L の `1 tracked modification + 100 untracked files`、canonical 101 entry、fingerprint stable、P0 formal series。
-- **[P4-fsmonitor]** 同 report の fsmonitor candidate。M fixture の `core.fsmonitor=true` / untracked cache 設定後、1 iteration の fingerprint check。
+- **[P4-A2]** main の `docs/research/627/A-read-paths.md`、`A2 — snapshot と CLI composite`。P0 index-prime、2 warm-up 除外、30 measured、両順序の formal series。
+- **[P4-A3]** 同 report の `A3 — P0 index-prime series`。同じ P0 index-prime と両順序の 1k / 5k / 20k / 50k series。
+- **[P4-cache]** 同 report の `untracked cache と dirty L`。L の `1 tracked modification + 100 untracked files`、canonical 101 entry、fingerprint stable、P0 formal series。
+- **[P4-fsmonitor]** 同 report の `--git-executable` と fsmonitor 条件。M fixture の `core.fsmonitor=true` / `core.untrackedCache=true` candidate は 3 iteration を試行し、1 回目後の fingerprint 変更で 2 回目開始前の P0 check が失敗した。
 - **[P5-D1]**, **[P5-D2]**, **[P5-F]** P5 `docs/research/627/D-execution-F-mixed.md` の各 section。D1 は macOS arm64 synthetic dirty tracked 2、D2 は macOS `fs_usage -w -f filesys`、F は S / 200 / 3 iteration。
-- **[Owner-index]** owner が本 issue thread で報告した実機修復値。workload、反復数、index 状態は未記録のため、P4 formal series と比較しない。
-- **[Owner-pathspec]** owner が本 issue thread で報告した 50k local libgit2 measurement。full status と pathspec は別 workload / timer であり、P4 formal series と比較しない。
-- **[Owner-filter]** owner が bare `git add` 対照で実施した 4 経路測定。filter 非実行という安全性の確認であり、latency benchmark ではない。
+- **[Owner-index]** `/tmp/kagi-627-p4/L` の新規 copy（tracked 50,000、286 MB）。`chmod -R u+w` 後に `find -type f -not -path '*/.git/*' -exec touch {} +` を実行し、内容を変えず stat のみ変更する。kagi 実機初回 load 前後の `.git/index` mtime と `git status --porcelain` 実時間を 1 回測定した end-to-end 確認。
+- **[Owner-pathspec]** 同 fixture（tracked 50,000）の local libgit2 measurement。stale index は full `5,427 ms` / pathspec `0.8 ms`、warm index は full `145.3 ms` / pathspec `1.2 ms`。backend 統計でなく、index 状態を揃えた局所探索範囲の比較にだけ使う。
+- **[Owner-filter]** libgit2 の `statuses` / `diff_index_to_workdir` / index `add_path` / `checkout_tree` を、filter が走ることを確認した bare `git add` と対照した 4 経路測定。安全性の確認であり、latency benchmark ではない。
 
 
 ## 証拠表
 
 | 領域 | 出典 | 条件と数値 | 事実 | P6 での使い方 |
 | --- | --- | --- | --- | --- |
-| 安全性 / 予測 | [Owner-filter] | bare `git add` を対照にした 4 経路 | libgit2 は `.gitattributes` filter を実行しない。予測を libgit2 に置けば repository config 由来コード実行を構造的に避けられる。 | **既定 libgit2 の主根拠。** 速度とトレードしない。 |
+| 安全性 / 予測 | [Owner-filter] | `statuses` / `diff_index_to_workdir` / index `add_path` / `checkout_tree` を、filter 実行確認済み bare `git add` と対照。 | libgit2 の 4 経路はいずれも `.gitattributes` filter を実行しない。予測を libgit2 に置けば repository config 由来コード実行を構造的に避けられる。 | **既定 libgit2 の主根拠。** 速度とトレードしない。 |
 | A1 / A3 status | [P4-A3] | 1k / 5k / 20k / 50k、P0 index-prime、2 warm-up 除外、30 sample × 両順序。50k: libgit2 `141.971 / 132.672 ms`、CLI `93.361 / 91.143 ms`。 | 20k 以上では CLI が速い。1k / 5k は順序感度が大きい。 | crossover は事実として保持。**自動切替の根拠にはしない。** |
 | A2 snapshot | [P4-A2] | S / M / L、P0 index-prime、2 warm-up 除外、30 sample × 両順序。libgit2 は pure `snapshot()`、CLI は 9 process composite。S: libgit2 `2.951 / 2.894 ms`、CLI `119.862 / 120.500 ms`。M: `19.065 / 24.926` 対 `142.311 / 140.867`。L: `200.777 / 173.259` 対 `344.556 / 242.053`。 | snapshot 全置換を除外。S 約41x、M 約6x、L は最小比でも約1.4xで libgit2 が速い。 |
 | A2 情報等価性 | [P4-A2] | 同じ A2 composite | CLI は common-dir `FETCH_HEAD`、detached worktree root、annotated-tag peeling、linked-worktree WIP を返さない。4 項目は CLI 原理限界でなく、現 composite の未実装。 | 現在の全置換は不可。補完しても追加 process / complexity を負担する。 |
 | A2 局所候補 | [P4-A2] | L、P0 index-prime、2 warm-up 除外、30 sample × 両順序。CLI 最重段 `status`: `177.334 / 120.859 ms`。 | libgit2 の private snapshot stage 内訳は未計測。 | explicit CLI mode で検討できる局所候補。production 計測 seam なしに他段へ一般化しない。 |
-| pathspec status | [Owner-pathspec] | 50k local libgit2、pathspec と full status は別 workload / timer。pathspec `1.2 ms`、full status `5,427 ms`。 | P4 formal A1/A3 と統計比較できない。 | 意味論を変えない局所最適化。backend mode と独立。 |
-| index stat cache | [Owner-index] | 実機修復観測。workload、反復数、index 状態は未記録。`4.25 s → 0.09 s`。 | status 遅延の主因は backend 選択でなく stale index stat cache。#657 / ADR-0193 が repair を扱う。 | 「遅いから CLI」論拠を弱める。repair policy は read/write contract と watcher contention を満たす必要がある。 |
+| pathspec status | [Owner-pathspec] | 同一 L fixture（tracked 50,000）。stale index: full `5,427 ms` / pathspec `0.8 ms`。**warm index: full `145.3 ms` / pathspec `1.2 ms`**。 | 局所最適化の比較は warm 同士の約121xだけを使う。stale-full と warm-pathspec を対比しない。 | 意味論を変えない局所最適化。backend mode と独立。 |
+| index stat cache | [Owner-index] | L 新規 copy、tracked 50,000 / 286 MB、全 worktree file の stat のみを変更後、実機 kagi 初回 load と `git status --porcelain` を 1 回測定。#657 適用後、`4.25 s → 0.09 s`。 | **統計値でない end-to-end 確認。** stale index が status 遅延に寄与する。 | 「遅いから CLI」論拠を弱める。repair policy は read/write contract と watcher contention を満たす必要がある。 |
 | untracked cache | [P4-cache] | L clean / dirty（tracked modification 1、untracked 100）、P0 index-prime、2 warm-up 除外、30 sample × 両順序。dirty cache off: libgit2 `145.399 / 138.237 ms`、CLI `98.398 / 95.595 ms`。on: `134.246 / 139.702`、`94.216 / 94.162`。 | 順序差 / tail を越える一貫した差はない。 | backend 選択・auto mode の条件にしない。設定値を観測表示することは可。 |
-| fsmonitor | [P4-fsmonitor] | M fixture、`core.fsmonitor=true` と untracked cache を設定した CLI candidate の 1 iteration fingerprint check。 | candidate は fingerprint を変更。libgit2 は fsmonitor を利用しない。 | libgit2 既定の性能 / 意味論判断に効果なし。CLI mode の watcher read には採らない。 |
+| fsmonitor | [P4-fsmonitor] | M fixture、`core.fsmonitor=true` / `core.untrackedCache=true` の CLI candidate を 3 iteration 試行。1 回目後に fingerprint が変わり、2 回目開始前の P0 check が失敗。 | libgit2 は fsmonitor を利用しない。CLI candidate は watcher read の非書込み契約を満たさない。 | libgit2 既定の性能 / 意味論判断に効果なし。CLI mode の watcher read には採らない。 |
 | D1 | [P5-D1] | macOS arm64、synthetic、dirty tracked 2、1k / 5k / 20k / 50k。registered warm-index rerun は未完。 | historic private-driver values は stale / contract差を含み、採否に使わない。 | **未確定。** CLI 実行経路の採用根拠にしない。 |
 | D2 | [P5-D2] | macOS `fs_usage -w -f filesys` は root 権限を要求。 | syscall 回数・read bytes は未測定。 | **未確定。** 原因診断の宿題。採否を単独で決めない。 |
 | F mixed stash | [P5-F] | S / 200、synthetic、3 iteration。CLI が作成した stash に libgit2 `plan` / `run_recorded` を適用。 | 探索範囲の plan / post-state divergence は `0`。`f-apply` / `f-pop` / `f-drop` は verified。 | 「混在が安全」の証明ではない。未実施の conflict、large fixture、untracked restore 境界を残す。全 write の pipeline を弱めない。 |
@@ -66,8 +66,8 @@ copy → writable copy → timer 外 hardened plain status
 | `CLI compatibility mode` | **明示選択のみ** | 利用者が mode を固定すれば、予測と実行前表示の挙動を説明できる。 | 暗黙の fallback / 閾値切替をしない。mode の既定化は 3 OS gate と情報等価性後。 |
 | snapshot | **全置換しない** | 現 CLI composite は 9 process かつ 4 情報不足。 | CLI snapshot を既定にしない。private libgit2 helper を probe / production へ複製しない。 |
 | snapshot 内 status | **局所候補としてのみ検討** | L CLI status は A2 の最重段。 | libgit2 stage 内訳が無いため、他段を「遅い」と断定しない。 |
-| pathspec status | **局所最適化として優先** | 50k owner 測定で `1.2 ms` 対 full `5,427 ms`。 | backend mode と結び付けない。pathspec が意味を満たさない集約画面には適用しない。 |
-| index stat cache | **repair/read policy を backend 選択から分離** | 実機 `4.25 s → 0.09 s`。 | global read path に無条件 write を混ぜない。watcher 競合と ADR-0193 contract を守る。 |
+| pathspec status | **局所最適化として優先** | 同一 L / 50k / warm index の owner 測定で full `145.3 ms` 対 pathspec `1.2 ms`（約121x）。 | backend mode と結び付けない。pathspec が意味を満たさない集約画面には適用しない。 |
+| index stat cache | **repair/read policy を backend 選択から分離** | L 新規 copy / 50k / 286 MB、全 file stat 変更後の実機初回 load 1 回で `4.25 s → 0.09 s`。 | global read path に無条件 write を混ぜない。watcher 競合と ADR-0193 contract を守る。 |
 | untracked cache / fsmonitor | **観測対象、選択条件ではない** | cache 差は一貫しない。fsmonitor は libgit2 に効果がなく、CLI candidate は fingerprint を変えた。 | cache / fsmonitor を hidden backend switch にしない。 |
 | mixed write family | **operation ごとに verify を維持** | F は探索範囲で 0 件だが未実施境界がある。 | `plan → confirm → preflight → execute → verify → oplog` を省略・弱化しない。 |
 

@@ -26,8 +26,11 @@ WARMUP_ITERATIONS = 2
 
 PORTABILITY_NOTE = (
     "Absolute times are runner-specific. Do NOT compare milliseconds across "
-    "operating systems — the runners differ in hardware. Only canonical-output "
-    "equality and the within-runner CLI/libgit2 ratio are portable evidence."
+    "operating systems — the runners differ in hardware. Canonical-output "
+    "equality is the portable result. The CLI/libgit2 ratio is a within-runner "
+    "observation only: it also moves with the runner (measured 2.9x-10.4x for "
+    "the same fixture across three runners), so it is not comparable between "
+    "operating systems either."
 )
 
 
@@ -114,6 +117,14 @@ def _compare(left: Any, right: Any) -> tuple[bool | None, dict[str, Any], list[s
 
 
 def probe_report() -> int:
+    # Windows defaults stdout to the ANSI code page, so the em dash in
+    # PORTABILITY_NOTE was written as cp1252 and the artifact was not valid
+    # UTF-8 (#627: the Windows summary failed to parse). The report is JSON, and
+    # JSON is UTF-8, so say so rather than dropping the punctuation.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     paths = [Path(arg) for arg in sys.argv[1:]]
     if not paths:
         print("usage: probe-report <probe-json>...", file=sys.stderr)

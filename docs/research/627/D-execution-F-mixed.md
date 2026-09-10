@@ -3,7 +3,7 @@
 ## 実施条件
 
 - macOS arm64
-- P0 登録済みの `backend_probe --operation execution-mixed` のみを実行経路に使う。私設 driver は dispatch / warm-up 契約を重複させるため削除した。
+- release profile の P0 登録済み `backend_probe --operation execution-mixed` のみを実行経路に使う。私設 driver は dispatch / warm-up 契約を重複させるため削除した。
 - fixture: synthetic、commits `3`、depth `3`、seed `627`
 - tracked files: `1,000` / `5,000` / `20,000` / `50,000`
 - backend ごとに `KAGI_LOG_DIR` を別 temporary directory に設定

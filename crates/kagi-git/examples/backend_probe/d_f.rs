@@ -31,6 +31,10 @@ impl ProbeOperation for ExecutionMixed {
                 "candidate must be d1-working-tree-status",
             ));
         }
+        let index_path = context.repo().join(".git/index");
+        let index_mtime_before = fs::metadata(&index_path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
         let output = run_git(
             context.repo(),
             &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
@@ -43,7 +47,11 @@ impl ProbeOperation for ExecutionMixed {
                 output.stderr.trim()
             )));
         }
+        let index_mtime_after = fs::metadata(&index_path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
         Ok(json!({
+            "index_mtime_changed": index_mtime_before != index_mtime_after,
             "index_stat_cache_primed": true,
             "priming_executor": "run_git status --porcelain=v2 -z",
             "repo_dynamic_settings_disabled": output.repo_dynamic_settings_disabled,

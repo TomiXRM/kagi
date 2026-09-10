@@ -1,0 +1,106 @@
+# ── RESEARCH: cross-platform backend evidence for #627 ───────────────────────
+#
+# RPT-627 §6.1 records that every measurement so far comes from one macOS host,
+# and the adoption gate in E4 needs macOS, Linux and Windows. This job collects
+# the missing two.
+#
+# It is manual (`workflow_dispatch`) on purpose: it is evidence gathering, not a
+# gate, and running it per-PR would spend minutes on every push for a number
+# nobody reads that day.
+#
+# **What this job can and cannot conclude.** Runners differ in CPU, disk and
+# filesystem, so milliseconds from the Windows runner say nothing about the
+# Linux one. Two results do travel: whether the two backends agree on what Git
+# reported, and the ratio between them — both measured inside a single runner.
+# `probe-report` enforces that split and refuses to emit a cross-OS comparison.
+name: backend probe (#627)
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "tracked files per fixture (CI runners are slow; 1000 takes ~1 min)"
+        default: "1000"
+        type: string
+      iterations:
+        description: "probe iterations; the first 2 are discarded as warm-up"
+        default: "12"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+
+      # The probe reads its own Git through the hardened wrapper, so record what
+      # that Git actually is. A backend difference that turns out to be a Git
+      # version difference is otherwise indistinguishable in the results.
+      - name: Record the runner's Git
+        shell: bash
+        run: git --version
+
+      - name: Build the probe
+        shell: bash
+        run: |
+          cargo build --release -p kagi-git \
+            --example backend_fixture --example backend_probe
+
+      # Running this locally: the generated template is read-only by the P0
+      # fixture contract, so `rm -rf probe-work` fails until you `chmod -R u+w`
+      # it first. CI discards the workspace, so the job itself needs no cleanup.
+      - name: Generate the fixture
+        shell: bash
+        run: |
+          cargo run -q --release -p kagi-git --example backend_fixture -- \
+            --out probe-work/fixture \
+            --files "${{ inputs.files }}" --commits 50 --depth 3 --seed 627
+
+      # `prepare_series` primes the index stat cache inside the probe (RPT-627
+      # §5.1), so the measured series is warm without any shell step here.
+      - name: Run the probe
+        shell: bash
+        env:
+          KAGI_LOG_DIR: probe-work/logs
+        run: |
+          mkdir -p probe-work/out probe-work/logs
+          for operation in working-tree-status snapshot; do
+            for backend in libgit2 cli; do
+              echo "── $operation / $backend"
+              cargo run -q --release -p kagi-git --example backend_probe -- \
+                --repo probe-work/fixture \
+                --operation "$operation" \
+                --backend "$backend" \
+                --iterations "${{ inputs.iterations }}" \
+                --format json \
+                > "probe-work/out/$operation-$backend.json"
+            done
+          done
+
+      - name: Summarise
+        shell: bash
+        run: |
+          uv run --project ci probe-report probe-work/out/*.json \
+            > "probe-work/out/summary-${{ matrix.os }}.json"
+
+      # The raw reports carry a before/after fingerprint of every tracked file
+      # per iteration, so they run to tens of MB. That is the harness's
+      # integrity evidence and worth keeping; upload-artifact zips it.
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-probe-${{ matrix.os }}
+          path: probe-work/out/
+          if-no-files-found: error

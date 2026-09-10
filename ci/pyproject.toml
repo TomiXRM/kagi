@@ -20,6 +20,7 @@ dependencies = []
 [project.scripts]
 # One command per gate, named after the check (`ci/check-loc.sh` before).
 check-all = "kagi_checks.cli:check_all"
+probe-report = "kagi_checks.probe_report:probe_report"
 check-ui-git2 = "kagi_checks.cli:check_ui_git2"
 check-app-layering = "kagi_checks.cli:check_app_layering"
 check-fault-test-only = "kagi_checks.cli:check_fault_test_only"

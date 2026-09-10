@@ -109,9 +109,9 @@ mod macos {
     };
     use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
-        commands::CreateSnapshot, commit_list, e2e, editor_tree_menu::EditorTreeAction, graph_wip,
-        oplog_panel, settings::CopyTarget, theme, BottomTab, CopyDiffSelection, KagiApp,
-        ToggleBottomPanel,
+        commands::CreateSnapshot, commit_list, diff_view::MainDiffSource, e2e,
+        editor_tree_menu::EditorTreeAction, graph_wip, oplog_panel, settings::CopyTarget, theme,
+        BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
     };
 
     #[link(name = "objc")]
@@ -689,6 +689,10 @@ mod macos {
                 "graph_copy",
                 Box::new(|cx| scenario_graph_copy(cx, log_dir.path())),
             ),
+            (
+                "diff_survives_reload",
+                Box::new(scenario_diff_survives_reload),
+            ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),
@@ -838,6 +842,67 @@ mod macos {
             "[gui-e2e] PASS graph_copy hash={} branch={branch}",
             &full_sha[..8]
         );
+    }
+
+    /// An external refresh (auto-fetch, FS watcher) must NOT close the
+    /// full-width diff of a *commit* and dump the reader back on the graph —
+    /// a commit's diff is immutable, so there is nothing to invalidate. Opens
+    /// the HEAD commit's first file, commits again from outside so every graph
+    /// row shifts down one, reloads, and asserts the pane is still up and
+    /// re-anchored to the same commit's NEW row index.
+    fn scenario_diff_survives_reload(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        let (kagi, win) = mount(cx, &repo_path);
+
+        // Select the HEAD row and let the render trigger load its changed
+        // files (`open_main_diff_commit` reads them out of the diff cache).
+        let sha = kagi.update(cx, |app, cx| {
+            app.select(0);
+            cx.notify();
+            app.view().rows[0].id.0.clone()
+        });
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).main_diff.is_some()),
+            "the HEAD commit's first file should open in the main diff pane"
+        );
+
+        // A commit lands from outside: the row the diff was opened from is no
+        // longer row 0.
+        std::fs::write(repo_path.join("README.md"), "# fixture\nthird line\n").unwrap();
+        git(&repo_path, &["commit", "-q", "-am", "third commit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+
+        cx.read(|app| {
+            let app_ref = kagi.read(app);
+            assert_eq!(
+                app_ref.view().rows[1].id.0,
+                sha,
+                "the diffed commit should have shifted to row 1"
+            );
+            let pane = app_ref
+                .main_diff
+                .as_ref()
+                .expect("external reload must not close a commit's diff");
+            match pane.read(app).view.source {
+                MainDiffSource::Commit {
+                    row_index,
+                    file_index,
+                } => assert_eq!(
+                    (row_index, file_index),
+                    (1, 0),
+                    "the pane should be re-anchored to the commit's new row"
+                ),
+                _ => panic!("expected a Commit-sourced diff"),
+            }
+        });
+
+        unmount(cx, kagi, win);
+        eprintln!("[gui-e2e] PASS diff_survives_reload");
     }
 
     /// Issue #468: the Operation Log row list is variable-height

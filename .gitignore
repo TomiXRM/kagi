@@ -11,3 +11,6 @@ ci/.venv/
 __pycache__/
 .mypy_cache/
 .ruff_cache/
+
+# #627 backend probe scratch (the workflow writes ~90 MB of fingerprint JSON here)
+probe-work/

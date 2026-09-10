@@ -23,6 +23,18 @@
 
 50k の既存 11 sample は安定していない。libgit2 range は `2,605.549–6,572.795 ms`、p95 は `6,572.795 ms`。CLI range は `1,033.112–5,844.586 ms`、p95 は `5,844.586 ms`。median の `171.913 ms` 差は、この range 内で backend 優劣を示さない。
 
-P4 A1 の 50k 値（libgit2 `4,153 ms` / CLI `1,317 ms`）とは逆の median が出た。どちらかを誤りとは扱わず、両方とも filesystem cache / pristine-copy の状態に支配された測定である可能性を残す。50k の CLI 採用判定は保留し、20k 以下の一貫した傾きだけを D2 の原因調査根拠に使う。
+P4 A1 の 50k 値（libgit2 `4,153 ms` / CLI `1,317 ms`）とは初回 11 sample の median が逆だった。どちらかを誤りとは扱わず、両方とも filesystem cache / pristine-copy の状態に支配された測定である可能性を残す。初回 50k の CLI 採用判定は保留し、20k 以下の一貫した傾きだけを D2 の原因調査根拠に使った。
 
-50k は 20–30 iteration へ増やし、warm-up 破棄後の median・p95・range を併記して再測定する。両 backend は fresh copy を使う process-warm 条件へ揃えるが、filesystem cache 同一性は保証できないため、補助観測として扱う。
+
+### D1 — 50k 再測定
+
+各 backend で `--iterations 21` を実行し、先頭の warm-up を除く 20 sample を使った。
+
+| backend | median (ms) | p95 (ms) | range (ms) |
+|---|---:|---:|---:|
+| libgit2 | `3,025.803` | `7,891.732` | `2,661.309–8,526.823` |
+| CLI | `1,073.654` | `3,454.947` | `1,026.872–3,988.477` |
+
+再測定 median では libgit2 は CLI の約 `2.82` 倍、絶対差 `1,952.149 ms` であり、D1 の L 規模 CLI 採用候補基準を満たす。一方、両 backend の range と p95 は大きく、filesystem cache / copy の交絡を除外できない。したがってこれは **CLI 採用の確定ではなく D2 と F へ進む候補判定** とする。
+
+先行 11 sample および P4 A1 との食い違いは解消されていない。後続判断では 50k の単一 median ではなく、この 20 sample の median / p95 / range を併記する。

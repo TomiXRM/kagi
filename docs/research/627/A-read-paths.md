@@ -1,6 +1,6 @@
 # 627 P4 — 読み経路の測定
 
-> 状態: 実行中。P1 review により A1 の libgit2 timer 境界を修正済み。旧 S/M/L performance 値は撤回し、reusable repository で再測定中。A0 / A2 / A3、process-cold、dirty L、backend 選定は未確定。
+> 状態: 実行中。P1 review により A1 の libgit2 timer 境界を修正済み。旧 S/M/L performance 値は timer 境界不正のため撤回した。P0 の fresh copy が作る stale index stat cache と、bare Git が行う index 修復を分離した L / 20k 再測定を記録済み。A0 / A2 / A3、process-cold、dirty L、backend 選定は未確定。
 >
 > branch: `exp/627-p4-read-paths`
 >
@@ -12,7 +12,7 @@
 - 各実行で `KAGI_LOG_DIR` を設定する。oplog が harness の pristine copy 外へ出ることを防ぐ。
 - CLI の production candidate は `git --no-optional-locks status --porcelain=v2 -z --untracked-files=all --renames` とする。
 - `bare` CLI は side-effect 比較だけに使う。性能判定値には使わない。
-- 3 iteration は backend 分岐・canonicalization・fingerprint の初期確認用。本測定は warm-up 1 回を破棄した 11 iteration と process-cold を使う。
+- 3 iteration は backend 分岐・canonicalization・fingerprint の初期確認用。本測定の P0 warm series は warm-up 1 回を破棄した 11 iteration と process-cold を使う。加えて、index stat cache の状態を分離する direct experiment は template copy を一度作り、timer 外の bare Git repair 後に warm-up 2 回と 30 iteration を使う。
 
 ## `--no-optional-locks` の判断
 
@@ -50,14 +50,33 @@ reusable repository を用い、11 回の最初を warm-up として破棄した
 | --- | ---: | ---: | --- | --- | ---: | --- | --- |
 | S | 200 | 0.196 | 19.021 / 20.170 | 24.543 / 26.222 | 1.29 | 11.676–20.170 | 22.525–26.222 |
 | M | 1,194 | 0.172 | 228.355 / 249.411 | 215.559 / 229.545 | 0.94 | 225.579–249.411 | 208.234–229.545 |
-| L | 50,000 | 0.219 | 4,153.127 / 5,455.873 | 1,317.064 / 1,476.294 | 0.32（非採用） | 3,793.953–5,455.873 | 1,235.606–1,476.294 |
+| L | 50,000 | 0.219 | 4,153.127 / 5,455.873 | 1,317.064 / 1,476.294 | 0.32（stale-index 条件。採否非使用） | 3,793.953–5,455.873 | 1,235.606–1,476.294 |
 
 p95 は warm-up を除いた n=10 の nearest-rank 値であり、n=10 では最大値と同じである。`Repository::open` は全規模で 0.219 ms 以下の timer 外コストだった。S/M はこの series 内では相対的に安定し、S では CLI が遅く、M はほぼ同等だった。
 
-L は libgit2 の range が 1,662 ms と大きい。P5 D1 は同じ 50,000 files で libgit2 が 172 ms 速い逆の中央値を得ており、PM の CLI 単独 5 回も 1,892–5,246 ms（2.8 倍）に揺れた。したがって L の `0.32` は測定事実として残すが、backend 選定・傾き・性能閾値 0.7 の根拠には使わない。50k は 20–30 iteration と state 制御を伴う再設計まで判定不能とする。
+L の既存値は消去しないが、P0 の fresh copy を使い、`--no-optional-locks` と `core.fsmonitor=` を使う **stale index stat cache 条件**の観測として分類する。P0 は read-only operation に一 copy の warm series を使うが、`run_probe` は invocation ごとに template を `materialize_pristine` する。copy は index の stat data と file の inode / ctime を不一致にし得る。さらにこの CLI candidate と libgit2 は L の timed series 中に index mtime を更新しなかった。そのため既存 L の `0.32` は backend 固有の採否・傾き・性能閾値の根拠に使わない。
 
-backend 選定は、安定している 20k 以下の規模系列を主軸にし、dirty L、process-cold、cache 条件の S/L、A2 snapshot 情報量と併せて判断する。
+### L 50k — index stat cache を正規化した direct 再測定
 
+元の L template から新しい copy を一度だけ作り `chmod -R u+w` を実行した。timer 外の bare `git status --porcelain=v2 -z` を 1 回実行して index mtime が `1788932046792.2166` から `1789033150211.511` へ変化したことを確認した。続く exact P4 candidate の計時中は mtime 不変である。各 backend は 2 warm-up 後に 30 回測定し、順序を反転した。
+
+| 実行順 | libgit2 median / p95 / min–max ms | CLI median / p95 / min–max ms | CLI / libgit2 |
+| --- | --- | --- | ---: |
+| libgit2 → CLI | 152.776 / 196.493 / 140.216–219.712 | 95.228 / 101.297 / 90.043–104.390 | 0.62 |
+| CLI → libgit2 | 209.579 / 438.934 / 156.303–2,020.167 | 107.250 / 364.164 / 89.828–395.101 | 0.51 |
+
+同じ direct L の stale-index 30 sample は libgit2 median `3,049–3,133 ms`、CLI median `963–1,071 ms` だった。bare Git repair 後は双方とも桁違いに短縮したため、stale index と warm index を混ぜた backend 比は無効である。一方、warm index でも順序ごとの median と p95 / range は動く。50k は単一 median の backend 選定値ではなく、index state と tail を併記する観測に留める。
+
+### 20k — 同じ index stat cache 効果の確認
+
+L と同じ generator parameter（seed 627 / 2,000 commits / depth 6）で 20,000 tracked files の template を作り、新しい writable copy を使った。stale series 中は index mtime 不変、timer 外 bare Git repair で mtime が変化し、その後の timed series は再び不変だった。
+
+| index state | libgit2 median / p95 / min–max ms | CLI median / p95 / min–max ms | CLI / libgit2 |
+| --- | --- | --- | ---: |
+| stale | 1,179.807 / 1,652.032 / 1,101.294–2,024.240 | 423.823 / 1,186.089 / 372.762–1,590.953 | 0.36 |
+| bare Git repair 後 | 77.523 / 124.601 / 70.487–148.353 | 61.176 / 102.617 / 52.239–143.143 | 0.79 |
+
+この効果は 50k 専用ではない。P5 の既存 20k series は P5 owner が同じ state-normalized procedure で判断し直す。P4 は P5 report を変更しない。P4 自身も S/M の旧 series を index state を固定した性能根拠として拡張解釈しない。
 
 ### `--git-executable` と fsmonitor 条件
 
@@ -103,11 +122,14 @@ M fixture の R100、Git が R63 と報告する内容変更 rename、rename 非
 | M clean reusable repository / CLI / 11 warm | `/tmp/kagi-627-p4/results/a1-M-clean-cli-11-reuse.json` |
 | L clean reusable repository / libgit2 / 11 warm | `/tmp/kagi-627-p4/results/a1-L-clean-libgit2-11-reuse.json` |
 | L clean reusable repository / CLI / 11 warm | `/tmp/kagi-627-p4/results/a1-L-clean-cli-11-reuse.json` |
+| L direct stale index / 2 warm-up / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-L-direct-warm-order-balanced-30.json` |
+| L direct warm index / 2 warm-up / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-L-warm-index-order-balanced-30.json` |
+| 20k stale / bare Git repair / warm index / 30 | `/tmp/kagi-627-p4/results/a1-20k-index-cache-confirmation-30.json` |
 
 ## 次の測定
 1. reusable repository で clean S / M / L の process-cold を測定する。
 2. dirty / rename / untracked の L case。
 3. fsmonitor disabled / untracked cache enabled 条件を S / L に広げる。built-in fsmonitor は P0 fingerprint を変えたため、watcher candidate から除外する。
 4. A2 の libgit2 `snapshot` と CLI 合成の段別 process / time / 情報欠落。
-5. A3 の `1k` / `5k` / `20k` / `50k` fixture における傾き。
+5. A3 の `1k` / `5k` / `20k` / `50k` fixture における傾き。各規模で stale / repaired index state を分離し、backend 選定に使う値を事前に固定する。
 6. A0 の GUI watcher scenario。`KAGI_BENCH_READ=1` の raw event、debounce 後 tick、reload、`snapshot` / `working_tree_status` 時間を記録する。

@@ -6,6 +6,8 @@
 >
 > この文書は main に merge 済みの P4 PR [#664](https://github.com/TomiXRM/kagi/pull/664) の `docs/research/627/A-read-paths.md`、P5 execution / mixed report、owner が実施した `.gitattributes` filter と実機値を入力にする。
 
+> 統合報告: [`RPT-627`](RPT-627.md)（論文形式、知見 ID 付き。実装時はそちらを引用する）
+
 ## 結論
 
 - **既定 backend は libgit2。** repository config 由来 filter を構造的に実行しない安全性が、単一 host の速度比より重い。

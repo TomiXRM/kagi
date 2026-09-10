@@ -3,7 +3,8 @@
 - Status: Accepted
 - Date: 2026-09-10
 - Related: [#627](https://github.com/TomiXRM/kagi/issues/627)、[ADR-0146](0146-run-git-hardening.md)、[ADR-0193](0193-index-stat-cache-refresh.md)
-- 証拠: `docs/research/627/E4-platform-matrix.md`（P0–P6 の実測をまとめた決定表）
+- 証拠: [`RPT-627`](../research/627/RPT-627.md)（統合報告。知見 ID `F-nn` で引用する）、
+  `docs/research/627/E4-platform-matrix.md`（決定表）
 
 ## 文脈
 

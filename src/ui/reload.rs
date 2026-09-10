@@ -58,7 +58,7 @@ impl KagiApp {
                 return;
             }
         };
-        let snap = match repo.snapshot(self.commit_limit) {
+        let snap = match repo.snapshot_repairing_stat_cache(self.commit_limit) {
             Ok(s) => s,
             Err(e) => {
                 klog!("reload: snapshot error: {}", e);
@@ -385,7 +385,7 @@ impl KagiApp {
                 return;
             }
         };
-        let snap = match repo.snapshot(self.commit_limit) {
+        let snap = match repo.snapshot_repairing_stat_cache(self.commit_limit) {
             Ok(s) => s,
             Err(e) => {
                 klog!("load more: snapshot error: {}", e);
@@ -556,7 +556,11 @@ impl KagiApp {
         let key = self.reads.current_key(session);
         let task = cx.background_spawn(async move {
             let backend = kagi_git::Backend::open(&bg_path).ok()?;
-            let status = backend.working_tree_status().ok()?;
+            // The refresh that renders the working tree is the one place allowed
+            // to repair the index stat cache (ADR-0193, #655): without it a repo
+            // whose files were touched but not changed re-hashes its whole
+            // content on every scan, forever.
+            let status = backend.working_tree_status_repairing_stat_cache().ok()?;
             let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
             Some((status, wip_diffstat))
         });
@@ -660,7 +664,7 @@ fn read_reload_data(
     let mut backend =
         kagi_git::Backend::open(repo_path).map_err(|e| format!("repo open error: {e}"))?;
     let snap = backend
-        .snapshot(commit_limit)
+        .snapshot_repairing_stat_cache(commit_limit)
         .map_err(|e| format!("snapshot error: {e}"))?;
     let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
     let repo_name = repo_path

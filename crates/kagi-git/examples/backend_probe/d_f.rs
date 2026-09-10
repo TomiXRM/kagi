@@ -92,7 +92,6 @@ impl ProbeOperation for ExecutionMixed {
 ///
 /// Setup runs inside `execute`; F records divergence evidence, not timing.
 /// Kagi's libgit2 action follows plan, preflight, execute, verify, and oplog.
-#[allow(dead_code)] // P0 registers this operation after reviewing the F contract.
 pub struct MixedStash;
 
 impl ProbeOperation for MixedStash {
@@ -174,7 +173,6 @@ impl ProbeOperation for MixedStash {
     }
 }
 
-#[allow(dead_code)] // Referenced by the P0-registered MixedStash operation.
 fn first_tracked_path(repo_path: &Path) -> Result<(PathBuf, PathBuf), HarnessError> {
     let repo =
         git2::Repository::open(repo_path).map_err(|error| HarnessError::new(error.to_string()))?;
@@ -195,8 +193,6 @@ fn first_tracked_path(repo_path: &Path) -> Result<(PathBuf, PathBuf), HarnessErr
     );
     Ok((workdir, relative))
 }
-
-#[allow(dead_code)] // Referenced by the P0-registered MixedStash operation.
 fn run_git_success(repo: &Path, args: &[&str]) -> Result<(), HarnessError> {
     let output = run_git(repo, args).map_err(|error| HarnessError::new(error.to_string()))?;
     if output.status == 0 {

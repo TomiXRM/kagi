@@ -159,6 +159,7 @@ impl ProbeOperation for MixedStash {
         Ok(json!({
             "backend": "libgit2",
             "setup_executor": "run_git stash push --include-untracked",
+            "wall_ns_includes_setup": true,
             "candidate": candidate,
             "plan_blockers": plan.blockers.iter().map(|note| note.message_en()).collect::<Vec<_>>(),
             "plan_warnings": plan.warnings.iter().map(|note| note.message_en()).collect::<Vec<_>>(),

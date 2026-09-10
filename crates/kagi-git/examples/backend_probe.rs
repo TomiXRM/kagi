@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 mod backend_probe {
     //! P2 owns `e`; the registry below is the only place it is wired in.
+    pub mod a;
     pub mod b;
     pub mod e;
 }
@@ -44,8 +45,9 @@ fn main() {
         Ok(request) => request,
         Err(error) => exit_error(&error),
     };
-    let operations: [&dyn ProbeOperation; 3] = [
+    let operations: [&dyn ProbeOperation; 4] = [
         &Noop,
+        &backend_probe::a::WorkingTreeStatus,
         &backend_probe::b::SemanticMatrix,
         &backend_probe::e::CliCapability,
     ];

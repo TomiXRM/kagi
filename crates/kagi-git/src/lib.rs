@@ -76,7 +76,7 @@ pub use blame::{
 #[allow(unused_imports)]
 pub use checklist::{checklist, text_has_conflict_marker};
 #[allow(unused_imports)]
-pub use cli::{run_git, GitCliOutput};
+pub use cli::{run_git, run_git_with_options, FsmonitorMode, GitCliOptions, GitCliOutput};
 #[allow(unused_imports)]
 pub use conflicts::{
     continue_blockers, detect_conflict_session, plan_conflict_abort, plan_conflict_continue,

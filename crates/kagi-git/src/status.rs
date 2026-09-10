@@ -49,15 +49,12 @@ pub use kagi_domain::status::{ChangeKind, FileStatus, WorkingTreeStatus};
 ///
 /// Returns [`GitError::Other`] on any `git2` failure.
 pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitError> {
-    let mut opts = StatusOptions::new();
-    opts.include_ignored(false)
-        .include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .renames_head_to_index(true);
-
-    let statuses = repo
-        .statuses(Some(&mut opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let statuses = statuses_refreshing_stat_cache(repo, |opts| {
+        opts.include_ignored(false)
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .renames_head_to_index(true);
+    })?;
 
     let mut result = WorkingTreeStatus::default();
     let workdir = repo.workdir().map(|p| p.to_path_buf());
@@ -249,4 +246,42 @@ fn entry_path(entry: &git2::StatusEntry<'_>) -> Option<PathBuf> {
         );
         None
     }
+}
+
+/// Run `statuses` with the index stat cache written back, falling back to a
+/// read-only scan when the index cannot be written.
+///
+/// libgit2 re-hashes the full content of every file whose `stat` data does not
+/// match the index. Unlike `git status` it does **not** write the refreshed
+/// stat data back, so that cost is paid on every scan forever. Anything that
+/// touches files without changing them — a build, a formatter that rewrites
+/// identical bytes, a restore from a copy — puts a repo into that state.
+/// Measured on a 50,000-file repo: 135 ms warm, 3,305 ms after `touch`, still
+/// 3,318 ms on the next scan. One `git status` from a terminal restored it to
+/// 143 ms, which is exactly the "the GUI is slow but the CLI is fast"
+/// complaint. `GIT_STATUS_OPT_UPDATE_INDEX` writes it back the way Git does:
+/// it only refreshes `stat` data for entries whose content still hashes equal,
+/// and never stages content (#655).
+///
+/// The write takes `index.lock`, so it fails outright while a concurrent Git
+/// process holds the lock (`GIT_ELOCKED`) or when `.git` is read-only — both
+/// reproduced. Status is a read and must not start failing because the repair
+/// leg could not run, so a failed attempt is retried once without the flag. A
+/// genuine status failure still surfaces from that second attempt.
+fn statuses_refreshing_stat_cache<'repo>(
+    repo: &'repo Repository,
+    configure: impl Fn(&mut StatusOptions),
+) -> Result<git2::Statuses<'repo>, GitError> {
+    let mut opts = StatusOptions::new();
+    configure(&mut opts);
+    opts.update_index(true);
+    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
+        return Ok(statuses);
+    }
+
+    let mut opts = StatusOptions::new();
+    configure(&mut opts);
+    opts.update_index(false);
+    repo.statuses(Some(&mut opts))
+        .map_err(|e| GitError::Other(e.message().to_string()))
 }

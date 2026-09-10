@@ -58,6 +58,20 @@ pub fn note_ja(note: &StashNote) -> String {
                 count, files_label
             )
         }
+        StashNote::ApplyWouldConflict { count, files } => {
+            let files_label = if files.is_empty() {
+                "(不明なファイル)".to_string()
+            } else {
+                files.join(", ")
+            };
+            format!(
+                "stash apply すると {} 件が conflict します。stash entry は残るので、作業ツリーで解決してください。\nfiles {}",
+                count, files_label
+            )
+        }
+        StashNote::ApplyPredictionUnavailable { reason } => format!(
+            "クリーンに適用できるか検証できませんでした({})。apply は entry を削除しないので、そのまま試せます。conflict した場合は解決してください。stash は残ります。"
+        , reason),
         StashNote::PopPredictionUnavailable { reason } => format!(
             "クリーンに適用できるか検証できませんでした({})。pop は entry を削除するためブロックしました。削除せず適用する Stash Apply を使ってください。",
             reason

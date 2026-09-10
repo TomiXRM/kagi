@@ -506,3 +506,59 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS external stash conflict → continue → no drop prompt");
 }
+
+/// #652: the apply modal announces a conflict before the user confirms.
+///
+/// Pop predicted this and apply did not, so the same stash was announced through
+/// one path and silent through the other. Showing what an operation will do
+/// before it runs is the product, so this checks the plan the user actually
+/// sees, not just the planner.
+pub fn scenario_stash_apply_conflict_preview(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+
+    // A stash that cannot apply cleanly, against a clean tree: stash one side,
+    // then commit the other. A dirty tree would block the plan before it ever
+    // reached the prediction.
+    std::fs::write(repo.join("README.md"), "stashed side\n").unwrap();
+    git(&repo, &["stash", "push", "-qm", "wip"]);
+    std::fs::write(repo.join("README.md"), "committed side\n").unwrap();
+    git(&repo, &["commit", "-qam", "diverge from the stash"]);
+
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_stash_apply_modal(0, cx));
+    wait(cx, &app, |app| {
+        matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+            && app
+                .stash_apply_modal()
+                .is_some_and(|modal| modal.plan.is_some())
+    });
+
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let plan = app
+            .stash_apply_modal()
+            .and_then(|modal| modal.plan.as_ref())
+            .expect("the apply modal must carry its plan");
+        assert!(
+            plan.blockers.is_empty(),
+            "a conflicting apply stays confirmable — the stash survives it: {:?}",
+            plan.blockers
+        );
+        let warned = plan.warnings.iter().any(|note| {
+            matches!(
+                note,
+                kagi_domain::plan_note::PlanNote::Stash(
+                    kagi_domain::plan_note::StashNote::ApplyWouldConflict { .. }
+                )
+            )
+        });
+        assert!(
+            warned,
+            "the modal must say the stash will conflict before it is confirmed (#652): {:?}",
+            plan.warnings
+        );
+    });
+
+    unmount(cx, app, window);
+}

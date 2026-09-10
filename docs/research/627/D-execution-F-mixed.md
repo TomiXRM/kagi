@@ -70,3 +70,15 @@ F は timing 実験ではなく divergence 実験である。現行 runner で�
 4. hardened `run_git <repo> stash push --include-untracked -m p5-mixed-stash` を実行する。
 
 その後に libgit2 の `Backend::plan` と `run_recorded` で `f-apply` / `f-pop` / `f-drop` を実行する。report は manifest、plan blockers/warnings、action error、oplog recovery handle、verified、実行後 status count を記録する。全 write の `plan → confirm → preflight → execute → verify → oplog` は結果に関係なく必須であり、verify の省略・弱化を提案しない。
+
+### 結果
+
+fixture は S（tracked `200` files）、各 candidate `3`反復。CLI が作った stash に libgit2 の `Backend::plan` / `run_recorded` を通す混在経路で、探索した範囲の plan 予測と実行後 state の食い違い件数は **`0`** だった。全 3 反復で同値だった。
+
+| candidate | verified | blockers | action error | post-state (staged / unstaged / untracked) |
+|---|---|---|---|---|
+| `f-apply` | `true` | `[]` | `None` | `0 / 1 / 0` |
+| `f-pop` | `true` | `[]` | `None` | `0 / 1 / 0` |
+| `f-drop` | `true` | `[]` | `None` | `0 / 0 / 0` |
+
+これは「混在が安全」という結論ではない。未実施範囲は、stash apply が競合する同一 path の別内容、S より大きい fixture、untracked を含む復元の境界である。F が `0` 件だったことは、全 write の `plan → confirm → preflight → execute → verify → oplog` を緩める根拠にならない。

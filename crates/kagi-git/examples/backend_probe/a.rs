@@ -11,8 +11,8 @@ use std::time::Instant;
 use git2::Repository;
 use kagi_git::benchmark::{HarnessError, ProbeContext, ProbeOperation};
 use kagi_git::{
-    run_git_with_options, working_tree_status, ChangeKind, FileStatus, FsmonitorMode,
-    GitCliOptions, WorkingTreeStatus as DomainWorkingTreeStatus,
+    run_git_with_options, snapshot, working_tree_status, ChangeKind, FileStatus, FsmonitorMode,
+    GitCliOptions, GitCliOutput, WorkingTreeStatus as DomainWorkingTreeStatus,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -38,27 +38,11 @@ impl ProbeOperation for WorkingTreeStatus {
     }
 
     fn prepare_series(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
-        if context.backend() != "libgit2" {
-            return Ok(Value::Null);
-        }
-        require_log_dir()?;
-        let start = Instant::now();
-        let repository = Repository::open(context.repo())?;
-        let repository_open_ns = start.elapsed().as_nanos();
-        let mut prepared = PREPARED_REPOSITORY
-            .lock()
-            .map_err(|_| harness_error("libgit2 warm-series repository lock poisoned"))?;
-        *prepared = Some(PreparedRepository {
-            path: context.repo().to_path_buf(),
-            repository,
-        });
-        Ok(json!({ "repository_open_ns": repository_open_ns }))
+        prepare_index_primed_series(context)
     }
 
     fn finish_series(&self) {
-        if let Ok(mut prepared) = PREPARED_REPOSITORY.lock() {
-            *prepared = None;
-        }
+        finish_prepared_series();
     }
 
     fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
@@ -70,6 +54,308 @@ impl ProbeOperation for WorkingTreeStatus {
             ))),
         }
     }
+}
+
+/// A2: compare the complete libgit2 snapshot with a hardened CLI composition.
+pub struct Snapshot;
+
+impl ProbeOperation for Snapshot {
+    fn name(&self) -> &'static str {
+        "snapshot"
+    }
+
+    fn mutates_fixture(&self) -> bool {
+        false
+    }
+
+    fn prepare_series(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+        prepare_index_primed_series(context)
+    }
+
+    fn finish_series(&self) {
+        finish_prepared_series();
+    }
+
+    fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+        match context.backend() {
+            "libgit2" => execute_snapshot_libgit2(context),
+            "cli" => execute_snapshot_cli(context),
+            backend => Err(harness_error(format!(
+                "snapshot requires backend libgit2 or cli, got {backend}"
+            ))),
+        }
+    }
+}
+
+fn prepare_index_primed_series(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+    require_log_dir()?;
+    let prime_start = Instant::now();
+    let prime = run_git_with_options(
+        context.repo(),
+        &[
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+            "--renames",
+        ],
+        GitCliOptions {
+            executable: context.git_executable(),
+            fsmonitor: FsmonitorMode::Disabled,
+        },
+    )
+    .map_err(git_error)?;
+    if prime.status != 0 {
+        return Err(harness_error(format!(
+            "index-prime status exited {}: {}",
+            prime.status,
+            prime.stderr.trim()
+        )));
+    }
+    let index_prime_ns = prime_start.elapsed().as_nanos();
+    if context.backend() != "libgit2" {
+        return Ok(json!({ "index_prime_ns": index_prime_ns }));
+    }
+
+    let start = Instant::now();
+    let repository = Repository::open(context.repo())?;
+    let repository_open_ns = start.elapsed().as_nanos();
+    let mut prepared = PREPARED_REPOSITORY
+        .lock()
+        .map_err(|_| harness_error("libgit2 warm-series repository lock poisoned"))?;
+    *prepared = Some(PreparedRepository {
+        path: context.repo().to_path_buf(),
+        repository,
+    });
+    Ok(json!({
+        "index_prime_ns": index_prime_ns,
+        "repository_open_ns": repository_open_ns,
+    }))
+}
+
+fn finish_prepared_series() {
+    if let Ok(mut prepared) = PREPARED_REPOSITORY.lock() {
+        *prepared = None;
+    }
+}
+
+fn execute_snapshot_libgit2(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+    require_log_dir()?;
+    let mut prepared = PREPARED_REPOSITORY
+        .lock()
+        .map_err(|_| harness_error("libgit2 warm-series repository lock poisoned"))?;
+    let repository = prepared
+        .as_mut()
+        .filter(|prepared| prepared.path == context.repo())
+        .ok_or_else(|| harness_error("libgit2 warm-series repository does not match probe copy"))?;
+    let start = Instant::now();
+    let snapshot = snapshot(&mut repository.repository, 10_000).map_err(git_error)?;
+    let wall_ns = start.elapsed().as_nanos();
+    Ok(json!({
+        "backend_path": "libgit2",
+        "git_processes": 0,
+        "total_ns": wall_ns,
+        "stage_count": 9,
+        "stages": [{ "name": "snapshot", "wall_ns": wall_ns }],
+        "most_expensive_stage": "snapshot",
+        "missing_information": [],
+        "timing_note": "snapshot's nine internal stages remain encapsulated; this is the public snapshot() total",
+        "information": {
+            "commits": snapshot.commits.len(),
+            "branches": snapshot.branches.len(),
+            "remote_branches": snapshot.remote_branches.len(),
+            "tags": snapshot.tags.len(),
+            "stashes": snapshot.stashes.len(),
+            "worktrees": snapshot.worktrees.len(),
+            "last_fetch_secs": snapshot.last_fetch_secs,
+            "status": canonical_status(&snapshot.status)?,
+        },
+    }))
+}
+
+fn execute_snapshot_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+    require_log_dir()?;
+    let mut stages = Vec::with_capacity(10);
+    let mut total_ns = 0u128;
+    let (status_stage, status_output) = snapshot_cli_stage(
+        context,
+        "status",
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+            "--renames",
+        ],
+    )?;
+    total_ns += stage_wall_ns(&status_stage);
+    if status_output.status != 0 {
+        return Err(harness_error(format!(
+            "snapshot status exited {}: {}",
+            status_output.status,
+            status_output.stderr.trim()
+        )));
+    }
+    let status = parse_porcelain_v2(context.repo(), &status_output.stdout)?;
+    stages.push(status_stage);
+
+    for (name, args) in [
+        (
+            "head-symbolic-ref",
+            &[
+                "--no-optional-locks",
+                "symbolic-ref",
+                "--quiet",
+                "--short",
+                "HEAD",
+            ][..],
+        ),
+        (
+            "head-oid",
+            &["--no-optional-locks", "rev-parse", "--verify", "HEAD"][..],
+        ),
+        (
+            "worktrees",
+            &["--no-optional-locks", "worktree", "list", "--porcelain"][..],
+        ),
+        (
+            "commits",
+            &[
+                "--no-optional-locks",
+                "rev-list",
+                "--parents",
+                "--all",
+                "--max-count=10000",
+            ][..],
+        ),
+        (
+            "branches",
+            &[
+                "--no-optional-locks",
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:trackshort)",
+                "refs/heads",
+            ][..],
+        ),
+        (
+            "remote-branches",
+            &[
+                "--no-optional-locks",
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)",
+                "refs/remotes",
+            ][..],
+        ),
+        (
+            "tags",
+            &[
+                "--no-optional-locks",
+                "for-each-ref",
+                "--format=%(refname)%00%(objecttype)%00%(objectname)",
+                "refs/tags",
+            ][..],
+        ),
+        (
+            "stashes",
+            &[
+                "--no-optional-locks",
+                "stash",
+                "list",
+                "--format=%H%x00%gd%x00%gs",
+            ][..],
+        ),
+    ] {
+        let (stage, _) = snapshot_cli_stage(context, name, args)?;
+        total_ns += stage_wall_ns(&stage);
+        stages.push(stage);
+    }
+
+    let fetch_head_start = Instant::now();
+    let last_fetch_secs = std::fs::metadata(context.repo().join(".git").join("FETCH_HEAD"))
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|mtime| mtime.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
+    let fetch_head_wall_ns = fetch_head_start.elapsed().as_nanos();
+    total_ns += fetch_head_wall_ns;
+    stages.push(json!({
+        "name": "fetch-head-mtime",
+        "git_processes": 0,
+        "wall_ns": fetch_head_wall_ns,
+        "last_fetch_secs": last_fetch_secs,
+    }));
+
+    let most_expensive_stage = stages
+        .iter()
+        .max_by_key(|stage| stage_wall_ns(stage))
+        .and_then(|stage| stage["name"].as_str())
+        .unwrap_or("none");
+    Ok(json!({
+        "backend_path": "cli",
+        "git_processes": 9,
+        "total_ns": total_ns,
+        "stage_count": 9,
+        "stages": stages,
+        "most_expensive_stage": most_expensive_stage,
+        "missing_information": [
+            {
+                "item": "linked-worktree common-dir FETCH_HEAD mtime",
+                "availability": "implementable",
+                "implementation": "git rev-parse --git-common-dir followed by local mtime",
+            },
+            {
+                "item": "detached worktree roots outside the 10,000 commit budget",
+                "availability": "implementable",
+                "implementation": "worktree list HEAD roots plus a pinned rev-list composition",
+            },
+            {
+                "item": "annotated-tag target peeling",
+                "availability": "implementable",
+                "implementation": "for-each-ref peeled-object atoms",
+            },
+            {
+                "item": "linked-worktree WIP counts",
+                "availability": "implementable",
+                "implementation": "one parsed status per linked worktree",
+            },
+        ],
+        "fundamentally_unavailable_information": [],
+        "information": {
+            "status": status,
+            "last_fetch_secs": last_fetch_secs,
+        },
+    }))
+}
+
+fn snapshot_cli_stage(
+    context: &ProbeContext<'_>,
+    name: &'static str,
+    args: &[&str],
+) -> Result<(Value, GitCliOutput), HarnessError> {
+    let start = Instant::now();
+    let output = run_git_with_options(
+        context.repo(),
+        args,
+        GitCliOptions {
+            executable: context.git_executable(),
+            fsmonitor: FsmonitorMode::Disabled,
+        },
+    )
+    .map_err(git_error)?;
+    let stage = json!({
+        "name": name,
+        "git_processes": 1,
+        "wall_ns": start.elapsed().as_nanos(),
+        "exit_status": output.status,
+        "stdout_bytes": output.stdout.len(),
+        "stderr_bytes": output.stderr.len(),
+    });
+    Ok((stage, output))
+}
+
+fn stage_wall_ns(stage: &Value) -> u128 {
+    stage["wall_ns"].as_u64().unwrap_or_default().into()
 }
 
 fn execute_libgit2(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {

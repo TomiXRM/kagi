@@ -46,9 +46,10 @@ fn main() {
         Ok(request) => request,
         Err(error) => exit_error(&error),
     };
-    let operations: [&dyn ProbeOperation; 6] = [
+    let operations: [&dyn ProbeOperation; 7] = [
         &Noop,
         &backend_probe::a::WorkingTreeStatus,
+        &backend_probe::a::Snapshot,
         &backend_probe::b::SemanticMatrix,
         &backend_probe::d_f::ExecutionMixed,
         &backend_probe::d_f::MixedStash,

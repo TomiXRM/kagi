@@ -89,20 +89,31 @@ L と同じ generator parameter（seed 627 / 2,000 commits / depth 6）で 20,00
 
 各 timed series は index mtime 不変である。p95 と min–max は raw JSON に残す。
 
-### A3 — state-normalized scale decision table
+### A3 — state-normalized scale observation table
 
 1k / 5k / 20k / 50k は同じ synthetic generator（seed 627 / 2,000 commits / depth 6）で作った。各点は `copy → chmod -R u+w → timer 外 bare Git repair → 2 warm-up → 30 measured`、両順序である。表の median は `libgit2 → CLI / CLI → libgit2` の順で併記し、単一比率を採否値にしない。
 
-| files | libgit2 median ms | CLI median ms | CLI / libgit2 range |
-| ---: | --- | --- | ---: |
-| 1,000 | 22.858 / 21.122 | 30.968 / 31.215 | 1.35–1.48 |
-| 5,000 | 33.807 / 31.557 | 37.349 / 37.787 | 1.11–1.20 |
-| 20,000 | 77.523 / 68.150 | 61.176 / 58.336 | 0.79–0.86 |
-| 50,000 | 152.776 / 209.579 | 95.228 / 107.250 | 0.51–0.62 |
+| files | libgit2 median ms | CLI median ms | CLI / libgit2 range | 観測 |
+| ---: | --- | --- | ---: | --- |
+| 1,000 | 22.858 / 21.122 | 30.968 / 31.215 | 1.35–1.48 | libgit2 が速い |
+| 5,000 | 33.807 / 31.557 | 37.349 / 37.787 | 1.11–1.20 | libgit2 が速い |
+| 20,000 | 77.523 / 68.150 | 61.176 / 58.336 | 0.79–0.86 | CLI が速い |
+| 50,000 | 152.776 / 209.579 | 95.228 / 107.250 | 0.51–0.62 | CLI が速い。libgit2 の tail は順序依存 |
 
-順序別 OLS（files を 1k 単位）は、libgit2 が `2.651–3.875 ms / 1k`（$R^2 = 0.980–0.999$）、CLI が `1.304–1.547 ms / 1k`（$R^2 = 0.993–0.999$）だった。傾き比は libgit2 が `2.03–2.51×`。これは stale index を含む旧傾きではなく、repaired index 条件の本 host に限る観測である。
+順序別 OLS（files を 1k 単位）は、libgit2 が `2.651–3.875 ms / 1k`（$R^2 = 0.980–0.999$）、CLI が `1.304–1.547 ms / 1k`（$R^2 = 0.993–0.999$）だった。傾き比は libgit2 が `2.03–2.51×`。従ってこの host・正規化条件では crossover は 5k–20k の間にある。これは stale index を含む旧傾きではなく、repaired index 条件の事実である。
 
-本表だけで backend を切り替えない。P5 との host 差、50k の order-dependent tail、A2 の情報等価性、3 OS gate を満たすまで採否は未確定とする。少なくとも「旧 20k 傾きを決定根拠にする」ことは取り消す。
+### backend の決定表
+
+この表の crossover は、repository size による backend 自動切替の根拠に**しない**。予測経路の backend が入力規模で暗黙に変われば、P3 B 系が測る意味論差も無言で切り替わり、実行前に示した予測の一貫性を失う。
+
+| 決定対象 | 決定 | 根拠 | 選ばなかった側の不利 / 未確定 |
+| --- | --- | --- | --- |
+| 既定の予測 backend | **libgit2** | repository config 由来の filter を構造的に実行しない。owner が bare `git add` 対照を含む 4 経路で確認した不変条件であり、速度より重い。小規模の本 host 観測もこれと整合するが、既定選定の根拠は単一 host の速度比ではない。 | CLI は 20k / 50k の warm-index full status で速い。しかし CLI を既定にすれば、予測経路の repository-config 由来コード実行を避けるという構造的性質を持てない。3 OS の意味論・tail・host 差は未確定。 |
+| CLI を使いたい利用者 | **明示設定の「CLI compatibility mode」** | 互換性検証または利用者の明示選択として backend を固定する。選択後の挙動を予測可能にし、mode と結果を UI / oplog に表示できる。 | repo size・測定値・環境による自動切替は導入しない。速度のための暗黙切替は意味論差を隠す。mode の既定昇格には 3 OS と A2 情報等価性の証拠が必要。 |
+| status の局所最適化 | **変更 pathspec に限定した status を優先** | owner 測定では 50k で libgit2 pathspec status は `1.2 ms`、full status は `5,427 ms`。同一 backend 内で探索範囲だけを狭め、backend 選択とは独立に効く。 | pathspec で表せない画面・集約要求には full status を残す。この測定は P4 の state-normalized full-status 表とは別の workload / timer 条件であり、backend crossover の比較値には使わない。 |
+| index stat cache | **backend 選定と分離して repair / read policy を扱う** | stale index を bare Git repair しただけで、20k / 50k の双方が桁違いに短縮した。status 遅延の主因を backend 固有の速度差と見なせない。 | #657 の stat-cache 対応は write contract・watcher contention の review を満たす必要がある。global `working_tree_status` に無条件 write を混ぜる設計は、この決定表からは導かない。 |
+
+既定は「シンプルで正しい」libgit2、賢い処理は pathspec status のように意味論を変えない局所へ閉じ込める。backend 差は明示 mode によってのみ選択可能にする。3 OS の backend 選定証拠が未完であるため、CLI mode の既定化と mode 間の完全な情報等価性は未確定とする。
 
 ### `--git-executable` と fsmonitor 条件
 

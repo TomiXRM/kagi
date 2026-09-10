@@ -49,13 +49,17 @@ pub use kagi_domain::status::{ChangeKind, FileStatus, WorkingTreeStatus};
 ///
 /// Returns [`GitError::Other`] on any `git2` failure.
 pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitError> {
-    let statuses = statuses_refreshing_stat_cache(repo, |opts| {
-        opts.include_ignored(false)
-            .include_untracked(true)
-            .recurse_untracked_dirs(true)
-            .renames_head_to_index(true);
-    })?;
+    build_working_tree_status(repo, collect_statuses(repo, false)?)
+}
 
+/// Fold a `statuses` walk into a [`WorkingTreeStatus`].
+///
+/// Shared by the read-only [`working_tree_status`] and the repairing variant so
+/// the two can never disagree about how a status entry is classified.
+fn build_working_tree_status(
+    repo: &Repository,
+    statuses: git2::Statuses<'_>,
+) -> Result<WorkingTreeStatus, GitError> {
     let mut result = WorkingTreeStatus::default();
     let workdir = repo.workdir().map(|p| p.to_path_buf());
 
@@ -248,40 +252,98 @@ fn entry_path(entry: &git2::StatusEntry<'_>) -> Option<PathBuf> {
     }
 }
 
-/// Run `statuses` with the index stat cache written back, falling back to a
-/// read-only scan when the index cannot be written.
+/// Only one status scan at a time may try to repair the index.
 ///
-/// libgit2 re-hashes the full content of every file whose `stat` data does not
-/// match the index. Unlike `git status` it does **not** write the refreshed
-/// stat data back, so that cost is paid on every scan forever. Anything that
-/// touches files without changing them — a build, a formatter that rewrites
-/// identical bytes, a restore from a copy — puts a repo into that state.
-/// Measured on a 50,000-file repo: 135 ms warm, 3,305 ms after `touch`, still
-/// 3,318 ms on the next scan. One `git status` from a terminal restored it to
-/// 143 ms, which is exactly the "the GUI is slow but the CLI is fast"
-/// complaint. `GIT_STATUS_OPT_UPDATE_INDEX` writes it back the way Git does:
-/// it only refreshes `stat` data for entries whose content still hashes equal,
-/// and never stages content (#655).
-///
-/// The write takes `index.lock`, so it fails outright while a concurrent Git
-/// process holds the lock (`GIT_ELOCKED`) or when `.git` is read-only — both
-/// reproduced. Status is a read and must not start failing because the repair
-/// leg could not run, so a failed attempt is retried once without the flag. A
-/// genuine status failure still surfaces from that second attempt.
-fn statuses_refreshing_stat_cache<'repo>(
-    repo: &'repo Repository,
-    configure: impl Fn(&mut StatusOptions),
-) -> Result<git2::Statuses<'repo>, GitError> {
-    let mut opts = StatusOptions::new();
-    configure(&mut opts);
-    opts.update_index(true);
-    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
-        return Ok(statuses);
-    }
+/// The watcher has no single-flight on same-revision status reads (measured:
+/// ~1.64 refreshes/s under continuous saves), so two scans can overlap. If both
+/// tried to take `index.lock`, one would lose, fall back, and re-scan — kagi
+/// contending with itself. The loser skips the repair instead and does the
+/// read-only scan it would have done anyway (#655).
+static REPAIR_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Guard that clears [`REPAIR_IN_FLIGHT`] however the scan leaves.
+struct RepairSlot;
+
+impl RepairSlot {
+    /// `Some` if this scan won the right to attempt a repair.
+    fn acquire() -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        REPAIR_IN_FLIGHT
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| RepairSlot)
+    }
+}
+
+impl Drop for RepairSlot {
+    fn drop(&mut self) {
+        REPAIR_IN_FLIGHT.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+fn status_opts(repair: bool) -> StatusOptions {
     let mut opts = StatusOptions::new();
-    configure(&mut opts);
-    opts.update_index(false);
-    repo.statuses(Some(&mut opts))
+    opts.include_ignored(false)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .renames_head_to_index(true)
+        .update_index(repair);
+    opts
+}
+
+fn collect_statuses(repo: &Repository, repair: bool) -> Result<git2::Statuses<'_>, GitError> {
+    if repair {
+        if let Some(_slot) = RepairSlot::acquire() {
+            // The write takes `index.lock`, so it fails outright while another
+            // Git process holds it (`GIT_ELOCKED`) or `.git` is read-only — both
+            // reproduced. Status is a read and must not start failing because
+            // the repair leg could not run, so fall through to the plain scan.
+            if let Ok(statuses) = repo.statuses(Some(&mut status_opts(true))) {
+                return Ok(statuses);
+            }
+        }
+    }
+    repo.statuses(Some(&mut status_opts(false)))
         .map_err(|e| GitError::Other(e.message().to_string()))
+}
+
+/// [`working_tree_status`], additionally writing the refreshed index stat cache
+/// back. **Only the UI refresh path may call this.**
+///
+/// libgit2 re-hashes the full content of every file whose `stat` data disagrees
+/// with the index and, unlike `git status`, never writes the refreshed data
+/// back — so the cost is paid on every scan forever. Anything that touches
+/// files without changing them puts a repo there: a build, a formatter that
+/// rewrites identical bytes, a restore from a copy. Measured on 50,000 files:
+/// 135 ms warm, 3,305 ms after `touch`, still 3,318 ms on the next scan; one
+/// `git status` from a terminal restored it to 143 ms.
+///
+/// This writes `.git/index`, so per ADR-0193 it is confined to the one refresh
+/// that renders the working tree. Every `plan_*` / `preflight_*` / snapshot
+/// caller keeps using [`working_tree_status`], which stays a pure read — a plan
+/// runs before the user has confirmed anything and must not write.
+pub fn working_tree_status_repairing_stat_cache(
+    repo: &Repository,
+) -> Result<WorkingTreeStatus, GitError> {
+    build_working_tree_status(repo, collect_statuses(repo, true)?)
+}
+
+#[cfg(test)]
+mod repair_slot_tests {
+    use super::RepairSlot;
+
+    #[test]
+    fn only_one_scan_holds_the_repair_slot_at_a_time() {
+        let held = RepairSlot::acquire().expect("an uncontended scan may repair");
+        assert!(
+            RepairSlot::acquire().is_none(),
+            "a second concurrent scan must skip the repair rather than lose a race \
+             for index.lock and have to re-scan (#655)"
+        );
+        drop(held);
+        assert!(
+            RepairSlot::acquire().is_some(),
+            "the slot must be released however the previous scan left"
+        );
+    }
 }

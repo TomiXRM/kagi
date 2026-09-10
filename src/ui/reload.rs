@@ -556,7 +556,11 @@ impl KagiApp {
         let key = self.reads.current_key(session);
         let task = cx.background_spawn(async move {
             let backend = kagi_git::Backend::open(&bg_path).ok()?;
-            let status = backend.working_tree_status().ok()?;
+            // The refresh that renders the working tree is the one place allowed
+            // to repair the index stat cache (ADR-0193, #655): without it a repo
+            // whose files were touched but not changed re-hashes its whole
+            // content on every scan, forever.
+            let status = backend.working_tree_status_repairing_stat_cache().ok()?;
             let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
             Some((status, wip_diffstat))
         });

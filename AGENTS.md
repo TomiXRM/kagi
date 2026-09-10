@@ -20,6 +20,14 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
 3. **No destructive commands — ever.** `push --force`, `reset --hard`, and `git clean`
    must not appear anywhere in the codebase. Their absence is the product's reason to exist.
 4. **Every write operation follows `plan → confirm → preflight → execute → verify → oplog`.**
+   A *write* is anything that changes observable repository state: refs, objects, the
+   index's **staged content** (which paths are staged, at which blob OID and mode),
+   the working tree, or config. Refreshing the `stat` cache of existing index
+   entries is **not** a write (ADR-0193), but the exemption holds only where both
+   are true: a test proves every entry's `(path, OID, mode)` survives the refresh
+   unchanged, and the repair is opt-in on the UI refresh path. `working_tree_status`
+   stays a pure read — it is reached from 100+ `plan_*`/`preflight_*`/snapshot call
+   sites, `plan_create_branch` among them, which run before the user confirms.
    Keep the `plan_X` / `preflight_X` / `execute_X` triple together in the matching
    per-feature module under `crates/kagi-git/src/ops/<feature>.rs`. Never let the UI
    mutate the repo outside this path.

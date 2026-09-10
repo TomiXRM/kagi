@@ -31,10 +31,13 @@ impl ProbeOperation for ExecutionMixed {
                 "candidate must be d1-working-tree-status",
             ));
         }
-        let index_path = context.repo().join(".git/index");
+        let repository = git2::Repository::open(context.repo())
+            .map_err(|error| HarnessError::new(error.to_string()))?;
+        let index_path = repository.path().join("index");
         let index_mtime_before = fs::metadata(&index_path)
-            .ok()
-            .and_then(|metadata| metadata.modified().ok());
+            .map_err(|error| HarnessError::io(&index_path, error))?
+            .modified()
+            .map_err(|error| HarnessError::io(&index_path, error))?;
         let output = run_git(
             context.repo(),
             &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
@@ -48,11 +51,13 @@ impl ProbeOperation for ExecutionMixed {
             )));
         }
         let index_mtime_after = fs::metadata(&index_path)
-            .ok()
-            .and_then(|metadata| metadata.modified().ok());
+            .map_err(|error| HarnessError::io(&index_path, error))?
+            .modified()
+            .map_err(|error| HarnessError::io(&index_path, error))?;
+        let index_mtime_changed = index_mtime_before != index_mtime_after;
         Ok(json!({
-            "index_mtime_changed": index_mtime_before != index_mtime_after,
-            "index_stat_cache_primed": true,
+            "index_mtime_changed": index_mtime_changed,
+            "index_stat_cache_primed": index_mtime_changed,
             "priming_executor": "run_git status --porcelain=v2 -z",
             "repo_dynamic_settings_disabled": output.repo_dynamic_settings_disabled,
         }))

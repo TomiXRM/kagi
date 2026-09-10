@@ -513,7 +513,7 @@ impl KagiApp {
             let mut backend = kagi_git::Backend::open(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             let snap = backend
-                .snapshot(commit_limit)
+                .snapshot_repairing_stat_cache(commit_limit)
                 .map_err(|e| i18n::op_failed(i18n::Op::Snapshot, e))?;
             let repo_name = bg_path
                 .file_name()

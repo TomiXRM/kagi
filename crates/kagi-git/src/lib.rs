@@ -172,7 +172,7 @@ pub use resolution::{
     ResolutionChoice, ResolvedLine, SelectionSide, SideBlobInfo,
 };
 #[allow(unused_imports)]
-pub use snapshot::{snapshot, RepoSnapshot};
+pub use snapshot::{snapshot, snapshot_repairing_stat_cache, RepoSnapshot};
 #[allow(unused_imports)]
 pub use staging::{
     commit_preview, plan_commit, staged_file_diff, unstaged_file_diff, CommitPreview,
@@ -180,7 +180,10 @@ pub use staging::{
 #[allow(unused_imports)]
 pub(crate) use staging::{execute_commit, stage_file, stage_files, unstage_file, unstage_files};
 #[allow(unused_imports)]
-pub use status::{working_tree_status, ChangeKind, FileStatus, WorkingTreeStatus};
+pub use status::{
+    working_tree_status, working_tree_status_repairing_stat_cache, ChangeKind, FileStatus,
+    WorkingTreeStatus,
+};
 #[allow(unused_imports)]
 pub use trailers::{
     is_url, parse_coauthors, parse_trailers, sanitize_trailer_value, CoAuthor, Trailer,

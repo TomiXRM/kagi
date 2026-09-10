@@ -85,8 +85,33 @@ pub struct RepoSnapshot {
 ///
 /// Returns [`GitError::Other`] on unexpected `git2` failures.
 pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapshot, GitError> {
+    snapshot_inner(repo, commit_limit, false)
+}
+
+/// [`snapshot`], additionally writing the refreshed index stat cache back.
+/// **Only the UI may call this** (ADR-0193).
+///
+/// The repair has to happen *inside* the snapshot rather than before it: the
+/// snapshot already walks the working tree, so a separate repair pass would
+/// scan twice and cost every warm repo an extra walk on open.
+pub fn snapshot_repairing_stat_cache(
+    repo: &mut Repository,
+    commit_limit: usize,
+) -> Result<RepoSnapshot, GitError> {
+    snapshot_inner(repo, commit_limit, true)
+}
+
+fn snapshot_inner(
+    repo: &mut Repository,
+    commit_limit: usize,
+    repair_stat_cache: bool,
+) -> Result<RepoSnapshot, GitError> {
     let head = resolve_head(repo)?;
-    let status = working_tree_status(repo)?;
+    let status = if repair_stat_cache {
+        crate::status::working_tree_status_repairing_stat_cache(repo)?
+    } else {
+        working_tree_status(repo)?
+    };
     // Detached linked-worktree HEADs are graph roots even when unreachable
     // from all named refs and the currently open HEAD (#595).
     let worktrees = collect_worktrees(repo, &status)?;

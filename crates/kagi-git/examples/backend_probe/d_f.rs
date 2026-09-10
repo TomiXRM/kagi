@@ -57,7 +57,7 @@ impl ProbeOperation for ExecutionMixed {
         let index_mtime_changed = index_mtime_before != index_mtime_after;
         Ok(json!({
             "index_mtime_changed": index_mtime_changed,
-            "index_stat_cache_primed": index_mtime_changed,
+            "index_warm_at_series_start": true,
             "priming_executor": "run_git status --porcelain=v2 -z",
             "repo_dynamic_settings_disabled": output.repo_dynamic_settings_disabled,
         }))

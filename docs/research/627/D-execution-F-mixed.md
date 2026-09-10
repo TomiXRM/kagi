@@ -34,7 +34,7 @@ P0 の materialize は copy ごとに ctime / inode と index stat cache を乖�
 
 ### warm-index 比較
 
-P0 runner の `prepare_series` hook が `materialize → index stat-cache prime → timer` を分離する。D1 の以後の canonical series は registered path の `series_setup.index_stat_cache_primed=true` を必須とする。下記の private driver 値は historic reference として残すが、registered warm-index 再測定で置き換える。
+P0 runner の `prepare_series` hook が `materialize → index stat-cache prime → timer` を分離する。D1 の以後の canonical series は registered path の `series_setup.index_warm_at_series_start=true` を必須とする。`index_mtime_changed` は書込みが起きた事実だけであり、`false` は既に warm で書込み不要だった場合を含む。下記の private driver 値は historic reference として残すが、registered warm-index 再測定で置き換える。
 
 #### direct warm-index（historic private driver）
 

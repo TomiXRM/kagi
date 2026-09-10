@@ -199,6 +199,26 @@ mod tests {
 
         let environment = collect_environment(None, None, Some(&executable)).unwrap();
 
+        // `command_stdout` turns every spawn failure into `None`, so a bare
+        // `assert_eq!` reports "left != right" and hides *why* the fixture did
+        // not run. This test has failed intermittently on Linux CI (#658) and
+        // that message was not enough to tell a flaky spawn from a real output
+        // mismatch. Re-run the spawn here so the panic carries the OS error.
+        if environment.git_version.is_none() {
+            let direct = std::process::Command::new(&executable)
+                .arg("--version")
+                .output();
+            panic!(
+                "git_version was None — the fixture executable did not produce output.                  Direct spawn of {}: {:?}",
+                executable.display(),
+                direct.map(|out| format!(
+                    "status={:?} stdout={:?} stderr={:?}",
+                    out.status,
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                ))
+            );
+        }
         assert_eq!(environment.git_version.as_deref(), Some("fixture git 9.9"));
     }
 

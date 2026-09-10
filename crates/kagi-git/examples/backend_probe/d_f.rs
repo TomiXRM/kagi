@@ -25,6 +25,44 @@ impl ProbeOperation for ExecutionMixed {
         false
     }
 
+    fn prepare_series(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
+        if context.candidate() != Some("d1-working-tree-status") {
+            return Err(HarnessError::new(
+                "candidate must be d1-working-tree-status",
+            ));
+        }
+        let repository = git2::Repository::open(context.repo())
+            .map_err(|error| HarnessError::new(error.to_string()))?;
+        let index_path = repository.path().join("index");
+        let index_mtime_before = fs::metadata(&index_path)
+            .map_err(|error| HarnessError::io(&index_path, error))?
+            .modified()
+            .map_err(|error| HarnessError::io(&index_path, error))?;
+        let output = run_git(
+            context.repo(),
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )
+        .map_err(|error| HarnessError::new(error.to_string()))?;
+        if output.status != 0 {
+            return Err(HarnessError::new(format!(
+                "index stat-cache prime exited {}: {}",
+                output.status,
+                output.stderr.trim()
+            )));
+        }
+        let index_mtime_after = fs::metadata(&index_path)
+            .map_err(|error| HarnessError::io(&index_path, error))?
+            .modified()
+            .map_err(|error| HarnessError::io(&index_path, error))?;
+        let index_mtime_changed = index_mtime_before != index_mtime_after;
+        Ok(json!({
+            "index_mtime_changed": index_mtime_changed,
+            "index_warm_at_series_start": true,
+            "priming_executor": "run_git status --porcelain=v2 -z",
+            "repo_dynamic_settings_disabled": output.repo_dynamic_settings_disabled,
+        }))
+    }
+
     fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
         if context.candidate() != Some("d1-working-tree-status") {
             return Err(HarnessError::new(
@@ -193,7 +231,6 @@ fn first_tracked_path(repo_path: &Path) -> Result<(PathBuf, PathBuf), HarnessErr
     );
     Ok((workdir, relative))
 }
-
 fn run_git_success(repo: &Path, args: &[&str]) -> Result<(), HarnessError> {
     let output = run_git(repo, args).map_err(|error| HarnessError::new(error.to_string()))?;
     if output.status == 0 {

@@ -3,12 +3,12 @@
 ## 実施条件
 
 - macOS arm64
-- P0 登録済みの `backend_probe --operation execution-mixed` のみを実行経路に使う。私設 driver は dispatch / warm-up 契約を重複させるため削除した。
+- release profile の P0 登録済み `backend_probe --operation execution-mixed` のみを実行経路に使う。私設 driver は dispatch / warm-up 契約を重複させるため削除した。
 - fixture: synthetic、commits `3`、depth `3`、seed `627`
 - tracked files: `1,000` / `5,000` / `20,000` / `50,000`
 - backend ごとに `KAGI_LOG_DIR` を別 temporary directory に設定
 - D1 は plan 指定どおり tracked file 2 個を dirty にする。hardened CLI の local override が無い clean fixture の値は #649 override cost を含まない lower bound として記録する。
-- P0 runner の read-only contract は 1 copy warm series である。ただし index 修復を timer 外に置く hook は P0 に無く、copy ごとの ctime / inode mismatch を避ける warm-index 比較は P0 owner の支援が必要である。
+- P0 runner の read-only contract は 1 copy warm series である。`ExecutionMixed::prepare_series` が materialize 後・timer 前に plain hardened `run_git status` を 1 回実行して index stat cache を prime し、`series_setup` に条件を記録する。
 
 ## D1 — `working_tree_status`、file 数傾き
 
@@ -34,7 +34,7 @@ P0 の materialize は copy ごとに ctime / inode と index stat cache を乖�
 
 ### warm-index 比較
 
-P0 runner には `materialize → chmod → plain git status → timer` の timer 外 hook がない。私設 driver を同条件の代替にしてはならない。したがって **P0 registered path での warm-index 比較は未測定** である。下記は既存の direct measurement であり、P0 owner が hook を提供するまで canonical にはしない。
+P0 runner の `prepare_series` hook が `materialize → index stat-cache prime → timer` を分離する。D1 の以後の canonical series は registered path の `series_setup.index_warm_at_series_start=true` を必須とする。`index_mtime_changed` は書込みが起きた事実だけであり、`false` は既に warm で書込み不要だった場合を含む。下記の private driver 値は historic reference として残すが、registered warm-index 再測定で置き換える。
 
 #### direct warm-index（historic private driver）
 
@@ -58,7 +58,7 @@ macOS の `fs_usage -w -f filesys` は root 権限を要求して終了した。
 
 ## F — mixed backend の追加照合
 
-計画が指定する `backend_fixture --scenario mixed-stash` は P0 fixture で未登録だった。共有 fixture / root dispatcher は変更しない。
+`backend_fixture --scenario mixed-stash` は未実装のままだが、PR #659 が `MixedStash` を P0 dispatcher に登録した。共有 fixture は変更していない。
 
 F は timing 実験ではなく divergence 実験である。現行 runner では `execute` が timer 内で呼ばれるため、固定 setup は `MixedStash::execute` 内で行い、`wall_ns` は setup を含む非比較値として扱う。判定は plan 予測、run_recorded の verify/oplog evidence、実行後 status の食い違いだけに基づける。
 
@@ -70,3 +70,22 @@ F は timing 実験ではなく divergence 実験である。現行 runner で�
 4. hardened `run_git <repo> stash push --include-untracked -m p5-mixed-stash` を実行する。
 
 その後に libgit2 の `Backend::plan` と `run_recorded` で `f-apply` / `f-pop` / `f-drop` を実行する。report は manifest、plan blockers/warnings、action error、oplog recovery handle、verified、実行後 status count を記録する。全 write の `plan → confirm → preflight → execute → verify → oplog` は結果に関係なく必須であり、verify の省略・弱化を提案しない。
+
+### 結果
+
+fixture は `/tmp/kagi-627-p4/S`（S、tracked `200` files）。各 candidate は `3`反復で、次の registered command を使った（`f-pop` / `f-drop` は candidate だけを置換）。
+
+```sh
+backend_probe --repo /tmp/kagi-627-p4/S --operation mixed-stash \
+  --backend libgit2 --candidate f-apply --iterations 3 --format json
+```
+
+CLI が作った stash に libgit2 の `Backend::plan` / `run_recorded` を通す混在経路で、探索した範囲の plan 予測と実行後 state の食い違い件数は **`0`** だった。全 3 反復で同値だった。
+
+| candidate | verified | blockers | action error | post-state (staged / unstaged / untracked) |
+|---|---|---|---|---|
+| `f-apply` | `true` | `[]` | `None` | `0 / 1 / 0` |
+| `f-pop` | `true` | `[]` | `None` | `0 / 1 / 0` |
+| `f-drop` | `true` | `[]` | `None` | `0 / 0 / 0` |
+
+これは「混在が安全」という結論ではない。未実施範囲は、stash apply が競合する同一 path の別内容、S より大きい fixture、untracked を含む復元の境界である。F が `0` 件だったことは、全 write の `plan → confirm → preflight → execute → verify → oplog` を緩める根拠にならない。

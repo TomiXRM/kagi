@@ -8,7 +8,7 @@
 - tracked files: `1,000` / `5,000` / `20,000` / `50,000`
 - backend ごとに `KAGI_LOG_DIR` を別 temporary directory に設定
 - D1 は plan 指定どおり tracked file 2 個を dirty にする。hardened CLI の local override が無い clean fixture の値は #649 override cost を含まない lower bound として記録する。
-- P0 runner の read-only contract は 1 copy warm series である。ただし index 修復を timer 外に置く hook は P0 に無く、copy ごとの ctime / inode mismatch を避ける warm-index 比較は P0 owner の支援が必要である。
+- P0 runner の read-only contract は 1 copy warm series である。`ExecutionMixed::prepare_series` が materialize 後・timer 前に plain hardened `run_git status` を 1 回実行して index stat cache を prime し、`series_setup` に条件を記録する。
 
 ## D1 — `working_tree_status`、file 数傾き
 
@@ -34,7 +34,7 @@ P0 の materialize は copy ごとに ctime / inode と index stat cache を乖�
 
 ### warm-index 比較
 
-P0 runner には `materialize → chmod → plain git status → timer` の timer 外 hook がない。私設 driver を同条件の代替にしてはならない。したがって **P0 registered path での warm-index 比較は未測定** である。下記は既存の direct measurement であり、P0 owner が hook を提供するまで canonical にはしない。
+P0 runner の `prepare_series` hook が `materialize → index stat-cache prime → timer` を分離する。D1 の以後の canonical series は registered path の `series_setup.index_stat_cache_primed=true` を必須とする。下記の private driver 値は historic reference として残すが、registered warm-index 再測定で置き換える。
 
 #### direct warm-index（historic private driver）
 

@@ -488,11 +488,31 @@ fn set_copy_permissions(path: &Path, _source: &fs::Metadata) -> Result<(), Harne
     fs::set_permissions(path, permissions).map_err(|error| HarnessError::io(path, error))
 }
 
+/// Restore a copied entry's modified time from the template.
+///
+/// The handle this opens is platform-sensitive in two ways that a read-only
+/// `File::open` hides. Windows refuses to set times through a handle that does
+/// not carry write access, and will not open a directory as a plain `File` at
+/// all; Unix's `futimens` accepts a read-only handle and opening a directory is
+/// ordinary. Opening read-only therefore looked portable and was not — the
+/// Windows probe failed here with `Access is denied (os error 5)` on
+/// `.git/COMMIT_EDITMSG` (#627).
 fn set_copy_modified_time(path: &Path, source: &fs::Metadata) -> Result<(), HarnessError> {
     let Ok(modified) = source.modified() else {
         return Ok(());
     };
-    File::open(path)
+    // Directory times cannot be restored on Windows through this API. Both
+    // copies of a template skip them identically, so a fingerprint comparison
+    // between copies stays valid; it just carries less on Windows.
+    if cfg!(windows) && source.is_dir() {
+        return Ok(());
+    }
+    let handle = if source.is_dir() {
+        File::open(path)
+    } else {
+        File::options().write(true).open(path)
+    };
+    handle
         .map_err(|error| HarnessError::io(path, error))?
         .set_times(fs::FileTimes::new().set_modified(modified))
         .map_err(|error| HarnessError::io(path, error))

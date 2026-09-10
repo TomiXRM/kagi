@@ -58,6 +58,12 @@ macOS の `fs_usage -w -f filesys` は root 権限を要求して終了した。
 
 ## F — mixed backend の追加照合
 
-計画が指定する `backend_fixture --scenario mixed-stash` は P0 fixture で未登録だった。共有 fixture / root dispatcher は変更せず、pristine synthetic copy に timer 外で固定の stash setup を適用する決定的導出へ切り替える。
+計画が指定する `backend_fixture --scenario mixed-stash` は P0 fixture で未登録だった。共有 fixture / root dispatcher は変更せず、`MixedStash` probe が pristine synthetic copy に timer 外で次の固定導出を適用する。
 
-setup コマンド列、各 copy の manifest、backend 組合せ、plan 予測と execute 後状態の差を記録する。全 write の `plan → confirm → preflight → execute → verify → oplog` は結果に関係なく必須であり、verify の省略・弱化を提案しない。
+1. index の先頭 tracked path を選び、元の bytes に `\nP5 staged stash content\n` を付加する。
+2. hardened `run_git <repo> add <path>` を実行する。
+3. 同じ元の bytes に `\nP5 unstaged stash content\n` を付加する。
+4. hardened `run_git <repo> stash push --include-untracked -m p5-mixed-stash` を実行する。
+5. libgit2 の `Backend::plan` と `run_recorded` で `f-apply` / `f-pop` / `f-drop` を実行する。
+
+`MixedStash::mutates_fixture()` は `true` であり、P0 runner は反復ごとに pristine copy を materialize する。report は manifest、plan blockers/warnings、action error、oplog recovery handle 数、verified、実行後 status count を記録する。全 write の `plan → confirm → preflight → execute → verify → oplog` は結果に関係なく必須であり、verify の省略・弱化を提案しない。

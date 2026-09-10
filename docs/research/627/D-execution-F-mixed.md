@@ -34,7 +34,7 @@ P0 の materialize は copy ごとに ctime / inode と index stat cache を乖�
 
 ### warm-index 比較
 
-P0 runner には `materialize → chmod → plain git status → timer` の timer 外 hook がない。私設 driver を同条件の代替にしてはならない。P0 owner が hook を提供するか、P4 の直接測定を canonical とするまで、この比較は未測定である。
+P0 runner には `materialize → chmod → plain git status → timer` の timer 外 hook がない。私設 driver を同条件の代替にしてはならない。したがって **P0 registered path での warm-index 比較は未測定** である。下記は既存の direct measurement であり、P0 owner が hook を提供するまで canonical にはしない。
 
 #### direct warm-index（historic private driver）
 

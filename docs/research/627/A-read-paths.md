@@ -114,6 +114,18 @@ L と同じ generator parameter（seed 627 / 2,000 commits / depth 6）で 20,00
 | index stat cache | **backend 選定と分離して repair / read policy を扱う** | stale index を bare Git repair しただけで、20k / 50k の双方が桁違いに短縮した。status 遅延の主因を backend 固有の速度差と見なせない。 | #657 の stat-cache 対応は write contract・watcher contention の review を満たす必要がある。global `working_tree_status` に無条件 write を混ぜる設計は、この決定表からは導かない。 |
 
 既定は「シンプルで正しい」libgit2、賢い処理は pathspec status のように意味論を変えない局所へ閉じ込める。backend 差は明示 mode によってのみ選択可能にする。3 OS の backend 選定証拠が未完であるため、CLI mode の既定化と mode 間の完全な情報等価性は未確定とする。
+### warm-index process-cold status
+
+S / M / L の既存 warm-index fixture を再利用し、各 sample を新しい executable process として実行した。外側 wall は process spawn、repository open、status、output を含む。libgit2 は child 内で status 本体だけの wall も併記した。CLI は `git -c core.fsmonitor= --no-optional-locks status --porcelain=v2 -z --untracked-files=all --renames` を一 process として起動した。各 backend は 2 warm-up + 30 measured、両順序である。
+
+| fixture | libgit2 outer median / p95 ms | libgit2 child status median ms | CLI outer median / p95 ms | 観測 |
+| --- | --- | --- | --- | --- |
+| S / 200 | 5.269 / 6.168、5.115 / 7.859 | 2.208 / 2.289 | 8.376 / 8.915、8.590 / 11.051 | libgit2 が process startup 込みでも速い |
+| M / 1,194 | 9.259 / 14.161、9.492 / 10.428 | 5.487 / 5.745 | 12.353 / 13.220、11.912 / 14.616 | libgit2 が process startup 込みでも速い |
+| L / 50,000 | 240.868 / 272.723、228.269 / 286.721 | 231.682 / 218.250 | 107.579 / 125.462、108.748 / 141.560 | CLI が速い。full status の規模差は残る |
+
+各セルの順序は `libgit2 → CLI / CLI → libgit2`。全 sample は clean output（libgit2 entry `0`、CLI output `0` bytes）であり、timed series の index mtime は不変だった。timer 外 bare Git repair も既に warm な index の mtime を変えなかった。この process-cold 結果は explicit mode の tail / startup evidence であり、既定 backend や size-based automatic switching の根拠には使わない。
+
 
 ### `--git-executable` と fsmonitor 条件
 
@@ -165,10 +177,12 @@ M fixture の R100、Git が R63 と報告する内容変更 rename、rename 非
 | S / M warm index / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-S-M-warm-index-order-balanced-30.json` |
 | A3 1k / 5k warm index / 30 × 2 order | `/tmp/kagi-627-p4/results/a3-1k-5k-warm-index-order-balanced-30.json` |
 | A3 repaired-index order-separated OLS | `/tmp/kagi-627-p4/results/a3-warm-index-decision-fit.json` |
+| S warm index / process-cold / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-S-warm-index-process-cold-order-balanced-30.json` |
+| M warm index / process-cold / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-M-warm-index-process-cold-order-balanced-30.json` |
+| L warm index / process-cold / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-L-warm-index-process-cold-order-balanced-30.json` |
 
 ## 次の測定
-1. reusable repository で clean S / M / L の process-cold を測定する。
-2. dirty / rename / untracked の L case。
-3. fsmonitor disabled / untracked cache enabled 条件を S / L に広げる。built-in fsmonitor は P0 fingerprint を変えたため、watcher candidate から除外する。
-4. A2 の libgit2 `snapshot` と CLI 合成の段別 process / time / 情報欠落。
-5. A0 の GUI watcher scenario。`KAGI_BENCH_READ=1` の raw event、debounce 後 tick、reload、`snapshot` / `working_tree_status` 時間を記録する。
+1. dirty / rename / untracked の L case。
+2. fsmonitor disabled / untracked cache enabled 条件を S / L に広げる。built-in fsmonitor は P0 fingerprint を変えたため、watcher candidate から除外する。
+3. A2 の libgit2 `snapshot` と CLI 合成の段別 process / time / 情報欠落。
+4. A0 の GUI watcher scenario。`KAGI_BENCH_READ=1` の raw event、debounce 後 tick、reload、`snapshot` / `working_tree_status` 時間を記録する。

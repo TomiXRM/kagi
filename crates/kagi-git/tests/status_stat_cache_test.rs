@@ -245,3 +245,39 @@ fn the_ui_snapshot_repairs_the_stat_cache() {
         "opening a repository is the moment a stale index costs the most (#655)"
     );
 }
+
+/// A repair must not move any verify fingerprint.
+///
+/// The UI repairs from a background thread, so it can land while a write
+/// operation is computing its `verify_*` fingerprint. Those fingerprints hash
+/// index entry `path`/`id`/`mode`/`flags` and worktree bytes — never the stat
+/// cache — so a refresh cannot change one. This pins that: if a future change
+/// folds stat data into a fingerprint, a background repair would start making
+/// verify disagree with its own plan, and that must fail here first.
+#[test]
+fn a_repair_does_not_move_the_stash_verify_fingerprint() {
+    fn fingerprint(repo: &Repository) -> Vec<(Vec<u8>, git2::Oid, u32, u16)> {
+        let index = repo.index().expect("index");
+        index
+            .iter()
+            .map(|e| (e.path.clone(), e.id, e.mode, e.flags))
+            .collect()
+    }
+
+    let (_serial, dir, repo) = stale_index_repo();
+    let before = fingerprint(&repo);
+    assert!(
+        !before.is_empty(),
+        "fixture must stage something to compare"
+    );
+
+    working_tree_status_repairing_stat_cache(&repo).expect("status succeeds");
+
+    let reopened = Repository::open(dir.path()).expect("reopen");
+    assert_eq!(
+        before,
+        fingerprint(&reopened),
+        "a background repair changed what a verify fingerprint hashes — verify \
+         would start disagreeing with the plan that preceded it"
+    );
+}

@@ -177,6 +177,12 @@ fn build_working_tree_status(
 /// hand-rolled `.gitignore` parsing). Eager and full, no lazy per-directory
 /// expansion; if that's too slow on huge repos, lazy expansion is
 /// T-WS-EDITOR-003's remaining scope.
+/// ponytail: this walks `statuses` itself and does **not** repair the index stat
+/// cache. Its only caller (`editor_workspace.rs`) asks the same `Backend` for
+/// `working_tree_status` first, so by the time this runs the UI refresh has
+/// already warmed the index; repairing again would be a second write for no
+/// gain. Called on its own against a stale index it stays slow — give it the
+/// repair only if a caller appears that does not follow a status read.
 pub fn worktree_files(repo: &Repository) -> Result<Vec<PathBuf>, GitError> {
     let mut opts = StatusOptions::new();
     opts.include_ignored(false)

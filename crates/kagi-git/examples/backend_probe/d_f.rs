@@ -17,7 +17,6 @@ impl ProbeOperation for ExecutionMixed {
     fn mutates_fixture(&self) -> bool {
         false
     }
-
     fn requires_pristine_copy_per_iteration(&self) -> bool {
         // Hardened CLI `git status` updates the index stat cache. Both backends
         // use a fresh copy so D1 compares equivalent cache conditions.

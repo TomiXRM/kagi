@@ -10,6 +10,7 @@ mod backend_probe {
     //! P2 owns `e`; the registry below is the only place it is wired in.
     pub mod a;
     pub mod b;
+    pub mod d_f;
     pub mod e;
 }
 
@@ -45,10 +46,12 @@ fn main() {
         Ok(request) => request,
         Err(error) => exit_error(&error),
     };
-    let operations: [&dyn ProbeOperation; 4] = [
+    let operations: [&dyn ProbeOperation; 6] = [
         &Noop,
         &backend_probe::a::WorkingTreeStatus,
         &backend_probe::b::SemanticMatrix,
+        &backend_probe::d_f::ExecutionMixed,
+        &backend_probe::d_f::MixedStash,
         &backend_probe::e::CliCapability,
     ];
     match run_probe(&request, &operations) {

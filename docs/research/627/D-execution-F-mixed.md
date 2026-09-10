@@ -3,21 +3,23 @@
 ## 実施条件
 
 - macOS arm64
-- release binary: `target/release/examples/p5_driver`
+- P0 登録済みの `backend_probe --operation execution-mixed` のみを実行経路に使う。私設 driver は dispatch / warm-up 契約を重複させるため削除した。
 - fixture: synthetic、commits `3`、depth `3`、seed `627`
 - tracked files: `1,000` / `5,000` / `20,000` / `50,000`
 - backend ごとに `KAGI_LOG_DIR` を別 temporary directory に設定
-- 既存の 50k series は、copy 後に index stat cache が stale な状態での測定として分類する。libgit2 は file content hash を走らせる一方、CLI は index を自己修復するため、これを通常 backend 比較には使わない。
-- 再測定は `copy → chmod -R u+w → git status --porcelain`（index 修復、timer 外）→ 2 warm-up → 30 measured とする。1 copy の warm series を backend ごとに取り、libgit2 → CLI と CLI → libgit2 の両順序を別 series として記録する。
+- D1 は plan 指定どおり tracked file 2 個を dirty にする。hardened CLI の local override が無い clean fixture の値は #649 override cost を含まない lower bound として記録する。
+- P0 runner の read-only contract は 1 copy warm series である。ただし index 修復を timer 外に置く hook は P0 に無く、copy ごとの ctime / inode mismatch を避ける warm-index 比較は P0 owner の支援が必要である。
 
 ## D1 — `working_tree_status`、file 数傾き
 
 
-1k→20k の初回 libgit2 median は `+1,058.221 ms`、傾きは約 `55.7 ms / 1k files` だった。ただしこの series は stale index stat cache を含むため、backend 選択の根拠にしない。20k 以下も同じ warm-index 手順で確認する。
+初回の private driver / clean fixture 測定は、P0 登録経路・dirty 2 file・同一 harness contract を満たさない。数値は設計判断に用いず、raw report も引用しない。
 
-### stale-index series（既存値）
+### stale-index series（P0 経路で再測定予定）
 
-既存値は撤回せず、copy 後の inode / ctime と index stat cache が食い違う状態を測った結果として残す。CLI は初回 `status` で index を更新し、後続の CLI と libgit2 を速くできる。libgit2 は refresh を index に書き戻さないため、stale copy 上で毎回 content hashing に入る。この非対称な自己修復を含むため、同値を「libgit2 が遅い」という比較に用いない。
+P0 の materialize は copy ごとに ctime / inode と index stat cache を乖離させる。CLI は `status` で index を自己修復でき、libgit2 は refresh を index に書き戻さないため、pristine copy の初回値はこの非対称性を含む。これは「libgit2 が遅い」の結論ではなく、stale index 修復の必要性を示す分類である。
+
+#### per-iteration copy（historic）
 
 | tracked files | libgit2 median (ms) | CLI median (ms) | 分類 |
 |---:|---:|---:|---|
@@ -26,11 +28,17 @@
 | 20,000 | `1,113.757` | `423.117` | stale-index |
 | 50,000 | `2,906.703` | `3,078.617` | stale-index、裾が大きい |
 
-初回 50k の 11 sample は libgit2 range `2,605.549–6,572.795 ms` / p95 `6,572.795 ms`、CLI range `1,033.112–5,844.586 ms` / p95 `5,844.586 ms` だった。21 iteration の stale-index 診断 series も、libgit2 median/p95/range `3,025.803/7,891.732/2,661.309–8,526.823 ms`、CLI `1,073.654/3,454.947/1,026.872–3,988.477 ms` として残す。
+50k の 11 sample は libgit2 range `2,605.549–6,572.795 ms` / p95 `6,572.795 ms`、CLI range `1,033.112–5,844.586 ms` / p95 `5,844.586 ms`。21 iteration series は libgit2 median/p95/range `3,025.803/7,891.732/2,661.309–8,526.823 ms`、CLI `1,073.654/3,454.947/1,026.872–3,988.477 ms` だった。いずれも stale-index 条件として保存し、通常 backend 比較には使わない。
 
-### warm-index 再測定
+各 size は raw iteration order、`wall_ns`、`user_ns`、`sys_ns`、canonical status count を残す。warm-up を除いた sample から min / median / nearest-rank p95 / max を出す。順序を sort した配列だけは記録しない。
 
-各 series は synthetic fixture（seed `627`、commits `3`、depth `3`）を materialize し、`chmod -R u+w` の後に hardened `run_git status --porcelain=v2 -z` を timer 外で 1 回実行して index stat cache を更新した。最初の backend は 2 warm-up 後に 30 回、次の backend は同じ warm index 上で 2 warm-up 後に 30 回実行した。p95 は nearest-rank（30 sample の 29 番目）である。
+### warm-index 比較
+
+P0 runner には `materialize → chmod → plain git status → timer` の timer 外 hook がない。私設 driver を同条件の代替にしてはならない。P0 owner が hook を提供するか、P4 の直接測定を canonical とするまで、この比較は未測定である。
+
+#### direct warm-index（historic private driver）
+
+この series は materialize 後に `chmod -R u+w` と plain `git status` を timer 外で行った。private driver は削除済みであり、P0 registered path の再現値ではないが、測定済みの数値を撤回しない。
 
 | files | order | backend | median (ms) | p95 (ms) | range (ms) |
 |---:|---|---|---:|---:|---:|
@@ -43,11 +51,10 @@
 | 50,000 | CLI → libgit2 | CLI | `95.891` | `112.739` | `71.844–115.844` |
 | 50,000 | CLI → libgit2 | libgit2 | `172.969` | `186.133` | `161.855–188.231` |
 
-stale-index series の秒単位の裾は消えた。一方この host の 50k warm-index 比は order により `1.80–2.78x` であり、P4 の `1.31x` は再現していない。差の原因は未確定である。したがって CLI 採用・libgit2 廃止の根拠にはせず、stale index を誰がいつ修復するかを主題として D2 を保留する。
-
 ## D2 — syscall 分類
 
-macOS の計画どおりの `fs_usage -w -f filesys` は root 権限を要求して終了した。したがって syscall 回数・読取 bytes は未測定である。warm-index 結果は stale-index artifact を示したが、backend 比の差と順序差の原因は未確定なため、D2 は root 権限を得られる環境まで保留する。
+macOS の `fs_usage -w -f filesys` は root 権限を要求して終了した。syscall 回数・読取 bytes は未測定である。root 不要の次の判別は、file 数固定で total byte 数だけを変える fixture を P0 経路で測り、wall / user / sys の比を比較することにする。
+
 
 ## F — mixed backend の追加照合
 

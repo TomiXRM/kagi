@@ -1,7 +1,7 @@
 //! P5 execution-path and mixed-backend probe for #627.
 //!
-//! This module is intentionally unregistered. The P0 integration owner owns the
-//! root dispatcher and registers it after reviewing the probe contract.
+//! P0 owns the root dispatcher; this registered module owns only P5 operation
+//! behaviour.
 
 use kagi_git::benchmark::{HarnessError, ProbeContext, ProbeOperation};
 use kagi_git::{run_git, Backend};
@@ -16,11 +16,6 @@ impl ProbeOperation for ExecutionMixed {
 
     fn mutates_fixture(&self) -> bool {
         false
-    }
-    fn requires_pristine_copy_per_iteration(&self) -> bool {
-        // Hardened CLI `git status` updates the index stat cache. Both backends
-        // use a fresh copy so D1 compares equivalent cache conditions.
-        true
     }
 
     fn execute(&self, context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
@@ -51,7 +46,13 @@ impl ProbeOperation for ExecutionMixed {
             "cli" => {
                 let output = run_git(
                     context.repo(),
-                    &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+                    &[
+                        "--no-optional-locks",
+                        "status",
+                        "--porcelain=v2",
+                        "-z",
+                        "--untracked-files=all",
+                    ],
                 )
                 .map_err(|error| HarnessError::new(error.to_string()))?;
                 if output.status != 0 {
@@ -64,7 +65,7 @@ impl ProbeOperation for ExecutionMixed {
                 let counts = parse_porcelain_v2(&output.stdout);
                 Ok(json!({
                     "backend": "cli",
-                    "executor": "run_git status --porcelain=v2 -z",
+                    "executor": "run_git --no-optional-locks status --porcelain=v2 -z",
                     "staged": counts.staged,
                     "unstaged": counts.unstaged,
                     "untracked": counts.untracked,

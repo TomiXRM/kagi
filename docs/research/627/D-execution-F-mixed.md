@@ -38,3 +38,13 @@ P4 A1 の 50k 値（libgit2 `4,153 ms` / CLI `1,317 ms`）とは初回 11 sample
 再測定 median では libgit2 は CLI の約 `2.82` 倍、絶対差 `1,952.149 ms` であり、D1 の L 規模 CLI 採用候補基準を満たす。一方、両 backend の range と p95 は大きく、filesystem cache / copy の交絡を除外できない。したがってこれは **CLI 採用の確定ではなく D2 と F へ進む候補判定** とする。
 
 先行 11 sample および P4 A1 との食い違いは解消されていない。後続判断では 50k の単一 median ではなく、この 20 sample の median / p95 / range を併記する。
+
+## D2 — syscall 分類
+
+macOS の計画どおりの `fs_usage -w -f filesys` を実行したが、環境は root 権限を要求して終了した。したがって open/read 回数・読取 bytes・未変更 file あたりの比は未測定である。D1 の傾きだけで「読み直し」を確定せず、D2 は root 権限を得られる macOS 環境で再実行する。
+
+## F — mixed backend の追加照合
+
+計画が指定する `backend_fixture --scenario mixed-stash` を実行したが、P0 fixture は `scenario 'mixed-stash' is not registered; P0 provides only synthetic` として拒否した。共通 fixture / root dispatcher は P0 ownership のため、この package では追加しない。
+
+F の食い違い件数は未測定である。全 write の `plan → confirm → preflight → execute → verify → oplog` は結果に関係なく必須であり、verify の省略・弱化を提案しない。mixed-stash fixture が登録された後、verify が追加照合すべき plan 予測と実行後状態の差を測定する。

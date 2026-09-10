@@ -954,6 +954,17 @@ C3 だけを 3 OS 必須**にする。macOS 専用 GUI と OS 固有 trace は�
     --backend mixed --iterations 3 --format json
   ```
 
+  `--scenario mixed-stash` は P0 では未実装で、`fixture.rs` の scenario allowlist は
+  `synthetic` だけを受け付ける。allowlist は共有 library 側にあるため、実験 owner が
+  自分の module だけで scenario を足すことはできない。**F は scenario 登録を必要と
+  しない**ので、共有 fixture を変更せず次の導出で同じ状態を作る: 反復ごとに synthetic
+  の pristine copy を materialize し、その copy に対して固定の stash setup コマンド列を
+  timer の外で適用してから mixed probe を走らせる。これで §4.3 の「F は変更する／
+  条件 × 反復ごとに 3 copy」を満たしたまま、共有 library と root dispatcher を触らない。
+  再現性は seed 627 の synthetic manifest と、report に逐語記載する setup コマンド列で
+  担保する。F は timing ではなく divergence の実験なので、setup の所要時間は結果に
+  影響しない。
+
 - **値**: 食い違う条件の件数、再現できたもの／できなかったもの。
 - **判断基準**: write 操作は F の結果に関係なく、常に
   **plan → confirm → preflight → execute → verify → oplog** を実装条件とする。これは

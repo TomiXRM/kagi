@@ -357,6 +357,19 @@ impl Backend {
         snapshot::snapshot(&mut self.repo, commit_limit)
     }
 
+    /// [`Backend::snapshot`], additionally writing the refreshed index stat
+    /// cache back. **Only the UI may call this** (ADR-0193): opening or
+    /// reloading a repository is a refresh that renders the working tree, and
+    /// it is the moment a stale index costs the user the most — a 50,000-file
+    /// repo whose files were touched takes seconds to open and stays that way
+    /// until something repairs it (#655).
+    pub fn snapshot_repairing_stat_cache(
+        &mut self,
+        commit_limit: usize,
+    ) -> Result<RepoSnapshot, GitError> {
+        snapshot::snapshot_repairing_stat_cache(&mut self.repo, commit_limit)
+    }
+
     /// The user's `commit.template`, comment lines stripped; `None` when unset
     /// or unreadable (see [`crate::load_commit_template`]).
     pub fn commit_template(&self) -> Option<String> {
@@ -371,6 +384,15 @@ impl Backend {
 
     pub fn working_tree_status(&self) -> Result<WorkingTreeStatus, GitError> {
         status::working_tree_status(&self.repo)
+    }
+
+    /// [`Backend::working_tree_status`], additionally writing the refreshed
+    /// index stat cache back. **Only the UI refresh path may call this**
+    /// (ADR-0193) — every `plan_*` / `preflight_*` / snapshot caller must keep
+    /// using the read-only variant, because a plan runs before the user has
+    /// confirmed anything and must not write.
+    pub fn working_tree_status_repairing_stat_cache(&self) -> Result<WorkingTreeStatus, GitError> {
+        status::working_tree_status_repairing_stat_cache(&self.repo)
     }
 
     /// All tracked + untracked (non-ignored) files in the working tree,

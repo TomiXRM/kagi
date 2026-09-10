@@ -235,5 +235,31 @@ fn test_execute_conflicting_rebase_reports_conflicted_not_error() {
     assert!(dir.join(".git").join("rebase-merge").exists());
 }
 
+/// An unused local filter must keep an unrelated clean-state backend error in
+/// broad repository-settings guidance, not a filter-specific outcome (#651 P2).
+#[test]
+fn test_execute_rebase_backend_failure_reports_settings_guidance() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, dir) = clean_rebase_repo();
+    git(&dir, &["config", "filter.unused.clean", "cat"]);
+    git(&dir, &["config", "rebase.backend", "bogus"]);
+    let repo = Repository::open(&dir).expect("open");
+
+    let error = execute_rebase_current_onto(&repo, &dir, "main").unwrap_err();
+    assert!(
+        matches!(
+            error,
+            kagi_git::GitError::RebaseCannotStartWithRepoSettingsDisabled(_)
+        ),
+        "unexpected error type: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("Unknown rebase backend"),
+        "expected backend failure, got: {error}"
+    );
+}
+
 #[path = "support/isolated.rs"]
 mod test_support;

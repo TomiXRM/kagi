@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-02
-- Closes: #290, #291 (owner gate deferred to a follow-up)
+- Closes: #290, #291, #647, #649 (owner gate deferred to a follow-up)
 
 ## Context
 
@@ -54,37 +54,51 @@ the app and its tests use at top level — still work. It will block a
 submodule-triggered fetch over an exotic transport, which is the hardening
 working as intended.
 
-### Dynamic driver keys (#647)
+### 動的な実行可能設定キー (#647, #649)
 
-An attribute can select an arbitrary merge driver name:
-`f.txt merge=evil` selects `merge.evil.driver`. The name is not a fixed
-allowlist value, and the driver value is an executable command. The initial
-hardening only neutralised fixed keys, so a repository could define a new
-driver name and execute it through `git merge-tree --write-tree`.
+属性は任意の merge、filter、diff driver 名を選べます。たとえば
+`f.txt filter=evil diff=evil` は、対応する `filter.evil.*` と
+`diff.evil.*` の設定を選択します。driver 名は固定の allowlist 値ではなく、
+設定値は実行可能な command です。
 
-Before every `run_git` child starts, Kagi opens the repository config and scans
-the **local** and **worktree** levels. For every key matching
-`merge.<name>.driver`, it prepends `-c merge.<name>.driver=`. It does not parse
-`.gitattributes`: an attribute that names a driver with no matching config
-definition has no executable command, while the config scan finds every
-executable definition irrespective of its attribute spelling. A driver defined
-only in global or system config remains available; the untrusted repository did
-not define it.
+各 `run_git` child の開始前に、Kagi は repository config の **local** と
+**worktree** level を一度だけ走査します。該当する各 key に対して、次の override
+を先頭に追加します。
 
-Config inspection is a security precondition. An absent local/worktree config is
-normal, but any other discovery, read, or enumeration failure aborts `run_git`
-before it starts a child. Continuing after a failed scan would turn a malformed
-or unreadable attacker-controlled config into a hardening bypass.
+- `merge.<name>.driver=`
+- `filter.<name>.clean=`、`.smudge=`、`.process=`
+- `filter.<name>.required=false`
+- `diff.<name>.command=`、`.textconv=`
 
-This establishes the general rule: **when the executable setting has a
-repository-chosen key name, scan the untrusted config level; never rely on a
-fixed key list.** The adjacent dynamic families `diff.<name>.command` /
-`.textconv` and `filter.<name>.clean` / `.smudge` / `.process` have the same
-shape. Filters can run during check-in/check-out conversion; with
-`merge.renormalize`, a three-way merge also performs those conversions. They
-are not covered by this merge-driver fix. No production `run_git` caller runs
-`merge-tree` yet, so a future adoption must make and document a separate
-filter-hardening decision before it can use the command.
+override には元の key の表記を保持します。Kagi は `.gitattributes` を解析しません。
+設定定義のない driver を属性が指定しても実行可能な command はなく、config scan は属性の
+表記にかかわらず全実行可能定義を見つけられるためです。global または system config
+だけで定義された設定は有効なままです。untrusted repository がそれを定義していません。
+
+config inspection は security precondition です。local/worktree config が存在しない
+ことは正常ですが、それ以外の discovery、read、enumeration failure は child 開始前に
+`run_git` を abort します。失敗した scan の後に続行すると、malformed または unreadable
+な attacker-controlled config が hardening bypass になります。
+
+一般則は次のとおりです。**実行可能設定の key 名を repository が選ぶ場合、untrusted
+config level を一度走査する。固定 key list や operation 固有 scan に依存しない。**
+そのため stash push は rebase、diff、現在および将来の全 `run_git` caller と同じ shared
+scanner を使います。
+
+rebase の conversion path は自明でないため別途測定しました。
+`merge.renormalize=false` でも repository-selected filter process は rebase 中に実行
+されます。この key だけでは実行を止められません。したがって Kagi は実行可能な filter
+key 自体を neutralise し、`merge.renormalize` は override しません。non-executable
+setting の正当な global/system behavior を維持します。
+
+filter を無効化した rebase が開始前に失敗すると、backend は
+`RebaseCannotStartWithRepoSettingsDisabled` を presentation boundary まで保持します。
+未参照の local filter 定義と `rebase.backend` のような無関係な設定 failure は同じ観測状態
+になり得るため、UI と oplog は filter を原因として表示しません。代わりに、Kagi が安全の
+ため repository 設定を無効化したことが影響している**可能性**と、terminal での
+`git status` と trusted repository の `git rebase` を案内します。`.gitattributes` の完全な
+参照判定には tree/index fallback と nested attributes を扱う必要があり、rebase の再試行には
+副作用があります。
 
 ### Argument injection (#291) — two independent layers
 

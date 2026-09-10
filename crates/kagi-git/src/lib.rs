@@ -172,7 +172,7 @@ pub use resolution::{
     ResolutionChoice, ResolvedLine, SelectionSide, SideBlobInfo,
 };
 #[allow(unused_imports)]
-pub use snapshot::{snapshot, RepoSnapshot};
+pub use snapshot::{snapshot, snapshot_repairing_stat_cache, RepoSnapshot};
 #[allow(unused_imports)]
 pub use staging::{
     commit_preview, plan_commit, staged_file_diff, unstaged_file_diff, CommitPreview,

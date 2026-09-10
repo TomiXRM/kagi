@@ -209,3 +209,39 @@ fn concurrent_repairing_scans_all_return_the_same_status() {
         assert_eq!(unstaged, 0, "rewriting identical bytes is not a change");
     }
 }
+
+/// The default snapshot must stay a pure read too.
+///
+/// `snapshot` is not UI-only: `backend/remove.rs` calls it inside an ops path.
+/// Repair belongs to `snapshot_repairing_stat_cache`, which only the UI calls.
+#[test]
+fn the_default_snapshot_never_writes_the_index() {
+    let (_serial, dir, _repo) = stale_index_repo();
+    let mut repo = Repository::open(dir.path()).expect("open");
+    let before = index_mtime(dir.path());
+
+    kagi_git::snapshot(&mut repo, 100).expect("snapshot succeeds");
+
+    assert_eq!(
+        before,
+        index_mtime(dir.path()),
+        "snapshot is reached from ops paths and must not write .git/index \
+         (invariant 4, ADR-0193)"
+    );
+}
+
+/// The UI variant repairs, so opening a big repo stops costing seconds forever.
+#[test]
+fn the_ui_snapshot_repairs_the_stat_cache() {
+    let (_serial, dir, _repo) = stale_index_repo();
+    let mut repo = Repository::open(dir.path()).expect("open");
+    let before = index_mtime(dir.path());
+
+    kagi_git::snapshot_repairing_stat_cache(&mut repo, 100).expect("snapshot succeeds");
+
+    assert_ne!(
+        before,
+        index_mtime(dir.path()),
+        "opening a repository is the moment a stale index costs the most (#655)"
+    );
+}

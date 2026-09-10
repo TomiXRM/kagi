@@ -58,7 +58,7 @@ macOS の `fs_usage -w -f filesys` は root 権限を要求して終了した。
 
 ## F — mixed backend の追加照合
 
-計画が指定する `backend_fixture --scenario mixed-stash` は P0 fixture で未登録だった。共有 fixture / root dispatcher は変更しない。
+`backend_fixture --scenario mixed-stash` は未実装のままだが、PR #659 が `MixedStash` を P0 dispatcher に登録した。共有 fixture は変更していない。
 
 F は timing 実験ではなく divergence 実験である。現行 runner では `execute` が timer 内で呼ばれるため、固定 setup は `MixedStash::execute` 内で行い、`wall_ns` は setup を含む非比較値として扱う。判定は plan 予測、run_recorded の verify/oplog evidence、実行後 status の食い違いだけに基づける。
 
@@ -73,7 +73,14 @@ F は timing 実験ではなく divergence 実験である。現行 runner で�
 
 ### 結果
 
-fixture は S（tracked `200` files）、各 candidate `3`反復。CLI が作った stash に libgit2 の `Backend::plan` / `run_recorded` を通す混在経路で、探索した範囲の plan 予測と実行後 state の食い違い件数は **`0`** だった。全 3 反復で同値だった。
+fixture は `/tmp/kagi-627-p4/S`（S、tracked `200` files）。各 candidate は `3`反復で、次の registered command を使った（`f-pop` / `f-drop` は candidate だけを置換）。
+
+```sh
+backend_probe --repo /tmp/kagi-627-p4/S --operation mixed-stash \
+  --backend libgit2 --candidate f-apply --iterations 3 --format json
+```
+
+CLI が作った stash に libgit2 の `Backend::plan` / `run_recorded` を通す混在経路で、探索した範囲の plan 予測と実行後 state の食い違い件数は **`0`** だった。全 3 反復で同値だった。
 
 | candidate | verified | blockers | action error | post-state (staged / unstaged / untracked) |
 |---|---|---|---|---|

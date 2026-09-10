@@ -58,12 +58,15 @@ macOS の `fs_usage -w -f filesys` は root 権限を要求して終了した。
 
 ## F — mixed backend の追加照合
 
-計画が指定する `backend_fixture --scenario mixed-stash` は P0 fixture で未登録だった。共有 fixture / root dispatcher は変更せず、`MixedStash` probe が pristine synthetic copy に timer 外で次の固定導出を適用する。
+計画が指定する `backend_fixture --scenario mixed-stash` は P0 fixture で未登録だった。共有 fixture / root dispatcher は変更しない。
+
+F には `mutates_fixture=true` の別 `ProbeOperation` と、`materialize → fixed stash setup → timer` を分離する P0 runner hook の両方が必要である。現行 `ProbeOperation::execute` は timer 内からしか呼ばれず、ここで `run_git add` / `stash push` を実行すると setup が timer 内になる。P5 はこの誤った実装を登録せず削除した。
+
+P0 owner が hook と registry entry を提供した後、反復ごとに synthetic pristine copy へ次の timer 外導出を行う。
 
 1. index の先頭 tracked path を選び、元の bytes に `\nP5 staged stash content\n` を付加する。
 2. hardened `run_git <repo> add <path>` を実行する。
 3. 同じ元の bytes に `\nP5 unstaged stash content\n` を付加する。
 4. hardened `run_git <repo> stash push --include-untracked -m p5-mixed-stash` を実行する。
-5. libgit2 の `Backend::plan` と `run_recorded` で `f-apply` / `f-pop` / `f-drop` を実行する。
 
-`MixedStash::mutates_fixture()` は `true` であり、P0 runner は反復ごとに pristine copy を materialize する。report は manifest、plan blockers/warnings、action error、oplog recovery handle 数、verified、実行後 status count を記録する。全 write の `plan → confirm → preflight → execute → verify → oplog` は結果に関係なく必須であり、verify の省略・弱化を提案しない。
+その後に libgit2 の `Backend::plan` と `run_recorded` で `f-apply` / `f-pop` / `f-drop` を実行する。report は manifest、plan blockers/warnings、action error、oplog recovery handle、verified、実行後 status count を記録する。全 write の `plan → confirm → preflight → execute → verify → oplog` は結果に関係なく必須であり、verify の省略・弱化を提案しない。

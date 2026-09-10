@@ -2073,3 +2073,114 @@ fn test_cherry_pick_dirty_safe_checkout_refuses_and_preserves_user_content() {
 
 #[path = "support/isolated.rs"]
 mod test_support;
+
+// ── #652: apply must predict conflicts, the way pop already does ──────────
+
+/// A stash that cannot apply cleanly, with a **clean** working tree.
+///
+/// The tree has to be clean or `DirtyBlocksApply` fires first and the plan never
+/// reaches the prediction. So: stash a change, then commit a *different* change
+/// to the same file. Restoring the stash now conflicts against HEAD.
+fn repo_with_conflicting_stash(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
+    let (dir, mut repo) = build_clean_repo(tmp);
+
+    write_file(&dir, "README.md", "stashed side\n");
+    execute_stash_push(&mut repo, Some("wip"), true).expect("stash push");
+
+    write_file(&dir, "README.md", "committed side\n");
+    git(&dir, &["add", "README.md"]);
+    git(&dir, &["commit", "-qm", "diverge from the stash"]);
+
+    let snap = snapshot(&mut repo, 100).expect("snapshot");
+    assert!(
+        !snap.status.is_dirty(),
+        "tree must be clean for this fixture"
+    );
+    assert_eq!(snap.stashes.len(), 1, "fixture needs exactly one stash");
+    (dir, repo)
+}
+
+#[test]
+fn stash_apply_warns_before_a_conflicting_apply() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (_dir, mut repo) = repo_with_conflicting_stash(&tmp);
+
+    let plan = plan_stash_apply(&mut repo, 0).expect("plan_stash_apply");
+
+    assert!(
+        plan.blockers.is_empty(),
+        "a conflicting apply is confirmable — the stash survives it: {:?}",
+        plan.blockers
+    );
+    let predicted = plan.warnings.iter().any(|note| {
+        matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Stash(
+                kagi_domain::plan_note::StashNote::ApplyWouldConflict { .. }
+            )
+        )
+    });
+    assert!(
+        predicted,
+        "apply must say the stash will conflict *before* it runs — showing what an \
+         operation will do is the product (#652). warnings: {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn stash_apply_stays_quiet_when_the_stash_applies_cleanly() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (dir, mut repo) = build_clean_repo(&tmp);
+    write_file(&dir, "README.md", "stashed content\n");
+    execute_stash_push(&mut repo, Some("wip"), true).expect("stash push");
+
+    let plan = plan_stash_apply(&mut repo, 0).expect("plan_stash_apply");
+
+    assert!(
+        plan.warnings.is_empty(),
+        "a stash that applies cleanly must not be warned about — a warning users \
+         learn to ignore protects nobody. warnings: {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn stash_apply_and_pop_agree_on_whether_the_same_stash_conflicts() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (_dir, mut repo) = repo_with_conflicting_stash(&tmp);
+
+    let apply = plan_stash_apply(&mut repo, 0).expect("plan_stash_apply");
+    let pop = kagi_git::plan_stash_pop(&mut repo, 0).expect("plan_stash_pop");
+
+    let apply_warns = apply.warnings.iter().any(|n| {
+        matches!(
+            n,
+            kagi_domain::plan_note::PlanNote::Stash(
+                kagi_domain::plan_note::StashNote::ApplyWouldConflict { .. }
+            )
+        )
+    });
+    let pop_warns = pop.warnings.iter().any(|n| {
+        matches!(
+            n,
+            kagi_domain::plan_note::PlanNote::Stash(
+                kagi_domain::plan_note::StashNote::PopWouldConflict { .. }
+            )
+        )
+    });
+    assert_eq!(
+        apply_warns, pop_warns,
+        "the same stash restored the same way must predict the same conflict through \
+         both paths — one silent and one loud is what #652 reported"
+    );
+}

@@ -48,6 +48,18 @@ pub enum StashNote {
     /// the stash entry (`StashPopOutcome::ConflictedStashKept`), so the user
     /// may confirm and resolve, exactly as real `git stash pop` behaves.
     PopWouldConflict { count: usize, files: Vec<String> },
+    /// warning (`plan_stash_apply`, issue #652): the in-memory merge of the
+    /// stash commit with HEAD predicts conflicts. Apply already keeps the stash
+    /// entry, so unlike [`StashNote::PopWouldConflict`] the wording does not
+    /// need to announce that — what the user needs to know is that confirming
+    /// leaves conflict markers to resolve.
+    ApplyWouldConflict { count: usize, files: Vec<String> },
+    /// warning (`plan_stash_apply`, issue #652): the conflict prediction could
+    /// not be computed. A *warning*, not a blocker — unlike pop, apply does not
+    /// delete the stash entry, so an unverifiable apply risks nothing that the
+    /// stash cannot undo. Blocking it would also remove capability kagi has
+    /// today, where apply runs with no prediction at all.
+    ApplyPredictionUnavailable { reason: String },
     /// blocker (`plan_stash_pop`, issue #280): the conflict prediction could
     /// not be computed. Fail-closed — an unverifiable pop is refused, because
     /// pop deletes the stash entry.
@@ -113,6 +125,25 @@ impl StashNote {
                     count, files_label
                 )
             }
+            StashNote::ApplyWouldConflict { count, files } => {
+                let files_label = if files.is_empty() {
+                    "(unknown files)".to_string()
+                } else {
+                    files.join(", ")
+                };
+                format!(
+                    "Stash apply will conflict in {} file(s): {}. \
+                     The stash entry stays in the list — resolve the conflicts \
+                     in the working tree.",
+                    count, files_label
+                )
+            }
+            StashNote::ApplyPredictionUnavailable { reason } => format!(
+                "Could not verify whether the stash applies cleanly ({}). \
+                 Apply keeps the stash entry, so it is safe to try — \
+                 if it conflicts, resolve the conflicts and the stash remains.",
+                reason
+            ),
             StashNote::PopPredictionUnavailable { reason } => format!(
                 "Could not verify whether the stash applies cleanly ({}). \
                  Pop is blocked because it deletes the stash entry. \

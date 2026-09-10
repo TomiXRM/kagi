@@ -623,6 +623,10 @@ mod macos {
                 Box::new(crate::app_stash::scenario_stash_conflict_followup),
             ),
             (
+                "stash_apply_conflict_preview",
+                Box::new(crate::app_stash::scenario_stash_apply_conflict_preview),
+            ),
+            (
                 "stash_conflict_close_reopen",
                 Box::new(crate::app_stash::scenario_stash_conflict_close_reopen),
             ),

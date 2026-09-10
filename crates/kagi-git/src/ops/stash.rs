@@ -76,6 +76,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
 
     // ── 4. Check blockers ────────────────────────────────────
     let mut blockers: Vec<PlanNote> = Vec::new();
+    let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Index out of range.
     if index >= stash_count {
@@ -102,6 +103,29 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
             },
             op: StashDirtyOp::Apply,
         }));
+    }
+
+    // Conflict prediction (#652). Pop predicted this and apply did not, so the
+    // same stash silently conflicted through one path and was announced through
+    // the other. Showing what an operation will do before it runs is the whole
+    // product, so the gap was a defect, not a missing nicety.
+    //
+    // Only when nothing blocks already: a dirty tree or an out-of-range index
+    // means the apply will not run, and predicting a merge for it would be
+    // noise. Unlike pop, a prediction we cannot compute is a warning rather
+    // than a blocker — apply keeps the stash entry, so nothing is at risk.
+    if blockers.is_empty() {
+        let stash_oid = entries
+            .iter()
+            .find(|(i, _, _)| *i == index)
+            .map(|(_, _, oid)| *oid);
+        if let Some(stash_oid) = stash_oid {
+            if let Some(note) =
+                predict_stash_restore_conflict(repo, &head, stash_oid, StashDirtyOp::Apply)
+            {
+                warnings.push(note);
+            }
+        }
     }
 
     // ── 5. Predicted StateSummary ─────────────────────────────
@@ -131,7 +155,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         title: PlanTitle::Stash(StashTitle::Apply { index }),
         current,
         predicted,
-        warnings: Vec::new(),
+        warnings,
         blockers,
         recovery: Some(recovery),
         head_at_plan: head,
@@ -298,7 +322,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
     // about means the repo state is not understood — re-plan.
     if blockers.is_empty() {
         if let Some(stash_oid) = stash_oid_for_index {
-            match predict_stash_pop_conflict(repo, &head, stash_oid) {
+            match predict_stash_restore_conflict(repo, &head, stash_oid, StashDirtyOp::Pop) {
                 Some(note @ PlanNote::Stash(StashNote::PopWouldConflict { .. })) => {
                     warnings.push(note);
                 }
@@ -635,17 +659,23 @@ pub(crate) fn execute_stash_drop(repo: &mut Repository, index: usize) -> Result<
 ///
 /// Returns `Some(blocker_note)` if a conflict is predicted or the prediction
 /// could not be computed, `None` only when the merge is provably clean.
-fn predict_stash_pop_conflict(
+/// Predict whether restoring `stash_oid` onto `head` conflicts.
+///
+/// Shared by pop and apply (#652): the merge is identical — apply and pop
+/// restore the same tree the same way — only the wording and the severity of a
+/// *failed* prediction differ, and `op` selects those.
+fn predict_stash_restore_conflict(
     repo: &Repository,
     head: &Head,
     stash_oid: git2::Oid,
+    op: StashDirtyOp,
 ) -> Option<PlanNote> {
     // Resolve HEAD OID.
     let head_oid = match head {
         Head::Attached { target, .. } | Head::Detached { target } => {
             match git2::Oid::from_str(target) {
                 Ok(oid) => oid,
-                Err(e) => return Some(prediction_unavailable(e.message())),
+                Err(e) => return Some(prediction_unavailable(e.message(), op)),
             }
         }
         // No HEAD commit: there is nothing to merge against, so the apply is a
@@ -655,7 +685,7 @@ fn predict_stash_pop_conflict(
 
     let index_result = match stash_apply_dry_run(repo, head_oid, stash_oid) {
         Ok(index) => index,
-        Err(e) => return Some(prediction_unavailable(e.message())),
+        Err(e) => return Some(prediction_unavailable(e.message(), op)),
     };
 
     if !index_result.has_conflicts() {
@@ -681,9 +711,16 @@ fn predict_stash_pop_conflict(
         // Still a conflict — we just could not name the files.
         Err(_) => conflict_files.clear(),
     }
-    Some(PlanNote::Stash(StashNote::PopWouldConflict {
-        count: conflict_files.len(),
-        files: conflict_files,
+    let count = conflict_files.len();
+    Some(PlanNote::Stash(match op {
+        StashDirtyOp::Pop => StashNote::PopWouldConflict {
+            count,
+            files: conflict_files,
+        },
+        StashDirtyOp::Apply => StashNote::ApplyWouldConflict {
+            count,
+            files: conflict_files,
+        },
     }))
 }
 
@@ -702,9 +739,16 @@ pub(crate) fn stash_apply_dry_run(
     repo.merge_trees(&base_tree, &head_tree, &stash_tree, None)
 }
 
-fn prediction_unavailable(reason: &str) -> PlanNote {
-    PlanNote::Stash(StashNote::PopPredictionUnavailable {
-        reason: reason.to_string(),
+fn prediction_unavailable(reason: &str, op: StashDirtyOp) -> PlanNote {
+    let reason = reason.to_string();
+    PlanNote::Stash(match op {
+        // Pop deletes the stash entry, so an apply we cannot reason about is
+        // refused outright — fail-closed (issue #280).
+        StashDirtyOp::Pop => StashNote::PopPredictionUnavailable { reason },
+        // Apply keeps the entry, so there is nothing the stash cannot undo.
+        // Blocking here would also remove capability kagi has today, where
+        // apply runs with no prediction at all (#652).
+        StashDirtyOp::Apply => StashNote::ApplyPredictionUnavailable { reason },
     })
 }
 

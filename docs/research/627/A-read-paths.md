@@ -1,6 +1,6 @@
 # 627 P4 — 読み経路の測定
 
-> 状態: 実行中。P1 review により A1 の libgit2 timer 境界を修正済み。旧 S/M/L performance 値は timer 境界不正のため撤回した。P0 の fresh copy が作る stale index stat cache と、bare Git が行う index 修復を分離した S / M / 1k / 5k / 20k / L 再測定を記録済み。A0 / A2、process-cold、dirty L、3 OS の backend 選定は未確定。
+> 状態: 実行中。P1 review により A1 の libgit2 timer 境界を修正済み。旧 S/M/L performance 値は timer 境界不正のため撤回した。P0 copy が作る stale index stat cache と、timer 外 index prime を分離した S / M / 1k / 5k / 20k / L 再測定、A2 snapshot composite、untracked cache と dirty L を記録済み。A0、fsmonitor 条件の S / L 展開、3 OS の backend 選定は未確定。
 >
 > branch: `exp/627-p4-read-paths`
 >
@@ -13,6 +13,7 @@
 - CLI の production candidate は `git --no-optional-locks status --porcelain=v2 -z --untracked-files=all --renames` とする。
 - `bare` CLI は side-effect 比較だけに使う。性能判定値には使わない。
 - 3 iteration は backend 分岐・canonicalization・fingerprint の初期確認用。本測定の P0 warm series は warm-up 1 回を破棄した 11 iteration と process-cold を使う。加えて、index stat cache の状態を分離する direct experiment は template copy を一度作り、timer 外の bare Git repair 後に warm-up 2 回と 30 iteration を使う。
+- 現行の formal A2 / A3 / cache / dirty L series は `WorkingTreeStatus` / `Snapshot` の `prepare_series` で `copy → writable copy → timer 外 hardened plain status（`--no-optional-locks` なし）→ 2 warm-up → 30 measured` とする。prime 後の timed CLI status は `--no-optional-locks`、libgit2 は open 済み handle を使う。
 
 ## `--no-optional-locks` の判断
 
@@ -102,6 +103,44 @@ L と同じ generator parameter（seed 627 / 2,000 commits / depth 6）で 20,00
 
 順序別 OLS（files を 1k 単位）は、libgit2 が `2.651–3.875 ms / 1k`（$R^2 = 0.980–0.999$）、CLI が `1.304–1.547 ms / 1k`（$R^2 = 0.993–0.999$）だった。傾き比は libgit2 が `2.03–2.51×`。従ってこの host・正規化条件では crossover は 5k–20k の間にある。これは stale index を含む旧傾きではなく、repaired index 条件の事実である。
 
+### A3 — P0 index-prime series
+
+P4 module の `prepare_series` で index prime を実行した formal series。各 backend の 32 iteration の先頭 2 を破棄し、残り 30 の median / p95 を採った。全 series で fingerprint は不変である。
+
+| files | libgit2 median / p95 ms | CLI median / p95 ms | 観測 |
+| ---: | --- | --- | --- |
+| 1,000 | 34.445 / 65.084、23.326 / 27.437 | 62.148 / 98.986、37.927 / 52.969 | 小規模は順序感度が大きい |
+| 5,000 | 37.705 / 46.078、35.820 / 48.842 | 38.765 / 51.177、41.070 / 62.067 | ほぼ同等 |
+| 20,000 | 76.108 / 88.581、68.218 / 76.333 | 64.300 / 77.235、64.314 / 87.595 | CLI が速い |
+| 50,000 | 141.971 / 218.616、132.672 / 139.486 | 93.361 / 102.446、91.143 / 99.519 | CLI が速い |
+
+各セルは `libgit2 → CLI / CLI → libgit2`。OLS slope は libgit2 `2.246 / 2.200 ms / 1k`（$R^2 = 0.998 / 0.999$）、CLI `0.875 / 1.101 ms / 1k`（$R^2 = 0.757 / 0.984$）。CLI の一方の順序の低い $R^2$ と小規模順序感度のため、傾きは explicit mode の規模証拠に留める。size-based automatic switching は採用しない。
+
+### A2 — `snapshot` と CLI composite
+
+libgit2 は public pure read `snapshot()` を実行し、repairing variant を呼ばない。9 private stage は production に閉じたままであり、libgit2 側の timing は `snapshot()` total のみである。CLI は 9 process（status、head 2、worktree、commits、refs 3、stash）と `FETCH_HEAD` mtime を個別計時する。
+
+| fixture | libgit2 total median ms | CLI total median ms | CLI 最重段 | 判定 |
+| --- | --- | --- | --- | --- |
+| S / 200 | 2.951 / 2.894 | 119.862 / 120.500 | `status`（13.630 / 13.677 ms） | 全置換不可 |
+| M / 1,194 | 19.065 / 24.926 | 142.311 / 140.867 | `commits`（25.514 / 25.525 ms） | 全置換不可 |
+| L / 50,000 | 200.777 / 173.259 | 344.556 / 242.053 | `status`（177.334 / 120.859 ms） | 全置換不可 |
+
+値は `libgit2 → CLI / CLI → libgit2`。全 fingerprint は不変。CLI composite は 4 項目を返さず、libgit2 は欠落 `[]` なので情報等価ではない。従って CLI 全置換の条件を満たさない。4 項目は CLI が原理的に取得不能なのではなく current composite の未実装である: common-dir `FETCH_HEAD` は `rev-parse --git-common-dir` + mtime、detached worktree root は worktree HEAD + pinned `rev-list`、annotated tag は peeled ref atom、linked worktree WIP は worktree ごとの parsed status で補える。ただし後者は追加 process と複雑性を増やす。現行 evidence は、最重 `status` だけを explicit CLI mode の局所候補として検討する根拠であり、libgit2 の private stage 内訳は production 計測 seam がない限り未確定である。
+
+### untracked cache と dirty L
+
+clean L は entry `0` のため、cache config だけでは untracked cache の効きを判定できない。そこで同一 L に tracked modification 1 件と untracked file 100 件を入れた。libgit2 / CLI の canonical status はともに 101 entry で完全一致し、全 timed fingerprint は不変だった。
+
+| condition | libgit2 median ms | CLI median ms | 観測 |
+| --- | --- | --- | --- |
+| clean cache off | 199.333 / 143.038 | 121.433 / 122.153 | 順序差が大きく、entry 0 では cache 効果を判定不能 |
+| clean cache on | 199.769 / 178.118 | 124.938 / 115.100 | 同上 |
+| dirty cache off | 145.399 / 138.237 | 98.398 / 95.595 | 101 entry |
+| dirty cache on | 134.246 / 139.702 | 94.216 / 94.162 | 101 entry |
+
+各セルは `libgit2 → CLI / CLI → libgit2` の 2 warm-up + 30 measured median。dirty L で cache on は CLI を `4.3% / 1.5%`、libgit2 を `7.7% / -1.1%` 動かしたが、順序差と single-host tail を越える一貫した差ではない。cache state を backend 選定や自動 mode switching の条件にしない。explicit mode は cache setting を観測・表示してよいが、backend の暗黙切替には使わない。
+
 ### backend の決定表
 
 この表の crossover は、repository size による backend 自動切替の根拠に**しない**。予測経路の backend が入力規模で暗黙に変われば、P3 B 系が測る意味論差も無言で切り替わり、実行前に示した予測の一貫性を失う。
@@ -180,9 +219,13 @@ M fixture の R100、Git が R63 と報告する内容変更 rename、rename 非
 | S warm index / process-cold / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-S-warm-index-process-cold-order-balanced-30.json` |
 | M warm index / process-cold / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-M-warm-index-process-cold-order-balanced-30.json` |
 | L warm index / process-cold / 30 × 2 order | `/tmp/kagi-627-p4/results/a1-L-warm-index-process-cold-order-balanced-30.json` |
+| A3 index-prime / 1k + 5k raw | `/tmp/kagi-627-p4/results/a3-1000-index-prime-order-balanced-32.json`, `/tmp/kagi-627-p4/results/a3-5000-index-prime-order-balanced-32.json` |
+| A3 index-prime / 20k + 50k compact + OLS | `/tmp/kagi-627-p4/results/a3-20000-index-prime-order-balanced-32.compact.json`, `/tmp/kagi-627-p4/results/a3-50000-index-prime-*.compact.json`, `/tmp/kagi-627-p4/results/a3-index-prime-order-balanced-32-summary.json` |
+| A2 snapshot / S + M + L compact | `/tmp/kagi-627-p4/results/a2-S-index-prime-order-balanced-32.compact.json`, `/tmp/kagi-627-p4/results/a2-M-index-prime-*.compact.json`, `/tmp/kagi-627-p4/results/a2-L-index-prime-order-balanced-32.compact.json` |
+| L clean cache off / on | `/tmp/kagi-627-p4/results/a1-L-cache-off-index-prime-order-balanced-32.compact.json`, `/tmp/kagi-627-p4/results/a1-L-cache-on-index-prime-order-balanced-32.compact.json` |
+| L dirty cache off / on | `/tmp/kagi-627-p4/results/a1-L-dirty-cache-off-index-prime-order-balanced-32.compact.json`, `/tmp/kagi-627-p4/results/a1-L-dirty-cache-on-index-prime-order-balanced-32.compact.json` |
 
 ## 次の測定
-1. dirty / rename / untracked の L case。
+1. L の rename（R100 / similarity 50% 近傍）case。
 2. fsmonitor disabled / untracked cache enabled 条件を S / L に広げる。built-in fsmonitor は P0 fingerprint を変えたため、watcher candidate から除外する。
-3. A2 の libgit2 `snapshot` と CLI 合成の段別 process / time / 情報欠落。
-4. A0 の GUI watcher scenario。`KAGI_BENCH_READ=1` の raw event、debounce 後 tick、reload、`snapshot` / `working_tree_status` 時間を記録する。
+3. A0 の GUI watcher scenario。`KAGI_BENCH_READ=1` の raw event、debounce 後 tick、reload、`snapshot` / `working_tree_status` 時間を記録する。

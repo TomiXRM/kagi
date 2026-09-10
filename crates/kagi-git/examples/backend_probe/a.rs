@@ -299,11 +299,28 @@ fn execute_snapshot_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessErro
         "stages": stages,
         "most_expensive_stage": most_expensive_stage,
         "missing_information": [
-            "linked-worktree common-dir FETCH_HEAD mtime",
-            "detached worktree roots outside the 10,000 commit budget",
-            "annotated-tag target peeling",
-            "linked-worktree WIP counts",
+            {
+                "item": "linked-worktree common-dir FETCH_HEAD mtime",
+                "availability": "implementable",
+                "implementation": "git rev-parse --git-common-dir followed by local mtime",
+            },
+            {
+                "item": "detached worktree roots outside the 10,000 commit budget",
+                "availability": "implementable",
+                "implementation": "worktree list HEAD roots plus a pinned rev-list composition",
+            },
+            {
+                "item": "annotated-tag target peeling",
+                "availability": "implementable",
+                "implementation": "for-each-ref peeled-object atoms",
+            },
+            {
+                "item": "linked-worktree WIP counts",
+                "availability": "implementable",
+                "implementation": "one parsed status per linked worktree",
+            },
         ],
+        "fundamentally_unavailable_information": [],
         "information": {
             "status": status,
             "last_fetch_secs": last_fetch_secs,

@@ -701,6 +701,10 @@ mod macos {
                 "wip_diff_survives_reload",
                 Box::new(scenario_wip_diff_survives_reload),
             ),
+            (
+                "commit_panel_survives_reload",
+                Box::new(scenario_commit_panel_survives_reload),
+            ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),
@@ -1026,6 +1030,70 @@ mod macos {
 
         unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS wip_diff_survives_reload");
+    }
+
+    /// The Commit Panel's display condition is "this working tree has something
+    /// to list" — the same condition its WIP row appears under. A reload used
+    /// to drop the panel unconditionally, which closed the one the user was
+    /// typing into on every auto-fetch. An unrelated external commit leaves the
+    /// panel (and the typed message) up; committing everything leaves nothing
+    /// to list, so it closes.
+    fn scenario_commit_panel_survives_reload(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        std::fs::write(repo_path.join("README.md"), "# fixture\nwip edit\n").unwrap();
+        let (kagi, win) = mount(cx, &repo_path);
+
+        let panel_path = repo_path.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_local_panel_no_inputs(app, panel_path, cx);
+        });
+        cx.run_until_parked();
+        // No `InputState`s in the runner (see `open_local_panel_no_inputs`), so
+        // the message is the `state.commit_msg` fallback.
+        let panel_entity = cx.read(|app| kagi.read(app).commit_panel.clone().expect("panel"));
+        cx.update(|app| {
+            panel_entity.update(app, |v, _| v.state.commit_msg = "half typed".to_string())
+        });
+        assert!(
+            cx.read(|app| kagi.read(app).commit_panel_open),
+            "the commit panel should be open"
+        );
+
+        // An unrelated commit lands from outside: README.md is still dirty, so
+        // there is still something to list.
+        std::fs::write(repo_path.join("other.txt"), "unrelated\n").unwrap();
+        git(&repo_path, &["add", "other.txt"]);
+        git(&repo_path, &["commit", "-q", "-m", "unrelated commit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+        cx.read(|app| {
+            let app_ref = kagi.read(app);
+            assert!(
+                app_ref.commit_panel_open,
+                "an external commit must not close the panel while the tree is dirty"
+            );
+            let panel = app_ref.commit_panel.as_ref().expect("panel");
+            assert_eq!(
+                panel.read(app).state.commit_msg,
+                "half typed",
+                "the message being typed must survive the reload"
+            );
+        });
+
+        // Everything is committed: nothing left to list, so the panel closes.
+        git(&repo_path, &["commit", "-q", "-am", "commit the wip edit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+        assert!(
+            cx.read(
+                |app| !kagi.read(app).commit_panel_open && kagi.read(app).commit_panel.is_none()
+            ),
+            "a clean working tree leaves the panel nothing to list"
+        );
+
+        unmount(cx, kagi, win);
+        eprintln!("[gui-e2e] PASS commit_panel_survives_reload");
     }
 
     /// Issue #468: the Operation Log row list is variable-height

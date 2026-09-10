@@ -721,3 +721,35 @@ pub use kagi_ui_core::file_tree::status_badge;
 #[cfg(test)]
 #[path = "commit_panel_tests.rs"]
 mod generated_fold_tests;
+
+impl KagiApp {
+    /// The message has reached a commit (or an amend): clear the branch draft
+    /// (T-COMMIT-007) **and** the panel's own copy of it.
+    ///
+    /// Clearing the entity used to be free — the reload at the tail of the op
+    /// dropped the whole panel. It no longer does (it closes the panel only
+    /// when the repository has nothing left to list), so a *partial* commit now
+    /// leaves the panel up with the remaining files, and the message it just
+    /// committed has to go explicitly or the next commit reuses it.
+    ///
+    /// #476: the draft key is the PANEL's repo path AND branch.
+    pub(crate) fn consume_commit_panel_message(
+        &mut self,
+        repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let branch = self.panel_draft_branch(cx);
+        let _ = kagi_git::clear_draft(repo_path, &branch);
+        klog!("draft: cleared {}", branch);
+        if let Some(entity) = self.commit_panel.clone() {
+            entity.update(cx, |v, _| {
+                v.last_draft_value = String::new();
+                // The `InputState`s need a `Window`; the panel's own
+                // window-bearing pass applies this on the next frame (the same
+                // hand-off smart-commit uses).
+                v.pending_smart_msg = Some(String::new());
+                v.state.commit_msg.clear();
+            });
+        }
+    }
+}

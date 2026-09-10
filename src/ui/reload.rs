@@ -260,10 +260,7 @@ impl KagiApp {
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
             self.conflict_merge_pending = false;
-            // T025/T026: drop the commit-panel entity (state + inputs + template)
-            // so it reflects fresh status after reload (ADR-0118: one entity).
-            self.commit_panel_open = false;
-            self.commit_panel = None;
+            self.refresh_commit_panel_after_reload(cx);
         }
 
         // ADR-0119 follow-up: refresh (never close) the HEAD-versioned overlays.
@@ -424,6 +421,43 @@ impl KagiApp {
             self.view().rows.len()
         );
         cx.notify();
+    }
+
+    /// Refresh the Commit Panel after a reload, and close it only when its
+    /// repository has nothing left to list.
+    ///
+    /// The panel is the WIP row's pane, and a WIP row exists exactly while that
+    /// working tree is dirty (`graph_wip::wip_targets`) — so "there is
+    /// something to stage or commit" is the panel's real display condition.
+    /// T025/T026 enforced it by dropping the whole entity on every reload,
+    /// which is correct after a commit (the tree goes clean) but also closed
+    /// the panel the user was typing into whenever an auto-fetch or an external
+    /// git change fired. Refreshing in place and testing the condition gives
+    /// the same result where it mattered — a commit, a discard, an external
+    /// checkout all leave nothing to list — without the collateral.
+    ///
+    /// #473: the lists come from the PANEL's repository, which for a linked
+    /// worktree's panel is not the tab's.
+    ///
+    /// ponytail: `reload_status` walks the panel repo's status on the UI
+    /// thread. That is the same walk `refresh_working_tree_external` already
+    /// does per watcher event, and it only happens while the panel is open; if
+    /// it ever shows on a large repository, fold the background `ReloadData`
+    /// panel read (already plumbed for the merge case) in instead.
+    fn refresh_commit_panel_after_reload(&mut self, cx: &mut Context<Self>) {
+        let Some(entity) = self.commit_panel.clone() else {
+            self.commit_panel_open = false;
+            return;
+        };
+        let nothing_left = entity.update(cx, |v, _| {
+            let repo_path = v.repo_path.clone();
+            v.state.reload_status(&repo_path);
+            v.state.staged.is_empty() && v.state.unstaged.is_empty()
+        });
+        if nothing_left {
+            self.commit_panel_open = false;
+            self.commit_panel = None;
+        }
     }
 
     /// HEAD-versioned refresh of the long-lived full-screen overlays (Analyze +

@@ -481,6 +481,10 @@ impl KagiApp {
                     new.short(),
                     old.short()
                 )));
+                // The amend message came out of the commit panel
+                // (`open_amend_modal`), so it is spent — and the panel now
+                // survives the reload below when the tree is still dirty.
+                app.consume_commit_panel_message(&repo_path, cx);
                 // #476: the worktree's WIP row goes clean in place, then
                 // `reload` re-snapshots the OPEN tab, which shares the ODB and
                 // refs and so must show the rewritten commit.

@@ -60,9 +60,9 @@ macOS の `fs_usage -w -f filesys` は root 権限を要求して終了した。
 
 計画が指定する `backend_fixture --scenario mixed-stash` は P0 fixture で未登録だった。共有 fixture / root dispatcher は変更しない。
 
-F には `mutates_fixture=true` の別 `ProbeOperation` と、`materialize → fixed stash setup → timer` を分離する P0 runner hook の両方が必要である。現行 `ProbeOperation::execute` は timer 内からしか呼ばれず、ここで `run_git add` / `stash push` を実行すると setup が timer 内になる。P5 はこの誤った実装を登録せず削除した。
+F は timing 実験ではなく divergence 実験である。現行 runner では `execute` が timer 内で呼ばれるため、固定 setup は `MixedStash::execute` 内で行い、`wall_ns` は setup を含む非比較値として扱う。判定は plan 予測、run_recorded の verify/oplog evidence、実行後 status の食い違いだけに基づける。
 
-P0 owner が hook と registry entry を提供した後、反復ごとに synthetic pristine copy へ次の timer 外導出を行う。
+各 iteration は `mutates_fixture=true` により synthetic pristine copy を materialize してから、次の固定導出を行う。
 
 1. index の先頭 tracked path を選び、元の bytes に `\nP5 staged stash content\n` を付加する。
 2. hardened `run_git <repo> add <path>` を実行する。

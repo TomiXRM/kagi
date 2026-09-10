@@ -11,13 +11,11 @@
 //! HEAD-versioned overlay refresh (ADR-0119 follow-up), and commit-graph
 //! paging (`load_more_commits`).
 
-use gpui::{prelude::*, Context, Entity, SharedString};
+use gpui::{prelude::*, Context, SharedString};
 
 use kagi_git::CommitId;
 
 use super::commit_panel::{CommitPanelState, CommitPanelView};
-use super::diff_view::MainDiffSource;
-use super::main_diff_pane::MainDiffPane;
 use super::{build_tab_view, FooterStatus, KagiApp, WipDiffStat, COMMIT_PAGE_STEP};
 
 impl KagiApp {
@@ -156,32 +154,16 @@ impl KagiApp {
             .and_then(|idx| self.view().details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
 
-        // Same trick for the open full-width diff: a *commit's* diff is
-        // immutable, so an auto-fetch or a watcher reload has no business
-        // closing it and throwing the reader back to the graph. Anchor it to
-        // the CommitId of the row it was opened from; it is re-pointed at that
-        // commit's new row index below (or dropped, if the commit is gone).
-        // Every other source keeps the old behaviour: Compare against the
-        // working tree and the Commit Panel's staged/unstaged files all show
-        // content a reload may have just invalidated.
-        // (`accept_tab_view` → `invalidate_caches_for_row_renumber` drops the
-        // pane below, so hold on to the entity itself, not just the anchor.)
-        let prev_diff: Option<(Entity<MainDiffPane>, CommitId, usize)> = self
-            .main_diff
-            .clone()
-            .and_then(|pane| match pane.read(cx).view.source {
-                MainDiffSource::Commit {
-                    row_index,
-                    file_index,
-                } => self.view().details.get(row_index).map(|detail| {
-                    (
-                        pane.clone(),
-                        CommitId(detail.full_sha.to_string()),
-                        file_index,
-                    )
-                }),
-                _ => None,
-            });
+        // Same idea for the two panes a reload used to close outright: an
+        // auto-fetch or a watcher reload threw the reader back to the graph
+        // mid-hunk, which on a busy repository made a diff unreadable. Both are
+        // captured here and put back below — refreshed against the new
+        // snapshot, not restored blindly. The sweep between the two points
+        // (`accept_tab_view` → `invalidate_caches_for_row_renumber`) drops the
+        // entities and renumbers the rows they point at, so the capture has to
+        // hold the entities themselves.
+        let prev_compare = self.compare_view.as_ref().map(|p| p.read(cx).view.clone());
+        let prev_diff = self.capture_main_diff(cx);
 
         // #482 stage 2: hand the rebuilt read model to its owner first. A
         // superseded reload (a newer read, or a mutation admitted while this one
@@ -208,21 +190,15 @@ impl KagiApp {
         self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
-        // The pane the sweep above dropped goes back up, re-pointed at the
-        // commit's new row so j/k stepping and the History button still
-        // resolve; a commit that is gone from the graph stays closed.
-        if let Some((pane, cid, file_index)) = prev_diff {
-            if let Some(&row_index) = self.view().commit_row_index.get(&cid) {
-                pane.update(cx, |pane, _| {
-                    pane.view.source = MainDiffSource::Commit {
-                        row_index,
-                        file_index,
-                    };
-                });
-                self.main_diff = Some(pane);
-            }
-        }
         self.compare_view = None;
+        // Compare first: the diff restore looks its file up in the refreshed
+        // compare list.
+        if let Some(view) = prev_compare {
+            self.restore_compare(view, cx);
+        }
+        if let Some(prev) = prev_diff {
+            self.restore_main_diff(prev, cx);
+        }
         // ADR-0119 follow-up: the full-screen Analyze + File History overlays are
         // HEAD-versioned and refreshed *in place* after the snapshot is applied
         // (see `refresh_overlays_after_reload`), only when HEAD actually moved.

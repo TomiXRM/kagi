@@ -17,7 +17,7 @@
 
 use gpui::{AppContext as _, Context};
 
-use super::diff_view::CompareView;
+use super::diff_view::{CompareTarget, CompareView};
 use super::KagiApp;
 
 /// Entity for the active compare (base commit ↔ HEAD / working tree).
@@ -36,6 +36,34 @@ impl KagiApp {
                 cx.notify();
             }),
             None => self.compare_view = Some(cx.new(|_| ComparePane { view })),
+        }
+    }
+
+    /// Put back the compare a reload's sweep
+    /// (`invalidate_caches_for_row_renumber`) just dropped, re-read against the
+    /// snapshot that reload installed. Closing it instead returned the right
+    /// pane to the Inspector every time an auto-fetch fired, which is what the
+    /// user was complaining about; the file list is genuinely stale, so it is
+    /// re-read rather than reused. A compare that can no longer be read
+    /// (no session, no HEAD, a git error) stays closed.
+    pub(crate) fn restore_compare(&mut self, view: CompareView, cx: &mut Context<Self>) {
+        let files = {
+            let Some(session) = self.repo_session.as_ref() else {
+                return;
+            };
+            let repo = session.backend();
+            match &view.target {
+                CompareTarget::Head => match repo.head_commit_id() {
+                    Some(head) => repo.compare_commits(&view.base, &head),
+                    None => return,
+                },
+                CompareTarget::WorkingTree => repo.compare_commit_to_workdir(&view.base),
+                CompareTarget::Commit(id) => repo.compare_commits(&view.base, id),
+            }
+        };
+        match files {
+            Ok(files) => self.show_compare(CompareView { files, ..view }, cx),
+            Err(e) => klog!("compare refresh error: {}", e),
         }
     }
 }

@@ -103,6 +103,9 @@ impl Backend {
             outcome,
             backup_refs,
             recording::recovery_handles(&result),
+            // The typed error is still in scope here; by the time the outcome
+            // has been built it is prose (#650).
+            result.as_ref().err().map(crate::oplog::FailureCode::from),
         );
         recording::RunReport {
             result,

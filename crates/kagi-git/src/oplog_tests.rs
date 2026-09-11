@@ -71,6 +71,7 @@ fn json_success_entry_contains_required_fields() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -109,6 +110,7 @@ fn json_refused_entry_contains_blockers() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -141,6 +143,7 @@ fn json_failed_entry_contains_error() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -166,6 +169,7 @@ fn json_escapes_special_chars_in_repo_path() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -216,6 +220,7 @@ fn append_two_entries_creates_two_jsonl_lines() {
     let make_entry = |op: &str, ts: i64| OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -275,6 +280,7 @@ fn append_includes_expected_json_fields() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -336,6 +342,7 @@ fn oplog_filter_scopes_to_bound_repo() {
     let mk = |repo: &std::path::Path, op: &str| OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -486,6 +493,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         outcome: OpOutcome::Success { after: state },
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
     }
 }
 

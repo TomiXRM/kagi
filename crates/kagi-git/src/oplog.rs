@@ -101,6 +101,92 @@ impl Actor {
     }
 }
 
+/// A stable, machine-identifiable reason a recorded operation failed.
+///
+/// `OpOutcome::Failed { error }` persists English prose, so identifying *why*
+/// something failed meant matching on that text — which breaks whenever Git,
+/// libgit2 or a translation changes wording (#650). #500 moved recovery handles
+/// out of prose into a structured field for the same reason.
+///
+/// **The serialized strings are the contract.** They are written to logs that
+/// outlive this binary, so a variant's string must never change once shipped.
+/// Renaming the Rust variant is fine; changing its `as_str` is not.
+///
+/// Unknown strings read back as [`FailureCode::Other`] rather than failing the
+/// parse: a log written by a newer Kagi must still be readable by an older one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureCode {
+    /// The repository workdir is owned by another uid and is not trusted.
+    Untrusted,
+    /// A deadline expired before the child was reaped: the operation may have
+    /// happened. Never treat this as a retryable failure (ADR-0177).
+    TerminationUnknown,
+    /// Plan-time blockers refused the operation.
+    Blocked,
+    /// A preflight check failed before execution.
+    Preflight,
+    /// The stash entry could not be identified as the one that was planned.
+    StashIdentityUnverified,
+    /// Rebase refused because repository config would execute code.
+    RebaseBlockedByRepoSettings,
+    /// The path is not a repository, or does not exist.
+    NotARepository,
+    /// Anything without a dedicated code yet, including codes written by a
+    /// newer Kagi than the one reading the log.
+    Other,
+}
+
+impl FailureCode {
+    /// The persisted string. **Never change one that has shipped.**
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureCode::Untrusted => "untrusted",
+            FailureCode::TerminationUnknown => "termination-unknown",
+            FailureCode::Blocked => "blocked",
+            FailureCode::Preflight => "preflight",
+            FailureCode::StashIdentityUnverified => "stash-identity-unverified",
+            FailureCode::RebaseBlockedByRepoSettings => "rebase-blocked-by-repo-settings",
+            FailureCode::NotARepository => "not-a-repository",
+            FailureCode::Other => "other",
+        }
+    }
+
+    /// Parse a persisted string. Anything unrecognised becomes
+    /// [`FailureCode::Other`] so an older Kagi can read a newer log.
+    pub fn from_str_lossy(value: &str) -> Self {
+        match value {
+            "untrusted" => FailureCode::Untrusted,
+            "termination-unknown" => FailureCode::TerminationUnknown,
+            "blocked" => FailureCode::Blocked,
+            "preflight" => FailureCode::Preflight,
+            "stash-identity-unverified" => FailureCode::StashIdentityUnverified,
+            "rebase-blocked-by-repo-settings" => FailureCode::RebaseBlockedByRepoSettings,
+            "not-a-repository" => FailureCode::NotARepository,
+            _ => FailureCode::Other,
+        }
+    }
+}
+
+impl From<&crate::GitError> for FailureCode {
+    fn from(error: &crate::GitError) -> Self {
+        use crate::GitError;
+        match error {
+            GitError::Untrusted(_) => FailureCode::Untrusted,
+            GitError::TerminationUnknown(_) => FailureCode::TerminationUnknown,
+            GitError::Blocked(_) => FailureCode::Blocked,
+            // A preflight failure wraps the underlying error; that it was
+            // refused *before* execution is the useful distinction here.
+            GitError::Preflight(_) => FailureCode::Preflight,
+            GitError::StashIdentityUnverified(_) => FailureCode::StashIdentityUnverified,
+            GitError::RebaseCannotStartWithRepoSettingsDisabled(_) => {
+                FailureCode::RebaseBlockedByRepoSettings
+            }
+            GitError::NotARepository(_) | GitError::PathNotFound(_) => FailureCode::NotARepository,
+            GitError::BareRepository(_) | GitError::Other(_) => FailureCode::Other,
+        }
+    }
+}
+
 /// One entry in the operation log.
 #[derive(Debug, Clone)]
 pub struct OpLogEntry {
@@ -121,6 +207,12 @@ pub struct OpLogEntry {
     pub repo: String,
     /// Who initiated the operation. Defaults to [`Actor::Human`].
     pub actor: Actor,
+    /// Machine-identifiable failure reason, when the outcome is a failure.
+    ///
+    /// Kept on the entry rather than inside `OpOutcome::Failed` so the 120-odd
+    /// sites that construct a failure outcome stay untouched, and so an old log
+    /// line without the field still parses (#650).
+    pub failure_code: Option<FailureCode>,
     /// Absolute path to the worktree the operation ran in (`None` for old
     /// lines that predate the field).
     pub worktree: Option<String>,
@@ -165,10 +257,20 @@ impl OpLogEntry {
             outcome,
             backup_refs: Vec::new(),
             recovery: Vec::new(),
+            failure_code: None,
         }
     }
 
     /// Builder: set the initiating actor.
+    /// Attach the machine-identifiable reason this operation failed.
+    ///
+    /// Callers that hold the typed `GitError` set this; the prose in
+    /// `OpOutcome::Failed` stays as it is for people to read (#650).
+    pub fn with_failure_code(mut self, code: FailureCode) -> Self {
+        self.failure_code = Some(code);
+        self
+    }
+
     pub fn with_actor(mut self, actor: Actor) -> Self {
         self.actor = actor;
         self
@@ -221,6 +323,12 @@ fn state_summary_to_json(s: &StateSummary) -> String {
 
 /// Serialise an [`OpLogEntry`] as a single-line JSON object (no trailing newline).
 pub fn entry_to_json(entry: &OpLogEntry) -> String {
+    // Emitted only when present, so an entry without a code is byte-identical
+    // to what earlier versions wrote (#650).
+    let failure_code_json = match entry.failure_code {
+        Some(code) => format!(",\"failure_code\":\"{}\"", code.as_str()),
+        None => String::new(),
+    };
     let outcome_json = match &entry.outcome {
         OpOutcome::Success { after } => {
             format!(
@@ -269,7 +377,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
     };
 
     format!(
-        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{},\"backup_refs\":[{}],\"recovery\":[{}]}}",
+        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{},\"backup_refs\":[{}],\"recovery\":[{}]{}}}",
         entry.id,
         parent_json,
         entry.timestamp,
@@ -281,6 +389,7 @@ pub fn entry_to_json(entry: &OpLogEntry) -> String {
         outcome_json,
         entry.backup_refs.iter().map(|r| escape_json_string(r)).collect::<Vec<_>>().join(","),
         recovery::to_json(&entry.recovery),
+        failure_code_json,
     )
 }
 
@@ -612,6 +721,8 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
         _ => return None,
     };
 
+    let failure_code =
+        extract_str_field(line, "failure_code").map(|value| FailureCode::from_str_lossy(&value));
     Some(OpLogEntry {
         id,
         parent,
@@ -624,6 +735,7 @@ fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
         outcome,
         backup_refs: extract_string_array(line, "backup_refs"),
         recovery: recovery::parse(line),
+        failure_code,
     })
 }
 
@@ -768,3 +880,136 @@ mod tests;
 #[cfg(test)]
 #[path = "oplog_adr0129_tests.rs"]
 mod adr0129_compat_tests;
+
+#[cfg(test)]
+mod failure_code_tests {
+    use super::*;
+
+    fn failed_entry() -> OpLogEntry {
+        OpLogEntry::new(
+            "fetch",
+            "/tmp/repo",
+            StateSummary {
+                head: "branch: main".into(),
+                dirty: "unchanged".into(),
+            },
+            OpOutcome::Failed {
+                error: "boom".into(),
+            },
+        )
+    }
+
+    #[test]
+    fn a_code_round_trips_through_the_persisted_line() {
+        let entry = failed_entry().with_failure_code(FailureCode::TerminationUnknown);
+        let line = entry_to_json(&entry);
+        assert!(
+            line.contains("\"failure_code\":\"termination-unknown\""),
+            "the code must be a field, not prose: {line}"
+        );
+        let parsed = parse_oplog_line(&line).expect("the line we just wrote must parse");
+        assert_eq!(parsed.failure_code, Some(FailureCode::TerminationUnknown));
+    }
+
+    #[test]
+    fn an_entry_without_a_code_is_written_exactly_as_before() {
+        let line = entry_to_json(&failed_entry());
+        assert!(
+            !line.contains("failure_code"),
+            "an entry with no code must be byte-identical to what earlier \
+             versions wrote, so existing readers are unaffected: {line}"
+        );
+    }
+
+    #[test]
+    fn a_log_line_from_before_this_field_still_parses() {
+        // The oplog outlives the binary that wrote it. A line written by any
+        // earlier Kagi has no `failure_code` at all.
+        let line = entry_to_json(&failed_entry());
+        let parsed = parse_oplog_line(&line).expect("an old line must still parse");
+        assert_eq!(
+            parsed.failure_code, None,
+            "absent means 'this Kagi did not record one', not 'no failure'"
+        );
+        assert!(matches!(parsed.outcome, OpOutcome::Failed { .. }));
+    }
+
+    #[test]
+    fn a_code_from_a_newer_kagi_does_not_break_the_parse() {
+        let line = entry_to_json(&failed_entry().with_failure_code(FailureCode::Untrusted))
+            .replace("untrusted", "invented-by-a-later-version");
+        let parsed = parse_oplog_line(&line)
+            .expect("a newer log must stay readable by an older Kagi (#650)");
+        assert_eq!(parsed.failure_code, Some(FailureCode::Other));
+    }
+
+    #[test]
+    fn every_typed_error_maps_to_a_code() {
+        use crate::GitError;
+        for (error, expected) in [
+            (GitError::Untrusted("x".into()), FailureCode::Untrusted),
+            (
+                GitError::TerminationUnknown("x".into()),
+                FailureCode::TerminationUnknown,
+            ),
+            (
+                GitError::RebaseCannotStartWithRepoSettingsDisabled("x".into()),
+                FailureCode::RebaseBlockedByRepoSettings,
+            ),
+            (
+                GitError::StashIdentityUnverified("x".into()),
+                FailureCode::StashIdentityUnverified,
+            ),
+            (
+                GitError::NotARepository("x".into()),
+                FailureCode::NotARepository,
+            ),
+            (GitError::Other("x".into()), FailureCode::Other),
+        ] {
+            assert_eq!(FailureCode::from(&error), expected, "for {error:?}");
+        }
+    }
+
+    #[test]
+    fn shipped_code_strings_never_change() {
+        // These strings are written into logs on users' disks. Renaming a Rust
+        // variant is fine; changing one of these is not, and this test is the
+        // thing that says so out loud.
+        for (code, expected) in [
+            (FailureCode::Untrusted, "untrusted"),
+            (FailureCode::TerminationUnknown, "termination-unknown"),
+            (FailureCode::Blocked, "blocked"),
+            (FailureCode::Preflight, "preflight"),
+            (
+                FailureCode::StashIdentityUnverified,
+                "stash-identity-unverified",
+            ),
+            (
+                FailureCode::RebaseBlockedByRepoSettings,
+                "rebase-blocked-by-repo-settings",
+            ),
+            (FailureCode::NotARepository, "not-a-repository"),
+            (FailureCode::Other, "other"),
+        ] {
+            assert_eq!(code.as_str(), expected);
+            assert_eq!(FailureCode::from_str_lossy(expected), code);
+        }
+    }
+
+    #[test]
+    fn a_recorded_failure_carries_its_code_end_to_end() {
+        // The code is only worth having if it reaches the persisted line from a
+        // real recording, not just from a hand-built entry.
+        let entry = failed_entry().with_failure_code(FailureCode::from(
+            &crate::GitError::Untrusted("/repo".into()),
+        ));
+        let line = entry_to_json(&entry);
+        let parsed = parse_oplog_line(&line).expect("parses");
+        assert_eq!(parsed.failure_code, Some(FailureCode::Untrusted));
+        // The prose is untouched: people still read the sentence.
+        match parsed.outcome {
+            OpOutcome::Failed { error } => assert_eq!(error, "boom"),
+            other => panic!("expected a failure outcome, got {other:?}"),
+        }
+    }
+}

@@ -38,6 +38,12 @@ pub fn confirm_bounds(id: gpui::WindowId) -> Option<gpui::Bounds<gpui::Pixels>> 
 pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
 }
+/// Forget a recorded bound, so the next draw proves whether the control is
+/// still rendered (the map otherwise keeps the last frame that drew it).
+#[cfg(feature = "gui-e2e")]
+pub fn clear_control_bounds(id: gpui::WindowId, name: &str) {
+    CONTROL_BOUNDS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
+}
 pub(crate) fn measure_control(
     name: impl Into<String>,
     control: impl gpui::IntoElement,

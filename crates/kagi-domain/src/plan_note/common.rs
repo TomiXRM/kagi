@@ -131,6 +131,10 @@ pub enum CommonNote {
     UntrackedRemain { count: usize, ctx: UntrackedCtx },
     /// §A11 — warning (merge_dirty_warnings): dirty WT rollback hint.
     DirtyRollbackHint { parts: DirtyParts, op: OpPhrase },
+    /// blocker (issue #675): the path is sparse-excluded, so it is absent from
+    /// the working tree on purpose. Staging it would record a deletion the user
+    /// never made — Git refuses the same operation.
+    SparseExcludedPath { path: String },
     /// §A12 — blocker: HEAD is detached (per-op sentence).
     HeadDetached { op: PlanOp },
     /// §A13 — blocker: HEAD is unborn (per-op sentence).
@@ -205,6 +209,13 @@ impl CommonNote {
                 "Working tree has {}. Stash or commit before {} if you want a clean rollback point.",
                 parts.parts_en(),
                 op.phrase_en()
+            ),
+            CommonNote::SparseExcludedPath { path } => format!(
+                "'{}' is excluded by sparse-checkout, so it is absent from the \
+                 working tree on purpose — not deleted. Staging it would record \
+                 a deletion you did not make. Git refuses this too; widen the \
+                 sparse-checkout definition first if you meant to change it.",
+                path
             ),
             CommonNote::HeadDetached { op } => match op {
                 PlanOp::Undo => {

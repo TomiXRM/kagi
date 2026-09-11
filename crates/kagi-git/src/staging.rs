@@ -37,6 +37,7 @@
 use kagi_domain::plan_note::commit::{
     CommitLeftoverParts, CommitNote, CommitRecovery, CommitTitle,
 };
+use kagi_domain::plan_note::CommonNote;
 use kagi_domain::plan_note::{PlanDisposition, PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
 use std::path::Path;
 
@@ -75,6 +76,18 @@ use super::{
 /// # Errors
 ///
 /// Returns [`GitError::Other`] on any libgit2 failure.
+/// Whether the index marks `path` `skip-worktree`.
+///
+/// Sparse-checkout sets this bit and removes the file; the bit is what Git
+/// itself acts on, so reading it avoids re-implementing cone / non-cone /
+/// negated pattern matching (#675).
+fn is_sparse_excluded(index: &git2::Index, path: &Path) -> bool {
+    index.get_path(path, 0).is_some_and(|entry| {
+        git2::IndexEntryExtendedFlag::from_bits_truncate(entry.flags_extended)
+            .contains(git2::IndexEntryExtendedFlag::SKIP_WORKTREE)
+    })
+}
+
 pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
     let workdir = repo
         .workdir()
@@ -91,6 +104,19 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
             .add_path(path)
             .map_err(|e| GitError::Other(format!("index.add_path failed: {}", e.message())))?;
     } else {
+        // "Absent from the working tree" is not the same as "deleted". A
+        // sparse-checkout excluded path is absent because Git removed it, and
+        // staging it here would record a deletion the user never made — and
+        // could not even see, since the file is invisible to them. Git refuses
+        // this same operation ("paths ... exist outside of your sparse-checkout
+        // definition, so will not be updated in the index"); so do we (#675).
+        if is_sparse_excluded(&index, path) {
+            return Err(GitError::Blocked(Box::new(PlanNote::Common(
+                CommonNote::SparseExcludedPath {
+                    path: path.display().to_string(),
+                },
+            ))));
+        }
         // File was deleted — stage the deletion.
         index
             .remove_path(path)

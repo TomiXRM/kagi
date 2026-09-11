@@ -52,6 +52,31 @@ pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitEr
     build_working_tree_status(repo, collect_statuses(repo, false)?)
 }
 
+/// Index paths Git has marked `skip-worktree`.
+///
+/// Sparse-checkout works by setting this bit and removing the file from the
+/// working tree. The file is **absent on purpose**, so "missing from the
+/// worktree" does not mean "deleted" for these paths — the distinction Git
+/// makes and libgit2's status does not (#675).
+///
+/// Read from the index rather than by interpreting `.git/info/sparse-checkout`:
+/// the bit is what Git itself acts on, and cone / non-cone / negated patterns
+/// all reduce to it. Parsing the patterns would mean re-implementing that
+/// reduction, which is where the next bug of this kind would live.
+fn sparse_excluded_paths(repo: &Repository) -> std::collections::HashSet<Vec<u8>> {
+    let Ok(index) = repo.index() else {
+        return std::collections::HashSet::new();
+    };
+    index
+        .iter()
+        .filter(|entry| {
+            git2::IndexEntryExtendedFlag::from_bits_truncate(entry.flags_extended)
+                .contains(git2::IndexEntryExtendedFlag::SKIP_WORKTREE)
+        })
+        .map(|entry| entry.path.clone())
+        .collect()
+}
+
 /// Fold a `statuses` walk into a [`WorkingTreeStatus`].
 ///
 /// Shared by the read-only [`working_tree_status`] and the repairing variant so
@@ -62,9 +87,23 @@ fn build_working_tree_status(
 ) -> Result<WorkingTreeStatus, GitError> {
     let mut result = WorkingTreeStatus::default();
     let workdir = repo.workdir().map(|p| p.to_path_buf());
+    let sparse_excluded = sparse_excluded_paths(repo);
 
     for entry in statuses.iter() {
         let s = entry.status();
+
+        // A sparse-excluded file is absent because Git removed it, not because
+        // the user deleted it. Reporting it as a deletion puts a change in the
+        // commit panel that the user never made, and staging it would record
+        // the deletion for real (#675).
+        if s.contains(git2::Status::WT_DELETED)
+            && entry
+                .index_to_workdir()
+                .and_then(|delta| delta.old_file().path_bytes())
+                .is_some_and(|path| sparse_excluded.contains(&path.to_vec()))
+        {
+            continue;
+        }
 
         // ── Conflicted ──────────────────────────────────────────────────
         if s.contains(git2::Status::CONFLICTED) {

@@ -11,7 +11,7 @@ use std::thread;
 
 use super::{Backend, GitError, OperationPlan};
 use crate::backend::ExecutionPolicy;
-use kagi_domain::operation::{Operation, OperationOutcome};
+use kagi_domain::operation::Operation;
 
 /// A request sent from the UI to the worker thread.
 // `Run` is inherently larger than `Shutdown`, but a request is sent at most once
@@ -24,7 +24,7 @@ enum WorkRequest {
         op: Operation,
         plan: OperationPlan,
         policy: ExecutionPolicy,
-        reply: mpsc::Sender<Result<OperationOutcome, GitError>>,
+        reply: mpsc::Sender<Result<crate::backend::recording::RunReport, GitError>>,
     },
     /// Shut down the worker thread cleanly.
     Shutdown,
@@ -74,7 +74,8 @@ impl RepoWorker {
         &self,
         op: Operation,
         plan: OperationPlan,
-    ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
+    ) -> Result<mpsc::Receiver<Result<crate::backend::recording::RunReport, GitError>>, GitError>
+    {
         self.submit_with_policy(op, plan, ExecutionPolicy::default())
     }
 
@@ -84,7 +85,8 @@ impl RepoWorker {
         op: Operation,
         plan: OperationPlan,
         policy: ExecutionPolicy,
-    ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
+    ) -> Result<mpsc::Receiver<Result<crate::backend::recording::RunReport, GitError>>, GitError>
+    {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(WorkRequest::Run {
@@ -120,8 +122,14 @@ impl RepoWorker {
                 } => {
                     // Fresh-open at execution re-evaluates owner trust, matching
                     // direct mutation boundaries. Read-session reuse is unchanged.
+                    //
+                    // `run_recorded`, not `run`: the latter drops the report's
+                    // recording, so the caller could not tell an operation whose
+                    // record landed from one whose did not. The direct path
+                    // already carries it, and a worker-backed GUI would have
+                    // silently lost it (#643 A1).
                     let result = Backend::open_with_policy(backend.path(), policy)
-                        .and_then(|mut current| current.run(&op, &plan));
+                        .map(|mut current| current.run_recorded(&op, &plan));
                     // If the reply channel is closed (caller dropped), the
                     // result is silently discarded — the operation still ran.
                     let _ = reply.send(result);
@@ -208,8 +216,22 @@ mod tests {
         let plan = backend.plan(&op).expect("plan");
 
         let rx = session.submit(op, plan).expect("submit");
-        let result = rx.recv().expect("recv");
-        assert!(result.is_ok(), "create-branch should succeed: {:?}", result);
+        // The outer `Result` is about opening the backend; the operation's own
+        // result — and now its recording — live inside the report (#643 A1).
+        let report = rx.recv().expect("recv").expect("the backend must open");
+        assert!(
+            report.result.is_ok(),
+            "create-branch should succeed: {:?}",
+            report.result
+        );
+        assert!(
+            matches!(
+                report.recording,
+                crate::backend::recording::Recording::Appended { .. }
+            ),
+            "the worker must hand back the receipt, not drop it: {:?}",
+            report.recording
+        );
 
         // Verify the branch exists.
         assert!(
@@ -256,12 +278,14 @@ mod tests {
 
         // Now submit the stale plan — run() should reject via preflight.
         let rx = session.submit(op, plan).expect("submit");
-        let result = rx.recv().expect("recv");
+        // Opening the backend still succeeds; the refusal is the *operation's*
+        // result. Collapsing the two was what hid the recording (#643 A1).
+        let report = rx.recv().expect("recv").expect("the backend must open");
         // Preflight should fail because HEAD moved since the plan was built.
         assert!(
-            result.is_err(),
+            report.result.is_err(),
             "stale plan should be rejected by preflight: {:?}",
-            result
+            report.result
         );
         // …and the refusal must be a real no-op: the branch was never created.
         assert!(

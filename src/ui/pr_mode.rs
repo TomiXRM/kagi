@@ -61,6 +61,9 @@ pub struct PrTab {
     pub reviews: Vec<Review>,
     pub comments: Vec<Comment>,
     pub line_comments: Vec<ReviewComment>,
+    /// The background conversation fetch has come back (ok or not). Until
+    /// then the empty lists above mean "not yet", not "none".
+    pub conversation_loaded: bool,
     /// ADR-0145: conflicts a merge would produce, computed locally on first
     /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
     /// = computed and clean, which is a different thing to say than "unknown".
@@ -82,6 +85,9 @@ pub struct PrTab {
     /// count, fetched once per tab open via `gh api graphql`. `None` = not
     /// fetched yet (or non-GitHub host / old `gh` — degrade to no card).
     pub merge_status: Option<kagi_git::github::PrMergeStatus>,
+    /// The merge-status fetch has come back (ok or not). Its own flag so the
+    /// Overview stops loading without waiting on the review calls.
+    pub merge_status_loaded: bool,
 }
 
 /// Which body the PR tab shows.
@@ -230,12 +236,14 @@ impl KagiApp {
             reviews: Vec::new(),
             comments: Vec::new(),
             line_comments: Vec::new(),
+            conversation_loaded: false,
             conflicts: None,
             conflict_selected: None,
             conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
             conflict_preview: None,
             conflict_at: 0,
             merge_status: None,
+            merge_status_loaded: false,
         };
         if !tab.files.is_empty() {
             tab.selected_file = Some(0);
@@ -249,59 +257,83 @@ impl KagiApp {
         self.pr_mode_load_conversation(pr.number, cx);
     }
 
-    /// Fetch reviews + comments for `number` in the background and drop them
-    /// on the matching tab. One `gh pr view` per tab open (never per list
-    /// refresh — the list ticker must stay one call).
+    /// Fetch reviews + comments, and separately the merge status, for `number`
+    /// in the background and drop them on the matching tab. Once per tab open
+    /// (never per list refresh — the list ticker must stay one call). The two
+    /// run side by side so each tab's loader ends on its own data.
     fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
+        let repo2 = repo.clone();
         cx.spawn(async move |this, acx| {
-            let repo2 = repo.clone();
-            let result = acx
+            // #347: mergeStateStatus + merge-queue position. A failure
+            // (non-GitHub host, old gh, no MQ) is not fatal — the card just
+            // does not appear.
+            let merge_status = acx
+                .background_executor()
+                .spawn(async move { kagi_git::github::pr_merge_status(&repo2, number).ok() })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                let Some(t) = app
+                    .pr_mode
+                    .as_mut()
+                    .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+                else {
+                    return;
+                };
+                if let Some(s) = &merge_status {
+                    klog!(
+                        "pr-mode: merge-status #{} state={:?} queued={}",
+                        number,
+                        s.state,
+                        s.queue.is_some()
+                    );
+                }
+                t.merge_status = merge_status;
+                t.merge_status_loaded = true;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.spawn(async move |this, acx| {
+            let (convo, lines) = acx
                 .background_executor()
                 .spawn(async move {
                     // Two calls: `gh pr view` for the verdicts + issue
                     // comments, `gh api` for the line comments (where Copilot
                     // / Codex put code suggestions — not exposed by --json).
-                    let convo = kagi_git::github::pr_conversation(&repo2, number);
-                    let lines = kagi_git::github::pr_review_comments(&repo2, number);
-                    // #347: mergeStateStatus + merge-queue position. A failure
-                    // (non-GitHub host, old gh, no MQ) is not fatal — the card
-                    // just does not appear.
-                    let merge_status = kagi_git::github::pr_merge_status(&repo2, number).ok();
-                    (convo, lines, merge_status)
+                    let convo = kagi_git::github::pr_conversation(&repo, number);
+                    let lines = kagi_git::github::pr_review_comments(&repo, number);
+                    (convo, lines)
                 })
                 .await;
-            let (Ok((reviews, comments)), lines, merge_status) = result else {
-                return;
-            };
-            let line_comments = lines.unwrap_or_default();
             let _ = this.update(acx, |app, cx| {
-                if let Some(m) = app.pr_mode.as_mut() {
-                    if let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) {
-                        klog!(
-                            "pr-mode: conversation #{} reviews={} comments={} line={}",
-                            number,
-                            reviews.len(),
-                            comments.len(),
-                            line_comments.len()
-                        );
-                        if let Some(s) = &merge_status {
-                            klog!(
-                                "pr-mode: merge-status #{} state={:?} queued={}",
-                                number,
-                                s.state,
-                                s.queue.is_some()
-                            );
-                        }
-                        t.reviews = reviews;
-                        t.comments = comments;
-                        t.line_comments = line_comments;
-                        t.merge_status = merge_status;
-                        cx.notify();
-                    }
-                }
+                let Some(t) = app
+                    .pr_mode
+                    .as_mut()
+                    .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+                else {
+                    return;
+                };
+                // Stop the loader even on failure; the pane then falls back to
+                // its "no reviews" wording as before.
+                t.conversation_loaded = true;
+                cx.notify();
+                let Ok((reviews, comments)) = convo else {
+                    return;
+                };
+                let line_comments = lines.unwrap_or_default();
+                klog!(
+                    "pr-mode: conversation #{} reviews={} comments={} line={}",
+                    number,
+                    reviews.len(),
+                    comments.len(),
+                    line_comments.len()
+                );
+                t.reviews = reviews;
+                t.comments = comments;
+                t.line_comments = line_comments;
             });
         })
         .detach();
@@ -1121,6 +1153,8 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         conflict_scroll,
         conflict_at,
         merge_status,
+        conversation_loaded,
+        merge_status_loaded,
     ) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
@@ -1134,6 +1168,8 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.conflict_scroll.clone(),
             t.conflict_at,
             t.merge_status.clone(),
+            t.conversation_loaded,
+            t.merge_status_loaded,
         )
     };
     let show_description = view == PrView::Overview;
@@ -1518,6 +1554,12 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     if view != PrView::Conflicts {
         col = col.child(strip);
     }
+    if show_review && !conversation_loaded {
+        let pane = super::pr_conversation::render_loading()
+            .flex_1()
+            .items_start();
+        return col.child(pane.pt_8()).into_any_element();
+    }
     if show_review {
         return col
             .child(super::pr_conversation::render_conversation(
@@ -1532,6 +1574,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     if show_description {
         // #347: the merge-status card above the description — the four
         // `mergeStateStatus` actions, queue position, and what is still missing.
+        if !merge_status_loaded {
+            col = col.child(super::pr_conversation::render_loading());
+        }
         if let Some(status) = &merge_status {
             let view = super::pr_merge_status::view_from(status, pr.review);
             if let Some(card) = super::pr_merge_status::render(&view, cx) {

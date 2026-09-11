@@ -1437,6 +1437,25 @@ pub enum MenuOverlay {
 const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
 const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
 
+/// Why a background fetch failed, kept apart from its display text.
+///
+/// `TerminationUnknown` means the deadline expired before the child was reaped:
+/// the fetch may well have reached the remote. Recording that as `Failed` would
+/// invite a retry of something that might have already happened (#646).
+#[derive(Clone)]
+struct FetchFailure {
+    message: String,
+    termination_unknown: bool,
+}
+
+impl std::fmt::Display for FetchFailure {
+    /// The display text is unchanged from before this type existed, so the
+    /// `[kagi]` contract lines and the footer keep their exact wording (#646).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 impl KagiApp {
     /// ADR-0154 / #335: capture the current working tree as a savepoint
     /// snapshot under `refs/kagi/snapshots/`. Non-destructive (only adds a ref),
@@ -1856,12 +1875,18 @@ impl KagiApp {
             let open_failed = result.is_err();
             let result = result.and_then(|backend| backend.fetch_remote());
             lease.complete_git(&result);
-            result.map_err(|e| {
-                if open_failed {
-                    format!("repo open error: {e}")
+            // Keep *why* it failed, not just the text. A deadline that expired
+            // is not proof the fetch did not happen, so it must reach the oplog
+            // as `Unknown` and never as a retryable `Failed` (ADR-0177). The
+            // previous `format!` flattened both into a string here, which is
+            // why the distinction could not be made at the call site (#646).
+            result.map_err(|error| FetchFailure {
+                termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
+                message: if open_failed {
+                    format!("repo open error: {error}")
                 } else {
-                    format!("{e}")
-                }
+                    format!("{error}")
+                },
             })
         });
         cx.spawn(async move |this, acx| {
@@ -1884,13 +1909,13 @@ impl KagiApp {
                     // side effects belong to the tab that started it, but a Pull
                     // confirmation waiting on this fetch must still be
                     // delivered — parked for its tab, not dropped (#626 review).
-                    let error = result.err();
+                    let error = result.err().map(|failure| failure.message);
                     for session in pull_confirm.into_iter().chain(waiters) {
                         app.deliver_pull_confirm(session, error.clone(), cx);
                     }
                     return;
                 }
-                let fetch_error = result.as_ref().err().cloned();
+                let fetch_error = result.as_ref().err().map(|f| f.message.clone());
                 match result {
                     Ok(outcome) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the
@@ -1920,6 +1945,34 @@ impl KagiApp {
                         }
                     }
                     Err(e) => {
+                        // AGENTS.md: a user-facing error surfaces via the oplog
+                        // *and* a modal. The footer and toast below were the
+                        // only surfaces, so a failed fetch left no record to
+                        // recover or audit from (#646). A silent auto-fetch is
+                        // recorded too — it is exactly the case the user cannot
+                        // see happen.
+                        let before = kagi_git::StateSummary {
+                            head: format!("branch: {}", app.view().status_summary.branch),
+                            dirty: "unchanged".to_string(),
+                        };
+                        let outcome = if e.termination_unknown {
+                            // The deadline expired before the child was reaped,
+                            // so the fetch may have reached the remote. Recording
+                            // Failed would invite a retry of something that may
+                            // already have happened (ADR-0177).
+                            kagi_git::oplog::OpOutcome::Unknown {
+                                after: kagi_git::StateSummary {
+                                    head: "unchanged".to_string(),
+                                    dirty: "unchanged".to_string(),
+                                },
+                                evidence: e.message.clone(),
+                            }
+                        } else {
+                            kagi_git::oplog::OpOutcome::Failed {
+                                error: i18n::op_failed(i18n::Op::Fetch, &e.message),
+                            }
+                        };
+                        app.record_op_persist("fetch", before, outcome, &repo_path_guard, cx);
                         if silent {
                             klog!("auto-fetch: failed (silent): {e}");
                         } else {

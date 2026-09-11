@@ -595,6 +595,10 @@ mod macos {
                 Box::new(crate::busy_label::scenario_fetch_busy_label),
             ),
             (
+                "fetch_failure_oplog",
+                Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
+            ),
+            (
                 "editor_save_admission",
                 Box::new(crate::app_writer_admission::scenario_editor_save_admission),
             ),

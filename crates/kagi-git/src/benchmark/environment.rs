@@ -190,12 +190,45 @@ mod tests {
 
     use super::*;
 
+    /// Spin until the freshly written fixture can actually be executed.
+    ///
+    /// Linux returns `ETXTBSY` when a file is open for writing anywhere in the
+    /// system at the moment of `exec`. Cargo runs these tests as threads in one
+    /// process, so another thread forking while this file is still open — the
+    /// window between `fork` and `exec`, during which the child holds our write
+    /// fd regardless of `O_CLOEXEC` — makes the exec fail. macOS does not do
+    /// this, which is why the failure only ever appeared on Linux CI (#658).
+    ///
+    /// The race is inherent to writing an executable inside a multi-threaded
+    /// process that also spawns processes, so absorb it here rather than in
+    /// `command_stdout`: production never execs a file it just wrote.
+    fn wait_until_executable(path: &Path) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match std::process::Command::new(path).arg("--version").output() {
+                Ok(_) => return,
+                Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "fixture executable stayed ETXTBSY for 10s: {}",
+                        path.display()
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                // Any other failure is the test's real subject; let the
+                // assertion below report it with its diagnostic.
+                Err(_) => return,
+            }
+        }
+    }
+
     #[test]
     fn records_the_selected_git_executable_version() {
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("git-fixture");
         fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' 'fixture git 9.9'\n").unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        wait_until_executable(&executable);
 
         let environment = collect_environment(None, None, Some(&executable)).unwrap();
 

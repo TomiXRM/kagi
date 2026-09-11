@@ -74,6 +74,8 @@ pub fn generate_fixture(request: &FixtureRequest) -> Result<FixtureManifest, Har
         commit(&request.output, index, &format!("fixture change {index}"))?;
     }
 
+    seed_ref_shapes(&request.output, request)?;
+
     let manifest = FixtureManifest {
         schema_version: 1,
         seed: request.seed,
@@ -297,6 +299,95 @@ fn git_stdout(repo: &Path, args: &[&str]) -> Result<String, HarnessError> {
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Give the fixture the ref shapes a `snapshot` actually has to report.
+///
+/// Without these, comparing the two backends' snapshots is two implementations
+/// agreeing that there is nothing there: the generator produced one branch, no
+/// tags, no remote-tracking refs and no stash, so four of the compared fields
+/// matched at zero and the rest at 1 (#627). A comparison that can only pass is
+/// not evidence.
+///
+/// The shapes chosen are the ones where the two are most likely to disagree:
+/// lightweight versus annotated tags (they peel differently), a stash (whose
+/// commits are reachable from `refs/` but are not branch history), and
+/// remote-tracking refs (which are refs but not local branches).
+///
+/// Every object here is dated like [`commit`], so a fixture built twice from
+/// the same seed still produces the same OIDs.
+fn seed_ref_shapes(repo: &Path, request: &FixtureRequest) -> Result<(), HarnessError> {
+    // `HEAD~1` only exists once there are two commits.
+    let earlier = if request.commits > 1 {
+        "HEAD~1"
+    } else {
+        "HEAD"
+    };
+    let earlier_oid = git_stdout(repo, &["rev-parse", earlier])?;
+    let head_oid = git_stdout(repo, &["rev-parse", "HEAD"])?;
+
+    git(repo, &["branch", "fixture/topic", &earlier_oid])?;
+
+    git(repo, &["tag", "fixture-lightweight", &earlier_oid])?;
+    git_dated(
+        repo,
+        request.commits,
+        &[
+            "tag",
+            "-a",
+            "fixture-annotated",
+            "-m",
+            "fixture annotated tag",
+            &head_oid,
+        ],
+    )?;
+
+    // Remote-tracking refs without a network or a configured remote: the refs
+    // are what a snapshot reads, and writing them directly keeps the fixture
+    // offline and deterministic.
+    git(repo, &["update-ref", "refs/remotes/origin/main", &head_oid])?;
+    git(
+        repo,
+        &["update-ref", "refs/remotes/origin/topic", &earlier_oid],
+    )?;
+
+    // A stash entry. `stash push` restores the worktree, so the fixture stays
+    // clean and the status measurements it feeds are unchanged.
+    let stashed = fixture_file_path(request.depth, 0);
+    let path = repo.join(&stashed);
+    let mut bytes = deterministic_bytes(request.seed ^ 0x5741_5348, 0, 64);
+    bytes.extend_from_slice(b"\nfixture stash\n");
+    write_file(&path, &bytes)?;
+    git_dated(
+        repo,
+        request.commits + 1,
+        &["stash", "push", "-q", "-m", "fixture stash"],
+    )?;
+    Ok(())
+}
+
+/// [`git`], with the deterministic clock [`commit`] uses.
+///
+/// Tag objects and stash commits carry a committer date, so they would
+/// otherwise make a fixture's OIDs depend on when it was generated.
+fn git_dated(repo: &Path, index: usize, args: &[&str]) -> Result<(), HarnessError> {
+    let timestamp = 1_704_067_200_i64 + index as i64;
+    let date = format!("{timestamp} +0000");
+    let status = fixture_git_command(repo)
+        .args(args)
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_DATE", &date)
+        .status()
+        .map_err(|error| HarnessError::io(repo, error))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(HarnessError::new(format!(
+            "git {} failed in {}",
+            args.join(" "),
+            repo.display()
+        )))
+    }
 }
 
 fn commit(repo: &Path, index: usize, message: &str) -> Result<(), HarnessError> {

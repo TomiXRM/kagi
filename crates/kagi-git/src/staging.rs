@@ -730,6 +730,19 @@ pub(crate) fn stage_files(
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
     for path in paths {
+        // Same rule as `stage_file`: absent from the working tree is not the
+        // same as deleted. This is the path "stage everything" takes, so it is
+        // the one a user in a sparse-checkout repository actually reaches
+        // (#675). Refuse the whole batch rather than skipping the offending
+        // paths — a partially applied stage is harder to reason about than one
+        // that did not happen.
+        if !workdir.join(path).exists() && is_sparse_excluded(&index, path) {
+            return Err(GitError::Blocked(Box::new(PlanNote::Common(
+                CommonNote::SparseExcludedPath {
+                    path: path.display().to_string(),
+                },
+            ))));
+        }
         if workdir.join(path).exists() {
             index.add_path(path).map_err(|e| {
                 GitError::Other(format!(

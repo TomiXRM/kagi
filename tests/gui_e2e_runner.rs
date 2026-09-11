@@ -92,6 +92,10 @@ mod read_owner;
 mod worktree_graph;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/workspace_mode_toolbar.rs"]
+mod workspace_mode_toolbar;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
 
@@ -683,6 +687,10 @@ mod macos {
             (
                 "stage_failure_notice",
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
+            (
+                "workspace_mode_toolbar",
+                Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (

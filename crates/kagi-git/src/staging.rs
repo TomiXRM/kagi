@@ -236,7 +236,7 @@ pub fn unstaged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, Gi
         .diff_index_to_workdir(None, Some(&mut diff_opts))
         .map_err(|e| GitError::Other(format!("diff_index_to_workdir failed: {}", e.message())))?;
 
-    patch_to_file_diff(&diff, path)
+    patch_to_file_diff(repo, &diff, path)
 }
 
 /// The diff shown for a path with unresolved index conflicts: ours (stage 2)
@@ -337,7 +337,7 @@ pub fn staged_file_diff(repo: &Repository, path: &Path) -> Result<FileDiff, GitE
         .diff_tree_to_index(old_tree.as_ref(), None, Some(&mut diff_opts))
         .map_err(|e| GitError::Other(format!("diff_tree_to_index failed: {}", e.message())))?;
 
-    patch_to_file_diff(&diff, path)
+    patch_to_file_diff(repo, &diff, path)
 }
 
 // ────────────────────────────────────────────────────────────

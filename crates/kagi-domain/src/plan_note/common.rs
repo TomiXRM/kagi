@@ -131,6 +131,10 @@ pub enum CommonNote {
     UntrackedRemain { count: usize, ctx: UntrackedCtx },
     /// §A11 — warning (merge_dirty_warnings): dirty WT rollback hint.
     DirtyRollbackHint { parts: DirtyParts, op: OpPhrase },
+    /// blocker (issue #677): the object is absent because the repository is a
+    /// partial clone and nothing has fetched it yet. libgit2 has no promisor
+    /// support, so unlike `git` it cannot fetch it on demand.
+    PartialCloneObjectMissing { detail: String },
     /// blocker (issue #675): the path is sparse-excluded, so it is absent from
     /// the working tree on purpose. Staging it would record a deletion the user
     /// never made — Git refuses the same operation.
@@ -209,6 +213,13 @@ impl CommonNote {
                 "Working tree has {}. Stash or commit before {} if you want a clean rollback point.",
                 parts.parts_en(),
                 op.phrase_en()
+            ),
+            CommonNote::PartialCloneObjectMissing { detail } => format!(
+                "This repository is a partial clone and the object this needs \
+                 has not been fetched yet, so Kagi cannot read it ({}). Run \
+                 `git fetch` in the repository to download it; `git` fetches \
+                 missing objects on demand, and Kagi does not.",
+                detail
             ),
             CommonNote::SparseExcludedPath { path } => format!(
                 "'{}' is excluded by sparse-checkout, so it is absent from the \

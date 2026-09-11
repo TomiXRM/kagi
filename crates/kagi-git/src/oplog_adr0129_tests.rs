@@ -43,6 +43,7 @@ fn mixed_old_and_new_lines_parse_together() {
     let new_entry = OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -83,6 +84,7 @@ fn structured_notes_serialize_as_plain_string_array() {
     let entry = OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        failure_code: None,
         id: 0,
         parent: None,
         actor: Actor::Human,

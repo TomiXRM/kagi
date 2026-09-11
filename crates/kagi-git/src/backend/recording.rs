@@ -151,7 +151,7 @@ impl Backend {
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
     ) -> Recording {
-        self.record_run_oplog_with_backups(op, before, outcome, Vec::new(), Vec::new())
+        self.record_run_oplog_with_backups(op, before, outcome, Vec::new(), Vec::new(), None)
     }
 
     pub(super) fn record_run_oplog_with_backups(
@@ -161,6 +161,7 @@ impl Backend {
         outcome: crate::oplog::OpOutcome,
         backup_refs: Vec<String>,
         recovery: Vec<RecoveryHandle>,
+        failure_code: Option<crate::oplog::FailureCode>,
     ) -> Recording {
         let repo = self.path.display().to_string();
         let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
@@ -168,6 +169,7 @@ impl Backend {
             .with_worktree(Some(repo));
         entry.backup_refs = backup_refs;
         entry.recovery = recovery;
+        entry.failure_code = failure_code;
         finalize(entry)
     }
 
@@ -212,7 +214,15 @@ impl Backend {
             Err(_) => Vec::new(),
         };
         let op_name = format!("{}-{}", dir.label_en_lower(), entry.kind.slug());
-        self.record_run_oplog_with_backups(&op_name, &plan.current, outcome, Vec::new(), handles);
+        let failure_code = result.as_ref().err().map(crate::oplog::FailureCode::from);
+        self.record_run_oplog_with_backups(
+            &op_name,
+            &plan.current,
+            outcome,
+            Vec::new(),
+            handles,
+            failure_code,
+        );
         result
     }
 }

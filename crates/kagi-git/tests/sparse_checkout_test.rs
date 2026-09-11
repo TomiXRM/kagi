@@ -108,3 +108,49 @@ fn a_real_deletion_is_still_stageable() {
         "a real deletion should have been staged"
     );
 }
+
+#[test]
+fn staging_everything_is_refused_when_a_sparse_path_is_in_the_batch() {
+    let dir = sparse_repo();
+    let backend = Backend::open(dir.path()).expect("open");
+
+    // "Stage all" is the path a user actually takes, and it is a different
+    // function from the single-file one (#675).
+    let error = backend
+        .stage_files(&[
+            std::path::PathBuf::from("drop/b1.txt"),
+            std::path::PathBuf::from("drop/b2.txt"),
+        ])
+        .expect_err("bulk staging must refuse a sparse-excluded path too");
+
+    assert!(
+        matches!(error, GitError::Blocked(_)),
+        "the refusal must be the typed plan refusal, got: {error:?}"
+    );
+
+    let repo = git2::Repository::open(dir.path()).expect("reopen");
+    let index = repo.index().expect("index");
+    for path in ["drop/b1.txt", "drop/b2.txt"] {
+        assert!(
+            index.get_path(Path::new(path), 0).is_some(),
+            "the refused batch must leave the index untouched: {path}"
+        );
+    }
+}
+
+#[test]
+fn staging_everything_still_works_on_real_changes() {
+    let dir = sparse_repo();
+    std::fs::write(dir.path().join("keep/a.txt"), "changed\n").unwrap();
+    std::fs::write(dir.path().join("keep/new.txt"), "new\n").unwrap();
+    let backend = Backend::open(dir.path()).expect("open");
+
+    let staged = backend
+        .stage_files(&[
+            std::path::PathBuf::from("keep/a.txt"),
+            std::path::PathBuf::from("keep/new.txt"),
+        ])
+        .expect("ordinary bulk staging must not be blocked by the guard");
+
+    assert_eq!(staged, 2);
+}

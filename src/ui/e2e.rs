@@ -196,6 +196,32 @@ pub fn footer_message_bounds() -> gpui::Bounds<gpui::Pixels> {
     super::render_status::footer_message_bounds()
 }
 
+/// Drive the legacy persisted-record path (#643 A1).
+///
+/// `record_op_persist` is private and every real caller needs a repository and
+/// a completed operation, so a test cannot otherwise reach the branch where the
+/// oplog append itself fails. Part of the seam for the same reason as
+/// [`push_failed_op`].
+pub fn record_persisted_op(
+    app: &mut KagiApp,
+    repo: &std::path::Path,
+    cx: &mut gpui::Context<KagiApp>,
+) {
+    let state = |dirty: &str| kagi_git::ops::StateSummary {
+        head: "branch: main".to_string(),
+        dirty: dirty.to_string(),
+    };
+    app.record_op_persist(
+        "e2e-record",
+        state("unchanged"),
+        kagi_git::oplog::OpOutcome::Success {
+            after: state("clean"),
+        },
+        repo,
+        cx,
+    );
+}
+
 /// Issue #468: push a synthetic `Failed` op-log entry onto the panel, through
 /// the same `OpLogPanel::push` the real `record_op` path uses. Part of the seam
 /// because `kagi_git::oplog::OpLogEntry` is a normal dep the runner cannot name.

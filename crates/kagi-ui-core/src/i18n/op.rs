@@ -139,6 +139,24 @@ impl Op {
     }
 }
 
+/// The operation finished, but Kagi could not persist its oplog record.
+///
+/// Kagi's promise is that every operation leaves a record to recover and audit
+/// from. Swallowing this failure leaves the user trusting a log that is missing
+/// the entry — and the in-session panel still shows it, so nothing looks wrong
+/// until the next launch (#643 A1).
+pub fn oplog_write_failed(err: impl std::fmt::Display) -> String {
+    match lang() {
+        Lang::En => format!(
+            "The operation finished, but its oplog record could not be written ({err}). \
+             Recovery and audit history for it is missing."
+        ),
+        Lang::Ja => format!(
+            "操作は完了しましたが、oplog への記録に失敗しました({err})。この操作の復旧・監査履歴が残っていません。"
+        ),
+    }
+}
+
 /// `"Pull failed: <err>"` / `"pull に失敗しました: <err>"`.
 ///
 /// The single sentence every operation-failure string in the UI goes through.

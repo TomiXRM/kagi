@@ -79,7 +79,7 @@ copy → writable copy → timer 外 hardened plain status
 | --- | --- | --- | --- | --- |
 | P4 A1 / A2 / A3 performance | 取得済み。単一 host。 | 未取得 | 未取得 | 新 backend 採用の証拠として未確定。既定 libgit2 を維持。 |
 | P4 canonical semantics / cache / dirty L | macOS fixture で取得済み | 未取得 | 未取得 | OS 別規則を作らない。 |
-| backend 間の canonical 一致（3 OS） | **一致** | **一致** | **一致** | `RPT-627 F-15`。`working-tree-status` は完全一致。`snapshot` は 8 field 中 1 field のみの比較であり、意味論の確認としては弱い。 |
+| backend 間の canonical 一致（3 OS） | **一致** | **一致** | **一致** | `RPT-627 F-15`（表 5）。`working-tree-status` は完全一致。`snapshot` は 8 field 中 7 field が一致し、値は `branches 2 / commits 50 / remote_branches 2 / stashes 1 / tags 2 / worktrees 1` で 0 同士の一致ではない。残る `last_fetch_secs` は fixture が fetch しないため両側 `null`。 |
 | 3 OS の性能比較 | — | — | — | **原理的に成立しない。** runner の hardware が異なり、比そのものも runner 依存（同一 fixture で 2.9x–10.4x）。`RPT-627 §3.6`。 |
 | P5 D1 registered warm-index | 未完 | 未取得 | 未取得 | 未確定。 |
 | P5 D2 syscall / bytes | root 権限不足 | 未取得 | 未取得 | 未確定。原因診断のみ。 |
@@ -91,7 +91,7 @@ E4 の採用 gate は plan §E4 に従う。新しい backend を operation に�
 
 ## 未確定事項と次の証拠
 
-1. 3 OS の意味論比較を実質的なものにする。`.github/workflows/backend-probe.yml` は 3 OS で通るようになった（`RPT-627 F-15`／Windows の harness bug は F-16 で修正済み）が、`snapshot` は CLI probe が counts を `null` で返すため 8 field 中 1 field しか比較できていない。**性能の 3 OS 比較は追わない** — 成立しないため（`RPT-627 §3.6`）。
+1. B2–B7（autocrlf、ignore、submodule、sparse checkout、partial clone、unrelated histories）を 3 OS で測る。`snapshot` と `working-tree-status` の意味論は 3 OS で一致を確認したが（`RPT-627 F-15`）、B2–B7 は未測定のままである（`F-11`）。とくに submodule / sparse checkout / partial clone は「黙って無視される」場合が最も危険で、予測の正しさに直結する。**性能の 3 OS 比較は追わない** — 成立しないため（`RPT-627 §3.6`）。
 2. production `snapshot()` に、private helper を露出しない stage timing seam を設計する。A2 の局所候補を他段へ一般化する前提である。
 3. D2 は root 権限または root 不要の代替診断で syscall / bytes を記録する。
 4. F は conflict、large fixture、untracked restore の boundary を追加する。0 divergence を安全一般化しない。

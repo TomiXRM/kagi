@@ -1127,14 +1127,7 @@ impl KagiApp {
         self.finish_op_on_main(cx, task, move |app, result, cx| match result {
             Ok((_new_short, after)) => {
                 klog!("async: commit finished");
-                // A successful commit clears the branch draft (T-COMMIT-007).
-                // #476: the panel's own draft key — repo path AND branch.
-                let branch = app.panel_draft_branch(cx);
-                let _ = kagi_git::clear_draft(&repo_path, &branch);
-                klog!("draft: cleared {}", branch);
-                if let Some(entity) = app.commit_panel.clone() {
-                    entity.update(cx, |v, _| v.last_draft_value = String::new());
-                }
+                app.consume_commit_panel_message(&repo_path, cx);
 
                 app.record_op(
                     "commit",

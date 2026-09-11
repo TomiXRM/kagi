@@ -233,6 +233,16 @@ pub fn open_worktree_panel_no_inputs(
     app.attach_commit_panel_at(path, Some((label.to_string().into(), color_idx)), cx);
 }
 
+/// The ordinary (non-foreign) commit panel, inputs-free — the local-repo
+/// counterpart of [`open_worktree_panel_no_inputs`], same `InputState` caveat.
+pub fn open_local_panel_no_inputs(
+    app: &mut KagiApp,
+    path: std::path::PathBuf,
+    cx: &mut gpui::Context<KagiApp>,
+) {
+    app.attach_commit_panel_at(path, None, cx);
+}
+
 /// Set the commit panel's message without touching an `InputState` (see
 /// [`open_worktree_panel_no_inputs`]) — the `state.commit_msg` fallback.
 pub fn set_commit_message(app: &KagiApp, msg: &str, cx: &mut App) {

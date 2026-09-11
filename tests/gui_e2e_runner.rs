@@ -109,9 +109,9 @@ mod macos {
     };
     use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
-        commands::CreateSnapshot, commit_list, e2e, editor_tree_menu::EditorTreeAction, graph_wip,
-        oplog_panel, settings::CopyTarget, theme, BottomTab, CopyDiffSelection, KagiApp,
-        ToggleBottomPanel,
+        commands::CreateSnapshot, commit_list, commit_panel::CommitPanelFileRef,
+        diff_view::MainDiffSource, e2e, editor_tree_menu::EditorTreeAction, graph_wip, oplog_panel,
+        settings::CopyTarget, theme, BottomTab, CopyDiffSelection, KagiApp, ToggleBottomPanel,
     };
 
     #[link(name = "objc")]
@@ -689,6 +689,22 @@ mod macos {
                 "graph_copy",
                 Box::new(|cx| scenario_graph_copy(cx, log_dir.path())),
             ),
+            (
+                "diff_survives_reload",
+                Box::new(scenario_diff_survives_reload),
+            ),
+            (
+                "compare_survives_reload",
+                Box::new(scenario_compare_survives_reload),
+            ),
+            (
+                "wip_diff_survives_reload",
+                Box::new(scenario_wip_diff_survives_reload),
+            ),
+            (
+                "commit_panel_survives_reload",
+                Box::new(scenario_commit_panel_survives_reload),
+            ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),
@@ -838,6 +854,246 @@ mod macos {
             "[gui-e2e] PASS graph_copy hash={} branch={branch}",
             &full_sha[..8]
         );
+    }
+
+    /// An external refresh (auto-fetch, FS watcher) must NOT close the
+    /// full-width diff of a *commit* and dump the reader back on the graph —
+    /// a commit's diff is immutable, so there is nothing to invalidate. Opens
+    /// the HEAD commit's first file, commits again from outside so every graph
+    /// row shifts down one, reloads, and asserts the pane is still up and
+    /// re-anchored to the same commit's NEW row index.
+    fn scenario_diff_survives_reload(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        let (kagi, win) = mount(cx, &repo_path);
+
+        // Select the HEAD row and let the render trigger load its changed
+        // files (`open_main_diff_commit` reads them out of the diff cache).
+        let sha = kagi.update(cx, |app, cx| {
+            app.select(0);
+            cx.notify();
+            app.view().rows[0].id.0.clone()
+        });
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).main_diff.is_some()),
+            "the HEAD commit's first file should open in the main diff pane"
+        );
+
+        // A commit lands from outside: the row the diff was opened from is no
+        // longer row 0.
+        std::fs::write(repo_path.join("README.md"), "# fixture\nthird line\n").unwrap();
+        git(&repo_path, &["commit", "-q", "-am", "third commit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+
+        cx.read(|app| {
+            let app_ref = kagi.read(app);
+            assert_eq!(
+                app_ref.view().rows[1].id.0,
+                sha,
+                "the diffed commit should have shifted to row 1"
+            );
+            let pane = app_ref
+                .main_diff
+                .as_ref()
+                .expect("external reload must not close a commit's diff");
+            match pane.read(app).view.source {
+                MainDiffSource::Commit {
+                    row_index,
+                    file_index,
+                } => assert_eq!(
+                    (row_index, file_index),
+                    (1, 0),
+                    "the pane should be re-anchored to the commit's new row"
+                ),
+                _ => panic!("expected a Commit-sourced diff"),
+            }
+        });
+
+        unmount(cx, kagi, win);
+        eprintln!("[gui-e2e] PASS diff_survives_reload");
+    }
+
+    /// The same rule for the Compare pane and the diff opened out of it: a
+    /// reload used to close both. Compare HEAD against the working tree, open a
+    /// file, land an unrelated commit from outside, and assert the compare list
+    /// and the diff are both still there — re-read, not merely kept.
+    fn scenario_compare_survives_reload(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        // A working-tree change to compare against, plus a second file for the
+        // external commit to touch.
+        std::fs::write(repo_path.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+        let (kagi, win) = mount(cx, &repo_path);
+
+        let head = kagi.update(cx, |app, cx| {
+            let head = app.view().rows[0].id.clone();
+            app.open_compare_with_working_tree(head.clone(), Some(cx));
+            head
+        });
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| app.open_main_diff_compare(0, cx));
+        cx.run_until_parked();
+        assert!(
+            cx.read(
+                |app| kagi.read(app).compare_view.is_some() && kagi.read(app).main_diff.is_some()
+            ),
+            "compare + its file diff should be open"
+        );
+
+        std::fs::write(repo_path.join("other.txt"), "unrelated\n").unwrap();
+        git(&repo_path, &["add", "other.txt"]);
+        git(&repo_path, &["commit", "-q", "-m", "unrelated commit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+
+        cx.read(|app| {
+            let app_ref = kagi.read(app);
+            let compare = app_ref
+                .compare_view
+                .as_ref()
+                .expect("external reload must not close the compare pane");
+            assert_eq!(
+                compare.read(app).view.base,
+                head,
+                "the compare should still be against the same base commit"
+            );
+            let pane = app_ref
+                .main_diff
+                .as_ref()
+                .expect("external reload must not close a compare file diff");
+            assert!(
+                matches!(pane.read(app).view.source, MainDiffSource::Compare { .. }),
+                "the pane should still be compare-sourced"
+            );
+        });
+
+        unmount(cx, kagi, win);
+        eprintln!("[gui-e2e] PASS compare_survives_reload");
+    }
+
+    /// And for a Commit Panel file's diff, which has to be re-read (its content
+    /// really can change): an unrelated external commit leaves it open with
+    /// fresh content, and committing the file itself — nothing left to show —
+    /// closes it rather than freezing a diff the repository no longer has.
+    fn scenario_wip_diff_survives_reload(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        std::fs::write(repo_path.join("README.md"), "# fixture\nwip edit\n").unwrap();
+        let (kagi, win) = mount(cx, &repo_path);
+
+        let panel_path = repo_path.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_local_panel_no_inputs(app, panel_path, cx);
+        });
+        cx.run_until_parked();
+        kagi.update(cx, |app, cx| {
+            app.open_main_diff_wip(CommitPanelFileRef::Unstaged { index: 0 }, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).main_diff.is_some()),
+            "the unstaged file's diff should be open"
+        );
+
+        // An unrelated commit lands: the edit is still uncommitted, so the diff
+        // stays up.
+        std::fs::write(repo_path.join("other.txt"), "unrelated\n").unwrap();
+        git(&repo_path, &["add", "other.txt"]);
+        git(&repo_path, &["commit", "-q", "-m", "unrelated commit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+        cx.read(|app| {
+            let pane = kagi
+                .read(app)
+                .main_diff
+                .as_ref()
+                .expect("external reload must not close an unstaged file's diff");
+            assert!(
+                matches!(pane.read(app).view.source, MainDiffSource::Unstaged { .. }),
+                "the pane should still be unstaged-sourced"
+            );
+        });
+
+        // Now the edit itself is committed from outside: there is no unstaged
+        // diff left, so the pane closes.
+        git(&repo_path, &["commit", "-q", "-am", "commit the wip edit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+        assert!(
+            cx.read(|app| kagi.read(app).main_diff.is_none()),
+            "a file with nothing left to diff should close the pane"
+        );
+
+        unmount(cx, kagi, win);
+        eprintln!("[gui-e2e] PASS wip_diff_survives_reload");
+    }
+
+    /// The Commit Panel's display condition is "this working tree has something
+    /// to list" — the same condition its WIP row appears under. A reload used
+    /// to drop the panel unconditionally, which closed the one the user was
+    /// typing into on every auto-fetch. An unrelated external commit leaves the
+    /// panel (and the typed message) up; committing everything leaves nothing
+    /// to list, so it closes.
+    fn scenario_commit_panel_survives_reload(cx: &mut VisualTestAppContext) {
+        let fixture = build_fixture();
+        let repo_path = fixture.path().canonicalize().unwrap();
+        std::fs::write(repo_path.join("README.md"), "# fixture\nwip edit\n").unwrap();
+        let (kagi, win) = mount(cx, &repo_path);
+
+        let panel_path = repo_path.clone();
+        kagi.update(cx, |app, cx| {
+            e2e::open_local_panel_no_inputs(app, panel_path, cx);
+        });
+        cx.run_until_parked();
+        // No `InputState`s in the runner (see `open_local_panel_no_inputs`), so
+        // the message is the `state.commit_msg` fallback.
+        let panel_entity = cx.read(|app| kagi.read(app).commit_panel.clone().expect("panel"));
+        cx.update(|app| {
+            panel_entity.update(app, |v, _| v.state.commit_msg = "half typed".to_string())
+        });
+        assert!(
+            cx.read(|app| kagi.read(app).commit_panel_open),
+            "the commit panel should be open"
+        );
+
+        // An unrelated commit lands from outside: README.md is still dirty, so
+        // there is still something to list.
+        std::fs::write(repo_path.join("other.txt"), "unrelated\n").unwrap();
+        git(&repo_path, &["add", "other.txt"]);
+        git(&repo_path, &["commit", "-q", "-m", "unrelated commit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+        cx.read(|app| {
+            let app_ref = kagi.read(app);
+            assert!(
+                app_ref.commit_panel_open,
+                "an external commit must not close the panel while the tree is dirty"
+            );
+            let panel = app_ref.commit_panel.as_ref().expect("panel");
+            assert_eq!(
+                panel.read(app).state.commit_msg,
+                "half typed",
+                "the message being typed must survive the reload"
+            );
+        });
+
+        // Everything is committed: nothing left to list, so the panel closes.
+        git(&repo_path, &["commit", "-q", "-am", "commit the wip edit"]);
+        kagi.update(cx, |app, cx| app.reload_external(cx));
+        cx.run_until_parked();
+        assert!(
+            cx.read(
+                |app| !kagi.read(app).commit_panel_open && kagi.read(app).commit_panel.is_none()
+            ),
+            "a clean working tree leaves the panel nothing to list"
+        );
+
+        unmount(cx, kagi, win);
+        eprintln!("[gui-e2e] PASS commit_panel_survives_reload");
     }
 
     /// Issue #468: the Operation Log row list is variable-height

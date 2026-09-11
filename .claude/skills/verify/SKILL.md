@@ -86,6 +86,10 @@ The current suite covers:
 - modal and branch-menu Enter isolation from the selected commit checkout;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - dirty Pull auto-stash success and Pull-failure restoration, including the persistent error modal.
+- reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff
+  re-anchored to its renumbered row, the Compare pane and its file diff re-read, a
+  Commit Panel file diff re-read (closed once nothing is left to show), and the
+  Commit Panel kept while the working tree still has something to list.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual
@@ -139,6 +143,14 @@ PID=$!
 # Select Kagi's layer-0 application window from this listing, then set its ID:
 WID=12345 # Replace with the selected window ID from the listing.
 ```
+
+Two launch pitfalls, both seen in practice. Launch Kagi from an unsandboxed shell:
+started from a sandboxed agent shell the process runs and logs normally, but
+WindowServer never shows its window, so there is nothing to click. And with
+`KAGI_NO_ACTIVATE=1` the window may not be on screen, so `windows --pid` (which
+lists on-screen windows only) prints nothing even though the window exists;
+clicks, keys and `screencapture -l` address the window by ID and still work, so
+take the ID from `CGWindowListCopyWindowInfo([.optionAll], …)` for that PID.
 
 `scripts/pidclick.swift` sends events with `CGEventPostToPid`; it does not move
 the user's pointer or activate another app. Select a window with `windows --pid`,

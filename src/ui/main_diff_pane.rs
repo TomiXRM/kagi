@@ -19,7 +19,7 @@ use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
 use gpui_component::button::Button;
 use gpui_component::Sizable as _;
 
-use super::diff_view::{MainDiffSource, MainDiffView, RowHighlights};
+use super::diff_view::{build_main_diff_view, MainDiffSource, MainDiffView, RowHighlights};
 use super::render_helpers::{new_diff_list_state, render_diff_list};
 use super::KagiApp;
 
@@ -179,5 +179,161 @@ impl KagiApp {
                 pane
             }
         }
+    }
+}
+
+/// Everything a reload needs to put the open diff back on screen. Captured
+/// *before* the new snapshot is installed, because the sweep in
+/// `apply_reload_data` (`invalidate_caches_for_row_renumber`) drops the pane
+/// and renumbers the rows the source points at.
+pub(crate) struct MainDiffRestore {
+    pane: Entity<MainDiffPane>,
+    source: MainDiffSource,
+    /// The file on screen, resolved while the old row indices still held.
+    path: Option<std::path::PathBuf>,
+    /// `Commit` source: the commit its row pointed at.
+    commit: Option<kagi_git::CommitId>,
+    /// `Staged` / `Unstaged` source: the repository the Commit Panel was
+    /// staging into. #473 — a linked worktree's panel must not be re-read from
+    /// the tab's repository.
+    wip_repo: Option<std::path::PathBuf>,
+}
+
+impl KagiApp {
+    /// Take hold of the open diff before a reload sweeps it away. `None` when
+    /// nothing is open.
+    pub(crate) fn capture_main_diff(&self, cx: &Context<Self>) -> Option<MainDiffRestore> {
+        let pane = self.main_diff.clone()?;
+        let source = pane.read(cx).view.source.clone();
+        let path = self.main_diff_source_ref(&source, cx).map(|(p, _)| p);
+        let commit = match source {
+            MainDiffSource::Commit { row_index, .. } => self.commit_id_for_row(row_index),
+            _ => None,
+        };
+        let wip_repo = match source {
+            MainDiffSource::Staged { .. } | MainDiffSource::Unstaged { .. } => {
+                self.commit_panel_repo_path(cx)
+            }
+            _ => None,
+        };
+        Some(MainDiffRestore {
+            pane,
+            source,
+            path,
+            commit,
+            wip_repo,
+        })
+    }
+
+    /// Put the captured diff back, refreshed against the snapshot the reload
+    /// installed. Closing it on every reload is what threw a reader back to the
+    /// graph each time an auto-fetch or the FS watcher fired.
+    ///
+    /// The pane **entity** is reused rather than rebuilt, so its `ListState` —
+    /// the scroll position inside the diff — survives with it. What each source
+    /// needs re-reading differs, and a source that can no longer be resolved
+    /// (the commit left the graph, the file is no longer changed, the read
+    /// errors) stays closed rather than freezing content the repository no
+    /// longer has.
+    pub(crate) fn restore_main_diff(&mut self, prev: MainDiffRestore, cx: &mut Context<Self>) {
+        let MainDiffRestore {
+            pane,
+            source,
+            path,
+            commit,
+            wip_repo,
+        } = prev;
+        match source {
+            // A commit's diff is immutable: nothing to re-read, just re-point
+            // the row the graph renumbered so j/k stepping and the History
+            // button still resolve.
+            MainDiffSource::Commit { file_index, .. } => {
+                let Some(commit) = commit else { return };
+                let Some(&row_index) = self.view().commit_row_index.get(&commit) else {
+                    return;
+                };
+                pane.update(cx, |p, _| {
+                    p.view.source = MainDiffSource::Commit {
+                        row_index,
+                        file_index,
+                    }
+                });
+                self.main_diff = Some(pane);
+            }
+            // The compare list was re-read first (`restore_compare`); find the
+            // same file in it again — its index moves as files enter and leave
+            // the comparison — and re-read the diff into the pane.
+            MainDiffSource::Compare { .. } => {
+                let Some(path) = path else { return };
+                let Some(file_index) = self
+                    .compare_view
+                    .as_ref()
+                    .and_then(|p| p.read(cx).view.files.iter().position(|f| f.path == path))
+                else {
+                    return;
+                };
+                self.main_diff = Some(pane);
+                self.open_main_diff_compare(file_index, cx);
+            }
+            MainDiffSource::Staged { path } => {
+                self.restore_wip_diff(pane, path, true, wip_repo, cx)
+            }
+            MainDiffSource::Unstaged { path } => {
+                self.restore_wip_diff(pane, path, false, wip_repo, cx)
+            }
+            // ADR-0145: the PR conflict preview is computed, with no file
+            // behind it to re-read.
+            MainDiffSource::Synthetic => {}
+        }
+    }
+
+    /// Re-read a Commit Panel file's diff into `pane`. Leaves the pane closed
+    /// when the file has nothing left to show — committed, discarded or staged
+    /// away while the reload was in flight — so a commit still returns the user
+    /// to the graph instead of freezing the diff it just consumed.
+    fn restore_wip_diff(
+        &mut self,
+        pane: Entity<MainDiffPane>,
+        path: std::path::PathBuf,
+        staged: bool,
+        wip_repo: Option<std::path::PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        // #473: read from the repository the panel was staging into, which for
+        // a linked worktree's panel is not the tab's.
+        let foreign = wip_repo
+            .filter(|p| Some(p) != self.repo_path.as_ref())
+            .and_then(|p| kagi_git::Backend::open(&p).ok());
+        let result = {
+            let repo = match (&foreign, self.repo_session.as_ref()) {
+                (Some(backend), _) => backend,
+                (None, Some(session)) => session.backend(),
+                (None, None) => return,
+            };
+            if staged {
+                repo.staged_file_diff(&path)
+            } else {
+                repo.unstaged_file_diff(&path)
+            }
+        };
+        let file_diff = match result {
+            Ok(fd) => fd,
+            Err(e) => {
+                klog!("commit-panel diff refresh error: {}", e);
+                return;
+            }
+        };
+        if file_diff.hunks.is_empty() && !file_diff.is_binary {
+            return;
+        }
+        let source = if staged {
+            MainDiffSource::Staged { path: path.clone() }
+        } else {
+            MainDiffSource::Unstaged { path: path.clone() }
+        };
+        let mut view = build_main_diff_view(&file_diff, &path, 0, source.clone());
+        view.images = self.diff_images_for(&file_diff, &source, &path);
+        self.main_diff = Some(pane);
+        self.show_main_diff(view, cx);
     }
 }

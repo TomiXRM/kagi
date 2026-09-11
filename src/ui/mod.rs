@@ -2017,6 +2017,13 @@ impl KagiApp {
         if persist {
             if let Err(e) = append_oplog(&entry) {
                 klog!("oplog: write failed (non-fatal): {}", e);
+                // "non-fatal" is true of the operation and false of the promise.
+                // The op already happened, but Kagi's reason to exist includes
+                // leaving a record to recover and audit from — and the in-memory
+                // panel below still shows the entry, so nothing looks wrong until
+                // the next launch, when it is simply gone. Say it out loud
+                // (#643 A1).
+                self.push_toast(ToastKind::Error, i18n::oplog_write_failed(&e), cx);
             }
         }
 

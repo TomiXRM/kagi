@@ -130,9 +130,9 @@ pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) ->
         .into_any_element()
 }
 
-/// "Loading…" with the bobbing dots, while the conversation fetch (reviews,
-/// comments, merge status) is still out. Callers keep it outside the scroll
-/// panes: `with_animation` doesn't tick inside one.
+/// "Loading…" with the bobbing dots, while a tab's own fetch is still out
+/// (Review: reviews + comments; Overview: merge status). Callers keep it
+/// outside the scroll panes: `with_animation` doesn't tick inside one.
 pub(super) fn render_loading() -> gpui::Div {
     div()
         .flex()

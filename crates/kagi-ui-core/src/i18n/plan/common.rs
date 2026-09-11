@@ -97,6 +97,10 @@ pub fn note_ja(note: &CommonNote) -> String {
             parts_ja(parts),
             phrase_ja(*op)
         ),
+        CommonNote::SparseExcludedPath { path } => format!(
+            "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。",
+            path
+        ),
         CommonNote::HeadDetached { op } => format!(
             "HEAD が detached 状態です。{} は branch 上でのみ実行できます。",
             op_ja(*op)

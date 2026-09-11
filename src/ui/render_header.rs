@@ -576,111 +576,131 @@ impl KagiApp {
                     .flex_row()
                     .items_center()
                     .flex_shrink_0()
-                    // Pull (↓N chip when behind>0)
-                    .child(
-                        make_btn(
-                            "tb-pull",
-                            "Pull",
-                            gpui_component::Icon::new(gpui_component::IconName::ArrowDown),
-                            toolbar.pull_on,
-                            toolbar.behind,
-                        )
-                        .on_click(pull_click),
-                    )
-                    .child(div().w(theme::scaled_px(2.0)))
-                    // Push (↑N chip when ahead>0)
-                    .child(
-                        make_btn(
-                            "tb-push",
-                            "Push",
-                            gpui_component::Icon::new(gpui_component::IconName::ArrowUp),
-                            toolbar.push_on,
-                            toolbar.ahead,
-                        )
-                        .on_click(push_click),
-                    )
-                    .child(sep())
-                    // Branch
-                    .child(
-                        make_btn(
-                            "tb-branch",
-                            "Branch",
-                            gpui_component::Icon::new(gpui_component::IconName::Plus),
-                            true,
-                            0,
-                        )
-                        .on_click(branch_click),
-                    )
-                    .child(div().w(theme::scaled_px(2.0)))
-                    // Stash
-                    .child(
-                        make_btn(
-                            "tb-stash",
-                            "Stash",
-                            gpui_component::Icon::new(gpui_component::IconName::Inbox),
-                            toolbar.stash_on,
-                            0,
-                        )
-                        .on_click(stash_click),
-                    )
-                    .child(div().w(theme::scaled_px(2.0)))
-                    // Pop
-                    .child(
-                        make_btn(
-                            "tb-pop",
-                            "Pop",
-                            gpui_component::Icon::new(gpui_component::IconName::FolderOpen),
-                            toolbar.pop_on,
-                            0,
-                        )
-                        .on_click(pop_click),
-                    )
-                    .child(sep())
-                    // Undo — operation-history undo (T-UNDOREDO-001). Label fixed; the
-                    // previewed operation summary is shown in the tooltip.
-                    .child(
-                        make_btn(
-                            "tb-undo",
-                            Msg::Undo.t(),
-                            gpui_component::Icon::new(gpui_component::IconName::Undo2),
-                            undo_on,
-                            0,
-                        )
-                        .when_some(undo_tooltip_text, |btn, text| {
-                            btn.tooltip(move |window, cx| {
-                                Tooltip::new(text.clone()).build(window, cx)
-                            })
-                        })
-                        .on_click(undo_click),
-                    )
-                    // Redo — operation-history redo (T-UNDOREDO-001).
-                    .child(
-                        make_btn(
-                            "tb-redo",
-                            Msg::Redo.t(),
-                            gpui_component::Icon::new(gpui_component::IconName::Redo2),
-                            redo_on,
-                            0,
-                        )
-                        .when_some(redo_tooltip_text, |btn, text| {
-                            btn.tooltip(move |window, cx| {
-                                Tooltip::new(text.clone()).build(window, cx)
-                            })
-                        })
-                        .on_click(redo_click),
-                    )
-                    .child(div().w(theme::scaled_px(2.0)))
-                    // Terminal (toggles bottom panel Terminal tab)
-                    .child(
-                        make_btn(
-                            "tb-terminal",
-                            "Terminal",
-                            gpui_component::Icon::new(gpui_component::IconName::SquareTerminal),
-                            terminal_on,
-                            0,
-                        )
-                        .on_click(terminal_click),
-                    ),
+                    // Pull … Terminal belong to Graph, so only Graph draws them;
+                    // the other modes get this slot for their own actions, added
+                    // when each mode needs them (user request).
+                    .when(mode == WorkspaceMode::Graph, |el| {
+                        el.child(super::e2e::measure_control(
+                            "tb-repo-actions",
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                // Pull (↓N chip when behind>0)
+                                .child(
+                                    make_btn(
+                                        "tb-pull",
+                                        "Pull",
+                                        gpui_component::Icon::new(
+                                            gpui_component::IconName::ArrowDown,
+                                        ),
+                                        toolbar.pull_on,
+                                        toolbar.behind,
+                                    )
+                                    .on_click(pull_click),
+                                )
+                                .child(div().w(theme::scaled_px(2.0)))
+                                // Push (↑N chip when ahead>0)
+                                .child(
+                                    make_btn(
+                                        "tb-push",
+                                        "Push",
+                                        gpui_component::Icon::new(
+                                            gpui_component::IconName::ArrowUp,
+                                        ),
+                                        toolbar.push_on,
+                                        toolbar.ahead,
+                                    )
+                                    .on_click(push_click),
+                                )
+                                .child(sep())
+                                // Branch
+                                .child(
+                                    make_btn(
+                                        "tb-branch",
+                                        "Branch",
+                                        gpui_component::Icon::new(gpui_component::IconName::Plus),
+                                        true,
+                                        0,
+                                    )
+                                    .on_click(branch_click),
+                                )
+                                .child(div().w(theme::scaled_px(2.0)))
+                                // Stash
+                                .child(
+                                    make_btn(
+                                        "tb-stash",
+                                        "Stash",
+                                        gpui_component::Icon::new(gpui_component::IconName::Inbox),
+                                        toolbar.stash_on,
+                                        0,
+                                    )
+                                    .on_click(stash_click),
+                                )
+                                .child(div().w(theme::scaled_px(2.0)))
+                                // Pop
+                                .child(
+                                    make_btn(
+                                        "tb-pop",
+                                        "Pop",
+                                        gpui_component::Icon::new(
+                                            gpui_component::IconName::FolderOpen,
+                                        ),
+                                        toolbar.pop_on,
+                                        0,
+                                    )
+                                    .on_click(pop_click),
+                                )
+                                .child(sep())
+                                // Undo — operation-history undo (T-UNDOREDO-001). Label fixed; the
+                                // previewed operation summary is shown in the tooltip.
+                                .child(
+                                    make_btn(
+                                        "tb-undo",
+                                        Msg::Undo.t(),
+                                        gpui_component::Icon::new(gpui_component::IconName::Undo2),
+                                        undo_on,
+                                        0,
+                                    )
+                                    .when_some(undo_tooltip_text, |btn, text| {
+                                        btn.tooltip(move |window, cx| {
+                                            Tooltip::new(text.clone()).build(window, cx)
+                                        })
+                                    })
+                                    .on_click(undo_click),
+                                )
+                                // Redo — operation-history redo (T-UNDOREDO-001).
+                                .child(
+                                    make_btn(
+                                        "tb-redo",
+                                        Msg::Redo.t(),
+                                        gpui_component::Icon::new(gpui_component::IconName::Redo2),
+                                        redo_on,
+                                        0,
+                                    )
+                                    .when_some(redo_tooltip_text, |btn, text| {
+                                        btn.tooltip(move |window, cx| {
+                                            Tooltip::new(text.clone()).build(window, cx)
+                                        })
+                                    })
+                                    .on_click(redo_click),
+                                )
+                                .child(div().w(theme::scaled_px(2.0)))
+                                // Terminal (toggles bottom panel Terminal tab)
+                                .child(
+                                    make_btn(
+                                        "tb-terminal",
+                                        "Terminal",
+                                        gpui_component::Icon::new(
+                                            gpui_component::IconName::SquareTerminal,
+                                        ),
+                                        terminal_on,
+                                        0,
+                                    )
+                                    .on_click(terminal_click),
+                                ),
+                        ))
+                    }),
             ) // ── end CENTRE cluster ──
             // ── RIGHT column (flex_1, equal width to the LEFT column) ──
             // Settings — now a standard toolbar button (icon + "Settings"

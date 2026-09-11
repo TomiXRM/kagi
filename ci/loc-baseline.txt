@@ -32,7 +32,7 @@ src/ui/operations/conflict.rs 1011
 src/ui/operations/modal_state.rs 1142
 src/ui/pr_mode.rs 2387
 src/ui/render.rs 908
-src/ui/render_header.rs 807
+src/ui/render_header.rs 827
 src/ui/settings_view.rs 823
 src/ui/sidebar.rs 2008
 src/ui/tabs.rs 1266

@@ -61,6 +61,9 @@ pub struct PrTab {
     pub reviews: Vec<Review>,
     pub comments: Vec<Comment>,
     pub line_comments: Vec<ReviewComment>,
+    /// The background conversation fetch has come back (ok or not). Until
+    /// then the empty lists above mean "not yet", not "none".
+    pub conversation_loaded: bool,
     /// ADR-0145: conflicts a merge would produce, computed locally on first
     /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
     /// = computed and clean, which is a different thing to say than "unknown".
@@ -230,6 +233,7 @@ impl KagiApp {
             reviews: Vec::new(),
             comments: Vec::new(),
             line_comments: Vec::new(),
+            conversation_loaded: false,
             conflicts: None,
             conflict_selected: None,
             conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
@@ -273,13 +277,18 @@ impl KagiApp {
                     (convo, lines, merge_status)
                 })
                 .await;
-            let (Ok((reviews, comments)), lines, merge_status) = result else {
-                return;
-            };
-            let line_comments = lines.unwrap_or_default();
+            let (convo, lines, merge_status) = result;
             let _ = this.update(acx, |app, cx| {
                 if let Some(m) = app.pr_mode.as_mut() {
                     if let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) {
+                        // Stop the loader even on failure; the pane then falls
+                        // back to its "no reviews" wording as before.
+                        t.conversation_loaded = true;
+                        cx.notify();
+                        let Ok((reviews, comments)) = convo else {
+                            return;
+                        };
+                        let line_comments = lines.unwrap_or_default();
                         klog!(
                             "pr-mode: conversation #{} reviews={} comments={} line={}",
                             number,
@@ -299,7 +308,6 @@ impl KagiApp {
                         t.comments = comments;
                         t.line_comments = line_comments;
                         t.merge_status = merge_status;
-                        cx.notify();
                     }
                 }
             });
@@ -1121,6 +1129,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         conflict_scroll,
         conflict_at,
         merge_status,
+        conversation_loaded,
     ) = {
         let m = app.pr_mode.as_ref().unwrap();
         let t = &m.tabs[ix];
@@ -1134,6 +1143,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.conflict_scroll.clone(),
             t.conflict_at,
             t.merge_status.clone(),
+            t.conversation_loaded,
         )
     };
     let show_description = view == PrView::Overview;
@@ -1518,6 +1528,12 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     if view != PrView::Conflicts {
         col = col.child(strip);
     }
+    if show_review && !conversation_loaded {
+        let pane = super::pr_conversation::render_loading()
+            .flex_1()
+            .items_start();
+        return col.child(pane.pt_8()).into_any_element();
+    }
     if show_review {
         return col
             .child(super::pr_conversation::render_conversation(
@@ -1532,6 +1548,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     if show_description {
         // #347: the merge-status card above the description — the four
         // `mergeStateStatus` actions, queue position, and what is still missing.
+        if !conversation_loaded {
+            col = col.child(super::pr_conversation::render_loading());
+        }
         if let Some(status) = &merge_status {
             let view = super::pr_merge_status::view_from(status, pr.review);
             if let Some(card) = super::pr_merge_status::render(&view, cx) {

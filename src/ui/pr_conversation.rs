@@ -130,6 +130,27 @@ pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) ->
         .into_any_element()
 }
 
+/// "Loading…" with the bobbing dots, while the conversation fetch (reviews,
+/// comments, merge status) is still out. Callers keep it outside the scroll
+/// panes: `with_animation` doesn't tick inside one.
+pub(super) fn render_loading() -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .py_3()
+        .bg(rgb(card_pane_bg()))
+        .child(super::render_body::render_loading_dots())
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(Msg::EditorWorkspaceLoading.t())),
+        )
+}
+
 /// The review conversation: submitted reviews and issue comments, newest
 /// last, each as a card with the author's verdict. Bodies go through the same
 /// markdown pipeline (and the same sanitiser) as the description.

@@ -586,6 +586,27 @@ pub(super) fn loading_dot_lift(reduce_motion: bool, phase: f32, delta: f32) -> f
 }
 
 fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
+    div()
+        .flex_1()
+        .h_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .bg(rgb(theme().bg_base))
+        .child(render_loading_dots())
+        .child(
+            div()
+                .text_lg()
+                .text_color(rgb(theme().text_sub))
+                .child(label),
+        )
+}
+
+/// The three bobbing dots alone, for panes that load something smaller than a
+/// whole tab (the PR conversation). Same outside-a-scroll-container rule.
+pub(super) fn render_loading_dots() -> gpui::Div {
     use gpui::AnimationExt as _;
     let reduce_motion = theme::reduce_motion();
     // Commit-node colors: branch / accent / success — reads as a tiny graph.
@@ -618,22 +639,7 @@ fn render_loading_placeholder(label: SharedString) -> impl IntoElement {
         };
         dots = dots.child(dot);
     }
-    div()
-        .flex_1()
-        .h_full()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_3()
-        .bg(rgb(theme().bg_base))
-        .child(dots)
-        .child(
-            div()
-                .text_lg()
-                .text_color(rgb(theme().text_sub))
-                .child(label),
-        )
+    dots
 }
 
 #[cfg(test)]

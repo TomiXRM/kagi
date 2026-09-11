@@ -43,6 +43,50 @@ pub use kagi_domain::diff::{DiffLine, DiffLineKind, FileDiff, Hunk};
 // Public API
 // ────────────────────────────────────────────────────────────
 
+/// Turn a libgit2 error into a [`GitError`], naming partial clone when that is
+/// what actually went wrong.
+///
+/// libgit2 has no promisor support: in a partial clone it cannot fetch an
+/// absent object, where `git` downloads it on demand. The raw message is
+/// `object not found - cannot read header for (<oid>)`, which tells the user
+/// nothing about why an object is missing from their own repository or what to
+/// do about it (#677).
+///
+/// Only the absent-object case is reinterpreted. Everything else keeps the
+/// libgit2 wording, so a genuinely corrupt repository is not mislabelled.
+fn diff_error(repo: &Repository, error: &git2::Error) -> GitError {
+    let absent =
+        error.class() == git2::ErrorClass::Odb && error.code() == git2::ErrorCode::NotFound;
+    if absent && is_partial_clone(repo) {
+        return GitError::Blocked(Box::new(kagi_domain::plan_note::PlanNote::Common(
+            kagi_domain::plan_note::CommonNote::PartialCloneObjectMissing {
+                detail: error.message().to_string(),
+            },
+        )));
+    }
+    GitError::Other(error.message().to_string())
+}
+
+/// Whether the repository was cloned with an object filter.
+///
+/// `git clone --filter=...` records `remote.<name>.promisor=true` alongside the
+/// filter it used; that flag is the marker Git itself keys off.
+fn is_partial_clone(repo: &Repository) -> bool {
+    let Ok(config) = repo.config() else {
+        return false;
+    };
+    let Ok(mut entries) = config.entries(Some("remote.*.promisor")) else {
+        return false;
+    };
+    let mut found = false;
+    while let Some(Ok(entry)) = entries.next() {
+        if entry.value() == Ok("true") {
+            found = true;
+        }
+    }
+    found
+}
+
 /// Return the list of files changed in `id` relative to its first parent.
 ///
 /// * For a **root commit** (no parents) all files are returned as
@@ -58,24 +102,16 @@ pub use kagi_domain::diff::{DiffLine, DiffLineKind, FileDiff, Hunk};
 /// Returns [`GitError::Other`] on any libgit2 failure.
 pub fn commit_changed_files(repo: &Repository, id: &CommitId) -> Result<Vec<FileStatus>, GitError> {
     // 1. Resolve the commit object.
-    let oid = git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
-    let commit = repo
-        .find_commit(oid)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let oid = git2::Oid::from_str(&id.0).map_err(|e| diff_error(repo, &e))?;
+    let commit = repo.find_commit(oid).map_err(|e| diff_error(repo, &e))?;
 
     // 2. Resolve the commit's own tree.
-    let new_tree = commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let new_tree = commit.tree().map_err(|e| diff_error(repo, &e))?;
 
     // 3. Resolve the first parent's tree (None for root commits).
     let parent_tree = if commit.parent_count() > 0 {
-        let parent = commit
-            .parent(0)
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
-        let tree = parent
-            .tree()
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let parent = commit.parent(0).map_err(|e| diff_error(repo, &e))?;
+        let tree = parent.tree().map_err(|e| diff_error(repo, &e))?;
         Some(tree)
     } else {
         // Root commit: diff against empty tree.
@@ -86,13 +122,13 @@ pub fn commit_changed_files(repo: &Repository, id: &CommitId) -> Result<Vec<File
     //    old_tree=None is equivalent to the empty tree in libgit2.
     let mut diff: Diff<'_> = repo
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), None)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+        .map_err(|e| diff_error(repo, &e))?;
 
     // 5. Enable rename detection so Added+Deleted pairs collapse into Renamed.
     let mut find_opts = DiffFindOptions::new();
     find_opts.renames(true);
     diff.find_similar(Some(&mut find_opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+        .map_err(|e| diff_error(repo, &e))?;
 
     // 6. Convert deltas to FileStatus entries.
     let mut result = Vec::new();
@@ -163,24 +199,14 @@ pub fn commit_file_diff(
     path: &Path,
 ) -> Result<FileDiff, GitError> {
     // 1. Resolve the commit.
-    let oid = git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
-    let commit = repo
-        .find_commit(oid)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let oid = git2::Oid::from_str(&id.0).map_err(|e| diff_error(repo, &e))?;
+    let commit = repo.find_commit(oid).map_err(|e| diff_error(repo, &e))?;
 
-    let new_tree = commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let new_tree = commit.tree().map_err(|e| diff_error(repo, &e))?;
 
     let parent_tree = if commit.parent_count() > 0 {
-        let parent = commit
-            .parent(0)
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
-        Some(
-            parent
-                .tree()
-                .map_err(|e| GitError::Other(e.message().to_string()))?,
-        )
+        let parent = commit.parent(0).map_err(|e| diff_error(repo, &e))?;
+        Some(parent.tree().map_err(|e| diff_error(repo, &e))?)
     } else {
         None
     };
@@ -194,9 +220,9 @@ pub fn commit_file_diff(
 
     let mut diff: Diff<'_> = repo
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(&mut diff_opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+        .map_err(|e| diff_error(repo, &e))?;
 
-    diff_to_file_diff(&mut diff, path)
+    diff_to_file_diff(repo, &mut diff, path)
 }
 
 /// Return files changed between two commits (`a` → `b`) without touching the
@@ -208,16 +234,12 @@ pub fn compare_commits(
 ) -> Result<Vec<FileStatus>, GitError> {
     let a_commit = find_commit(repo, a)?;
     let b_commit = find_commit(repo, b)?;
-    let a_tree = a_commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let b_tree = b_commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let a_tree = a_commit.tree().map_err(|e| diff_error(repo, &e))?;
+    let b_tree = b_commit.tree().map_err(|e| diff_error(repo, &e))?;
 
     let mut diff = repo
         .diff_tree_to_tree(Some(&a_tree), Some(&b_tree), None)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+        .map_err(|e| diff_error(repo, &e))?;
     diff_to_file_statuses(&mut diff)
 }
 
@@ -230,20 +252,16 @@ pub fn compare_file_diff(
 ) -> Result<FileDiff, GitError> {
     let a_commit = find_commit(repo, a)?;
     let b_commit = find_commit(repo, b)?;
-    let a_tree = a_commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let b_tree = b_commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let a_tree = a_commit.tree().map_err(|e| diff_error(repo, &e))?;
+    let b_tree = b_commit.tree().map_err(|e| diff_error(repo, &e))?;
 
     let mut diff_opts = DiffOptions::new();
     diff_opts.pathspec(super::path_to_pathspec(path)?);
     diff_opts.disable_pathspec_match(true); // #292: literal match.
     let mut diff = repo
         .diff_tree_to_tree(Some(&a_tree), Some(&b_tree), Some(&mut diff_opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    diff_to_file_diff(&mut diff, path)
+        .map_err(|e| diff_error(repo, &e))?;
+    diff_to_file_diff(repo, &mut diff, path)
 }
 
 /// Return files changed between a commit and the current working tree,
@@ -253,14 +271,12 @@ pub fn compare_commit_to_workdir(
     a: &CommitId,
 ) -> Result<Vec<FileStatus>, GitError> {
     let a_commit = find_commit(repo, a)?;
-    let a_tree = a_commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let a_tree = a_commit.tree().map_err(|e| diff_error(repo, &e))?;
 
     let mut diff_opts = workdir_compare_options();
     let mut diff = repo
         .diff_tree_to_workdir_with_index(Some(&a_tree), Some(&mut diff_opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+        .map_err(|e| diff_error(repo, &e))?;
     diff_to_file_statuses(&mut diff)
 }
 
@@ -272,26 +288,23 @@ pub fn compare_commit_to_workdir_file_diff(
     path: &Path,
 ) -> Result<FileDiff, GitError> {
     let a_commit = find_commit(repo, a)?;
-    let a_tree = a_commit
-        .tree()
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    let a_tree = a_commit.tree().map_err(|e| diff_error(repo, &e))?;
 
     let mut diff_opts = workdir_compare_options();
     diff_opts.pathspec(super::path_to_pathspec(path)?);
     diff_opts.disable_pathspec_match(true); // #292: literal match.
     let mut diff = repo
         .diff_tree_to_workdir_with_index(Some(&a_tree), Some(&mut diff_opts))
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    diff_to_file_diff(&mut diff, path)
+        .map_err(|e| diff_error(repo, &e))?;
+    diff_to_file_diff(repo, &mut diff, path)
 }
 
 fn find_commit<'repo>(
     repo: &'repo Repository,
     id: &CommitId,
 ) -> Result<git2::Commit<'repo>, GitError> {
-    let oid = git2::Oid::from_str(&id.0).map_err(|e| GitError::Other(e.message().to_string()))?;
-    repo.find_commit(oid)
-        .map_err(|e| GitError::Other(e.message().to_string()))
+    let oid = git2::Oid::from_str(&id.0).map_err(|e| diff_error(repo, &e))?;
+    repo.find_commit(oid).map_err(|e| diff_error(repo, &e))
 }
 
 fn workdir_compare_options() -> DiffOptions {
@@ -339,19 +352,27 @@ fn file_status_from_delta(delta: &git2::DiffDelta<'_>) -> FileStatus {
     FileStatus { path, change }
 }
 
-fn diff_to_file_diff(diff: &mut Diff<'_>, path: &Path) -> Result<FileDiff, GitError> {
+fn diff_to_file_diff(
+    repo: &Repository,
+    diff: &mut Diff<'_>,
+    path: &Path,
+) -> Result<FileDiff, GitError> {
     let mut find_opts = DiffFindOptions::new();
     find_opts.renames(true);
     diff.find_similar(Some(&mut find_opts))
         .map_err(|e| GitError::Other(e.message().to_string()))?;
 
-    patch_to_file_diff(diff, path)
+    patch_to_file_diff(repo, diff, path)
 }
 
 /// Convert the selected delta without changing the caller's rename/pathspec policy.
 /// Commit, compare and staging diffs share this conversion; conflicted worktree
 /// diffs use the same hunk decoder with their explicit ours-to-worktree patch.
-pub(crate) fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<FileDiff, GitError> {
+pub(crate) fn patch_to_file_diff(
+    repo: &Repository,
+    diff: &git2::Diff<'_>,
+    path: &Path,
+) -> Result<FileDiff, GitError> {
     // Never fall back to delta 0: a missing exact match must not show another file.
     let Some(delta_idx) = diff.deltas().position(|delta| {
         delta.new_file().path() == Some(path) || delta.old_file().path() == Some(path)
@@ -365,8 +386,7 @@ pub(crate) fn patch_to_file_diff(diff: &git2::Diff<'_>, path: &Path) -> Result<F
         });
     };
 
-    let patch = git2::Patch::from_diff(diff, delta_idx)
-        .map_err(|e| GitError::Other(format!("Patch::from_diff failed: {}", e.message())))?;
+    let patch = git2::Patch::from_diff(diff, delta_idx).map_err(|e| diff_error(repo, &e))?;
     // libgit2 inspects content lazily. Re-read the delta after materializing the
     // patch rather than using flags copied before inspection or guessing from
     // zero hunks (which also occur for empty files, renames and mode-only changes).

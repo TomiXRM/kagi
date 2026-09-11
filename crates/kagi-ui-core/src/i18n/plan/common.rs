@@ -97,6 +97,10 @@ pub fn note_ja(note: &CommonNote) -> String {
             parts_ja(parts),
             phrase_ja(*op)
         ),
+        CommonNote::PartialCloneObjectMissing { detail } => format!(
+            "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。`git` は不足 object を必要に応じて取得しますが、Kagi は取得しません。",
+            detail
+        ),
         CommonNote::SparseExcludedPath { path } => format!(
             "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。",
             path

@@ -177,6 +177,12 @@ fn execute_snapshot_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessErro
     require_log_dir()?;
     let mut stages = Vec::with_capacity(10);
     let mut total_ns = 0u128;
+    let mut worktrees = 0usize;
+    let mut commits = 0usize;
+    let mut branches = 0usize;
+    let mut remote_branches = 0usize;
+    let mut tags = 0usize;
+    let mut stashes = 0usize;
     let (status_stage, status_output) = snapshot_cli_stage(
         context,
         "status",
@@ -266,8 +272,24 @@ fn execute_snapshot_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessErro
             ][..],
         ),
     ] {
-        let (stage, _) = snapshot_cli_stage(context, name, args)?;
+        let (stage, output) = snapshot_cli_stage(context, name, args)?;
         total_ns += stage_wall_ns(&stage);
+        match name {
+            "worktrees" => {
+                worktrees = output
+                    .stdout
+                    .lines()
+                    .filter(|line| line.starts_with("worktree "))
+                    .count();
+            }
+            "commits" => commits = output.stdout.lines().count(),
+            "branches" => branches = output.stdout.lines().count(),
+            "remote-branches" => remote_branches = output.stdout.lines().count(),
+            "tags" => tags = output.stdout.lines().count(),
+            "stashes" => stashes = output.stdout.lines().count(),
+            "head-symbolic-ref" | "head-oid" => {}
+            _ => unreachable!("unexpected snapshot CLI information stage: {name}"),
+        }
         stages.push(stage);
     }
 
@@ -322,6 +344,12 @@ fn execute_snapshot_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessErro
         ],
         "fundamentally_unavailable_information": [],
         "information": {
+            "commits": commits,
+            "branches": branches,
+            "remote_branches": remote_branches,
+            "tags": tags,
+            "stashes": stashes,
+            "worktrees": worktrees,
             "status": status,
             "last_fetch_secs": last_fetch_secs,
         },

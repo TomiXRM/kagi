@@ -226,12 +226,21 @@ fn execute_snapshot_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessErro
             &["--no-optional-locks", "worktree", "list", "--porcelain"][..],
         ),
         (
+            // `--all` is the obvious spelling and it is wrong here: it includes
+            // `refs/stash`, so a stash's own two commits ("On <branch>: ..."
+            // and "index on <branch>: ...") are counted as repository history.
+            // Measured on a fixture with one stash: `--all` reported 42 where
+            // libgit2's snapshot reported 40 (`RPT-627 F-17`). Kagi draws
+            // stashes as their own rows, so the libgit2 reading is the one the
+            // product wants. Name the ref classes instead.
             "commits",
             &[
                 "--no-optional-locks",
                 "rev-list",
                 "--parents",
-                "--all",
+                "--branches",
+                "--tags",
+                "--remotes",
                 "--max-count=10000",
             ][..],
         ),

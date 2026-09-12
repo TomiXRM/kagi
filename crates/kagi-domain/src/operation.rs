@@ -230,6 +230,18 @@ pub enum OperationOutcome {
     },
     /// A PR review suggestion applied to the working tree (#351).
     Suggestion(SuggestionOutcome),
+    /// Branch Cleanup's per-branch results (ADR-0128). Not dispatched through
+    /// [`Operation`] — the batch is its own execute — but it rides the same
+    /// run-family completion so an unconfirmed delete lands in reconcile.
+    BranchCleanup(crate::branch_cleanup::CleanupOutcome),
+    /// `gh pr merge`'s own words for a merge the receipt calls done (ADR-0149).
+    /// Like Branch Cleanup, a non-`Operation` write that rides the run family.
+    /// `confirmed` is false when the merge landed but a later step (branch
+    /// deletion) did not answer — merged, yet not finished.
+    PrMerge {
+        detail: String,
+        confirmed: bool,
+    },
     /// Deleted branch tip retained by a mandatory commit recovery ref (#584).
     DeleteBranch {
         name: String,

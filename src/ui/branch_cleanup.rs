@@ -290,124 +290,72 @@ impl KagiApp {
             );
             return;
         }
-        if self.reject_if_busy(cx) {
-            return;
-        }
-        // ADR-0196 Wave 3: admission is the write lease, so a cleanup holds
-        // quit and tab-close like every migrated family.
-        let guard = match self.admit_write("branch-cleanup", &repo_path) {
-            Ok(guard) => guard,
-            Err(crate::app::AdmissionError::Identity(error)) => {
-                // The repository could not be opened, so no backend will ever
-                // record this attempt — the UI is its recorder (ADR-0149).
-                let err_msg = i18n::op_failed(i18n::Op::Cleanup, error);
-                self.record_op_persist(
-                    "branch-cleanup",
-                    modal.plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                if let Some(m) = self_modal_with_error(&modal, &err_msg) {
-                    self.set_branch_cleanup_modal(m);
-                }
-                return;
-            }
-            Err(error) => {
-                self.report_admission_refusal(error, cx);
-                return;
-            }
-        };
-        self.clear_branch_cleanup_modal();
-        let bg_path = repo_path.clone();
-        let plan = modal.plan.clone();
-        let targets = modal.targets.clone();
-        let task = cx.background_spawn(async move {
-            match kagi_git::Backend::open(&bg_path) {
-                Ok(backend) => backend.execute_delete_merged_branches(&plan, &targets),
-                Err(error) => {
-                    // No backend exists to record this failed attempt. Persist
-                    // before returning across the tab-owned completion guard.
-                    let entry = kagi_git::oplog::OpLogEntry::new(
-                        "branch-cleanup",
-                        bg_path.display().to_string(),
-                        plan.current.clone(),
-                        kagi_git::oplog::OpOutcome::Failed {
-                            error: format!("branch-cleanup failed: {error}"),
-                        },
-                    );
-                    kagi_git::backend::recording::CleanupReport {
-                        result: Err(error),
-                        recording: kagi_git::backend::recording::finalize(entry),
-                    }
-                }
-            }
-        });
+        // ADR-0196 Wave 3: the cleanup rides the run family. `finish_run`
+        // admits it (lease + owner stamp), presents the backend's receipt, and
+        // — the reason it is here rather than on a standalone guard — hands the
+        // completion to `apply`, which parks a reconcile entry and keeps the
+        // lease when the batch delete's termination is unconfirmed (ADR-0177).
+        let (bg_path, bg_plan, bg_targets) =
+            (repo_path.clone(), modal.plan.clone(), modal.targets.clone());
         let notice_repo = repo_path.clone();
-        self.finish_op_on_main_settled(
+        let dispatched = self.finish_run(
             cx,
-            task,
-            // The deletions and their receipt are durable before this arrives;
-            // settle the lease and the failed-append notice whatever the tab is
-            // doing now (#501).
-            move |app, report: &kagi_git::backend::recording::CleanupReport, _cx| {
-                // `complete_git` retains the lease for an unconfirmed
-                // termination: the deletes may still be in flight (ADR-0177).
-                guard.complete_git(&report.result);
-                app.refresh_write_busy();
-                app.notice_recording_failure("branch-cleanup", &report.recording, &notice_repo);
-                if let kagi_git::oplog::OpOutcome::Unknown { evidence, .. } =
-                    &report.recording.entry().outcome
-                {
-                    app.report_unknown_notice(&notice_repo, evidence.clone());
-                }
+            "branch-cleanup",
+            i18n::Op::Cleanup,
+            modal.plan.clone(),
+            repo_path,
+            move || {
+                // An open failure is the job's own to record (`RunJob::run`).
+                let backend = kagi_git::Backend::open(&bg_path)
+                    .map_err(|e| i18n::op_failed(i18n::Op::Cleanup, e))?;
+                Ok(backend.execute_delete_merged_branches(&bg_plan, &bg_targets))
             },
-            move |app, report, cx| {
-                // The backend recorded this attempt, recovery OIDs and all:
-                // present that receipt, never a UI copy of it.
-                app.present_recorded(&report.recording, cx);
-                match report.result {
-                    Ok(outcome) => {
-                        klog!(
-                            "executed: branch-cleanup deleted={} failed={}",
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(kagi_git::OperationOutcome::BranchCleanup(outcome)) => {
+                    klog!(
+                        "executed: branch-cleanup deleted={} failed={}",
+                        outcome.deleted.len(),
+                        outcome.failed.len()
+                    );
+                    if outcome.failed.is_empty() {
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "branch-cleanup: {} deleted, {} failed",
                             outcome.deleted.len(),
                             outcome.failed.len()
-                        );
-                        if outcome.failed.is_empty() {
-                            app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                                "branch-cleanup: {} deleted, {} failed",
-                                outcome.deleted.len(),
-                                outcome.failed.len()
-                            )));
-                        } else {
-                            // Show completed halves and failures together, not a retry
-                            // of the original batch: some refs may already be deleted.
-                            app.bottom_panel_open = true;
-                            app.bottom_tab = BottomTab::OperationLog;
-                            if let Some(panel) = app.op_log.clone() {
-                                panel.update(cx, |panel, cx| {
-                                    panel.toggle_expanded(0);
-                                    cx.notify();
-                                });
-                            }
+                        )));
+                    } else {
+                        // Show completed halves and failures together, not a retry
+                        // of the original batch: some refs may already be deleted.
+                        app.bottom_panel_open = true;
+                        app.bottom_tab = BottomTab::OperationLog;
+                        if let Some(panel) = app.op_log.clone() {
+                            panel.update(cx, |panel, cx| {
+                                panel.toggle_expanded(0);
+                                cx.notify();
+                            });
                         }
-                        app.reload(cx);
                     }
-                    // An unconfirmed termination is not a retryable failure:
-                    // the modal is a retry affordance, so it stays closed and
-                    // the Unknown receipt (plus its notice) stands alone.
-                    Err(kagi_git::GitError::TerminationUnknown(_)) => {}
-                    Err(e) => {
-                        let err_msg = i18n::op_failed(i18n::Op::Cleanup, e);
-                        if let Some(m) = self_modal_with_error(&modal, &err_msg) {
-                            app.set_branch_cleanup_modal(m);
-                        }
+                }
+                Ok(_) => {}
+                // An unconfirmed termination is not a retryable failure: the
+                // modal is a retry affordance, so it stays closed. The lease is
+                // held and the reconcile entry is parked; the notice says so.
+                Err(failure)
+                    if failure.code == kagi_git::oplog::FailureCode::TerminationUnknown =>
+                {
+                    app.report_unknown_notice(&notice_repo, failure.message);
+                }
+                Err(failure) => {
+                    if let Some(m) = self_modal_with_error(&modal, &failure.message) {
+                        app.set_branch_cleanup_modal(m);
                     }
                 }
             },
         );
+        if dispatched {
+            self.clear_branch_cleanup_modal();
+        }
     }
 }
 

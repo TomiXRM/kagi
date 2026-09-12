@@ -1600,12 +1600,14 @@ impl Backend {
     /// Branch Cleanup (ADR-0128): delete the targeted branches (remote halves
     /// first), re-verifying every tip OID. Per-branch failures are collected
     /// in the outcome, not returned as `Err`. Records every attempt before
-    /// returning, and hands that receipt back with it (ADR-0196 Wave 3).
+    /// returning, and hands that receipt back on the run family's own
+    /// [`RunReport`] — so an unconfirmed delete reaches `apply`, keeps its
+    /// lease and parks a reconcile entry like every other write (ADR-0196).
     pub fn execute_delete_merged_branches(
         &self,
         plan: &OperationPlan,
         targets: &[ops::CleanupDeleteTarget],
-    ) -> recording::CleanupReport {
+    ) -> recording::RunReport {
         self.execute_delete_merged_branches_with(plan, targets, crate::cli::run_git)
     }
 
@@ -1618,7 +1620,7 @@ impl Backend {
         plan: &OperationPlan,
         targets: &[ops::CleanupDeleteTarget],
         run_git: ops::GitRunner,
-    ) -> recording::CleanupReport {
+    ) -> recording::RunReport {
         let result = self.require_trust().and_then(|()| {
             ops::execute_delete_merged_branches_with(&self.repo, &self.path, plan, targets, run_git)
         });
@@ -1674,9 +1676,13 @@ impl Backend {
         );
         let result = match unknown {
             Some(reason) => Err(GitError::TerminationUnknown(reason)),
-            None => result,
+            None => result.map(OperationOutcome::BranchCleanup),
         };
-        recording::CleanupReport { result, recording }
+        recording::RunReport {
+            result,
+            recording,
+            stash: None,
+        }
     }
 
     pub fn plan_discard(&self, paths: &[String]) -> Result<OperationPlan, GitError> {

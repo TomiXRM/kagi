@@ -25,6 +25,9 @@ impl TransportHolds {
     pub(crate) fn contains(&self, owner: &Path, operation: &str) -> bool {
         self.0.contains(&(owner.to_path_buf(), operation.into()))
     }
+    fn hold(&mut self, owner: &Path, operation: &str) {
+        self.0.insert((owner.to_path_buf(), operation.into()));
+    }
 }
 impl KagiApp {
     pub(crate) fn settle_transport(&mut self, owner: &Path, operation: &str, outcome: &OpOutcome) {
@@ -42,6 +45,20 @@ impl KagiApp {
                 ),
             );
         }
+    }
+
+    /// Hold from a caller that already knows the completion was indeterminate
+    /// — a run-family `on_done` sees the typed outcome, not the receipt
+    /// (ADR-0196 Wave 3). Same hold, same notice as [`Self::settle_transport`].
+    pub(crate) fn hold_transport(&mut self, owner: &Path, operation: &str, evidence: &str) {
+        self.transport_holds.hold(owner, operation);
+        self.report_unknown_notice(
+            owner,
+            format!(
+                "{operation}: {evidence}. {}",
+                crate::ui::i18n::Msg::TransportRetryHeld.t()
+            ),
+        );
     }
 
     pub(crate) fn reject_transport_hold(&mut self, owner: &Path, operation: &str) -> bool {

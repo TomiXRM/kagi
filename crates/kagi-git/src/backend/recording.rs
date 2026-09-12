@@ -25,17 +25,6 @@ impl Recording {
     }
 }
 
-/// A Branch Cleanup attempt plus the receipt written for it (ADR-0196 Wave 3).
-/// The deletions are already durable when this returns, so the UI presents the
-/// `recording` instead of re-deriving an entry from `result` (the two used to
-/// map the same outcome twice, and only the backend's copy carried the actor
-/// and worktree the log is read by).
-#[derive(Debug)]
-pub struct CleanupReport {
-    pub result: Result<ops::CleanupOutcome, GitError>,
-    pub recording: Recording,
-}
-
 #[derive(Clone, Debug)]
 pub struct RunReport {
     pub result: Result<OperationOutcome, GitError>,

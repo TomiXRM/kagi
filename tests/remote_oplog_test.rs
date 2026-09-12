@@ -93,7 +93,19 @@ fn remote_drop_persists_recovery_and_failed_attempt_before_returning() {
     std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
     std::env::set_var("KAGI_LOG_DIR", &logs);
     let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
-    kagi::remote::remote_stash_drop(&host, repo.to_str().unwrap(), 0, &before).unwrap();
+    let report = kagi::remote::remote_stash_drop(&host, repo.to_str().unwrap(), 0, &before);
+    report.result.expect("the drop itself must succeed");
+    // #643 A1: the receipt comes back with the result, so a record that never
+    // landed cannot look like one that did.
+    assert!(
+        matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ),
+        "the attempt must be recorded, and the caller must be able to see that \
+         it was: {:?}",
+        report.recording
+    );
     assert!(git(&repo, &["stash", "list"]).is_empty());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 1);
@@ -110,7 +122,16 @@ fn remote_drop_persists_recovery_and_failed_attempt_before_returning() {
         entries[0].repo,
         format!("fixture.invalid:{}", repo.display())
     );
-    assert!(kagi::remote::remote_stash_drop(&host, repo.to_str().unwrap(), 0, &before).is_err());
+    let failed = kagi::remote::remote_stash_drop(&host, repo.to_str().unwrap(), 0, &before);
+    assert!(failed.result.is_err());
+    assert!(
+        matches!(
+            failed.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ),
+        "a failed drop is still an attempt, and the attempt is still recorded: {:?}",
+        failed.recording
+    );
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 2);
     assert!(matches!(
@@ -304,3 +325,71 @@ fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
 
 #[path = "support/isolated.rs"]
 mod test_support;
+
+/// #643 A1: when the oplog append fails, the caller can tell.
+///
+/// The point of returning a receipt is that a record which never landed stops
+/// looking like one that did. Before this, the append error was discarded with
+/// `let _` and the drop reported plain success.
+#[test]
+fn a_remote_drop_whose_record_cannot_be_written_says_so() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    // PATH and KAGI_LOG_DIR are process-global; share them like the tests above.
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    let logs = tmp.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    fake_ssh(&bin);
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.email", "t@example.com"]);
+    git(&repo, &["config", "user.name", "t"]);
+    std::fs::write(repo.join("file"), "work\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-qm", "seed"]);
+    std::fs::write(repo.join("file"), "changed\n").unwrap();
+    git(&repo, &["stash", "push", "-qm", "wip"]);
+
+    let _restore = Environment {
+        path: std::env::var_os("PATH"),
+        log: std::env::var_os("KAGI_LOG_DIR"),
+    };
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &_restore.path.clone().unwrap_or_default(),
+    ));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    std::env::set_var("KAGI_LOG_DIR", &logs);
+
+    // Hold the oplog's lock so the append cannot take it.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(logs.join("operations.jsonl.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+
+    let before = kagi_git::StateSummary {
+        head: git(&repo, &["rev-parse", "HEAD"]),
+        dirty: "clean".into(),
+    };
+    let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
+    let report = kagi::remote::remote_stash_drop(&host, repo.to_str().unwrap(), 0, &before);
+
+    assert!(
+        matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Failed { .. }
+        ),
+        "the caller must be able to see that the record did not land: {:?}",
+        report.recording
+    );
+
+    drop(lock);
+}

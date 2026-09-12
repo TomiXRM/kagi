@@ -468,12 +468,24 @@ pub fn remote_commit_file_diff(
 /// and oplog in the UI. `git stash drop` prints the dropped entry to stdout on
 /// success; a non-zero exit (e.g. the index no longer exists) is surfaced as a
 /// [`RemoteError`].
+/// The dropped stash and the receipt for having recorded the attempt.
+///
+/// #643 A1: this used to return the result alone and discard the append error
+/// with `let _`, so a drop whose record never landed looked identical to one
+/// that did. [`RemotePullReport`] already carried its receipt (#501) — the two
+/// siblings simply disagreed, and the pull side's doc even claimed this one
+/// behaved the same way. It does now.
+pub struct RemoteStashDropReport {
+    pub result: Result<String, RemoteError>,
+    pub recording: kagi_git::backend::recording::Recording,
+}
+
 pub fn remote_stash_drop(
     host: &RemoteHost,
     repo: &str,
     index: usize,
     before: &kagi_git::StateSummary,
-) -> Result<String, RemoteError> {
+) -> RemoteStashDropReport {
     let stash_ref = format!("stash@{{{index}}}");
     let result = run_checked(
         host,
@@ -496,9 +508,10 @@ pub fn remote_stash_drop(
     let entry =
         kagi_git::oplog::OpLogEntry::new("stash-drop", scope.clone(), before.clone(), outcome)
             .with_worktree(Some(scope));
-    // Persist before returning across the UI lifecycle boundary.
-    let _ = kagi_git::oplog::append_oplog(&entry);
-    result
+    // Persist before returning across the UI lifecycle boundary, and hand the
+    // receipt back with the result so a failed append cannot pass unnoticed.
+    let recording = kagi_git::backend::recording::finalize(entry);
+    RemoteStashDropReport { result, recording }
 }
 
 /// Pull the current branch of the remote repository over SSH (ADR-0089 Phase 3).

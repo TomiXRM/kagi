@@ -81,6 +81,15 @@ impl RunJob {
     pub fn stamp(&self) -> OwnerStamp {
         self.stamp
     }
+    /// The completion to settle with if this job's task never returns one.
+    pub fn abandonment(&self) -> RunAbandonment {
+        RunAbandonment {
+            id: self.id,
+            name: self.request.name,
+            path: self.request.path.clone(),
+            before: self.request.plan.current.clone(),
+        }
+    }
     pub fn run(self) -> RunCompletion {
         let report = match (self.execute)() {
             Ok(report) => report,
@@ -111,6 +120,50 @@ impl RunJob {
 pub struct RunCompletion {
     pub id: OperationId,
     pub report: RunReport,
+}
+
+/// A run whose task ended without a completion — a panicked job (#289).
+///
+/// The write may have happened, so this is `Unknown`, not a failure, and it
+/// settles through the same `apply`: the operation id survives, the lease is
+/// retained (an unproven termination), and the reconcile entry it parks is the
+/// exit. Dropping the task instead would strand both.
+pub struct RunAbandonment {
+    id: OperationId,
+    name: &'static str,
+    path: PathBuf,
+    before: kagi_git::StateSummary,
+}
+impl RunAbandonment {
+    pub fn into_completion(self) -> RunCompletion {
+        let evidence = format!(
+            "the {} task unwound; whether the write happened cannot be established",
+            self.name
+        );
+        let repo = self.path.display().to_string();
+        let entry = OpLogEntry::new(
+            self.name,
+            repo.clone(),
+            self.before.clone(),
+            OpOutcome::Unknown {
+                after: self.before,
+                evidence: evidence.clone(),
+            },
+        )
+        // The same stamp the backend puts on what it records: an abandoned
+        // write still names the worktree it was running in.
+        .with_worktree(Some(repo));
+        RunCompletion {
+            id: self.id,
+            report: RunReport {
+                result: Err(kagi_git::GitError::TerminationUnknown(
+                    kagi_git::Termination::unproven(evidence),
+                )),
+                recording: recording::finalize(entry),
+                stash: None,
+            },
+        }
+    }
 }
 
 pub fn prepare_run(

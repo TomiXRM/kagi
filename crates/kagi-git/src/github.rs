@@ -482,16 +482,22 @@ pub fn merge_pr(
     };
     let result = match &outcome {
         crate::oplog::OpOutcome::Success { .. } => Ok(crate::OperationOutcome::PrMerge {
+            number,
             detail,
             confirmed: true,
         }),
         crate::oplog::OpOutcome::Partial { error, .. } => Ok(crate::OperationOutcome::PrMerge {
+            number,
             detail: error.clone(),
             confirmed: false,
         }),
-        crate::oplog::OpOutcome::Unknown { evidence, .. } => {
-            Err(GitError::TerminationUnknown(evidence.clone()))
-        }
+        // Both `gh` invocations exited — what is unknown is the *repository*
+        // state, not the child. `stopped` says so, so the lease is released at
+        // settlement and the reconcile entry can be read and acknowledged; an
+        // `unproven` termination here would strand it with no pid to prove.
+        crate::oplog::OpOutcome::Unknown { evidence, .. } => Err(GitError::TerminationUnknown(
+            crate::Termination::stopped(evidence.clone()),
+        )),
         _ => Err(result.err().unwrap_or(GitError::Other(detail))),
     };
     let entry =

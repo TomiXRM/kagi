@@ -1624,45 +1624,47 @@ impl Backend {
         let result = self.require_trust().and_then(|()| {
             ops::execute_delete_merged_branches_with(&self.repo, &self.path, plan, targets, run_git)
         });
-        // ADR-0177: the run stopped with its own termination unconfirmed. The
-        // receipt says `Unknown`, and the result the caller settles with is a
-        // `TerminationUnknown` — so the write lease is retained, not released.
-        let unknown = result.as_ref().ok().and_then(|c| c.unknown.clone());
-        let outcome = match &result {
-            Ok(cleanup) if unknown.is_some() => crate::oplog::OpOutcome::Unknown {
-                after: ops::StateSummary {
-                    head: plan.current.head.clone(),
-                    dirty: cleanup.oplog_summary(),
+        let after = |dirty: String| ops::StateSummary {
+            head: plan.current.head.clone(),
+            dirty,
+        };
+        // ADR-0177: a run that stopped with its own termination unconfirmed
+        // records `Unknown` and hands the caller the *typed* `Termination` —
+        // `child_stopped` / `pid` is what lets a later reconcile prove the
+        // child went away and release the retained lease (ADR-0196 決定 2.4).
+        let (outcome, result) = match result {
+            Ok((cleanup, Some(termination))) => (
+                crate::oplog::OpOutcome::Unknown {
+                    after: after(cleanup.oplog_summary()),
+                    evidence: format!(
+                        "{termination}; process termination is unconfirmed — \
+                         do not retry this operation"
+                    ),
                 },
-                evidence: format!(
-                    "{}; process termination is unconfirmed — do not retry this operation",
-                    unknown.clone().unwrap_or_default()
-                ),
-            },
-            Ok(cleanup) => {
+                Err(GitError::TerminationUnknown(termination)),
+            ),
+            Ok((cleanup, None)) => {
                 let summary = cleanup.oplog_summary();
-                if cleanup.failed.is_empty() {
+                let outcome = if cleanup.failed.is_empty() {
                     crate::oplog::OpOutcome::Success {
-                        after: ops::StateSummary {
-                            head: plan.current.head.clone(),
-                            dirty: summary,
-                        },
+                        after: after(summary),
                     }
                 } else if cleanup.deleted.is_empty() {
                     crate::oplog::OpOutcome::Failed { error: summary }
                 } else {
                     crate::oplog::OpOutcome::Partial {
-                        after: ops::StateSummary {
-                            head: plan.current.head.clone(),
-                            dirty: summary.clone(),
-                        },
+                        after: after(summary.clone()),
                         error: summary,
                     }
-                }
+                };
+                (outcome, Ok(OperationOutcome::BranchCleanup(cleanup)))
             }
-            Err(error) => crate::oplog::OpOutcome::Failed {
-                error: error.to_string(),
-            },
+            Err(error) => (
+                crate::oplog::OpOutcome::Failed {
+                    error: error.to_string(),
+                },
+                Err(error),
+            ),
         };
         let recording = self.record_run_oplog_with_backups(
             "branch-cleanup",
@@ -1670,14 +1672,11 @@ impl Backend {
             outcome,
             Vec::new(),
             Vec::new(),
-            unknown
-                .as_ref()
-                .map(|_| crate::oplog::FailureCode::TerminationUnknown),
+            result.as_ref().err().and_then(|error| {
+                matches!(error, GitError::TerminationUnknown(_))
+                    .then_some(crate::oplog::FailureCode::TerminationUnknown)
+            }),
         );
-        let result = match unknown {
-            Some(reason) => Err(GitError::TerminationUnknown(reason)),
-            None => result.map(OperationOutcome::BranchCleanup),
-        };
         recording::RunReport {
             result,
             recording,

@@ -2,6 +2,7 @@
 mod conflict;
 mod flow;
 mod read;
+mod run;
 mod session;
 mod stash;
 mod tabs;
@@ -10,6 +11,7 @@ pub use conflict::*;
 pub use flow::*;
 pub use kagi_domain::remove::{RepoId, WorktreeId};
 pub use read::*;
+pub use run::*;
 pub use session::*;
 pub use stash::*;
 pub use tabs::*;

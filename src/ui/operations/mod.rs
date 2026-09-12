@@ -49,12 +49,13 @@ pub enum PullConfirmDelivery {
     FetchFailed(String),
 }
 use crate::ui::KagiApp;
-use gpui::{Context, SharedString, Task};
+use gpui::{AppContext, Context, SharedString, Task};
 use kagi_git::backend::recording::{Recording, RunReport};
 use kagi_git::oplog::{FailureCode, OpOutcome};
 use kagi_git::OperationOutcome;
-use kagi_git::StateSummary;
+use kagi_git::{OperationPlan, StateSummary};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// What to do with a finished background op, decided from the join result and
 /// whether the op's owning tab is still the active one. Pure (no `KagiApp`,
@@ -226,6 +227,7 @@ impl KagiApp {
     /// outcome. An `Err` from the task means the repository would not open:
     /// nothing ran and nothing was recorded, so that one case is still
     /// recorded here.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finish_recorded<N, F>(
         &mut self,
         cx: &mut Context<Self>,
@@ -290,6 +292,158 @@ impl KagiApp {
                 }
             },
         );
+    }
+
+    /// ADR-0196 Wave 3: one legacy run-pipeline write, admitted through the
+    /// application layer. Replaces the `busy_op = Some(..)`, `background_spawn`
+    /// and [`finish_recorded`](Self::finish_recorded) trio: admission
+    /// (`approve_run`, then `begin_write`) reserves the lease and freezes the
+    /// owner stamp; the family's blocking core runs as the job; `apply`
+    /// settles (lease, reconcile, invalidation) and the completion is
+    /// presented to the tab the stamp names — same tab, same visit — or
+    /// dropped exactly as the legacy `switch_generation` guard dropped it.
+    /// The `Invalidate` delivery reloads the owner, so `on_done` no longer
+    /// calls `reload`. Returns `false` when admission refused; the refusal is
+    /// already presented.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn finish_run<X, N, F>(
+        &mut self,
+        cx: &mut Context<Self>,
+        op_name: &'static str,
+        op: crate::ui::i18n::Op,
+        plan: Arc<OperationPlan>,
+        repo_path: PathBuf,
+        execute: X,
+        finished_note: N,
+        on_done: F,
+    ) -> bool
+    where
+        X: FnOnce() -> Result<RunReport, String> + Send + 'static,
+        N: FnOnce(&OperationOutcome) -> Option<String> + 'static,
+        F: for<'a> FnOnce(&mut Self, Result<&'a OperationOutcome, OpFailure>, &mut Context<Self>)
+            + 'static,
+    {
+        use crate::app::{self, Delivery, FamilyEvidence, LegacyBusy};
+        self.refresh_write_busy();
+        let owner = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id));
+        let admitted = owner
+            .ok_or(app::AdmissionError::StaleApproval)
+            .and_then(|owner| {
+                let repo = kagi_git::Backend::open(&repo_path)
+                    .and_then(|backend| backend.write_repo_id())
+                    .map_err(|error| app::AdmissionError::Identity(error.to_string()))?;
+                app::approve_run(
+                    &mut self.app_sessions,
+                    app::RunRequest {
+                        owner,
+                        name: op_name,
+                        path: repo_path.clone(),
+                        repo,
+                        plan: plan.clone(),
+                    },
+                )
+            })
+            .and_then(|approved| {
+                app::prepare_run(
+                    &mut self.app_sessions,
+                    approved,
+                    LegacyBusy(self.busy_op.is_some()),
+                    Box::new(execute),
+                )
+            });
+        let job = match app::admit(&mut self.reads, admitted) {
+            Ok(job) => job,
+            Err(error) => {
+                self.report_admission_refusal(error, cx);
+                return false;
+            }
+        };
+        self.mark_write_busy(op_name);
+        let stamp = job.stamp();
+        let task = cx.background_spawn(async move { job.run() });
+        cx.spawn(async move |this, acx| {
+            let completion = task.fallible().await;
+            let _ = this.update(acx, move |app, cx| {
+                let Some(completion) = completion else {
+                    // #289: a panicking job must not wedge the UI. The lease
+                    // stays reserved — a panic is not evidence of termination.
+                    klog!("op panicked: {} — busy_op cleared", op_name);
+                    app.busy_op = None;
+                    app.write_busy_op = None;
+                    app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                        "{op_name}: operation failed unexpectedly"
+                    )));
+                    cx.notify();
+                    return;
+                };
+                let deliveries = app::apply(&mut app.app_sessions, completion);
+                app.refresh_write_busy();
+                let (completed, rest): (Vec<_>, Vec<_>) = deliveries
+                    .into_iter()
+                    .partition(|d| matches!(d, Delivery::Completed { .. }));
+                let mut failed = false;
+                for delivery in completed {
+                    let Delivery::Completed { report, .. } = delivery else {
+                        continue;
+                    };
+                    let FamilyEvidence::Run(report) = report.evidence else {
+                        continue;
+                    };
+                    // Settle first, whatever the tab is doing now (#501).
+                    app.notice_recording_failure(op_name, &report.recording, &repo_path);
+                    let current = app.active_session() == Some(stamp.session)
+                        && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
+                    if !current {
+                        klog!("op result dropped: tab switched during op");
+                        continue;
+                    }
+                    failed = report.result.is_err();
+                    match &report.result {
+                        Ok(outcome) => {
+                            klog!(
+                                "async: {} finished{}",
+                                op_name,
+                                finished_note(outcome).unwrap_or_default()
+                            );
+                            app.present_recorded(&report.recording, cx);
+                            on_done(app, Ok(outcome), cx);
+                        }
+                        Err(error) => {
+                            let failure = OpFailure {
+                                message: crate::ui::i18n::op_failed(op, error),
+                                code: FailureCode::from(error),
+                            };
+                            klog!("async: {} failed — {}", op_name, failure.message);
+                            app.present_recorded(&report.recording, cx);
+                            on_done(app, Err(failure), cx);
+                        }
+                    }
+                    // One completion per admitted write.
+                    break;
+                }
+                for delivery in rest {
+                    match delivery {
+                        // A failed write reopened its modal with the error; the
+                        // reload sweep would clear it (`reload.rs`), and the
+                        // legacy path never reloaded a failure. Mark the reads
+                        // stale, let the next reload pick them up.
+                        Delivery::Invalidate(target) if failed => {
+                            for session in app.app_sessions.sessions_for(&target.worktree) {
+                                app.reads.invalidate(session);
+                            }
+                        }
+                        other => app.deliver_app_result(other, cx),
+                    }
+                }
+                app.present_app_notice();
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+        true
     }
 
     /// Synchronous twin of [`KagiApp::finish_recorded`] for the inline

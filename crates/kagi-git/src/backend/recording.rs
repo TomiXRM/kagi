@@ -25,7 +25,7 @@ impl Recording {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RunReport {
     pub result: Result<OperationOutcome, GitError>,
     pub recording: Recording,

@@ -257,73 +257,30 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(_) => "checkout-commit",
         };
 
-        self.busy_op = Some("checkout");
         self.clear_plan_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
         klog!("async: checkout started");
 
         let plan = modal.plan.clone();
         let target = modal.target.clone();
-        let bg_path = repo_path.clone();
-        let bg_plan = plan.clone();
-        let bg_target = target.clone();
-        let task =
-            cx.background_spawn(async move { checkout_blocking(&bg_path, &bg_plan, &bg_target) });
-        let notice_path = repo_path.clone();
-        // ADR-0196 Wave 2: the backend's receipt is the record. The settle half
-        // runs on every arrival, so a tab switch can no longer swallow "changed
-        // but not recorded"; the presentation half consumes the *real* receipt
-        // instead of re-synthesizing one from a stringified error (#643 A1/A2).
-        self.finish_op_on_main_settled(
+        let (bg_path, bg_plan, bg_target) = (repo_path.clone(), plan.clone(), target.clone());
+        // ADR-0196 Wave 3: admitted through the application layer; the
+        // `Invalidate` delivery reloads the tab, the receipt is the record.
+        self.finish_run(
             cx,
-            task,
-            move |app, result: &Result<kagi_git::backend::recording::RunReport, String>, _cx| {
-                if let Ok(report) = result {
-                    app.notice_recording_failure(op_name, &report.recording, &notice_path);
-                }
-            },
-            move |app, result, cx| match result {
-                Ok(report) => {
-                    match &report.result {
-                        Ok(_) => klog!("async: checkout finished"),
-                        Err(error) => klog!(
-                            "async: checkout failed — {}",
-                            i18n::op_failed(i18n::Op::Checkout, error)
-                        ),
-                    }
-                    let failed = report.result.as_ref().err().cloned();
-                    app.present_recorded(&report.recording, cx);
-                    match failed {
-                        None => app.reload(cx),
-                        Some(error) => app.set_plan_modal(CheckoutPlanModal {
-                            stash_first: false,
-                            target: target.clone(),
-                            plan: plan.clone(),
-                            error: Some(SharedString::from(i18n::op_failed(
-                                i18n::Op::Checkout,
-                                error,
-                            ))),
-                        }),
-                    }
-                }
-                // The repository would not open: nothing ran and nothing was
-                // recorded, so this is the one case the UI still reports itself.
-                Err(err_msg) => {
-                    klog!("async: checkout failed — {}", err_msg);
-                    app.record_op(
-                        op_name,
-                        plan.current.clone(),
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
+            op_name,
+            i18n::Op::Checkout,
+            plan.clone(),
+            repo_path,
+            move || checkout_blocking(&bg_path, &bg_plan, &bg_target),
+            |_| None,
+            move |app, done, _cx| {
+                if let Err(failure) = done {
                     app.set_plan_modal(CheckoutPlanModal {
                         stash_first: false,
                         target: target.clone(),
                         plan: plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(failure.message)),
                     });
                 }
             },

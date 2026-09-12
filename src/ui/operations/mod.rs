@@ -78,12 +78,14 @@ enum OpDisposition {
 /// (the result belongs to a tab the user has since left). Mirrors the sibling
 /// async guards in `reload.rs` / `mod.rs` — using both signals is strictly
 /// safer than either alone.
-/// Whether a state-changing op may start right now. `busy_op` is the single
-/// in-flight-op latch; a mutation started while another is running is exactly
+/// Whether a state-changing op may start right now. `busy_op` is the
+/// in-flight *write* latch and `planning` the in-flight *plan* latch
+/// (ADR-0196 Wave 3); a mutation started while either is running is exactly
 /// the concurrent-mutation hazard #283 is about, so every entry point that
-/// begins one consults this. Pure so the gate is testable without a Context.
-pub(crate) fn op_may_start(busy_op: Option<&'static str>) -> bool {
-    busy_op.is_none()
+/// begins one consults this — through [`KagiApp::op_latched`]. Pure so the
+/// gate is testable without a Context.
+pub(crate) fn op_may_start(busy_op: Option<&'static str>, planning: Option<&'static str>) -> bool {
+    busy_op.is_none() && planning.is_none()
 }
 
 fn op_result_applies(
@@ -134,7 +136,7 @@ impl KagiApp {
     /// Returns true (and sets the footer) when the caller must bail out.
     pub(crate) fn reject_if_busy(&mut self, cx: &mut Context<Self>) -> bool {
         self.refresh_write_busy();
-        if op_may_start(self.busy_op) && !self.app_sessions.has_leases() {
+        if !self.op_latched() && !self.app_sessions.has_leases() {
             return false;
         }
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
@@ -172,14 +174,16 @@ impl KagiApp {
     {
         let owner_repo = self.repo_path.clone();
         let owner_gen = self.switch_generation;
-        let op_tag = self.busy_op;
+        let op_tag = self.busy_op.or(self.planning);
         cx.spawn(async move |this, acx| {
             let result = task.fallible().await;
             let _ = this.update(acx, move |app, cx| {
                 // Unconditional release (#289): whatever happened to the op,
-                // the global op mutex must not stay latched.
+                // the global op mutex must not stay latched — the write latch
+                // and the plan latch alike (ADR-0196 Wave 3).
                 app.busy_op = None;
                 app.write_busy_op = None;
+                app.planning = None;
                 // Settle first, whatever the tab is doing now (#501).
                 if let Some(result) = result.as_ref() {
                     settle(app, result, cx);
@@ -249,6 +253,7 @@ impl KagiApp {
     {
         use crate::app::{self, Delivery, FamilyEvidence, LegacyBusy};
         self.refresh_write_busy();
+        let latched = LegacyBusy(self.op_latched());
         let owner = self
             .active_session()
             .and_then(|id| self.app_sessions.attachment(id));
@@ -277,12 +282,7 @@ impl KagiApp {
                 )
             })
             .and_then(|approved| {
-                app::prepare_run(
-                    &mut self.app_sessions,
-                    approved,
-                    LegacyBusy(self.busy_op.is_some()),
-                    Box::new(execute),
-                )
+                app::prepare_run(&mut self.app_sessions, approved, latched, Box::new(execute))
             });
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
@@ -439,9 +439,9 @@ mod tests {
     #[test]
     fn op_may_start_only_when_no_op_is_in_flight() {
         // #283: the single in-flight-op latch is the concurrent-mutation gate.
-        assert!(op_may_start(None), "idle must allow a new op");
+        assert!(op_may_start(None, None), "idle must allow a new op");
         assert!(
-            !op_may_start(Some("merge")),
+            !op_may_start(Some("merge"), None),
             "an op in flight must block a new one"
         );
     }
@@ -474,11 +474,11 @@ mod tests {
         // start_*. Guards the regression where start_pr_merge never read
         // busy_op.
         assert!(
-            !op_may_start(Some("pr-merge")),
+            !op_may_start(Some("pr-merge"), None),
             "a pr-merge in flight must block a new op"
         );
         assert!(
-            !op_may_start(Some("checkout")),
+            !op_may_start(Some("checkout"), None),
             "a local op in flight must block a pr-merge"
         );
     }

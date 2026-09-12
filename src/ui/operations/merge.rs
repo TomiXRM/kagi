@@ -34,7 +34,7 @@ impl KagiApp {
         else {
             return;
         };
-        self.busy_op = Some("merge-plan");
+        self.planning = Some("merge-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
         klog!("async: merge plan started for {}", target);
         let bg_owner = owner.clone();
@@ -118,12 +118,8 @@ impl KagiApp {
             .iter()
             .map(|rb| format!("{}/{}", rb.remote, rb.name))
             .collect();
-        match validate_merge_from_drag(
-            &source,
-            &self.view().branches,
-            &remotes,
-            self.busy_op.is_some(),
-        ) {
+        match validate_merge_from_drag(&source, &self.view().branches, &remotes, self.op_latched())
+        {
             Ok(()) => {
                 klog!("drag-merge: start merge from drag — source={}", source);
                 self.open_merge_modal(source, None, cx);
@@ -159,7 +155,7 @@ impl KagiApp {
         else {
             return;
         };
-        self.busy_op = Some("merge-plan");
+        self.planning = Some("merge-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
         klog!(
             "async: merge-into plan started for {} -> {}",
@@ -226,7 +222,7 @@ impl KagiApp {
             &target,
             &self.view().branches,
             &remotes,
-            self.busy_op.is_some(),
+            self.op_latched(),
         ) {
             Ok(()) => {
                 klog!("drag-merge: into {} from {}", target, source);

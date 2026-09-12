@@ -635,6 +635,10 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
             ),
             (
+                "cleanup_presents_backend_receipt",
+                Box::new(crate::recovery_operations::scenario_cleanup_presents_backend_receipt),
+            ),
+            (
                 "cleanup_open_failure",
                 Box::new(crate::recovery_operations::scenario_cleanup_open_failure),
             ),
@@ -657,6 +661,14 @@ mod macos {
             (
                 "oplog_append_failure_visible",
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
+            ),
+            (
+                "pr_merge_write_lease",
+                Box::new(crate::busy_label::scenario_pr_merge_holds_the_write_lease),
+            ),
+            (
+                "merge_plan_latch",
+                Box::new(crate::busy_label::scenario_merge_plan_latches_planning),
             ),
             (
                 "editor_save_admission",

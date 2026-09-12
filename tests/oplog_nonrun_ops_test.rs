@@ -413,6 +413,7 @@ fn cleanup_records_full_tips_and_allows_local_and_remote_recovery() {
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     let outcome = backend
         .execute_delete_merged_branches(&plan, std::slice::from_ref(&target))
+        .result
         .unwrap();
     assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
     assert_eq!(outcome.deleted.len(), 1);
@@ -462,6 +463,7 @@ fn untrusted_cleanup_preserves_branch_and_records_failure() {
 
     let error = backend
         .execute_delete_merged_branches(&plan, &[target])
+        .result
         .unwrap_err();
     assert!(error.is_untrusted());
     assert_eq!(git(dir, &["rev-parse", "merged"]), expected);
@@ -531,6 +533,7 @@ fn cleanup_remote_success_local_failure_preserves_recovery_and_records_partial()
 
     let outcome = backend
         .execute_delete_merged_branches(&plan, std::slice::from_ref(&target))
+        .result
         .unwrap();
     assert!(git(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
     assert!(git(dir, &["for-each-ref", "refs/remotes/origin/merged"]).is_empty());
@@ -585,6 +588,7 @@ fn cleanup_moved_local_tip_without_deletions_records_failed() {
 
     let outcome = backend
         .execute_delete_merged_branches(&plan, &[target])
+        .result
         .unwrap();
     assert!(outcome.deleted.is_empty());
     assert_eq!(outcome.failed.len(), 1);

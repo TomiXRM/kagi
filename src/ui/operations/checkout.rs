@@ -217,7 +217,7 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -297,7 +297,7 @@ impl KagiApp {
         if !self.root_has_focus(window) {
             return;
         }
-        if self.busy_op.is_some() || self.repo_path.is_none() {
+        if self.op_latched() || self.repo_path.is_none() {
             return;
         }
         // Ignore Enter while any overlay / panel / text input is active.

@@ -124,7 +124,7 @@ impl KagiApp {
             if pull_on {
                 this.open_pull_modal(cx);
             } else {
-                let reason = if this.busy_op.is_some() {
+                let reason = if this.op_latched() {
                     Msg::PullBusy.t()
                 } else if this.view().status_summary.is_detached {
                     Msg::PullDetached.t()
@@ -146,7 +146,7 @@ impl KagiApp {
             if push_on {
                 this.open_push_modal(cx);
             } else {
-                let reason = if this.busy_op.is_some() {
+                let reason = if this.op_latched() {
                     Msg::PushBusy.t()
                 } else if this.view().status_summary.is_detached {
                     Msg::PushDetached.t()
@@ -499,8 +499,7 @@ impl KagiApp {
                                 self.refresh_spin_started = None;
                             }
                         }
-                        let spinning =
-                            self.busy_op.is_some() || self.refresh_spin_started.is_some();
+                        let spinning = self.op_latched() || self.refresh_spin_started.is_some();
                         let icon = gpui::svg()
                             .path("icons/refresh-cw.svg")
                             .w(theme::scaled_px(16.0))

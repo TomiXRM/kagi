@@ -7,8 +7,17 @@ impl KagiApp {
         self.write_busy_op = Some(name);
     }
 
+    /// Is any operation latched — a write (`busy_op`, lease-mirrored) or a
+    /// planning task (`planning`)? The single question every gate asks
+    /// (ADR-0196 Wave 3); `busy_op` alone no longer answers it.
+    pub(crate) fn op_latched(&self) -> bool {
+        !super::operations::op_may_start(self.busy_op, self.planning)
+    }
+
     pub(crate) fn busy_snackbar_label(&self) -> Option<&'static str> {
-        self.busy_op.map(kagi_ui_core::i18n::busy_label)
+        self.busy_op
+            .or(self.planning)
+            .map(kagi_ui_core::i18n::busy_label)
     }
 }
 

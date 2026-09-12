@@ -63,7 +63,7 @@ impl KagiApp {
     /// reload — a conflict pause and a clean completion both flow through
     /// the same `reload()` call (see module doc).
     pub fn start_rebase(&mut self, cx: &mut Context<Self>) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }

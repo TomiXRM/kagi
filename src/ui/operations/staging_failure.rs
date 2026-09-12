@@ -125,10 +125,10 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
         self.refresh_write_busy();
+        let latched = app::LegacyBusy(self.op_latched());
         match app::admit(
             &mut self.reads,
-            self.app_sessions
-                .write_lease(repo, app::LegacyBusy(self.busy_op.is_some())),
+            self.app_sessions.write_lease(repo, latched),
         ) {
             Ok(guard) => {
                 self.mark_write_busy(action.name());

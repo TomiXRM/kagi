@@ -1599,12 +1599,13 @@ impl Backend {
 
     /// Branch Cleanup (ADR-0128): delete the targeted branches (remote halves
     /// first), re-verifying every tip OID. Per-branch failures are collected
-    /// in the outcome, not returned as `Err`. Records every attempt before returning.
+    /// in the outcome, not returned as `Err`. Records every attempt before
+    /// returning, and hands that receipt back with it (ADR-0196 Wave 3).
     pub fn execute_delete_merged_branches(
         &self,
         plan: &OperationPlan,
         targets: &[ops::CleanupDeleteTarget],
-    ) -> Result<ops::CleanupOutcome, GitError> {
+    ) -> recording::CleanupReport {
         let result = self.require_trust().and_then(|()| {
             ops::execute_delete_merged_branches(&self.repo, &self.path, plan, targets)
         });
@@ -1634,8 +1635,8 @@ impl Backend {
                 error: error.to_string(),
             },
         };
-        self.record_run_oplog("branch-cleanup", &plan.current, outcome);
-        result
+        let recording = self.record_run_oplog("branch-cleanup", &plan.current, outcome);
+        recording::CleanupReport { result, recording }
     }
 
     pub fn plan_discard(&self, paths: &[String]) -> Result<OperationPlan, GitError> {

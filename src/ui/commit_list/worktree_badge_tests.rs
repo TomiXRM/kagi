@@ -36,6 +36,7 @@ fn snap(head_branch: &str) -> RepoSnapshot {
         ],
         cleanup_rows: Vec::new(),
         last_fetch_secs: None,
+        operation: None,
     }
 }
 

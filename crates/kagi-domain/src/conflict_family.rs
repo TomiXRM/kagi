@@ -55,12 +55,25 @@ pub enum ConflictRequest {
         revision: ConflictRevision,
         choice: DirFileChoice,
     },
+    /// End the whole operation and restore the pre-operation state (#704).
+    ///
+    /// Unlike Save and ResolveDirFile this names no path — it is about the
+    /// operation, not a file — and it is admissible whenever one is in
+    /// progress, resolved or not. `operation` is the slug the observation
+    /// carried; the Backend refuses if the live one has become a different
+    /// kind of operation.
+    Abort {
+        revision: ConflictRevision,
+        operation: String,
+    },
 }
 
 impl ConflictRequest {
     pub fn revision(&self) -> &ConflictRevision {
         match self {
-            Self::Save { revision, .. } | Self::ResolveDirFile { revision, .. } => revision,
+            Self::Save { revision, .. }
+            | Self::ResolveDirFile { revision, .. }
+            | Self::Abort { revision, .. } => revision,
         }
     }
 
@@ -69,13 +82,16 @@ impl ConflictRequest {
             Self::Save {
                 buffer_revision, ..
             } => Some(buffer_revision),
-            Self::ResolveDirFile { .. } => None,
+            Self::ResolveDirFile { .. } | Self::Abort { .. } => None,
         }
     }
 
-    pub fn path(&self) -> &std::path::Path {
+    /// The one path this request is about. `None` for [`Self::Abort`], which
+    /// is about the operation rather than a file.
+    pub fn path(&self) -> Option<&std::path::Path> {
         match self {
-            Self::Save { path, .. } | Self::ResolveDirFile { path, .. } => path,
+            Self::Save { path, .. } | Self::ResolveDirFile { path, .. } => Some(path),
+            Self::Abort { .. } => None,
         }
     }
 
@@ -83,6 +99,7 @@ impl ConflictRequest {
         match self {
             Self::Save { .. } => ConflictAction::Save,
             Self::ResolveDirFile { choice, .. } => ConflictAction::ResolveDirFile(*choice),
+            Self::Abort { .. } => ConflictAction::Abort,
         }
     }
 }
@@ -91,6 +108,7 @@ impl ConflictRequest {
 pub enum ConflictAction {
     Save,
     ResolveDirFile(DirFileChoice),
+    Abort,
 }
 
 impl ConflictAction {
@@ -98,6 +116,7 @@ impl ConflictAction {
         match self {
             Self::Save => "conflict-save".into(),
             Self::ResolveDirFile(choice) => format!("conflict-dir-file:{}", choice.slug()),
+            Self::Abort => "conflict-abort".into(),
         }
     }
 }

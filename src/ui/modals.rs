@@ -73,17 +73,9 @@ pub struct HistoryPlanModal {
     pub error: Option<SharedString>,
 }
 
-/// State for a sequencer (rebase / cherry-pick / revert) conflict-continue
-/// confirmation (ADR-0068 / T-CONFLICT-FLOW-032).  A `git <op> --continue` plan
-/// shown before the sequencer is advanced.  Merge does NOT use this modal — it
-/// routes to the commit panel instead.
-#[derive(Clone)]
-pub struct ConflictContinuePlanModal {
-    /// The computed `<op> --continue` plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if execute failed (replaces the confirm button).
-    pub error: Option<SharedString>,
-}
+// The conflict modals live with the conflict actions (`ui::conflict_abort`),
+// re-exported here so `modals::*` stays the one import (#704).
+pub use super::conflict_abort::{ConflictAbortModal, ConflictContinuePlanModal};
 
 /// State for an in-progress amend confirmation (T-COMMIT-011, ADR-0040).
 ///
@@ -798,6 +790,7 @@ pub enum ActiveModal {
     BranchCleanup(BranchCleanupModal),
     Discard(DiscardModal),
     ConflictContinue(ConflictContinuePlanModal),
+    ConflictAbort(ConflictAbortModal),
     EditorDirtyGuard(EditorDirtyGuardModal),
     EditorFsPrompt(EditorFsPromptModal),
     EditorDeleteConfirm(EditorDeleteConfirmModal),
@@ -851,6 +844,7 @@ impl ActiveModal {
             | M::BranchCleanup(_)
             | M::Discard(_)
             | M::ConflictContinue(_)
+            | M::ConflictAbort(_)
             | M::EditorDirtyGuard(_)
             | M::EditorFsPrompt(_)
             | M::EditorDeleteConfirm(_)

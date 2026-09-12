@@ -9,14 +9,14 @@
 use super::super::modals::ActiveModal;
 use super::super::modals::{
     AmendPlanModal, BranchCleanupModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal,
-    ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
-    DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
-    EditorDirtyGuardModal, EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal,
-    LockWorktreeModal, MergePlanModal, PopPlanModal, PrMergeModal, PruneWorktreesModal,
-    PullPlanModal, PushPlanModal, PushTagModal, RebaseCurrentOntoModal, RemoveWorktreeModal,
-    RenameBranchModal, RepairWorktreesModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
-    StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
-    TrackingCheckoutPlanModal, TrustRepoModal, UnlockWorktreeModal,
+    CreateBranchModal, CreateTagModal, CreateWorktreeModal, DeleteBranchModal,
+    DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal, EditorDirtyGuardModal,
+    EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal, LockWorktreeModal, MergePlanModal,
+    PopPlanModal, PrMergeModal, PruneWorktreesModal, PullPlanModal, PushPlanModal, PushTagModal,
+    RebaseCurrentOntoModal, RemoveWorktreeModal, RenameBranchModal, RepairWorktreesModal,
+    ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
+    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, TrustRepoModal,
+    UnlockWorktreeModal,
 };
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
@@ -781,30 +781,6 @@ impl KagiApp {
     #[inline]
     pub fn clear_editor_dirty_guard_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::EditorDirtyGuard(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn conflict_continue_modal(&self) -> Option<&ConflictContinuePlanModal> {
-        match &self.active_modal {
-            Some(ActiveModal::ConflictContinue(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn conflict_continue_modal_mut(&mut self) -> Option<&mut ConflictContinuePlanModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::ConflictContinue(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_conflict_continue_modal(&mut self, m: ConflictContinuePlanModal) {
-        self.active_modal = Some(ActiveModal::ConflictContinue(m));
-    }
-    #[inline]
-    pub fn clear_conflict_continue_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::ConflictContinue(_))) {
             self.active_modal = None;
         }
     }

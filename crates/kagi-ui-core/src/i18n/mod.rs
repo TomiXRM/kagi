@@ -422,7 +422,9 @@ pub enum Msg {
     ConflictSectionConflicted,
     ConflictSectionResolved,
     ConflictConfirmAbort,
-    ConflictConfirmAbortHint,
+    /// #704 header operation strip: the prose after the operation's own name
+    /// (`merge · in progress`, `rebase 2/5 · 進行中`).
+    OperationInProgress,
     ConflictExternalTool,
     ConflictExternalToolUnset,
     ConflictOpenTerminal,
@@ -1414,12 +1416,8 @@ impl Msg {
             }
             (En, ConflictConfirmAbort) => "Confirm abort",
             (Ja, ConflictConfirmAbort) => "中止を確定",
-            (En, ConflictConfirmAbortHint) => {
-                "Aborting may discard your saved resolutions (they are preserved in the autosave directory)."
-            }
-            (Ja, ConflictConfirmAbortHint) => {
-                "中止すると保存済みの resolution が失われる可能性があります(autosave に退避されます)。"
-            }
+            (En, OperationInProgress) => "in progress",
+            (Ja, OperationInProgress) => "進行中",
             (En, ConflictExternalTool) => "Open in external tool",
             (Ja, ConflictExternalTool) => "外部ツールで開く",
             (En, ConflictExternalToolUnset) => {

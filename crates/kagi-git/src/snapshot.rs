@@ -63,7 +63,7 @@ pub struct RepoSnapshot {
     /// is in the middle of, if any (#704 / ADR-0196).
     ///
     /// A plain read, from the one detector
-    /// ([`crate::backend::conflict_observe::observation`]) — the conflict
+    /// (`backend::conflict_ops::conflict_observe::observation`) — the conflict
     /// family freezes the same revision into its requests. Every consumer of
     /// "is something in progress?" reads this rather than the presence of a
     /// view or pane: the operation outlives the conflict editor, which is
@@ -162,7 +162,7 @@ fn snapshot_inner(
         // Cheap when nothing is in progress: `detect_conflict_session` reads
         // `repo.state()` and bails, and only a live operation pays for the
         // index fingerprint.
-        operation: crate::backend::conflict_observe::observation(repo)?
+        operation: crate::backend::conflict_ops::conflict_observe::observation(repo)?
             .map(|snapshot| snapshot.in_progress()),
     })
 }

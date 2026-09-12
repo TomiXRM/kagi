@@ -253,6 +253,9 @@ impl KagiApp {
                 kagi_domain::conflict_family::ConflictAction::ResolveDirFile(
                     kagi_git::DirFileChoice::KeepFile,
                 ) => ("conflict-dir-file:keep-file", Msg::OpInProgress),
+                kagi_domain::conflict_family::ConflictAction::Abort => {
+                    ("conflict-abort", Msg::OpInProgress)
+                }
             },
         };
         let latched = LegacyBusy(self.op_latched());
@@ -285,6 +288,7 @@ impl KagiApp {
             "conflict-save"
             | "conflict-dir-file:keep-directory"
             | "conflict-dir-file:keep-file" => {}
+            "conflict-abort" => self.clear_conflict_abort_modal(),
             _ => unreachable!(),
         }
         self.status_footer = FooterStatus::Busy(SharedString::from(label.t()));

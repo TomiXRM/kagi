@@ -675,6 +675,7 @@ mod remote_fold_tests {
             worktrees: Vec::new(),
             cleanup_rows: Vec::new(),
             last_fetch_secs: None,
+            operation: None,
         }
     }
 

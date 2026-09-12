@@ -67,7 +67,7 @@ impl KagiApp {
         }
         match intent {
             conflict_view::FrozenConflictIntent::Request { request, .. } => {
-                self.start_conflict_request(request, cx)
+                let _ = self.start_conflict_request(request, cx);
             }
             conflict_view::FrozenConflictIntent::SaveRefusal {
                 owner,
@@ -90,12 +90,19 @@ impl KagiApp {
         }
     }
 
-    fn start_conflict_request(&mut self, request: app::ConflictAppRequest, cx: &mut Context<Self>) {
+    /// Plan → approve → dispatch one conflict-family request. `false` = the
+    /// request never became a job (a refused plan, a stale approval); its
+    /// recording has already been presented.
+    pub(crate) fn start_conflict_request(
+        &mut self,
+        request: app::ConflictAppRequest,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let policy = crate::ui::blocking_ops::execution_policy();
         let owner = request.owner.session;
         let job = app::plan_conflict(&mut self.app_sessions, request, policy);
         if !app::apply_plan(&mut self.app_sessions, job.run()) {
-            return;
+            return false;
         }
         let token = match self.app_sessions.plan_state() {
             app::PlanState::Ready { token, .. } => token.clone(),
@@ -111,14 +118,18 @@ impl KagiApp {
                     self.app_notices.push_back(error.clone().into());
                 }
                 self.present_app_notice();
-                return;
+                return false;
             }
-            _ => return,
+            _ => return false,
         };
         match app::approve(&mut self.app_sessions, token, app::Policy::Conflict(policy)) {
-            Ok(approved) => self.dispatch_job(approved, cx),
+            Ok(approved) => {
+                self.dispatch_job(approved, cx);
+                true
+            }
             Err(error) => {
                 self.push_toast(ToastKind::Error, error.to_string(), cx);
+                false
             }
         }
     }
@@ -439,119 +450,6 @@ impl KagiApp {
     pub fn cancel_conflict_continue(&mut self) {
         self.clear_conflict_continue_modal();
     }
-
-    /// Abort the in-progress operation through the existing plan pipeline:
-    /// `plan_conflict_abort` → `execute_conflict_abort` → oplog → re-detect.
-    /// Abort is always available (no blockers); the partial resolution buffer is
-    /// preserved by the backend (ADR-0057).
-    pub fn conflict_abort(&mut self, cx: &mut Context<Self>) {
-        if self.reject_if_busy(cx) {
-            return;
-        }
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        let Some(mode) = self.conflict_mode_snapshot(cx) else {
-            return;
-        };
-
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
-            None => {
-                self.push_toast(
-                    ToastKind::Error,
-                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
-                    cx,
-                );
-                return;
-            }
-        };
-
-        if matches!(mode.session.op, kagi_git::ConflictOp::StashConflict) {
-            if let Some(owner) = self.active_session() {
-                self.app_sessions.observe_stash_conflict(
-                    owner,
-                    &repo.stash_conflict_identity().unwrap_or_default(),
-                );
-            }
-        }
-        let plan = match repo.plan_conflict_abort(&mode.session) {
-            Ok(p) => p,
-            Err(e) => {
-                self.push_toast(
-                    ToastKind::Error,
-                    SharedString::from(i18n::op_plan_failed(i18n::Op::Abort, e)),
-                    cx,
-                );
-                return;
-            }
-        };
-        let op_name = format!("{}-abort", mode.session.op.slug());
-        let Some(guard) = self.reserve_write("conflict-abort", &repo_path, cx) else {
-            return;
-        };
-
-        // #309: a stash conflict has no ORIG_HEAD / sequencer state — abort
-        // restores HEAD for the conflicted paths and keeps the stash, rather than
-        // moving refs back via ORIG_HEAD (execute_conflict_abort's path).
-        let abort_result = if matches!(mode.session.op, kagi_git::ConflictOp::StashConflict) {
-            self.repo_session
-                .as_ref()
-                .expect("repo session existed while planning conflict abort")
-                .backend()
-                .execute_stash_conflict_abort(&mode.session, &mode.buffer)
-        } else {
-            self.repo_session
-                .as_ref()
-                .expect("repo session existed while planning conflict abort")
-                .backend()
-                .execute_conflict_abort(&mode.session, &mode.buffer)
-        };
-        let unknown = app::settle_conflict_write(guard, &abort_result, plan.current.clone());
-        self.refresh_write_busy();
-        match abort_result {
-            Ok(_outcome) => {
-                if let Some(owner) = self.active_session() {
-                    self.app_sessions.clear_stash_conflict(owner);
-                }
-                klog!("executed: {}", op_name);
-                let after = StateSummary {
-                    head: plan.predicted.head.clone(),
-                    dirty: "clean".to_string(),
-                };
-                self.record_op_persist(
-                    &op_name,
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                self.reload(cx);
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                let is_unknown = unknown.is_some();
-                klog!("{} failed: {}", op_name, err_msg);
-                let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
-                    error: err_msg.clone(),
-                });
-                self.record_op_persist(&op_name, plan.current.clone(), outcome, &repo_path, cx);
-                // Without this the failure only reached the oplog: no toast, no
-                // modal, no reload — so the UI kept rendering the pre-failure
-                // conflict state and the user believed the abort/skip had
-                // happened. CLAUDE.md: errors surface via the oplog *and* the UI.
-                if !is_unknown {
-                    self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
-                }
-            }
-        }
-        cx.notify();
-    }
-
-    // ADR-0118: the two-stage Abort *arming* (first click) is entity-internal
-    // (`ConflictView::abort_request_arm`); the *execute* (second click) defers to
-    // `conflict_abort` here via `spawn_in`/`update_in`.
 
     /// Open the configured external merge tool for the selected conflict file
     /// (ADR-0060 / T-050).  Reads `settings.json` `"mergetool"` and substitutes
@@ -956,7 +854,6 @@ impl KagiApp {
                     current_branch,
                     selected_file,
                     editing_file,
-                    abort_armed: false,
                     skip_armed: false,
                 };
                 let files = mode.session.files.clone();

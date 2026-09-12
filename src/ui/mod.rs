@@ -22,6 +22,7 @@ pub mod commit_list;
 pub mod commit_panel;
 mod commit_panel_render;
 pub mod compare_pane;
+pub mod conflict_abort;
 pub mod conflict_binary_view;
 pub mod conflict_editor;
 pub mod conflict_view;
@@ -75,6 +76,7 @@ mod modal_renderers_plan;
 mod modal_renderers_stash;
 mod modal_shell;
 pub mod modals;
+mod operation_strip;
 mod operations;
 pub mod oplog_panel;
 mod oplog_render;
@@ -3262,6 +3264,7 @@ impl KagiApp {
             M::BranchCleanup(_) => self.confirm_branch_cleanup(cx),
             M::Discard(_) => self.start_discard(cx),
             M::ConflictContinue(_) => self.confirm_conflict_continue(cx),
+            M::ConflictAbort(_) => self.confirm_conflict_abort(cx),
             M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
             M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
             M::EditorDeleteConfirm(_) => self.confirm_editor_delete(cx),
@@ -3351,6 +3354,7 @@ impl KagiApp {
             M::BranchCleanup(_) => self.cancel_branch_cleanup_modal(),
             M::Discard(_) => self.cancel_discard_modal(),
             M::ConflictContinue(_) => self.cancel_conflict_continue(),
+            M::ConflictAbort(_) => self.cancel_conflict_abort(),
             M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
             M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),
             M::EditorDeleteConfirm(_) => self.cancel_editor_delete_confirm(),

@@ -8,7 +8,7 @@
 //! function rather than growing a second implementation over the same `.git`
 //! files.
 
-use super::*;
+use crate::backend::*;
 use kagi_domain::conflict_family::{
     BufferRevision, ConflictDraft, ConflictObservation, ConflictRevision, InProgressOperation,
 };
@@ -135,4 +135,149 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
         },
         session,
     }))
+}
+pub(crate) fn text_mode(repo: &Repository, path: &Path) -> u32 {
+    let executable = repo
+        .workdir()
+        .and_then(|root| std::fs::symlink_metadata(root.join(path)).ok())
+        .map(|metadata| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o111 != 0
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = metadata;
+                false
+            }
+        })
+        .unwrap_or(false);
+    if executable {
+        0o100755
+    } else {
+        0o100644
+    }
+}
+
+pub(crate) fn verify_save(
+    repo: &Repository,
+    path: &Path,
+    draft: &ConflictDraft,
+    expected_mode: u32,
+) -> Result<(), GitError> {
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    if index.get_path(path, 1).is_some()
+        || index.get_path(path, 2).is_some()
+        || index.get_path(path, 3).is_some()
+    {
+        return Err(GitError::Other(format!(
+            "{} remains unmerged after save",
+            path.display()
+        )));
+    }
+    let entry = index
+        .get_path(path, 0)
+        .ok_or_else(|| GitError::Other(format!("{} was not staged", path.display())))?;
+    match draft {
+        ConflictDraft::Text(bytes) => {
+            let root = repo
+                .workdir()
+                .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
+            let actual = std::fs::read(root.join(path))
+                .map_err(|e| GitError::Other(format!("verify {} failed: {e}", path.display())))?;
+            let expected_oid = git2::Oid::hash_object(git2::ObjectType::Blob, bytes)
+                .map_err(|e| GitError::Other(e.to_string()))?;
+            if actual != *bytes || entry.id != expected_oid || entry.mode != expected_mode {
+                return Err(GitError::Other(format!(
+                    "{} bytes, blob, or mode differ after save",
+                    path.display()
+                )));
+            }
+        }
+        ConflictDraft::Raw { oid, mode } => {
+            if entry.id.to_string() != *oid || entry.mode != *mode {
+                return Err(GitError::Other(format!(
+                    "{} raw OID or mode differs after save",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_dir_file(repo: &Repository, plan: &ops::DirFilePlan) -> Result<(), GitError> {
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    if index.get_path(&plan.path, 1).is_some()
+        || index.get_path(&plan.path, 2).is_some()
+        || index.get_path(&plan.path, 3).is_some()
+    {
+        return Err(GitError::Other(
+            "directory/file entry remains unmerged".into(),
+        ));
+    }
+    match plan.choice {
+        ops::DirFileChoice::KeepFile => {
+            let entry = index
+                .get_path(&plan.path, 0)
+                .ok_or_else(|| GitError::Other("kept file is absent from index".into()))?;
+            if entry.id != plan.file_oid || entry.mode != plan.file_mode {
+                return Err(GitError::Other("kept file identity differs".into()));
+            }
+            if plan
+                .dir_children
+                .iter()
+                .any(|path| index.get_path(path, 0).is_some())
+            {
+                return Err(GitError::Other("directory children remain in index".into()));
+            }
+        }
+        ops::DirFileChoice::KeepDirectory => {
+            if index.get_path(&plan.path, 0).is_some()
+                || plan
+                    .dir_children
+                    .iter()
+                    .any(|path| index.get_path(path, 0).is_none())
+            {
+                return Err(GitError::Other("kept directory index shape differs".into()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #704 / ADR-0196: measure the abort rather than trusting it. The operation
+/// state has to be gone, and HEAD has to stand where the restore said it put
+/// it — a `cleanup_state` that silently left `MERGE_HEAD` behind is exactly
+/// the dead end this issue is about, and must not be recorded as a success.
+pub(crate) fn verify_abort(
+    repo: &Repository,
+    restored: &conflicts::AbortOutcome,
+) -> Result<(), GitError> {
+    if let Some(live) = observation(repo)? {
+        return Err(GitError::Other(format!(
+            "{} is still in progress after the abort",
+            live.observation.operation
+        )));
+    }
+    let Some(target) = &restored.restored_to else {
+        return Ok(());
+    };
+    let head = repo
+        .head()
+        .ok()
+        .and_then(|head| head.target())
+        .map(|oid| oid.to_string());
+    if head.as_deref() != Some(target.as_str()) {
+        return Err(GitError::Other(format!(
+            "HEAD is {} after the abort, not the restored {target}",
+            head.unwrap_or_else(|| "unresolvable".into())
+        )));
+    }
+    Ok(())
 }

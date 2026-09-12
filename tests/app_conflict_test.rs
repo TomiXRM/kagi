@@ -610,3 +610,179 @@ fn text_save_preserves_executable_mode_in_stage_zero() {
         0o100755
     );
 }
+
+// ── Conflict C2: Abort (#704) ───────────────────────────────────────────────
+//
+// The dead end this closes: resolve → Continue → unstage → discard leaves the
+// repository `MERGING` with nothing unmerged, so the `ConflictView` is gone
+// and, before this, so was every way to abort. Admission comes from the
+// session's read model instead, which still has the operation.
+
+impl Fixture {
+    /// The #704 state: the resolution is staged, so `session.files` is empty
+    /// and the conflict editor has been torn down.
+    fn resolve_and_stage(&self) {
+        std::fs::write(self.repo.join("file.txt"), "resolved\n").unwrap();
+        assert!(git(&self.repo, &["add", "file.txt"]));
+    }
+
+    /// The pure observation the header operation strip renders and freezes
+    /// into its request — the same value `TabViewState::operation` holds.
+    fn in_progress(&self) -> kagi_domain::conflict_family::InProgressOperation {
+        Backend::open(&self.repo)
+            .unwrap()
+            .conflict_snapshot()
+            .unwrap()
+            .expect("an operation is in progress")
+            .in_progress()
+    }
+}
+
+#[test]
+fn abort_is_admissible_with_no_conflict_view_and_settles_once() {
+    let fixture = Fixture::content();
+    fixture.resolve_and_stage();
+    let mut sessions = Sessions::new();
+    // No `ConflictView` exists in this test at all — admission is the read
+    // model's observation and nothing else.
+    let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let operation = fixture.in_progress();
+    assert_eq!(operation.slug, "merge");
+    assert_eq!(operation.unmerged, 0);
+
+    let job = fixture.job(&mut sessions, Backend::conflict_abort_request(&operation));
+    let id = job.id();
+    let completion = job.run();
+    assert_eq!(
+        completion.report().evidence.progress,
+        ConflictProgress::Verified,
+        "the abort ran to a verified end"
+    );
+    let OpOutcome::Success { after } = &completion.report().recording.entry().outcome else {
+        panic!(
+            "expected Success, got {:?}",
+            completion.report().recording.entry().outcome
+        );
+    };
+    assert!(
+        !after.head.contains("unreadable"),
+        "the receipt carries a measured after-state: {after:?}"
+    );
+    assert!(
+        completion.report().evidence.after.is_none(),
+        "no operation is observed once the abort has landed"
+    );
+
+    let first = sessions.apply(completion.clone());
+    assert!(!sessions.has_leases(), "a proven stop releases the lease");
+    assert!(first.iter().any(|delivery| matches!(
+        delivery,
+        Delivery::Completed { id: settled, .. } if *settled == id
+    )));
+    assert_eq!(kagi_git::oplog::read_oplog_tail(10).len(), 1);
+    assert!(
+        sessions.apply(completion).is_empty(),
+        "a duplicate completion settles nothing a second time"
+    );
+    assert_eq!(kagi_git::oplog::read_oplog_tail(10).len(), 1);
+
+    assert!(
+        !fixture.repo.join(".git/MERGE_HEAD").exists(),
+        "the merge is over"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("file.txt")).unwrap(),
+        "main\n",
+        "the pre-merge content is restored"
+    );
+}
+
+#[test]
+fn an_abort_planned_against_a_stale_revision_is_refused_without_mutation() {
+    let fixture = Fixture::content();
+    fixture.resolve_and_stage();
+    let mut sessions = Sessions::new();
+    let (owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    // The user opens the confirmation…
+    let frozen = Backend::conflict_abort_request(&fixture.in_progress());
+    let frozen_for_backend = frozen.clone();
+    // …and the repository moves under it before they confirm.
+    std::fs::write(fixture.repo.join("other.txt"), "typed meanwhile\n").unwrap();
+    assert!(git(&fixture.repo, &["add", "other.txt"]));
+
+    let fresh = Backend::open(&fixture.repo)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("still merging");
+    sessions.observe_conflict(owner, Some(fresh.observation));
+    let owner = sessions.attachment(owner).unwrap();
+    let plan = plan_conflict(
+        &mut sessions,
+        ConflictAppRequest {
+            owner,
+            request: frozen,
+        },
+        ExecutionPolicy::human(false),
+    );
+    assert!(apply_plan(&mut sessions, plan.run()));
+    assert!(
+        matches!(sessions.plan_state(), PlanState::Error { .. }),
+        "a frozen revision that no longer describes the repository is refused"
+    );
+    assert!(!sessions.has_leases(), "a refused plan admits no write");
+    assert!(
+        fixture.repo.join(".git/MERGE_HEAD").exists(),
+        "the refusal mutated nothing"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("other.txt")).unwrap(),
+        "typed meanwhile\n"
+    );
+    // Belt to that brace: the Backend refuses the frozen request on its own,
+    // so a caller that skipped the application boundary is refused too.
+    assert!(
+        Backend::plan_recorded_conflict(&fixture.repo, frozen_for_backend).is_err(),
+        "the Backend re-reads the live revision and refuses a stale abort"
+    );
+    assert!(fixture.repo.join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn an_abort_whose_result_cannot_be_measured_is_unknown_and_blocks_retry() {
+    let fixture = Fixture::content();
+    fixture.resolve_and_stage();
+    let mut sessions = Sessions::new();
+    let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let operation = fixture.in_progress();
+    let job = fixture.job(&mut sessions, Backend::conflict_abort_request(&operation));
+    let id = job.id();
+    let completion = job
+        .with_fault_for_test(ConflictFaultPoint::AbortAfterStateUnreadable)
+        .run();
+    assert!(
+        matches!(
+            completion.report().recording.entry().outcome,
+            OpOutcome::Unknown { .. }
+        ),
+        "a started restore with no measurable after-state is Unknown, got {:?}",
+        completion.report().recording.entry().outcome
+    );
+    sessions.apply(completion);
+    assert!(
+        matches!(
+            sessions.write_lease(&fixture.repo, LegacyBusy(false)),
+            Err(AdmissionError::NeedsReconcile)
+        ),
+        "no further write is admitted against a scope with an unresolved Unknown"
+    );
+    // …and it is reconcilable rather than a dead end.
+    let read = prepare_reconcile(&sessions, id)
+        .expect("an Unknown abort parks a reconcile entry")
+        .run()
+        .expect("the reconcile read succeeds");
+    acknowledge(&mut sessions, read).expect("acknowledging clears the requirement");
+    assert!(sessions
+        .write_lease(&fixture.repo, LegacyBusy(false))
+        .is_ok());
+}

@@ -367,59 +367,61 @@ impl KagiApp {
                 merge_blocking(&bg_owner, &plan, &target, &kind)
             }
         });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok((summary, after)) => {
-                klog!("async: merge finished — {}", summary);
-                app.record_op(
-                    "merge",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                // Record for undo/redo only when the merge actually moved
-                // the branch ref (clean merge / fast-forward). A merge
-                // left in conflict has not moved HEAD, so before==after
-                // and record_history is a no-op.
-                if let (Some((branch, before)), Some((_, after_sha))) =
-                    (history_before.clone(), app.head_branch_and_sha())
-                {
-                    app.record_history(
-                        kagi_git::OperationKind::Merge,
-                        &branch,
-                        before,
-                        after_sha,
-                        format!("merge {}", history_target),
-                    );
+        let (note_source, note_into) = (modal.target.clone(), modal.into_branch.clone());
+        self.finish_recorded(
+            cx,
+            task,
+            "merge",
+            i18n::Op::Merge,
+            modal.plan.current.clone(),
+            repo_path,
+            move |outcome| {
+                Some(format!(
+                    " — {}",
+                    crate::ui::blocking_ops::merge_summary(
+                        off_branch,
+                        &note_source,
+                        &note_into,
+                        outcome
+                    )
+                ))
+            },
+            move |app, done, cx| match done {
+                Ok(_) => {
+                    // Record for undo/redo only when the merge actually moved
+                    // the branch ref (clean merge / fast-forward). A merge
+                    // left in conflict has not moved HEAD, so before==after
+                    // and record_history is a no-op.
+                    if let (Some((branch, before)), Some((_, after_sha))) =
+                        (history_before.clone(), app.head_branch_and_sha())
+                    {
+                        app.record_history(
+                            kagi_git::OperationKind::Merge,
+                            &branch,
+                            before,
+                            after_sha,
+                            format!("merge {}", history_target),
+                        );
+                    }
+                    // reload() resets the conflict-mode detection guard and
+                    // re-runs detect_conflict_mode(); a merge that left
+                    // conflict markers (MergeKind::Conflicts) therefore enters
+                    // Conflict Mode here. Non-conflict merges stay Normal.
+                    app.reload(cx);
                 }
-                // reload() resets the conflict-mode detection guard and
-                // re-runs detect_conflict_mode(); a merge that left
-                // conflict markers (MergeKind::Conflicts) therefore enters
-                // Conflict Mode here. Non-conflict merges stay Normal.
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: merge failed — {}", err_msg);
-                app.record_op(
-                    "merge",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_merge_modal(MergePlanModal {
-                    owner: modal.owner.clone(),
-                    target: modal.target.clone(),
-                    into_branch: modal.into_branch.clone(),
-                    plan: modal.plan.clone(),
-                    kind: modal.kind.clone(),
-                    off_branch: modal.off_branch,
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        });
+                Err(failure) => {
+                    app.set_merge_modal(MergePlanModal {
+                        owner: modal.owner.clone(),
+                        target: modal.target.clone(),
+                        into_branch: modal.into_branch.clone(),
+                        plan: modal.plan.clone(),
+                        kind: modal.kind.clone(),
+                        off_branch: modal.off_branch,
+                        error: Some(SharedString::from(failure.message)),
+                    });
+                }
+            },
+        );
     }
 }
 

@@ -30,6 +30,14 @@ pub mod worktree;
 use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;
 
+/// A failure handed to a family's `on_done` by [`KagiApp::finish_recorded`]:
+/// the localized text plus the receipt's typed code (ADR-0195), so a family
+/// can special-case a code without matching on prose.
+pub(crate) struct OpFailure {
+    pub message: String,
+    pub code: FailureCode,
+}
+
 /// A Pull confirmation that could not be delivered when its fetch finished,
 /// waiting for the tab that asked for it (#625, ADR-0192).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,7 +51,8 @@ pub enum PullConfirmDelivery {
 use crate::ui::KagiApp;
 use gpui::{Context, SharedString, Task};
 use kagi_git::backend::recording::{Recording, RunReport};
-use kagi_git::oplog::OpOutcome;
+use kagi_git::oplog::{FailureCode, OpOutcome};
+use kagi_git::OperationOutcome;
 use kagi_git::StateSummary;
 use std::path::{Path, PathBuf};
 
@@ -209,15 +218,15 @@ impl KagiApp {
     ///
     /// The settle half notices a failed append on every arrival, so a tab
     /// switch cannot swallow "changed but not recorded". The presentation half
-    /// presents the recorded entry — never one re-synthesized from the error
-    /// text — and hands `on_done` the localized failure, `None` on success.
-    /// An `Err` from the task means the repository would not open: nothing ran
-    /// and nothing was recorded, so that one case is still recorded here.
-    ///
-    /// The `async: <op> finished|failed` contract line is logged here, before
-    /// presentation, so its position relative to the footer line is unchanged;
-    /// `finished_note` is the family's historical ` — <summary>` suffix.
-    pub(crate) fn finish_recorded<F>(
+    /// logs the `async: <op> finished|failed` contract line *before* the
+    /// footer line (its historical position), presents the recorded entry —
+    /// never one re-synthesized from the error text — and hands `on_done` the
+    /// outcome, or the localized failure with its typed code. `finished_note`
+    /// is the family's historical ` — <summary>` suffix, built from the
+    /// outcome. An `Err` from the task means the repository would not open:
+    /// nothing ran and nothing was recorded, so that one case is still
+    /// recorded here.
+    pub(crate) fn finish_recorded<N, F>(
         &mut self,
         cx: &mut Context<Self>,
         task: Task<Result<RunReport, String>>,
@@ -225,10 +234,12 @@ impl KagiApp {
         op: crate::ui::i18n::Op,
         before: StateSummary,
         repo_path: PathBuf,
-        finished_note: Option<String>,
+        finished_note: N,
         on_done: F,
     ) where
-        F: FnOnce(&mut Self, Option<String>, &mut Context<Self>) + 'static,
+        N: FnOnce(&OperationOutcome) -> Option<String> + 'static,
+        F: for<'a> FnOnce(&mut Self, Result<&'a OperationOutcome, OpFailure>, &mut Context<Self>)
+            + 'static,
     {
         let notice_path = repo_path.clone();
         self.finish_op_on_main_settled(
@@ -240,23 +251,26 @@ impl KagiApp {
                 }
             },
             move |app, result, cx| match result {
-                Ok(report) => {
-                    let failed = report
-                        .result
-                        .as_ref()
-                        .err()
-                        .map(|e| crate::ui::i18n::op_failed(op, e));
-                    match &failed {
-                        None => klog!(
+                Ok(report) => match &report.result {
+                    Ok(outcome) => {
+                        klog!(
                             "async: {} finished{}",
                             op_name,
-                            finished_note.as_deref().unwrap_or("")
-                        ),
-                        Some(err_msg) => klog!("async: {} failed — {}", op_name, err_msg),
+                            finished_note(outcome).unwrap_or_default()
+                        );
+                        app.present_recorded(&report.recording, cx);
+                        on_done(app, Ok(outcome), cx);
                     }
-                    app.present_recorded(&report.recording, cx);
-                    on_done(app, failed, cx);
-                }
+                    Err(error) => {
+                        let failure = OpFailure {
+                            message: crate::ui::i18n::op_failed(op, error),
+                            code: FailureCode::from(error),
+                        };
+                        klog!("async: {} failed — {}", op_name, failure.message);
+                        app.present_recorded(&report.recording, cx);
+                        on_done(app, Err(failure), cx);
+                    }
+                },
                 Err(err_msg) => {
                     klog!("async: {} failed — {}", op_name, err_msg);
                     app.record_op(
@@ -268,7 +282,11 @@ impl KagiApp {
                         &repo_path,
                         cx,
                     );
-                    on_done(app, Some(err_msg), cx);
+                    let failure = OpFailure {
+                        message: err_msg,
+                        code: FailureCode::Other,
+                    };
+                    on_done(app, Err(failure), cx);
                 }
             },
         );

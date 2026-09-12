@@ -106,84 +106,89 @@ impl KagiApp {
         let bg_onto = onto.clone();
         let task =
             cx.background_spawn(async move { rebase_blocking(&bg_path, &bg_plan, &bg_onto) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(summary) => {
-                klog!("async: rebase finished — {}", summary);
-                app.record_op(
-                    "rebase",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success {
-                        after: kagi_git::ops::StateSummary {
-                            head: plan.current.head.clone(),
-                            dirty: summary,
-                        },
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("rebase: onto '{}'", onto)));
-                // Re-runs conflict-mode detection unconditionally — a
-                // rebase paused at a conflict enters Conflict Mode here,
-                // exactly like a conflicting merge (see module doc).
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: rebase failed — {}", err_msg);
-                app.record_op(
-                    "rebase",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_rebase_current_onto_modal(RebaseCurrentOntoModal {
-                    onto: onto.clone(),
-                    branch: modal.branch.clone(),
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        });
+        self.finish_recorded(
+            cx,
+            task,
+            "rebase",
+            i18n::Op::Rebase,
+            plan.current.clone(),
+            repo_path,
+            |outcome| Some(format!(" — {}", rebase_summary(outcome))),
+            move |app, done, cx| match done {
+                Ok(_) => {
+                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                        "rebase: onto '{}'",
+                        onto
+                    )));
+                    // Re-runs conflict-mode detection unconditionally — a
+                    // rebase paused at a conflict enters Conflict Mode here,
+                    // exactly like a conflicting merge (see module doc).
+                    app.reload(cx);
+                }
+                Err(failure) => {
+                    // The typed code, not the prose (ADR-0195): a rebase that
+                    // could not start because Kagi disabled repository settings
+                    // gets its own guidance.
+                    let error = if failure.code
+                        == kagi_git::oplog::FailureCode::RebaseBlockedByRepoSettings
+                    {
+                        i18n::rebase_repository_settings_may_block_start().to_string()
+                    } else {
+                        failure.message
+                    };
+                    app.set_rebase_current_onto_modal(RebaseCurrentOntoModal {
+                        onto: onto.clone(),
+                        branch: modal.branch.clone(),
+                        plan: plan.clone(),
+                        error: Some(SharedString::from(error)),
+                    });
+                }
+            },
+        );
     }
 }
 
 /// Blocking `preflight → execute` for the background thread, mirroring
-/// `blocking_ops.rs::merge_blocking`. `run()` enforces preflight (refuses if
-/// HEAD moved since `plan` was captured) as its first step. Returns a short
-/// human string describing the outcome for the oplog/footer — `Conflicted`
-/// is not an `Err` (see module doc).
+/// `blocking_ops.rs::merge_blocking`. Returns the backend's receipt — a
+/// `Conflicted` rebase is a successful outcome, not an error (see module doc).
 fn rebase_blocking(
     repo_path: &std::path::Path,
     plan: &kagi_git::ops::OperationPlan,
     onto: &str,
-) -> Result<String, String> {
+) -> Result<kagi_git::backend::recording::RunReport, String> {
     let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
         .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::RebaseCurrentOnto {
         onto: onto.to_string(),
     };
-    let outcome = repo.run(&op, plan).map_err(|error| match error {
-        kagi_git::GitError::RebaseCannotStartWithRepoSettingsDisabled(_) => {
-            i18n::rebase_repository_settings_may_block_start().to_string()
-        }
-        other => i18n::op_failed(i18n::Op::Rebase, other),
-    })?;
-    match outcome {
-        kagi_git::OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Completed { head }) => {
+    let report = repo.run_recorded(&op, plan);
+    match &report.result {
+        Ok(kagi_git::OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Completed {
+            head,
+        })) => {
             klog!(
                 "executed: rebase onto {} — completed at {}",
                 onto,
                 head.short()
             );
-            Ok(format!("completed at {}", head.short()))
+        }
+        Ok(kagi_git::OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Conflicted)) => {
+            klog!("executed: rebase onto {} — paused for conflicts", onto);
+        }
+        _ => {}
+    }
+    Ok(report)
+}
+
+/// The ` — <outcome>` suffix of the `async: rebase finished` contract line.
+fn rebase_summary(outcome: &kagi_git::OperationOutcome) -> String {
+    match outcome {
+        kagi_git::OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Completed { head }) => {
+            format!("completed at {}", head.short())
         }
         kagi_git::OperationOutcome::Rebase(kagi_git::ops::RebaseOutcome::Conflicted) => {
-            klog!("executed: rebase onto {} — paused for conflicts", onto);
-            Ok("paused for conflicts".to_string())
+            "paused for conflicts".to_string()
         }
-        _ => Ok("done".to_string()),
+        _ => "done".to_string(),
     }
 }

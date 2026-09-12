@@ -123,20 +123,20 @@ impl KagiApp {
             i18n::Op::Delete,
             plan.current.clone(),
             repo_path,
-            None,
-            move |app, failed, cx| match failed {
-                None => {
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(
                         "delete-remote-branch: '{}' deleted",
                         remote_branch
                     )));
                     app.reload(cx);
                 }
-                Some(err_msg) => {
+                Err(err_msg) => {
                     app.set_delete_remote_branch_modal(DeleteRemoteBranchModal {
                         remote_branch: remote_branch.clone(),
                         plan: plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(err_msg.message)),
                         confirm_armed: false,
                     });
                 }

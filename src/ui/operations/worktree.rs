@@ -219,29 +219,25 @@ impl KagiApp {
                 allow_existing_branch,
             )
         });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                klog!("async: create-worktree finished");
-                app.record_op(
-                    "create-worktree",
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: create-worktree failed — {}", err_msg);
-                app.record_op(
-                    "create-worktree",
-                    plan.current.clone(),
-                    OpOutcome::Failed { error: err_msg },
-                    &repo_path,
-                    cx,
-                );
-            }
-        });
+        let op = if allow_existing_branch {
+            i18n::Op::OpenWorktree
+        } else {
+            i18n::Op::CreateWorktree
+        };
+        self.finish_recorded(
+            cx,
+            task,
+            "create-worktree",
+            op,
+            plan.current.clone(),
+            repo_path,
+            |_| None,
+            move |app, done, cx| {
+                if done.is_ok() {
+                    app.reload(cx);
+                }
+            },
+        );
     }
 
     /// Dispatch a worktree context-menu action.

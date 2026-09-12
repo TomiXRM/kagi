@@ -765,12 +765,26 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
         );
         assert!(app.busy_op.is_none(), "busy must be released on failure");
     });
-    assert!(
-        records(repo, "push")
-            .iter()
-            .any(|e| matches!(e.outcome, OpOutcome::Failed { .. })),
-        "the failure must also be durable in the oplog"
-    );
+    let durable = records(repo, "push");
+    let failed = durable
+        .iter()
+        .find(|e| matches!(e.outcome, OpOutcome::Failed { .. }))
+        .expect("the failure must also be durable in the oplog");
+    // ADR-0196 Wave 2: the panel shows the backend's receipt itself, not a
+    // copy the UI re-synthesized from the error text.
+    cx.read(|cx| {
+        let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+        let shown: Vec<_> = panel.entries().iter().filter(|e| e.op == "push").collect();
+        assert_eq!(shown.len(), 1, "the panel shows the receipt once");
+        assert!(
+            failed.failure_code.is_some(),
+            "the backend records a typed failure code"
+        );
+        assert_eq!(
+            shown[0].failure_code, failed.failure_code,
+            "the presented entry keeps the backend's failure code"
+        );
+    });
     assert_eq!(
         repo_fingerprint(repo),
         before,

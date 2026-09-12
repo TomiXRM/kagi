@@ -314,41 +314,37 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_modal = modal.clone();
         let task = cx.background_spawn(async move { branch_plan_blocking(&bg_path, &bg_modal) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                app.record_op(
-                    op_name,
-                    modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: after.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "{}: {}",
-                    op_name, after.dirty
-                )));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                app.record_op(
-                    op_name,
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_branch_plan_modal(BranchPlanModal {
-                    kind: modal.kind.clone(),
-                    branch_name: modal.branch_name.clone(),
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        });
+        let op = match modal.kind {
+            BranchPlanKind::PullFfOnly => i18n::Op::Pull,
+            BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => i18n::Op::Push,
+        };
+        self.finish_recorded(
+            cx,
+            task,
+            op_name,
+            op,
+            modal.plan.current.clone(),
+            repo_path,
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(outcome) => {
+                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                        "{}: {}",
+                        op_name,
+                        branch_plan_summary(&modal.branch_name, outcome)
+                    )));
+                    app.reload(cx);
+                }
+                Err(failure) => {
+                    app.set_branch_plan_modal(BranchPlanModal {
+                        kind: modal.kind.clone(),
+                        branch_name: modal.branch_name.clone(),
+                        plan: modal.plan.clone(),
+                        error: Some(SharedString::from(failure.message)),
+                    });
+                }
+            },
+        );
     }
 
     pub fn open_set_upstream_modal(&mut self, branch_name: String) {
@@ -450,18 +446,18 @@ impl KagiApp {
             i18n::Op::SetUpstream,
             plan.current.clone(),
             repo_path,
-            None,
-            move |app, failed, cx| match failed {
-                None => {
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
                     app.reload(cx);
                 }
-                Some(err_msg) => {
+                Err(err_msg) => {
                     app.set_set_upstream_modal(SetUpstreamModal {
                         branch_name: modal.branch_name.clone(),
                         input: modal.input.clone(),
                         input_state: None,
                         plan: ModalPlan::Ready(plan.clone()),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(err_msg.message)),
                     });
                 }
             },
@@ -574,19 +570,19 @@ impl KagiApp {
             i18n::Op::Rename,
             plan.current.clone(),
             repo_path,
-            None,
-            move |app, failed, cx| match failed {
-                None => {
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
                     app.reload(cx);
                 }
-                Some(err_msg) => {
+                Err(err_msg) => {
                     app.set_rename_branch_modal(RenameBranchModal {
                         old_name: modal.old_name.clone(),
                         input: modal.input.clone(),
                         input_state: None,
                         validation: modal.validation.clone(),
                         plan: ModalPlan::Ready(plan.clone()),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(err_msg.message)),
                     });
                 }
             },
@@ -683,6 +679,7 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             checkout_tracking_blocking(&bg_path, &plan, &remote_branch, &local_branch)
         });
+        let note_branch = modal.local_branch.clone();
         self.finish_recorded(
             cx,
             task,
@@ -690,17 +687,17 @@ impl KagiApp {
             i18n::Op::CheckoutTracking,
             modal.plan.current.clone(),
             repo_path,
-            Some(format!(" — checkout {}", modal.local_branch)),
-            move |app, failed, cx| match failed {
-                None => {
+            move |_| Some(format!(" — checkout {}", note_branch)),
+            move |app, done, cx| match done {
+                Ok(_) => {
                     app.reload(cx);
                 }
-                Some(err_msg) => {
+                Err(err_msg) => {
                     app.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
                         remote_branch: modal.remote_branch.clone(),
                         local_branch: modal.local_branch.clone(),
                         plan: modal.plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(err_msg.message)),
                     });
                 }
             },
@@ -797,6 +794,7 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             switch_to_latest_blocking(&bg_path, &plan, &branch_name, &remote_branch)
         });
+        let note_branch = modal.branch_name.clone();
         self.finish_recorded(
             cx,
             task,
@@ -804,17 +802,17 @@ impl KagiApp {
             i18n::Op::SwitchToLatest,
             modal.plan.current.clone(),
             repo_path,
-            Some(format!(" — switch {}", modal.branch_name)),
-            move |app, failed, cx| match failed {
-                None => {
+            move |_| Some(format!(" — switch {}", note_branch)),
+            move |app, done, cx| match done {
+                Ok(_) => {
                     app.reload(cx);
                 }
-                Some(err_msg) => {
+                Err(err_msg) => {
                     app.set_switch_to_latest_modal(SwitchToLatestPlanModal {
                         branch_name: modal.branch_name.clone(),
                         remote_branch: modal.remote_branch.clone(),
                         plan: modal.plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(err_msg.message)),
                     });
                 }
             },

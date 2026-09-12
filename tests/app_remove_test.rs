@@ -143,6 +143,105 @@ fn outcome(completion: &RemoveCompletion) -> &OpOutcome {
 }
 const COPY: &str = "[[pre_remove]]\ntype = 'copy'\nfrom = 'source'\nto = 'copied'\n";
 
+/// ADR-0196 決定 3: the owner frozen at admission is the routing key on delivery.
+///
+/// The legacy path routed by `repo_path + switch_generation` — a path string
+/// standing in for identity. The stamp must be the one `begin_write` minted,
+/// never re-derived from a sessions map that may have moved on.
+#[test]
+fn delivery_carries_the_stamp_minted_at_admission() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new(None);
+    let mut s = Sessions::new();
+    let job = f.job(&mut s);
+    let admitted = job.id();
+    // The one attached session is the owner; capture its identity *before* the
+    // job runs so a later visit bump cannot leak into the expectation.
+    let owner = s
+        .attachment(s.sessions_for(&Fixture::worktree_id(&f.repo))[0])
+        .expect("owner attached");
+    let deliveries = apply(&mut s, job.run());
+    let stamp = deliveries
+        .iter()
+        .find_map(|d| match d {
+            Delivery::Completed { stamp, id, .. } => Some((*stamp, *id)),
+            _ => None,
+        })
+        .expect("a completion is delivered to its owner");
+    assert_eq!(
+        stamp.1, admitted,
+        "delivered under the admitted operation id"
+    );
+    assert_eq!(
+        stamp.0,
+        OwnerStamp {
+            session: owner.session,
+            visit: owner.visit,
+            operation: admitted,
+        },
+        "the stamp is the owner frozen at admission, not something re-resolved"
+    );
+}
+
+/// A completion that arrives after the user left the tab still routes to the
+/// owner — by the *admission* visit, not the current one — so it can be
+/// recorded and shown but never seed a proposal for the next visit (#557).
+#[test]
+fn stamp_keeps_the_admission_visit_after_the_owner_departs() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new(None);
+    let mut s = Sessions::new();
+    let job = f.job(&mut s);
+    let session = s.sessions_for(&Fixture::worktree_id(&f.repo))[0];
+    let admission_visit = s.attachment(session).unwrap().visit;
+    s.depart(session);
+    assert_eq!(
+        s.attachment(session).unwrap().visit,
+        admission_visit + 1,
+        "departing bumps the live visit"
+    );
+    let deliveries = apply(&mut s, job.run());
+    let stamp = deliveries
+        .iter()
+        .find_map(|d| match d {
+            Delivery::Completed { stamp, .. } => Some(*stamp),
+            _ => None,
+        })
+        .expect("delivered");
+    assert_eq!(stamp.session, session);
+    assert_eq!(
+        stamp.visit, admission_visit,
+        "the stamp names the visit the write was admitted in, so a receiver can \
+         tell a stale-visit completion apart without a path comparison"
+    );
+}
+
+/// `begin_write` is one-shot: the approval it consumed cannot be spent again.
+#[test]
+fn begin_write_spends_the_approval_exactly_once() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new(None);
+    let mut s = Sessions::new();
+    let token = f.ready(&mut s);
+    let approved = approve(&mut s, token, RemovePolicy::default()).unwrap();
+    let running = begin_write(&mut s, &approved, LegacyBusy(false)).expect("first admission");
+    assert_eq!(running.owner_stamp.operation, running.operation_id);
+    assert!(s.has_leases(), "admission reserves the scope");
+    assert_eq!(
+        begin_write(&mut s, &approved, LegacyBusy(false)).unwrap_err(),
+        AdmissionError::StaleApproval,
+        "the plan slot expired with the first admission"
+    );
+    // A legacy busy writer is refused even before the approval check matters.
+    assert!(matches!(s.plan_state(), PlanState::Draft));
+}
+
 #[test]
 fn normal_receipt_identity_and_invalidation() {
     if !crate::test_support::run_isolated() {

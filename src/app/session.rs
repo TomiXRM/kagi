@@ -119,9 +119,37 @@ impl std::fmt::Display for AdmissionError {
 #[derive(Clone, Copy)]
 pub struct LegacyBusy(pub bool);
 
+/// The delivery owner of one write, frozen at admission (ADR-0196 決定 3).
+///
+/// Completion is routed by this stamp and never re-resolved: the legacy path
+/// compared `repo_path + switch_generation`, which is a path string standing in
+/// for identity and is exactly what let a completion land on the wrong tab or
+/// be dropped. `session` says *which* tab incarnation, `visit` says which stay
+/// in it (a completion from an earlier visit may be recorded and shown but
+/// must not seed a proposal for the next one, #557), `operation` ties it to the
+/// one admitted write it belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OwnerStamp {
+    pub session: SessionId,
+    pub visit: u64,
+    pub operation: OperationId,
+}
+
+/// What `begin_write` hands back: the admitted operation and its frozen owner.
+///
+/// The lease itself lives in `Sessions` keyed by `operation_id` and is released
+/// by `apply` on settlement, so this carries no guard — dropping it is not a
+/// cancellation (ADR-0175).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunningWrite {
+    pub operation_id: OperationId,
+    pub owner_stamp: OwnerStamp,
+}
+
 pub(crate) struct InFlight {
     pub plan: Planned,
     pub attachment: OwnerAttachment,
+    pub stamp: OwnerStamp,
 }
 pub(crate) struct ReconcileEntry {
     pub plan: Planned,
@@ -478,11 +506,14 @@ pub enum Delivery {
     Completed {
         id: OperationId,
         attachment: Attachment,
+        /// Routing key frozen at admission; equals what `begin_write` returned.
+        stamp: OwnerStamp,
         report: Box<ExecutionReport>,
     },
     RemoteCompleted {
         id: OperationId,
         attachment: crate::remote::stash::RemoteAttachment,
+        stamp: OwnerStamp,
         report: Box<ExecutionReport>,
     },
 }

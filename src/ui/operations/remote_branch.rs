@@ -116,41 +116,32 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             delete_remote_branch_blocking(&bg_path, &bg_plan, &bg_remote_branch)
         });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                klog!("async: delete-remote-branch finished");
-                app.record_op(
-                    "delete-remote-branch",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "delete-remote-branch: '{}' deleted",
-                    remote_branch
-                )));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: delete-remote-branch failed — {}", err_msg);
-                app.record_op(
-                    "delete-remote-branch",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_delete_remote_branch_modal(DeleteRemoteBranchModal {
-                    remote_branch: remote_branch.clone(),
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    confirm_armed: false,
-                });
-            }
-        });
+        self.finish_recorded(
+            cx,
+            task,
+            "delete-remote-branch",
+            i18n::Op::Delete,
+            plan.current.clone(),
+            repo_path,
+            None,
+            move |app, failed, cx| match failed {
+                None => {
+                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                        "delete-remote-branch: '{}' deleted",
+                        remote_branch
+                    )));
+                    app.reload(cx);
+                }
+                Some(err_msg) => {
+                    app.set_delete_remote_branch_modal(DeleteRemoteBranchModal {
+                        remote_branch: remote_branch.clone(),
+                        plan: plan.clone(),
+                        error: Some(SharedString::from(err_msg)),
+                        confirm_armed: false,
+                    });
+                }
+            },
+        );
     }
 }
 

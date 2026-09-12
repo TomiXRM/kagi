@@ -341,38 +341,64 @@ pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
     app.busy_snackbar_label()
 }
 
-/// Arm a *known* failed termination for the next pr-merge.
+/// Arm one canned pr-merge terminal.
 ///
 /// Without a GitHub remote every `gh` call fails, including the re-read, so a
-/// real merge attempt in a fixture is honestly `Unknown` — which retains the
-/// lease. This is how a test reaches the other terminal, the one that must
-/// release it: the report is the same shape the transport returns, recording
-/// included.
+/// real merge attempt in a fixture is honestly `Unknown`. These are the two
+/// terminals a fixture cannot otherwise reach — the report is the same shape
+/// the transport returns, recording included.
 #[cfg(feature = "gui-e2e")]
-pub fn arm_pr_merge_failure() {
-    PR_MERGE_FAILURE.store(true, std::sync::atomic::Ordering::SeqCst);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PrMergeTerminal {
+    /// The server refused it: a plain, retryable failure.
+    Failed,
+    /// Merged, but `--delete-branch` never answered — the receipt is `Partial`,
+    /// the lease is released, and nothing but the transport hold stops a
+    /// second merge of a PR that is already merged.
+    Partial,
 }
 #[cfg(feature = "gui-e2e")]
-static PR_MERGE_FAILURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn arm_pr_merge_terminal(terminal: PrMergeTerminal) {
+    *PR_MERGE_TERMINAL.lock().unwrap() = Some(terminal);
+}
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn pr_merge_failure_fault(
+static PR_MERGE_TERMINAL: std::sync::Mutex<Option<PrMergeTerminal>> = std::sync::Mutex::new(None);
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn pr_merge_terminal_fault(
     repo: &Path,
+    number: u64,
     plan: &kagi_git::OperationPlan,
 ) -> Option<kagi_git::backend::recording::RunReport> {
-    if !PR_MERGE_FAILURE.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        return None;
-    }
-    const ERROR: &str = "injected: the server refused the merge";
+    let terminal = PR_MERGE_TERMINAL.lock().unwrap().take()?;
+    const FAILED: &str = "injected: the server refused the merge";
+    const PARTIAL: &str = "injected: merged; branch deletion unconfirmed";
+    let (outcome, result) = match terminal {
+        PrMergeTerminal::Failed => (
+            kagi_git::oplog::OpOutcome::Failed {
+                error: FAILED.to_string(),
+            },
+            Err(kagi_git::GitError::Other(FAILED.to_string())),
+        ),
+        PrMergeTerminal::Partial => (
+            kagi_git::oplog::OpOutcome::Partial {
+                after: plan.predicted.clone(),
+                error: PARTIAL.to_string(),
+            },
+            Ok(kagi_git::OperationOutcome::PrMerge {
+                number,
+                detail: PARTIAL.to_string(),
+                confirmed: false,
+            }),
+        ),
+    };
     let entry = kagi_git::oplog::OpLogEntry::new(
         "pr-merge",
         repo.display().to_string(),
         plan.current.clone(),
-        kagi_git::oplog::OpOutcome::Failed {
-            error: ERROR.to_string(),
-        },
+        outcome,
     );
     Some(kagi_git::backend::recording::RunReport {
-        result: Err(kagi_git::GitError::Other(ERROR.to_string())),
+        result,
         recording: kagi_git::backend::recording::finalize(entry),
         stash: None,
     })

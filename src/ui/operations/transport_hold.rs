@@ -47,18 +47,40 @@ impl KagiApp {
         }
     }
 
-    /// Hold from a caller that already knows the completion was indeterminate
-    /// — a run-family `on_done` sees the typed outcome, not the receipt
-    /// (ADR-0196 Wave 3). Same hold, same notice as [`Self::settle_transport`].
-    pub(crate) fn hold_transport(&mut self, owner: &Path, operation: &str, evidence: &str) {
-        self.transport_holds.hold(owner, operation);
-        self.report_unknown_notice(
-            owner,
-            format!(
-                "{operation}: {evidence}. {}",
-                crate::ui::i18n::Msg::TransportRetryHeld.t()
-            ),
-        );
+    /// Settlement for one run-family receipt, before the stale-tab guard: what
+    /// the execution boundary made durable is delivered whatever the tab is
+    /// doing now (#501, ADR-0196 Wave 3).
+    ///
+    /// A PR merge that landed but did not finish (`confirmed: false` —
+    /// `Partial`) is the one outcome nothing else guards: `apply` releases its
+    /// lease and parks no reconcile entry, because the merge *is* done. Only
+    /// this hold stops the button offering it again, so it cannot live in the
+    /// presentation half. `Unknown` deliberately does **not** hold: the Run
+    /// reconcile owns that scope until it is acknowledged, and `TransportHolds`
+    /// has no clear API — a hold there would outlive the acknowledgement.
+    pub(crate) fn settle_run_receipt(
+        &mut self,
+        op: &str,
+        report: &kagi_git::backend::recording::RunReport,
+        repo: &Path,
+    ) {
+        self.notice_recording_failure(op, &report.recording, repo);
+        if let Ok(kagi_git::OperationOutcome::PrMerge {
+            number,
+            detail,
+            confirmed: false,
+        }) = &report.result
+        {
+            let operation = format!("{op} #{number}");
+            self.transport_holds.hold(repo, &operation);
+            self.report_unknown_notice(
+                repo,
+                format!(
+                    "{operation}: {detail}. {}",
+                    crate::ui::i18n::Msg::TransportRetryHeld.t()
+                ),
+            );
+        }
     }
 
     pub(crate) fn reject_transport_hold(&mut self, owner: &Path, operation: &str) -> bool {

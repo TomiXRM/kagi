@@ -349,7 +349,6 @@ impl KagiApp {
         // that admission succeeded (it can refuse: Identity / NeedsReconcile).
         let rp = repo_path.clone();
         let bg_plan = plan.clone();
-        let notice_repo = repo_path.clone();
         let dispatched = self.finish_run(
             cx,
             "pr-merge",
@@ -358,7 +357,8 @@ impl KagiApp {
             repo_path,
             move || {
                 #[cfg(feature = "gui-e2e")]
-                if let Some(report) = crate::ui::e2e::pr_merge_failure_fault(&rp, &bg_plan) {
+                if let Some(report) = crate::ui::e2e::pr_merge_terminal_fault(&rp, number, &bg_plan)
+                {
                     return Ok(report);
                 }
                 Ok(kagi_git::github::merge_pr(
@@ -374,15 +374,16 @@ impl KagiApp {
             move |app, done, cx| {
                 // The recorded outcome decided what happened, not the raw `gh`
                 // exit: a non-zero exit whose server re-read says "merged" came
-                // back as `Ok` here (#501).
-                let hold = format!("pr-merge #{number}");
+                // back as `Ok` here (#501). The two indeterminate outcomes are
+                // already settled — `Partial` by the transport hold, `Unknown`
+                // by the reconcile entry `apply` parked — so this half only
+                // presents.
                 match done {
-                    Ok(kagi_git::OperationOutcome::PrMerge { detail, confirmed }) => {
+                    Ok(kagi_git::OperationOutcome::PrMerge {
+                        detail, confirmed, ..
+                    }) => {
                         klog!("executed: pr-merge #{}", number);
                         if !confirmed {
-                            // Merged, but a later step never answered: never
-                            // offer that button again this session (#501).
-                            app.hold_transport(&notice_repo, &hold, detail);
                             return;
                         }
                         app.push_toast(
@@ -403,11 +404,7 @@ impl KagiApp {
                     Ok(_) => {}
                     Err(failure) => {
                         klog!("pr-merge failed: {}", failure.message);
-                        if failure.code == kagi_git::oplog::FailureCode::TerminationUnknown {
-                            // Neither confirmed nor refuted: the lease is held
-                            // and a reconcile entry is parked; hold the button.
-                            app.hold_transport(&notice_repo, &hold, &failure.message);
-                        } else {
+                        if failure.code != kagi_git::oplog::FailureCode::TerminationUnknown {
                             app.push_toast(
                                 ToastKind::Error,
                                 SharedString::from(failure.message),

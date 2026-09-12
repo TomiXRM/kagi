@@ -299,21 +299,23 @@ impl KagiApp {
         };
         self.mark_write_busy(op_name);
         let stamp = job.stamp();
+        // #289: gpui does not propagate a background panic, so the task can end
+        // without a completion. That is not evidence of termination — the write
+        // may have happened — so it settles as `Unknown` through the same
+        // `apply`, which keeps the operation id, retains the lease and parks
+        // the reconcile entry. Clearing the busy mirror here instead would
+        // leave `has_leases()` true with `op_latched()` false.
+        let abandonment = job.abandonment();
         let task = cx.background_spawn(async move { job.run() });
         cx.spawn(async move |this, acx| {
             let completion = task.fallible().await;
             let _ = this.update(acx, move |app, cx| {
-                let Some(completion) = completion else {
-                    // #289: a panicking job must not wedge the UI. The lease
-                    // stays reserved — a panic is not evidence of termination.
-                    klog!("op panicked: {} — busy_op cleared", op_name);
-                    app.busy_op = None;
-                    app.write_busy_op = None;
-                    app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                        "{op_name}: operation failed unexpectedly"
-                    )));
-                    cx.notify();
-                    return;
+                let completion = match completion {
+                    Some(completion) => completion,
+                    None => {
+                        klog!("op panicked: {} — busy_op cleared", op_name);
+                        abandonment.into_completion()
+                    }
                 };
                 let deliveries = app::apply(&mut app.app_sessions, completion);
                 app.refresh_write_busy();
@@ -331,8 +333,9 @@ impl KagiApp {
                     // Settle first, whatever the tab is doing now (#501). A
                     // parked reconcile requirement refuses every later write in
                     // this scope, so the way into it is settlement too — it must
-                    // survive the tab guard below (#702 re-review).
-                    app.notice_recording_failure(op_name, &report.recording, &repo_path);
+                    // survive the tab guard below (#702 re-review). So must the
+                    // `Partial` transport hold `settle_run_receipt` registers.
+                    app.settle_run_receipt(op_name, &report, &repo_path);
                     app.notice_reconcile_required(id, op_name, &repo_path);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);

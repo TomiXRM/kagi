@@ -365,13 +365,17 @@ pub fn plan_delete_merged_branches(
 /// The Git runner is a parameter so a test can answer a mutating command with
 /// [`GitError::TerminationUnknown`] and prove the workflow stops there — a real
 /// 60-second deadline is not a test. Production passes [`crate::cli::run_git`].
+///
+/// The [`crate::Termination`] rides beside the outcome rather than inside it:
+/// it is the caller's proof material (`child_stopped` / `pid`), and flattening
+/// it to prose leaves the retained lease no way out (ADR-0196 決定 2.4).
 pub(crate) fn execute_delete_merged_branches_with(
     repo: &Repository,
     repo_path: &Path,
     plan: &OperationPlan,
     targets: &[CleanupDeleteTarget],
     run_git: GitRunner,
-) -> Result<CleanupOutcome, GitError> {
+) -> Result<(CleanupOutcome, Option<crate::Termination>), GitError> {
     preflight_check(repo, plan)?;
 
     let default = default_branch_name(repo);
@@ -379,6 +383,9 @@ pub(crate) fn execute_delete_merged_branches_with(
 
     let mut outcome = CleanupOutcome::default();
     let mut failed: HashMap<String, String> = HashMap::new();
+    // Set by the first mutating command whose termination is unconfirmed: the
+    // workflow stops there rather than re-running a delete that may have run.
+    let mut unknown: Option<crate::Termination> = None;
 
     // ── Phase 1: one ls-remote for every remote half, OID comparison ──
     // #291: a branch name read back from the repo that git would parse as an
@@ -462,7 +469,7 @@ pub(crate) fn execute_delete_merged_branches_with(
             Ok(out) if out.status == 0 => {
                 remote_deleted.extend(to_push.iter().map(|t| t.name.clone()))
             }
-            Err(GitError::TerminationUnknown(reason)) => outcome.unknown = Some(reason),
+            Err(GitError::TerminationUnknown(termination)) => unknown = Some(termination),
             _ => {
                 for t in &to_push {
                     match run_git(repo_path, &["push", "--delete", "--", "origin", &t.name]) {
@@ -473,8 +480,8 @@ pub(crate) fn execute_delete_merged_branches_with(
                                 format!("push --delete failed: {}", out.stderr.trim()),
                             );
                         }
-                        Err(GitError::TerminationUnknown(reason)) => {
-                            outcome.unknown = Some(reason);
+                        Err(GitError::TerminationUnknown(termination)) => {
+                            unknown = Some(termination);
                             break;
                         }
                         Err(e) => {
@@ -492,7 +499,7 @@ pub(crate) fn execute_delete_merged_branches_with(
     for t in already_gone
         .iter()
         .chain(to_push.iter())
-        .take_while(|_| outcome.unknown.is_none())
+        .take_while(|_| unknown.is_none())
     {
         if let Ok(mut r) = repo.find_reference(&format!("refs/remotes/origin/{}", t.name)) {
             if remote_deleted.contains(&t.name) || already_gone.iter().any(|g| g.name == t.name) {
@@ -509,7 +516,7 @@ pub(crate) fn execute_delete_merged_branches_with(
         let mut deleted_local = false;
         // No further mutation after an unconfirmed one — but a confirmed
         // deletion still enters `deleted`: it is the recovery evidence.
-        if let (None, Some(planned)) = (&outcome.unknown, &t.local_tip) {
+        if let (None, Some(planned)) = (&unknown, &t.local_tip) {
             match delete_local_verified(repo, t, planned, main_tip) {
                 Ok(()) => deleted_local = true,
                 Err(msg) => {
@@ -529,7 +536,7 @@ pub(crate) fn execute_delete_merged_branches_with(
 
     outcome.failed = failed.into_iter().collect();
     outcome.failed.sort();
-    Ok(outcome)
+    Ok((outcome, unknown))
 }
 
 /// Delete one local branch after re-verifying its tip OID (and, for

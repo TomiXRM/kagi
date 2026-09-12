@@ -183,14 +183,15 @@ fn unmergeable_pr() -> kagi_domain::github::PullRequest {
 
 /// ADR-0196 Wave 3: a PR merge is a write, so it rides the run family — the
 /// lease is what holds quit and tab-close, which the legacy `busy_op` latch
-/// never did. `apply` releases it on a known termination even when the tab was
-/// left, and on an unconfirmed one keeps it, keeps the busy mirror with it,
-/// and parks the reconcile entry that refuses the next write on that scope.
+/// never did. Its two indeterminate terminals have different owners: an
+/// `Unknown` receipt parks a reconcile entry (readable and acknowledgeable,
+/// because both `gh` children exited), while a `Partial` — merged, deletion
+/// unconfirmed — is held by the transport, at settlement, even off-tab.
 pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     // Part 1 — the honest fixture terminal. No GitHub remote exists, so the
     // merge fails AND the `gh pr view` re-read cannot say whether it landed:
-    // `Unknown`. The lease is retained, its mirror with it, and the scope is
-    // parked for reconcile, so nothing else may write there.
+    // `Unknown`. The children are accounted for, so the lease is released at
+    // settlement, but the scope stays parked until the entry is acknowledged.
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     git(&repo, &["branch", "feature", "HEAD~1"]);
@@ -241,51 +242,45 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
         recorded.outcome
     );
     app.update(cx, |app, cx| {
-        assert!(
-            app.app_sessions.has_leases(),
-            "an unconfirmed termination retains the lease — the merge may still be running"
-        );
-        assert_eq!(
-            app.busy_op,
-            Some("pr-merge"),
-            "the busy mirror must stay with the retained lease (ADR-0196 Wave 3)"
-        );
-        assert!(e2e::busy_snackbar_label(app).is_some());
-        // Planning must not start against a writer that may still be running.
-        app.open_merge_modal("feature".into(), None, cx);
-        assert_eq!(app.planning, None, "a retained lease must refuse planning");
-        assert!(app.merge_modal().is_none());
-        app.open_delete_branch_modal("feature", cx);
-        assert_eq!(app.planning, None);
-        assert!(app.delete_branch_modal().is_none());
-        // The exit: `apply` parked a reconcile entry for this operation, so the
-        // retained lease has an id and a job to prove the process stopped —
-        // without one it would be a dead end for the process lifetime.
+        // The exit: `apply` parked a reconcile entry for this operation, and
+        // because the transport reported a *stopped* child it is immediately
+        // readable and acknowledgeable — not a dead end.
         let parked = app.app_sessions.reconcile_ids();
         assert_eq!(
             parked.len(),
             1,
             "an Unknown receipt must park exactly one reconcile entry"
         );
-        // The entry is parked as *not stopped*: the acknowledge path holds it
-        // until the process is proven dead, which is #702's stop-proof half.
-        // Without the entry there would be no id to prove anything about.
-        assert_eq!(
-            kagi::app::prepare_reconcile(&app.app_sessions, parked[0])
-                .err()
-                .as_deref(),
-            Some("execution termination is unconfirmed"),
-            "the parked entry is the one the acknowledge path reads"
+        let read = kagi::app::read_reconcile(&app.app_sessions, parked[0])
+            .expect("both gh processes exited, so the entry is readable");
+        assert!(read.stop_proven(), "the transport already proved the stop");
+        // Meanwhile the scope is refused: the reconcile entry, not a lease.
+        assert!(
+            !app.app_sessions.has_leases(),
+            "a stopped child releases the lease at settlement"
         );
-        // And the scope stays refused meanwhile: the transport hold turns the
-        // retry away before admission, so no second operation is started.
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, false, cx);
         app.start_pr_merge(cx);
+        let refusal = match &app.status_footer {
+            kagi::ui::FooterStatus::Failed(text) => text.to_string(),
+            other => panic!("a refused admission must reach the footer: {other:?}"),
+        };
+        assert!(
+            refusal.contains("NeedsReconcile"),
+            "the parked entry is what refuses the next write on this scope: {refusal}"
+        );
         assert_eq!(
             app.app_sessions.reconcile_ids(),
             parked,
-            "a retry must not start a second operation on the parked scope"
+            "and no second operation was started"
         );
+        assert!(
+            app.pr_merge_modal().is_some(),
+            "a refused admission keeps the confirmation"
+        );
+        // Acknowledging it releases the scope, which is the whole point.
+        kagi::app::acknowledge(&mut app.app_sessions, read).expect("a proven stop can be closed");
+        assert!(app.app_sessions.reconcile_ids().is_empty());
     });
     unmount(cx, app, window);
 
@@ -296,7 +291,7 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let other = build_fixture();
     let (app, window) = mount(cx, &repo);
-    e2e::arm_pr_merge_failure();
+    e2e::arm_pr_merge_terminal(e2e::PrMergeTerminal::Failed);
     app.update(cx, |app, cx| {
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, false, cx);
         app.start_pr_merge(cx);
@@ -321,10 +316,56 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(state.busy_op, None);
         assert!(state.app_sessions.may_close_host());
+        assert!(
+            state.app_sessions.reconcile_ids().is_empty(),
+            "a refused merge is not an unknown one"
+        );
+    });
+    unmount(cx, app, window);
+
+    // Part 3 — `Partial`: merged, but the branch deletion never answered.
+    // `apply` releases the lease and parks nothing (the merge *is* done), so
+    // the transport hold is the only thing standing between the user and a
+    // second merge — and it must be registered at settlement, not in the
+    // presentation half the stale-tab guard skips.
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other = build_fixture();
+    let (app, window) = mount(cx, &repo);
+    e2e::arm_pr_merge_terminal(e2e::PrMergeTerminal::Partial);
+    app.update(cx, |app, cx| {
+        app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, true, cx);
+        app.start_pr_merge(cx);
+        // Leave the tab in the same turn: the presentation is dropped.
+        assert!(app.open_repository(other.path().to_path_buf(), cx));
+        app.switch_repo(1, cx);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while cx.read(|cx| app.read(cx).app_sessions.has_leases()) {
+        cx.run_until_parked();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a partial merge still settles its lease"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(
+            app.app_sessions.reconcile_ids().is_empty(),
+            "a merge that happened is not awaiting reconcile"
+        );
+        app.switch_repo(0, cx);
+        // The hold survives the tab move: the button refuses to plan again.
+        app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, true, cx);
+        assert!(
+            app.pr_merge_modal().is_none(),
+            "an unfinished merge must not be offered again, even off-tab (#501)"
+        );
     });
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pr_merge_write_lease: unknown retains lease + reconcile, known releases off-tab"
+        "[gui-e2e] PASS pr_merge_write_lease: unknown reconciles, known releases, partial holds off-tab"
     );
 }
 

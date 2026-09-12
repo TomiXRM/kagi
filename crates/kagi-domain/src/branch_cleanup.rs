@@ -137,12 +137,6 @@ pub struct CleanupOutcome {
     pub deleted: Vec<CleanupDeleted>,
     /// `(branch, reason)` for branches that were refused or failed.
     pub failed: Vec<(String, String)>,
-    /// Why the run stopped with its own termination unconfirmed (ADR-0177).
-    /// A mutating command whose wait was cut short may or may not have moved
-    /// the remote, so the workflow stops there rather than re-running a delete
-    /// that might already have happened; `deleted` keeps what was confirmed
-    /// before it, as recovery evidence.
-    pub unknown: Option<String>,
 }
 
 impl CleanupOutcome {

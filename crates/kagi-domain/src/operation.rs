@@ -237,8 +237,10 @@ pub enum OperationOutcome {
     /// `gh pr merge`'s own words for a merge the receipt calls done (ADR-0149).
     /// Like Branch Cleanup, a non-`Operation` write that rides the run family.
     /// `confirmed` is false when the merge landed but a later step (branch
-    /// deletion) did not answer — merged, yet not finished.
+    /// deletion) did not answer — merged, yet not finished; the `number` names
+    /// the PR that must not be offered again in that case.
     PrMerge {
+        number: u64,
         detail: String,
         confirmed: bool,
     },

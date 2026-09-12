@@ -1139,5 +1139,158 @@ fn pr_merge_unknown_resolves_only_on_a_merged_re_read() {
     assert!(sessions.reconcile_ids().is_empty());
 }
 
+/// #701 final review: `gh pr merge --delete-branch` promises *two* things, and
+/// the merge alone does not confirm it. If the re-read only asked GitHub
+/// whether the PR is merged, an Unknown would resolve — and acknowledge would
+/// clear the requirement — while the head branch is still on the remote and the
+/// same merge is still re-dispatchable from the PR list. So the plan freezes the
+/// branch too, and `observe_remote_run`'s all-of rule keeps the entry open until
+/// the branch is provably gone.
+#[test]
+fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let dir = &fixture.path;
+    let bin = dir.join("fake-bin");
+
+    // The head branch the PR names, on a real `origin` so `ls-remote` answers.
+    let remote_repo = TempDir::new().unwrap();
+    git(remote_repo.path(), &["init", "--bare", "."]);
+    git(
+        dir,
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote_repo.path().to_str().unwrap(),
+        ],
+    );
+    git(dir, &["branch", "feat/x"]);
+    git(dir, &["push", "-q", "origin", "feat/x"]);
+
+    let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
+    let plan = kagi_git::github::plan_pr_merge(
+        &pr,
+        kagi_git::github::MergeMethod::Squash,
+        true,
+        "branch 'main'".into(),
+    );
+    let backend = Backend::open(dir).unwrap();
+    let repo_id = backend.write_repo_id().unwrap();
+    let remote = backend.remote_expectation("pr-merge", &plan);
+    assert_eq!(
+        remote,
+        vec![
+            kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
+                number: 501,
+                expect: kagi_git::backend::remote_ref::PrExpect::Merged,
+            },
+            kagi_git::backend::remote_ref::RemoteExpectation::Ref {
+                remote: "origin".to_string(),
+                refname: "refs/heads/feat/x".to_string(),
+                expect: kagi_git::backend::remote_ref::RemoteExpect::Absent,
+            },
+        ],
+        "--delete-branch is half the promise and must be frozen with the merge"
+    );
+    drop(backend);
+
+    let mut sessions = kagi::app::Sessions::new();
+    let session = sessions.attach(dir.clone());
+    let owner = sessions.attachment(session).unwrap();
+    let approved = kagi::app::approve_run(
+        &mut sessions,
+        kagi::app::RunRequest {
+            owner,
+            name: "pr-merge",
+            path: dir.clone(),
+            repo: repo_id,
+            plan: std::sync::Arc::new(plan.clone()),
+            remote,
+        },
+    )
+    .unwrap();
+    let (entry_repo, entry_before) = (dir.display().to_string(), plan.current.clone());
+    let job = kagi::app::prepare_run(
+        &mut sessions,
+        approved,
+        kagi::app::LegacyBusy(false),
+        Box::new(move || {
+            const EVIDENCE: &str = "gh failed and the state could not be re-read";
+            let entry = OpLogEntry::new(
+                "pr-merge",
+                entry_repo.clone(),
+                entry_before,
+                OpOutcome::Unknown {
+                    after: StateSummary {
+                        head: "unknown".into(),
+                        dirty: "unknown".into(),
+                    },
+                    evidence: EVIDENCE.to_string(),
+                },
+            )
+            .with_worktree(Some(entry_repo));
+            Ok(kagi_git::backend::recording::RunReport {
+                result: Err(kagi_git::GitError::TerminationUnknown(
+                    kagi_git::Termination::stopped(EVIDENCE),
+                )),
+                recording: kagi_git::backend::recording::finalize(entry),
+                stash: None,
+            })
+        }),
+    )
+    .unwrap();
+    let id = job.id();
+    sessions.apply(job.run());
+    assert_eq!(sessions.reconcile_ids(), vec![id]);
+
+    // Merged — but the branch this merge also promised to delete is still
+    // there. Half a promise is not the operation the user approved.
+    {
+        let _gh = FakeGh::answering(&bin, r#"echo '{"mergedAt":"2026-09-07T00:00:00Z"}'"#);
+        let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+        assert!(
+            !read.resolved(),
+            "the head branch is still on the remote: {}",
+            read.observation
+        );
+        assert!(kagi::app::acknowledge(&mut sessions, read).is_err());
+
+        // Nor does an unreadable remote settle it (ADR-0177): "could not ask"
+        // is not "gone".
+        git(dir, &["remote", "set-url", "origin", "/nonexistent/origin"]);
+        assert!(
+            kagi::app::read_reconcile(&sessions, id).is_err(),
+            "a remote that cannot be read confirms nothing"
+        );
+        git(
+            dir,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                remote_repo.path().to_str().unwrap(),
+            ],
+        );
+
+        // Both halves kept: only now can the requirement be closed.
+        git(
+            remote_repo.path(),
+            &["update-ref", "-d", "refs/heads/feat/x"],
+        );
+        let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+        assert!(
+            read.resolved(),
+            "merged and the branch is gone: {}",
+            read.observation
+        );
+        kagi::app::acknowledge(&mut sessions, read).expect("a whole kept promise closes it");
+    }
+    assert!(sessions.reconcile_ids().is_empty());
+}
+
 #[path = "support/isolated.rs"]
 mod test_support;

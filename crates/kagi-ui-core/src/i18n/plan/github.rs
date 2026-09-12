@@ -58,7 +58,7 @@ pub fn title_ja(title: &GithubTitle) -> String {
 /// Japanese rendering of one GitHub recovery block.
 pub fn recovery_ja(recovery: &GithubRecovery) -> String {
     match recovery {
-        GithubRecovery::MergePr { number } => format!(
+        GithubRecovery::MergePr { number, .. } => format!(
             "merge 後も #{} のページに Revert ボタンが残ります。ローカルでは:\n  git revert -m 1 <merge-sha>\nbranch を削除しても PR ページから復元できます。",
             number
         ),

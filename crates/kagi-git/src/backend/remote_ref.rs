@@ -76,7 +76,9 @@ impl Backend {
     /// the reconcile read unresolved rather than guessing. A list, because one
     /// operation can promise several refs (a batch delete).
     pub fn remote_expectation(&self, op: &str, plan: &OperationPlan) -> Vec<RemoteExpectation> {
-        use kagi_domain::plan_note::{cleanup::CleanupRecovery, RecoveryKind};
+        use kagi_domain::plan_note::{
+            cleanup::CleanupRecovery, github::GithubRecovery, RecoveryKind,
+        };
         // The one operation that promises *several* refs: the batch of remote
         // halves branch cleanup will delete, frozen into the plan when it was
         // built (#701). `origin` because that is the only remote its
@@ -95,13 +97,38 @@ impl Backend {
                     .collect();
             }
         }
+        // The other multi-entry operation: `gh pr merge --delete-branch` is two
+        // promises, and confirming the merge alone would let a re-read call an
+        // undeleted branch "done" (#701 final review). `observe_remote_run`
+        // requires *every* entry, so "merged but the branch is still there" —
+        // and "the branch cannot be read" — stay unresolved.
+        if op == "pr-merge" {
+            if let Some(RecoveryKind::Github(GithubRecovery::MergePr {
+                number,
+                delete_branch,
+            })) = plan.recovery.as_ref().map(|recovery| &recovery.kind)
+            {
+                let mut expectations = vec![RemoteExpectation::PullRequest {
+                    number: *number,
+                    expect: PrExpect::Merged,
+                }];
+                if let Some(branch) = delete_branch {
+                    expectations.push(RemoteExpectation::Ref {
+                        remote: "origin".to_string(),
+                        refname: format!("refs/heads/{branch}"),
+                        expect: RemoteExpect::Absent,
+                    });
+                }
+                return expectations;
+            }
+        }
         self.one_remote_expectation(op, plan).into_iter().collect()
     }
 
     fn one_remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {
         use kagi_domain::plan_note::{
-            force_lease::ForceLeaseRecovery, github::GithubRecovery, push::PushTitle,
-            remote_branch::RemoteBranchRecovery, tag::TagRecovery, PlanTitle, RecoveryKind,
+            force_lease::ForceLeaseRecovery, push::PushTitle, remote_branch::RemoteBranchRecovery,
+            tag::TagRecovery, PlanTitle, RecoveryKind,
         };
         let kind = plan.recovery.as_ref().map(|recovery| &recovery.kind);
         // The branch and remote come from the plan's own typed title, and the
@@ -157,14 +184,6 @@ impl Backend {
                 refname: format!("refs/heads/{branch}"),
                 expect: RemoteExpect::Absent,
             }),
-            // The merge is server state, so the promise is the PR's own: it
-            // should read merged when asked again (#701).
-            ("pr-merge", Some(RecoveryKind::Github(GithubRecovery::MergePr { number }))) => {
-                Some(RemoteExpectation::PullRequest {
-                    number: *number,
-                    expect: PrExpect::Merged,
-                })
-            }
             ("push-tag", Some(RecoveryKind::Tag(TagRecovery::PushTag { name, remote }))) => {
                 let oid = self
                     .repo

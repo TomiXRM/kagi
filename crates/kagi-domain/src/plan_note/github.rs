@@ -107,7 +107,16 @@ impl GithubTitle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubRecovery {
     /// A merged PR can be reverted on GitHub, or locally with `git revert -m 1`.
-    MergePr { number: u64 },
+    ///
+    /// `delete_branch` is the head branch this merge also promises to delete
+    /// (`--delete-branch`), frozen here at plan time and `None` when the merge
+    /// keeps it. A reconcile confirms the *whole* promise: merging without
+    /// deleting is not the operation the user approved (#701). Not rendered —
+    /// the recovery text is about the merge.
+    MergePr {
+        number: u64,
+        delete_branch: Option<String>,
+    },
     /// A suggestion edits only the working tree; the pre-apply file content is
     /// backed up to the ODB and recoverable by blob SHA (#351).
     ApplySuggestion,
@@ -117,7 +126,7 @@ impl GithubRecovery {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
-            GithubRecovery::MergePr { number } => format!(
+            GithubRecovery::MergePr { number, .. } => format!(
                 "GitHub keeps a 'Revert' button on #{} after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted.",
                 number
             ),
@@ -188,9 +197,17 @@ mod tests {
             .message_en(),
             "Merge pull request #42 (squash)"
         );
-        assert_eq!(
-            GithubRecovery::MergePr { number: 42 }.message_en(),
-            "GitHub keeps a 'Revert' button on #42 after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted."
-        );
+        // The frozen branch promise is reconcile material, not display: the
+        // recovery text is the same with and without it.
+        for delete_branch in [None, Some("feat/x".to_string())] {
+            assert_eq!(
+                GithubRecovery::MergePr {
+                    number: 42,
+                    delete_branch
+                }
+                .message_en(),
+                "GitHub keeps a 'Revert' button on #42 after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted."
+            );
+        }
     }
 }

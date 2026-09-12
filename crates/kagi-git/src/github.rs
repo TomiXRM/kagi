@@ -368,7 +368,12 @@ pub fn plan_pr_merge(
         warnings,
         blockers,
         recovery: Some(PlanRecovery {
-            kind: RecoveryKind::Github(GithubRecovery::MergePr { number: pr.number }),
+            kind: RecoveryKind::Github(GithubRecovery::MergePr {
+                number: pr.number,
+                // Freeze the *whole* promise: a merge that also deletes the
+                // head branch is not confirmed by the merge alone (#701).
+                delete_branch: delete_branch.then(|| pr.head.clone()),
+            }),
             commands: Vec::new(),
         }),
         head_at_plan: Head::Unborn {

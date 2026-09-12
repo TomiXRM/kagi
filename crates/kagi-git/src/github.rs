@@ -492,9 +492,10 @@ pub fn merge_pr(
             confirmed: false,
         }),
         // Both `gh` invocations exited — what is unknown is the *repository*
-        // state, not the child. `stopped` says so, so the lease is released at
-        // settlement and the reconcile entry can be read and acknowledged; an
-        // `unproven` termination here would strand it with no pid to prove.
+        // state, not the child. `Stopped` says so, so the lease is released at
+        // settlement and the reconcile entry can be read and acknowledged. The
+        // other two states would be lies here: nothing is left to probe
+        // (`Unaccounted`) and kagi did not lose its executor (`Abandoned`).
         crate::oplog::OpOutcome::Unknown { evidence, .. } => Err(GitError::TerminationUnknown(
             crate::Termination::stopped(evidence.clone()),
         )),

@@ -690,6 +690,11 @@ fn cleanup_through_the_app(
         .unwrap();
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     let repo_id = backend.write_repo_id().unwrap();
+    // Branch cleanup deletes a *batch* of remote refs, which the single-ref
+    // expectation cannot name — so there is none, and the reconcile read leans
+    // on the process-group proof alone (#702).
+    let remote = backend.remote_expectation("branch-cleanup", &plan);
+    assert!(remote.is_none(), "cleanup has no single-ref expectation");
     drop(backend);
 
     let mut sessions = kagi::app::Sessions::new();
@@ -703,6 +708,7 @@ fn cleanup_through_the_app(
             path: dir.clone(),
             repo: repo_id,
             plan: std::sync::Arc::new(plan.clone()),
+            remote,
         },
     )
     .expect("a fresh session admits the write");
@@ -828,6 +834,11 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
         .plan_delete_merged_branches(NOW, std::slice::from_ref(&target))
         .unwrap();
     let repo_id = backend.write_repo_id().unwrap();
+    // Branch cleanup deletes a *batch* of remote refs, which the single-ref
+    // expectation cannot name — so there is none, and the reconcile read leans
+    // on the process-group proof alone (#702).
+    let remote = backend.remote_expectation("branch-cleanup", &plan);
+    assert!(remote.is_none(), "cleanup has no single-ref expectation");
     drop(backend);
 
     let mut sessions = kagi::app::Sessions::new();
@@ -841,6 +852,7 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
             path: dir.clone(),
             repo: repo_id,
             plan: std::sync::Arc::new(plan),
+            remote,
         },
     )
     .unwrap();

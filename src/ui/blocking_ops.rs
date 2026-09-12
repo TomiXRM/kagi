@@ -9,6 +9,7 @@
 //! operation, and return a result. The UI's `start_*` handlers call them via
 //! `cx.background_spawn`. None of them touch `&self`, `cx`, or `window`.
 
+use kagi_git::backend::recording::RunReport;
 use kagi_git::{AmendMode, CommitId, Head, MergeKind, OperationPlan, PullOutcome, StateSummary};
 
 use crate::ui::i18n;
@@ -94,14 +95,21 @@ pub(crate) fn verify_after_snapshot(
 
 /// Blocking part of checkout (branch or commit). `checkout_tree` writes the
 /// working tree on disk, which scales with tree size.
+///
+/// Returns the backend's own receipt (ADR-0196 Wave 2). It comes back even when
+/// the operation failed or its termination is unknown, because that is exactly
+/// when the UI must present the *real* outcome instead of re-synthesizing one
+/// from a stringified error (#643 A1/A2). Only a repository that would not open
+/// is an `Err` — nothing ran, so there is nothing to report.
 pub(crate) fn checkout_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     target: &CheckoutPlanTarget,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced
-    // in one place (run() calls preflight_check as its first line).
+    // ADR-0104 Phase 2: route through the run pipeline so preflight is enforced
+    // in one place. `run_recorded`, not `run`: `run` drops the receipt, and the
+    // UI then had to invent one.
     let op = match target {
         CheckoutPlanTarget::Branch(branch) => kagi_git::Operation::Checkout {
             branch: branch.clone(),
@@ -110,66 +118,46 @@ pub(crate) fn checkout_blocking(
             id: commit_id.clone(),
         },
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Checkout, e))?;
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_err() {
+        return Ok(report);
+    }
 
-    let summary = match target {
-        CheckoutPlanTarget::Branch(branch) => {
-            klog!("executed: checkout {}", branch);
-            format!("checkout {}", branch)
-        }
+    match target {
+        CheckoutPlanTarget::Branch(branch) => klog!("executed: checkout {}", branch),
         CheckoutPlanTarget::Commit(commit_id) => {
-            klog!("executed: checkout-commit {}", commit_id.short());
-            format!("detached: {}", commit_id.short())
+            klog!("executed: checkout-commit {}", commit_id.short())
         }
-    };
+    }
 
-    // Verify: re-snapshot and confirm HEAD.
-    let after = match open_backend(repo_path) {
-        Ok(mut repo2) => match repo2.snapshot(10_000) {
-            Ok(snap) => {
-                match (target, &snap.head) {
-                    (
-                        CheckoutPlanTarget::Branch(branch),
-                        Head::Attached {
-                            branch: actual_branch,
-                            ..
-                        },
-                    ) if actual_branch == branch => {
-                        klog!("verified: HEAD={}", actual_branch);
-                    }
-                    (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target: t })
-                        if t == &commit_id.0 =>
-                    {
-                        klog!("verified: detached HEAD={}", commit_id.short());
-                    }
-                    other => {
-                        eprintln!(
-                            "[kagi] verify: unexpected HEAD state after checkout: {:?}",
-                            other
-                        );
-                    }
-                }
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if snap.status.is_dirty() {
-                        "dirty".to_string()
-                    } else {
-                        "clean".to_string()
-                    },
-                }
+    // Verify: re-snapshot and confirm HEAD. Evidence for the log only — the
+    // receipt already holds the recorded `after` and is not rewritten from it.
+    match open_backend(repo_path).and_then(|mut repo2| repo2.snapshot(10_000)) {
+        Ok(snap) => match (target, &snap.head) {
+            (
+                CheckoutPlanTarget::Branch(branch),
+                Head::Attached {
+                    branch: actual_branch,
+                    ..
+                },
+            ) if actual_branch == branch => {
+                klog!("verified: HEAD={}", actual_branch);
             }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
-                plan.predicted.clone()
+            (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target: t })
+                if t == &commit_id.0 =>
+            {
+                klog!("verified: detached HEAD={}", commit_id.short());
+            }
+            other => {
+                eprintln!(
+                    "[kagi] verify: unexpected HEAD state after checkout: {:?}",
+                    other
+                );
             }
         },
-        Err(e) => {
-            klog!("verify: repo open error: {}", e);
-            plan.predicted.clone()
-        }
-    };
-    Ok((summary, after))
+        Err(e) => klog!("verify: snapshot error: {}", e),
+    }
+    Ok(report)
 }
 
 /// Reopen the merge plan's worktree without accepting a retargeted locator.
@@ -485,7 +473,7 @@ pub(crate) fn delete_branch_blocking(
     owner: &crate::app::Attachment,
     plan: &OperationPlan,
     branch_name: &str,
-) -> Result<kagi_git::backend::recording::RunReport, String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(&owner.path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     if repo.write_worktree_id().ok().as_ref() != owner.worktree.as_ref() || owner.worktree.is_none()
     {

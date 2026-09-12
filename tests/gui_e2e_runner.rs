@@ -553,6 +553,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_push_failure_keeps_modal),
             ),
             (
+                "checkout_presents_backend_receipt",
+                Box::new(crate::recovery_operations::scenario_checkout_presents_backend_receipt),
+            ),
+            (
                 "backend_cli_capability_observation",
                 Box::new(
                     crate::recovery_cli_capability::scenario_backend_cli_capability_observation,

@@ -292,6 +292,22 @@ impl KagiApp {
         );
     }
 
+    /// Synchronous twin of [`KagiApp::finish_recorded`] for the inline
+    /// main-thread sites (create-branch, create-tag, the auto-stash before a
+    /// checkout, the continued-merge commit): settle — notice a failed append
+    /// — and present the receipt. Callers keep their own contract lines and
+    /// modal handling around it; the receipt is the record either way.
+    pub(crate) fn present_report(
+        &mut self,
+        op_name: &str,
+        report: &RunReport,
+        repo_path: &Path,
+        cx: &mut Context<Self>,
+    ) {
+        self.notice_recording_failure(op_name, &report.recording, repo_path);
+        self.present_recorded(&report.recording, cx);
+    }
+
     /// Owner-named notice for a record the execution boundary could not append
     /// (#501). Call it from the settle half so a tab switch cannot swallow
     /// "changed but not recorded" — the same delivery the stash family uses.

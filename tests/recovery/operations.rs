@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{modals::ActiveModal, CheckoutSelected, FooterStatus, KagiApp};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
-use kagi_git::oplog::{read_oplog_tail_for_repo, FailureCode, OpLogEntry, OpOutcome};
-use kagi_git::{CommitId, OperationKind};
+use kagi_git::oplog::{append_oplog, read_oplog_tail_for_repo, FailureCode, OpLogEntry, OpOutcome};
+use kagi_git::{CommitId, OperationKind, StateSummary};
 
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 
@@ -949,6 +949,83 @@ pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppConte
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS cherry_pick_presents_backend_receipt: panel shows the recorded receipt"
+    );
+}
+
+/// ADR-0196 Wave 2: the synchronous inline sites (create-branch, create-tag,
+/// the auto-stash before a checkout, the continued-merge commit) present the
+/// receipt through `present_report`. Create-branch stands in for the four.
+/// The durable log is seeded first so the receipt's id differs from the id 0
+/// a UI-synthesized entry carries — on a fresh log both would be 0.
+pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let seed = OpLogEntry::new(
+        "seed",
+        repo.display().to_string(),
+        StateSummary {
+            head: "seed".to_string(),
+            dirty: "clean".to_string(),
+        },
+        OpOutcome::Failed {
+            error: "seed".to_string(),
+        },
+    );
+    append_oplog(&seed).expect("seed the durable log");
+    let (app, window) = mount(cx, &repo);
+
+    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    paint(cx, window);
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .and_then(|m| m.input_state.clone())
+        })
+        .expect("the first paint creates the branch-name input");
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "f e a t");
+    cx.run_until_parked();
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|m| m.plan.plan())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        !output(&repo, &["branch", "--list", "feat"]).is_empty(),
+        "Enter on a clean plan creates the branch"
+    );
+    let durable = records(&repo, "create-branch");
+    assert_eq!(durable.len(), 1, "one attempt, one durable entry");
+    assert!(
+        durable[0].id >= 1,
+        "the seeded log puts the receipt past entry 0"
+    );
+    cx.read(|cx| {
+        let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|e| e.op == "create-branch")
+            .collect();
+        assert_eq!(shown.len(), 1, "the panel shows the receipt once");
+        assert_eq!(
+            shown[0].id, durable[0].id,
+            "the panel entry is the durable receipt, not a UI copy"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS create_branch_presents_backend_receipt: panel shows the recorded receipt"
     );
 }
 

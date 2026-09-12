@@ -561,6 +561,12 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_cherry_pick_presents_backend_receipt),
             ),
             (
+                "create_branch_presents_backend_receipt",
+                Box::new(
+                    crate::recovery_operations::scenario_create_branch_presents_backend_receipt,
+                ),
+            ),
+            (
                 "backend_cli_capability_observation",
                 Box::new(
                     crate::recovery_cli_capability::scenario_backend_cli_capability_observation,

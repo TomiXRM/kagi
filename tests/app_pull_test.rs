@@ -1,0 +1,377 @@
+//! ADR-0196 Wave 3: the pull workflow through the public application API.
+//!
+//! Pull is the one family whose job runs up to three recorded children, so the
+//! settlement that matters is the *decisive* receipt, not the last one. The
+//! cases that decide it — an unconfirmed pull, an `Unknown` stash — cannot be
+//! provoked from a real repository (`execute_pull` maps every CLI error to
+//! `GitError::Other`), so the job closure is substituted here exactly as the
+//! brief allows. What the closure returns is what a real workflow builds.
+use kagi::app::*;
+use kagi_git::backend::recording::{self, RunReport};
+use kagi_git::oplog::{OpLogEntry, OpOutcome};
+use kagi_git::{Backend, GitError, OperationOutcome, StateSummary};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct Fixture {
+    _guard: MutexGuard<'static, ()>,
+    _dir: tempfile::TempDir,
+    repo: PathBuf,
+    old_log: Option<std::ffi::OsString>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        match &self.old_log {
+            Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
+            None => std::env::remove_var("KAGI_LOG_DIR"),
+        }
+    }
+}
+fn git(repo: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {:?}", output.stderr);
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+impl Fixture {
+    fn new() -> Self {
+        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let repo = root.join("repo");
+        let bare = root.join("origin.git");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "initial"]);
+        git(&repo, &["init", "--bare", "-q", bare.to_str().unwrap()]);
+        git(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        git(&repo, &["push", "-q", "-u", "origin", "main"]);
+        let old_log = std::env::var_os("KAGI_LOG_DIR");
+        std::env::set_var("KAGI_LOG_DIR", root.join("log"));
+        Self {
+            _guard: guard,
+            _dir: dir,
+            repo,
+            old_log,
+        }
+    }
+    fn request(&self, s: &mut Sessions) -> PullRequest {
+        let session = s.attach(self.repo.clone());
+        let owner = s.attachment(session).expect("attached");
+        let backend = Backend::open(&self.repo).unwrap();
+        PullRequest {
+            owner,
+            name: "pull",
+            path: self.repo.clone(),
+            repo: backend.write_repo_id().unwrap(),
+            plan: Arc::new(backend.plan_pull().expect("plan pull")),
+            auto_stash: true,
+            promised_dirty: None,
+        }
+    }
+    /// One durable receipt, exactly as a child of the workflow writes it.
+    fn receipt(
+        &self,
+        op: &str,
+        outcome: OpOutcome,
+        result: Result<OperationOutcome, GitError>,
+    ) -> RunReport {
+        let before = StateSummary {
+            head: "branch: main".to_string(),
+            dirty: "dirty".to_string(),
+        };
+        RunReport {
+            result,
+            recording: recording::finalize(OpLogEntry::new(
+                op,
+                self.repo.display().to_string(),
+                before,
+                outcome,
+            )),
+            stash: None,
+        }
+    }
+    fn success(&self, op: &str) -> RunReport {
+        self.receipt(
+            op,
+            OpOutcome::Success {
+                after: StateSummary {
+                    head: "branch: main".to_string(),
+                    dirty: "clean".to_string(),
+                },
+            },
+            Ok(OperationOutcome::Unit),
+        )
+    }
+}
+
+fn admit(s: &mut Sessions, request: PullRequest, report: PullReport) -> PullJob {
+    let approved = approve_pull(s, request).expect("owner attached and identical");
+    prepare_pull(s, approved, LegacyBusy(false), Box::new(move || Ok(report))).expect("admitted")
+}
+
+fn completed(deliveries: &[Delivery]) -> (OwnerStamp, PullReport, RunReport) {
+    deliveries
+        .iter()
+        .find_map(|d| match d {
+            Delivery::Completed { stamp, report, .. } => match &report.evidence {
+                FamilyEvidence::Pull(pull) => Some((
+                    *stamp,
+                    pull.clone(),
+                    RunReport {
+                        result: Ok(OperationOutcome::Unit),
+                        recording: report.recording.clone(),
+                        stash: None,
+                    },
+                )),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("a pull completion is delivered to its owner")
+}
+
+/// A pull whose termination is unconfirmed does not pop the auto-stash, keeps
+/// the stash as recovery context, retains the lease, and registers exactly one
+/// reconcile requirement — which cannot be acknowledged until the writer is
+/// proven stopped (ADR-0175 / ADR-0196 決定 5).
+#[test]
+fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let second = request.clone();
+    let stash_oid = "1".repeat(40);
+    let report = PullReport::settled(
+        vec![
+            f.success("stash-push"),
+            f.receipt(
+                "pull",
+                OpOutcome::Failed {
+                    error: "git fetch deadline expired".to_string(),
+                },
+                Err(GitError::TerminationUnknown(
+                    "git fetch deadline expired".into(),
+                )),
+            ),
+        ],
+        PullPresentation::Partial {
+            error: "pull: termination unconfirmed".to_string(),
+        },
+        Some(stash_oid.clone()),
+    );
+    let job = admit(&mut s, request, report);
+    let id = job.id();
+
+    let deliveries = apply(&mut s, job.run());
+    let (_, delivered, _) = completed(&deliveries);
+    assert_eq!(
+        delivered
+            .steps
+            .iter()
+            .map(|step| step.recording.entry().op.as_str())
+            .collect::<Vec<_>>(),
+        vec!["stash-push", "pull"],
+        "no pop may follow an unconfirmed pull"
+    );
+    assert_eq!(
+        delivered.terminal.stash_oid.as_deref(),
+        Some(stash_oid.as_str()),
+        "the stash left behind is the recovery context"
+    );
+    assert!(
+        s.has_leases(),
+        "an unconfirmed writer keeps the scope reserved"
+    );
+    assert_eq!(
+        prepare_reconcile(&s, id).err().as_deref(),
+        Some("execution termination is unconfirmed"),
+        "the reconcile requirement is registered and cannot be acknowledged yet"
+    );
+    // Registered once, and it is what refuses the next pull on this scope.
+    let approved = approve_pull(&mut s, second).unwrap();
+    assert_eq!(
+        prepare_pull(
+            &mut s,
+            approved,
+            LegacyBusy(false),
+            Box::new(|| Err("never run".to_string()))
+        )
+        .err(),
+        Some(AdmissionError::NeedsReconcile)
+    );
+}
+
+/// The decisive receipt is not the last one run: a pull that failed and whose
+/// stash was then restored settles as a failed pull, releases its lease, and
+/// needs no reconciliation.
+#[test]
+fn a_restored_failure_settles_on_the_pull_receipt() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let owner = request.owner.clone();
+    let pull = f.receipt(
+        "pull",
+        OpOutcome::Failed {
+            error: "fetch failed".to_string(),
+        },
+        Err(GitError::Other("fetch failed".into())),
+    );
+    let report = PullReport::new(
+        vec![
+            f.success("stash-push"),
+            pull.clone(),
+            f.success("stash-pop"),
+        ],
+        pull,
+        PullPresentation::Failed {
+            error: "pull failed; your changes were restored".to_string(),
+        },
+        None,
+    );
+    let job = admit(&mut s, request, report);
+    let id = job.id();
+
+    let deliveries = apply(&mut s, job.run());
+    let (_, _, presented) = completed(&deliveries);
+    assert_eq!(
+        presented.recording.entry().op,
+        "pull",
+        "the workflow is presented through the receipt that decided it"
+    );
+    assert!(
+        matches!(
+            presented.recording.entry().outcome,
+            OpOutcome::Failed { .. }
+        ),
+        "a trailing successful pop must not report the workflow as done"
+    );
+    assert!(!s.has_leases(), "a stopped workflow releases its lease");
+    assert_eq!(
+        prepare_reconcile(&s, id).err().as_deref(),
+        Some("no reconcile request"),
+        "a known failure needs no reconciliation"
+    );
+    assert!(
+        deliveries.iter().any(|d| matches!(
+            d,
+            Delivery::Invalidate(target) if Some(&target.worktree) == owner.worktree.as_ref()
+        )),
+        "the owner's worktree is invalidated"
+    );
+}
+
+/// An `Unknown` receipt from a *stopped* writer is reconcilable: the read names
+/// HEAD, the upstream, whether the stash entry is still there, and whether the
+/// working tree is still the one the confirmation promised. It never retries
+/// and never pops, and until it is acknowledged no new write may enter the
+/// scope.
+#[test]
+fn an_unknown_stash_is_reconciled_by_reading_it_back() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let report = PullReport::settled(
+        vec![f.receipt(
+            "stash-push",
+            OpOutcome::Unknown {
+                after: StateSummary {
+                    head: "branch: main".to_string(),
+                    dirty: "unknown".to_string(),
+                },
+                evidence: "the stash entry could not be identified".to_string(),
+            },
+            Err(GitError::StashIdentityUnverified("concurrent push".into())),
+        )],
+        PullPresentation::Partial {
+            error: "auto-stash identity unverified".to_string(),
+        },
+        Some("2".repeat(40)),
+    );
+    let second = request.clone();
+    let job = admit(&mut s, request, report);
+    let id = job.id();
+    apply(&mut s, job.run());
+
+    let approved = approve_pull(&mut s, second.clone()).unwrap();
+    assert_eq!(
+        prepare_pull(
+            &mut s,
+            approved,
+            LegacyBusy(false),
+            Box::new(|| Err("never run".to_string()))
+        )
+        .err(),
+        Some(AdmissionError::NeedsReconcile),
+        "an unacknowledged Unknown closes the scope to new writes"
+    );
+    let read = read_reconcile(&s, id).expect("a stopped writer is reconcilable");
+    assert!(
+        read.observation.contains("head=branch: main")
+            && read.observation.contains("upstream=origin/main")
+            && read.observation.contains("not found")
+            && read.observation.contains("dirty="),
+        "the read must name HEAD, the upstream, the stash and the tree: {}",
+        read.observation
+    );
+    acknowledge(&mut s, read).expect("acknowledged");
+    let approved = approve_pull(&mut s, second).unwrap();
+    assert!(
+        prepare_pull(
+            &mut s,
+            approved,
+            LegacyBusy(false),
+            Box::new(|| Err("never run".to_string()))
+        )
+        .is_ok(),
+        "acknowledging reopens the scope"
+    );
+}
+
+/// The completion is routed by the stamp frozen at admission. Leaving the tab
+/// while the workflow runs does not re-target it: the visit no longer matches,
+/// which is exactly what makes the UI drop the presentation (`op result
+/// dropped`) instead of showing it on whatever tab is now on screen.
+#[test]
+fn a_pull_completion_is_routed_by_the_stamp_frozen_at_admission() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let owner = request.owner.clone();
+    let report = PullReport::settled(
+        vec![f.success("pull")],
+        PullPresentation::Success {
+            summary: "already up to date".to_string(),
+        },
+        None,
+    );
+    let job = admit(&mut s, request, report);
+    let stamp = job.stamp();
+    assert_eq!((stamp.session, stamp.visit), (owner.session, owner.visit));
+
+    s.depart(owner.session);
+    let deliveries = apply(&mut s, job.run());
+    let (delivered, _, _) = completed(&deliveries);
+    assert_eq!(delivered, stamp, "routed by the stamp minted at admission");
+    assert_ne!(
+        s.attachment(owner.session).map(|now| now.visit),
+        Some(delivered.visit),
+        "the visit moved on, so the presentation is dropped rather than misplaced"
+    );
+}

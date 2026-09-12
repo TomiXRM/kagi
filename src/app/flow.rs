@@ -27,6 +27,9 @@ pub enum Planned {
     /// ADR-0196 Wave 3: a legacy `Backend::run` write whose plan lives in its
     /// modal. Admitted through [`approve_run`], not the plan slot.
     Run(RunRequest),
+    /// ADR-0196 Wave 3: the pull workflow — one admitted write that runs up to
+    /// three recorded children. Admitted through [`approve_pull`].
+    Pull(PullRequest),
 }
 impl Planned {
     pub fn owner(&self) -> OwnerAttachment {
@@ -36,6 +39,7 @@ impl Planned {
             Self::RemoteStash { request, .. } => OwnerAttachment::Remote(request.owner.clone()),
             Self::Conflict { request, .. } => OwnerAttachment::Local(request.owner.clone()),
             Self::Run(request) => OwnerAttachment::Local(request.owner.clone()),
+            Self::Pull(request) => OwnerAttachment::Local(request.owner.clone()),
         }
     }
     pub fn scope(&self) -> WriteScope {
@@ -45,6 +49,7 @@ impl Planned {
             Self::RemoteStash { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
             Self::Conflict { plan, .. } => WriteScope::Local(plan.common_dir().clone()),
             Self::Run(request) => WriteScope::Local(request.repo.clone()),
+            Self::Pull(request) => WriteScope::Local(request.repo.clone()),
         }
     }
     pub fn owner_session(&self) -> SessionId {
@@ -67,6 +72,8 @@ impl Planned {
             // Conservative: every run-pipeline write may move refs or HEAD, so
             // every open sibling is told. Index-only families are not here.
             Self::Run { .. } => true,
+            // Pull moves refs and its auto-stash rewrites the stash reflog.
+            Self::Pull { .. } => true,
         }
     }
 }
@@ -192,6 +199,7 @@ fn identity_matches(s: &Sessions, prepared: &Planned) -> Result<(), AdmissionErr
             }
         }
         Planned::Run(request) => s.confirm_identity(&request.owner)?,
+        Planned::Pull(request) => s.confirm_identity(&request.owner)?,
     }
     Ok(())
 }
@@ -253,6 +261,8 @@ pub fn approve(
         Planned::Conflict { policy, .. } => Policy::Conflict(*policy),
         // A run plan has no token to spend; it is admitted by `approve_run`.
         Planned::Run(_) => return Err(AdmissionError::StaleApproval),
+        // Likewise the pull workflow: `approve_pull` is its admission.
+        Planned::Pull(_) => return Err(AdmissionError::StaleApproval),
     };
     if current.revision != token.revision || planned_policy != policy.into() {
         return Err(AdmissionError::StaleApproval);
@@ -342,6 +352,12 @@ pub enum Completion {
     Stash(Box<StashCompletion>),
     Conflict(Box<ConflictCompletion>),
     Run(Box<RunCompletion>),
+    Pull(Box<PullCompletion>),
+}
+impl From<PullCompletion> for Completion {
+    fn from(c: PullCompletion) -> Self {
+        Self::Pull(Box::new(c))
+    }
 }
 impl From<RunCompletion> for Completion {
     fn from(c: RunCompletion) -> Self {
@@ -370,6 +386,7 @@ pub enum FamilyEvidence {
     RemoteStash(crate::remote::stash::RemoteStashReport),
     Conflict(kagi_git::backend::conflict_ops::ConflictReport),
     Run(kagi_git::backend::recording::RunReport),
+    Pull(PullReport),
 }
 #[derive(Clone, Debug)]
 pub struct ExecutionReport {
@@ -413,9 +430,15 @@ pub fn prepare(
         Planned::Run(_) => Err(AdmissionError::Identity(
             "run-family writes are prepared through prepare_run".into(),
         )),
+        Planned::Pull(_) => Err(AdmissionError::Identity(
+            "pull writes are prepared through prepare_pull".into(),
+        )),
     }
 }
 pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Delivery> {
+    // The auto-stash a pull left behind: the reconcile read needs to say
+    // whether that entry is still there, and only the report knows its OID.
+    let mut pull_recovery: Option<String> = None;
     let (id, report, stopped, remote_recovery) = match completion.into() {
         Completion::Remove(c) => {
             let c = *c;
@@ -484,6 +507,27 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                 None,
             )
         }
+        // The workflow settles on the receipt that decided it — not on the
+        // last child that ran. A pull that failed and whose stash was then
+        // restored is a failed pull, not a successful pop (ADR-0196 決定 5).
+        Completion::Pull(c) => {
+            let c = *c;
+            pull_recovery = c.report.terminal.stash_oid.clone();
+            let decisive = c.report.terminal.decisive.clone();
+            let stopped = !matches!(
+                decisive.result,
+                Err(kagi_git::GitError::TerminationUnknown(_))
+            );
+            (
+                c.id,
+                ExecutionReport {
+                    recording: decisive.recording,
+                    evidence: FamilyEvidence::Pull(c.report),
+                },
+                stopped,
+                None,
+            )
+        }
     };
     if s.settled.contains(&id) {
         return vec![];
@@ -495,16 +539,20 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     if stopped {
         s.release_lease(&owner.plan.scope(), id);
     }
+    // An unconfirmed termination is itself a reconcile requirement: the lease
+    // is retained, so there must be an entry to acknowledge it against.
     if matches!(
         report.recording.entry().outcome,
         kagi_git::OpOutcome::Unknown { .. }
-    ) {
+    ) || !stopped
+    {
         s.reconcile.insert(
             id,
             ReconcileEntry {
                 plan: owner.plan.clone(),
                 stopped,
                 remote: remote_recovery,
+                pull: pull_recovery,
             },
         );
     }
@@ -599,6 +647,18 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             s.stale.insert(target.worktree.clone());
             deliveries.push(Delivery::Invalidate(target));
         }
+        (Planned::Pull(request), FamilyEvidence::Pull(_)) => {
+            let target = InvalidTarget {
+                worktree: request
+                    .owner
+                    .worktree
+                    .clone()
+                    .expect("a pull owner is a local worktree tab"),
+                path: request.owner.path.clone(),
+            };
+            s.stale.insert(target.worktree.clone());
+            deliveries.push(Delivery::Invalidate(target));
+        }
         _ => unreachable!("completion family is fixed by its owned job"),
     }
     // Shared refs / stash / worktree administration make every *open* sibling
@@ -611,6 +671,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             Planned::RemoteStash { .. } => unreachable!("remote refs have no local siblings"),
             Planned::Conflict { .. } => unreachable!("conflict writes are worktree-local"),
             Planned::Run(request) => &request.repo,
+            Planned::Pull(request) => &request.repo,
         };
         let delivered: Vec<_> = deliveries
             .iter()

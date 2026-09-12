@@ -155,6 +155,9 @@ pub(crate) struct ReconcileEntry {
     pub plan: Planned,
     pub stopped: bool,
     pub remote: Option<crate::remote::stash::RemoteStashEvidence>,
+    /// The auto-stash a pull created and did not restore. Only the report knew
+    /// its OID, so the entry carries it for the reconcile read.
+    pub pull: Option<String>,
 }
 pub struct Sessions {
     pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
@@ -528,6 +531,7 @@ pub struct ReconcileJob {
     id: OperationId,
     plan: Planned,
     remote: Option<crate::remote::stash::RemoteStashEvidence>,
+    pull_stash: Option<String>,
 }
 impl ReconcileJob {
     pub fn run(self) -> Result<ReconcileRead, String> {
@@ -570,6 +574,7 @@ impl ReconcileJob {
                     .map_err(|e| e.to_string())?,
                 true,
             ),
+            Planned::Pull(request) => (observe_pull(request, self.pull_stash.as_deref())?, true),
         };
         Ok(ReconcileRead {
             id: self.id,
@@ -578,6 +583,51 @@ impl ReconcileJob {
         })
     }
 }
+/// What a pull left behind, read back live: where HEAD and its upstream now
+/// stand, whether the auto-stash entry still exists, and whether the working
+/// tree is still the one the confirmation named. Never retries and never pops.
+fn observe_pull(request: &PullRequest, stash_oid: Option<&str>) -> Result<String, String> {
+    let snap = kagi_git::Backend::open(&request.path)
+        .and_then(|mut backend| backend.snapshot(1))
+        .map_err(|e| e.to_string())?;
+    let upstream = match &snap.head {
+        kagi_git::Head::Attached { branch, .. } | kagi_git::Head::Unborn { branch } => snap
+            .branches
+            .iter()
+            .find(|candidate| &candidate.name == branch)
+            .and_then(|candidate| candidate.upstream.as_ref())
+            .map(|up| {
+                format!(
+                    "{} ahead={} behind={}",
+                    up.remote_branch, up.ahead, up.behind
+                )
+            })
+            .unwrap_or_else(|| "none".to_string()),
+        kagi_git::Head::Detached { .. } => "detached".to_string(),
+    };
+    let stash = match stash_oid {
+        None => "none".to_string(),
+        Some(oid) => match kagi_git::Backend::unique_stash_index(&request.path, oid)
+            .map_err(|e| e.to_string())?
+        {
+            Some(index) => format!("{oid} at stash@{{{index}}}"),
+            None => format!("{oid} not found"),
+        },
+    };
+    let digest = snap.status.digest();
+    let promise = match request.promised_dirty {
+        Some(promised) if promised == digest => "as confirmed",
+        Some(_) => "moved",
+        None => "not promised",
+    };
+    Ok(format!(
+        "head={} upstream={upstream} auto_stash={} stash={stash} dirty={} ({promise})",
+        snap.head.display(),
+        request.auto_stash,
+        digest.0
+    ))
+}
+
 pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileJob, String> {
     let entry = sessions.reconcile.get(&id).ok_or("no reconcile request")?;
     if !entry.stopped && entry.remote.is_none() {
@@ -587,6 +637,7 @@ pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<Reconci
         id,
         plan: entry.plan.clone(),
         remote: entry.remote.clone(),
+        pull_stash: entry.pull.clone(),
     })
 }
 pub fn read_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileRead, String> {

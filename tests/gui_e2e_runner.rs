@@ -599,6 +599,10 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),
             (
+                "pull_presents_backend_receipts",
+                Box::new(crate::recovery_pull::scenario_pull_presents_backend_receipts),
+            ),
+            (
                 "pull_auto_stash_failure_restores",
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
             ),

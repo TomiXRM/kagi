@@ -181,7 +181,7 @@ DifferentialManifest {
 | 0 | 契約固定（本書） | **完了** |
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **run family は完了** (#698 #699 #700、下記メモ)。残: pull / pr-merge / branch-cleanup / plan 系 latch → `busy_op` 除去 |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **run family と pull は完了** (#698 #699 #700 + 本 PR、下記メモ)。残: pr-merge / branch-cleanup / plan 系 latch → `busy_op` 除去 |
 | 4 | UI state: `TabUiState` per session | |
 | 5 | crate 抽出（境界安定後のみ） | |
 | 6 | cleanup | |
@@ -212,10 +212,14 @@ stash → pull → pop の複合結果 `PullBlockingResult`、discard は `Disca
 switch-to-latest / set-upstream / rename-branch / delete-remote-branch / push /
 merge(+into) / commit / amend / create-worktree / rebase / reset-current /
 force-with-lease-push / push-tag / branch-plan / delete-branch / discard。
-**残り**: (a) pull — stash → pull → pop の 3 receipt を持つ workflow。
-`FamilyEvidence::Pull { run: RunReport, workflow: PullBlockingResult }` のような
-per-family variant にするか、workflow 単位の受領証を backend に作るかは本 ADR の
-改訂事項。(b) pr-merge / branch-cleanup — ADR-0149 の non-run writer。
+**pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
+`PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
+実行順で運び、settle は最後の step ではなく `terminal.decisive`（pull 失敗後に restore
+成功なら pull）の outcome で行う。pull が `TerminationUnknown` のときは pop を実行せず、
+stash OID を recovery context に残して reconcile を 1 回登録する。#625 の runtime
+refusal は core が `Refused` の no-execute step として記録し、UI は entry を合成しない。
+
+**残り**: (a) 済（上記 pull メモ）。(b) pr-merge / branch-cleanup — ADR-0149 の non-run writer。
 `write_lease`（`reserve_write`）に載せる。(c) merge-plan / delete-branch-plan —
 書き込みではなく planning の UI latch。`busy_op` を `planning` フラグに分けて
 `busy_op` を消す。(a)(b)(c) が済んだら `reject_if_busy` を `has_leases()` に寄せ、

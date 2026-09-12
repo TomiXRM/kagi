@@ -237,6 +237,8 @@ impl KagiApp {
             // Run-family writes dispatch through `finish_run`; `prepare` refuses
             // this one below and the refusal is presented like any other.
             app::Planned::Run(request) => (request.name, Msg::OpInProgress),
+            // Same: the pull workflow dispatches through `finish_pull`.
+            app::Planned::Pull(request) => (request.name, Msg::BusyPull),
             app::Planned::Conflict { plan, .. } => match plan.request().action() {
                 kagi_domain::conflict_family::ConflictAction::Save => {
                     ("conflict-save", Msg::OpInProgress)
@@ -391,7 +393,7 @@ impl KagiApp {
                     app::FamilyEvidence::RemoteStash(_) => return,
                     // Presented by the `finish_run` that admitted it; a
                     // completion abandoned by its window has no one to show.
-                    app::FamilyEvidence::Run(_) => return,
+                    app::FamilyEvidence::Run(_) | app::FamilyEvidence::Pull(_) => return,
                     app::FamilyEvidence::Conflict(report) => {
                         self.deliver_conflict_result(attachment, report, cx);
                         return;

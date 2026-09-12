@@ -114,6 +114,109 @@ pub fn scenario_pull_auto_stash_success(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS pull_auto_stash_success: dirty changes restored after Pull");
 }
 
+/// ADR-0196 Wave 3: the pull workflow presents the backend's own receipts.
+///
+/// A dirty pull is three writes, each of which already records itself. The UI
+/// used to add a fourth entry it synthesized from the composite result — so a
+/// successful auto-stash pull wrote two `pull` rows, one of them not produced
+/// by any execution. This asserts the three children in execution order, one
+/// durable `pull` entry, and a panel row that *is* the durable entry.
+pub fn scenario_pull_presents_backend_receipts(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    let bare = remote_root.path().join("origin.git");
+    let other = remote_root.path().join("other");
+    let bare_path = bare.to_str().unwrap();
+    let other_path = other.to_str().unwrap();
+
+    git(repo, &["init", "--bare", "-q", bare_path]);
+    git(repo, &["remote", "add", "origin", bare_path]);
+    git(repo, &["push", "-q", "-u", "origin", "main"]);
+    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
+    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
+    git(&other, &["add", "upstream.txt"]);
+    git(&other, &["commit", "-q", "-m", "upstream"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    std::fs::write(repo.join("README.md"), "local staged change\n").unwrap();
+    git(repo, &["add", "README.md"]);
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_pull_modal(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            app.read(cx)
+                .pull_modal()
+                .is_some_and(|modal| modal.auto_stash && modal.plan.blockers.is_empty()),
+            "the fixture must produce a confirmable auto-stash pull"
+        );
+    });
+
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    // The tail reads newest first; the workflow ran the other way round.
+    let durable = read_oplog_tail_for_repo(repo, 100);
+    let workflow: Vec<&str> = durable
+        .iter()
+        .rev()
+        .map(|entry| entry.op.as_str())
+        .filter(|op| matches!(*op, "stash-push" | "pull" | "stash-pop"))
+        .collect();
+    assert_eq!(
+        workflow,
+        vec!["stash-push", "pull", "stash-pop"],
+        "a dirty pull records its three children, in execution order"
+    );
+    let pulls = records(repo, "pull");
+    assert_eq!(
+        pulls.len(),
+        1,
+        "the one pull entry is the backend's; the UI must not synthesize a copy"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        // The panel is seeded from the whole log, so scope it to this fixture.
+        let mine: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|entry| entry.repo == pulls[0].repo)
+            .collect();
+        let shown: Vec<_> = mine.iter().filter(|entry| entry.op == "pull").collect();
+        assert_eq!(
+            shown.len(),
+            1,
+            "the panel shows the receipt once, not a UI copy"
+        );
+        assert_eq!(
+            shown[0].id, pulls[0].id,
+            "the panel entry is the durable receipt"
+        );
+        assert_eq!(
+            shown[0].failure_code, pulls[0].failure_code,
+            "the presented entry keeps the backend's failure code"
+        );
+        for op in ["stash-push", "pull", "stash-pop"] {
+            let durable = records(repo, op);
+            assert_eq!(durable.len(), 1, "{op} is recorded once");
+            assert!(
+                mine.iter().any(|entry| entry.id == durable[0].id),
+                "the panel must show the durable {op} receipt"
+            );
+        }
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_presents_backend_receipts: three child receipts, no UI-synthesized entry"
+    );
+}
+
 pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();

@@ -3,7 +3,7 @@ use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::{GitError, OperationOutcome, OperationPlan, PullOutcome, StashPopOutcome};
 
 use super::{open_backend, verify_after_snapshot};
-use crate::app::{PullPresentation, PullReport};
+use crate::app::{PullPresentation, PullReport, AUTO_STASH_MESSAGE};
 use crate::ui::i18n;
 
 /// The restore-prediction notes a pull plan carries, in plan order.
@@ -80,6 +80,24 @@ fn failed_to_start(repo_path: &std::path::Path, plan: &OperationPlan, error: Str
     not_started(repo_path, plan, outcome, error)
 }
 
+/// The receipt for a pull whose confirmed plan already carries blockers.
+///
+/// The UI used to author this `Refused` outcome itself, which left pull with
+/// two receipt authors (#702 review P2). It never runs anything, so it is a
+/// no-execute step like the runtime refusal below — the only difference is that
+/// these blockers were known before admission.
+pub(crate) fn refuse_blocked_pull(repo_path: &std::path::Path, plan: &OperationPlan) -> RunReport {
+    let blockers: Vec<String> = plan.blockers.iter().map(|note| note.message_en()).collect();
+    let error = blockers.join("; ");
+    no_execute(
+        "pull",
+        repo_path,
+        plan,
+        OpOutcome::Refused { blockers },
+        error,
+    )
+}
+
 /// Blocking part of Pull. A dirty plan uses the confirmed
 /// stash → pull → pop sequence; every step remains a planned Backend operation
 /// and contributes its own receipt to [`PullReport::steps`], in execution
@@ -94,7 +112,7 @@ pub(crate) fn pull_blocking(
         open_backend(repo_path).map_err(|error| i18n::op_failed(i18n::Op::RepoOpen, error))?;
 
     let mut steps: Vec<RunReport> = Vec::new();
-    let mut stashed_oid = None;
+    let mut stashed: Option<kagi_git::backend::stash::StashEvidence> = None;
     if auto_stash {
         let dirty = match repo.working_tree_status() {
             Ok(status) => status.is_dirty(),
@@ -151,7 +169,7 @@ pub(crate) fn pull_blocking(
                 ));
             }
             let stash_op = kagi_git::Operation::StashPush {
-                message: Some("kagi: auto-stash before pull".to_string()),
+                message: Some(AUTO_STASH_MESSAGE.to_string()),
                 include_untracked: true,
             };
             let stash_plan = match repo.plan(&stash_op) {
@@ -165,9 +183,14 @@ pub(crate) fn pull_blocking(
                 }
             };
             let push = repo.run_recorded(&stash_op, &stash_plan);
+            // What the backend saw of the entry it created. It travels whole,
+            // because the case that needs it most is the one where the OID is
+            // missing (#623) — an OID-only recovery context would be `None`
+            // exactly when a stash is outstanding.
+            let created = push.stash.clone();
             let mut stop = None;
             match &push.result {
-                Ok(OperationOutcome::StashPush { oid }) => stashed_oid = Some(oid.clone()),
+                Ok(OperationOutcome::StashPush { .. }) => stashed = created.clone(),
                 // #623: the stash exists but a concurrent external push made it
                 // indistinguishable, so no OID came back. Same user situation as
                 // an unexpected outcome — work is saved, pull must not start,
@@ -185,7 +208,12 @@ pub(crate) fn pull_blocking(
             }
             steps.push(push);
             if let Some(presentation) = stop {
-                return Ok(PullReport::settled(steps, presentation, None));
+                // An unidentified stash is still a stash: hand the evidence on
+                // so the reconcile read can hunt for it (#702 review P1).
+                let outstanding = matches!(presentation, PullPresentation::Partial { .. })
+                    .then(|| created)
+                    .flatten();
+                return Ok(PullReport::settled(steps, presentation, outstanding));
             }
         }
     }
@@ -205,24 +233,27 @@ pub(crate) fn pull_blocking(
         Ok(_) => failure = Some("pull: unexpected outcome".to_string()),
         Err(error) => failure = Some(i18n::op_failed(i18n::Op::Pull, error)),
     }
-    let decisive_pull = pull.clone();
+    // The pull's own place in the workflow: it decides when it fails and the
+    // restore then puts the work back.
+    let pull_at = steps.len();
+    let may_restore = may_restore_after(&pull.result);
     steps.push(pull);
 
     if let Some(error) = failure {
         // The stash stays exactly where it is and travels in the recovery
         // context instead.
-        if !may_restore_after(&decisive_pull.result) {
+        if !may_restore {
             return Ok(PullReport::settled(
                 steps,
                 PullPresentation::Partial { error },
-                stashed_oid,
+                stashed,
             ));
         }
-        let Some(stash_oid) = stashed_oid.clone() else {
+        let Some(stash_oid) = stashed.as_ref().and_then(|s| s.oid.clone()) else {
             return Ok(PullReport::settled(
                 steps,
                 PullPresentation::Failed { error },
-                None,
+                stashed,
             ));
         };
         let (pop, restored) = pop_auto_stash(repo_path, &mut repo, plan, &stash_oid);
@@ -232,7 +263,7 @@ pub(crate) fn pull_blocking(
             // the pull that failed — not the pop that succeeded after it.
             Ok(StashPopOutcome::Applied) => PullReport::new(
                 steps,
-                decisive_pull,
+                pull_at,
                 PullPresentation::Failed {
                     error: i18n::pull_failed_stash_restored(&error),
                 },
@@ -243,14 +274,14 @@ pub(crate) fn pull_blocking(
                 PullPresentation::Partial {
                     error: i18n::auto_stash_restore_conflicted(Some(&error), &files.join(", ")),
                 },
-                Some(stash_oid),
+                stashed,
             ),
             Err(pop_error) => PullReport::settled(
                 steps,
                 PullPresentation::Partial {
                     error: i18n::auto_stash_restore_failed(Some(&error), &pop_error),
                 },
-                Some(stash_oid),
+                stashed,
             ),
         });
     }
@@ -258,7 +289,7 @@ pub(crate) fn pull_blocking(
     let summary = summary.expect("a pull that did not fail carries its outcome");
     klog!("executed: pull — {}", summary);
 
-    if let Some(stash_oid) = stashed_oid.clone() {
+    if let Some(stash_oid) = stashed.as_ref().and_then(|s| s.oid.clone()) {
         let (pop, restored) = pop_auto_stash(repo_path, &mut repo, plan, &stash_oid);
         steps.push(pop);
         match restored {
@@ -271,7 +302,7 @@ pub(crate) fn pull_blocking(
                     PullPresentation::Partial {
                         error: i18n::auto_stash_restore_conflicted(None, &files.join(", ")),
                     },
-                    Some(stash_oid),
+                    stashed,
                 ));
             }
             Err(error) => {
@@ -282,7 +313,7 @@ pub(crate) fn pull_blocking(
                     PullPresentation::Partial {
                         error: i18n::auto_stash_restore_failed(None, &error),
                     },
-                    Some(stash_oid),
+                    stashed,
                 ));
             }
         }
@@ -293,7 +324,7 @@ pub(crate) fn pull_blocking(
     Ok(PullReport::settled(
         steps,
         PullPresentation::Success {
-            summary: if stashed_oid.is_some() {
+            summary: if stashed.is_some() {
                 format!("{summary}; {}", i18n::Msg::AutoStashRestored.t())
             } else {
                 summary

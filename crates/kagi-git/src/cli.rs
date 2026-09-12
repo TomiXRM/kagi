@@ -38,7 +38,24 @@ use std::time::Duration;
 
 use crate::proc::run_child;
 
-use super::GitError;
+use super::{GitError, Termination};
+
+/// Add context to a failed `run_git` without flattening what it *means*.
+///
+/// Every caller used to write `.map_err(|e| GitError::Other(format!("… : {e}")))`,
+/// which turned an unproven termination into an ordinary failure — and an
+/// ordinary failure is a stopped writer, so the caller would happily start the
+/// next mutating step (ADR-0177, #702 review P1). One helper, used by every
+/// call site, so the class of bug cannot come back one caller at a time.
+pub fn context(what: &str, error: GitError) -> GitError {
+    match error {
+        GitError::TerminationUnknown(mut t) => {
+            t.reason = format!("{what}: {}", t.reason);
+            GitError::TerminationUnknown(t)
+        }
+        other => GitError::Other(format!("{what}: {other}")),
+    }
+}
 
 // Timeout for git CLI operations (fetch can be slow on large repos).
 const GIT_CLI_TIMEOUT_SECS: u64 = 60;
@@ -428,17 +445,21 @@ pub fn run_git_with_options(
     // A deadline that expires is not an exit: `git push` may already have moved
     // the remote. Keep it a `TerminationUnknown` so the app records `Unknown`
     // and never auto-retries (ADR-0177).
-    let status = run
-        .status
-        .clone()
-        .map_err(|stop| GitError::TerminationUnknown(format!("git {} {}", args.join(" "), stop)))?;
+    let status = run.status.clone().map_err(|stop| {
+        // A killed-and-collected child cannot write anything more; one the kill
+        // did not account for leaves only its pid to prove it later.
+        let reason = format!("git {} {}", args.join(" "), stop);
+        GitError::TerminationUnknown(Termination::from_stop(reason, &stop, run.pid))
+    })?;
     // Exit 0 with a truncated capture is not a successful read: the caller
     // parses this output. Unknown, not success and not a plain failure.
     if let Err(io) = &run.io {
-        return Err(GitError::TerminationUnknown(format!(
+        // The wait resolved, so the child itself is gone; what is unknown is
+        // whether the capture this caller parses is the whole of its output.
+        return Err(GitError::TerminationUnknown(Termination::stopped(format!(
             "git {}: {io}",
             args.join(" ")
-        )));
+        ))));
     }
 
     Ok(GitCliOutput {

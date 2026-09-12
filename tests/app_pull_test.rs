@@ -8,8 +8,9 @@
 //! brief allows. What the closure returns is what a real workflow builds.
 use kagi::app::*;
 use kagi_git::backend::recording::{self, RunReport};
+use kagi_git::backend::stash::StashEvidence;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
-use kagi_git::{Backend, GitError, OperationOutcome, StateSummary};
+use kagi_git::{Backend, GitError, OperationOutcome, StateSummary, Termination};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -120,6 +121,19 @@ impl Fixture {
     }
 }
 
+/// The evidence a `StashPush` leaves on its receipt. `oid: None` is the
+/// production shape of `StashIdentityUnverified` (#623): the entry exists, but
+/// a concurrent external push made it impossible to name.
+fn stash_evidence(oid: Option<&str>) -> StashEvidence {
+    StashEvidence {
+        started: true,
+        unknown: oid.is_none(),
+        oid: oid.map(str::to_string),
+        observations: vec!["the stash entry could not be identified".to_string()],
+        ..StashEvidence::default()
+    }
+}
+
 fn admit(s: &mut Sessions, request: PullRequest, report: PullReport) -> PullJob {
     let approved = approve_pull(s, request).expect("owner attached and identical");
     prepare_pull(s, approved, LegacyBusy(false), Box::new(move || Ok(report))).expect("admitted")
@@ -165,15 +179,17 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
                 OpOutcome::Failed {
                     error: "git fetch deadline expired".to_string(),
                 },
-                Err(GitError::TerminationUnknown(
-                    "git fetch deadline expired".into(),
-                )),
+                // The executor could not account for the child: no proof it
+                // stopped, and no pid either. The hardest case.
+                Err(GitError::TerminationUnknown(Termination::unproven(
+                    "git fetch deadline expired",
+                ))),
             ),
         ],
         PullPresentation::Partial {
             error: "pull: termination unconfirmed".to_string(),
         },
-        Some(stash_oid.clone()),
+        Some(stash_evidence(Some(&stash_oid))),
     );
     let job = admit(&mut s, request, report);
     let id = job.id();
@@ -190,7 +206,11 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
         "no pop may follow an unconfirmed pull"
     );
     assert_eq!(
-        delivered.terminal.stash_oid.as_deref(),
+        delivered
+            .terminal
+            .stash
+            .as_ref()
+            .and_then(|evidence| evidence.oid.as_deref()),
         Some(stash_oid.as_str()),
         "the stash left behind is the recovery context"
     );
@@ -217,6 +237,124 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
     );
 }
 
+/// The same unconfirmed pull, but the executor **did** account for the child:
+/// it killed it and collected it. That is the stop proof, so the scope is
+/// released at settlement and the `Unknown` receipt is reconcilable rather than
+/// parked behind a guard nothing can ever satisfy (#702 review P1).
+#[test]
+fn a_reaped_child_is_the_stop_proof_that_reopens_the_scope() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let report = PullReport::settled(
+        vec![f.receipt(
+            "pull",
+            OpOutcome::Unknown {
+                after: StateSummary {
+                    head: "branch: main".to_string(),
+                    dirty: "unknown".to_string(),
+                },
+                evidence: "git fetch timed out after 60s".to_string(),
+            },
+            Err(GitError::TerminationUnknown(Termination::stopped(
+                "git fetch timed out after 60s",
+            ))),
+        )],
+        PullPresentation::Partial {
+            error: "pull: termination unconfirmed".to_string(),
+        },
+        None,
+    );
+    let job = admit(&mut s, request, report);
+    let id = job.id();
+    apply(&mut s, job.run());
+
+    assert!(
+        !s.has_leases(),
+        "a child the executor collected cannot write again: the scope is free"
+    );
+    let read = read_reconcile(&s, id).expect("a proven-stopped writer is reconcilable");
+    assert!(read.stop_proven());
+    acknowledge(&mut s, read).expect("acknowledged");
+    assert_eq!(
+        prepare_reconcile(&s, id).err().as_deref(),
+        Some("no reconcile request"),
+        "acknowledging clears the requirement"
+    );
+}
+
+/// A child that could **not** be reaped is not a dead end either: the pid it
+/// left behind is the handle, and the reconcile read asks the OS. This process
+/// is certainly alive, so its own pid must keep the read unproven — and a pid
+/// that is gone must let the acknowledge through.
+#[test]
+fn an_unreaped_child_is_proven_stopped_by_its_pid_going_away() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let alive = std::process::id();
+    let report = |pid: u32| {
+        PullReport::settled(
+            vec![f.receipt(
+                "pull",
+                OpOutcome::Unknown {
+                    after: StateSummary {
+                        head: "branch: main".to_string(),
+                        dirty: "unknown".to_string(),
+                    },
+                    evidence: "the local child could not be stopped".to_string(),
+                },
+                Err(GitError::TerminationUnknown(Termination {
+                    reason: "the local child could not be stopped".to_string(),
+                    child_stopped: false,
+                    pid: Some(pid),
+                })),
+            )],
+            PullPresentation::Partial {
+                error: "pull: termination unconfirmed".to_string(),
+            },
+            None,
+        )
+    };
+
+    let request = f.request(&mut s);
+    let job = admit(&mut s, request, report(alive));
+    let id = job.id();
+    apply(&mut s, job.run());
+    assert!(s.has_leases(), "a live child keeps the scope reserved");
+    let read = read_reconcile(&s, id).expect("a pid is something a read can check");
+    assert!(
+        !read.stop_proven(),
+        "the child is this very process: it has demonstrably not stopped"
+    );
+    assert_eq!(
+        acknowledge(&mut s, read).err(),
+        Some(AdmissionError::NeedsReconcile),
+        "an unproven stop must not release the scope"
+    );
+
+    // A pid nothing answers to: the child is gone and the read says so.
+    let gone = dead_pid();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let job = admit(&mut s, request, report(gone));
+    let id = job.id();
+    apply(&mut s, job.run());
+    let read = read_reconcile(&s, id).expect("readable");
+    assert!(read.stop_proven(), "a pid nothing answers to is stopped");
+    acknowledge(&mut s, read).expect("a proven stop releases the scope");
+    assert!(!s.has_leases());
+}
+
+/// A pid that has really exited: spawn a child, wait for it, reuse its id.
+fn dead_pid() -> u32 {
+    let mut child = std::process::Command::new("true")
+        .spawn()
+        .expect("spawn /usr/bin/true");
+    let pid = child.id();
+    child.wait().expect("reap it");
+    pid
+}
+
 /// The decisive receipt is not the last one run: a pull that failed and whose
 /// stash was then restored settles as a failed pull, releases its lease, and
 /// needs no reconciliation.
@@ -234,12 +372,8 @@ fn a_restored_failure_settles_on_the_pull_receipt() {
         Err(GitError::Other("fetch failed".into())),
     );
     let report = PullReport::new(
-        vec![
-            f.success("stash-push"),
-            pull.clone(),
-            f.success("stash-pop"),
-        ],
-        pull,
+        vec![f.success("stash-push"), pull, f.success("stash-pop")],
+        1,
         PullPresentation::Failed {
             error: "pull failed; your changes were restored".to_string(),
         },
@@ -277,35 +411,46 @@ fn a_restored_failure_settles_on_the_pull_receipt() {
     );
 }
 
-/// An `Unknown` receipt from a *stopped* writer is reconcilable: the read names
-/// HEAD, the upstream, whether the stash entry is still there, and whether the
-/// working tree is still the one the confirmation promised. It never retries
-/// and never pops, and until it is acknowledged no new write may enter the
-/// scope.
+/// The production `StashIdentityUnverified` shape: a stash **was** created but
+/// no OID came back (#623), so the recovery context is the backend's evidence
+/// with `oid: None`. The read has to hunt for the entry by the message the
+/// workflow wrote, and until it can point at exactly one, `acknowledge` must
+/// not release the scope (#702 review P1).
 #[test]
-fn an_unknown_stash_is_reconciled_by_reading_it_back() {
+fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
     let f = Fixture::new();
     let mut s = Sessions::new();
+    // The stash the workflow created — the one nothing could name at the time.
+    std::fs::write(f.repo.join("a.txt"), "work in progress\n").unwrap();
+    git(&f.repo, &["stash", "push", "-q", "-m", AUTO_STASH_MESSAGE]);
+    // And a second entry answering to the same message: exactly the ambiguity
+    // that made the identity unverifiable in the first place.
+    std::fs::write(f.repo.join("a.txt"), "more work\n").unwrap();
+    git(&f.repo, &["stash", "push", "-q", "-m", AUTO_STASH_MESSAGE]);
+
     let request = f.request(&mut s);
-    let report = PullReport::settled(
-        vec![f.receipt(
-            "stash-push",
-            OpOutcome::Unknown {
-                after: StateSummary {
-                    head: "branch: main".to_string(),
-                    dirty: "unknown".to_string(),
-                },
-                evidence: "the stash entry could not be identified".to_string(),
-            },
-            Err(GitError::StashIdentityUnverified("concurrent push".into())),
-        )],
-        PullPresentation::Partial {
-            error: "auto-stash identity unverified".to_string(),
-        },
-        Some("2".repeat(40)),
-    );
     let second = request.clone();
-    let job = admit(&mut s, request, report);
+    let report = |f: &Fixture| {
+        PullReport::settled(
+            vec![f.receipt(
+                "stash-push",
+                OpOutcome::Unknown {
+                    after: StateSummary {
+                        head: "branch: main".to_string(),
+                        dirty: "unknown".to_string(),
+                    },
+                    evidence: "the stash entry could not be identified".to_string(),
+                },
+                Err(GitError::StashIdentityUnverified("concurrent push".into())),
+            )],
+            PullPresentation::Partial {
+                error: "auto-stash identity unverified".to_string(),
+            },
+            // Production hands over evidence, not an OID: there is none.
+            Some(stash_evidence(None)),
+        )
+    };
+    let job = admit(&mut s, request, report(&f));
     let id = job.id();
     apply(&mut s, job.run());
 
@@ -321,16 +466,40 @@ fn an_unknown_stash_is_reconciled_by_reading_it_back() {
         Some(AdmissionError::NeedsReconcile),
         "an unacknowledged Unknown closes the scope to new writes"
     );
+
     let read = read_reconcile(&s, id).expect("a stopped writer is reconcilable");
     assert!(
         read.observation.contains("head=branch: main")
             && read.observation.contains("upstream=origin/main")
-            && read.observation.contains("not found")
             && read.observation.contains("dirty="),
-        "the read must name HEAD, the upstream, the stash and the tree: {}",
+        "the read must name HEAD, the upstream and the tree: {}",
         read.observation
     );
-    acknowledge(&mut s, read).expect("acknowledged");
+    assert!(
+        read.observation
+            .contains("2 entries answer to the auto-stash"),
+        "the read must say it cannot tell the entries apart: {}",
+        read.observation
+    );
+    assert!(!read.resolved(), "an ambiguous stash is not accounted for");
+    assert_eq!(
+        acknowledge(&mut s, read).err(),
+        Some(AdmissionError::NeedsReconcile),
+        "acknowledging would report 'settled' about work kagi cannot point at"
+    );
+
+    // The user resolves the ambiguity themselves — that is the exit. One entry
+    // answers to the message now, so the read can name it and let go.
+    git(&f.repo, &["stash", "drop", "-q", "stash@{0}"]);
+    let read = read_reconcile(&s, id).expect("still reconcilable");
+    assert!(
+        read.observation
+            .contains("unidentified auto-stash resolved to"),
+        "the surviving entry must be named: {}",
+        read.observation
+    );
+    assert!(read.resolved());
+    acknowledge(&mut s, read).expect("an accounted-for stash releases the scope");
     let approved = approve_pull(&mut s, second).unwrap();
     assert!(
         prepare_pull(
@@ -341,6 +510,49 @@ fn an_unknown_stash_is_reconciled_by_reading_it_back() {
         )
         .is_ok(),
         "acknowledging reopens the scope"
+    );
+}
+
+/// A task that unwinds is not a completion, but it is not nothing either: the
+/// write may have happened. The abandonment settles as `Unknown` so the lease
+/// it holds has a reconcile entry to be acknowledged against, instead of an
+/// operation that can never be settled (#289 / #702 review P1).
+#[test]
+fn an_abandoned_pull_task_settles_as_unknown_and_keeps_its_lease() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let report = PullReport::settled(
+        vec![f.success("pull")],
+        PullPresentation::Success {
+            summary: "never reached".to_string(),
+        },
+        None,
+    );
+    let job = admit(&mut s, request, report);
+    let id = job.id();
+    let abandonment = job.abandonment();
+    // The task unwinds: `job.run()` is never called.
+    drop(job);
+
+    let deliveries = apply(&mut s, abandonment.into_completion());
+    let (_, _, presented) = completed(&deliveries);
+    assert!(
+        matches!(
+            presented.recording.entry().outcome,
+            OpOutcome::Unknown { .. }
+        ),
+        "a panic is not evidence of termination: {:?}",
+        presented.recording.entry().outcome
+    );
+    assert!(
+        s.has_leases(),
+        "the lease stays held — nothing proved the write stopped"
+    );
+    assert_eq!(
+        prepare_reconcile(&s, id).err().as_deref(),
+        Some("execution termination is unconfirmed"),
+        "and it is a registered reconcile requirement, not a lost operation"
     );
 }
 

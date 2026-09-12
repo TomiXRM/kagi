@@ -464,18 +464,17 @@ fn do_command_progress(
         // The wait was cut short — not the same as the step having finished, and
         // not a failure either. `termination_unknown` stays set (#507/ADR-0177).
         Err(stop) => {
-            return Err(GitError::TerminationUnknown(format!(
-                "command '{run}' {stop}{}",
-                output_tail(&stdout, &stderr)
-            )))
+            let reason = format!("command '{run}' {stop}{}", output_tail(&stdout, &stderr));
+            let unknown = crate::Termination::from_stop(reason, &stop, out.pid);
+            return Err(GitError::TerminationUnknown(unknown));
         }
     };
     // Exit status without complete output: a descendant of the step is still
-    // running (it holds the pipes), so the step is not proven finished either.
+    // running (it holds the pipes), so the *output* is not proven complete.
     if let Err(io) = &out.io {
-        return Err(GitError::TerminationUnknown(format!(
-            "command '{run}' exited with status {status} but {io}{}",
-            output_tail(&stdout, &stderr)
+        let tail = output_tail(&stdout, &stderr);
+        return Err(GitError::TerminationUnknown(crate::Termination::stopped(
+            format!("command '{run}' exited with status {status} but {io}{tail}"),
         )));
     }
     progress.termination_unknown = false;

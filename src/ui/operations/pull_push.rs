@@ -11,6 +11,8 @@ use kagi_domain::plan_note::{
     UntrackedCtx,
 };
 
+mod settle;
+
 use crate::ui::operations::PullConfirmDelivery;
 use crate::ui::*;
 
@@ -442,15 +444,11 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: pull plan has blockers, not executing");
-            self.record_op(
-                "pull",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
+            // #702 review P2: the UI authors no pull outcome at all. A known
+            // blocker is a no-execute receipt like the runtime refusal, written
+            // by the same core factory and only presented here.
+            let refusal = refuse_blocked_pull(&repo_path, &modal.plan);
+            self.present_report("pull", &refusal, &repo_path, cx);
             self.clear_pull_modal();
             cx.notify();
             return;
@@ -460,177 +458,6 @@ impl KagiApp {
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
         klog!("async: pull started");
         self.finish_pull(cx, modal, repo_path);
-    }
-
-    /// ADR-0196 Wave 3: run the confirmed pull workflow through the
-    /// application layer.
-    ///
-    /// Pull is three writes wearing one confirmation, so the blocking core owns
-    /// every receipt it produced and names the one that decided the workflow —
-    /// which is not always the last one run. This presents that decisive
-    /// receipt and applies the terminal's footer / modal policy; it never
-    /// synthesizes an entry of its own. Returns `false` when admission refused
-    /// (the refusal is already presented).
-    fn finish_pull(
-        &mut self,
-        cx: &mut Context<Self>,
-        modal: PullPlanModal,
-        repo_path: PathBuf,
-    ) -> bool {
-        use crate::app::{self, Delivery, FamilyEvidence, LegacyBusy, PullPresentation};
-        use kagi_git::backend::recording::Recording;
-        self.refresh_write_busy();
-        let plan = modal.plan.clone();
-        let (auto_stash, promised_dirty) = (modal.auto_stash, modal.dirty_digest);
-        let (bg_path, bg_plan) = (repo_path.clone(), plan.clone());
-        let admitted = self
-            .active_session()
-            .and_then(|id| self.app_sessions.attachment(id))
-            .ok_or(app::AdmissionError::StaleApproval)
-            .and_then(|owner| {
-                let repo = kagi_git::Backend::open(&repo_path)
-                    .and_then(|backend| backend.write_repo_id())
-                    .map_err(|error| app::AdmissionError::Identity(error.to_string()))?;
-                app::approve_pull(
-                    &mut self.app_sessions,
-                    app::PullRequest {
-                        owner,
-                        name: "pull",
-                        path: repo_path.clone(),
-                        repo,
-                        plan: plan.clone(),
-                        auto_stash,
-                        promised_dirty,
-                    },
-                )
-            })
-            .and_then(|approved| {
-                app::prepare_pull(
-                    &mut self.app_sessions,
-                    approved,
-                    LegacyBusy(self.busy_op.is_some()),
-                    Box::new(move || pull_blocking(&bg_path, &bg_plan, auto_stash, promised_dirty)),
-                )
-            });
-        let job = match app::admit(&mut self.reads, admitted) {
-            Ok(job) => job,
-            Err(error) => {
-                self.report_admission_refusal(error, cx);
-                return false;
-            }
-        };
-        self.mark_write_busy("pull");
-        let stamp = job.stamp();
-        let task = cx.background_spawn(async move { job.run() });
-        cx.spawn(async move |this, acx| {
-            let completion = task.fallible().await;
-            let _ = this.update(acx, move |app, cx| {
-                let Some(completion) = completion else {
-                    // #289: a panicking job must not wedge the UI. The lease
-                    // stays reserved — a panic is not evidence of termination.
-                    klog!("op panicked: pull — busy_op cleared");
-                    app.busy_op = None;
-                    app.write_busy_op = None;
-                    app.status_footer = FooterStatus::Failed(SharedString::from(
-                        "pull: operation failed unexpectedly",
-                    ));
-                    cx.notify();
-                    return;
-                };
-                let deliveries = app::apply(&mut app.app_sessions, completion);
-                app.refresh_write_busy();
-                let (completed, rest): (Vec<_>, Vec<_>) = deliveries
-                    .into_iter()
-                    .partition(|d| matches!(d, Delivery::Completed { .. }));
-                let mut failed = false;
-                for delivery in completed {
-                    let Delivery::Completed { report, .. } = delivery else {
-                        continue;
-                    };
-                    let FamilyEvidence::Pull(report) = report.evidence else {
-                        continue;
-                    };
-                    let decisive = report.terminal.decisive;
-                    // Settle first, whatever the tab is doing now (#501).
-                    for step in &report.steps {
-                        app.notice_recording_failure("pull", &step.recording, &repo_path);
-                    }
-                    let current = app.active_session() == Some(stamp.session)
-                        && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
-                    if !current {
-                        klog!("op result dropped: tab switched during op");
-                        continue;
-                    }
-                    // Every step is a receipt the backend wrote, so the panel
-                    // shows what happened in the order it happened; nothing
-                    // here is synthesized. The decisive one is what the footer
-                    // and the modal are built from.
-                    for step in &report.steps {
-                        app.present_recorded(&step.recording, cx);
-                    }
-                    match report.terminal.presentation {
-                        PullPresentation::Success { summary } => {
-                            klog!("async: pull finished — {}", summary);
-                            // A mutation that happened but was not recorded is
-                            // presented as "changed but not recorded" (#501);
-                            // the success footer must not paper over it.
-                            if !matches!(decisive.recording, Recording::Failed { .. }) {
-                                app.status_footer = FooterStatus::Success(SharedString::from(
-                                    format!("pull: {summary}"),
-                                ));
-                            }
-                        }
-                        // #493 / ADR-0189: the failure modal survives watcher
-                        // reloads and remains until the user dismisses it.
-                        PullPresentation::Failed { error } => {
-                            failed = true;
-                            klog!("async: pull failed — {}", error);
-                            app.reopen_pull_modal(&plan, auto_stash, promised_dirty, error);
-                        }
-                        PullPresentation::Partial { error } => {
-                            klog!("async: pull partially applied — {}", error);
-                            app.reopen_pull_modal(&plan, auto_stash, promised_dirty, error);
-                        }
-                    }
-                    // One completion per admitted write.
-                    break;
-                }
-                for delivery in rest {
-                    match delivery {
-                        // A failed write reopened its modal with the error; the
-                        // reload sweep would clear it. Mark the reads stale and
-                        // let the next reload pick them up.
-                        Delivery::Invalidate(target) if failed => {
-                            for session in app.app_sessions.sessions_for(&target.worktree) {
-                                app.reads.invalidate(session);
-                            }
-                        }
-                        other => app.deliver_app_result(other, cx),
-                    }
-                }
-                app.present_app_notice();
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
-        true
-    }
-
-    /// Put the confirmation back with the workflow's own message on it.
-    fn reopen_pull_modal(
-        &mut self,
-        plan: &std::sync::Arc<kagi_git::OperationPlan>,
-        auto_stash: bool,
-        dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
-        error: String,
-    ) {
-        self.set_pull_modal(PullPlanModal {
-            plan: plan.clone(),
-            auto_stash,
-            error: Some(SharedString::from(error)),
-            dirty_digest,
-        });
     }
 
     /// Build a push plan and open the confirmation modal.

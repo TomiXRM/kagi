@@ -212,6 +212,14 @@ stash → pull → pop の複合結果 `PullBlockingResult`、discard は `Disca
 switch-to-latest / set-upstream / rename-branch / delete-remote-branch / push /
 merge(+into) / commit / amend / create-worktree / rebase / reset-current /
 force-with-lease-push / push-tag / branch-plan / delete-branch / discard。
+**終端未確定の出口（全 local family 共通、2026-09-12 追記）**: `run_git` /
+`run_child` は `GitError::TerminationUnknown(kagi_git::Termination { reason,
+child_stopped, pid })` を型のまま返す（`Other` へ潰さない）。`apply` は
+`child_stopped` で lease を解放するか保持するかを決め、どちらでも reconcile entry を
+登録する。保持した場合の出口は `ReconcileJob` が pid の生存を確認して `stop_proven`
+を作ることで、repository snapshot を stop proof とはみなさない。`acknowledge` は
+`stop_proven` かつ `resolved` の read だけを受け付ける。
+
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
 実行順で運び、settle は最後の step ではなく `terminal.decisive`（pull 失敗後に restore

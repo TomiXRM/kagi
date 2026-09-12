@@ -228,6 +228,61 @@ pub struct RepoInfo {
     pub is_worktree: bool,
 }
 
+/// What is known about a writer whose termination could not be established.
+///
+/// `child_stopped` is the executor's own proof that the **local** child process
+/// is gone — it exited, or it was killed and collected
+/// ([`proc::ProcStop::reaped`]). Nothing more can be written by that process,
+/// so the scope may be released and the `Unknown` receipt reconciled.
+///
+/// Without that proof the child is unaccounted for and the lease stays held
+/// (ADR-0175). `pid` is the only handle a later reconcile read has to prove it
+/// finally went away; see `app::ReconcileJob`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Termination {
+    pub reason: String,
+    pub child_stopped: bool,
+    pub pid: Option<u32>,
+}
+impl Termination {
+    /// The child is unaccounted for: no proof it stopped, no handle to get one.
+    /// The conservative default, and what a `String` converts into.
+    pub fn unproven(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            child_stopped: false,
+            pid: None,
+        }
+    }
+    /// The executor saw the child go.
+    pub fn stopped(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            child_stopped: true,
+            pid: None,
+        }
+    }
+    /// From a runner stop: either the kill accounted for the child, or its pid
+    /// is the only handle left on it. The one place that rule is written.
+    pub fn from_stop(reason: impl Into<String>, stop: &proc::ProcStop, pid: u32) -> Self {
+        Self {
+            reason: reason.into(),
+            child_stopped: stop.reaped(),
+            pid: (!stop.reaped()).then_some(pid),
+        }
+    }
+}
+impl<S: Into<String>> From<S> for Termination {
+    fn from(reason: S) -> Self {
+        Self::unproven(reason)
+    }
+}
+impl std::fmt::Display for Termination {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.reason)
+    }
+}
+
 /// Errors that can occur when opening a repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitError {
@@ -250,7 +305,7 @@ pub enum GitError {
     /// UI delivery can localize the note before displaying it (#606).
     Blocked(Box<kagi_domain::plan_note::PlanNote>),
     /// CLI timeout/reap uncertainty: admission must not release on this error.
-    TerminationUnknown(String),
+    TerminationUnknown(Termination),
     /// A stash **was created** but its entry could not be identified, because a
     /// concurrent external `git stash push` made it indistinguishable from
     /// kagi's own (#623). Treated exactly like [`GitError::TerminationUnknown`]
@@ -303,8 +358,8 @@ impl std::fmt::Display for GitError {
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
             GitError::Blocked(note) => f.write_str(&note.message_en()),
+            GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason),
             GitError::Other(msg)
-            | GitError::TerminationUnknown(msg)
             | GitError::StashIdentityUnverified(msg)
             | GitError::RebaseCannotStartWithRepoSettingsDisabled(msg) => {
                 write!(f, "git error: {}", msg)

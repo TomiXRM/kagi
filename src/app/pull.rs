@@ -14,10 +14,17 @@
 //! blocking core.
 use super::*;
 use kagi_git::backend::recording::{self, RunReport};
+use kagi_git::backend::stash::StashEvidence;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
-use kagi_git::OperationPlan;
+use kagi_git::{OperationPlan, StateSummary};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// The message every auto-stash the pull workflow creates carries.
+///
+/// It is the only handle on an entry whose OID could not be established
+/// (#623), so the writer and the reconcile read share one definition of it.
+pub const AUTO_STASH_MESSAGE: &str = "kagi: auto-stash before pull";
 
 #[derive(Clone, Debug)]
 pub struct PullRequest {
@@ -50,13 +57,19 @@ pub enum PullPresentation {
 /// The step the workflow settles on, plus what the UI shows for it.
 #[derive(Clone, Debug)]
 pub struct PullTerminal {
-    /// The decisive receipt — one of [`PullReport::steps`].
-    pub decisive: RunReport,
+    /// Where the decisive receipt sits in [`PullReport::steps`]. Private: the
+    /// constructors are the only way to set it, so [`PullReport::decisive`]
+    /// cannot be handed an index that is not there.
+    decisive: usize,
     pub presentation: PullPresentation,
     /// An auto-stash this workflow created and did **not** restore: the
     /// recovery context a reconcile needs. A pull whose termination is
     /// unconfirmed never has its stash popped on the user's behalf.
-    pub stash_oid: Option<String>,
+    ///
+    /// The backend's own evidence, not just an OID: when the entry could not be
+    /// identified (#623) there *is* no OID, and the reconcile read has to fall
+    /// back to matching [`AUTO_STASH_MESSAGE`] against the live stash list.
+    pub stash: Option<StashEvidence>,
 }
 
 /// Every receipt the pull workflow produced, in execution order.
@@ -66,21 +79,45 @@ pub struct PullReport {
     pub terminal: PullTerminal,
 }
 impl PullReport {
-    /// Settle on `decisive`, which the caller took from `steps`.
+    /// Settle on the step at `decisive`.
+    ///
+    /// # Panics
+    /// `decisive` must index `steps`; every construction site is in-crate.
     pub fn new(
         steps: Vec<RunReport>,
-        decisive: RunReport,
+        decisive: usize,
         presentation: PullPresentation,
-        stash_oid: Option<String>,
+        stash: Option<StashEvidence>,
     ) -> Self {
+        assert!(
+            decisive < steps.len(),
+            "the decisive receipt must be one of the steps that ran"
+        );
         Self {
             steps,
             terminal: PullTerminal {
                 decisive,
                 presentation,
-                stash_oid,
+                stash,
             },
         }
+    }
+    /// The receipt the workflow settles on — not always the last one run: a
+    /// pull that failed and whose stash was then restored is a failed pull.
+    pub fn decisive(&self) -> &RunReport {
+        &self.steps[self.terminal.decisive]
+    }
+    /// Its position, for a presenter that walks the steps in execution order.
+    pub fn decisive_index(&self) -> usize {
+        self.terminal.decisive
+    }
+    /// Did any step's receipt fail to reach the oplog? A mutation that happened
+    /// but was not recorded must never be presented as a clean success (#501),
+    /// and that is true of a *child*'s receipt too, not only the decisive one.
+    pub fn recording_failed(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| matches!(step.recording, recording::Recording::Failed { .. }))
     }
     /// Settle on the last step run — the common case.
     ///
@@ -90,13 +127,13 @@ impl PullReport {
     pub fn settled(
         steps: Vec<RunReport>,
         presentation: PullPresentation,
-        stash_oid: Option<String>,
+        stash: Option<StashEvidence>,
     ) -> Self {
         let decisive = steps
-            .last()
-            .expect("a pull workflow records at least one step")
-            .clone();
-        Self::new(steps, decisive, presentation, stash_oid)
+            .len()
+            .checked_sub(1)
+            .expect("a pull workflow records at least one step");
+        Self::new(steps, decisive, presentation, stash)
     }
 }
 
@@ -124,6 +161,15 @@ impl PullJob {
     /// The owner frozen at admission; the completion is routed by it.
     pub fn stamp(&self) -> OwnerStamp {
         self.stamp
+    }
+    /// The completion to settle with if this job's task never returns one.
+    pub fn abandonment(&self) -> PullAbandonment {
+        PullAbandonment {
+            id: self.id,
+            name: self.request.name,
+            path: self.request.path.clone(),
+            before: self.request.plan.current.clone(),
+        }
     }
     pub fn run(self) -> PullCompletion {
         let report = (self.execute)().unwrap_or_else(|error| {
@@ -156,6 +202,51 @@ impl PullJob {
 pub struct PullCompletion {
     pub id: OperationId,
     pub report: PullReport,
+}
+
+/// What to settle an admitted pull with when its task unwinds before it can
+/// complete (#289).
+///
+/// A panic is not evidence of termination: the write may have happened and
+/// nothing can say otherwise. Recording it as `Unknown` keeps the retained
+/// lease paired with a reconcile entry, instead of leaving an operation that
+/// can never be settled and a busy mirror that disagrees with the lease.
+/// Built before the job is dispatched; it appends nothing until it is used.
+#[derive(Clone, Debug)]
+pub struct PullAbandonment {
+    id: OperationId,
+    name: &'static str,
+    path: PathBuf,
+    before: StateSummary,
+}
+impl PullAbandonment {
+    pub fn into_completion(self) -> PullCompletion {
+        let evidence =
+            "the pull task unwound; whether the write happened cannot be established".to_string();
+        let entry = OpLogEntry::new(
+            self.name,
+            self.path.display().to_string(),
+            self.before.clone(),
+            OpOutcome::Unknown {
+                after: self.before,
+                evidence: evidence.clone(),
+            },
+        );
+        PullCompletion {
+            id: self.id,
+            report: PullReport::settled(
+                vec![RunReport {
+                    result: Err(kagi_git::GitError::TerminationUnknown(
+                        kagi_git::Termination::unproven(evidence.clone()),
+                    )),
+                    recording: recording::finalize(entry),
+                    stash: None,
+                }],
+                PullPresentation::Partial { error: evidence },
+                None,
+            ),
+        }
+    }
 }
 
 pub fn prepare_pull(

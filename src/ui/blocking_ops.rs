@@ -32,7 +32,7 @@ pub(crate) fn execution_policy() -> kagi_git::backend::ExecutionPolicy {
 mod discard;
 pub(crate) use discard::discard_blocking;
 mod pull;
-pub(crate) use pull::pull_blocking;
+pub(crate) use pull::{pull_blocking, refuse_blocked_pull};
 
 // Background and headless hosts share these operation cores.
 

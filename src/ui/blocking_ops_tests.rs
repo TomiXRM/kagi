@@ -153,8 +153,8 @@ fn auto_stash_pull_restores_tracked_and_untracked_changes() {
         "a dirty pull runs and records all three children"
     );
     assert_eq!(decisive_op(&result), "stash-pop");
-    assert_eq!(
-        result.terminal.stash_oid, None,
+    assert!(
+        result.terminal.stash.is_none(),
         "a restored stash leaves no recovery context"
     );
     assert_eq!(
@@ -209,7 +209,7 @@ fn auto_stash_pull_keeps_stash_when_restore_conflicts() {
         "a conflicted restore is what decided this workflow"
     );
     assert!(
-        result.terminal.stash_oid.is_some(),
+        result.terminal.stash.is_some(),
         "a kept stash must travel as recovery context"
     );
     let mut backend = kagi_git::Backend::open(&repos.local).expect("backend");
@@ -234,7 +234,7 @@ fn ops(report: &PullReport) -> Vec<&str> {
 }
 
 fn decisive_op(report: &PullReport) -> &str {
-    report.terminal.decisive.recording.entry().op.as_str()
+    report.decisive().recording.entry().op.as_str()
 }
 
 /// ADR-0196 決定 5: a clean pull is one write and records exactly one receipt —
@@ -300,11 +300,11 @@ fn failed_pull_settles_on_the_pull_not_the_restore() {
     );
     assert!(
         matches!(
-            result.terminal.decisive.recording.entry().outcome,
+            result.decisive().recording.entry().outcome,
             kagi_git::oplog::OpOutcome::Failed { .. }
         ),
         "the decisive receipt is the failure: {:?}",
-        result.terminal.decisive.recording.entry().outcome
+        result.decisive().recording.entry().outcome
     );
     assert!(
         matches!(
@@ -350,11 +350,11 @@ fn a_stale_confirmation_refuses_before_stashing() {
     );
     assert!(
         matches!(
-            result.terminal.decisive.recording.entry().outcome,
+            result.decisive().recording.entry().outcome,
             kagi_git::oplog::OpOutcome::Refused { .. }
         ),
         "the refusal is recorded by the core: {:?}",
-        result.terminal.decisive.recording.entry().outcome
+        result.decisive().recording.entry().outcome
     );
     let mut backend = kagi_git::Backend::open(&repos.local).expect("backend");
     assert_eq!(backend.stash_count().unwrap(), 0, "nothing was stashed");
@@ -362,5 +362,77 @@ fn a_stale_confirmation_refuses_before_stashing() {
         std::fs::read_to_string(repos.local.join("second.txt")).unwrap(),
         "written after confirming\n",
         "the work done after confirming is untouched"
+    );
+}
+
+/// A `git` child that leaves a descendant holding the pipes: the wait resolves
+/// but the capture is not proven complete, which is `run_git`'s
+/// [`GitError::TerminationUnknown`]. This is the injection the real repository
+/// path accepts — `remote.<name>.uploadpack` is what `git fetch` runs for a
+/// local remote — and it is not neutralised by the CLI hardening.
+fn leaky_upload_pack(repos: &Repos) -> String {
+    let path = repos._root.path().join("upload-pack.sh");
+    std::fs::write(&path, "#!/bin/sh\nsleep 5 &\nexec git upload-pack \"$@\"\n")
+        .expect("write helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path.to_str().expect("utf-8 path").to_string()
+}
+
+/// #702 review P1 — the forbidden step, on the **production** path.
+///
+/// `execute_pull` used to flatten `run_git`'s `TerminationUnknown` into
+/// `GitError::Other`, so a fetch that may still be running read as a stopped
+/// writer and the workflow went straight on to pop the auto-stash. The mapper
+/// keeps the type now, and the workflow stops with the user's work still in the
+/// stash. Nothing is simulated here: the pull runs against a real repository.
+#[test]
+fn an_unconfirmed_fetch_stops_the_workflow_before_the_restore() {
+    let _lock = crate::ui::ENV_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let repos = setup();
+    let log = TempDir::new().expect("log dir");
+    let _env = LogEnv::set(log.path());
+    push_remote_change(&repos, "upstream\nbase\n");
+    write_file(&repos.local, "base.txt", "base\nlocal\n");
+    git(&repos.local, &["add", "base.txt"]);
+    let helper = leaky_upload_pack(&repos);
+    git(
+        &repos.local,
+        &["config", "remote.origin.uploadpack", &helper],
+    );
+
+    let backend = kagi_git::Backend::open(&repos.local).expect("backend");
+    let plan = backend.plan_pull().expect("pull plan");
+    let promised = backend.working_tree_status().expect("status").digest();
+    let result = pull_blocking(&repos.local, &plan, true, Some(promised)).expect("repo opens");
+
+    assert!(
+        matches!(
+            result.decisive().result,
+            Err(kagi_git::GitError::TerminationUnknown(_))
+        ),
+        "the fetch's unproven termination must reach the workflow with its type \
+         intact, not flattened into a plain failure: {:?}",
+        result.decisive().result
+    );
+    assert_eq!(
+        ops(&result),
+        vec!["stash-push", "pull"],
+        "no pop may follow a fetch that is not proven stopped"
+    );
+    let mut backend = kagi_git::Backend::open(&repos.local).expect("backend");
+    assert_eq!(
+        backend.stash_count().unwrap(),
+        1,
+        "the user's work stays in the stash, untouched"
+    );
+    assert!(
+        result.terminal.stash.is_some(),
+        "and travels on as the recovery context"
     );
 }

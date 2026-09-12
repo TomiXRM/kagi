@@ -119,6 +119,9 @@ pub struct ProcRun {
     /// `Ok(())` — `stdout`/`stderr` are everything the child wrote, and all the
     /// input reached it. `Err(_)` — see [`ProcIo`]; the buffers are a prefix.
     pub io: Result<(), ProcIo>,
+    /// The child's process id. The only handle on a child that could not be
+    /// reaped, so a later read can prove it finally went away (ADR-0175).
+    pub pid: u32,
 }
 
 impl ProcRun {
@@ -191,6 +194,7 @@ pub fn run_child(
     .stderr(Stdio::piped());
 
     let mut child = cmd.spawn()?;
+    let pid = child.id();
 
     // Each collector reports through the channel when it is done, so the wait
     // for them can be bounded (a `JoinHandle` cannot). The handles are kept only
@@ -242,7 +246,29 @@ pub fn run_child(
         stderr,
         status: status.map(|s| s.code().unwrap_or(-1)),
         io,
+        pid,
     })
+}
+
+/// Is `pid` still a live process?
+///
+/// `kill(pid, 0)` is the POSIX existence probe: it sends no signal. `Ok` or
+/// `EPERM` means something with that id is there; `ESRCH` means it is gone.
+/// This is how a writer whose child could not be reaped is finally proven
+/// stopped, long after the run that abandoned it (ADR-0175, #702 review P1).
+// ponytail: pid reuse can make a recycled id read as alive, which keeps a scope
+// closed that could have been released. Conservative in the safe direction; a
+// start-time comparison would be the upgrade if it ever bites.
+#[cfg(unix)]
+pub fn process_alive(pid: u32) -> bool {
+    // SAFETY: `kill` with signal 0 performs no action; it only reports whether
+    // the process exists and is signallable.
+    let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+#[cfg(not(unix))]
+pub fn process_alive(_pid: u32) -> bool {
+    true
 }
 
 /// Read a child pipe to EOF on its own thread, reporting through `tx`.

@@ -260,11 +260,19 @@ pub fn approve(
     s.state = PlanState::Approved;
     Ok(approved)
 }
-pub(crate) fn reserve(
+/// Admit one approved write: the single entry every state-changing operation
+/// takes before its task is spawned (ADR-0196 決定 1, #643 A0).
+///
+/// Checks, in order: the approval is the current one, no legacy writer holds
+/// the global busy slot, the scope has no unresolved `Unknown` awaiting
+/// reconcile, and no lease is held. Then it reserves the lease, freezes the
+/// owner as an [`OwnerStamp`], and expires the plan slot so the same approval
+/// cannot be spent twice.
+pub fn begin_write(
     s: &mut Sessions,
     approved: &Approved,
     legacy: LegacyBusy,
-) -> Result<OperationId, AdmissionError> {
+) -> Result<RunningWrite, AdmissionError> {
     if approved.revision != s.revision || !matches!(s.state, PlanState::Approved) {
         return Err(AdmissionError::StaleApproval);
     }
@@ -283,15 +291,39 @@ pub(crate) fn reserve(
     }
     let id = OperationId(next_id());
     s.reserve_lease(scope, id)?;
+    let attachment = approved.prepared.owner();
+    let session = attachment.session();
+    // The owner was verified attached by `approve`; a visit of 0 for a session
+    // that vanished between approve and here is still a routing key that will
+    // never match a live tab, which is the correct outcome for it.
+    let stamp = OwnerStamp {
+        session,
+        visit: s.visit(session).unwrap_or(0),
+        operation: id,
+    };
     s.operations.insert(
         id,
         InFlight {
             plan: approved.prepared.clone(),
-            attachment: approved.prepared.owner(),
+            attachment,
+            stamp,
         },
     );
     s.invalidate_plan();
-    Ok(id)
+    Ok(RunningWrite {
+        operation_id: id,
+        owner_stamp: stamp,
+    })
+}
+
+/// Family `prepare_*` entry points only need the id today; they migrate to
+/// [`begin_write`] as their jobs learn to carry the stamp (Wave 3).
+pub(crate) fn reserve(
+    s: &mut Sessions,
+    approved: &Approved,
+    legacy: LegacyBusy,
+) -> Result<OperationId, AdmissionError> {
+    begin_write(s, approved, legacy).map(|running| running.operation_id)
 }
 #[derive(Clone, Debug)]
 pub enum Completion {
@@ -543,15 +575,20 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             deliveries.push(Delivery::Invalidate(InvalidTarget { worktree, path }));
         }
     }
+    // The stamp is the one frozen at admission — never re-derived from the
+    // sessions map here, which may have moved on (ADR-0196 決定 3).
+    let stamp = owner.stamp;
     deliveries.push(match owner.attachment {
         OwnerAttachment::Local(attachment) => Delivery::Completed {
             id,
             attachment,
+            stamp,
             report: Box::new(report),
         },
         OwnerAttachment::Remote(attachment) => Delivery::RemoteCompleted {
             id,
             attachment,
+            stamp,
             report: Box::new(report),
         },
     });

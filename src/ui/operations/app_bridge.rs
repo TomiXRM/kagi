@@ -368,6 +368,7 @@ impl KagiApp {
                 id,
                 attachment,
                 report,
+                ..
             } => {
                 let report = match report.evidence {
                     app::FamilyEvidence::Remove(report) => report,
@@ -462,6 +463,7 @@ impl KagiApp {
                 id,
                 attachment,
                 report,
+                ..
             } => {
                 let app::FamilyEvidence::RemoteStash(report) = report.evidence else {
                     return;

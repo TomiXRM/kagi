@@ -456,6 +456,7 @@ impl KagiApp {
             return;
         }
 
+        self.busy_op = Some("pull");
         self.clear_pull_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
         klog!("async: pull started");

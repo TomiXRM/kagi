@@ -567,6 +567,12 @@ mod macos {
                 ),
             ),
             (
+                "run_success_unrecorded_keeps_partial_footer",
+                Box::new(
+                    crate::recovery_operations::scenario_run_success_unrecorded_keeps_partial_footer,
+                ),
+            ),
+            (
                 "backend_cli_capability_observation",
                 Box::new(
                     crate::recovery_cli_capability::scenario_backend_cli_capability_observation,

@@ -34,6 +34,7 @@ impl KagiApp {
         else {
             return;
         };
+        self.busy_op = Some("merge-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
         klog!("async: merge plan started for {}", target);
         let bg_owner = owner.clone();
@@ -158,6 +159,7 @@ impl KagiApp {
         else {
             return;
         };
+        self.busy_op = Some("merge-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
         klog!(
             "async: merge-into plan started for {} -> {}",

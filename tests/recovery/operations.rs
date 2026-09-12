@@ -1029,6 +1029,65 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
     );
 }
 
+/// ADR-0196 Wave 3 / #501: a write that happened but could not be recorded is
+/// presented as "changed but not recorded"; a family's own success footer must
+/// not paper over it. Delete-branch stands in for every `finish_run` family
+/// that sets a success footer. The oplog lock is held so the append fails.
+pub fn scenario_run_success_unrecorded_keeps_partial_footer(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["branch", "merged-delete"]);
+    let (app, window) = mount(cx, &repo);
+    let lock_path = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+        .join("operations.jsonl.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    lock.lock().unwrap();
+
+    app.update(cx, |app, cx| {
+        app.open_delete_branch_modal("merged-delete", cx)
+    });
+    wait_idle(cx, &app);
+    app.update(cx, |app, cx| app.start_delete_branch(cx));
+    wait_idle(cx, &app);
+    assert_eq!(
+        output(&repo, &["branch", "--list", "merged-delete"]),
+        "",
+        "the write itself went through"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let shown = panel
+            .entries()
+            .iter()
+            .find(|e| e.op == "delete-branch")
+            .expect("the attempted receipt is shown");
+        assert!(
+            matches!(shown.outcome, OpOutcome::Partial { .. }),
+            "unrecorded success is presented as partial: {:?}",
+            shown.outcome
+        );
+        match &app.status_footer {
+            FooterStatus::Success(text) => panic!("success footer hid the missing record: {text}"),
+            FooterStatus::Failed(text) | FooterStatus::Idle(text) => assert!(
+                text.contains("not recorded"),
+                "the footer must say the record is missing: {text}"
+            ),
+            other => panic!("unexpected footer: {other:?}"),
+        }
+    });
+
+    drop(lock);
+    let _ = std::fs::remove_file(&lock_path);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS run_success_unrecorded_keeps_partial_footer");
+}
+
 pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
         window.draw(cx).clear();

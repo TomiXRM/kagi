@@ -329,7 +329,14 @@ impl KagiApp {
                                 finished_note(outcome).unwrap_or_default()
                             );
                             app.present_recorded(&report.recording, cx);
+                            let presented = app.status_footer.clone();
                             on_done(app, Ok(outcome), cx);
+                            // A mutation that happened but was not recorded is
+                            // presented as "changed but not recorded" (#501); a
+                            // family's own success footer must not paper over it.
+                            if matches!(report.recording, Recording::Failed { .. }) {
+                                app.status_footer = presented;
+                            }
                         }
                         Err(error) => {
                             let failure = OpFailure {

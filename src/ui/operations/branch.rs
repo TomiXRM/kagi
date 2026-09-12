@@ -167,17 +167,10 @@ impl KagiApp {
             at: modal.at.clone(),
             checkout_after: modal.checkout_after,
         };
-        if let Err(e) = repo.run(&op, &plan) {
+        let report = repo.run_recorded(&op, &plan);
+        if let Err(e) = &report.result {
             let err_msg = i18n::op_failed(i18n::Op::CreateBranch, e);
-            self.record_op(
-                "create-branch",
-                plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-                cx,
-            );
+            self.present_report("create-branch", &report, &repo_path, cx);
             if let Some(m) = self.create_branch_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
             }
@@ -210,16 +203,8 @@ impl KagiApp {
         }
 
         // The combined Backend operation already performed optional checkout and
-        // persisted one receipt. Keep the established presentation/log lines.
-        self.record_op(
-            "create-branch",
-            plan.current.clone(),
-            OpOutcome::Success {
-                after: plan.predicted.clone(),
-            },
-            &repo_path,
-            cx,
-        );
+        // persisted one receipt; present that receipt (ADR-0196 Wave 2).
+        self.present_report("create-branch", &report, &repo_path, cx);
         if modal.checkout_after {
             klog!("executed: checkout {}", modal.input);
         }

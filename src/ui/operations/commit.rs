@@ -1099,7 +1099,7 @@ impl KagiApp {
         // single-parent commit.  This is synchronous (cheap; no tree rebuild on a
         // worker) so the conflict-mode transition stays simple.
         if self.conflict_merge_pending {
-            self.finish_merge_commit(&commit_message, &plan, cx);
+            self.finish_merge_commit(&commit_message, cx);
             return;
         }
 
@@ -1179,12 +1179,7 @@ impl KagiApp {
     /// T-CONFLICT-FLOW-031): `execute_merge_commit` (HEAD + MERGE_HEAD parents +
     /// cleanup_state), then drop the resolution buffer, clear the merge-pending /
     /// commit-panel state, oplog, and reload (which clears Conflict Mode).
-    fn finish_merge_commit(
-        &mut self,
-        message: &str,
-        plan: &std::sync::Arc<OperationPlan>,
-        cx: &mut Context<Self>,
-    ) {
+    fn finish_merge_commit(&mut self, message: &str, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -1218,7 +1213,8 @@ impl KagiApp {
                 return;
             }
         };
-        match repo.run(&merge_op, &merge_plan) {
+        let report = repo.run_recorded(&merge_op, &merge_plan);
+        match &report.result {
             Ok(kagi_git::OperationOutcome::Commit(id)) => {
                 klog!("executed: merge commit {}", id.short());
                 let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
@@ -1227,17 +1223,7 @@ impl KagiApp {
                 if let Some(entity) = self.commit_panel.clone() {
                     entity.update(cx, |v, _| v.last_draft_value = String::new());
                 }
-                let after = StateSummary {
-                    head: format!("branch: {} (merge commit {})", branch, id.short()),
-                    dirty: "clean".to_string(),
-                };
-                self.record_op(
-                    "merge-commit",
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
+                self.present_report("merge-commit", &report, &repo_path, cx);
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
                 self.conflict_merge_pending = false;
@@ -1249,8 +1235,10 @@ impl KagiApp {
             }
             Ok(_) => {
                 // MergeCommit only yields OperationOutcome::Commit; any other
-                // variant is a backend bug — surface it loudly.
+                // variant is a backend bug — surface it loudly. The receipt
+                // was still recorded, so present it before the toast.
                 klog!("merge commit: unexpected outcome variant");
+                self.present_report("merge-commit", &report, &repo_path, cx);
                 self.push_toast(
                     ToastKind::Error,
                     SharedString::from("merge commit: unexpected outcome"),
@@ -1261,15 +1249,7 @@ impl KagiApp {
             Err(e) => {
                 let err_msg = format!("{}", e);
                 klog!("merge commit failed: {}", err_msg);
-                self.record_op(
-                    "merge-commit",
-                    plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
+                self.present_report("merge-commit", &report, &repo_path, cx);
                 if let Some(entity) = self.commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         if let Some(modal) = v.state.plan_modal.as_mut() {

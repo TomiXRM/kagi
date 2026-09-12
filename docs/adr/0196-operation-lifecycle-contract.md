@@ -1,6 +1,6 @@
 # ADR-0196: operation lifecycle を唯一化する — Wave 0 契約の固定
 
-- Status: Accepted (Wave 0 — 契約のみ。コードはまだ動かさない)
+- Status: Accepted (Wave 0 契約; Wave 1–2 実装済み — 決定 5 の表を参照)
 - Date: 2026-09-12
 - Related: [#643](https://github.com/TomiXRM/kagi/issues/643)（A0 / A1 / A2）、ADR-0104（run pipeline）、ADR-0149（oplog）、ADR-0177（TerminationUnknown）、ADR-0183（session-owned read）、ADR-0195（FailureCode）
 - 適用範囲: `src/app`、`src/ui/operations/*`、`crates/kagi-git/src/backend/*`、`src/remote/*`
@@ -179,12 +179,25 @@ DifferentialManifest {
 | Wave | 内容 | 本 ADR での位置 |
 | --- | --- | --- |
 | 0 | 契約固定（本書） | **完了** |
-| 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | 次 |
-| 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | |
+| 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
+| 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | 次 |
 | 4 | UI state: `TabUiState` per session | |
 | 5 | crate 抽出（境界安定後のみ） | |
 | 6 | cleanup | |
+
+**Wave 2 実装メモ（2026-09-12）**: legacy family は全て `*_blocking` から
+`RunReport` を返し、`KagiApp::finish_recorded`（非同期; settle → `async: <op>
+finished|failed` 契約行 → `present_recorded` → `on_done(Result<&OperationOutcome,
+OpFailure>)`）か `KagiApp::present_report`（同期 4 サイト）で**backend の receipt
+そのもの**を提示する。`src/ui` に bare `Backend::run` は無い。UI が entry を
+合成するのは (a) plan blockers による `Refused`、(b) repository が開けず何も
+走らなかった場合、(c) ADR-0149 の non-run ops（`record_op_persist`: fetch 失敗、
+conflict 解決、terminal 起動、PR merge、worktree 操作）のみ。pull は
+stash → pull → pop の複合結果 `PullBlockingResult`、discard は `DiscardReport`
+で `RunReport` を運ぶ既存形のまま。`RunReport` を `FamilyEvidence::Run` に包んで
+`begin_write` / `apply` に載せるのは Wave 3 の cutover で行う（`RunReport` は
+`#[derive(Debug)]`、全 field Clone なので `Clone` 付与は 1 行）。
 
 **SubAgent 規律**: family / module / report は単独 owner。shared schema・router・ADR・
 migration summary は integration owner 専有。子 agent は evidence packet（revision、

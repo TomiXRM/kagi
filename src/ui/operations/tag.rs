@@ -126,17 +126,10 @@ impl KagiApp {
             name: modal.input.clone(),
             at: modal.at.clone(),
         };
-        if let Err(e) = repo.run(&op, &plan) {
+        let report = repo.run_recorded(&op, &plan);
+        if let Err(e) = &report.result {
             let err_msg = i18n::op_failed(i18n::Op::CreateTag, e);
-            self.record_op(
-                "create-tag",
-                plan.current.clone(),
-                OpOutcome::Failed {
-                    error: err_msg.clone(),
-                },
-                &repo_path,
-                cx,
-            );
+            self.present_report("create-tag", &report, &repo_path, cx);
             if let Some(m) = self.create_tag_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
             }
@@ -149,19 +142,7 @@ impl KagiApp {
             modal.at.short()
         );
 
-        let create_after = StateSummary {
-            head: plan.current.head.clone(),
-            dirty: plan.current.dirty.clone(),
-        };
-        self.record_op(
-            "create-tag",
-            plan.current.clone(),
-            OpOutcome::Success {
-                after: create_after,
-            },
-            &repo_path,
-            cx,
-        );
+        self.present_report("create-tag", &report, &repo_path, cx);
 
         self.clear_create_tag_modal();
         self.reload(cx);

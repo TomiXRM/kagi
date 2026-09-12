@@ -187,18 +187,11 @@ impl KagiApp {
             message: Some(msg.to_string()),
             include_untracked: true,
         };
-        match repo.run(&stash_op, &plan) {
+        let report = repo.run_recorded(&stash_op, &plan);
+        match &report.result {
             Ok(_) => {
                 klog!("executed: auto-stash before checkout");
-                self.record_op(
-                    "stash-push",
-                    plan.current.clone(),
-                    OpOutcome::Success {
-                        after: plan.predicted.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
+                self.present_report("stash-push", &report, &repo_path, cx);
                 // Keep status fresh so the checkout preflight sees the
                 // now-clean tree.
                 self.reload(cx);
@@ -206,13 +199,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err = i18n::op_failed(i18n::Op::Stash, e);
-                self.record_op(
-                    "stash-push",
-                    plan.current.clone(),
-                    OpOutcome::Failed { error: err.clone() },
-                    &repo_path,
-                    cx,
-                );
+                self.present_report("stash-push", &report, &repo_path, cx);
                 if let Some(m) = self.plan_modal_mut() {
                     m.error = Some(SharedString::from(err));
                 }

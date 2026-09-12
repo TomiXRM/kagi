@@ -413,10 +413,7 @@ use detail_panel::CommitDetail;
 use graph_view::graph_canvas;
 use kagi_git::{
     oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome},
-    ops::{
-        default_tracking_branch_name, validate_branch_rename, AmendMode, OperationPlan,
-        StateSummary,
-    },
+    ops::{default_tracking_branch_name, validate_branch_rename, AmendMode, StateSummary},
     CommitId, FileDiffStat, FileStatus, RepoSnapshot, SkipProgress,
 };
 

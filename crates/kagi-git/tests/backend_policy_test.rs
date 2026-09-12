@@ -266,11 +266,16 @@ fn one_worker_applies_new_policy_each_time_and_refuses_stale_requests() {
             actor: Actor::Mcp,
             auto_snapshot: enabled,
         };
+        // #643 A1: the worker now replies with the whole `RunReport`. The outer
+        // `Result` says whether the backend opened; the operation's own result
+        // is inside it, alongside the recording.
         worker
             .submit_with_policy(op.clone(), plan.clone(), policy)
             .unwrap()
             .recv()
             .unwrap()
+            .expect("the backend must open")
+            .result
             .unwrap();
         assert_eq!(
             backend.list_snapshots().unwrap().len(),
@@ -282,6 +287,8 @@ fn one_worker_applies_new_policy_each_time_and_refuses_stale_requests() {
             .unwrap()
             .recv()
             .unwrap()
+            .expect("the backend still opens; the stale request is what is refused")
+            .result
             .is_err());
         assert_eq!(unchanged(tmp.path()), before);
         assert_eq!(kagi_git::read_oplog_tail(1)[0].actor, Actor::Mcp);

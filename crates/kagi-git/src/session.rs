@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use super::worker::RepoWorker;
 use super::{Backend, GitError, OperationPlan};
-use kagi_domain::operation::{Operation, OperationOutcome};
+use kagi_domain::operation::Operation;
 use std::sync::mpsc;
 
 /// One `Backend` owner per repository tab. Cloning is cheap (`Rc` bump);
@@ -65,7 +65,8 @@ impl RepoSession {
         &self,
         op: Operation,
         plan: OperationPlan,
-    ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
+    ) -> Result<mpsc::Receiver<Result<crate::backend::recording::RunReport, GitError>>, GitError>
+    {
         self.submit_with_policy(op, plan, self.backend.execution_policy())
     }
 
@@ -75,7 +76,8 @@ impl RepoSession {
         op: Operation,
         plan: OperationPlan,
         policy: crate::backend::ExecutionPolicy,
-    ) -> Result<mpsc::Receiver<Result<OperationOutcome, GitError>>, GitError> {
+    ) -> Result<mpsc::Receiver<Result<crate::backend::recording::RunReport, GitError>>, GitError>
+    {
         // Lazily spawn the worker if it doesn't exist yet.
         let mut worker_slot = self.worker.borrow_mut();
         if worker_slot.is_none() {

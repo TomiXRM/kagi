@@ -515,7 +515,13 @@ pub fn merge_pr(
 /// answered (gh missing, offline, auth gone) — the honest outcome is then
 /// `Unknown`, never an assumed failure. Server state is authoritative; the
 /// exit status of the merge command is not.
-fn pr_merged_on_server(workdir: &Path, number: u64) -> Option<bool> {
+///
+/// `pub` because it is asked twice: once by [`merge_pr`] to decide the
+/// receipt, and again by the reconcile read that observes a
+/// [`RemoteExpectation::PullRequest`](crate::backend::remote_ref::RemoteExpectation)
+/// — the same question, so the same answer, including the `None` that must
+/// never pass for "not merged" (#701).
+pub fn pr_merged_on_server(workdir: &Path, number: u64) -> Option<bool> {
     let out = crate::cli::gh_command()
         .args(["pr", "view", &number.to_string(), "--json", "mergedAt"])
         .current_dir(workdir)

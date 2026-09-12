@@ -240,7 +240,7 @@ fn observe_expectation(
     path: &std::path::Path,
     expectation: &kagi_git::backend::remote_ref::RemoteExpectation,
 ) -> Result<(String, bool), String> {
-    use kagi_git::backend::remote_ref::RemoteExpectation;
+    use kagi_git::backend::remote_ref::{PrExpect, RemoteExpectation};
     match expectation {
         RemoteExpectation::Ref {
             remote,
@@ -257,6 +257,25 @@ fn observe_expectation(
                     live.as_deref().unwrap_or("absent"),
                 ),
                 matched,
+            ))
+        }
+        // The same question `merge_pr` asked to decide the receipt, asked
+        // again. `None` is "could not ask" — it confirms nothing, and it must
+        // never read as "not merged" (ADR-0177).
+        RemoteExpectation::PullRequest { number, expect } => {
+            let PrExpect::Merged = expect;
+            let merged = kagi_git::github::pr_merged_on_server(path, *number);
+            let live = match merged {
+                Some(true) => "merged",
+                Some(false) => "open",
+                None => "unreadable",
+            };
+            Ok((
+                format!(
+                    "pr #{number} expected=merged live={live} confirmed={}",
+                    merged == Some(true)
+                ),
+                merged == Some(true),
             ))
         }
     }

@@ -909,8 +909,10 @@ fn every_remote_expectation_is_confirmed_only_by_its_frozen_value() {
     );
 }
 
-/// The four remote-writing operations name their effect from their own typed
-/// plan recovery; everything else names nothing and stays unresolved.
+/// A remote-writing operation names its effect from its own typed plan
+/// recovery; everything else names nothing and stays unresolved. (#701 adds
+/// two more namers on top of these four — the branch-cleanup batch and the
+/// pull-request merge — pinned by their own tests.)
 #[test]
 fn a_remote_effect_is_named_from_the_plan_that_is_about_to_run() {
     use kagi_git::backend::remote_ref::{RemoteExpect, RemoteExpectation};

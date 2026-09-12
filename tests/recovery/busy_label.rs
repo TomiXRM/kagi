@@ -243,8 +243,8 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     );
     app.update(cx, |app, cx| {
         // The exit: `apply` parked a reconcile entry for this operation, and
-        // because the transport reported a *stopped* child it is immediately
-        // readable and acknowledgeable — not a dead end.
+        // because the transport reported a *stopped* child it is readable
+        // straight away — not a dead end.
         let parked = app.app_sessions.reconcile_ids();
         assert_eq!(
             parked.len(),
@@ -254,6 +254,16 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
         let read = kagi::app::read_reconcile(&app.app_sessions, parked[0])
             .expect("both gh processes exited, so the entry is readable");
         assert!(read.stop_proven(), "the transport already proved the stop");
+        // Readable is not the same as answerable: this fixture has no GitHub,
+        // so the promise frozen at approval — that PR #7 reads *merged* —
+        // cannot be checked, and the requirement stays open (#701). The
+        // acknowledge that a merged re-read earns is covered by
+        // `pr_merge_unknown_resolves_only_on_a_merged_re_read`.
+        assert!(
+            !read.resolved(),
+            "nothing can confirm the merge here: {}",
+            read.observation
+        );
         // Meanwhile the scope is refused: the reconcile entry, not a lease.
         assert!(
             !app.app_sessions.has_leases(),
@@ -278,9 +288,12 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             app.pr_merge_modal().is_some(),
             "a refused admission keeps the confirmation"
         );
-        // Acknowledging it releases the scope, which is the whole point.
-        kagi::app::acknowledge(&mut app.app_sessions, read).expect("a proven stop can be closed");
-        assert!(app.app_sessions.reconcile_ids().is_empty());
+        // And an unconfirmable promise must not be closed on the user's behalf.
+        assert!(
+            kagi::app::acknowledge(&mut app.app_sessions, read).is_err(),
+            "a merge nobody can confirm stays parked"
+        );
+        assert_eq!(app.app_sessions.reconcile_ids(), parked);
     });
     unmount(cx, app, window);
 

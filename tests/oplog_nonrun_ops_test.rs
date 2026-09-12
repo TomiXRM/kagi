@@ -141,11 +141,19 @@ impl Fixture {
     }
 
     fn merged_target(&self) -> CleanupDeleteTarget {
-        git(&self.path, &["branch", "merged"]);
-        let tip = git(&self.path, &["rev-parse", "merged"]).trim().to_string();
-        self.commit_file("later.txt", "later\n", "advance main");
+        self.merged_target_named("merged")
+    }
+
+    fn merged_target_named(&self, name: &str) -> CleanupDeleteTarget {
+        git(&self.path, &["branch", name]);
+        let tip = git(&self.path, &["rev-parse", name]).trim().to_string();
+        self.commit_file(
+            &format!("later-{name}.txt"),
+            "later\n",
+            &format!("advance main past {name}"),
+        );
         CleanupDeleteTarget {
-            name: "merged".to_string(),
+            name: name.to_string(),
             local_tip: Some(CommitId(tip)),
             remote_tip: None,
             status: MergedBranchStatus::FullyMerged,
@@ -621,20 +629,6 @@ fn cleanup_moved_local_tip_without_deletions_records_failed() {
 /// observation and not an inference. One test uses it; `ENV_LOCK` serializes.
 static RUNNER_CALLS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Give the fixture's `merged` branch a remote half, so the cleanup reaches
-/// the `push --delete` the runner answers.
-fn push_target_to(fixture: &Fixture, remote: &TempDir, target: &mut CleanupDeleteTarget) {
-    let dir = &fixture.path;
-    git(remote.path(), &["init", "--bare", "."]);
-    git(
-        dir,
-        &["remote", "add", "origin", remote.path().to_str().unwrap()],
-    );
-    git(dir, &["push", "origin", "merged"]);
-    git(dir, &["fetch", "-q", "origin"]);
-    target.remote_tip = target.local_tip.clone();
-}
-
 /// A process group that has already gone: the handle an `Unaccounted`
 /// termination carries, in the state a later reconcile read must be able to
 /// prove. A reaped child leads its own group here — nothing is left to signal.
@@ -648,8 +642,8 @@ fn dead_group() -> u32 {
 }
 
 /// The runner answers the batch delete with a termination the executor *saw*
-/// end — what a `gh`-style transport reports when the process is accounted for
-/// but the repository state is not.
+/// end — what a transport reports when the process is accounted for but the
+/// repository state is not.
 fn push_stopped(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git::GitError> {
     RUNNER_CALLS.lock().unwrap().push(args.join(" "));
     if args.first() == Some(&"push") {
@@ -676,25 +670,41 @@ fn push_unaccounted(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git:
     kagi_git::cli::run_git(dir, args)
 }
 
+/// Give one of the fixture's branches a remote half on `remote`, so the
+/// cleanup reaches the `push --delete` the runner answers.
+fn push_target_to(fixture: &Fixture, remote: &Path, target: &mut CleanupDeleteTarget) {
+    let dir = &fixture.path;
+    git(dir, &["push", "origin", &target.name]);
+    git(dir, &["fetch", "-q", "origin"]);
+    let _ = remote;
+    target.remote_tip = target.local_tip.clone();
+}
+
 /// Run one cleanup through the production admission path with `runner`, and
 /// hand back the sessions it settled into plus the operation id.
 fn cleanup_through_the_app(
     fixture: &Fixture,
-    target: &CleanupDeleteTarget,
+    targets: &[CleanupDeleteTarget],
     runner: kagi_git::ops::GitRunner,
 ) -> (kagi::app::Sessions, kagi::app::OperationId, OpOutcome) {
     let dir = &fixture.path;
     let backend = Backend::open(dir).unwrap();
-    let plan = backend
-        .plan_delete_merged_branches(NOW, std::slice::from_ref(target))
-        .unwrap();
+    let plan = backend.plan_delete_merged_branches(NOW, targets).unwrap();
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     let repo_id = backend.write_repo_id().unwrap();
-    // Branch cleanup deletes a *batch* of remote refs, which the single-ref
-    // expectation cannot name — so there is none, and the reconcile read leans
-    // on the process-group proof alone (#702).
+    // Frozen at approval: one `Absent` promise per remote half this batch will
+    // delete — no more (a local-only target promises nothing) and no fewer.
     let remote = backend.remote_expectation("branch-cleanup", &plan);
-    assert!(remote.is_none(), "cleanup has no single-ref expectation");
+    let expected: Vec<kagi_git::backend::remote_ref::RemoteExpectation> = targets
+        .iter()
+        .filter(|t| t.remote_tip.is_some())
+        .map(|t| kagi_git::backend::remote_ref::RemoteExpectation::Ref {
+            remote: "origin".to_string(),
+            refname: format!("refs/heads/{}", t.name),
+            expect: kagi_git::backend::remote_ref::RemoteExpect::Absent,
+        })
+        .collect();
+    assert_eq!(remote, expected, "the batch is frozen at plan time");
     drop(backend);
 
     let mut sessions = kagi::app::Sessions::new();
@@ -712,7 +722,7 @@ fn cleanup_through_the_app(
         },
     )
     .expect("a fresh session admits the write");
-    let (job_path, job_plan, job_targets) = (dir.clone(), plan, vec![target.clone()]);
+    let (job_path, job_plan, job_targets) = (dir.clone(), plan, targets.to_vec());
     let job = kagi::app::prepare_run(
         &mut sessions,
         approved,
@@ -731,11 +741,33 @@ fn cleanup_through_the_app(
     (sessions, id, recorded)
 }
 
+/// Two merged branches, both pushed to a bare remote: the batch this cleanup
+/// promises to delete. Returns the targets and the remote.
+fn two_remote_targets(fixture: &Fixture) -> (Vec<CleanupDeleteTarget>, TempDir) {
+    let remote = TempDir::new().unwrap();
+    git(remote.path(), &["init", "--bare", "."]);
+    git(
+        &fixture.path,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    let mut targets = vec![
+        fixture.merged_target_named("merged"),
+        fixture.merged_target_named("merged-two"),
+    ];
+    for target in &mut targets {
+        push_target_to(fixture, remote.path(), target);
+    }
+    (targets, remote)
+}
+
 /// ADR-0177 / ADR-0196 決定 2.4: a `push --delete` whose termination is
 /// unconfirmed stops the cleanup — retrying it per branch would re-run a
 /// deletion that may already have happened — and the `Termination` reaches the
-/// settlement *typed*, because `child_stopped` / `pid` is the whole difference
-/// between a lease with an exit and a lease without one.
+/// settlement *typed*, because `child_stopped` / `group` is the whole
+/// difference between a lease with an exit and a lease without one.
+///
+/// The exit itself is the frozen batch: the read confirms the delete only when
+/// **every** promised ref is gone from the remote (#701).
 #[test]
 fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
     if !crate::test_support::run_isolated() {
@@ -746,12 +778,10 @@ fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
     // ── The child was accounted for: the scope is free, the receipt is not.
     RUNNER_CALLS.lock().unwrap().clear();
     let fixture = Fixture::new();
-    let mut target = fixture.merged_target();
-    let remote = TempDir::new().unwrap();
-    push_target_to(&fixture, &remote, &mut target);
+    let (targets, remote) = two_remote_targets(&fixture);
     let local_tip = git(&fixture.path, &["rev-parse", "merged"]);
 
-    let (mut sessions, id, recorded) = cleanup_through_the_app(&fixture, &target, push_stopped);
+    let (mut sessions, id, recorded) = cleanup_through_the_app(&fixture, &targets, push_stopped);
     let pushes: Vec<String> = RUNNER_CALLS
         .lock()
         .unwrap()
@@ -775,9 +805,41 @@ fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
         "a child the executor saw stop releases the scope at settlement"
     );
     assert_eq!(sessions.reconcile_ids(), vec![id]);
+
+    // Nothing was deleted on the remote, so nothing is confirmed.
     let read = kagi::app::read_reconcile(&sessions, id).expect("the entry is readable");
     assert!(read.stop_proven(), "the executor already proved the stop");
-    kagi::app::acknowledge(&mut sessions, read).expect("and it can be acknowledged");
+    assert!(
+        !read.resolved(),
+        "both promised refs are still on the remote: {}",
+        read.observation
+    );
+    assert!(kagi::app::acknowledge(&mut sessions, read).is_err());
+
+    // One of the two is gone. A batch that removed half of itself is not a
+    // confirmed batch — this is the assertion "any one absent" would break.
+    git(remote.path(), &["update-ref", "-d", "refs/heads/merged"]);
+    let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+    assert!(
+        !read.resolved(),
+        "one of two refs is not the batch: {}",
+        read.observation
+    );
+    assert!(kagi::app::acknowledge(&mut sessions, read).is_err());
+
+    // Both gone: the promise the plan froze is kept, and only now can the
+    // requirement be closed.
+    git(
+        remote.path(),
+        &["update-ref", "-d", "refs/heads/merged-two"],
+    );
+    let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+    assert!(
+        read.resolved(),
+        "every promised ref is absent: {}",
+        read.observation
+    );
+    kagi::app::acknowledge(&mut sessions, read).expect("a kept promise can be acknowledged");
     assert!(sessions.reconcile_ids().is_empty());
     let records = fixture.records(1, Actor::Cli);
     assert!(matches!(records[0].outcome, OpOutcome::Unknown { .. }));
@@ -787,26 +849,33 @@ fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
     );
 
     // ── The group could not be accounted for: the scope stays reserved until
-    // a read proves that group is gone, and only then can it be acknowledged.
+    // a read proves that group is gone — and even then, only a kept promise
+    // closes it.
     RUNNER_CALLS.lock().unwrap().clear();
     let fixture = Fixture::new();
-    let mut target = fixture.merged_target();
-    let remote = TempDir::new().unwrap();
-    push_target_to(&fixture, &remote, &mut target);
+    let (targets, remote) = two_remote_targets(&fixture);
 
-    let (mut sessions, id, recorded) = cleanup_through_the_app(&fixture, &target, push_unaccounted);
+    let (mut sessions, id, recorded) =
+        cleanup_through_the_app(&fixture, &targets, push_unaccounted);
     assert!(matches!(recorded, OpOutcome::Unknown { .. }));
     assert!(
         sessions.has_leases(),
         "an unaccounted process group retains the scope (ADR-0175)"
     );
     assert_eq!(sessions.reconcile_ids(), vec![id]);
+    for name in ["merged", "merged-two"] {
+        git(
+            remote.path(),
+            &["update-ref", "-d", &format!("refs/heads/{name}")],
+        );
+    }
     let read = kagi::app::read_reconcile(&sessions, id)
         .expect("the group it carries is what makes the entry readable");
     assert!(
         read.stop_proven(),
         "the read asked the OS: that group is gone"
     );
+    assert!(read.resolved(), "and the remote kept the promise");
     kagi::app::acknowledge(&mut sessions, read).expect("the proven stop releases the scope");
     assert!(
         !sessions.has_leases(),
@@ -834,11 +903,9 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
         .plan_delete_merged_branches(NOW, std::slice::from_ref(&target))
         .unwrap();
     let repo_id = backend.write_repo_id().unwrap();
-    // Branch cleanup deletes a *batch* of remote refs, which the single-ref
-    // expectation cannot name — so there is none, and the reconcile read leans
-    // on the process-group proof alone (#702).
+    // A local-only target promises nothing on a remote.
     let remote = backend.remote_expectation("branch-cleanup", &plan);
-    assert!(remote.is_none(), "cleanup has no single-ref expectation");
+    assert!(remote.is_empty(), "no remote half, no promise");
     drop(backend);
 
     let mut sessions = kagi::app::Sessions::new();
@@ -901,6 +968,175 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
         "an abandoned write is Unknown, never a failure: {:?}",
         records[0].outcome
     );
+}
+
+/// A stand-in `gh` first on PATH, answering `gh pr view … mergedAt` with
+/// `body`. The guard restores PATH on drop, so one test can ask the same
+/// question of three different servers.
+struct FakeGh(Option<OsString>);
+impl FakeGh {
+    fn answering(bin: &Path, body: &str) -> Self {
+        std::fs::create_dir_all(bin).unwrap();
+        let gh = bin.join("gh");
+        std::fs::write(&gh, format!("#!/bin/sh\n{body}\n")).unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&gh, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let restore = Self(std::env::var_os("PATH"));
+        let mut paths = vec![bin.to_path_buf()];
+        paths.extend(std::env::split_paths(
+            &restore.0.clone().unwrap_or_default(),
+        ));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        restore
+    }
+}
+impl Drop for FakeGh {
+    fn drop(&mut self) {
+        match &self.0 {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+}
+
+const PR_JSON: &str = r#"[{"number":501,"title":"reconcile","headRefName":"feat/x",
+  "headRefOid":"1111111111111111111111111111111111111111","baseRefName":"main",
+  "isDraft":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE",
+  "statusCheckRollup":[],"url":"https://example.invalid/pull/501",
+  "author":{"login":"a"},"reviewRequests":[],"body":""}]"#;
+
+/// #701: a pr-merge whose server state could not be re-read settles `Unknown`
+/// with the child accounted for — the lease goes, the requirement stays. Its
+/// exit is the promise frozen at approval: the PR itself must read *merged*
+/// when asked again. "Open" is a readable answer that confirms nothing, and
+/// "could not ask" must never pass for either.
+#[test]
+fn pr_merge_unknown_resolves_only_on_a_merged_re_read() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let dir = &fixture.path;
+    let bin = dir.join("fake-bin");
+
+    let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
+    let plan = kagi_git::github::plan_pr_merge(
+        &pr,
+        kagi_git::github::MergeMethod::Squash,
+        false,
+        "branch 'main'".into(),
+    );
+    let backend = Backend::open(dir).unwrap();
+    let repo_id = backend.write_repo_id().unwrap();
+    let remote = backend.remote_expectation("pr-merge", &plan);
+    assert_eq!(
+        remote,
+        vec![
+            kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
+                number: 501,
+                expect: kagi_git::backend::remote_ref::PrExpect::Merged,
+            }
+        ],
+        "the promise a merge freezes is the PR's own state, not a ref"
+    );
+    drop(backend);
+
+    let mut sessions = kagi::app::Sessions::new();
+    let session = sessions.attach(dir.clone());
+    let owner = sessions.attachment(session).unwrap();
+    let approved = kagi::app::approve_run(
+        &mut sessions,
+        kagi::app::RunRequest {
+            owner,
+            name: "pr-merge",
+            path: dir.clone(),
+            repo: repo_id,
+            plan: std::sync::Arc::new(plan.clone()),
+            remote,
+        },
+    )
+    .unwrap();
+    // What `merge_pr` returns when `gh` failed and the re-read could not say:
+    // the children exited, the repository state did not.
+    let (entry_repo, entry_before) = (dir.display().to_string(), plan.current.clone());
+    let job = kagi::app::prepare_run(
+        &mut sessions,
+        approved,
+        kagi::app::LegacyBusy(false),
+        Box::new(move || {
+            const EVIDENCE: &str = "gh failed and the state could not be re-read";
+            let entry = OpLogEntry::new(
+                "pr-merge",
+                entry_repo.clone(),
+                entry_before,
+                OpOutcome::Unknown {
+                    after: StateSummary {
+                        head: "unknown".into(),
+                        dirty: "unknown".into(),
+                    },
+                    evidence: EVIDENCE.to_string(),
+                },
+            )
+            .with_worktree(Some(entry_repo));
+            Ok(kagi_git::backend::recording::RunReport {
+                result: Err(kagi_git::GitError::TerminationUnknown(
+                    kagi_git::Termination::stopped(EVIDENCE),
+                )),
+                recording: kagi_git::backend::recording::finalize(entry),
+                stash: None,
+            })
+        }),
+    )
+    .unwrap();
+    let id = job.id();
+    sessions.apply(job.run());
+    assert!(
+        !sessions.has_leases(),
+        "both gh processes exited, so the scope is released at settlement"
+    );
+    assert_eq!(sessions.reconcile_ids(), vec![id]);
+
+    // The server says the PR is still open: readable, and not a merge.
+    {
+        let _gh = FakeGh::answering(&bin, r#"echo '{"mergedAt":null}'"#);
+        let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+        assert!(
+            !read.resolved(),
+            "an open PR is not a merged one: {}",
+            read.observation
+        );
+        assert!(kagi::app::acknowledge(&mut sessions, read).is_err());
+    }
+    // The server cannot be asked at all. This is the answer that must never
+    // pass for "merged" — nor for "not merged" (ADR-0177).
+    {
+        let _gh = FakeGh::answering(&bin, "echo 'could not connect' >&2; exit 1");
+        let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+        assert!(
+            !read.resolved(),
+            "an unreadable server confirms nothing: {}",
+            read.observation
+        );
+        assert!(
+            read.observation.contains("unreadable"),
+            "and it must not be reported as an answer: {}",
+            read.observation
+        );
+        assert!(kagi::app::acknowledge(&mut sessions, read).is_err());
+    }
+    // Merged: the promise is kept, and only now can the scope be closed.
+    {
+        let _gh = FakeGh::answering(&bin, r#"echo '{"mergedAt":"2026-09-07T00:00:00Z"}'"#);
+        let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+        assert!(
+            read.resolved(),
+            "the server confirms the merge: {}",
+            read.observation
+        );
+        kagi::app::acknowledge(&mut sessions, read).expect("a kept promise closes it");
+    }
+    assert!(sessions.reconcile_ids().is_empty());
 }
 
 #[path = "support/isolated.rs"]

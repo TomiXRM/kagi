@@ -319,7 +319,17 @@ pub fn plan_delete_merged_branches(
     }
 
     let recovery = PlanRecovery {
-        kind: RecoveryKind::Cleanup(CleanupRecovery::CleanupDelete),
+        kind: RecoveryKind::Cleanup(CleanupRecovery::CleanupDelete {
+            // Frozen here, before anything runs: the remote halves this batch
+            // promises to remove. A reconcile confirms the delete only when
+            // every one of them is gone (#701 / ADR-0177). `origin` is the
+            // only remote this op deletes on — the same one Phase 2 pushes to.
+            remote_refs: targets
+                .iter()
+                .filter(|t| t.remote_tip.is_some())
+                .map(|t| format!("refs/heads/{}", t.name))
+                .collect(),
+        }),
         commands: vec![
             "git branch <name> <oid>          (local)".to_string(),
             "git push origin <oid>:refs/heads/<name>   (remote)".to_string(),

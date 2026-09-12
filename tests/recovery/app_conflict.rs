@@ -297,6 +297,10 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         .collect();
     assert_eq!(entries.len(), 1, "the Backend records the abort once");
     assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    assert!(
+        cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()),
+        "the confirmation closes with the operation it confirmed"
+    );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
 }

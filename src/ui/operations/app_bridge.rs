@@ -482,6 +482,16 @@ impl KagiApp {
         report: kagi_git::backend::conflict_ops::ConflictReport,
         cx: &mut Context<Self>,
     ) {
+        // The abort's long-standing contract line (ADR-0056, documented in
+        // T-ENTITY-CONFLICT-001). #704 moved the execution into the family, so
+        // it is emitted from the receipt instead of from the UI's own run.
+        if matches!(
+            report.evidence.action,
+            kagi_domain::conflict_family::ConflictAction::Abort
+        ) && matches!(report.recording.entry().outcome, OpOutcome::Success { .. })
+        {
+            klog!("executed: {}", report.recording.entry().op);
+        }
         self.present_conflict_recording(attachment.session, report.recording, cx);
     }
 

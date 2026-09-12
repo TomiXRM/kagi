@@ -653,7 +653,7 @@ impl KagiApp {
             modal.plan.clone(),
             repo_path,
             move || checkout_tracking_blocking(&bg_path, &plan, &remote_branch, &local_branch),
-            move |_| Some(format!(" — checkout {}", note_branch)),
+            move |_| Some(format!("finished — checkout {}", note_branch)),
             move |app, done, _cx| match done {
                 Ok(_) => {}
                 Err(err_msg) => {
@@ -762,7 +762,7 @@ impl KagiApp {
             modal.plan.clone(),
             repo_path,
             move || switch_to_latest_blocking(&bg_path, &plan, &branch_name, &remote_branch),
-            move |_| Some(format!(" — switch {}", note_branch)),
+            move |_| Some(format!("finished — switch {}", note_branch)),
             move |app, done, _cx| match done {
                 Ok(_) => {}
                 Err(err_msg) => {

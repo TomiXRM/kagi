@@ -645,7 +645,7 @@ impl KagiApp {
             modal.plan.clone(),
             repo_path,
             move || push_blocking(&bg_path, &plan),
-            |outcome| Some(format!(" — {}", push_summary(outcome))),
+            |outcome| Some(format!("finished — {}", push_summary(outcome))),
             move |app, done, _cx| match done {
                 Ok(outcome) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(

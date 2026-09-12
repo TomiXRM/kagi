@@ -375,7 +375,7 @@ impl KagiApp {
             },
             move |outcome| {
                 Some(format!(
-                    " — {}",
+                    "finished — {}",
                     crate::ui::blocking_ops::merge_summary(
                         off_branch,
                         &note_source,

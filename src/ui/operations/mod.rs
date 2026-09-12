@@ -224,8 +224,11 @@ impl KagiApp {
     /// presented to the tab the stamp names — same tab, same visit — or
     /// dropped exactly as the legacy `switch_generation` guard dropped it.
     /// The `Invalidate` delivery reloads the owner, so `on_done` no longer
-    /// calls `reload`. Returns `false` when admission refused; the refusal is
-    /// already presented.
+    /// calls `reload`. `finished_note` is the tail of the `async: <op> …`
+    /// contract line for a successful result (`None` = `finished`; a family
+    /// with a historical ` — <summary>` suffix or a "partially applied" verb
+    /// returns the whole tail). Returns `false` when admission refused; the
+    /// refusal is already presented.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn finish_run<X, N, F>(
         &mut self,
@@ -324,9 +327,9 @@ impl KagiApp {
                     match &report.result {
                         Ok(outcome) => {
                             klog!(
-                                "async: {} finished{}",
+                                "async: {} {}",
                                 op_name,
-                                finished_note(outcome).unwrap_or_default()
+                                finished_note(outcome).unwrap_or_else(|| "finished".to_string())
                             );
                             app.present_recorded(&report.recording, cx);
                             let presented = app.status_footer.clone();

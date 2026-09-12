@@ -1,6 +1,6 @@
 # ADR-0196: operation lifecycle を唯一化する — Wave 0 契約の固定
 
-- Status: Accepted (Wave 0 契約; Wave 1–2 実装済み — 決定 5 の表を参照)
+- Status: Accepted (Wave 0 契約; Wave 1–2 実装済み、Wave 3 進行中 — 決定 5 の表を参照)
 - Date: 2026-09-12
 - Related: [#643](https://github.com/TomiXRM/kagi/issues/643)（A0 / A1 / A2）、ADR-0104（run pipeline）、ADR-0149（oplog）、ADR-0177（TerminationUnknown）、ADR-0183（session-owned read）、ADR-0195（FailureCode）
 - 適用範囲: `src/app`、`src/ui/operations/*`、`crates/kagi-git/src/backend/*`、`src/remote/*`
@@ -181,7 +181,7 @@ DifferentialManifest {
 | 0 | 契約固定（本書） | **完了** |
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | 次 |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **run family は完了** (#698 #699 #700、下記メモ)。残: pull / pr-merge / branch-cleanup / plan 系 latch → `busy_op` 除去 |
 | 4 | UI state: `TabUiState` per session | |
 | 5 | crate 抽出（境界安定後のみ） | |
 | 6 | cleanup | |
@@ -198,6 +198,28 @@ stash → pull → pop の複合結果 `PullBlockingResult`、discard は `Disca
 で `RunReport` を運ぶ既存形のまま。`RunReport` を `FamilyEvidence::Run` に包んで
 `begin_write` / `apply` に載せるのは Wave 3 の cutover で行う（`RunReport` は
 `#[derive(Debug)]`、全 field Clone なので `Clone` 付与は 1 行）。
+
+**Wave 3 実装メモ（2026-09-12）**: `Planned::Run(RunRequest)` /
+`RunJob` / `Completion::Run` / `FamilyEvidence::Run(RunReport)`（`src/app/run.rs`）
+が legacy の `Backend::run` 系 write 全部の family。plan はモーダル側にあるので
+`approve_run`（owner attached・凍結 worktree 一致）が plan slot の `approve` の代わり、
+`prepare_run` が `begin_write` で承認を 1 回消費。UI は `KagiApp::finish_run`
+（admission → job → `apply` → stamp の指す tab へ提示、違えば
+`op result dropped`）。**失敗時は reload しない**（reload の sweep が plan modal を
+消す）— reads を stale にするだけ。記録失敗（`Recording::Failed`）時は family の
+成功 footer で「changed but not recorded」を上書きしない（#501）。
+載せ替え済み 20 family: checkout / cherry-pick / revert / checkout-tracking /
+switch-to-latest / set-upstream / rename-branch / delete-remote-branch / push /
+merge(+into) / commit / amend / create-worktree / rebase / reset-current /
+force-with-lease-push / push-tag / branch-plan / delete-branch / discard。
+**残り**: (a) pull — stash → pull → pop の 3 receipt を持つ workflow。
+`FamilyEvidence::Pull { run: RunReport, workflow: PullBlockingResult }` のような
+per-family variant にするか、workflow 単位の受領証を backend に作るかは本 ADR の
+改訂事項。(b) pr-merge / branch-cleanup — ADR-0149 の non-run writer。
+`write_lease`（`reserve_write`）に載せる。(c) merge-plan / delete-branch-plan —
+書き込みではなく planning の UI latch。`busy_op` を `planning` フラグに分けて
+`busy_op` を消す。(a)(b)(c) が済んだら `reject_if_busy` を `has_leases()` に寄せ、
+`busy_op` と `LegacyBusy` を削除（完了条件）。
 
 **SubAgent 規律**: family / module / report は単独 owner。shared schema・router・ADR・
 migration summary は integration owner 専有。子 agent は evidence packet（revision、

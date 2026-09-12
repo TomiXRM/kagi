@@ -252,7 +252,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("push-tag");
         self.clear_push_tag_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPushTag.t()));
         klog!("async: push-tag started");
@@ -260,35 +259,33 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let (bg_path, bg_plan) = (repo_path.clone(), plan.clone());
         let (name, remote) = (modal.name.clone(), modal.remote.clone());
-        let task = cx.background_spawn(async move {
-            let run = || -> Result<kagi_git::backend::recording::RunReport, String> {
-                let mut repo = crate::ui::blocking_ops::open_backend(&bg_path)
-                    .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-                let op = kagi_git::Operation::PushTag {
-                    name: name.clone(),
-                    remote: remote.clone(),
-                };
-                let report = repo.run_recorded(&op, &bg_plan);
-                if report.result.is_ok() {
-                    klog!("executed: push-tag {} -> {}", name, remote);
-                }
-                Ok(report)
-            };
-            run()
-        });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "push-tag",
             i18n::Op::PushTag,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || {
+                let run = || -> Result<kagi_git::backend::recording::RunReport, String> {
+                    let mut repo = crate::ui::blocking_ops::open_backend(&bg_path)
+                        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+                    let op = kagi_git::Operation::PushTag {
+                        name: name.clone(),
+                        remote: remote.clone(),
+                    };
+                    let report = repo.run_recorded(&op, &bg_plan);
+                    if report.result.is_ok() {
+                        klog!("executed: push-tag {} -> {}", name, remote);
+                    }
+                    Ok(report)
+                };
+                run()
+            },
             |_| None,
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     app.status_footer =
                         FooterStatus::Success(SharedString::from(Msg::PushTagDone.t()));
-                    app.reload(cx);
                 }
                 // The remote refusing a moved tag lands here — its own message
                 // says exactly why, so show it rather than paraphrasing.

@@ -93,7 +93,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("force-with-lease-push");
         self.clear_force_lease_push_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from("Force-with-lease pushing…"));
         klog!("async: force-with-lease-push started");
@@ -101,21 +100,18 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
-        let task =
-            cx.background_spawn(async move { force_lease_push_blocking(&bg_path, &bg_plan) });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "force-with-lease-push",
             i18n::Op::Push,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || force_lease_push_blocking(&bg_path, &bg_plan),
             |_| None,
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     app.status_footer =
                         FooterStatus::Success(SharedString::from("force-with-lease-push: done"));
-                    app.reload(cx);
                 }
                 Err(failure) => {
                     app.set_force_lease_push_modal(ForceLeasePushModal {

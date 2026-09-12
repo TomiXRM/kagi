@@ -26,8 +26,8 @@ src/ui/diff_view.rs 1600
 src/ui/inspector.rs 1244
 src/ui/mod.rs 4164
 src/ui/modals.rs 859
-src/ui/operations/branch.rs 1303
-src/ui/operations/commit.rs 1411
+src/ui/operations/branch.rs 1207
+src/ui/operations/commit.rs 1408
 src/ui/operations/conflict.rs 1011
 src/ui/operations/modal_state.rs 1142
 src/ui/pr_mode.rs 2387

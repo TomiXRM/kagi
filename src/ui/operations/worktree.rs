@@ -198,7 +198,6 @@ impl KagiApp {
             klog!("worktree: trusted .kagi/worktree.toml (post_create)");
         }
 
-        self.busy_op = Some("create-worktree");
         self.clear_create_worktree_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCreateWorktree.t()));
         klog!("async: create-worktree started");
@@ -209,34 +208,30 @@ impl KagiApp {
         let allow_existing_branch = modal.allow_existing_branch;
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
-        let task = cx.background_spawn(async move {
-            create_worktree_blocking(
-                &bg_path,
-                &bg_plan,
-                &branch_input,
-                &path_input,
-                &at,
-                allow_existing_branch,
-            )
-        });
         let op = if allow_existing_branch {
             i18n::Op::OpenWorktree
         } else {
             i18n::Op::CreateWorktree
         };
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "create-worktree",
             op,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
-            |_| None,
-            move |app, done, cx| {
-                if done.is_ok() {
-                    app.reload(cx);
-                }
+            move || {
+                create_worktree_blocking(
+                    &bg_path,
+                    &bg_plan,
+                    &branch_input,
+                    &path_input,
+                    &at,
+                    allow_existing_branch,
+                )
             },
+            |_| None,
+            // The `Invalidate` delivery reloads; a failure left the record.
+            |_, _, _| {},
         );
     }
 

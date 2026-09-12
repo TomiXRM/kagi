@@ -91,7 +91,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("rebase");
         self.clear_rebase_current_onto_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
             "Rebasing '{}' onto '{}'…",
@@ -104,17 +103,15 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_onto = onto.clone();
-        let task =
-            cx.background_spawn(async move { rebase_blocking(&bg_path, &bg_plan, &bg_onto) });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "rebase",
             i18n::Op::Rebase,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || rebase_blocking(&bg_path, &bg_plan, &bg_onto),
             |outcome| Some(format!(" — {}", rebase_summary(outcome))),
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(
                         "rebase: onto '{}'",
@@ -123,7 +120,6 @@ impl KagiApp {
                     // Re-runs conflict-mode detection unconditionally — a
                     // rebase paused at a conflict enters Conflict Mode here,
                     // exactly like a conflicting merge (see module doc).
-                    app.reload(cx);
                 }
                 Err(failure) => {
                     // The typed code, not the prose (ADR-0195): a rebase that

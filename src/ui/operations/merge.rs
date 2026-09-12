@@ -344,7 +344,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("merge");
         self.clear_merge_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
         klog!("async: merge started");
@@ -358,23 +357,22 @@ impl KagiApp {
         let history_before = self.head_branch_and_sha();
         let off_branch = modal.off_branch;
         let bg_into = modal.into_branch.clone();
-        let task = cx.background_spawn(async move {
-            if off_branch {
-                crate::ui::blocking_ops::merge_into_branch_blocking(
-                    &bg_owner, &plan, &target, &bg_into,
-                )
-            } else {
-                merge_blocking(&bg_owner, &plan, &target, &kind)
-            }
-        });
         let (note_source, note_into) = (modal.target.clone(), modal.into_branch.clone());
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "merge",
             i18n::Op::Merge,
-            modal.plan.current.clone(),
+            modal.plan.clone(),
             repo_path,
+            move || {
+                if off_branch {
+                    crate::ui::blocking_ops::merge_into_branch_blocking(
+                        &bg_owner, &plan, &target, &bg_into,
+                    )
+                } else {
+                    merge_blocking(&bg_owner, &plan, &target, &kind)
+                }
+            },
             move |outcome| {
                 Some(format!(
                     " — {}",
@@ -386,7 +384,7 @@ impl KagiApp {
                     )
                 ))
             },
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     // Record for undo/redo only when the merge actually moved
                     // the branch ref (clean merge / fast-forward). A merge
@@ -407,7 +405,6 @@ impl KagiApp {
                     // re-runs detect_conflict_mode(); a merge that left
                     // conflict markers (MergeKind::Conflicts) therefore enters
                     // Conflict Mode here. Non-conflict merges stay Normal.
-                    app.reload(cx);
                 }
                 Err(failure) => {
                     app.set_merge_modal(MergePlanModal {

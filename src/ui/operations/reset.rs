@@ -95,7 +95,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("reset-current");
         self.clear_reset_current_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
             "Resetting current branch to {}…",
@@ -108,25 +107,20 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_target = target.clone();
-        let task =
-            cx.background_spawn(
-                async move { reset_current_blocking(&bg_path, &bg_plan, &bg_target) },
-            );
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "reset-current",
             i18n::Op::Reset,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || reset_current_blocking(&bg_path, &bg_plan, &bg_target),
             |_| None,
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(
                         "reset-current: now at {}",
                         target.short()
                     )));
-                    app.reload(cx);
                 }
                 Err(failure) => {
                     app.set_reset_current_modal(ResetCurrentModal {

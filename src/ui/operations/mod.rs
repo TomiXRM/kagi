@@ -51,9 +51,9 @@ pub enum PullConfirmDelivery {
 use crate::ui::KagiApp;
 use gpui::{AppContext, Context, SharedString, Task};
 use kagi_git::backend::recording::{Recording, RunReport};
-use kagi_git::oplog::{FailureCode, OpOutcome};
+use kagi_git::oplog::FailureCode;
 use kagi_git::OperationOutcome;
-use kagi_git::{OperationPlan, StateSummary};
+use kagi_git::OperationPlan;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -215,85 +215,6 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// ADR-0196 Wave 2: settle and present one family's own receipt.
-    ///
-    /// The settle half notices a failed append on every arrival, so a tab
-    /// switch cannot swallow "changed but not recorded". The presentation half
-    /// logs the `async: <op> finished|failed` contract line *before* the
-    /// footer line (its historical position), presents the recorded entry —
-    /// never one re-synthesized from the error text — and hands `on_done` the
-    /// outcome, or the localized failure with its typed code. `finished_note`
-    /// is the family's historical ` — <summary>` suffix, built from the
-    /// outcome. An `Err` from the task means the repository would not open:
-    /// nothing ran and nothing was recorded, so that one case is still
-    /// recorded here.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn finish_recorded<N, F>(
-        &mut self,
-        cx: &mut Context<Self>,
-        task: Task<Result<RunReport, String>>,
-        op_name: &'static str,
-        op: crate::ui::i18n::Op,
-        before: StateSummary,
-        repo_path: PathBuf,
-        finished_note: N,
-        on_done: F,
-    ) where
-        N: FnOnce(&OperationOutcome) -> Option<String> + 'static,
-        F: for<'a> FnOnce(&mut Self, Result<&'a OperationOutcome, OpFailure>, &mut Context<Self>)
-            + 'static,
-    {
-        let notice_path = repo_path.clone();
-        self.finish_op_on_main_settled(
-            cx,
-            task,
-            move |app, result, _cx| {
-                if let Ok(report) = result {
-                    app.notice_recording_failure(op_name, &report.recording, &notice_path);
-                }
-            },
-            move |app, result, cx| match result {
-                Ok(report) => match &report.result {
-                    Ok(outcome) => {
-                        klog!(
-                            "async: {} finished{}",
-                            op_name,
-                            finished_note(outcome).unwrap_or_default()
-                        );
-                        app.present_recorded(&report.recording, cx);
-                        on_done(app, Ok(outcome), cx);
-                    }
-                    Err(error) => {
-                        let failure = OpFailure {
-                            message: crate::ui::i18n::op_failed(op, error),
-                            code: FailureCode::from(error),
-                        };
-                        klog!("async: {} failed — {}", op_name, failure.message);
-                        app.present_recorded(&report.recording, cx);
-                        on_done(app, Err(failure), cx);
-                    }
-                },
-                Err(err_msg) => {
-                    klog!("async: {} failed — {}", op_name, err_msg);
-                    app.record_op(
-                        op_name,
-                        before,
-                        OpOutcome::Failed {
-                            error: err_msg.clone(),
-                        },
-                        &repo_path,
-                        cx,
-                    );
-                    let failure = OpFailure {
-                        message: err_msg,
-                        code: FailureCode::Other,
-                    };
-                    on_done(app, Err(failure), cx);
-                }
-            },
-        );
-    }
-
     /// ADR-0196 Wave 3: one legacy run-pipeline write, admitted through the
     /// application layer. Replaces the `busy_op = Some(..)`, `background_spawn`
     /// and [`finish_recorded`](Self::finish_recorded) trio: admission
@@ -408,7 +329,14 @@ impl KagiApp {
                                 finished_note(outcome).unwrap_or_default()
                             );
                             app.present_recorded(&report.recording, cx);
+                            let presented = app.status_footer.clone();
                             on_done(app, Ok(outcome), cx);
+                            // A mutation that happened but was not recorded is
+                            // presented as "changed but not recorded" (#501); a
+                            // family's own success footer must not paper over it.
+                            if matches!(report.recording, Recording::Failed { .. }) {
+                                app.status_footer = presented;
+                            }
                         }
                         Err(error) => {
                             let failure = OpFailure {

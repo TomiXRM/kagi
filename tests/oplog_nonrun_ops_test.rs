@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 use kagi_domain::history::{HistoryEntry, OperationKind};
 use kagi_domain::plan_note::HistoryMoveDir;
+use kagi_git::cli::GitCliOutput;
 use kagi_git::oplog::{
     read_oplog_tail, read_oplog_tail_for_repo, recovery, Actor, OpLogEntry, OpOutcome,
 };
@@ -603,6 +604,100 @@ fn cleanup_moved_local_tip_without_deletions_records_failed() {
         OpOutcome::Failed { error } => assert!(error.contains(&outcome.failed[0].1)),
         other => panic!("expected Failed with no deleted refs, got {other:?}"),
     }
+}
+
+/// Commands the injected runner saw, so "no fallback push ran" is an
+/// observation and not an inference. One test uses it; `ENV_LOCK` serializes.
+static RUNNER_CALLS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// A Git runner whose `push` never confirms its termination — what the real
+/// 60-second deadline produces (`cli::run_git`), without waiting for it. Every
+/// other command is the real thing, so the workflow reaches the push honestly.
+fn push_termination_unknown(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git::GitError> {
+    RUNNER_CALLS.lock().unwrap().push(args.join(" "));
+    if args.first() == Some(&"push") {
+        return Err(kagi_git::GitError::TerminationUnknown(
+            "git push --delete deadline expired".to_string(),
+        ));
+    }
+    kagi_git::cli::run_git(dir, args)
+}
+
+/// ADR-0177 / ADR-0196: a `push --delete` whose termination is unconfirmed
+/// stops the cleanup. Retrying it per branch would re-run a deletion that may
+/// already have happened, and reporting it as `Failed` would release the write
+/// lease that keeps anything else from starting on top of it.
+#[test]
+fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    RUNNER_CALLS.lock().unwrap().clear();
+    let fixture = Fixture::new();
+    let dir = &fixture.path;
+    let mut target = fixture.merged_target();
+    let remote = TempDir::new().unwrap();
+    git(remote.path(), &["init", "--bare", "."]);
+    git(
+        dir,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(dir, &["push", "origin", "merged"]);
+    git(dir, &["fetch", "-q", "origin"]);
+    target.remote_tip = target.local_tip.clone();
+    let local_tip = git(dir, &["rev-parse", "merged"]);
+    let mut backend = Backend::open(dir).unwrap();
+    backend.set_actor(Actor::Cli);
+    let plan = backend
+        .plan_delete_merged_branches(NOW, std::slice::from_ref(&target))
+        .unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+
+    let report = backend.execute_delete_merged_branches_with(
+        &plan,
+        std::slice::from_ref(&target),
+        push_termination_unknown,
+    );
+
+    let pushes: Vec<String> = RUNNER_CALLS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|call| call.starts_with("push "))
+        .cloned()
+        .collect();
+    assert_eq!(
+        pushes.len(),
+        1,
+        "an unconfirmed delete must not be re-run per branch: {pushes:?}"
+    );
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Unknown { .. }),
+        "the receipt must be Unknown, not a retryable failure: {:?}",
+        report.recording.entry().outcome
+    );
+    assert!(
+        matches!(
+            report.result,
+            Err(kagi_git::GitError::TerminationUnknown(_))
+        ),
+        "the settled result must carry the unconfirmed termination"
+    );
+    // The workflow stopped: the local half of the same branch is untouched.
+    assert_eq!(git(dir, &["rev-parse", "merged"]), local_tip);
+
+    // What the UI does with that result: the lease stays reserved, so nothing
+    // else can start on top of a delete that may still be in flight.
+    let mut sessions = kagi::app::Sessions::new();
+    let lease = sessions
+        .write_lease(dir, kagi::app::LegacyBusy(false))
+        .expect("a fresh session admits the write");
+    lease.complete_git(&report.result);
+    assert!(
+        sessions.has_leases(),
+        "an unconfirmed termination must retain the write lease (ADR-0177)"
+    );
 }
 
 #[path = "support/isolated.rs"]

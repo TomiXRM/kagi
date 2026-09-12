@@ -175,19 +175,25 @@ impl KagiApp {
         let owner_repo = self.repo_path.clone();
         let owner_gen = self.switch_generation;
         let op_tag = self.busy_op.or(self.planning);
+        let planning_tag = self.planning;
         cx.spawn(async move |this, acx| {
             let result = task.fallible().await;
             let _ = this.update(acx, move |app, cx| {
-                // Unconditional release (#289): whatever happened to the op,
-                // the global op mutex must not stay latched — the write latch
-                // and the plan latch alike (ADR-0196 Wave 3).
-                app.busy_op = None;
-                app.write_busy_op = None;
-                app.planning = None;
-                // Settle first, whatever the tab is doing now (#501).
+                // Settle first, whatever the tab is doing now (#501): the
+                // terminal is what decides whether the latch may drop.
                 if let Some(result) = result.as_ref() {
                     settle(app, result, cx);
                 }
+                // Release (#289) — but a lease that survived the settle means
+                // the writer's termination is unconfirmed and it may still be
+                // running, so its mirror stays with it (ADR-0196 Wave 3).
+                crate::ui::busy::release_finished_latches(
+                    &mut app.busy_op,
+                    &mut app.write_busy_op,
+                    &mut app.planning,
+                    planning_tag,
+                    app.app_sessions.has_leases(),
+                );
                 let still_current = op_result_applies(
                     app.repo_path.as_deref(),
                     app.switch_generation,

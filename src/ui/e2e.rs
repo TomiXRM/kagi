@@ -340,3 +340,39 @@ pub fn mount_root(
 pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
     app.busy_snackbar_label()
 }
+
+/// Arm an unconfirmed termination for the next pr-merge (ADR-0177 coverage).
+///
+/// It is the terminal that proves *nothing*: `gh` may have merged. The lease
+/// is deliberately retained there, and its busy mirror must be retained with
+/// it. A test cannot reach it through a real `gh` — the report is the same
+/// shape the transport would return, recording included.
+#[cfg(feature = "gui-e2e")]
+pub fn arm_pr_merge_termination_unknown() {
+    PR_MERGE_UNKNOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+#[cfg(feature = "gui-e2e")]
+static PR_MERGE_UNKNOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn pr_merge_unknown_fault(
+    repo: &Path,
+    plan: &kagi_git::OperationPlan,
+) -> Option<kagi_git::github::PrMergeReport> {
+    if !PR_MERGE_UNKNOWN.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return None;
+    }
+    const EVIDENCE: &str = "injected: gh termination unconfirmed — do not retry";
+    let entry = kagi_git::oplog::OpLogEntry::new(
+        "pr-merge",
+        repo.display().to_string(),
+        plan.current.clone(),
+        kagi_git::oplog::OpOutcome::Unknown {
+            after: plan.predicted.clone(),
+            evidence: EVIDENCE.to_string(),
+        },
+    );
+    Some(kagi_git::github::PrMergeReport {
+        result: Err(kagi_git::GitError::TerminationUnknown(EVIDENCE.to_string())),
+        recording: kagi_git::backend::recording::finalize(entry),
+    })
+}

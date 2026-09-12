@@ -667,6 +667,10 @@ mod macos {
                 Box::new(crate::busy_label::scenario_pr_merge_holds_the_write_lease),
             ),
             (
+                "pr_merge_admission_keeps_modal",
+                Box::new(crate::busy_label::scenario_pr_merge_admission_keeps_the_modal),
+            ),
+            (
                 "merge_plan_latch",
                 Box::new(crate::busy_label::scenario_merge_plan_latches_planning),
             ),

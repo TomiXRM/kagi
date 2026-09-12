@@ -341,15 +341,17 @@ impl KagiApp {
         }
         let (number, method, delete_branch) = (modal.number, modal.method, modal.delete_branch);
         let head_sha = modal.head_sha.clone();
-        self.clear_pr_merge_modal();
         // ADR-0196 Wave 3: a PR merge is a write, so it takes the write lease
         // like every migrated family — quit and tab-close are held while it is
         // in flight, which the legacy `busy_op` latch never did. `complete_git`
         // in the settle half releases it (and retains it for an unconfirmed
         // termination, which is not evidence the merge did not happen).
+        // Admission can still refuse here (Identity / NeedsReconcile), so the
+        // confirmation is only discarded once the lease is actually held.
         let Some(guard) = self.reserve_write("pr-merge", &repo_path, cx) else {
             return;
         };
+        self.clear_pr_merge_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
             "{} #{}…",
             Msg::PrModeMerge.t(),
@@ -359,6 +361,10 @@ impl KagiApp {
 
         let rp = repo_path.clone();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(report) = crate::ui::e2e::pr_merge_unknown_fault(&rp, &plan) {
+                return report;
+            }
             kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha, &plan)
         });
         // #501: the transport already appended the receipt. The settle half

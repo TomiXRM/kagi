@@ -578,4 +578,18 @@ fn a_sequencer_step_is_not_released_by_a_stopped_process_alone() {
     assert!(read.stop_proven() && read.resolved());
     acknowledge(&mut sessions, read).expect("an observed sequencer releases the scope");
     assert!(!sessions.has_leases());
+
+    // And the default side of the classification: a writer nobody named is
+    // held, not released. Getting that backwards is how a sequencer added
+    // tomorrow becomes re-runnable.
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    guard
+        .for_op("some-future-writer")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            kagi_git::Termination::stopped("timed out"),
+        )));
+    assert!(
+        sessions.has_leases(),
+        "an unclassified writer settles under the strict rule"
+    );
 }

@@ -27,10 +27,10 @@ impl KagiApp {
         let label = match operation.step {
             Some((step, total)) => format!(
                 "{} {step}/{total} · {}",
-                operation.slug,
+                operation.slug(),
                 Msg::OperationInProgress.t()
             ),
-            None => format!("{} · {}", operation.slug, Msg::OperationInProgress.t()),
+            None => format!("{} · {}", operation.slug(), Msg::OperationInProgress.t()),
         };
         let abort = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             this.open_conflict_abort_modal(cx);

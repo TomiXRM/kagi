@@ -691,6 +691,14 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
             ),
             (
+                "operation_strip_startup",
+                Box::new(crate::app_conflict::scenario_operation_strip_startup),
+            ),
+            (
+                "operation_strip_abort",
+                Box::new(crate::app_conflict::scenario_operation_strip_abort),
+            ),
+            (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
             ),

@@ -27,13 +27,11 @@ impl ConflictSnapshot {
     /// observation for itself.
     pub fn in_progress(&self) -> InProgressOperation {
         InProgressOperation {
-            slug: self.session.op.slug().to_string(),
+            observation: self.observation.clone(),
             step: match self.session.op {
                 conflicts::ConflictOp::Rebase { step, total, .. } => Some((step, total)),
                 _ => None,
             },
-            unmerged: self.session.files.len(),
-            revision: self.observation.revision.clone(),
         }
     }
 }

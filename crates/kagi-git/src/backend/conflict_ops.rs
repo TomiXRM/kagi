@@ -215,8 +215,8 @@ impl Backend {
         operation: &kagi_domain::conflict_family::InProgressOperation,
     ) -> ConflictRequest {
         ConflictRequest::Abort {
-            revision: operation.revision.clone(),
-            operation: operation.slug.clone(),
+            revision: operation.revision().clone(),
+            operation: operation.slug().to_string(),
         }
     }
 

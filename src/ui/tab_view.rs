@@ -294,7 +294,7 @@ impl KagiApp {
         self.view()
             .operation
             .as_ref()
-            .is_some_and(|op| op.slug == "merge" && op.unmerged == 0)
+            .is_some_and(|op| op.slug() == "merge" && op.unmerged() == 0)
     }
 
     /// End a session and everything that belonged to its display.
@@ -392,6 +392,20 @@ impl KagiApp {
     /// called when a background tab's read lands: that owner's data is stored,
     /// but the active tab's diff panes and caches must not be touched.
     pub(crate) fn on_view_published(&mut self, session: crate::app::SessionId) {
+        // #704: the in-progress operation is part of the read, so its owner
+        // learns it the moment the read lands — for a background tab too, and
+        // before any conflict editor exists. Admission used to wait for
+        // `apply_conflict_detect` to observe it, which is why a repository
+        // opened mid-merge had no abort until something built a `ConflictView`
+        // that a resolved merge never gets. (`observe_conflict` declines while
+        // a write of its own is in flight, so this cannot race one.)
+        let observed = self
+            .reads
+            .get(Some(session))
+            .operation
+            .as_ref()
+            .map(|operation| operation.observation.clone());
+        self.app_sessions.observe_conflict(session, observed);
         if self.active_session() != Some(session) {
             return;
         }

@@ -647,8 +647,8 @@ fn abort_is_admissible_with_no_conflict_view_and_settles_once() {
     // model's observation and nothing else.
     let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
     let operation = fixture.in_progress();
-    assert_eq!(operation.slug, "merge");
-    assert_eq!(operation.unmerged, 0);
+    assert_eq!(operation.slug(), "merge");
+    assert_eq!(operation.unmerged(), 0);
 
     let job = fixture.job(&mut sessions, Backend::conflict_abort_request(&operation));
     let id = job.id();

@@ -225,3 +225,78 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict D/F disabled while leased → control → exact index/receipt");
 }
+
+/// The #704 dead end, built the way the GUI walks into it: a conflicting
+/// merge, the resolution staged (what Continue does), then the commit panel's
+/// Unstage and Discard all. The repository is left `MERGING` with a clean
+/// index and nothing unmerged — no conflict, no `ConflictView`, and before
+/// this no way out but the CLI.
+fn stuck_merging_fixture() -> tempfile::TempDir {
+    let fixture = content_fixture();
+    let repo = fixture.path();
+    std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
+    git(repo, &["add", "file.txt"]); // Continue stages the resolution
+    git(repo, &["reset", "-q", "--", "file.txt"]); // Unstage
+    git(repo, &["checkout", "--", "file.txt"]); // Discard all
+    assert!(repo.join(".git/MERGE_HEAD").exists());
+    fixture
+}
+
+pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
+    let fixture = stuck_merging_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    // No `detect_conflict_mode` call: the strip comes from the tab's first
+    // accepted read, which is the whole ownership fix.
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict.is_none()),
+        "there is no conflict editor to hang the abort off"
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).view().operation.is_some()),
+        "the read model knows the merge is still in progress"
+    );
+    assert!(
+        e2e::control_bounds(window.window_id(), "operation-strip").is_some(),
+        "the operation strip is on screen from the first frame"
+    );
+    assert!(
+        e2e::control_bounds(window.window_id(), "operation-strip-abort").is_some(),
+        "and it offers the way out"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS operation strip visible at startup on a stuck MERGING repo");
+}
+
+pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
+    let fixture = stuck_merging_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    click_control(cx, window, "operation-strip-abort");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
+        "the first click confirms nothing — it opens the plan"
+    );
+    assert!(repo.join(".git/MERGE_HEAD").exists(), "and mutates nothing");
+    app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
+    wait_idle(cx, &app);
+    assert!(
+        !repo.join(".git/MERGE_HEAD").exists(),
+        "the second stage ends the merge"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("file.txt")).unwrap(),
+        "main\n"
+    );
+    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "merge-abort")
+        .collect();
+    assert_eq!(entries.len(), 1, "the Backend records the abort once");
+    assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
+}

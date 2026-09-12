@@ -123,7 +123,7 @@ impl KagiApp {
         // #309: a stash conflict is identified by its entry, not by a ref, so
         // the owner has to have observed that identity before it can approve
         // anything against it.
-        if operation.slug == "stash" {
+        if operation.slug() == "stash" {
             let identity = repo.stash_conflict_identity().unwrap_or_default();
             if let Some(owner) = self.active_session() {
                 self.app_sessions.observe_stash_conflict(owner, &identity);

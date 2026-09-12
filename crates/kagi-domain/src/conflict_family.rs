@@ -142,17 +142,33 @@ pub struct ConflictObservation {
 /// for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InProgressOperation {
-    /// `merge` / `rebase` / `cherry-pick` / `revert` / `stash`.
-    pub slug: String,
+    /// What the repository was observed to be doing. The same value the
+    /// conflict family freezes into a request and re-reads at preflight —
+    /// carried whole rather than copied field by field, so a read model and
+    /// an admission decision can never be looking at different observations.
+    pub observation: ConflictObservation,
     /// Sequencer position as `(step, total)`, for the operations that report
     /// one (rebase). `None` for a single-step operation.
     pub step: Option<(usize, usize)>,
-    /// How many paths are still unmerged in the index. Zero is normal: a
-    /// resolved-but-uncommitted merge is still a merge in progress.
-    pub unmerged: usize,
+}
+
+impl InProgressOperation {
+    /// `merge` / `rebase` / `cherry-pick` / `revert` / `stash`.
+    pub fn slug(&self) -> &str {
+        &self.observation.operation
+    }
+
     /// The revision an abort request freezes. The Backend re-reads the live
     /// one at preflight and refuses if the two have parted.
-    pub revision: ConflictRevision,
+    pub fn revision(&self) -> &ConflictRevision {
+        &self.observation.revision
+    }
+
+    /// How many paths are still unmerged in the index. Zero is normal: a
+    /// resolved-but-uncommitted merge is still a merge in progress.
+    pub fn unmerged(&self) -> usize {
+        self.observation.paths.len()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

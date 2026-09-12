@@ -1698,8 +1698,8 @@ fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
     let operation = snapshot
         .operation
         .expect("MERGE_HEAD is an operation in progress, resolved or not");
-    assert_eq!(operation.slug, "merge");
-    assert_eq!(operation.unmerged, 0, "nothing is unmerged any more");
+    assert_eq!(operation.slug(), "merge");
+    assert_eq!(operation.unmerged(), 0, "nothing is unmerged any more");
     assert_eq!(operation.step, None, "a merge is a single step");
 
     // …and it goes away with the operation, not with the conflicts.

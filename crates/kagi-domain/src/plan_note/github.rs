@@ -121,9 +121,10 @@ pub enum GithubRecovery {
     /// (`--delete-branch`), frozen here at plan time and `None` when the merge
     /// keeps it. A reconcile confirms the *whole* promise: merging without
     /// deleting is not the operation the user approved (#701). `base_repo` is
-    /// the `owner/name` that deletion happens in — a remote *name* would be a
-    /// guess, and `origin` is not always the PR's base. Neither is rendered —
-    /// the recovery text is about the merge.
+    /// the `<host>/<owner>/<repo>` that deletion happens in — a remote *name*
+    /// would be a guess, `origin` is not always the PR's base, and without the
+    /// host a same-named repository on another host answers instead. Neither
+    /// is rendered — the recovery text is about the merge.
     MergePr {
         number: u64,
         base_repo: String,

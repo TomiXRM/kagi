@@ -31,10 +31,13 @@ pub fn gh_available() -> bool {
     })
 }
 
+/// Every name here must be a field `gh pr list --json` accepts: `gh` rejects
+/// an unknown one *before* the API call, which would break every PR fetch.
+/// `field_names_are_accepted_by_gh` guards that. There is no `baseRepository`
+/// field — the base repository's identity comes out of `url` instead.
 pub(crate) const FIELDS: &str =
     "number,title,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,\
-statusCheckRollup,url,author,reviewRequests,body,mergeable,isCrossRepository,\
-baseRepository,headRepository";
+statusCheckRollup,url,author,reviewRequests,body,mergeable,isCrossRepository";
 
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
 /// callers cache it (the sidebar's "Mine" grouping keys on it).
@@ -153,16 +156,11 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
             .get("isCrossRepository")
             .and_then(|x| x.as_bool())
             .unwrap_or(true),
-        base_repo: name_with_owner(v.get("baseRepository")),
+        // `https://<host>/<owner>/<repo>/pull/<n>` already names the base
+        // repository, host included — and `gh pr list --json` has no
+        // `baseRepository` field to ask for it (#701 final review 3).
+        base_repo: crate::backend::remote_ref::repo_identity(&s("url")).unwrap_or_default(),
     })
-}
-
-/// `{"nameWithOwner": "owner/name"}` → `owner/name`, empty when absent.
-fn name_with_owner(v: Option<&serde_json::Value>) -> String {
-    v.and_then(|r| r.get("nameWithOwner"))
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string()
 }
 
 /// Reviews + issue comments for one PR — the "review chat". One `gh pr view`
@@ -623,7 +621,6 @@ pub use crate::github_merge::{
 mod tests {
     use super::*;
     use kagi_domain::github::CiState;
-
     const SAMPLE: &str = r#"[
       {"number":236,"title":"feat(ui): stash peek","headRefName":"feat/stash-peek",
        "baseRefName":"main","isDraft":false,"reviewDecision":"",

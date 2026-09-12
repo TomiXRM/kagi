@@ -242,6 +242,38 @@ mod tests {
     use super::*;
     use crate::github::parse_pr_list;
 
+    /// `gh` validates `--json` field names *before* it calls the API and exits
+    /// on the first unknown one, so a bad name in [`FIELDS`] breaks every PR
+    /// fetch above. Fixtures cannot catch that — they hand finished JSON
+    /// straight to `parse_pr_list` (#701 final review 3, where
+    /// `baseRepository` shipped). `--limit 0` is rejected *after* field
+    /// validation, so this negotiates the names without touching the network.
+    #[test]
+    fn field_names_are_accepted_by_gh() {
+        let ask = |fields: &str| {
+            std::process::Command::new("gh")
+                .args(["pr", "list", "--json", fields, "--limit", "0"])
+                .output()
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out.stderr).into_owned())
+        };
+        let Some(stderr) = ask(FIELDS) else {
+            return; // no `gh` here; wherever there is one, this runs
+        };
+        assert!(
+            !stderr.contains("Unknown JSON field"),
+            "FIELDS names something gh pr list does not have: {stderr}"
+        );
+        // Without a negative control, a `gh` that stopped reporting unknown
+        // fields would make the assertion above vacuously true.
+        assert!(
+            ask("number,noSuchFieldAtAll")
+                .expect("gh answered a moment ago")
+                .contains("Unknown JSON field"),
+            "the check cannot fail, so it proves nothing"
+        );
+    }
+
     const SAMPLE: &str = r#"[
       {"number":236,"title":"a","headRefName":"feat/a","baseRefName":"main",
        "isDraft":false,"mergeable":"MERGEABLE","author":{"login":"x"}},

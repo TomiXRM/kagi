@@ -1004,9 +1004,14 @@ impl Drop for FakeGh {
 const PR_JSON_T: &str = r#"[{"number":501,"title":"reconcile","headRefName":"feat/x",
   "headRefOid":"1111111111111111111111111111111111111111","baseRefName":"main",
   "isDraft":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE",
-  "statusCheckRollup":[],"url":"https://example.invalid/pull/501",
+  "statusCheckRollup":[],"url":"https://ghe.example/acme/widgets/pull/501",
   "author":{"login":"a"},"reviewRequests":[],"body":"",
-  "isCrossRepository":{fork},"baseRepository":{"nameWithOwner":"acme/widgets"}}]"#;
+  "isCrossRepository":{fork}}]"#;
+
+/// The base repository the fixture's `url` names, host included.
+const BASE_URL: &str = "https://ghe.example/acme/widgets";
+/// Same `acme/widgets`, different host: the remote that must never answer.
+const DECOY_URL: &str = "https://github.com/acme/widgets";
 
 fn pr_json(fork: bool) -> String {
     PR_JSON_T.replace("{fork}", if fork { "true" } else { "false" })
@@ -1018,15 +1023,33 @@ fn one_pr(fork: bool) -> kagi_domain::github::PullRequest {
         .remove(0)
 }
 
-/// A bare remote whose URL identity is `acme/widgets` — the `nameWithOwner`
-/// the PR fixture names as its base repository. Returns the temp root (keep
-/// it alive) and the repository path.
-fn base_repo_remote() -> (TempDir, PathBuf) {
+/// Two bare repositories reachable under two *hosted* URLs that share
+/// `acme/widgets` and differ only in host — the shape that made a host-less
+/// identity pick the wrong remote (#701 final review 3).
+///
+/// `url.<path>.insteadOf` is how a hosted URL is made to answer locally: the
+/// remote keeps the URL kagi reads for identity, and Git rewrites it for
+/// transport. Returns the temp root (keep it alive) and the two paths, in the
+/// same order as `[BASE_URL, DECOY_URL]`.
+fn two_hosts_one_repo(work: &Path) -> (TempDir, PathBuf, PathBuf) {
     let root = TempDir::new().unwrap();
-    let path = root.path().join("acme/widgets");
-    std::fs::create_dir_all(&path).unwrap();
-    git(&path, &["init", "--bare", "."]);
-    (root, path)
+    let mut paths = Vec::new();
+    for (name, url) in [("base", BASE_URL), ("decoy", DECOY_URL)] {
+        let path = root.path().join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        git(&path, &["init", "--bare", "."]);
+        git(
+            work,
+            &[
+                "config",
+                &format!("url.{}.insteadOf", path.to_str().unwrap()),
+                url,
+            ],
+        );
+        paths.push(path);
+    }
+    let decoy = paths.pop().unwrap();
+    (root, paths.pop().unwrap(), decoy)
 }
 
 /// #701: a pr-merge whose server state could not be re-read settles `Unknown`
@@ -1180,14 +1203,21 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
     let dir = &fixture.path;
     let bin = dir.join("fake-bin");
 
-    // The head branch the PR names, on a real remote so `ls-remote` answers —
-    // and deliberately *not* named `origin`. `origin` is a convention; the
-    // promise has to name the remote that is the PR's base repository.
-    let (_remote_root, base) = base_repo_remote();
-    let remote_path = base.to_str().unwrap().to_string();
-    git(dir, &["remote", "add", "upstream", &remote_path]);
+    // Two remotes sharing `acme/widgets`, on two hosts. `origin` is *not* the
+    // PR's base repository — it is the decoy, and it is enumerated first — and
+    // it has no `feat/x` at all, so picking it would read "absent" for a ref
+    // that was never there and call the deletion done.
+    let (_remote_root, base, decoy) = two_hosts_one_repo(dir);
+    git(dir, &["remote", "add", "origin", DECOY_URL]);
+    git(dir, &["remote", "add", "upstream", BASE_URL]);
     git(dir, &["branch", "feat/x"]);
     git(dir, &["push", "-q", "upstream", "feat/x"]);
+    assert!(
+        git(&decoy, &["for-each-ref", "refs/heads/feat/x"])
+            .trim()
+            .is_empty(),
+        "the decoy never has the branch: absence there proves nothing"
+    );
 
     let pr = one_pr(false);
     let plan = kagi_git::github::plan_pr_merge(
@@ -1214,23 +1244,24 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
         ],
         "--delete-branch is half the promise, on the remote that *is* the base repository"
     );
-    // No remote points at the base repository: nothing about the deletion can
-    // be observed, so nothing at all is frozen — and an empty expectation
-    // never confirms, rather than confirming on the merge alone.
-    git(dir, &["remote", "rename", "upstream", "elsewhere"]);
-    git(
-        dir,
-        &["remote", "set-url", "elsewhere", "/nowhere/other/repo"],
-    );
-    assert!(
+    // Neither "no remote is the base repository" nor "two of them are" can be
+    // observed, so both freeze nothing at all — and an empty expectation never
+    // confirms, rather than confirming on the merge alone.
+    let frozen_is_empty = || {
         Backend::open(dir)
             .unwrap()
             .remote_expectation("pr-merge", &plan)
-            .is_empty(),
-        "an unobservable deletion must freeze nothing, not a guess at `origin`"
+            .is_empty()
+    };
+    git(dir, &["remote", "set-url", "upstream", "/nowhere/else"]);
+    assert!(frozen_is_empty(), "no remote is the base repository");
+    git(dir, &["remote", "set-url", "upstream", BASE_URL]);
+    git(dir, &["remote", "set-url", "origin", BASE_URL]);
+    assert!(
+        frozen_is_empty(),
+        "two remotes are, and neither is 'the' one"
     );
-    git(dir, &["remote", "set-url", "elsewhere", &remote_path]);
-    git(dir, &["remote", "rename", "elsewhere", "upstream"]);
+    git(dir, &["remote", "set-url", "origin", DECOY_URL]);
     drop(backend);
 
     let mut sessions = kagi::app::Sessions::new();
@@ -1301,7 +1332,7 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
             kagi::app::read_reconcile(&sessions, id).is_err(),
             "a remote that cannot be read confirms nothing"
         );
-        git(dir, &["remote", "set-url", "upstream", &remote_path]);
+        git(dir, &["remote", "set-url", "upstream", BASE_URL]);
 
         // Both halves kept: only now can the requirement be closed.
         git(&base, &["update-ref", "-d", "refs/heads/feat/x"]);
@@ -1333,8 +1364,8 @@ fn pr_merge_from_a_fork_refuses_to_promise_a_branch_deletion() {
     let dir = &fixture.path;
     // The base repository, with no `feat/x` — exactly the shape that makes an
     // `Absent` expectation confirm without observing anything.
-    let (_remote_root, base) = base_repo_remote();
-    git(dir, &["remote", "add", "upstream", base.to_str().unwrap()]);
+    let (_remote_root, base, _decoy) = two_hosts_one_repo(dir);
+    git(dir, &["remote", "add", "upstream", BASE_URL]);
     assert!(
         git(&base, &["for-each-ref", "refs/heads/feat/x"])
             .trim()

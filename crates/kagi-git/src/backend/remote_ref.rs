@@ -45,15 +45,51 @@ pub enum RemoteExpect {
     Absent,
 }
 
-/// `owner/name` from a remote URL — the last two path segments, `.git`
-/// stripped. Covers both URL shapes Git accepts
-/// (`https://host/o/r.git`, `git@host:o/r.git`).
-fn repo_identity(url: &str) -> String {
-    let url = url.trim_end_matches('/').trim_end_matches(".git");
-    let mut parts = url.rsplit(['/', ':']);
-    let name = parts.next().unwrap_or_default();
-    let owner = parts.next().unwrap_or_default();
-    format!("{owner}/{name}")
+/// `<host>/<owner>/<repo>`, lower-cased, from any GitHub-ish URL: a Git remote
+/// URL in either shape (`https://host/o/r.git`, `git@host:o/r.git`,
+/// `ssh://git@host/o/r`) or a pull-request page URL, whose extra
+/// `…/pull/<n>` tail is simply not read.
+///
+/// The **host is part of the identity**. `acme/widgets` on github.com and
+/// `acme/widgets` on a GitHub Enterprise host are different repositories, and
+/// picking the wrong one gets "absent" for a ref that was never there (#701
+/// final review 3).
+///
+/// `None` when no host can be read — a local path, a `file://` URL, or an SSH
+/// alias whose real host lives in the user's ssh config. Unknown identity is
+/// never a guess.
+pub(crate) fn repo_identity(url: &str) -> Option<String> {
+    let Some((_, rest)) = url.split_once("://") else {
+        return scp_identity(url);
+    };
+    // Strip `user[:pass]@` — only when the `@` is in the authority.
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    let rest = match rest[..authority_end].rfind('@') {
+        Some(at) => &rest[at + 1..],
+        None => rest,
+    };
+    let (host, path) = rest.split_once('/')?;
+    owner_repo(host, path)
+}
+
+/// `git@host:owner/repo.git` — Git's scp-like remote syntax, which has no
+/// scheme and separates host from path with a colon.
+fn scp_identity(url: &str) -> Option<String> {
+    let (authority, path) = url.split_once(':')?;
+    if authority.contains('/') {
+        return None; // a local path that happens to contain a colon
+    }
+    owner_repo(authority.rsplit('@').next()?, path)
+}
+
+fn owner_repo(host: &str, path: &str) -> Option<String> {
+    let mut segments = path.split('/').filter(|s| !s.is_empty());
+    let owner = segments.next()?;
+    let repo = segments.next()?.trim_end_matches(".git");
+    if host.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{host}/{owner}/{repo}").to_ascii_lowercase())
 }
 
 impl RemoteExpect {
@@ -147,30 +183,37 @@ impl Backend {
         self.one_remote_expectation(op, plan).into_iter().collect()
     }
 
-    /// The name of the local remote pointing at `owner/name`, or `None`.
+    /// The name of the one local remote pointing at `identity`
+    /// (`<host>/<owner>/<repo>`), or `None`.
     ///
     /// GitHub identifies a repository; Git identifies a remote. Only the URL
-    /// joins them, so this compares the last two path segments of each remote
-    /// URL (`.git` stripped) with the identity the plan froze. Empty
-    /// `owner/name` matches nothing — an unknown base repository must not
-    /// silently pick the first remote.
-    fn remote_for_repo(&self, owner_name: &str) -> Option<String> {
-        if owner_name.is_empty() {
+    /// joins them. An empty identity, no match, and *several* matches all
+    /// answer `None`: a promise that cannot be pinned to exactly one remote is
+    /// not a promise this can check (#701 final review 3).
+    fn remote_for_repo(&self, identity: &str) -> Option<String> {
+        if identity.is_empty() {
             return None;
         }
         let remotes = self.repo.remotes().ok()?;
+        // The configured URL, not `Remote::url()`: the latter has already had
+        // `url.<base>.insteadOf` applied, which is a transport rewrite. What
+        // the user wrote down is what says which repository this remote is.
+        let config = self.repo.config().ok()?;
+        let mut found: Option<String> = None;
         for name in remotes.iter().flatten().flatten() {
-            let matched = self
-                .repo
-                .find_remote(name)
+            let matched = config
+                .get_string(&format!("remote.{name}.url"))
                 .ok()
-                .and_then(|remote| remote.url().ok().map(repo_identity))
-                .is_some_and(|id| id.eq_ignore_ascii_case(owner_name));
+                .and_then(|url| repo_identity(&url))
+                .is_some_and(|id| id == identity);
             if matched {
-                return Some(name.to_string());
+                if found.is_some() {
+                    return None; // ambiguous: two remotes, one repository
+                }
+                found = Some(name.to_string());
             }
         }
-        None
+        found
     }
 
     fn one_remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {
@@ -276,5 +319,48 @@ impl Backend {
             .stdout
             .lines()
             .find_map(|line| line.split_whitespace().next().map(str::to_string)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::repo_identity;
+
+    #[test]
+    fn identity_keeps_the_host_across_every_url_shape() {
+        for url in [
+            "https://github.com/acme/Widgets.git",
+            "https://github.com/acme/widgets",
+            "https://user:token@github.com/acme/widgets.git",
+            "git@github.com:acme/widgets.git",
+            "ssh://git@github.com/acme/widgets",
+            // A pull-request page URL: the `/pull/<n>` tail is not read.
+            "https://github.com/acme/widgets/pull/501",
+        ] {
+            assert_eq!(
+                repo_identity(url).as_deref(),
+                Some("github.com/acme/widgets"),
+                "{url}"
+            );
+        }
+        // Same owner/repo, different host — a *different* repository.
+        assert_eq!(
+            repo_identity("https://ghe.example/acme/widgets.git").as_deref(),
+            Some("ghe.example/acme/widgets")
+        );
+        // No host to read: never a guess.
+        for url in [
+            "/srv/git/acme/widgets.git",
+            "file:///srv/git/acme/widgets",
+            "https://github.com/acme",
+        ] {
+            assert_eq!(repo_identity(url), None, "{url}");
+        }
+        // An ssh_config alias reads as its own host, which matches no real
+        // one — fail closed by mismatch rather than by pretending to know.
+        assert_eq!(
+            repo_identity("myalias:acme/widgets.git").as_deref(),
+            Some("myalias/acme/widgets")
+        );
     }
 }

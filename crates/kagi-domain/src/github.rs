@@ -53,10 +53,12 @@ pub struct PullRequest {
     /// head deletion for these, so `--delete-branch` promises something it
     /// will not do (#701 final review 2).
     pub cross_repository: bool,
-    /// `owner/name` of the repository the PR targets — the one `gh` operates
-    /// on. Which local remote points at it is a separate question; the plan
-    /// freezes this identity, not a remote name. Empty when the caller
-    /// requested a reduced field set.
+    /// `<host>/<owner>/<repo>` of the repository the PR targets — the one
+    /// `gh` operates on — read out of `url`. The host is part of it: the same
+    /// `owner/repo` on github.com and on an Enterprise host are different
+    /// repositories. Which local remote points at it is a separate question;
+    /// the plan freezes this identity, not a remote name. Empty when `url`
+    /// could not be read that way.
     pub base_repo: String,
 }
 

@@ -297,7 +297,6 @@ impl KagiApp {
         // lease when the batch delete's termination is unconfirmed (ADR-0177).
         let (bg_path, bg_plan, bg_targets) =
             (repo_path.clone(), modal.plan.clone(), modal.targets.clone());
-        let notice_repo = repo_path.clone();
         let dispatched = self.finish_run(
             cx,
             "branch-cleanup",
@@ -339,13 +338,11 @@ impl KagiApp {
                 }
                 Ok(_) => {}
                 // An unconfirmed termination is not a retryable failure: the
-                // modal is a retry affordance, so it stays closed. The lease is
-                // held and the reconcile entry is parked; the notice says so.
+                // modal is a retry affordance, so it stays closed. Settlement
+                // already offered the reconcile that ends it
+                // (`notice_reconcile_required`), so there is nothing to add.
                 Err(failure)
-                    if failure.code == kagi_git::oplog::FailureCode::TerminationUnknown =>
-                {
-                    app.report_unknown_notice(&notice_repo, failure.message);
-                }
+                    if failure.code == kagi_git::oplog::FailureCode::TerminationUnknown => {}
                 Err(failure) => {
                     if let Some(m) = self_modal_with_error(&modal, &failure.message) {
                         app.set_branch_cleanup_modal(m);

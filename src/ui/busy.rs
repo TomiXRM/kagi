@@ -37,9 +37,68 @@ pub(super) fn settle_write_busy(
     }
 }
 
+/// Which latches a finished operation may drop (#289, ADR-0196 Wave 3).
+///
+/// The write mirror goes only when no lease survived the settle: a retained
+/// lease means the writer's termination is unconfirmed (or its task panicked,
+/// which proves nothing), so it may still be running — clearing the mirror
+/// there would leave `has_leases()` true with `op_latched()` false, and a plan
+/// could start against a live writer. `planning` is this completion's to clear
+/// only while the tag it latched is still the one in place.
+pub(super) fn release_finished_latches(
+    busy: &mut Option<&'static str>,
+    writer: &mut Option<&'static str>,
+    planning: &mut Option<&'static str>,
+    planning_tag: Option<&'static str>,
+    has_leases: bool,
+) {
+    if !has_leases {
+        *busy = None;
+        *writer = None;
+    }
+    if planning_tag.is_some() && *planning == planning_tag {
+        *planning = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_retained_lease_keeps_its_mirror_and_planning_is_only_its_owners() {
+        // Known termination: the lease went with the settle, so the mirror goes.
+        let (mut busy, mut writer, mut planning) = (Some("pr-merge"), Some("pr-merge"), None);
+        release_finished_latches(&mut busy, &mut writer, &mut planning, None, false);
+        assert_eq!((busy, writer), (None, None));
+
+        // Unconfirmed termination (or a panicked task): the lease is still
+        // reserved, so the writer may still be running — keep it visible.
+        let (mut busy, mut writer, mut planning) = (Some("pr-merge"), Some("pr-merge"), None);
+        release_finished_latches(&mut busy, &mut writer, &mut planning, None, true);
+        assert_eq!((busy, writer), (Some("pr-merge"), Some("pr-merge")));
+
+        // A legacy plan owns its tag; another completion must not drop it.
+        let mut planning = Some("merge-plan");
+        release_finished_latches(&mut None, &mut None, &mut planning, None, false);
+        assert_eq!(planning, Some("merge-plan"));
+        release_finished_latches(
+            &mut None,
+            &mut None,
+            &mut planning,
+            Some("delete-branch-plan"),
+            false,
+        );
+        assert_eq!(planning, Some("merge-plan"));
+        release_finished_latches(
+            &mut None,
+            &mut None,
+            &mut planning,
+            Some("merge-plan"),
+            false,
+        );
+        assert_eq!(planning, None);
+    }
 
     #[test]
     fn named_writer_settles_but_live_leases_and_legacy_plans_do_not() {

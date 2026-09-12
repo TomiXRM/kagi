@@ -1606,10 +1606,37 @@ impl Backend {
         plan: &OperationPlan,
         targets: &[ops::CleanupDeleteTarget],
     ) -> recording::CleanupReport {
+        self.execute_delete_merged_branches_with(plan, targets, crate::cli::run_git)
+    }
+
+    /// [`Self::execute_delete_merged_branches`] with the Git runner supplied.
+    /// `#[doc(hidden)]`: the only caller outside this crate is the test that
+    /// answers the batch delete with [`GitError::TerminationUnknown`].
+    #[doc(hidden)]
+    pub fn execute_delete_merged_branches_with(
+        &self,
+        plan: &OperationPlan,
+        targets: &[ops::CleanupDeleteTarget],
+        run_git: ops::GitRunner,
+    ) -> recording::CleanupReport {
         let result = self.require_trust().and_then(|()| {
-            ops::execute_delete_merged_branches(&self.repo, &self.path, plan, targets)
+            ops::execute_delete_merged_branches_with(&self.repo, &self.path, plan, targets, run_git)
         });
+        // ADR-0177: the run stopped with its own termination unconfirmed. The
+        // receipt says `Unknown`, and the result the caller settles with is a
+        // `TerminationUnknown` — so the write lease is retained, not released.
+        let unknown = result.as_ref().ok().and_then(|c| c.unknown.clone());
         let outcome = match &result {
+            Ok(cleanup) if unknown.is_some() => crate::oplog::OpOutcome::Unknown {
+                after: ops::StateSummary {
+                    head: plan.current.head.clone(),
+                    dirty: cleanup.oplog_summary(),
+                },
+                evidence: format!(
+                    "{}; process termination is unconfirmed — do not retry this operation",
+                    unknown.clone().unwrap_or_default()
+                ),
+            },
             Ok(cleanup) => {
                 let summary = cleanup.oplog_summary();
                 if cleanup.failed.is_empty() {
@@ -1635,7 +1662,20 @@ impl Backend {
                 error: error.to_string(),
             },
         };
-        let recording = self.record_run_oplog("branch-cleanup", &plan.current, outcome);
+        let recording = self.record_run_oplog_with_backups(
+            "branch-cleanup",
+            &plan.current,
+            outcome,
+            Vec::new(),
+            Vec::new(),
+            unknown
+                .as_ref()
+                .map(|_| crate::oplog::FailureCode::TerminationUnknown),
+        );
+        let result = match unknown {
+            Some(reason) => Err(GitError::TerminationUnknown(reason)),
+            None => result,
+        };
         recording::CleanupReport { result, recording }
     }
 

@@ -353,9 +353,16 @@ impl KagiApp {
             // settle the lease and the failed-append notice whatever the tab is
             // doing now (#501).
             move |app, report: &kagi_git::backend::recording::CleanupReport, _cx| {
+                // `complete_git` retains the lease for an unconfirmed
+                // termination: the deletes may still be in flight (ADR-0177).
                 guard.complete_git(&report.result);
                 app.refresh_write_busy();
                 app.notice_recording_failure("branch-cleanup", &report.recording, &notice_repo);
+                if let kagi_git::oplog::OpOutcome::Unknown { evidence, .. } =
+                    &report.recording.entry().outcome
+                {
+                    app.report_unknown_notice(&notice_repo, evidence.clone());
+                }
             },
             move |app, report, cx| {
                 // The backend recorded this attempt, recovery OIDs and all:
@@ -388,6 +395,10 @@ impl KagiApp {
                         }
                         app.reload(cx);
                     }
+                    // An unconfirmed termination is not a retryable failure:
+                    // the modal is a retry affordance, so it stays closed and
+                    // the Unknown receipt (plus its notice) stands alone.
+                    Err(kagi_git::GitError::TerminationUnknown(_)) => {}
                     Err(e) => {
                         let err_msg = i18n::op_failed(i18n::Op::Cleanup, e);
                         if let Some(m) = self_modal_with_error(&modal, &err_msg) {

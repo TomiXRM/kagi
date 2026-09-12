@@ -297,7 +297,7 @@ impl KagiApp {
 
         // Re-resolve the continued-merge flow after detection.
         if was_merge_commit_pending {
-            if self.merge_commit_ready {
+            if self.merge_commit_ready() {
                 // Still a resolved merge awaiting its commit: keep the commit
                 // panel up (refresh the staged list from the index) and keep the
                 // pre-filled / user-edited merge message entity untouched.

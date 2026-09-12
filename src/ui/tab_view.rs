@@ -62,6 +62,15 @@ pub struct TabViewState {
     /// candidates, straight from the snapshot; drives the sidebar badge and
     /// the cleanup pane.
     pub cleanup_rows: Vec<kagi_domain::branch_cleanup::BranchCleanupRow>,
+    /// The merge / rebase / cherry-pick / revert / stash-apply this worktree
+    /// is in the middle of, straight from the snapshot (#704 / ADR-0196).
+    ///
+    /// The session owns this observation, so the header operation strip and
+    /// the availability of Abort come from the first accepted read of the tab
+    /// — not from whether a `ConflictView` entity happens to exist. It stays
+    /// present after the last conflict is resolved, which is the state the
+    /// user could not escape.
+    pub operation: Option<kagi_domain::conflict_family::InProgressOperation>,
     /// HEAD commit OID (hex) for this snapshot, or `None` for an unborn HEAD.
     /// Used to decide whether HEAD-versioned overlays (Analyze, File History)
     /// are stale on a reload — an auto-fetch that only moves remote-tracking
@@ -228,6 +237,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         branch_solo: None,
         activity: kagi_domain::activity::aggregate(&snap.commits, now_unix_secs()),
         cleanup_rows: snap.cleanup_rows.clone(),
+        operation: snap.operation.clone(),
         head_oid: match &snap.head {
             Head::Attached { target, .. } | Head::Detached { target } => Some(target.clone()),
             Head::Unborn { .. } => None,
@@ -270,6 +280,21 @@ impl KagiApp {
     /// says so).
     pub fn view(&self) -> &TabViewState {
         self.reads.get(self.active_session())
+    }
+
+    /// A merge whose conflicts are all resolved and which is waiting for its
+    /// commit (ADR-0068's commit-panel route).
+    ///
+    /// Derived from the session's operation observation, never stored. As a
+    /// `merge_commit_ready` flag it was set by conflict detection and cleared
+    /// by the next one, so anything that dropped the conflict view — the
+    /// `MergeResolvedReady` branch itself — decided the answer. #704: the
+    /// repository is what knows, and it says so from the first accepted read.
+    pub fn merge_commit_ready(&self) -> bool {
+        self.view()
+            .operation
+            .as_ref()
+            .is_some_and(|op| op.slug == "merge" && op.unmerged == 0)
     }
 
     /// End a session and everything that belonged to its display.

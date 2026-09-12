@@ -740,13 +740,16 @@ mod intent_tests {
 /// same detection run either synchronously (`reload`) or off the UI thread
 /// (`detect_conflict_mode_async`) without changing the emitted `[kagi]` lines.
 pub(crate) enum ConflictDetectOutcome {
-    /// `Backend::open` failed — leave `merge_commit_ready` untouched, clear mode.
+    /// `Backend::open` failed — clear mode and leave the read model alone.
     OpenFailed,
     /// No conflict session — clear Conflict Mode (emits `conflict-mode: cleared`
     /// only when a mode was previously open).
     Cleared,
-    /// A merge with MERGE_HEAD but no unmerged entries — resolved, ready to commit.
-    MergeResolvedReady,
+    /// A merge with MERGE_HEAD but no unmerged entries — resolved, ready to
+    /// commit. #704: the *observation* is carried, not dropped. The editor has
+    /// nothing left to show, but the merge is still in progress, and the
+    /// abort that ends it needs this revision to freeze into its request.
+    MergeResolvedReady(kagi_domain::conflict_family::ConflictObservation),
     /// An active conflict/merge with files to resolve.  Boxed: the session +
     /// resolution buffer are large, and this variant is the rare case.
     Detected(Box<ConflictDetected>),
@@ -796,7 +799,7 @@ impl KagiApp {
         // A merge with MERGE_HEAD present but no remaining unmerged index entries
         // is not a conflict to resolve — it is a resolved merge ready to commit.
         if matches!(session.op, kagi_git::ConflictOp::Merge { .. }) && session.files.is_empty() {
-            return ConflictDetectOutcome::MergeResolvedReady;
+            return ConflictDetectOutcome::MergeResolvedReady(snapshot.observation);
         }
 
         // Build / reload the resolution buffer.  A previously-autosaved buffer
@@ -885,8 +888,13 @@ impl KagiApp {
         outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
+        // #704: a resolved-but-uncommitted merge is still an operation the
+        // owner is in. Dropping its observation here was what made Abort
+        // structurally unreachable — `identity_matches` has nothing to check
+        // the frozen revision against, so the family refuses the request.
         let conflict_observation = match &outcome {
             ConflictDetectOutcome::Detected(detected) => Some(detected.observation.clone()),
+            ConflictDetectOutcome::MergeResolvedReady(observation) => Some(observation.clone()),
             _ => None,
         };
         if let Some(owner) = self.active_session() {
@@ -904,13 +912,9 @@ impl KagiApp {
         }
         match outcome {
             ConflictDetectOutcome::OpenFailed => {
-                // Mirrors the original early-return on `Backend::open` failure,
-                // which happened before `merge_commit_ready` was reset — so that
-                // flag is intentionally left untouched here.
                 self.conflict = None;
             }
             ConflictDetectOutcome::Cleared => {
-                self.merge_commit_ready = false;
                 if self
                     .conflict
                     .as_ref()
@@ -922,10 +926,10 @@ impl KagiApp {
                 // the accepted Stage-1 reset delta on re-entry).
                 self.conflict = None;
             }
-            ConflictDetectOutcome::MergeResolvedReady => {
-                self.merge_commit_ready = false;
+            ConflictDetectOutcome::MergeResolvedReady(_) => {
                 klog!("conflict-mode: merge resolved — ready to commit");
-                self.merge_commit_ready = true;
+                // Only the *editor* has nothing left to show. The merge itself
+                // lives on in the read model (#704).
                 self.conflict = None;
             }
             ConflictDetectOutcome::Detected(detected) => {
@@ -939,7 +943,6 @@ impl KagiApp {
                     editing_file,
                     editing_path,
                 } = *detected;
-                self.merge_commit_ready = false;
                 eprintln!(
                     "[kagi] conflict-mode: {} {} file(s)",
                     session.op.slug(),

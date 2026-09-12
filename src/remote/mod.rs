@@ -406,6 +406,9 @@ pub fn remote_snapshot(
         // Remote read-only views have no local FETCH_HEAD to date; the
         // fetch-age indicator (ADR-0127) stays hidden for them.
         last_fetch_secs: None,
+        // A remote read-only view has no working tree to be in the middle of
+        // an operation on, and no way to abort one (#704).
+        operation: None,
     })
 }
 

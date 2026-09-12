@@ -1298,8 +1298,8 @@ pub struct KagiApp {
     /// A/B/Result inputs, splits/geometry, and its own `cx.notify()` scope.
     /// Built / dropped by `apply_conflict_detect`; cleared on reload / abort /
     /// tab switch. The per-repo run-once guard (`detected_for`),
-    /// `conflict_merge_pending`, the `conflict_count` badge, and
-    /// `merge_commit_ready` stay on `KagiApp` (separate concerns).
+    /// `conflict_merge_pending` and the `conflict_count` badge stay on
+    /// `KagiApp` (separate concerns).
     pub conflict: Option<Entity<conflict_view::ConflictView>>,
     /// Per-repo run-once guard for conflict detection (was `ConflictState.
     /// detected_for`). Holds the repo path whose conflict state has been detected
@@ -1312,18 +1312,6 @@ pub struct KagiApp {
     /// watcher) — kept off `ConflictState` so the upcoming `ConflictView` entity
     /// flip never has to be leased just to test the gate (ADR-0118 Mechanism B).
     pub conflict_merge_pending: bool,
-    /// #309 one-shot: after a stash-conflict Continue stages the resolution, the
-    /// kept stash's index to offer for dropping. Set before `reload`; consumed
-    /// (via `take`) at the END of the reload apply, so the drop-confirm modal is
-    /// opened AFTER reload's `clear_*_modal()` sweep instead of being wiped by it.
-    /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
-    /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
-    /// index entries).  This is the "ready to create the merge commit" state — the
-    /// app shows the commit panel, not an empty Conflict Mode editor.  Used by
-    /// `reload` to keep the merge commit panel alive across the FS-watcher reload
-    /// that the resolution staging itself triggers (otherwise the panel would be
-    /// torn down and re-replaced by an empty conflict view).
-    pub merge_commit_ready: bool,
     /// Auto-update (ADR-0082): the offered update + its source release, set by the
     /// startup background check when a newer stable release exists for this
     /// platform. `None` = up to date / not yet checked / skipped.
@@ -1596,7 +1584,6 @@ impl KagiApp {
             conflict: None,
             conflict_detected_for: None,
             conflict_merge_pending: false,
-            merge_commit_ready: false,
             update_available: None,
             update_checked: false,
             update_modal_open: false,

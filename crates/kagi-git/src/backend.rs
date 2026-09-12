@@ -16,6 +16,7 @@ use super::{
 
 mod absorb;
 pub mod backups;
+pub mod conflict_observe;
 pub mod conflict_ops;
 mod policy;
 pub mod recording;

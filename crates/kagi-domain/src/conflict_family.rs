@@ -109,6 +109,33 @@ pub struct ConflictObservation {
     pub paths: Vec<PathBuf>,
 }
 
+/// An operation the repository is in the middle of — a merge, rebase,
+/// cherry-pick, revert, or a stash apply that left conflicts.
+///
+/// This is an observation of the repository, present for exactly as long as
+/// `.git` says the operation is: including after every conflict has been
+/// resolved and nothing is unmerged any more, which is the state #704 had no
+/// way out of. It is *not* derived from any view, entity or pane — those may
+/// come and go while the operation stands (ADR-0196).
+///
+/// `Merge` is deliberately part of this and the name deliberately is not
+/// "sequencer": a plain merge is one step and Git keeps no sequencer state
+/// for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InProgressOperation {
+    /// `merge` / `rebase` / `cherry-pick` / `revert` / `stash`.
+    pub slug: String,
+    /// Sequencer position as `(step, total)`, for the operations that report
+    /// one (rebase). `None` for a single-step operation.
+    pub step: Option<(usize, usize)>,
+    /// How many paths are still unmerged in the index. Zero is normal: a
+    /// resolved-but-uncommitted merge is still a merge in progress.
+    pub unmerged: usize,
+    /// The revision an abort request freezes. The Backend re-reads the live
+    /// one at preflight and refuses if the two have parted.
+    pub revision: ConflictRevision,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictProgress {
     NotStarted,

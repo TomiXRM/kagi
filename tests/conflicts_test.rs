@@ -1678,6 +1678,42 @@ fn abort_is_not_refused_after_the_resolution_was_staged() {
     );
 }
 
+/// #704 slice 1: the read model keeps the operation after the last conflict is
+/// resolved. `RepoSnapshot::operation` is what the header strip and the
+/// availability of Abort are derived from, so it has to outlive the unmerged
+/// entries — a resolved merge is still a merge in progress.
+#[test]
+fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let mut backend = kagi_git::Backend::open(dir).expect("open");
+    let snapshot = backend.snapshot(10_000).expect("snapshot");
+    let operation = snapshot
+        .operation
+        .expect("MERGE_HEAD is an operation in progress, resolved or not");
+    assert_eq!(operation.slug, "merge");
+    assert_eq!(operation.unmerged, 0, "nothing is unmerged any more");
+    assert_eq!(operation.step, None, "a merge is a single step");
+
+    // …and it goes away with the operation, not with the conflicts.
+    let buffer = ResolutionBuffer::from_repo(&Repository::open(dir).unwrap()).unwrap();
+    let session = detect_conflict_session(&Repository::open(dir).unwrap()).unwrap();
+    execute_conflict_abort(&Repository::open(dir).unwrap(), &session, &buffer).expect("abort");
+    let mut backend = kagi_git::Backend::open(dir).expect("reopen");
+    assert!(backend
+        .snapshot(10_000)
+        .expect("snapshot")
+        .operation
+        .is_none());
+}
+
 /// #704 end to end: resolve → stage → unstage → discard leaves the repository
 /// `MERGING` with a clean index and no unmerged entries. Abort must still take
 /// it back to a normal state — that dead end is the whole issue.

@@ -119,9 +119,9 @@ impl KagiApp {
             i18n::Op::CherryPick,
             plan.current.clone(),
             repo_path,
-            None,
-            move |app, failed, cx| match failed {
-                None => {
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
                     if let (Some((branch, before)), Some((_, after_sha))) =
                         (history_before.clone(), app.head_branch_and_sha())
                     {
@@ -135,11 +135,11 @@ impl KagiApp {
                     }
                     app.reload(cx);
                 }
-                Some(err_msg) => {
+                Err(err_msg) => {
                     app.set_cherry_pick_modal(CherryPickModal {
                         commit_id: commit_id.clone(),
                         plan: plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(err_msg.message)),
                     });
                 }
             },
@@ -247,9 +247,9 @@ impl KagiApp {
             i18n::Op::Revert,
             plan.current.clone(),
             repo_path,
-            None,
-            move |app, failed, cx| match failed {
-                None => {
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
                     if let (Some((branch, before)), Some((_, after_sha))) =
                         (history_before.clone(), app.head_branch_and_sha())
                     {
@@ -263,11 +263,11 @@ impl KagiApp {
                     }
                     app.reload(cx);
                 }
-                Some(err_msg) => {
+                Err(err_msg) => {
                     app.set_revert_modal(RevertModal {
                         commit_id: commit_id.clone(),
                         plan: plan.clone(),
-                        error: Some(SharedString::from(err_msg)),
+                        error: Some(SharedString::from(err_msg.message)),
                     });
                 }
             },

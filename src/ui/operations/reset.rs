@@ -112,62 +112,50 @@ impl KagiApp {
             cx.background_spawn(
                 async move { reset_current_blocking(&bg_path, &bg_plan, &bg_target) },
             );
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                klog!("async: reset-current finished");
-                app.record_op(
-                    "reset-current",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "reset-current: now at {}",
-                    target.short()
-                )));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: reset-current failed — {}", err_msg);
-                app.record_op(
-                    "reset-current",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_reset_current_modal(ResetCurrentModal {
-                    target: target.clone(),
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    confirm_armed: false,
-                });
-            }
-        });
+        self.finish_recorded(
+            cx,
+            task,
+            "reset-current",
+            i18n::Op::Reset,
+            plan.current.clone(),
+            repo_path,
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
+                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                        "reset-current: now at {}",
+                        target.short()
+                    )));
+                    app.reload(cx);
+                }
+                Err(failure) => {
+                    app.set_reset_current_modal(ResetCurrentModal {
+                        target: target.clone(),
+                        plan: plan.clone(),
+                        error: Some(SharedString::from(failure.message)),
+                        confirm_armed: false,
+                    });
+                }
+            },
+        );
     }
 }
 
 /// Blocking `plan → preflight → execute` for the background thread, mirroring
-/// `blocking_ops.rs::delete_remote_branch_blocking`.
+/// `blocking_ops.rs::delete_remote_branch_blocking`. Returns the backend's receipt.
 fn reset_current_blocking(
     repo_path: &std::path::Path,
     plan: &kagi_git::ops::OperationPlan,
     target: &CommitId,
-) -> Result<kagi_git::ops::StateSummary, String> {
+) -> Result<kagi_git::backend::recording::RunReport, String> {
     let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
         .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ResetCurrentToHead {
         target: target.clone(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Reset, e))?;
-    klog!("executed: reset-current-to-head {}", target.short());
-
-    Ok(kagi_git::ops::StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("HEAD reset to {}", target.short()),
-    })
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_ok() {
+        klog!("executed: reset-current-to-head {}", target.short());
+    }
+    Ok(report)
 }

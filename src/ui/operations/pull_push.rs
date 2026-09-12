@@ -640,54 +640,29 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let bg_path = repo_path.clone();
         let task = cx.background_spawn(async move { push_blocking(&bg_path, &plan) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| {
-            app.finish_push(result, modal, repo_path, cx);
-        });
-    }
-
-    /// Apply the result of a background push on the main thread.
-    /// `busy_op` is cleared by the `finish_op_on_main` caller before this runs.
-    fn finish_push(
-        &mut self,
-        result: Result<(String, StateSummary), String>,
-        modal: PushPlanModal,
-        repo_path: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        match result {
-            Ok((summary, after_summary)) => {
-                klog!("async: push finished — {}", summary);
-                self.record_op(
-                    "push",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success {
-                        after: after_summary,
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("push: {}", summary)));
-                self.reload_async(false, cx);
-            }
-            Err(err_msg) => {
-                klog!("async: push failed — {}", err_msg);
-                self.record_op(
-                    "push",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
+        self.finish_recorded(
+            cx,
+            task,
+            "push",
+            i18n::Op::Push,
+            modal.plan.current.clone(),
+            repo_path,
+            |outcome| Some(format!(" — {}", push_summary(outcome))),
+            move |app, done, cx| match done {
+                Ok(outcome) => {
+                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                        "push: {}",
+                        push_summary(outcome)
+                    )));
+                    app.reload_async(false, cx);
+                }
                 // #493 safety review: see `finish_pull` — the failure must reach
                 // the modal, not just the oplog and the footer.
-                self.set_push_modal(PushPlanModal {
+                Err(failure) => app.set_push_modal(PushPlanModal {
                     plan: modal.plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                });
-            }
-        }
+                    error: Some(SharedString::from(failure.message)),
+                }),
+            },
+        );
     }
 }

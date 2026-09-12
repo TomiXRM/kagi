@@ -36,29 +36,30 @@ pub(crate) use pull::{pull_blocking, PullBlockingResult};
 
 // Background and headless hosts share these operation cores.
 
-/// Blocking part of push. Returns (human summary, after-state) or an error
-/// message suitable for the oplog / modal.
+/// Blocking part of push. Returns the backend's receipt (ADR-0196 Wave 2).
 pub(crate) fn push_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    let outcome = match repo.run(&kagi_git::Operation::Push, plan) {
-        Ok(kagi_git::OperationOutcome::Push(o)) => o,
-        Ok(_) => return Err("push: unexpected outcome".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Push, e)),
-    };
-    let summary = if outcome.set_upstream {
-        format!("pushed {} commit(s), set upstream", outcome.pushed)
-    } else {
-        format!("pushed {} commit(s)", outcome.pushed)
-    };
-    klog!("executed: push — {}", summary);
+    let report = repo.run_recorded(&kagi_git::Operation::Push, plan);
+    if let Ok(outcome) = &report.result {
+        klog!("executed: push — {}", push_summary(outcome));
+        let after_summary = verify_after_snapshot(repo_path, plan);
+        klog!("verified: push after = {}", after_summary.head);
+    }
+    Ok(report)
+}
 
-    let after_summary = verify_after_snapshot(repo_path, plan);
-    klog!("verified: push after = {}", after_summary.head);
-    Ok((summary, after_summary))
+/// The push line the footer and the `async: push finished` contract line share.
+pub(crate) fn push_summary(outcome: &kagi_git::OperationOutcome) -> String {
+    match outcome {
+        kagi_git::OperationOutcome::Push(o) if o.set_upstream => {
+            format!("pushed {} commit(s), set upstream", o.pushed)
+        }
+        kagi_git::OperationOutcome::Push(o) => format!("pushed {} commit(s)", o.pushed),
+        _ => "push: unexpected outcome".to_string(),
+    }
 }
 
 /// Re-snapshot the repo for the verified after-state; falls back to the
@@ -181,27 +182,25 @@ pub(crate) fn merge_into_branch_blocking(
     plan: &OperationPlan,
     source: &str,
     target: &str,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let repo_path = owner.path.as_path();
     let mut repo = open_merge_backend(owner)?;
     let op = kagi_git::Operation::MergeIntoBranch {
         source: source.to_string(),
         target: target.to_string(),
     };
-    let new_tip = match repo.run(&op, plan) {
-        Ok(kagi_git::OperationOutcome::Commit(c)) => c,
-        Ok(_) => return Err("merge-into: unexpected outcome".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Merge, e)),
-    };
-    klog!(
-        "executed: merge-into {} -> {} = {}",
-        source,
-        target,
-        new_tip.short()
-    );
-    let after = verify_after_snapshot(repo_path, plan);
-    klog!("verified: merge-into after = {}", after.head);
-    Ok((format!("merge {source} into {target}"), after))
+    let report = repo.run_recorded(&op, plan);
+    if let Ok(kagi_git::OperationOutcome::Commit(new_tip)) = &report.result {
+        klog!(
+            "executed: merge-into {} -> {} = {}",
+            source,
+            target,
+            new_tip.short()
+        );
+        let after = verify_after_snapshot(repo_path, plan);
+        klog!("verified: merge-into after = {}", after.head);
+    }
+    Ok(report)
 }
 
 pub(crate) fn merge_blocking(
@@ -209,49 +208,52 @@ pub(crate) fn merge_blocking(
     plan: &OperationPlan,
     target: &str,
     kind: &MergeKind,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let repo_path = owner.path.as_path();
     let mut repo = open_merge_backend(owner)?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    match kind {
-        MergeKind::Conflicts(_) => {
-            // W31: perform the real conflicting merge — leaves markers + index
-            // stages + MERGE_HEAD. No commit is created; Conflict Mode takes over
-            // on the subsequent reload.
-            let op = kagi_git::Operation::MergeIntoConflict {
-                target: target.to_string(),
-            };
-            let files = match repo.run(&op, plan) {
-                Ok(kagi_git::OperationOutcome::MergeIntoConflict(f)) => f,
-                Ok(_) => return Err("merge-into-conflict: unexpected outcome".to_string()),
-                Err(e) => return Err(i18n::op_failed(i18n::Op::Merge, e)),
-            };
+    let op = match kind {
+        // W31: perform the real conflicting merge — leaves markers + index
+        // stages + MERGE_HEAD. No commit is created; Conflict Mode takes over
+        // on the subsequent reload.
+        MergeKind::Conflicts(_) => kagi_git::Operation::MergeIntoConflict {
+            target: target.to_string(),
+        },
+        MergeKind::FastForward | MergeKind::MergeCommit => kagi_git::Operation::MergeBranch {
+            target: target.to_string(),
+        },
+    };
+    let report = repo.run_recorded(&op, plan);
+    match &report.result {
+        Ok(kagi_git::OperationOutcome::MergeIntoConflict(files)) => {
             eprintln!(
                 "[kagi] executed: merge-into-conflict {} -> {} conflict(s)",
                 target,
                 files.len()
             );
-            let after = verify_after_snapshot(repo_path, plan);
-            Ok((
-                format!("merge {} (conflicts: {})", target, files.len()),
-                after,
-            ))
         }
-        MergeKind::FastForward | MergeKind::MergeCommit => {
-            let op = kagi_git::Operation::MergeBranch {
-                target: target.to_string(),
-            };
-            let _new_head = match repo.run(&op, plan) {
-                Ok(kagi_git::OperationOutcome::Commit(c)) => c,
-                Ok(_) => return Err("merge: unexpected outcome".to_string()),
-                Err(e) => return Err(i18n::op_failed(i18n::Op::Merge, e)),
-            };
-            klog!("executed: merge {} -> {}", target, _new_head.short());
-
+        Ok(kagi_git::OperationOutcome::Commit(new_head)) => {
+            klog!("executed: merge {} -> {}", target, new_head.short());
             let after = verify_after_snapshot(repo_path, plan);
             klog!("verified: merge after = {}", after.head);
-            Ok((format!("merge {}", target), after))
         }
+        _ => {}
+    }
+    Ok(report)
+}
+
+/// The ` — merge …` suffix of the `async: merge finished` contract line.
+pub(crate) fn merge_summary(
+    off_branch: bool,
+    source: &str,
+    into: &str,
+    outcome: &kagi_git::OperationOutcome,
+) -> String {
+    match outcome {
+        _ if off_branch => format!("merge {source} into {into}"),
+        kagi_git::OperationOutcome::MergeIntoConflict(files) => {
+            format!("merge {} (conflicts: {})", source, files.len())
+        }
+        _ => format!("merge {}", source),
     }
 }
 
@@ -351,29 +353,29 @@ pub(crate) fn revert_blocking(
 }
 
 /// Blocking part of commit (tree-build + write). Scales with the staged tree.
-/// Returns the new commit id alongside the after-state so the UI finish step can
-/// clear the branch draft on the main thread.
 pub(crate) fn commit_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     message: &str,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    // (Commit's plan is a HEAD snapshot; preflight detects a checkout/commit
-    // between plan and execute.)
+    // Commit's plan is a HEAD snapshot; preflight detects a checkout/commit
+    // between plan and execute.
     let op = kagi_git::Operation::Commit {
         message: message.to_string(),
     };
-    let new_id = match repo.run(&op, plan) {
-        Ok(kagi_git::OperationOutcome::Commit(c)) => c,
-        Ok(_) => return Err("commit: unexpected outcome".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Commit, e)),
-    };
-    klog!("executed: commit {}", new_id.short());
+    let report = repo.run_recorded(&op, plan);
+    if let Ok(kagi_git::OperationOutcome::Commit(new_id)) = &report.result {
+        klog!("executed: commit {}", new_id.short());
+        log_commit_verification(repo_path, new_id);
+    }
+    Ok(report)
+}
 
-    // Verify: re-snapshot, check HEAD is the new commit, unstaged remain.
-    let after = match open_backend(repo_path) {
+/// Verify evidence for the log only: HEAD is the new commit, unstaged remain.
+/// The receipt already carries the recorded `after`.
+fn log_commit_verification(repo_path: &std::path::Path, new_id: &CommitId) {
+    match open_backend(repo_path) {
         Ok(mut repo2) => match repo2.snapshot(10_000) {
             Ok(snap) => {
                 if let Head::Attached { target, branch } = &snap.head {
@@ -387,48 +389,29 @@ pub(crate) fn commit_blocking(
                         klog!("verify: HEAD mismatch after commit");
                     }
                 }
-                let is_dirty = snap.status.is_dirty();
                 eprintln!(
                     "[kagi] verified: working tree {} after commit",
-                    if is_dirty {
+                    if snap.status.is_dirty() {
                         "dirty (unstaged remain)"
                     } else {
                         "clean"
                     }
                 );
-                StateSummary {
-                    head: snap.head.display(),
-                    dirty: if is_dirty {
-                        "dirty".to_string()
-                    } else {
-                        "clean".to_string()
-                    },
-                }
             }
-            Err(e) => {
-                klog!("verify: snapshot error: {}", e);
-                plan.predicted.clone()
-            }
+            Err(e) => klog!("verify: snapshot error: {}", e),
         },
-        Err(e) => {
-            klog!("verify: repo open error: {}", e);
-            plan.predicted.clone()
-        }
-    };
-    Ok((new_id.short().to_string(), after))
+        Err(e) => klog!("verify: repo open error: {}", e),
+    }
 }
 
 /// Blocking part of amend (history rewrite: tree-build + commit-replace).
-/// Returns (summary-suffix, after, old, new) so the UI footer can render the
-/// 旧→新 SHA transition and the restore hint.
 pub(crate) fn amend_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     mode: AmendMode,
     message: &str,
-) -> Result<(StateSummary, CommitId, CommitId), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::Amend {
         mode,
         message: if message.trim().is_empty() {
@@ -437,26 +420,15 @@ pub(crate) fn amend_blocking(
             Some(message.to_string())
         },
     };
-    let outcome = match repo.run(&op, plan) {
-        Ok(kagi_git::OperationOutcome::Amend(o)) => o,
-        Ok(_) => return Err("amend: unexpected outcome".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Amend, e)),
-    };
-    eprintln!(
-        "[kagi] executed: amend {} -> {}",
-        outcome.old.short(),
-        outcome.new.short()
-    );
-
-    let after = StateSummary {
-        head: format!(
-            "branch @ {} (was {})",
-            outcome.new.short(),
-            outcome.old.short()
-        ),
-        dirty: "amended".to_string(),
-    };
-    Ok((after, outcome.old, outcome.new))
+    let report = repo.run_recorded(&op, plan);
+    if let Ok(kagi_git::OperationOutcome::Amend(outcome)) = &report.result {
+        eprintln!(
+            "[kagi] executed: amend {} -> {}",
+            outcome.old.short(),
+            outcome.new.short()
+        );
+    }
+    Ok(report)
 }
 
 /// Blocking part of delete-branch (preflight → ref delete). Lightweight, but
@@ -500,62 +472,46 @@ pub(crate) fn delete_remote_branch_blocking(
 pub(crate) fn branch_plan_blocking(
     repo_path: &std::path::Path,
     modal: &BranchPlanModal,
-) -> Result<StateSummary, String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
-    match modal.kind {
-        BranchPlanKind::PullFfOnly => {
-            let op = kagi_git::Operation::PullBranchFf {
-                branch_name: modal.branch_name.clone(),
-            };
-            let outcome = match repo.run(&op, &modal.plan) {
-                Ok(kagi_git::OperationOutcome::Pull(o)) => o,
-                Ok(_) => return Err("pull-ff: unexpected outcome".to_string()),
-                Err(e) => return Err(i18n::op_failed(i18n::Op::Pull, e)),
-            };
-            let dirty = match outcome {
-                PullOutcome::UpToDate => {
-                    format!("branch '{}' already up to date", modal.branch_name)
-                }
-                PullOutcome::FastForward { to } => {
-                    format!(
-                        "branch '{}' fast-forwarded to {}",
-                        modal.branch_name,
-                        to.short()
-                    )
-                }
-                PullOutcome::Merged { .. } => "unexpected merge outcome".to_string(),
-            };
-            Ok(StateSummary {
-                head: modal.plan.current.head.clone(),
-                dirty,
-            })
+    let op = match modal.kind {
+        BranchPlanKind::PullFfOnly => kagi_git::Operation::PullBranchFf {
+            branch_name: modal.branch_name.clone(),
+        },
+        BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => kagi_git::Operation::PushBranch {
+            branch_name: modal.branch_name.clone(),
+            set_upstream: modal.kind == BranchPlanKind::PushSetUpstream,
+        },
+    };
+    Ok(repo.run_recorded(&op, &modal.plan))
+}
+
+/// The footer line for a branch-plan outcome (pull-ff / push / push-set-upstream).
+pub(crate) fn branch_plan_summary(
+    branch_name: &str,
+    outcome: &kagi_git::OperationOutcome,
+) -> String {
+    match outcome {
+        kagi_git::OperationOutcome::Pull(PullOutcome::UpToDate) => {
+            format!("branch '{}' already up to date", branch_name)
         }
-        BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => {
-            let set_upstream = modal.kind == BranchPlanKind::PushSetUpstream;
-            let op = kagi_git::Operation::PushBranch {
-                branch_name: modal.branch_name.clone(),
-                set_upstream,
-            };
-            let outcome = match repo.run(&op, &modal.plan) {
-                Ok(kagi_git::OperationOutcome::Push(o)) => o,
-                Ok(_) => return Err("push-branch: unexpected outcome".to_string()),
-                Err(e) => return Err(i18n::op_failed(i18n::Op::Push, e)),
-            };
-            Ok(StateSummary {
-                head: modal.plan.current.head.clone(),
-                dirty: format!(
-                    "branch '{}' pushed {} commit(s){}",
-                    modal.branch_name,
-                    outcome.pushed,
-                    if outcome.set_upstream {
-                        " and upstream set"
-                    } else {
-                        ""
-                    }
-                ),
-            })
+        kagi_git::OperationOutcome::Pull(PullOutcome::FastForward { to }) => {
+            format!("branch '{}' fast-forwarded to {}", branch_name, to.short())
         }
+        kagi_git::OperationOutcome::Pull(PullOutcome::Merged { .. }) => {
+            "unexpected merge outcome".to_string()
+        }
+        kagi_git::OperationOutcome::Push(o) => format!(
+            "branch '{}' pushed {} commit(s){}",
+            branch_name,
+            o.pushed,
+            if o.set_upstream {
+                " and upstream set"
+            } else {
+                ""
+            }
+        ),
+        _ => "unexpected outcome".to_string(),
     }
 }
 
@@ -596,9 +552,8 @@ pub(crate) fn create_worktree_blocking(
     path_input: &str,
     at: &CommitId,
     allow_existing_branch: bool,
-) -> Result<StateSummary, String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = if allow_existing_branch {
         kagi_git::Operation::OpenWorktreeForBranch {
             branch: branch_input.to_string(),
@@ -611,13 +566,10 @@ pub(crate) fn create_worktree_blocking(
             start: at.clone(),
         }
     };
-    repo.run(&op, plan).map_err(|e| {
-        if allow_existing_branch {
-            i18n::op_failed(i18n::Op::OpenWorktree, e)
-        } else {
-            i18n::op_failed(i18n::Op::CreateWorktree, e)
-        }
-    })?;
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_err() {
+        return Ok(report);
+    }
     eprintln!(
         "[kagi] executed: create-worktree '{}' path='{}' @ {}",
         branch_input,
@@ -662,7 +614,7 @@ pub(crate) fn create_worktree_blocking(
         ),
     }
 
-    Ok(plan.predicted.clone())
+    Ok(report)
 }
 
 /// Re-snapshot after a new-commit op (cherry-pick / revert) for the after-state,

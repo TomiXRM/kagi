@@ -280,56 +280,44 @@ impl KagiApp {
         let (bg_path, bg_plan) = (repo_path.clone(), plan.clone());
         let (name, remote) = (modal.name.clone(), modal.remote.clone());
         let task = cx.background_spawn(async move {
-            let run = || -> Result<kagi_git::StateSummary, String> {
+            let run = || -> Result<kagi_git::backend::recording::RunReport, String> {
                 let mut repo = crate::ui::blocking_ops::open_backend(&bg_path)
                     .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
                 let op = kagi_git::Operation::PushTag {
                     name: name.clone(),
                     remote: remote.clone(),
                 };
-                repo.run(&op, &bg_plan)
-                    .map_err(|e| i18n::op_failed(i18n::Op::PushTag, e))?;
-
-                klog!("executed: push-tag {} -> {}", name, remote);
-                Ok(kagi_git::StateSummary {
-                    head: bg_plan.current.head.clone(),
-                    dirty: format!("tag '{}' pushed to '{}'", name, remote),
-                })
+                let report = repo.run_recorded(&op, &bg_plan);
+                if report.result.is_ok() {
+                    klog!("executed: push-tag {} -> {}", name, remote);
+                }
+                Ok(report)
             };
             run()
         });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                klog!("async: push-tag finished");
-                app.record_op(
-                    "push-tag",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer = FooterStatus::Success(SharedString::from(Msg::PushTagDone.t()));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                app.record_op(
-                    "push-tag",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
+        self.finish_recorded(
+            cx,
+            task,
+            "push-tag",
+            i18n::Op::PushTag,
+            plan.current.clone(),
+            repo_path,
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
+                    app.status_footer =
+                        FooterStatus::Success(SharedString::from(Msg::PushTagDone.t()));
+                    app.reload(cx);
+                }
                 // The remote refusing a moved tag lands here — its own message
                 // says exactly why, so show it rather than paraphrasing.
-                app.set_push_tag_modal(PushTagModal {
+                Err(failure) => app.set_push_tag_modal(PushTagModal {
                     plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
+                    error: Some(SharedString::from(failure.message)),
                     name: modal.name.clone(),
                     remote: modal.remote.clone(),
-                });
-            }
-        });
+                }),
+            },
+        );
     }
 }

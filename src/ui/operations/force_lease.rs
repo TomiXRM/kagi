@@ -103,57 +103,44 @@ impl KagiApp {
         let bg_plan = plan.clone();
         let task =
             cx.background_spawn(async move { force_lease_push_blocking(&bg_path, &bg_plan) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok(after) => {
-                klog!("async: force-with-lease-push finished");
-                app.record_op(
-                    "force-with-lease-push",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                app.status_footer =
-                    FooterStatus::Success(SharedString::from("force-with-lease-push: done"));
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: force-with-lease-push failed — {}", err_msg);
-                app.record_op(
-                    "force-with-lease-push",
-                    plan.current.clone(),
-                    kagi_git::oplog::OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_force_lease_push_modal(ForceLeasePushModal {
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    confirm_armed: false,
-                });
-            }
-        });
+        self.finish_recorded(
+            cx,
+            task,
+            "force-with-lease-push",
+            i18n::Op::Push,
+            plan.current.clone(),
+            repo_path,
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(_) => {
+                    app.status_footer =
+                        FooterStatus::Success(SharedString::from("force-with-lease-push: done"));
+                    app.reload(cx);
+                }
+                Err(failure) => {
+                    app.set_force_lease_push_modal(ForceLeasePushModal {
+                        plan: plan.clone(),
+                        error: Some(SharedString::from(failure.message)),
+                        confirm_armed: false,
+                    });
+                }
+            },
+        );
     }
 }
 
 /// Blocking `preflight → execute` for the background thread, mirroring
-/// `operations/reset.rs::reset_current_blocking`. `run()` enforces preflight
-/// (refuses if HEAD moved since `plan` was captured) as its first step.
+/// `operations/reset.rs::reset_current_blocking`. Returns the backend's receipt.
 fn force_lease_push_blocking(
     repo_path: &std::path::Path,
     plan: &kagi_git::ops::OperationPlan,
-) -> Result<kagi_git::ops::StateSummary, String> {
+) -> Result<kagi_git::backend::recording::RunReport, String> {
     let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
         .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ForceWithLeasePush;
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Push, e))?;
-    klog!("executed: force-with-lease-push");
-
-    Ok(kagi_git::ops::StateSummary {
-        head: plan.current.head.clone(),
-        dirty: "force-with-lease pushed".to_string(),
-    })
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_ok() {
+        klog!("executed: force-with-lease-push");
+    }
+    Ok(report)
 }

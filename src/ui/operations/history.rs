@@ -456,60 +456,53 @@ impl KagiApp {
         let bg_msg = message.clone();
         let task =
             cx.background_spawn(async move { amend_blocking(&bg_path, &bg_plan, mode, &bg_msg) });
-        self.finish_op_on_main(cx, task, move |app, result, cx| match result {
-            Ok((after, old, new)) => {
-                klog!("async: amend finished");
-                app.record_op(
-                    "amend",
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                if let (false, Some((branch, _))) = (skip_undo, app.head_branch_and_sha()) {
-                    app.record_history(
-                        kagi_git::OperationKind::Amend,
-                        &branch,
-                        old.clone(),
-                        new.clone(),
-                        format!("amend {} → {}", old.short(), new.short()),
-                    );
+        self.finish_recorded(
+            cx,
+            task,
+            "amend",
+            i18n::Op::Amend,
+            plan.current.clone(),
+            repo_path.clone(),
+            |_| None,
+            move |app, done, cx| match done {
+                Ok(outcome) => {
+                    if let kagi_git::OperationOutcome::Amend(o) = outcome {
+                        if let (false, Some((branch, _))) = (skip_undo, app.head_branch_and_sha()) {
+                            app.record_history(
+                                kagi_git::OperationKind::Amend,
+                                &branch,
+                                o.old.clone(),
+                                o.new.clone(),
+                                format!("amend {} → {}", o.old.short(), o.new.short()),
+                            );
+                        }
+                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                            "amend: {} → {} (restore: git reset --soft {})",
+                            o.old.short(),
+                            o.new.short(),
+                            o.old.short()
+                        )));
+                    }
+                    // The amend message came out of the commit panel
+                    // (`open_amend_modal`), so it is spent — and the panel now
+                    // survives the reload below when the tree is still dirty.
+                    app.consume_commit_panel_message(&repo_path, cx);
+                    // #476: the worktree's WIP row goes clean in place, then
+                    // `reload` re-snapshots the OPEN tab, which shares the ODB and
+                    // refs and so must show the rewritten commit.
+                    app.refresh_worktree_wip_row(&repo_path);
+                    app.reload(cx);
                 }
-                app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "amend: {} → {} (restore: git reset --soft {})",
-                    old.short(),
-                    new.short(),
-                    old.short()
-                )));
-                // The amend message came out of the commit panel
-                // (`open_amend_modal`), so it is spent — and the panel now
-                // survives the reload below when the tree is still dirty.
-                app.consume_commit_panel_message(&repo_path, cx);
-                // #476: the worktree's WIP row goes clean in place, then
-                // `reload` re-snapshots the OPEN tab, which shares the ODB and
-                // refs and so must show the rewritten commit.
-                app.refresh_worktree_wip_row(&repo_path);
-                app.reload(cx);
-            }
-            Err(err_msg) => {
-                klog!("async: amend failed — {}", err_msg);
-                app.record_op(
-                    "amend",
-                    plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                app.set_amend_modal(AmendPlanModal {
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(err_msg)),
-                    mode,
-                    message: message.clone(),
-                    confirm_armed: false,
-                });
-            }
-        });
+                Err(failure) => {
+                    app.set_amend_modal(AmendPlanModal {
+                        plan: plan.clone(),
+                        error: Some(SharedString::from(failure.message)),
+                        mode,
+                        message: message.clone(),
+                        confirm_armed: false,
+                    });
+                }
+            },
+        );
     }
 }

@@ -125,9 +125,11 @@ pub struct RunCompletion {
 /// A run whose task ended without a completion — a panicked job (#289).
 ///
 /// The write may have happened, so this is `Unknown`, not a failure, and it
-/// settles through the same `apply`: the operation id survives, the lease is
-/// retained (an unproven termination), and the reconcile entry it parks is the
-/// exit. Dropping the task instead would strand both.
+/// settles through the same `apply`: the operation id survives and the lease
+/// is retained. The termination is [`kagi_git::Termination::Abandoned`] —
+/// kagi lost its own executor, so unlike a killed child there is no process
+/// group left to probe, and the scope stays held until the application
+/// restarts. Dropping the task instead would lose the operation as well.
 pub struct RunAbandonment {
     id: OperationId,
     name: &'static str,
@@ -157,7 +159,7 @@ impl RunAbandonment {
             id: self.id,
             report: RunReport {
                 result: Err(kagi_git::GitError::TerminationUnknown(
-                    kagi_git::Termination::unproven(evidence),
+                    kagi_git::Termination::abandoned(evidence),
                 )),
                 recording: recording::finalize(entry),
                 stash: None,

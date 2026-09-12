@@ -260,23 +260,22 @@ pub(crate) fn checkout_tracking_blocking(
     plan: &OperationPlan,
     remote_branch: &str,
     local_branch: &str,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::CheckoutTrackingBranch {
         remote_branch: remote_branch.to_string(),
         local_branch: local_branch.to_string(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::CheckoutTracking, e))?;
-    eprintln!(
-        "[kagi] executed: checkout-tracking {} -> {}",
-        remote_branch, local_branch
-    );
-
-    let after = verify_after_snapshot(repo_path, plan);
-    klog!("verified: checkout-tracking after = {}", after.head);
-    Ok((format!("checkout {}", local_branch), after))
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_ok() {
+        eprintln!(
+            "[kagi] executed: checkout-tracking {} -> {}",
+            remote_branch, local_branch
+        );
+        let after = verify_after_snapshot(repo_path, plan);
+        klog!("verified: checkout-tracking after = {}", after.head);
+    }
+    Ok(report)
 }
 
 pub(crate) fn switch_to_latest_blocking(
@@ -284,24 +283,23 @@ pub(crate) fn switch_to_latest_blocking(
     plan: &OperationPlan,
     branch_name: &str,
     remote_branch: &str,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::SwitchToLatestBranch {
         branch_name: branch_name.to_string(),
         remote_branch: remote_branch.to_string(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::SwitchToLatest, e))?;
-    klog!(
-        "executed: switch-to-latest {} <- {}",
-        branch_name,
-        remote_branch
-    );
-
-    let after = verify_after_snapshot(repo_path, plan);
-    klog!("verified: switch-to-latest after = {}", after.head);
-    Ok((format!("switch {}", branch_name), after))
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_ok() {
+        klog!(
+            "executed: switch-to-latest {} <- {}",
+            branch_name,
+            remote_branch
+        );
+        let after = verify_after_snapshot(repo_path, plan);
+        klog!("verified: switch-to-latest after = {}", after.head);
+    }
+    Ok(report)
 }
 
 /// Blocking part of cherry-pick (in-memory index merge → commit → safe
@@ -310,25 +308,22 @@ pub(crate) fn cherry_pick_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     commit_id: &CommitId,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::CherryPick {
         id: commit_id.clone(),
     };
-    let new_id = match repo.run(&op, plan) {
-        Ok(kagi_git::OperationOutcome::Commit(c)) => c,
-        Ok(_) => return Err("cherry-pick: unexpected outcome".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::CherryPick, e)),
-    };
-    eprintln!(
-        "[kagi] executed: cherry-pick {} -> {}",
-        commit_id.short(),
-        new_id.short()
-    );
-
-    let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "cherry-pick");
-    Ok((format!("{} applied", commit_id.short()), after))
+    let report = repo.run_recorded(&op, plan);
+    if let Ok(kagi_git::OperationOutcome::Commit(new_id)) = &report.result {
+        eprintln!(
+            "[kagi] executed: cherry-pick {} -> {}",
+            commit_id.short(),
+            new_id.short()
+        );
+        // Log evidence only; the receipt already carries the verified `after`.
+        verify_new_commit_snapshot(repo_path, plan, new_id, "cherry-pick");
+    }
+    Ok(report)
 }
 
 /// Blocking part of revert (in-memory inverse merge → commit). Scales with the
@@ -337,25 +332,22 @@ pub(crate) fn revert_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     commit_id: &CommitId,
-) -> Result<(String, StateSummary), String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::Revert {
         id: commit_id.clone(),
     };
-    let new_id = match repo.run(&op, plan) {
-        Ok(kagi_git::OperationOutcome::Commit(c)) => c,
-        Ok(_) => return Err("revert: unexpected outcome".to_string()),
-        Err(e) => return Err(i18n::op_failed(i18n::Op::Revert, e)),
-    };
-    eprintln!(
-        "[kagi] executed: revert {} -> {}",
-        commit_id.short(),
-        new_id.short()
-    );
-
-    let after = verify_new_commit_snapshot(repo_path, plan, &new_id, "revert");
-    Ok((format!("reverted {}", commit_id.short()), after))
+    let report = repo.run_recorded(&op, plan);
+    if let Ok(kagi_git::OperationOutcome::Commit(new_id)) = &report.result {
+        eprintln!(
+            "[kagi] executed: revert {} -> {}",
+            commit_id.short(),
+            new_id.short()
+        );
+        // Log evidence only; the receipt already carries the verified `after`.
+        verify_new_commit_snapshot(repo_path, plan, new_id, "revert");
+    }
+    Ok(report)
 }
 
 /// Blocking part of commit (tree-build + write). Scales with the staged tree.
@@ -493,19 +485,16 @@ pub(crate) fn delete_remote_branch_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     remote_branch: &str,
-) -> Result<StateSummary, String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::DeleteRemoteBranch {
         remote_branch: remote_branch.to_string(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Delete, e))?;
-    klog!("executed: delete-remote-branch {}", remote_branch);
-
-    Ok(StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("remote branch '{}' deleted", remote_branch),
-    })
+    let report = repo.run_recorded(&op, plan);
+    if report.result.is_ok() {
+        klog!("executed: delete-remote-branch {}", remote_branch);
+    }
+    Ok(report)
 }
 
 pub(crate) fn branch_plan_blocking(
@@ -575,19 +564,13 @@ pub(crate) fn set_upstream_blocking(
     plan: &OperationPlan,
     branch_name: &str,
     upstream: &str,
-) -> Result<StateSummary, String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::SetUpstream {
         branch_name: branch_name.to_string(),
         upstream: upstream.to_string(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::SetUpstream, e))?;
-    Ok(StateSummary {
-        head: plan.current.head.clone(),
-        dirty: format!("branch '{}' upstream set to '{}'", branch_name, upstream),
-    })
+    Ok(repo.run_recorded(&op, plan))
 }
 
 pub(crate) fn rename_branch_blocking(
@@ -595,19 +578,13 @@ pub(crate) fn rename_branch_blocking(
     plan: &OperationPlan,
     old_name: &str,
     new_name: &str,
-) -> Result<StateSummary, String> {
+) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // ADR-0104 Phase 2: route through Backend::run so preflight is enforced.
     let op = kagi_git::Operation::RenameBranch {
         old_name: old_name.to_string(),
         new_name: new_name.to_string(),
     };
-    repo.run(&op, plan)
-        .map_err(|e| i18n::op_failed(i18n::Op::Rename, e))?;
-    Ok(StateSummary {
-        head: plan.predicted.head.clone(),
-        dirty: format!("branch '{}' renamed to '{}'", old_name, new_name),
-    })
+    Ok(repo.run_recorded(&op, plan))
 }
 
 /// Blocking part of create-worktree (checks out a full tree into a new linked

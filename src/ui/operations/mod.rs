@@ -42,8 +42,10 @@ pub enum PullConfirmDelivery {
 }
 use crate::ui::KagiApp;
 use gpui::{Context, SharedString, Task};
-use kagi_git::backend::recording::Recording;
-use std::path::Path;
+use kagi_git::backend::recording::{Recording, RunReport};
+use kagi_git::oplog::OpOutcome;
+use kagi_git::StateSummary;
+use std::path::{Path, PathBuf};
 
 /// What to do with a finished background op, decided from the join result and
 /// whether the op's owning tab is still the active one. Pure (no `KagiApp`,
@@ -201,6 +203,75 @@ impl KagiApp {
         })
         .detach();
         cx.notify();
+    }
+
+    /// ADR-0196 Wave 2: settle and present one family's own receipt.
+    ///
+    /// The settle half notices a failed append on every arrival, so a tab
+    /// switch cannot swallow "changed but not recorded". The presentation half
+    /// presents the recorded entry — never one re-synthesized from the error
+    /// text — and hands `on_done` the localized failure, `None` on success.
+    /// An `Err` from the task means the repository would not open: nothing ran
+    /// and nothing was recorded, so that one case is still recorded here.
+    ///
+    /// The `async: <op> finished|failed` contract line is logged here, before
+    /// presentation, so its position relative to the footer line is unchanged;
+    /// `finished_note` is the family's historical ` — <summary>` suffix.
+    pub(crate) fn finish_recorded<F>(
+        &mut self,
+        cx: &mut Context<Self>,
+        task: Task<Result<RunReport, String>>,
+        op_name: &'static str,
+        op: crate::ui::i18n::Op,
+        before: StateSummary,
+        repo_path: PathBuf,
+        finished_note: Option<String>,
+        on_done: F,
+    ) where
+        F: FnOnce(&mut Self, Option<String>, &mut Context<Self>) + 'static,
+    {
+        let notice_path = repo_path.clone();
+        self.finish_op_on_main_settled(
+            cx,
+            task,
+            move |app, result, _cx| {
+                if let Ok(report) = result {
+                    app.notice_recording_failure(op_name, &report.recording, &notice_path);
+                }
+            },
+            move |app, result, cx| match result {
+                Ok(report) => {
+                    let failed = report
+                        .result
+                        .as_ref()
+                        .err()
+                        .map(|e| crate::ui::i18n::op_failed(op, e));
+                    match &failed {
+                        None => klog!(
+                            "async: {} finished{}",
+                            op_name,
+                            finished_note.as_deref().unwrap_or("")
+                        ),
+                        Some(err_msg) => klog!("async: {} failed — {}", op_name, err_msg),
+                    }
+                    app.present_recorded(&report.recording, cx);
+                    on_done(app, failed, cx);
+                }
+                Err(err_msg) => {
+                    klog!("async: {} failed — {}", op_name, err_msg);
+                    app.record_op(
+                        op_name,
+                        before,
+                        OpOutcome::Failed {
+                            error: err_msg.clone(),
+                        },
+                        &repo_path,
+                        cx,
+                    );
+                    on_done(app, Some(err_msg), cx);
+                }
+            },
+        );
     }
 
     /// Owner-named notice for a record the execution boundary could not append

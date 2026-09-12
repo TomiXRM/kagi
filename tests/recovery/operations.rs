@@ -859,6 +859,85 @@ pub fn scenario_checkout_presents_backend_receipt(cx: &mut VisualTestAppContext)
     eprintln!("[gui-e2e] PASS checkout_presents_backend_receipt: panel shows the recorded receipt");
 }
 
+/// ADR-0196 Wave 2: the families routed through `finish_recorded` present the
+/// backend's own receipt. Cherry-pick stands in for the seven (cherry-pick,
+/// revert, checkout-tracking, switch-to-latest, set-upstream, rename-branch,
+/// delete-remote-branch) — they share the one helper, so the assertion is on
+/// the helper: the panel entry is the durable entry and keeps `failure_code`.
+pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["checkout", "-q", "-b", "side", "HEAD~1"]);
+    std::fs::write(repo.join("side.txt"), "picked\n").unwrap();
+    git(repo, &["add", "side.txt"]);
+    git(repo, &["commit", "-q", "-m", "side commit"]);
+    let pick = output(repo, &["rev-parse", "HEAD"]);
+    git(repo, &["checkout", "-q", "main"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.open_cherry_pick_modal(CommitId(pick)));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .cherry_pick_modal()
+            .is_some_and(|m| m.plan.blockers.is_empty())),
+        "the fixture must produce a clean cherry-pick plan so the refusal is preflight's"
+    );
+    git(
+        repo,
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "moved under the plan",
+        ],
+    );
+    let head = output(repo, &["rev-parse", "HEAD"]);
+
+    app.update(cx, |app, cx| app.start_cherry_pick(cx));
+    wait_idle(cx, &app);
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        head,
+        "preflight must refuse the stale plan"
+    );
+    let durable = records(repo, "cherry-pick");
+    assert_eq!(durable.len(), 1, "one attempt, one durable entry");
+    assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app
+            .cherry_pick_modal()
+            .expect("a refused cherry-pick must re-open the plan modal");
+        assert!(
+            modal.error.is_some(),
+            "the refusal text must reach the modal"
+        );
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|e| e.op == "cherry-pick")
+            .collect();
+        assert_eq!(
+            shown.len(),
+            1,
+            "the panel shows the receipt once, not a UI copy"
+        );
+        assert_eq!(
+            shown[0].id, durable[0].id,
+            "the panel entry is the durable receipt"
+        );
+        assert_eq!(shown[0].failure_code, Some(FailureCode::Preflight));
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS cherry_pick_presents_backend_receipt: panel shows the recorded receipt"
+    );
+}
+
 pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
         window.draw(cx).clear();

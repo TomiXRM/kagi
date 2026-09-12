@@ -64,7 +64,7 @@ impl Backend {
                     match &result {
                         Err(GitError::TerminationUnknown(t)) => {
                             evidence.unknown = true;
-                            evidence.observations.push(t.reason.clone());
+                            evidence.observations.push(t.reason().to_string());
                         }
                         Err(GitError::StashIdentityUnverified(reason)) => {
                             evidence.unknown = true;

@@ -62,6 +62,28 @@ fn may_restore_after(result: &Result<OperationOutcome, GitError>) -> bool {
     !matches!(result, Err(GitError::TerminationUnknown(_)))
 }
 
+/// How the auto-stash push ended, as the workflow presents it. `None` means
+/// the entry was created and named, so the pull may go ahead.
+///
+/// Only a *stopped* writer is a plain failure. A stash whose entry could not be
+/// identified (#623) and one whose termination is unproven (ADR-0177) are both
+/// "the work is saved, the pull must not start, and this needs reconciling" —
+/// and both leave an entry the reconcile read has to account for.
+fn classify_stash_push(result: &Result<OperationOutcome, GitError>) -> Option<PullPresentation> {
+    match result {
+        Ok(OperationOutcome::StashPush { .. }) => None,
+        Ok(_) | Err(GitError::StashIdentityUnverified(_)) => Some(PullPresentation::Partial {
+            error: i18n::auto_stash_identity_unverified().to_string(),
+        }),
+        Err(error @ GitError::TerminationUnknown(_)) => Some(PullPresentation::Partial {
+            error: i18n::op_failed(i18n::Op::Stash, error),
+        }),
+        Err(error) => Some(PullPresentation::Failed {
+            error: i18n::op_failed(i18n::Op::Stash, error),
+        }),
+    }
+}
+
 /// The workflow stopped before it started: one recorded step, and it decides.
 fn not_started(
     repo_path: &std::path::Path,
@@ -188,31 +210,17 @@ pub(crate) fn pull_blocking(
             // missing (#623) — an OID-only recovery context would be `None`
             // exactly when a stash is outstanding.
             let created = push.stash.clone();
-            let mut stop = None;
-            match &push.result {
-                Ok(OperationOutcome::StashPush { .. }) => stashed = created.clone(),
-                // #623: the stash exists but a concurrent external push made it
-                // indistinguishable, so no OID came back. Same user situation as
-                // an unexpected outcome — work is saved, pull must not start,
-                // and the Unknown receipt already asks for reconciliation.
-                Ok(_) | Err(GitError::StashIdentityUnverified(_)) => {
-                    stop = Some(PullPresentation::Partial {
-                        error: i18n::auto_stash_identity_unverified().to_string(),
-                    })
-                }
-                Err(error) => {
-                    stop = Some(PullPresentation::Failed {
-                        error: i18n::op_failed(i18n::Op::Stash, error),
-                    })
-                }
+            let stop = classify_stash_push(&push.result);
+            if stop.is_none() {
+                stashed = created.clone();
             }
             steps.push(push);
             if let Some(presentation) = stop {
-                // An unidentified stash is still a stash: hand the evidence on
-                // so the reconcile read can hunt for it (#702 review P1).
-                let outstanding = matches!(presentation, PullPresentation::Partial { .. })
-                    .then(|| created)
-                    .flatten();
+                // Whether an entry may be outstanding is a question about the
+                // *execution*, not about how it is presented: a stash push that
+                // started may have created one however it then ended (#702
+                // Codex review). The reconcile read hunts for it from here.
+                let outstanding = created.filter(|evidence| evidence.started);
                 return Ok(PullReport::settled(steps, presentation, outstanding));
             }
         }
@@ -383,7 +391,9 @@ mod tests {
     #[test]
     fn an_unconfirmed_pull_never_starts_the_restore() {
         assert!(
-            !may_restore_after(&Err(GitError::TerminationUnknown("deadline".into()))),
+            !may_restore_after(&Err(GitError::TerminationUnknown(
+                kagi_git::Termination::stopped("deadline")
+            ))),
             "an unconfirmed pull must not be followed by a pop"
         );
         assert!(

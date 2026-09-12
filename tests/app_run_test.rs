@@ -231,8 +231,8 @@ fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
     let request = f.request(&mut s);
     let plan = request.plan.clone();
     let repo = f.repo.clone();
-    // A child the kill could not account for: only its pid can prove it later.
-    let pid = dead_pid();
+    // A group the kill could not account for: only probing it proves it later.
+    let pid = dead_group();
     let approved = approve_run(&mut s, request).unwrap();
     let job = prepare_run(
         &mut s,
@@ -241,10 +241,9 @@ fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
         Box::new(move || {
             let evidence = "git fetch timed out after 60s".to_string();
             Ok(kagi_git::backend::recording::RunReport {
-                result: Err(GitError::TerminationUnknown(Termination {
+                result: Err(GitError::TerminationUnknown(Termination::Unaccounted {
                     reason: evidence.clone(),
-                    child_stopped: false,
-                    pid: Some(pid),
+                    group: pid,
                 })),
                 recording: kagi_git::backend::recording::finalize(
                     kagi_git::oplog::OpLogEntry::new(
@@ -287,9 +286,13 @@ fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
     );
 }
 
-/// A pid that has really exited: spawn a child, wait for it, reuse its id.
-fn dead_pid() -> u32 {
-    let mut child = Command::new("true").spawn().expect("spawn /usr/bin/true");
+/// A process group with nothing left in it: spawn a child in its own group,
+/// wait for it, and reuse the id. `kill(-pgid, 0)` then answers ESRCH.
+fn dead_group() -> u32 {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new("true");
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("spawn /usr/bin/true");
     let pid = child.id();
     child.wait().expect("reap it");
     pid

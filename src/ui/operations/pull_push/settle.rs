@@ -96,9 +96,25 @@ impl KagiApp {
                     let FamilyEvidence::Pull(report) = report.evidence else {
                         continue;
                     };
-                    // Settle first, whatever the tab is doing now (#501).
+                    // Settle first, whatever the tab is doing now (#501). A parked
+                    // reconcile requirement refuses every later write in this
+                    // scope, and the notice is the only way into it — so it is
+                    // settlement, not presentation, and it must survive the tab
+                    // switch below exactly as the recording-failure notice does
+                    // (#702 re-review).
                     for step in &report.steps {
                         app.notice_recording_failure("pull", &step.recording, &repo_path);
+                    }
+                    if app.app_sessions.needs_reconcile(id) {
+                        app.app_notices.push_back(crate::ui::modals::AppNotice {
+                            message: format!(
+                                "{}: pull: {}",
+                                repo_path.display(),
+                                report.decisive().recording.entry().op
+                            ),
+                            inspect: Some(id),
+                            acknowledge: None,
+                        });
                     }
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
@@ -106,7 +122,6 @@ impl KagiApp {
                         klog!("op result dropped: tab switched during op");
                         continue;
                     }
-                    let decisive = report.decisive().clone();
                     // The workflow's own line comes first, exactly as every
                     // other family emits it — the `footer:` line a receipt
                     // announces belongs after it (#702 Codex review).
@@ -124,31 +139,26 @@ impl KagiApp {
                     }
                     // Every child receipt belongs in the panel — they are all
                     // durable entries the backend wrote — but only one of them
-                    // is the answer to what the user asked for. The siblings go
-                    // in as rows; the decisive one is *presented*: one toast,
-                    // one `footer:` line, one auto-open (#702 review P1).
+                    // is the answer to what the user asked for. Walking the
+                    // steps in execution order keeps the panel's newest-first
+                    // order the same as the durable log's, and announcing
+                    // exactly one of them (one toast, one `footer:` line, one
+                    // auto-open) keeps a sibling's success from becoming the
+                    // workflow's (#702 review P1 / Codex).
+                    //
+                    // #501: when a step's receipt never reached the oplog, that
+                    // is the fact worth announcing — `entry_for_recording`
+                    // renders it as "changed but not recorded" — so it takes the
+                    // announcement from the decisive receipt rather than
+                    // letting a clean one speak for a workflow that was not
+                    // fully recorded.
+                    let announce_at = report.announce();
                     for (at, step) in report.steps.iter().enumerate() {
-                        if at != report.decisive_index() {
+                        if at == announce_at {
+                            app.present_recorded(&step.recording, cx);
+                        } else {
                             app.insert_recorded_row(&step.recording, cx);
                         }
-                    }
-                    app.present_recorded(&decisive.recording, cx);
-                    // A parked reconcile requirement refuses every later write
-                    // in this scope. Without an inspectable notice the user has
-                    // no way to reach it once the modal is dismissed (#702
-                    // Codex review). `Unknown` is one way to get one; an
-                    // unproven termination is the other, and it holds the lease
-                    // too — so the question is the requirement, not the outcome.
-                    if app.app_sessions.needs_reconcile(id) {
-                        app.app_notices.push_back(crate::ui::modals::AppNotice {
-                            message: format!(
-                                "{}: pull: {}",
-                                repo_path.display(),
-                                decisive.recording.entry().op
-                            ),
-                            inspect: Some(id),
-                            acknowledge: None,
-                        });
                     }
                     let recording_failed = report.recording_failed();
                     match report.terminal.presentation {

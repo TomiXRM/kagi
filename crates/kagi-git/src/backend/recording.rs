@@ -58,6 +58,14 @@ pub fn oplog_outcome_from(
     partial_after: Option<ops::StateSummary>,
 ) -> crate::oplog::OpOutcome {
     match (result, partial_after) {
+        // First, so the function itself guarantees what its doc says: an
+        // unproven termination is *always* `Unknown`, whatever else is known
+        // about it. A `Partial` would say the side effects are accounted for,
+        // which is the one thing this error means they are not (#702 review).
+        (Err(GitError::TerminationUnknown(t)), _) => crate::oplog::OpOutcome::Unknown {
+            after: predicted.clone(),
+            evidence: t.reason().to_string(),
+        },
         (Err(e), Some(after)) => crate::oplog::OpOutcome::Partial {
             after,
             error: e.to_string(),
@@ -100,15 +108,6 @@ pub fn oplog_outcome_from(
         },
         (Ok(_), _) => crate::oplog::OpOutcome::Success {
             after: predicted.clone(),
-        },
-        // ADR-0196 §2.1: an unproven termination always falls to `Unknown`,
-        // never `Failed`. The stash family got this right through
-        // `stash_outcome`; the generic pipeline recorded it as an ordinary
-        // failure, which is a stopped writer — so nothing asked for the
-        // reconciliation the contract requires (#702 review).
-        (Err(GitError::TerminationUnknown(t)), _) => crate::oplog::OpOutcome::Unknown {
-            after: predicted.clone(),
-            evidence: t.reason.clone(),
         },
         (Err(e), _) => crate::oplog::OpOutcome::Failed {
             error: e.to_string(),
@@ -234,5 +233,43 @@ impl Backend {
             failure_code,
         );
         result
+    }
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+    use crate::Termination;
+
+    fn summary(head: &str) -> ops::StateSummary {
+        ops::StateSummary {
+            head: head.to_string(),
+            dirty: "clean".to_string(),
+        }
+    }
+
+    /// The doc says "an unproven termination is always `Unknown`", and the
+    /// function has to be the thing that guarantees it — including against the
+    /// `Err + partial_after` arm, which would otherwise claim the side effects
+    /// are accounted for (#702 re-review P2).
+    #[test]
+    fn an_unproven_termination_outranks_a_partial_after_state() {
+        let predicted = summary("branch: main");
+        let unproven = Err(GitError::TerminationUnknown(Termination::stopped(
+            "git push timed out",
+        )));
+        for partial in [None, Some(summary("branch: half-way"))] {
+            let outcome = oplog_outcome_from(&unproven, &predicted, partial);
+            assert!(
+                matches!(outcome, crate::oplog::OpOutcome::Unknown { .. }),
+                "an unproven termination is never Partial or Failed: {outcome:?}"
+            );
+        }
+        // A partial after-state from any *other* error still means Partial.
+        let ordinary = Err(GitError::Other("half applied".into()));
+        assert!(matches!(
+            oplog_outcome_from(&ordinary, &predicted, Some(summary("branch: half"))),
+            crate::oplog::OpOutcome::Partial { .. }
+        ));
     }
 }

@@ -214,6 +214,85 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     );
 }
 
+/// #702 re-review — the reconcile notice is settlement, not presentation.
+///
+/// A pull whose tab the user left still parks a reconcile requirement, and that
+/// requirement refuses every later write in the scope. Building the inspectable
+/// notice after the current-tab guard left those completions with an entry
+/// nobody could open: the write refusals said `NeedsReconcile` and there was no
+/// other way in. The notice is queued with the recording-failure notices now,
+/// before the guard, so it survives the switch.
+pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    let (bare, other) = (
+        remote_root.path().join("origin.git"),
+        remote_root.path().join("other"),
+    );
+    let (bare_path, other_path) = (bare.to_str().unwrap(), other.to_str().unwrap());
+
+    git(repo, &["init", "--bare", "-q", bare_path]);
+    git(repo, &["remote", "add", "origin", bare_path]);
+    git(repo, &["push", "-q", "-u", "origin", "main"]);
+    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
+    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
+    git(&other, &["add", "upstream.txt"]);
+    git(&other, &["commit", "-q", "-m", "upstream"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    git(repo, &["fetch", "-q", "origin"]);
+    let helper = leaky_upload_pack(remote_root.path());
+    git(repo, &["config", "remote.origin.uploadpack", &helper]);
+    let other_tab = build_fixture();
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_tab.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.open_pull_modal(cx));
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).pull_modal().is_some(),
+            "tab A must have a confirmation to press"
+        );
+    });
+
+    // Confirm and leave in one synchronous turn: the completion certainly
+    // arrives while tab B is on screen, so its presentation is dropped.
+    app.update(cx, |app, cx| {
+        app.start_pull(cx);
+        app.switch_repo(1, cx);
+    });
+    wait_idle(cx, &app);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let notice = app
+            .read(cx)
+            .app_notice()
+            .expect("a parked reconcile must offer itself even to the tab that stayed");
+        assert!(
+            notice.inspect.is_some(),
+            "and it must be the inspectable kind: {}",
+            notice.message
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_unknown_notice_survives_a_tab_switch: settlement queued it, not presentation"
+    );
+}
+
 /// #702 review P1 — a restored failure must not end on a success.
 ///
 /// `steps` is `stash-push Success → pull Failed → stash-pop Success`, and

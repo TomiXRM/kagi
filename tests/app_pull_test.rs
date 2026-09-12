@@ -179,9 +179,10 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
                 OpOutcome::Failed {
                     error: "git fetch deadline expired".to_string(),
                 },
-                // The executor could not account for the child: no proof it
-                // stopped, and no pid either. The hardest case.
-                Err(GitError::TerminationUnknown(Termination::unproven(
+                // Kagi lost its own executor mid-write: no proof, and no
+                // handle to get one. The hardest case, and the only state that
+                // admits it (#702 re-review).
+                Err(GitError::TerminationUnknown(Termination::abandoned(
                     "git fetch deadline expired",
                 ))),
             ),
@@ -220,8 +221,8 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
     );
     assert_eq!(
         prepare_reconcile(&s, id).err().as_deref(),
-        Some("execution termination is unconfirmed"),
-        "the reconcile requirement is registered and cannot be acknowledged yet"
+        Some("execution termination is unconfirmed and nothing is left to probe"),
+        "the reconcile requirement is registered and says why it cannot be read"
     );
     // Registered once, and it is what refuses the next pull on this scope.
     let approved = approve_pull(&mut s, second).unwrap();
@@ -283,15 +284,15 @@ fn a_reaped_child_is_the_stop_proof_that_reopens_the_scope() {
     );
 }
 
-/// A child that could **not** be reaped is not a dead end either: the pid it
-/// left behind is the handle, and the reconcile read asks the OS. This process
-/// is certainly alive, so its own pid must keep the read unproven — and a pid
-/// that is gone must let the acknowledge through.
+/// A group that could **not** be reaped is not a dead end either: it is the
+/// handle, and the reconcile read asks the OS before it reads anything. This
+/// process's own group is certainly alive, so the read must come back
+/// unresolved *without observing*; a group that is gone must let it through.
 #[test]
-fn an_unreaped_child_is_proven_stopped_by_its_pid_going_away() {
+fn an_unaccounted_group_is_proven_stopped_by_going_away() {
     let f = Fixture::new();
     let mut s = Sessions::new();
-    let alive = std::process::id();
+    let alive = LiveGroup::spawn();
     let report = |pid: u32| {
         PullReport::settled(
             vec![f.receipt(
@@ -303,10 +304,9 @@ fn an_unreaped_child_is_proven_stopped_by_its_pid_going_away() {
                     },
                     evidence: "the local child could not be stopped".to_string(),
                 },
-                Err(GitError::TerminationUnknown(Termination {
+                Err(GitError::TerminationUnknown(Termination::Unaccounted {
                     reason: "the local child could not be stopped".to_string(),
-                    child_stopped: false,
-                    pid: Some(pid),
+                    group: pid,
                 })),
             )],
             PullPresentation::Partial {
@@ -317,14 +317,20 @@ fn an_unreaped_child_is_proven_stopped_by_its_pid_going_away() {
     };
 
     let request = f.request(&mut s);
-    let job = admit(&mut s, request, report(alive));
+    let job = admit(&mut s, request, report(alive.id()));
     let id = job.id();
     apply(&mut s, job.run());
     assert!(s.has_leases(), "a live child keeps the scope reserved");
-    let read = read_reconcile(&s, id).expect("a pid is something a read can check");
+    let read = read_reconcile(&s, id).expect("a group is something a read can check");
     assert!(
         !read.stop_proven(),
-        "the child is this very process: it has demonstrably not stopped"
+        "the group holds a live process: it has demonstrably not stopped"
+    );
+    assert!(
+        read.observation.contains("still running"),
+        "and nothing was observed while it runs — a pre-mutation snapshot must \
+         not come back wearing a post-mutation label: {}",
+        read.observation
     );
     assert_eq!(
         acknowledge(&mut s, read).err(),
@@ -332,27 +338,50 @@ fn an_unreaped_child_is_proven_stopped_by_its_pid_going_away() {
         "an unproven stop must not release the scope"
     );
 
-    // A pid nothing answers to: the child is gone and the read says so.
-    let gone = dead_pid();
+    // A group nothing answers to: the writer is gone and the read says so.
+    let gone = dead_group();
     let mut s = Sessions::new();
     let request = f.request(&mut s);
     let job = admit(&mut s, request, report(gone));
     let id = job.id();
     apply(&mut s, job.run());
     let read = read_reconcile(&s, id).expect("readable");
-    assert!(read.stop_proven(), "a pid nothing answers to is stopped");
+    assert!(read.stop_proven(), "a group nothing answers to is stopped");
     acknowledge(&mut s, read).expect("a proven stop releases the scope");
     assert!(!s.has_leases());
 }
 
-/// A pid that has really exited: spawn a child, wait for it, reuse its id.
-fn dead_pid() -> u32 {
-    let mut child = std::process::Command::new("true")
-        .spawn()
-        .expect("spawn /usr/bin/true");
+/// A process group with nothing left in it: spawn a child in its own group,
+/// wait for it, and reuse the id. `kill(-pgid, 0)` then answers ESRCH.
+fn dead_group() -> u32 {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = std::process::Command::new("true");
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("spawn /usr/bin/true");
     let pid = child.id();
     child.wait().expect("reap it");
     pid
+}
+
+/// A process group that is certainly alive: our own child, in its own group,
+/// stopped when the guard drops.
+struct LiveGroup(std::process::Child);
+impl LiveGroup {
+    fn spawn() -> Self {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("30").process_group(0);
+        Self(cmd.spawn().expect("spawn /bin/sleep"))
+    }
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
+}
+impl Drop for LiveGroup {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 /// The decisive receipt is not the last one run: a pull that failed and whose
@@ -551,8 +580,108 @@ fn an_abandoned_pull_task_settles_as_unknown_and_keeps_its_lease() {
     );
     assert_eq!(
         prepare_reconcile(&s, id).err().as_deref(),
-        Some("execution termination is unconfirmed"),
-        "and it is a registered reconcile requirement, not a lost operation"
+        Some("execution termination is unconfirmed and nothing is left to probe"),
+        "and it is a registered reconcile requirement that says why it cannot be \
+         read: kagi lost its own executor, so there is no handle to probe"
+    );
+}
+
+/// #702 re-review — a local snapshot cannot say whether a push landed.
+///
+/// `oplog_outcome_from` now records `Unknown` for push-shaped operations too,
+/// so their reconcile reads have to mean something. Reading HEAD and calling it
+/// resolved would let an unconfirmed remote mutation be acknowledged and
+/// retried, which is the thing ADR-0177 exists to prevent. The read asks the
+/// remote, and only a remote that already carries the local tip is confirmed.
+#[test]
+fn a_remote_write_is_resolved_only_by_the_remote() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let session = s.attach(f.repo.clone());
+    let owner = s.attachment(session).expect("attached");
+    let backend = Backend::open(&f.repo).unwrap();
+    let request = RunRequest {
+        owner,
+        name: "push",
+        path: f.repo.clone(),
+        repo: backend.write_repo_id().unwrap(),
+        plan: Arc::new(backend.plan_push().expect("plan push")),
+        // ponytail: no per-operation target in `RunRequest`; the read derives
+        // the branch from HEAD, which is what `Operation::Push` pushes.
+    };
+    let second = request.clone();
+    let unknown = f.receipt(
+        "push",
+        OpOutcome::Unknown {
+            after: StateSummary {
+                head: "branch: main".to_string(),
+                dirty: "unknown".to_string(),
+            },
+            evidence: "git push timed out".to_string(),
+        },
+        Err(GitError::TerminationUnknown(Termination::stopped(
+            "git push timed out",
+        ))),
+    );
+    let approved = approve_run(&mut s, request).unwrap();
+    let job = prepare_run(
+        &mut s,
+        approved,
+        LegacyBusy(false),
+        Box::new(move || Ok(unknown)),
+    )
+    .unwrap();
+    let id = job.id();
+    apply(&mut s, job.run());
+
+    // The fixture pushed `main` already, so the remote *does* carry the local
+    // tip: the write is confirmed and the scope can be reopened.
+    let read = read_reconcile(&s, id).expect("readable");
+    assert!(
+        read.observation.contains("origin/main=") && read.observation.contains("confirmed=true"),
+        "the read must name the live remote ref, not just HEAD: {}",
+        read.observation
+    );
+    assert!(read.resolved());
+    acknowledge(&mut s, read).expect("a confirmed remote state releases the scope");
+
+    // Now the local branch moves ahead of the remote: the same read can no
+    // longer say the push landed, so it must not let the scope reopen.
+    git(&f.repo, &["commit", "-q", "--allow-empty", "-m", "ahead"]);
+    let unknown = f.receipt(
+        "push",
+        OpOutcome::Unknown {
+            after: StateSummary {
+                head: "branch: main".to_string(),
+                dirty: "unknown".to_string(),
+            },
+            evidence: "git push timed out".to_string(),
+        },
+        Err(GitError::TerminationUnknown(Termination::stopped(
+            "git push timed out",
+        ))),
+    );
+    let approved = approve_run(&mut s, second).unwrap();
+    let job = prepare_run(
+        &mut s,
+        approved,
+        LegacyBusy(false),
+        Box::new(move || Ok(unknown)),
+    )
+    .unwrap();
+    let id = job.id();
+    apply(&mut s, job.run());
+    let read = read_reconcile(&s, id).expect("readable");
+    assert!(
+        read.observation.contains("confirmed=false"),
+        "the remote does not carry the local tip: {}",
+        read.observation
+    );
+    assert!(!read.resolved());
+    assert_eq!(
+        acknowledge(&mut s, read).err(),
+        Some(AdmissionError::NeedsReconcile),
+        "an unconfirmed remote mutation must never become retryable"
     );
 }
 

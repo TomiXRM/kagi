@@ -681,8 +681,16 @@ impl KagiApp {
         };
         self.clear_app_notice();
         if let Some(read) = notice.acknowledge {
+            // A refusal must not be the end of the road: the requirement is
+            // still parked and still refusing every write in that scope, so the
+            // replacement notice keeps the way back to it (#702 Codex review).
+            let id = read.operation();
             if let Err(error) = app::acknowledge(&mut self.app_sessions, read) {
-                self.app_notices.push_back(error.to_string().into());
+                self.app_notices.push_back(modals::AppNotice {
+                    message: error.to_string(),
+                    inspect: Some(id),
+                    acknowledge: None,
+                });
             }
         } else if let Some(id) = notice.inspect {
             match app::prepare_reconcile(&self.app_sessions, id) {
@@ -692,6 +700,17 @@ impl KagiApp {
                         let result = task.await;
                         let _ = this.update(cx, |app, cx| {
                             match result {
+                                // Only a settled read may be acknowledged. One
+                                // that still cannot account for the writer or
+                                // what it left behind comes back as another
+                                // look, not a button that will be refused.
+                                Ok(read) if !read.settled() => {
+                                    app.app_notices.push_back(modals::AppNotice {
+                                        message: read.observation,
+                                        inspect: Some(id),
+                                        acknowledge: None,
+                                    });
+                                }
                                 Ok(read) => {
                                     app.app_notices.push_back(modals::AppNotice {
                                         message: format!(

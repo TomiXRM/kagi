@@ -19,7 +19,7 @@ fn termination(
     result: &Result<kagi_git::OperationOutcome, kagi_git::GitError>,
 ) -> (bool, Option<u32>) {
     match result {
-        Err(kagi_git::GitError::TerminationUnknown(t)) => (t.child_stopped, t.pid),
+        Err(kagi_git::GitError::TerminationUnknown(t)) => (t.child_stopped(), t.group()),
         _ => (true, None),
     }
 }
@@ -28,7 +28,9 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     // The auto-stash a pull left behind: the reconcile read must account for
     // that entry, and only the report carries what the backend saw of it.
     let mut pull_recovery: Option<kagi_git::backend::stash::StashEvidence> = None;
-    // The child of an unproven termination, if there is one to account for.
+    // The process group of an unproven termination, if there is one to account
+    // for. `None` with `stopped == false` is the abandoned case: held, and
+    // honest that nothing can prove otherwise.
     let mut unaccounted_child: Option<u32> = None;
     let (id, report, stopped, remote_recovery) = match completion.into() {
         Completion::Remove(c) => {

@@ -115,9 +115,24 @@ impl PullReport {
     /// but was not recorded must never be presented as a clean success (#501),
     /// and that is true of a *child*'s receipt too, not only the decisive one.
     pub fn recording_failed(&self) -> bool {
+        self.announce() != self.terminal.decisive
+    }
+    /// Which receipt speaks for the workflow.
+    ///
+    /// Normally the decisive one. But a step whose receipt never reached the
+    /// oplog outranks it: "this happened and kagi could not record it" is the
+    /// fact the user needs, and `entry_for_recording` already renders exactly
+    /// that ("changed but not recorded"). Announcing the clean decisive receipt
+    /// beside it would show a success for a workflow that was not fully
+    /// recorded (#501, #702 re-review).
+    ///
+    /// Pure, and the single place the choice is made: the presenter walks the
+    /// steps and announces this index — one toast, one footer, one auto-open.
+    pub fn announce(&self) -> usize {
         self.steps
             .iter()
-            .any(|step| matches!(step.recording, recording::Recording::Failed { .. }))
+            .position(|step| matches!(step.recording, recording::Recording::Failed { .. }))
+            .unwrap_or(self.terminal.decisive)
     }
     /// Settle on the last step run — the common case.
     ///
@@ -192,6 +207,12 @@ mod tests {
             report.recording_failed(),
             "the decisive receipt landed, but the stash-push's did not"
         );
+        assert_eq!(
+            report.announce(),
+            0,
+            "so the workflow speaks through the receipt that never landed — a \
+             clean decisive receipt must not announce a success for it"
+        );
         let all_kept = PullReport::settled(
             vec![step(kept.clone()), step(kept)],
             PullPresentation::Success {
@@ -200,6 +221,11 @@ mod tests {
             None,
         );
         assert!(!all_kept.recording_failed());
+        assert_eq!(
+            all_kept.announce(),
+            all_kept.decisive_index(),
+            "with everything recorded, the decisive receipt speaks"
+        );
     }
 }
 
@@ -303,7 +329,7 @@ impl PullAbandonment {
             report: PullReport::settled(
                 vec![RunReport {
                     result: Err(kagi_git::GitError::TerminationUnknown(
-                        kagi_git::Termination::unproven(evidence.clone()),
+                        kagi_git::Termination::abandoned(evidence.clone()),
                     )),
                     recording: recording::finalize(entry),
                     stash: None,

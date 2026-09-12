@@ -230,56 +230,93 @@ pub struct RepoInfo {
 
 /// What is known about a writer whose termination could not be established.
 ///
-/// `child_stopped` is the executor's own proof that the **local** child process
-/// is gone — it exited, or it was killed and collected
-/// ([`proc::ProcStop::reaped`]). Nothing more can be written by that process,
-/// so the scope may be released and the `Unknown` receipt reconciled.
-///
-/// Without that proof the child is unaccounted for and the lease stays held
-/// (ADR-0175). `pid` is the only handle a later reconcile read has to prove it
-/// finally went away; see `app::ReconcileJob`.
+/// Three states, and no way to write a fourth: a scope is only ever held on
+/// evidence, and every state that holds one says how it can be let go
+/// (ADR-0175, #702 re-review).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Termination {
-    pub reason: String,
-    pub child_stopped: bool,
-    pub pid: Option<u32>,
+pub enum Termination {
+    /// The executor saw the process go — it exited, or it was killed and
+    /// collected. Nothing more can be written by it, so the scope is released
+    /// and the `Unknown` receipt is reconcilable straight away.
+    Stopped { reason: String },
+    /// A process **group** that may still be running. `group` is what a later
+    /// reconcile read probes, and there is no constructor without one: a stop
+    /// that can be neither proven nor probed is a scope closed forever.
+    ///
+    /// The group, not the pid: a `git push` that was killed can leave a
+    /// transport helper or a hook still writing, and reaping the direct child
+    /// proves nothing about those ([`proc::ProcStop::reaped`] says so itself).
+    Unaccounted { reason: String, group: u32 },
+    /// Kagi lost its own executor — a task unwound while a write was in flight,
+    /// so the process handle went with it. Nothing is left to probe and nothing
+    /// is proven either way; the scope stays held until the application
+    /// restarts. Deliberately distinct from [`Self::Unaccounted`]: this one has
+    /// no automatic exit, and pretending otherwise would release a lease on no
+    /// evidence.
+    Abandoned { reason: String },
 }
 impl Termination {
-    /// The child is unaccounted for: no proof it stopped, no handle to get one.
-    /// The conservative default, and what a `String` converts into.
-    pub fn unproven(reason: impl Into<String>) -> Self {
-        Self {
-            reason: reason.into(),
-            child_stopped: false,
-            pid: None,
-        }
-    }
-    /// The executor saw the child go.
+    /// The executor saw the process go.
     pub fn stopped(reason: impl Into<String>) -> Self {
-        Self {
+        Self::Stopped {
             reason: reason.into(),
-            child_stopped: true,
-            pid: None,
         }
     }
-    /// From a runner stop: either the kill accounted for the child, or its pid
-    /// is the only handle left on it. The one place that rule is written.
-    pub fn from_stop(reason: impl Into<String>, stop: &proc::ProcStop, pid: u32) -> Self {
-        Self {
+    /// Kagi's own executor unwound; there is no handle left.
+    pub fn abandoned(reason: impl Into<String>) -> Self {
+        Self::Abandoned {
             reason: reason.into(),
-            child_stopped: stop.reaped(),
-            pid: (!stop.reaped()).then_some(pid),
         }
     }
-}
-impl<S: Into<String>> From<S> for Termination {
-    fn from(reason: S) -> Self {
-        Self::unproven(reason)
+    /// The same termination, said about a wider operation. Keeps the state —
+    /// only a `Stopped` stays stopped (#702 review P1).
+    pub fn in_context(self, what: &str) -> Self {
+        match self {
+            Self::Stopped { reason } => Self::Stopped {
+                reason: format!("{what}: {reason}"),
+            },
+            Self::Unaccounted { reason, group } => Self::Unaccounted {
+                reason: format!("{what}: {reason}"),
+                group,
+            },
+            Self::Abandoned { reason } => Self::Abandoned {
+                reason: format!("{what}: {reason}"),
+            },
+        }
+    }
+    /// From a runner stop: either the kill accounted for the child, or the
+    /// group it was spawned into is the handle left on it. The one place that
+    /// rule is written.
+    pub fn from_stop(reason: impl Into<String>, stop: &proc::ProcStop, group: u32) -> Self {
+        if stop.reaped() {
+            return Self::stopped(reason);
+        }
+        Self::Unaccounted {
+            reason: reason.into(),
+            group,
+        }
+    }
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::Stopped { reason } | Self::Abandoned { reason } => reason,
+            Self::Unaccounted { reason, .. } => reason,
+        }
+    }
+    /// Is the writer proven stopped? Only [`Self::Stopped`] is.
+    pub fn child_stopped(&self) -> bool {
+        matches!(self, Self::Stopped { .. })
+    }
+    /// The process group a later read can prove stop against, if there is one.
+    pub fn group(&self) -> Option<u32> {
+        match self {
+            Self::Unaccounted { group, .. } => Some(*group),
+            _ => None,
+        }
     }
 }
 impl std::fmt::Display for Termination {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.reason)
+        f.write_str(self.reason())
     }
 }
 
@@ -308,9 +345,11 @@ pub enum GitError {
     TerminationUnknown(Termination),
     /// A stash **was created** but its entry could not be identified, because a
     /// concurrent external `git stash push` made it indistinguishable from
-    /// kagi's own (#623). Treated exactly like [`GitError::TerminationUnknown`]
-    /// by admission and the oplog — Unknown receipt, lease retained,
-    /// reconciliation required, never an automatic retry — but kept a separate
+    /// kagi's own (#623). Like [`GitError::TerminationUnknown`] it records an
+    /// Unknown receipt and requires reconciliation, and it is never retried
+    /// automatically — but the **lease is released**: the stash call itself
+    /// returned, so what is unknown is the entry's identity, not whether a
+    /// process is still running (#702 re-review). Kept a separate
     /// variant because the user situation differs: the work *is* saved, and the
     /// UI says so (`i18n::auto_stash_identity_unverified`). A marker inside the
     /// message would not do: the message embeds the user's own stash text, so a
@@ -358,7 +397,7 @@ impl std::fmt::Display for GitError {
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
             GitError::Blocked(note) => f.write_str(&note.message_en()),
-            GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason),
+            GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason()),
             GitError::Other(msg)
             | GitError::StashIdentityUnverified(msg)
             | GitError::RebaseCannotStartWithRepoSettingsDisabled(msg) => {
@@ -520,8 +559,15 @@ mod termination_tests {
             },
             4242,
         );
-        assert!(collected.child_stopped, "a reaped child is proven stopped");
-        assert_eq!(collected.pid, None, "and needs no handle to prove it again");
+        assert!(
+            collected.child_stopped(),
+            "a reaped child is proven stopped"
+        );
+        assert_eq!(
+            collected.group(),
+            None,
+            "and needs no handle to prove it again"
+        );
 
         let unaccounted = Termination::from_stop(
             "git fetch",
@@ -532,21 +578,29 @@ mod termination_tests {
             4242,
         );
         assert!(
-            !unaccounted.child_stopped,
+            !unaccounted.child_stopped(),
             "a child the kill did not account for is not proven stopped"
         );
         assert_eq!(
-            unaccounted.pid,
+            unaccounted.group(),
             Some(4242),
-            "its pid is the only way a later read can prove it went away"
+            "its process group is the only way a later read can prove it went away"
         );
     }
 
+    /// The states a scope can be held in, and how each one is let go. There is
+    /// deliberately no fourth: "unproven, nothing to probe" as a *default* is
+    /// what closed a repository for the life of the process (#702 re-review).
     #[test]
-    fn a_plain_reason_is_unproven_by_default() {
-        let t: Termination = "something went wrong".into();
-        assert!(!t.child_stopped, "the conservative default");
-        assert_eq!(t.pid, None);
+    fn every_held_state_says_how_it_can_be_let_go() {
+        assert_eq!(Termination::stopped("done").group(), None);
+        assert!(Termination::stopped("done").child_stopped());
+        // Abandoned is the honest one: kagi lost its own executor, so there is
+        // no handle and no proof. It says so instead of pretending to a pid.
+        let lost = Termination::abandoned("the task unwound");
+        assert!(!lost.child_stopped());
+        assert_eq!(lost.group(), None);
+        assert_eq!(lost.reason(), "the task unwound");
     }
 }
 

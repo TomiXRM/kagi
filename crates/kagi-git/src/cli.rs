@@ -49,10 +49,7 @@ use super::{GitError, Termination};
 /// call site, so the class of bug cannot come back one caller at a time.
 pub fn context(what: &str, error: GitError) -> GitError {
     match error {
-        GitError::TerminationUnknown(mut t) => {
-            t.reason = format!("{what}: {}", t.reason);
-            GitError::TerminationUnknown(t)
-        }
+        GitError::TerminationUnknown(t) => GitError::TerminationUnknown(t.in_context(what)),
         other => GitError::Other(format!("{what}: {other}")),
     }
 }

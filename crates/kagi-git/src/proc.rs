@@ -119,8 +119,9 @@ pub struct ProcRun {
     /// `Ok(())` — `stdout`/`stderr` are everything the child wrote, and all the
     /// input reached it. `Err(_)` — see [`ProcIo`]; the buffers are a prefix.
     pub io: Result<(), ProcIo>,
-    /// The child's process id. The only handle on a child that could not be
-    /// reaped, so a later read can prove it finally went away (ADR-0175).
+    /// The child's process id — and, because it is spawned as its own group
+    /// leader, the id of the group holding everything it started. The handle a
+    /// later read proves stop against when the kill could not (ADR-0175).
     pub pid: u32,
 }
 
@@ -193,7 +194,16 @@ pub fn run_child(
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
 
+    // Its own process group, so the stop proof can be about everything the
+    // command started — a transport helper, a hook, an ssh — and not just the
+    // one process we hold a handle to (#702 re-review).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn()?;
+    // The child is its own group leader, so the group id is its pid.
     let pid = child.id();
 
     // Each collector reports through the channel when it is done, so the wait
@@ -250,26 +260,41 @@ pub fn run_child(
     })
 }
 
-/// Is `pid` still a live process?
+/// Is anything in process group `pgid` still alive?
 ///
-/// `kill(pid, 0)` is the POSIX existence probe: it sends no signal. `Ok` or
-/// `EPERM` means something with that id is there; `ESRCH` means it is gone.
-/// This is how a writer whose child could not be reaped is finally proven
-/// stopped, long after the run that abandoned it (ADR-0175, #702 review P1).
-// ponytail: pid reuse can make a recycled id read as alive, which keeps a scope
-// closed that could have been released. Conservative in the safe direction; a
-// start-time comparison would be the upgrade if it ever bites.
+/// `kill(-pgid, 0)` is the POSIX existence probe applied to a whole group: it
+/// sends no signal. `Ok` or `EPERM` means at least one process in the group is
+/// there; `ESRCH` means the group is empty. This is how a writer that could not
+/// be reaped is finally proven stopped, long after the run that abandoned it
+/// (ADR-0175, #702 review).
+///
+/// The **group**, not the pid: [`run_child`] spawns each child as its own group
+/// leader, so a transport helper or hook that outlived the child it was
+/// spawned from is still counted. Reaping the direct child proves nothing about
+/// those ([`ProcStop::reaped`] says so), and a writer lease must not be
+/// released on a proof that narrow.
+// ponytail: pid reuse can make a recycled group id read as alive, which keeps a
+// scope closed that could have been released. Conservative in the safe
+// direction; a start-time comparison would be the upgrade if it ever bites. A
+// just-exited member reads alive until `run_child`'s janitor reaps it, which is
+// prompt — the janitor owns every child it could not reap itself, so a zombie
+// is never permanent.
 #[cfg(unix)]
-pub fn process_alive(pid: u32) -> bool {
+pub fn group_alive(pgid: u32) -> bool {
     // SAFETY: `kill` with signal 0 performs no action; it only reports whether
-    // the process exists and is signallable.
-    let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    // the target exists and is signallable. A negative pid targets the group.
+    let rc = unsafe { libc::kill(-(pgid as i32) as libc::pid_t, 0) };
     rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
+// A platform without a probe cannot answer this, and both answers are wrong:
+// `true` wedges the scope for the life of the process, `false` releases a lease
+// on no evidence. Refuse to build there instead of shipping either (#702 Codex
+// review). Kagi is macOS-only today, so this arm is unreachable.
 #[cfg(not(unix))]
-pub fn process_alive(_pid: u32) -> bool {
-    true
-}
+compile_error!(
+    "the reconcile exit needs a process-group probe: implement `group_alive` \
+     for this platform before targeting it"
+);
 
 /// Read a child pipe to EOF on its own thread, reporting through `tx`.
 fn drain<R: std::io::Read + Send + 'static>(

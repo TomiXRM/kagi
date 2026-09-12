@@ -1,18 +1,24 @@
 //! Application progress/approval/delivery. No runtime, view state or direct I/O.
 mod conflict;
 mod flow;
+mod pull;
 mod read;
+mod reconcile;
 mod run;
 mod session;
+mod settle;
 mod stash;
 mod tabs;
 mod worktree;
 pub use conflict::*;
 pub use flow::*;
 pub use kagi_domain::remove::{RepoId, WorktreeId};
+pub use pull::*;
 pub use read::*;
+pub use reconcile::*;
 pub use run::*;
 pub use session::*;
+pub use settle::*;
 pub use stash::*;
 pub use tabs::*;
 pub use worktree::*;

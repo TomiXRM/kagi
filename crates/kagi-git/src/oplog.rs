@@ -949,7 +949,7 @@ mod failure_code_tests {
         for (error, expected) in [
             (GitError::Untrusted("x".into()), FailureCode::Untrusted),
             (
-                GitError::TerminationUnknown("x".into()),
+                GitError::TerminationUnknown(crate::Termination::stopped("x")),
                 FailureCode::TerminationUnknown,
             ),
             (

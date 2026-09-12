@@ -2,7 +2,7 @@
 //! application API — admission, job, settlement, delivery. No window.
 use kagi::app::*;
 use kagi_git::oplog::{read_oplog_tail, OpOutcome};
-use kagi_git::{Backend, Operation};
+use kagi_git::{Backend, GitError, Operation, StateSummary, Termination};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -76,6 +76,7 @@ impl Fixture {
             path: self.repo.clone(),
             repo: backend.write_repo_id().unwrap(),
             plan: Arc::new(plan),
+            remote: Vec::new(),
         }
     }
 }
@@ -213,4 +214,89 @@ fn a_second_run_is_refused_while_the_first_holds_the_lease() {
         .err(),
         Some(AdmissionError::Busy)
     );
+}
+
+/// A run-family write whose termination is unconfirmed: the lease is retained,
+/// a reconcile requirement is registered, and — once the child is proven gone —
+/// the read and the acknowledge release the scope.
+///
+/// The whole lifecycle, because the previous revision registered the entry and
+/// then had no exit: `prepare_reconcile` refused every `!stopped` local plan
+/// forever, so the scope stayed closed for the life of the process
+/// (#702 review P1). Fault injection is unavailable at this level, so the job
+/// closure stands in for the executor; what it returns is what `run_git` builds.
+#[cfg(unix)]
+#[test]
+fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let plan = request.plan.clone();
+    let repo = f.repo.clone();
+    // A group the kill could not account for: only probing it proves it later.
+    let pid = dead_group();
+    let approved = approve_run(&mut s, request).unwrap();
+    let job = prepare_run(
+        &mut s,
+        approved,
+        LegacyBusy(false),
+        Box::new(move || {
+            let evidence = "git fetch timed out after 60s".to_string();
+            Ok(kagi_git::backend::recording::RunReport {
+                result: Err(GitError::TerminationUnknown(Termination::Unaccounted {
+                    reason: evidence.clone(),
+                    group: pid,
+                })),
+                recording: kagi_git::backend::recording::finalize(
+                    kagi_git::oplog::OpLogEntry::new(
+                        "checkout",
+                        repo.display().to_string(),
+                        plan.current.clone(),
+                        OpOutcome::Unknown {
+                            after: StateSummary {
+                                head: plan.current.head.clone(),
+                                dirty: "unknown".to_string(),
+                            },
+                            evidence,
+                        },
+                    ),
+                ),
+                stash: None,
+            })
+        }),
+    )
+    .unwrap();
+    let id = job.id();
+
+    apply(&mut s, job.run());
+    assert!(
+        s.has_leases(),
+        "an unconfirmed writer keeps the scope reserved (ADR-0175)"
+    );
+
+    let read = read_reconcile(&s, id).expect("a pid is something a read can check");
+    assert!(
+        read.stop_proven(),
+        "nothing answers to that pid any more: the writer is proven stopped"
+    );
+    acknowledge(&mut s, read).expect("a proven stop releases the scope");
+    assert!(!s.has_leases(), "and the lease is gone with it");
+    assert_eq!(
+        prepare_reconcile(&s, id).err().as_deref(),
+        Some("no reconcile request"),
+        "the requirement is cleared, not merely satisfied"
+    );
+}
+
+#[cfg(unix)]
+/// A process group with nothing left in it: spawn a child in its own group,
+/// wait for it, and reuse the id. `kill(-pgid, 0)` then answers ESRCH.
+fn dead_group() -> u32 {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new("true");
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("spawn /usr/bin/true");
+    let pid = child.id();
+    child.wait().expect("reap it");
+    pid
 }

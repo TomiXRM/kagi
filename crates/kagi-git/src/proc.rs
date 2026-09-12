@@ -15,6 +15,10 @@
 //! The shapes here answer those: [`ProcStop`] carries no exit code, [`ProcIo`]
 //! says whether the capture is complete, and neither can pass for success.
 
+mod group;
+pub use group::group_alive;
+
+use group::{group_settled, kill_group};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -119,6 +123,20 @@ pub struct ProcRun {
     /// `Ok(())` — `stdout`/`stderr` are everything the child wrote, and all the
     /// input reached it. `Err(_)` — see [`ProcIo`]; the buffers are a prefix.
     pub io: Result<(), ProcIo>,
+    /// The child's process id. On unix it is also the id of the group holding
+    /// everything the child started, because the child is spawned as its own
+    /// group leader — the handle a later read proves stop against when the kill
+    /// could not (ADR-0175). Elsewhere it is just the pid, and
+    /// [`group_alive`] has nothing to ask.
+    pub pid: u32,
+    /// Is the child's whole process **group** confirmed empty?
+    ///
+    /// The only thing that may become `Termination::Stopped`. Reaping the
+    /// direct child is not it: a transport helper or hook it started can still
+    /// be writing, and `ProcIo::Unfinished` is that case caught in the act —
+    /// something in the group is still holding the pipes (#702 re-review).
+    /// Always `false` where there is no probe: no evidence is not "gone".
+    pub group_stopped: bool,
 }
 
 impl ProcRun {
@@ -190,7 +208,17 @@ pub fn run_child(
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
 
+    // Its own process group, so the stop proof can be about everything the
+    // command started — a transport helper, a hook, an ssh — and not just the
+    // one process we hold a handle to (#702 re-review).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn()?;
+    // The child is its own group leader, so the group id is its pid.
+    let pid = child.id();
 
     // Each collector reports through the channel when it is done, so the wait
     // for them can be bounded (a `JoinHandle` cannot). The handles are kept only
@@ -215,8 +243,16 @@ pub fn run_child(
     // arrives.
     drop(tx);
 
+    // A deadline that expires stops the whole group, not just the process we
+    // hold: whatever the command started is part of the same write, and leaving
+    // it running is what makes the termination unprovable. `wait_or_kill` does
+    // it, because only it still holds the child unreaped at that moment — see
+    // the ordering note there.
     let status = wait_or_kill(&mut child, timeout);
     let (stdout, stderr, io) = collect(&rx, threads.len());
+    // Asked *after* the collectors settle, so a descendant still holding the
+    // pipes is still counted. This is the whole stop proof.
+    let group_stopped = !group_settled(pid, status.is_err());
 
     // Hand off whenever something is still ours to own: an unreaped child, or a
     // read that has not ended. On the ordinary path the collectors are done, so
@@ -242,6 +278,8 @@ pub fn run_child(
         stderr,
         status: status.map(|s| s.code().unwrap_or(-1)),
         io,
+        pid,
+        group_stopped,
     })
 }
 
@@ -311,11 +349,17 @@ fn collect(
 /// Wait up to `timeout` for `child` to exit, polling `try_wait`.
 ///
 /// `Ok(status)` means it really exited. On timeout (or a `try_wait` error) the
-/// child is **killed and reaped** and the [`ProcStop`] says so, so a hung
-/// process never leaks (issue #294) and no caller can mistake the cut-short
-/// wait for an exit (issue #507). The reap is bounded — after a kill the child
-/// exits promptly — so this never blocks indefinitely; if the bound is hit,
-/// `reaped` is false.
+/// child's **process group** is killed and the child is reaped, and the
+/// [`ProcStop`] says so, so a hung process never leaks (issue #294) and no
+/// caller can mistake the cut-short wait for an exit (issue #507). The reap is
+/// bounded — after a kill the child exits promptly — so this never blocks
+/// indefinitely; if the bound is hit, `reaped` is false.
+///
+/// **The group is signalled first, while the leader is still unreaped.** An
+/// unreaped leader pins the pgid; the moment the group empties, that number is
+/// free for the OS to hand to someone else, and a `kill(-pgid, …)` sent
+/// afterwards would land on a stranger's process group (#702 review 5). A pgid
+/// held only as a number, after the reap, is not a handle to anything.
 pub(crate) fn wait_or_kill(
     child: &mut std::process::Child,
     timeout: Duration,
@@ -328,9 +372,13 @@ pub(crate) fn wait_or_kill(
             Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            // Timed out, or try_wait failed: kill and reap.
+            // Timed out, or try_wait failed: kill the group, then reap.
             other => {
                 let error = other.err().map(|e| e.to_string());
+                // Group first — the still-unreaped leader is what makes this
+                // pgid ours to signal. `run_child` spawns every child as its
+                // own group leader, so the child's pid *is* the group id.
+                kill_group(child.id());
                 let _ = child.kill();
                 // Bounded reap: the child exits promptly once killed.
                 let mut reaped = false;
@@ -368,6 +416,68 @@ mod tests {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+
+    /// The group is stopped **before** the leader is reaped, and the ordering is
+    /// the safety property, not a detail (#702 review 5).
+    ///
+    /// An unreaped leader pins the pgid. Reap it first and, if nothing else is
+    /// left in the group, that number goes back to the OS — a `kill(-pgid, …)`
+    /// sent afterwards can land on a stranger's process group. So by the time
+    /// `wait_or_kill` says "reaped", the group it was given must already be
+    /// gone: here the leader's own child outlives a plain `child.kill()`, and
+    /// only a group signal sent while the leader still held the pgid can have
+    /// removed it.
+    #[cfg(unix)]
+    #[test]
+    fn wait_or_kill_stops_the_group_before_it_reaps_the_leader() {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 3071 & wait"])
+            .process_group(0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = cmd.spawn().expect("spawn sh");
+        let pgid = child.id();
+
+        let stop = wait_or_kill(&mut child, Duration::from_millis(200))
+            .expect_err("the shell waits, so the deadline must expire");
+        assert!(stop.reaped(), "the leader is reaped: {stop:?}");
+
+        // The sleeper is reparented and reaped by init; give that a bounded
+        // moment. Nothing here waits on a *living* process — under the
+        // reap-then-signal ordering the sleeper survives its full 3071s and
+        // this loop runs out.
+        for _ in 0..200 {
+            if !group_alive(pgid) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        pkill("sleep 3071");
+        panic!("the group outlived the reap: the pgid was signalled too late, or not at all");
+    }
+
+    /// Every child leads its own process group, so the stop proof can be about
+    /// everything the command started rather than the one process we hold a
+    /// handle to (#702 re-review). Without this, `group_alive` and a plain pid
+    /// probe are the same check and a surviving transport helper reads as gone.
+    #[cfg(unix)]
+    #[test]
+    fn a_child_leads_its_own_process_group() {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg("ps -o pgid= -p $$");
+        let run = run_child(&mut cmd, Duration::from_secs(30), None).expect("spawn sh");
+        assert_eq!(run.status, Ok(0), "stderr: {}", run.stderr_lossy());
+        let pgid: u32 = run
+            .stdout_lossy()
+            .trim()
+            .parse()
+            .unwrap_or_else(|e| panic!("pgid from {:?}: {e}", run.stdout_lossy()));
+        assert_eq!(
+            pgid, run.pid,
+            "the child must be its own group leader, so its pid is the group id"
+        );
     }
 
     #[test]
@@ -475,9 +585,11 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes() {
-        // The shell stays alive (`wait`), so the deadline kills *it* — but the
-        // grandchild inherited stdout/stderr, so the reads cannot reach EOF.
-        // Joining them would hang here forever; the caller must still be freed.
+        // The shell stays alive (`wait`) and its grandchild inherited
+        // stdout/stderr, so joining the readers would hang here forever. The
+        // deadline kills the whole *group* (#702 re-review), which is what
+        // frees both the caller and the pipes — and what makes the stop
+        // provable: nothing this command started is left running.
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "sleep 3072 & wait"]);
 
@@ -495,10 +607,10 @@ mod tests {
             "expected a Deadline stop, got {:?}",
             run.status
         );
-        assert_eq!(
-            run.io,
-            Err(ProcIo::Unfinished),
-            "an unfinished capture must say so"
+        assert!(
+            run.group_stopped,
+            "killing the group is the stop proof: nothing the command started \
+             may be left running"
         );
     }
 

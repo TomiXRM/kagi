@@ -50,8 +50,7 @@ pub(crate) fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchO
     // (which closes/re-mines HEAD-versioned overlays and re-walks the graph).
     let before = remote_ref_oids(repo);
 
-    let out =
-        run_git(repo_path, &args).map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+    let out = run_git(repo_path, &args).map_err(|e| crate::cli::context("fetch failed", e))?;
 
     if out.status != 0 {
         return Err(GitError::Other(format!(
@@ -109,7 +108,7 @@ pub(crate) fn fetch_remote_branch(
     check_operand("branch", branch)?;
 
     let out = run_git(repo_path, &["fetch", "--prune", "--", remote, branch])
-        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+        .map_err(|e| crate::cli::context("fetch failed", e))?;
 
     if out.status != 0 {
         return Err(GitError::Other(format!(

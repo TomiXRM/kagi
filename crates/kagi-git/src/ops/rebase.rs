@@ -129,7 +129,7 @@ pub(crate) fn execute_rebase_current_onto(
     check_operand("upstream", onto)?;
 
     let out = run_git(repo_path, &["rebase", "--", onto])
-        .map_err(|error| GitError::Other(format!("rebase failed to start: {error}")))?;
+        .map_err(|error| crate::cli::context("rebase failed to start", error))?;
 
     if !matches!(repo.state(), git2::RepositoryState::Clean) {
         return Ok(RebaseOutcome::Conflicted);

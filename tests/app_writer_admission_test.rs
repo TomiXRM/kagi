@@ -291,7 +291,7 @@ fn fetch_unknown_retains_but_known_failure_releases() {
         let mut sessions = Sessions::new();
         let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
         let error = if unknown {
-            GitError::TerminationUnknown("timeout".into())
+            GitError::TerminationUnknown(kagi_git::Termination::abandoned("timeout"))
         } else {
             GitError::Other("offline".into())
         };
@@ -310,7 +310,7 @@ fn conflict_c0_termination_unknown_records_unknown_and_retains_owner_lease() {
     let mut sessions = Sessions::new();
     let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
     let result = Err::<(), _>(GitError::TerminationUnknown(
-        "git rebase --continue timed out".into(),
+        kagi_git::Termination::abandoned("git rebase --continue timed out"),
     ));
 
     let outcome = kagi::app::settle_conflict_write(
@@ -452,4 +452,144 @@ fn detach_never_releases_a_reservation_or_admits_the_reopened_tab() {
         assert_eq!(std::fs::read(f.linked.join("file")).unwrap(), original);
         drop(job);
     }
+}
+
+// ── #702 review 6: a guarded write's unproven termination has an exit ────────
+
+/// A process group with nothing left in it: spawn a child in its own group,
+/// wait for it, reuse the id. `kill(-pgid, 0)` then answers ESRCH.
+#[cfg(unix)]
+fn dead_group() -> u32 {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = std::process::Command::new("true");
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("spawn /usr/bin/true");
+    let pid = child.id();
+    child.wait().expect("reap it");
+    pid
+}
+
+/// The direct Fetch paths never reach `Sessions::apply`: they hold a
+/// `WriteGuard` and call `complete_git`. Once `ops/fetch.rs` returned
+/// `TerminationUnknown` typed, that retained the lease with no entry, no
+/// inspect id and no exit — every later write `Busy` and host close refused
+/// until restart, which main did not do. A group proven empty releases; one
+/// that is not parks the requirement that can release it.
+#[cfg(unix)]
+#[test]
+fn a_guarded_write_that_cannot_prove_its_stop_parks_the_way_out() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut sessions = Sessions::new();
+
+    // A stop the executor proved: released, exactly as a clean result is.
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    guard
+        .for_op("fetch")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            kagi_git::Termination::stopped("git fetch timed out"),
+        )));
+    assert!(
+        !sessions.has_leases(),
+        "an empty group cannot write again: the scope is free"
+    );
+
+    // A stop it could not: the lease is held *and* the requirement is parked.
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let group = dead_group();
+    guard
+        .for_op("fetch")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            kagi_git::Termination::Unaccounted {
+                reason: "git fetch: output collection did not finish".into(),
+                group,
+            },
+        )));
+    assert!(
+        sessions.has_leases(),
+        "an unaccounted group holds the scope"
+    );
+    let parked = sessions.drain_unaccounted();
+    let [(id, op, _)] = parked.as_slice() else {
+        panic!("the retained lease must come with the entry that releases it");
+    };
+    assert_eq!(*op, "fetch");
+    assert!(sessions.needs_reconcile(*id), "and the UI can reach it");
+
+    // The group is gone, so the read proves the stop and the ack releases.
+    let read = read_reconcile(&sessions, *id).expect("a group is something a read can check");
+    assert!(read.stop_proven());
+    assert!(read.resolved());
+    acknowledge(&mut sessions, read).expect("a proven stop releases the scope");
+    assert!(
+        !sessions.has_leases(),
+        "acknowledging is the exit this path never had"
+    );
+}
+
+/// A sequencer step is not accounted for by a stopped process.
+///
+/// `git rebase --skip` that advanced past the commit before its termination
+/// went unknown leaves a repository the group probe cannot describe: releasing
+/// on "the process stopped" would let the user run the same skip again and lose
+/// that commit. So a conflict writer retains even on a proven stop, and only a
+/// read of the live sequencer state releases it (#702 review 7). Fetch keeps
+/// the group-only rule — `a_guarded_write_that_cannot_prove_its_stop_parks_the_way_out`
+/// is the other half of this pair.
+#[cfg(unix)]
+#[test]
+fn a_sequencer_step_is_not_released_by_a_stopped_process_alone() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut sessions = Sessions::new();
+
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    guard
+        .for_op("conflict-skip")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            // The executor *did* see the process go. For a fetch that would
+            // release; here it proves nothing about how far the skip got.
+            kagi_git::Termination::stopped("git rebase --skip: deadline expired"),
+        )));
+    assert!(
+        sessions.has_leases(),
+        "a proven stop is not an account of what the sequencer advanced past"
+    );
+
+    let parked = sessions.drain_unaccounted();
+    let [(id, op, _)] = parked.as_slice() else {
+        panic!("the retained lease must come with the entry that releases it");
+    };
+    assert_eq!(*op, "conflict-skip");
+
+    // The read is the live sequencer state, not a process probe.
+    let read = read_reconcile(&sessions, *id).expect("the repository can be read");
+    assert!(
+        read.observation.starts_with("sequencer="),
+        "a sequencer step is reconciled by looking at the sequencer: {}",
+        read.observation
+    );
+    assert!(read.stop_proven() && read.resolved());
+    acknowledge(&mut sessions, read).expect("an observed sequencer releases the scope");
+    assert!(!sessions.has_leases());
+
+    // And the default side of the classification: a writer nobody named is
+    // held, not released. Getting that backwards is how a sequencer added
+    // tomorrow becomes re-runnable.
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    guard
+        .for_op("some-future-writer")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            kagi_git::Termination::stopped("timed out"),
+        )));
+    assert!(
+        sessions.has_leases(),
+        "an unclassified writer settles under the strict rule"
+    );
 }

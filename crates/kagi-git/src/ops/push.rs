@@ -393,8 +393,7 @@ pub(crate) fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOu
     };
 
     // ── 5. Run git push via CLI ───────────────────────────────
-    let out =
-        run_git(repo_path, &args).map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
+    let out = run_git(repo_path, &args).map_err(|e| crate::cli::context("push failed", e))?;
 
     if out.status != 0 {
         return Err(GitError::Other(format!(
@@ -712,8 +711,7 @@ pub(crate) fn execute_push_branch(
     } else {
         vec!["push", "--", &remote_name, branch_name]
     };
-    let out =
-        run_git(repo_path, &args).map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
+    let out = run_git(repo_path, &args).map_err(|e| crate::cli::context("push failed", e))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(
             "push failed (exit {}): {}",

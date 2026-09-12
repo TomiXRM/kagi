@@ -260,7 +260,7 @@ pub(crate) fn execute_push_tag(repo_path: &Path, remote: &str, name: &str) -> Re
 
     let refspec = format!("refs/tags/{}", name);
     let out = run_git(repo_path, &["push", "--", remote, &refspec])
-        .map_err(|e| GitError::Other(format!("push tag failed: {}", e)))?;
+        .map_err(|e| crate::cli::context("push tag failed", e))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(
             "push tag failed (exit {}): {}",

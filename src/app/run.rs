@@ -26,6 +26,14 @@ pub struct RunRequest {
     /// Frozen at approval — the lease scope.
     pub repo: RepoId,
     pub plan: Arc<OperationPlan>,
+    /// What this write is about to make true on a remote, frozen here at
+    /// approval (`Backend::remote_expectation`). Empty for a local-only
+    /// operation, and for a remote one whose effect cannot be named — which
+    /// leaves the reconcile read unresolved rather than guessing.
+    ///
+    /// A list: one operation can promise several refs, and a reconcile is
+    /// confirmed only when **every** one of them is.
+    pub remote: Vec<kagi_git::backend::remote_ref::RemoteExpectation>,
 }
 
 /// Admission for a plan that lives in a modal rather than the plan slot: the
@@ -33,16 +41,27 @@ pub struct RunRequest {
 /// time. The slot is re-issued so a migrated family's pending plan can never
 /// be spent across this write.
 pub fn approve_run(s: &mut Sessions, request: RunRequest) -> Result<Approved, AdmissionError> {
-    if !s.is_attached(request.owner.session) {
+    let owner = request.owner.clone();
+    approve_modal_plan(s, owner, Planned::Run(request))
+}
+
+/// The admission [`approve_run`] and [`approve_pull`](super::approve_pull)
+/// share: both families plan in their modal, so neither has a plan token.
+pub(crate) fn approve_modal_plan(
+    s: &mut Sessions,
+    owner: Attachment,
+    prepared: Planned,
+) -> Result<Approved, AdmissionError> {
+    if !s.is_attached(owner.session) {
         return Err(AdmissionError::StaleApproval);
     }
-    s.confirm_identity(&request.owner)?;
+    s.confirm_identity(&owner)?;
     s.invalidate_plan();
-    s.plan_owner = Some(request.owner.session);
+    s.plan_owner = Some(owner.session);
     s.state = PlanState::Approved;
     Ok(Approved {
         revision: s.revision,
-        prepared: Planned::Run(request),
+        prepared,
     })
 }
 

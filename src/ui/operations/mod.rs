@@ -255,9 +255,15 @@ impl KagiApp {
         let admitted = owner
             .ok_or(app::AdmissionError::StaleApproval)
             .and_then(|owner| {
-                let repo = kagi_git::Backend::open(&repo_path)
-                    .and_then(|backend| backend.write_repo_id())
+                let backend = kagi_git::Backend::open(&repo_path)
                     .map_err(|error| app::AdmissionError::Identity(error.to_string()))?;
+                let repo = backend
+                    .write_repo_id()
+                    .map_err(|error| app::AdmissionError::Identity(error.to_string()))?;
+                // Frozen here, before the write: what the remote should say
+                // afterwards. A reconcile compares against this, never against
+                // whatever the repository holds later (#702 re-review).
+                let remote = backend.remote_expectation(op_name, &plan);
                 app::approve_run(
                     &mut self.app_sessions,
                     app::RunRequest {
@@ -266,6 +272,7 @@ impl KagiApp {
                         path: repo_path.clone(),
                         repo,
                         plan: plan.clone(),
+                        remote,
                     },
                 )
             })
@@ -309,14 +316,18 @@ impl KagiApp {
                     .partition(|d| matches!(d, Delivery::Completed { .. }));
                 let mut failed = false;
                 for delivery in completed {
-                    let Delivery::Completed { report, .. } = delivery else {
+                    let Delivery::Completed { id, report, .. } = delivery else {
                         continue;
                     };
                     let FamilyEvidence::Run(report) = report.evidence else {
                         continue;
                     };
-                    // Settle first, whatever the tab is doing now (#501).
+                    // Settle first, whatever the tab is doing now (#501). A
+                    // parked reconcile requirement refuses every later write in
+                    // this scope, so the way into it is settlement too — it must
+                    // survive the tab guard below (#702 re-review).
                     app.notice_recording_failure(op_name, &report.recording, &repo_path);
+                    app.notice_reconcile_required(id, op_name, &repo_path);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     if !current {

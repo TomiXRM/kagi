@@ -151,14 +151,85 @@ pub(crate) struct InFlight {
     pub attachment: OwnerAttachment,
     pub stamp: OwnerStamp,
 }
+/// What a writer's stop has to account for.
+///
+/// An **allowlist** of the lax kind, for the same reason `writes_only_locally`
+/// is one: a writer nobody classified settles under the strict rule. Getting it
+/// the other way round lets a sequencer step be re-run (#702 review 7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuardKind {
+    /// The only mutation is local and idempotent — a fetch's remote-tracking
+    /// refs, an editor save, a savepoint. A stopped process group accounts for
+    /// all of it, so a proven stop releases.
+    GroupOnly,
+    /// A sequencer step: rebase / cherry-pick / merge `--continue`, `--skip`,
+    /// `--abort`. Here "the process stopped" is *not* "the mutation is
+    /// accounted for": a `--skip` that advanced past the commit before the
+    /// termination went unknown must not be re-runnable, or the user loses that
+    /// commit. Even a proven stop retains, until a read has seen the live
+    /// sequencer state.
+    Sequencer,
+}
+impl GuardKind {
+    fn of(op: &str) -> Self {
+        match op {
+            "fetch" | "editor-save" | "snapshot" => Self::GroupOnly,
+            _ => Self::Sequencer,
+        }
+    }
+}
+
+/// What a reconcile read has to look at.
+#[derive(Clone, Debug)]
+pub(crate) enum ReconcileTarget {
+    /// A write that went through the plan pipeline: its plan says what to read.
+    Planned(Box<Planned>),
+    /// A write admitted through [`Sessions::write_lease`]. It has no plan; the
+    /// kind says whether the group probe is the whole read.
+    Guarded { kind: GuardKind, path: PathBuf },
+}
+
 pub(crate) struct ReconcileEntry {
-    pub plan: Planned,
+    pub target: ReconcileTarget,
+    /// The scope this entry closes. Kept directly: a planless entry has no
+    /// `Planned` to derive it from, and the two callers that need it should not
+    /// re-derive what admission already decided.
+    pub scope: WriteScope,
     pub stopped: bool,
     pub remote: Option<crate::remote::stash::RemoteStashEvidence>,
+    /// The auto-stash a pull created and did not restore, as the backend saw
+    /// it. `oid` is `None` exactly when the entry could not be identified
+    /// (#623), which is why the evidence — not just an OID — travels here.
+    pub pull: Option<kagi_git::backend::stash::StashEvidence>,
+    /// The child of an unproven termination. While it is alive the writer is
+    /// not proven stopped, so the scope stays reserved (ADR-0175); once it is
+    /// gone the reconcile read says so and the entry can be acknowledged.
+    pub child: Option<u32>,
 }
+/// A write that kept its lease because its process group is unaccounted for.
+///
+/// Sent by [`WriteGuard::complete_git`], which runs wherever the writer does
+/// and has no `Sessions` in hand; drained into `reconcile` on the next UI turn.
+/// The point is that the retained lease never exists without the entry that can
+/// release it (#702 review 6).
+pub(crate) struct UnaccountedWrite {
+    pub id: OperationId,
+    pub scope: WriteScope,
+    pub op: &'static str,
+    pub path: PathBuf,
+    pub kind: GuardKind,
+    /// Did the executor prove the writer stopped? A sequencer parks even then,
+    /// because the stop is not the account.
+    pub stopped: bool,
+    /// The process group to probe, when the stop was not proven.
+    pub group: Option<u32>,
+}
+
 pub struct Sessions {
     pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
     abandoned_rx: std::sync::mpsc::Receiver<Completion>,
+    unaccounted_tx: std::sync::mpsc::Sender<UnaccountedWrite>,
+    unaccounted_rx: std::sync::mpsc::Receiver<UnaccountedWrite>,
     pub(crate) plan_errors: Vec<PlanErrorJob>,
     sessions: HashMap<SessionId, TabSession>,
     pub(crate) stash_conflicts: HashMap<SessionId, StashConflict>,
@@ -183,9 +254,12 @@ impl Default for Sessions {
 impl Sessions {
     pub fn new() -> Self {
         let (abandoned_tx, abandoned_rx) = std::sync::mpsc::channel();
+        let (unaccounted_tx, unaccounted_rx) = std::sync::mpsc::channel();
         Self {
             abandoned_tx,
             abandoned_rx,
+            unaccounted_tx,
+            unaccounted_rx,
             plan_errors: Vec::new(),
             sessions: HashMap::new(),
             stash_conflicts: HashMap::new(),
@@ -354,6 +428,32 @@ impl Sessions {
             _ => None,
         }
     }
+    /// Park the requirements that guarded writes reported since the last turn,
+    /// and hand back what the UI has to offer a way into.
+    pub fn drain_unaccounted(&mut self) -> Vec<(OperationId, &'static str, PathBuf)> {
+        let parked: Vec<_> = self.unaccounted_rx.try_iter().collect();
+        parked
+            .into_iter()
+            .map(|write| {
+                let offer = (write.id, write.op, write.path.clone());
+                self.reconcile.insert(
+                    write.id,
+                    ReconcileEntry {
+                        target: ReconcileTarget::Guarded {
+                            kind: write.kind,
+                            path: write.path,
+                        },
+                        scope: write.scope,
+                        stopped: write.stopped,
+                        remote: None,
+                        pull: None,
+                        child: write.group,
+                    },
+                );
+                offer
+            })
+            .collect()
+    }
     pub fn drain_abandoned(&mut self) -> Vec<Delivery> {
         let completions: Vec<_> = self.abandoned_rx.try_iter().collect();
         completions
@@ -383,7 +483,7 @@ impl Sessions {
         if self
             .reconcile
             .values()
-            .any(|entry| entry.plan.scope() == WriteScope::Local(repo.clone()))
+            .any(|entry| entry.scope == WriteScope::Local(repo.clone()))
         {
             return Err(AdmissionError::NeedsReconcile);
         }
@@ -393,6 +493,12 @@ impl Sessions {
             leases: self.leases.clone(),
             scope: WriteScope::Local(repo),
             id,
+            op: "write",
+            // Unnamed until `for_op`: the strict rule, so a writer that forgets
+            // to name itself is held rather than released.
+            kind: GuardKind::Sequencer,
+            path: path.to_path_buf(),
+            unaccounted: self.unaccounted_tx.clone(),
         })
     }
     pub(crate) fn reserve_lease(
@@ -423,6 +529,21 @@ impl Sessions {
         self.state = PlanState::Draft;
         self.plan_owner = None;
     }
+    /// Did settlement park a reconcile requirement for this operation?
+    ///
+    /// The UI asks so it can offer the user a way in: an unacknowledged
+    /// requirement refuses every later write in that scope, and a modal the
+    /// user dismisses is not a way back to it.
+    pub fn needs_reconcile(&self, id: OperationId) -> bool {
+        self.reconcile.contains_key(&id)
+    }
+    /// Any unacknowledged requirement, so a `NeedsReconcile` refusal can hand
+    /// the user the entry that is blocking them rather than only the word.
+    // ponytail: the first one, not "the one for this scope" — a refusal has no
+    // scope in hand, and one entry is enough to get the user into the flow.
+    pub fn blocking_reconcile(&self) -> Option<OperationId> {
+        self.reconcile.keys().copied().next()
+    }
     pub fn is_stale(&self, worktree: &WorktreeId) -> bool {
         self.stale.contains(worktree)
     }
@@ -445,8 +566,19 @@ pub struct WriteGuard {
     leases: Arc<Mutex<HashMap<WriteScope, OperationId>>>,
     scope: WriteScope,
     id: OperationId,
+    op: &'static str,
+    kind: GuardKind,
+    path: PathBuf,
+    unaccounted: std::sync::mpsc::Sender<UnaccountedWrite>,
 }
 impl WriteGuard {
+    /// Name the write. The name also decides which settle rule it is under —
+    /// see [`GuardKind`], where the classification lives.
+    pub fn for_op(mut self, op: &'static str) -> Self {
+        self.op = op;
+        self.kind = GuardKind::of(op);
+        self
+    }
     pub fn complete(self) {
         if let Ok(mut leases) = self.leases.lock() {
             if leases.get(&self.scope) == Some(&self.id) {
@@ -460,17 +592,40 @@ impl WriteGuard {
         self.complete();
         result
     }
-    /// CLI errors with unconfirmed process termination must retain the lease —
-    /// and so must a stash whose entry could not be identified (#623): the
-    /// repository did change, kagi just cannot name the entry, so the scope
-    /// stays reserved until the user reconciles.
+    /// Settle a guarded write.
+    ///
+    /// A termination kagi could not prove retains the lease — but never on its
+    /// own: it parks the reconcile requirement that can release it, so this
+    /// path cannot leave a scope closed with no way out (#702 review 6). Before
+    /// that, `TerminationUnknown` retained unconditionally and these writers —
+    /// fetch, editor-save, snapshot, conflict — never went through `apply`, so
+    /// nothing existed to acknowledge.
+    ///
+    /// A stash whose entry could not be identified (#623) also retains: the
+    /// repository did change and kagi cannot name the entry.
     pub fn complete_git<R>(self, result: &Result<R, kagi_git::GitError>) {
-        if !matches!(
-            result,
-            Err(kagi_git::GitError::TerminationUnknown(_)
-                | kagi_git::GitError::StashIdentityUnverified(_))
-        ) {
-            self.complete();
+        match result {
+            Err(kagi_git::GitError::TerminationUnknown(t)) => {
+                // A group proven empty cannot write again — release, but only
+                // where the group *is* the account. A sequencer step retains
+                // even then: what it advanced past is not something a process
+                // probe can see (#702 review 7).
+                if t.child_stopped() && self.kind == GuardKind::GroupOnly {
+                    self.complete();
+                    return;
+                }
+                let _ = self.unaccounted.send(UnaccountedWrite {
+                    id: self.id,
+                    scope: self.scope.clone(),
+                    op: self.op,
+                    path: self.path.clone(),
+                    kind: self.kind,
+                    stopped: t.child_stopped(),
+                    group: t.group(),
+                });
+            }
+            Err(kagi_git::GitError::StashIdentityUnverified(_)) => {}
+            _ => self.complete(),
         }
     }
 }
@@ -516,91 +671,4 @@ pub enum Delivery {
         stamp: OwnerStamp,
         report: Box<ExecutionReport>,
     },
-}
-
-#[derive(Clone)]
-pub struct ReconcileRead {
-    id: OperationId,
-    pub observation: String,
-    stop_proven: bool,
-}
-pub struct ReconcileJob {
-    id: OperationId,
-    plan: Planned,
-    remote: Option<crate::remote::stash::RemoteStashEvidence>,
-}
-impl ReconcileJob {
-    pub fn run(self) -> Result<ReconcileRead, String> {
-        let (observation, stop_proven) = match &self.plan {
-            Planned::Remove { plan, .. } => (
-                kagi_git::Backend::read_remove_status(plan).map_err(|e| e.to_string())?,
-                true,
-            ),
-            Planned::Stash { plan, .. } => (
-                kagi_git::Backend::read_stash_status(plan).map_err(|e| e.to_string())?,
-                true,
-            ),
-            Planned::RemoteStash { plan, .. } => {
-                let evidence = self
-                    .remote
-                    .as_ref()
-                    .ok_or("remote completion evidence is missing")?;
-                (
-                    crate::remote::stash::reconcile_remote_stash(plan, evidence, self.id.0)?,
-                    true,
-                )
-            }
-            Planned::Conflict { plan, .. } => (
-                kagi_git::Backend::open(plan.repo())
-                    .and_then(|backend| backend.conflict_snapshot())
-                    .map(|snapshot| format!("conflict={snapshot:?}"))
-                    .map_err(|e| e.to_string())?,
-                true,
-            ),
-            Planned::Run(request) => (
-                kagi_git::Backend::open(&request.path)
-                    .and_then(|mut backend| backend.snapshot(1))
-                    .map(|snap| {
-                        format!(
-                            "head={} dirty={}",
-                            snap.head.display(),
-                            snap.status.is_dirty()
-                        )
-                    })
-                    .map_err(|e| e.to_string())?,
-                true,
-            ),
-        };
-        Ok(ReconcileRead {
-            id: self.id,
-            observation,
-            stop_proven,
-        })
-    }
-}
-pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileJob, String> {
-    let entry = sessions.reconcile.get(&id).ok_or("no reconcile request")?;
-    if !entry.stopped && entry.remote.is_none() {
-        return Err("execution termination is unconfirmed".into());
-    }
-    Ok(ReconcileJob {
-        id,
-        plan: entry.plan.clone(),
-        remote: entry.remote.clone(),
-    })
-}
-pub fn read_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileRead, String> {
-    prepare_reconcile(sessions, id)?.run()
-}
-pub fn acknowledge(sessions: &mut Sessions, read: ReconcileRead) -> Result<(), AdmissionError> {
-    let Some(entry) = sessions.reconcile.get(&read.id) else {
-        return Err(AdmissionError::NeedsReconcile);
-    };
-    if !entry.stopped && !read.stop_proven {
-        return Err(AdmissionError::NeedsReconcile);
-    }
-    let scope = entry.plan.scope();
-    sessions.reconcile.remove(&read.id);
-    sessions.release_lease(&scope, read.id);
-    Ok(())
 }

@@ -152,7 +152,7 @@ pub(crate) fn execute_delete_remote_branch(
 
     // `--delete` stays *before* `--`: it is an option, not an operand.
     let out = run_git(repo_path, &["push", "--delete", "--", remote, branch])
-        .map_err(|e| GitError::Other(format!("push --delete failed: {}", e)))?;
+        .map_err(|e| crate::cli::context("push --delete failed", e))?;
 
     if out.status != 0 {
         return Err(GitError::Other(format!(

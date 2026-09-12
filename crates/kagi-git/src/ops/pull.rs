@@ -340,7 +340,7 @@ pub(crate) fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOu
     // ── 2. git fetch <remote> via CLI ─────────────────────────
     check_operand("remote", &remote_name)?;
     let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", &remote_name])
-        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+        .map_err(|e| crate::cli::context("fetch failed", e))?;
 
     if fetch_out.status != 0 {
         return Err(GitError::Other(format!(
@@ -655,7 +655,7 @@ pub(crate) fn execute_pull_branch_ff(
 
     check_operand("remote", &remote_name)?;
     let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", &remote_name])
-        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+        .map_err(|e| crate::cli::context("fetch failed", e))?;
     if fetch_out.status != 0 {
         return Err(GitError::Other(format!(
             "fetch failed (exit {}): {}",

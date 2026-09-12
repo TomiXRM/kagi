@@ -989,6 +989,38 @@ impl FakeGh {
         std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
         restore
     }
+
+    /// A `gh` that answers *per repository*, logging every argv to `log`.
+    ///
+    /// [`BASE_REPO`] — the one the plan froze — reports the PR merged and its
+    /// head branch present or gone as `branch_present` says. **Any other**
+    /// repository, and any question that names none, gets the false-confirm
+    /// shape: merged, branch 404. So a read that is not pinned to the frozen
+    /// identity resolves, and a pinned one cannot (#701 review 4).
+    fn serving(bin: &Path, log: &Path, branch_present: bool) -> Self {
+        let sha = if branch_present {
+            r#"echo '{"object":{"sha":"1111111111111111111111111111111111111111"}}'"#
+        } else {
+            "echo 'gh: Not Found (HTTP 404)' >&2; exit 1"
+        };
+        Self::answering(
+            bin,
+            &format!(
+                r#"echo "$*" >> {log}
+case "$*" in
+  *"-R {BASE_REPO}"*)                 echo '{{"mergedAt":"2026-09-07T00:00:00Z"}}' ;;
+  *"repos/acme/widgets/git/ref/"*)    if echo "$*" | grep -q -- '--hostname ghe.example'; then
+                                        {sha}
+                                      else
+                                        echo 'gh: Not Found (HTTP 404)' >&2; exit 1
+                                      fi ;;
+  "pr view"*)                         echo '{{"mergedAt":"2026-09-07T00:00:00Z"}}' ;;
+  *)                                  echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+esac"#,
+                log = log.display(),
+            ),
+        )
+    }
 }
 impl Drop for FakeGh {
     fn drop(&mut self) {
@@ -1010,6 +1042,8 @@ const PR_JSON_T: &str = r#"[{"number":501,"title":"reconcile","headRefName":"fea
 
 /// The base repository the fixture's `url` names, host included.
 const BASE_URL: &str = "https://ghe.example/acme/widgets";
+/// The same repository as `<host>/<owner>/<repo>` — what the plan freezes.
+const BASE_REPO: &str = "ghe.example/acme/widgets";
 /// Same `acme/widgets`, different host: the remote that must never answer.
 const DECOY_URL: &str = "https://github.com/acme/widgets";
 
@@ -1021,35 +1055,6 @@ fn one_pr(fork: bool) -> kagi_domain::github::PullRequest {
     kagi_git::github::parse_pr_list(&pr_json(fork))
         .unwrap()
         .remove(0)
-}
-
-/// Two bare repositories reachable under two *hosted* URLs that share
-/// `acme/widgets` and differ only in host — the shape that made a host-less
-/// identity pick the wrong remote (#701 final review 3).
-///
-/// `url.<path>.insteadOf` is how a hosted URL is made to answer locally: the
-/// remote keeps the URL kagi reads for identity, and Git rewrites it for
-/// transport. Returns the temp root (keep it alive) and the two paths, in the
-/// same order as `[BASE_URL, DECOY_URL]`.
-fn two_hosts_one_repo(work: &Path) -> (TempDir, PathBuf, PathBuf) {
-    let root = TempDir::new().unwrap();
-    let mut paths = Vec::new();
-    for (name, url) in [("base", BASE_URL), ("decoy", DECOY_URL)] {
-        let path = root.path().join(name);
-        std::fs::create_dir_all(&path).unwrap();
-        git(&path, &["init", "--bare", "."]);
-        git(
-            work,
-            &[
-                "config",
-                &format!("url.{}.insteadOf", path.to_str().unwrap()),
-                url,
-            ],
-        );
-        paths.push(path);
-    }
-    let decoy = paths.pop().unwrap();
-    (root, paths.pop().unwrap(), decoy)
 }
 
 /// #701: a pr-merge whose server state could not be re-read settles `Unknown`
@@ -1081,6 +1086,7 @@ fn pr_merge_unknown_resolves_only_on_a_merged_re_read() {
         remote,
         vec![
             kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
+                base_repo: BASE_REPO.to_string(),
                 number: 501,
                 expect: kagi_git::backend::remote_ref::PrExpect::Merged,
             }
@@ -1186,15 +1192,19 @@ fn pr_merge_unknown_resolves_only_on_a_merged_re_read() {
     assert!(sessions.reconcile_ids().is_empty());
 }
 
-/// #701 final review: `gh pr merge --delete-branch` promises *two* things, and
-/// the merge alone does not confirm it. If the re-read only asked GitHub
-/// whether the PR is merged, an Unknown would resolve — and acknowledge would
-/// clear the requirement — while the head branch is still on the remote and the
-/// same merge is still re-dispatchable from the PR list. So the plan freezes the
-/// branch too, and `observe_remote_run`'s all-of rule keeps the entry open until
-/// the branch is provably gone.
+/// #701 final review 4: both halves of the merge promise are read from the
+/// repository the plan **named**, not from whatever a remote name resolves to
+/// at reconcile time.
+///
+/// A remote name is not an address. After the promise is frozen, an external
+/// `remote.<name>.url` change or a new `url.*.insteadOf` rewrite can point it
+/// at a repository where the head ref never existed — and `Absent` succeeds
+/// without observing the base repository at all. So this test moves the remote
+/// under the frozen promise and still requires the frozen identity to be what
+/// GitHub is asked about; a decoy repository answers with exactly the
+/// false-confirm shape (merged, branch 404) so an unpinned read resolves.
 #[test]
-fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
+fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -1202,26 +1212,11 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
     let fixture = Fixture::new();
     let dir = &fixture.path;
     let bin = dir.join("fake-bin");
-
-    // Two remotes sharing `acme/widgets`, on two hosts. `origin` is *not* the
-    // PR's base repository — it is the decoy, and it is enumerated first — and
-    // it has no `feat/x` at all, so picking it would read "absent" for a ref
-    // that was never there and call the deletion done.
-    let (_remote_root, base, decoy) = two_hosts_one_repo(dir);
-    git(dir, &["remote", "add", "origin", DECOY_URL]);
+    let log = dir.join("gh-argv");
     git(dir, &["remote", "add", "upstream", BASE_URL]);
-    git(dir, &["branch", "feat/x"]);
-    git(dir, &["push", "-q", "upstream", "feat/x"]);
-    assert!(
-        git(&decoy, &["for-each-ref", "refs/heads/feat/x"])
-            .trim()
-            .is_empty(),
-        "the decoy never has the branch: absence there proves nothing"
-    );
 
-    let pr = one_pr(false);
     let plan = kagi_git::github::plan_pr_merge(
-        &pr,
+        &one_pr(false),
         kagi_git::github::MergeMethod::Squash,
         true,
         "branch 'main'".into(),
@@ -1233,35 +1228,18 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
         remote,
         vec![
             kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
+                base_repo: BASE_REPO.to_string(),
                 number: 501,
                 expect: kagi_git::backend::remote_ref::PrExpect::Merged,
             },
-            kagi_git::backend::remote_ref::RemoteExpectation::Ref {
-                remote: "upstream".to_string(),
-                refname: "refs/heads/feat/x".to_string(),
+            kagi_git::backend::remote_ref::RemoteExpectation::GithubRef {
+                base_repo: BASE_REPO.to_string(),
+                branch: "feat/x".to_string(),
                 expect: kagi_git::backend::remote_ref::RemoteExpect::Absent,
             },
         ],
-        "--delete-branch is half the promise, on the remote that *is* the base repository"
+        "both halves carry the repository, and neither carries a remote name"
     );
-    // Neither "no remote is the base repository" nor "two of them are" can be
-    // observed, so both freeze nothing at all — and an empty expectation never
-    // confirms, rather than confirming on the merge alone.
-    let frozen_is_empty = || {
-        Backend::open(dir)
-            .unwrap()
-            .remote_expectation("pr-merge", &plan)
-            .is_empty()
-    };
-    git(dir, &["remote", "set-url", "upstream", "/nowhere/else"]);
-    assert!(frozen_is_empty(), "no remote is the base repository");
-    git(dir, &["remote", "set-url", "upstream", BASE_URL]);
-    git(dir, &["remote", "set-url", "origin", BASE_URL]);
-    assert!(
-        frozen_is_empty(),
-        "two remotes are, and neither is 'the' one"
-    );
-    git(dir, &["remote", "set-url", "origin", DECOY_URL]);
     drop(backend);
 
     let mut sessions = kagi::app::Sessions::new();
@@ -1313,29 +1291,53 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
     sessions.apply(job.run());
     assert_eq!(sessions.reconcile_ids(), vec![id]);
 
-    // Merged — but the branch this merge also promised to delete is still
-    // there. Half a promise is not the operation the user approved.
+    // The promise is frozen. Now move everything a remote name could be
+    // resolved through — the configured URL, and an `insteadOf` rewrite of the
+    // frozen URL itself. Neither may reach the read.
+    git(dir, &["remote", "set-url", "upstream", DECOY_URL]);
+    git(
+        dir,
+        &["config", &format!("url.{DECOY_URL}.insteadOf"), BASE_URL],
+    );
+
+    // Merged in the base repository, but its head branch is still there.
     {
-        let _gh = FakeGh::answering(&bin, r#"echo '{"mergedAt":"2026-09-07T00:00:00Z"}'"#);
+        let _gh = FakeGh::serving(&bin, &log, true);
         let read = kagi::app::read_reconcile(&sessions, id).unwrap();
         assert!(
             !read.resolved(),
-            "the head branch is still on the remote: {}",
+            "the head branch is still in the base repository: {}",
             read.observation
         );
         assert!(kagi::app::acknowledge(&mut sessions, read).is_err());
+    }
+    // Every question went to the frozen repository. Without this a read that
+    // asked the decoy would have been answered "merged, branch gone".
+    let asked = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        asked.contains(&format!("-R {BASE_REPO}")),
+        "the PR must be read in the frozen repository: {asked}"
+    );
+    assert!(
+        asked.contains("--hostname ghe.example repos/acme/widgets/git/ref/heads/feat/x"),
+        "and so must the branch: {asked}"
+    );
+    assert!(
+        !asked.contains("github.com"),
+        "nothing may be asked of the decoy: {asked}"
+    );
 
-        // Nor does an unreadable remote settle it (ADR-0177): "could not ask"
-        // is not "gone".
-        git(dir, &["remote", "set-url", "upstream", "/nonexistent/base"]);
+    // "Could not ask" is not "gone" (ADR-0177): a 500 leaves it unresolved.
+    {
+        let _gh = FakeGh::answering(&bin, "echo 'gh: HTTP 500' >&2; exit 1");
         assert!(
             kagi::app::read_reconcile(&sessions, id).is_err(),
-            "a remote that cannot be read confirms nothing"
+            "a repository that cannot be read confirms nothing"
         );
-        git(dir, &["remote", "set-url", "upstream", BASE_URL]);
-
-        // Both halves kept: only now can the requirement be closed.
-        git(&base, &["update-ref", "-d", "refs/heads/feat/x"]);
+    }
+    // Both halves kept, in the repository that was promised.
+    {
+        let _gh = FakeGh::serving(&bin, &log, false);
         let read = kagi::app::read_reconcile(&sessions, id).unwrap();
         assert!(
             read.resolved(),
@@ -1362,17 +1364,9 @@ fn pr_merge_from_a_fork_refuses_to_promise_a_branch_deletion() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fixture = Fixture::new();
     let dir = &fixture.path;
-    // The base repository, with no `feat/x` — exactly the shape that makes an
-    // `Absent` expectation confirm without observing anything.
-    let (_remote_root, base, _decoy) = two_hosts_one_repo(dir);
-    git(dir, &["remote", "add", "upstream", BASE_URL]);
-    assert!(
-        git(&base, &["for-each-ref", "refs/heads/feat/x"])
-            .trim()
-            .is_empty(),
-        "the fork's head branch is not in the base repository"
-    );
-
+    // A fork's head branch is in the fork, so `heads/<head>` in the base
+    // repository is 404 from the start — the shape that makes an `Absent`
+    // expectation confirm without observing anything.
     let plan = kagi_git::github::plan_pr_merge(
         &one_pr(true),
         kagi_git::github::MergeMethod::Squash,
@@ -1413,6 +1407,7 @@ fn pr_merge_from_a_fork_refuses_to_promise_a_branch_deletion() {
             .remote_expectation("pr-merge", &plan),
         vec![
             kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
+                base_repo: BASE_REPO.to_string(),
                 number: 501,
                 expect: kagi_git::backend::remote_ref::PrExpect::Merged,
             }

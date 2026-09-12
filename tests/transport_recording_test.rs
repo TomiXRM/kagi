@@ -24,7 +24,7 @@ const PR_JSON: &str = r#"[{"number":501,"title":"transport recording",
   "headRefName":"feat/x","headRefOid":"1111111111111111111111111111111111111111",
   "baseRefName":"main","isDraft":false,"reviewDecision":"APPROVED",
   "mergeable":"MERGEABLE","statusCheckRollup":[],
-  "url":"https://example.invalid/pull/501","author":{"login":"a"},
+  "url":"https://example.invalid/acme/widgets/pull/501","author":{"login":"a"},
   "reviewRequests":[],"body":""}]"#;
 
 struct Environment {
@@ -68,9 +68,14 @@ fn fake_gh(bin: &Path, body: &str) {
 }
 
 /// `gh pr <subcommand> …` — dispatch on `$2` so one script answers both the
-/// merge and the state re-read the boundary does after a non-zero exit.
+/// merge and the state re-read the boundary does after a non-zero exit. The
+/// `--json` field is matched anywhere in the argv, not at a fixed position:
+/// both commands also carry `-R <host/owner/repo>` (#701 review 4).
 fn gh_script(merge: &str, view: &str) -> String {
-    format!("#!/bin/sh\ncase \"$2\" in\nmerge) {merge} ;;\nview) test \"$5\" = mergedAt || exit 2; {view} ;;\nesac\n")
+    format!(
+        "#!/bin/sh\ncase \"$2\" in\nmerge) {merge} ;;\n\
+         view) case \"$*\" in *mergedAt*) {view} ;; *) exit 2 ;; esac ;;\nesac\n"
+    )
 }
 
 const MERGE_OK: &str = "echo '✓ Merged pull request #501'";

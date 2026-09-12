@@ -418,188 +418,6 @@ pub fn plan_pr_merge(
     }
 }
 
-/// Build the `gh pr merge` argument vector. Pure and unit-tested so the
-/// **safety invariant** — `--match-head-commit <SHA>` is *always* present — is
-/// checked without spawning `gh`. That flag makes GitHub refuse the merge if
-/// the head branch moved after the plan was shown (PR-side force-with-lease,
-/// #347): the same principle as force-with-lease, applied to the merge button.
-pub fn merge_args(
-    number: u64,
-    method: MergeMethod,
-    delete_branch: bool,
-    head_sha: &str,
-) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "pr".into(),
-        "merge".into(),
-        number.to_string(),
-        method.flag().into(),
-        // ALWAYS present — never gate this behind a flag or a branch.
-        "--match-head-commit".into(),
-        head_sha.to_string(),
-    ];
-    if delete_branch {
-        args.push("--delete-branch".into());
-    }
-    args
-}
-
-/// Merge a PR through `gh pr merge` (execute step — the plan/confirm live in
-/// the UI layer, per the write-op invariant). `delete_branch` maps to
-/// `--delete-branch`; nothing here touches the local working tree.
-///
-/// #501: the attempt is recorded **here**, before returning across the UI's
-/// tab-owned completion guard, so a stale completion (`OpDisposition::DropStale`)
-/// cannot lose the record of a merge that really happened on GitHub. The UI's
-/// callback is presentation-only.
-///
-/// ADR-0196 Wave 3: the returned `result` **follows the receipt**, not the raw
-/// `gh` exit. A merge the server confirms is `Ok` even when `gh` exited
-/// non-zero, and a merge nobody can confirm or refute is
-/// [`GitError::TerminationUnknown`] — so `apply` keeps the write lease and
-/// parks a reconcile entry instead of releasing a merge that may be in flight.
-pub fn merge_pr(
-    workdir: &Path,
-    number: u64,
-    method: MergeMethod,
-    delete_branch: bool,
-    head_sha: &str,
-    plan: &OperationPlan,
-) -> crate::backend::recording::RunReport {
-    let result = merge_pr_transport(workdir, number, method, delete_branch, head_sha);
-    // Recovery material: the exact head the merge was bound to
-    // (`--match-head-commit`), so the merged state stays identifiable after the
-    // PR leaves the open list.
-    let merged_after = || StateSummary {
-        head: plan.predicted.head.clone(),
-        dirty: format!("{} (head {head_sha})", plan.predicted.dirty),
-    };
-    let outcome = match &result {
-        Ok(_) => crate::oplog::OpOutcome::Success {
-            after: merged_after(),
-        },
-        // A non-zero `gh` exit does not mean "not merged": the merge can land
-        // and a later step (`--delete-branch`) or the response itself fail. The
-        // server holds the truth, so re-read it before deciding (#501).
-        Err(error) => match pr_merged_on_server(workdir, number) {
-            Some(true) if delete_branch => crate::oplog::OpOutcome::Partial {
-                after: merged_after(),
-                error: format!(
-                    "merged; gh failed after the merge (branch deletion unconfirmed): {error}"
-                ),
-            },
-            Some(true) => crate::oplog::OpOutcome::Success {
-                after: merged_after(),
-            },
-            Some(false) => crate::oplog::OpOutcome::Failed {
-                error: error.to_string(),
-            },
-            None => crate::oplog::OpOutcome::Unknown {
-                after: StateSummary {
-                    head: plan.predicted.head.clone(),
-                    dirty: format!("#{number} state unconfirmed (head {head_sha})"),
-                },
-                evidence: format!(
-                    "gh failed ({error}) and `gh pr view --json merged` could not be re-read; \
-                     the merge is neither confirmed nor refuted — do not retry"
-                ),
-            },
-        },
-    };
-    let repo = workdir.display().to_string();
-    // The receipt decides. `detail` keeps `gh`'s own words for the UI.
-    let detail = match &result {
-        Ok(out) => out.clone(),
-        Err(error) => error.to_string(),
-    };
-    let result = match &outcome {
-        crate::oplog::OpOutcome::Success { .. } => Ok(crate::OperationOutcome::PrMerge {
-            number,
-            detail,
-            confirmed: true,
-        }),
-        crate::oplog::OpOutcome::Partial { error, .. } => Ok(crate::OperationOutcome::PrMerge {
-            number,
-            detail: error.clone(),
-            confirmed: false,
-        }),
-        // Both `gh` invocations exited — what is unknown is the *repository*
-        // state, not the child. `Stopped` says so, so the lease is released at
-        // settlement and the reconcile entry can be read and acknowledged. The
-        // other two states would be lies here: nothing is left to probe
-        // (`Unaccounted`) and kagi did not lose its executor (`Abandoned`).
-        crate::oplog::OpOutcome::Unknown { evidence, .. } => Err(GitError::TerminationUnknown(
-            crate::Termination::stopped(evidence.clone()),
-        )),
-        _ => Err(result.err().unwrap_or(GitError::Other(detail))),
-    };
-    let entry =
-        crate::oplog::OpLogEntry::new("pr-merge", repo.clone(), plan.current.clone(), outcome)
-            .with_worktree(Some(repo));
-    crate::backend::recording::RunReport {
-        result,
-        recording: crate::backend::recording::finalize(entry),
-        stash: None,
-    }
-}
-
-/// Did GitHub actually merge the PR? `None` means the question could not be
-/// answered (gh missing, offline, auth gone) — the honest outcome is then
-/// `Unknown`, never an assumed failure. Server state is authoritative; the
-/// exit status of the merge command is not.
-///
-/// `pub` because it is asked twice: once by [`merge_pr`] to decide the
-/// receipt, and again by the reconcile read that observes a
-/// [`RemoteExpectation::PullRequest`](crate::backend::remote_ref::RemoteExpectation)
-/// — the same question, so the same answer, including the `None` that must
-/// never pass for "not merged" (#701).
-pub fn pr_merged_on_server(workdir: &Path, number: u64) -> Option<bool> {
-    let out = crate::cli::gh_command()
-        .args(["pr", "view", &number.to_string(), "--json", "mergedAt"])
-        .current_dir(workdir)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let value: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).ok()?;
-    let merged_at = value.get("mergedAt")?;
-    if merged_at.is_null() {
-        Some(false)
-    } else {
-        merged_at.as_str().map(|_| true)
-    }
-}
-
-fn merge_pr_transport(
-    workdir: &Path,
-    number: u64,
-    method: MergeMethod,
-    delete_branch: bool,
-    head_sha: &str,
-) -> Result<String, GitError> {
-    let args = merge_args(number, method, delete_branch, head_sha);
-    let out = crate::cli::gh_command()
-        .args(&args)
-        .current_dir(workdir)
-        .output()
-        .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    if out.status.success() {
-        Ok(if stdout.is_empty() { stderr } else { stdout })
-    } else {
-        // gh writes the actionable reason (blocked by review, checks, …) to
-        // stderr; surface it verbatim rather than a generic failure.
-        Err(GitError::Other(if stderr.is_empty() {
-            stdout
-        } else {
-            stderr
-        }))
-    }
-}
-
 // #506 fetch contract (typed failures, classification, cache fold, the two
 // `gh pr list` calls) lives in `github_fetch`, re-exported here so the public
 // path stays `kagi_git::github::*`.
@@ -612,9 +430,10 @@ pub use crate::github_fetch::{
 // queue, enqueue/dequeue) lives in `github_merge` and is re-exported here so
 // the public path stays `kagi_git::github::*`.
 pub use crate::github_merge::{
-    dequeue_args, dequeue_pr, enqueue_args, enqueue_pr, gh_at_least, gh_version, parse_gh_version,
-    parse_merge_status, pr_merge_status, BypassCapability, MergeQueueEntryState, MergeStateStatus,
-    MissingRequirements, PrMergeStatus, QueuePosition,
+    dequeue_args, dequeue_pr, enqueue_args, enqueue_pr, gh_at_least, gh_version, merge_args,
+    merge_pr, parse_gh_version, parse_merge_status, pr_merge_status, pr_merged_on_server,
+    BypassCapability, MergeQueueEntryState, MergeStateStatus, MissingRequirements, PrMergeStatus,
+    QueuePosition,
 };
 
 #[cfg(test)]
@@ -725,12 +544,22 @@ mod tests {
     fn merge_always_matches_head_commit() {
         for method in [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase] {
             for delete in [false, true] {
-                let args = merge_args(42, method, delete, "deadbeef");
+                let args = merge_args("ghe.example/acme/widgets", 42, method, delete, "deadbeef");
                 let i = args
                     .iter()
                     .position(|a| a == "--match-head-commit")
                     .expect("--match-head-commit is always present");
                 assert_eq!(args.get(i + 1).map(String::as_str), Some("deadbeef"));
+                // And it merges in the repository the plan named, not
+                // whichever one the working directory resolves to (#701).
+                let r = args
+                    .iter()
+                    .position(|a| a == "-R")
+                    .expect("the merge is addressed to the frozen repository");
+                assert_eq!(
+                    args.get(r + 1).map(String::as_str),
+                    Some("ghe.example/acme/widgets")
+                );
             }
         }
     }

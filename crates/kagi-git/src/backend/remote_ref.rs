@@ -25,10 +25,33 @@ pub enum RemoteExpectation {
         refname: String,
         expect: RemoteExpect,
     },
-    /// One pull request, checked by asking GitHub again (`gh pr view`). Not a
-    /// ref: the merge commit may be anywhere, and the branch may be gone —
-    /// what was promised is the PR's own state (#701).
-    PullRequest { number: u64, expect: PrExpect },
+    /// One pull request in one repository, checked by asking GitHub again
+    /// (`gh pr view -R <base_repo>`). Not a ref: the merge commit may be
+    /// anywhere, and the branch may be gone — what was promised is the PR's
+    /// own state (#701).
+    PullRequest {
+        /// `<host>/<owner>/<repo>`, frozen at plan time and passed to `gh` as
+        /// `-R`. A PR number alone is not an address (#701 final review 4).
+        base_repo: String,
+        number: u64,
+        expect: PrExpect,
+    },
+    /// One branch in one GitHub repository, read through the API rather than
+    /// a local remote.
+    ///
+    /// A remote *name* is not an address: `remote.<name>.url` and
+    /// `url.<base>.insteadOf` can both move after the promise is frozen, and
+    /// asking the moved endpoint for `refs/heads/<head>` gets "absent" for a
+    /// ref that was never there — the deletion confirmed without ever being
+    /// observed (#701 final review 4). The git-native families keep [`Self::Ref`];
+    /// GitHub operations address the repository they froze.
+    GithubRef {
+        /// `<host>/<owner>/<repo>`.
+        base_repo: String,
+        /// Branch name, without `refs/heads/`.
+        branch: String,
+        expect: RemoteExpect,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,24 +179,22 @@ impl Backend {
                 delete_branch,
             })) = plan.recovery.as_ref().map(|recovery| &recovery.kind)
             {
+                // Without the repository's identity there is no address to
+                // re-read, and a PR number on its own names a different PR in
+                // every repository. Freeze *nothing*: an empty expectation
+                // never confirms (#701 final review 4).
+                if base_repo.is_empty() {
+                    return Vec::new();
+                }
                 let mut expectations = vec![RemoteExpectation::PullRequest {
+                    base_repo: base_repo.clone(),
                     number: *number,
                     expect: PrExpect::Merged,
                 }];
                 if let Some(branch) = delete_branch {
-                    // Which remote is the PR's base repository? `origin` is a
-                    // convention, not a fact, and asking the wrong remote for
-                    // `refs/heads/<head>` gets "absent" for a ref that was
-                    // never there — a deletion proved by a ref that never
-                    // existed (#701 final review 2). With no remote pointing
-                    // at the base repository, nothing here is observable, so
-                    // freeze *nothing*: an empty expectation never confirms.
-                    let Some(remote) = self.remote_for_repo(base_repo) else {
-                        return Vec::new();
-                    };
-                    expectations.push(RemoteExpectation::Ref {
-                        remote,
-                        refname: format!("refs/heads/{branch}"),
+                    expectations.push(RemoteExpectation::GithubRef {
+                        base_repo: base_repo.clone(),
+                        branch: branch.clone(),
                         expect: RemoteExpect::Absent,
                     });
                 }
@@ -182,40 +203,6 @@ impl Backend {
         }
         self.one_remote_expectation(op, plan).into_iter().collect()
     }
-
-    /// The name of the one local remote pointing at `identity`
-    /// (`<host>/<owner>/<repo>`), or `None`.
-    ///
-    /// GitHub identifies a repository; Git identifies a remote. Only the URL
-    /// joins them. An empty identity, no match, and *several* matches all
-    /// answer `None`: a promise that cannot be pinned to exactly one remote is
-    /// not a promise this can check (#701 final review 3).
-    fn remote_for_repo(&self, identity: &str) -> Option<String> {
-        if identity.is_empty() {
-            return None;
-        }
-        let remotes = self.repo.remotes().ok()?;
-        // The configured URL, not `Remote::url()`: the latter has already had
-        // `url.<base>.insteadOf` applied, which is a transport rewrite. What
-        // the user wrote down is what says which repository this remote is.
-        let config = self.repo.config().ok()?;
-        let mut found: Option<String> = None;
-        for name in remotes.iter().flatten().flatten() {
-            let matched = config
-                .get_string(&format!("remote.{name}.url"))
-                .ok()
-                .and_then(|url| repo_identity(&url))
-                .is_some_and(|id| id == identity);
-            if matched {
-                if found.is_some() {
-                    return None; // ambiguous: two remotes, one repository
-                }
-                found = Some(name.to_string());
-            }
-        }
-        found
-    }
-
     fn one_remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {
         use kagi_domain::plan_note::{
             force_lease::ForceLeaseRecovery, push::PushTitle, remote_branch::RemoteBranchRecovery,
@@ -290,6 +277,57 @@ impl Backend {
             }
             _ => None,
         }
+    }
+
+    /// The OID `base_repo` (`<host>/<owner>/<repo>`) currently has for
+    /// `refs/heads/<branch>`, `None` when GitHub answers 404, and `Err` for
+    /// every other answer — including "could not ask", which must never pass
+    /// for "gone" (ADR-0177).
+    ///
+    /// The repository is addressed directly, so no remote name, no
+    /// `remote.<name>.url` and no `url.<base>.insteadOf` sits between the
+    /// frozen promise and what is read (#701 final review 4). `workdir` is
+    /// only `gh`'s working directory, for its auth and host config.
+    pub fn read_github_ref(
+        workdir: &Path,
+        base_repo: &str,
+        branch: &str,
+    ) -> Result<Option<String>, GitError> {
+        let (host, owner_repo) = base_repo
+            .split_once('/')
+            .ok_or_else(|| GitError::Other(format!("not a repository identity: {base_repo}")))?;
+        ops::check_operand("branch", branch)?;
+        let out = crate::cli::gh_command()
+            .args([
+                "api",
+                "--hostname",
+                host,
+                &format!("repos/{owner_repo}/git/ref/heads/{branch}"),
+            ])
+            .current_dir(workdir)
+            .output()
+            .map_err(|e| GitError::Other(format!("gh: {e}")))?;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() {
+            // 404 is an answer: the branch is not there. Anything else — no
+            // `gh`, no auth, no network, a 5xx — is not.
+            return if stderr.contains("HTTP 404") {
+                Ok(None)
+            } else {
+                Err(GitError::Other(format!(
+                    "gh api {base_repo} heads/{branch}: {}",
+                    stderr.trim()
+                )))
+            };
+        }
+        let value: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout))
+            .map_err(|e| GitError::Other(format!("gh api json: {e}")))?;
+        value
+            .get("object")
+            .and_then(|o| o.get("sha"))
+            .and_then(|s| s.as_str())
+            .map(|sha| Some(sha.to_string()))
+            .ok_or_else(|| GitError::Other(format!("gh api {base_repo}: no object.sha")))
     }
 
     /// The OID a remote currently has for `refname`, or `None` when the remote

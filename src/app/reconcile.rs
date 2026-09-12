@@ -262,9 +262,13 @@ fn observe_expectation(
         // The same question `merge_pr` asked to decide the receipt, asked
         // again. `None` is "could not ask" — it confirms nothing, and it must
         // never read as "not merged" (ADR-0177).
-        RemoteExpectation::PullRequest { number, expect } => {
+        RemoteExpectation::PullRequest {
+            base_repo,
+            number,
+            expect,
+        } => {
             let PrExpect::Merged = expect;
-            let merged = kagi_git::github::pr_merged_on_server(path, *number);
+            let merged = kagi_git::github::pr_merged_on_server(path, base_repo, *number);
             let live = match merged {
                 Some(true) => "merged",
                 Some(false) => "open",
@@ -272,10 +276,29 @@ fn observe_expectation(
             };
             Ok((
                 format!(
-                    "pr #{number} expected=merged live={live} confirmed={}",
+                    "{base_repo} pr #{number} expected=merged live={live} confirmed={}",
                     merged == Some(true)
                 ),
                 merged == Some(true),
+            ))
+        }
+        // The frozen repository is the address: no remote name, so nothing
+        // between approval and this read can redirect it (#701 review 4).
+        RemoteExpectation::GithubRef {
+            base_repo,
+            branch,
+            expect,
+        } => {
+            let live = kagi_git::Backend::read_github_ref(path, base_repo, branch)
+                .map_err(|e| e.to_string())?;
+            let matched = expect.matches(live.as_deref());
+            Ok((
+                format!(
+                    "{base_repo} heads/{branch} expected={} live={} confirmed={matched}",
+                    expect.describe(),
+                    live.as_deref().unwrap_or("absent"),
+                ),
+                matched,
             ))
         }
     }

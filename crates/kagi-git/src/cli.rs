@@ -38,7 +38,21 @@ use std::time::Duration;
 
 use crate::proc::run_child;
 
-use super::GitError;
+use super::{GitError, Termination};
+
+/// Add context to a failed `run_git` without flattening what it *means*.
+///
+/// Every caller used to write `.map_err(|e| GitError::Other(format!("… : {e}")))`,
+/// which turned an unproven termination into an ordinary failure — and an
+/// ordinary failure is a stopped writer, so the caller would happily start the
+/// next mutating step (ADR-0177, #702 review P1). One helper, used by every
+/// call site, so the class of bug cannot come back one caller at a time.
+pub fn context(what: &str, error: GitError) -> GitError {
+    match error {
+        GitError::TerminationUnknown(t) => GitError::TerminationUnknown(t.in_context(what)),
+        other => GitError::Other(format!("{what}: {other}")),
+    }
+}
 
 // Timeout for git CLI operations (fetch can be slow on large repos).
 const GIT_CLI_TIMEOUT_SECS: u64 = 60;
@@ -428,16 +442,21 @@ pub fn run_git_with_options(
     // A deadline that expires is not an exit: `git push` may already have moved
     // the remote. Keep it a `TerminationUnknown` so the app records `Unknown`
     // and never auto-retries (ADR-0177).
-    let status = run
-        .status
-        .clone()
-        .map_err(|stop| GitError::TerminationUnknown(format!("git {} {}", args.join(" "), stop)))?;
+    let status = run.status.clone().map_err(|stop| {
+        // An empty group cannot write anything more; one that still has a
+        // member in it leaves that group as the handle to prove it later.
+        let reason = format!("git {} {}", args.join(" "), stop);
+        GitError::TerminationUnknown(Termination::from_run(reason, &run))
+    })?;
     // Exit 0 with a truncated capture is not a successful read: the caller
     // parses this output. Unknown, not success and not a plain failure.
     if let Err(io) = &run.io {
-        return Err(GitError::TerminationUnknown(format!(
-            "git {}: {io}",
-            args.join(" ")
+        // The child is gone but something it started still holds the pipes —
+        // a descendant of this write, still running. That is the unaccounted
+        // case, not a stopped one (#702 re-review).
+        return Err(GitError::TerminationUnknown(Termination::from_run(
+            format!("git {}: {io}", args.join(" ")),
+            &run,
         )));
     }
 

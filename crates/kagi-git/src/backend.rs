@@ -19,10 +19,11 @@ pub mod backups;
 pub mod conflict_ops;
 mod policy;
 pub mod recording;
+pub mod remote_ref;
 pub mod remove;
 mod run;
-pub use policy::ExecutionPolicy;
 pub mod stash;
+pub use policy::ExecutionPolicy;
 pub use recording::{oplog_outcome_from, recovery_handles};
 
 pub struct Backend {
@@ -840,8 +841,6 @@ impl Backend {
         self.run_recorded(op, plan).result
     }
 
-    // (see free fn `oplog_outcome_from` below for the result → OpOutcome mapping)
-
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
         staging::plan_commit(&self.repo, message)
     }
@@ -1600,43 +1599,89 @@ impl Backend {
 
     /// Branch Cleanup (ADR-0128): delete the targeted branches (remote halves
     /// first), re-verifying every tip OID. Per-branch failures are collected
-    /// in the outcome, not returned as `Err`. Records every attempt before returning.
+    /// in the outcome, not returned as `Err`. Records every attempt before
+    /// returning, and hands that receipt back on the run family's own
+    /// [`RunReport`] — so an unconfirmed delete reaches `apply`, keeps its
+    /// lease and parks a reconcile entry like every other write (ADR-0196).
     pub fn execute_delete_merged_branches(
         &self,
         plan: &OperationPlan,
         targets: &[ops::CleanupDeleteTarget],
-    ) -> Result<ops::CleanupOutcome, GitError> {
+    ) -> recording::RunReport {
+        self.execute_delete_merged_branches_with(plan, targets, crate::cli::run_git)
+    }
+
+    /// [`Self::execute_delete_merged_branches`] with the Git runner supplied.
+    /// `#[doc(hidden)]`: the only caller outside this crate is the test that
+    /// answers the batch delete with [`GitError::TerminationUnknown`].
+    #[doc(hidden)]
+    pub fn execute_delete_merged_branches_with(
+        &self,
+        plan: &OperationPlan,
+        targets: &[ops::CleanupDeleteTarget],
+        run_git: ops::GitRunner,
+    ) -> recording::RunReport {
         let result = self.require_trust().and_then(|()| {
-            ops::execute_delete_merged_branches(&self.repo, &self.path, plan, targets)
+            ops::execute_delete_merged_branches_with(&self.repo, &self.path, plan, targets, run_git)
         });
-        let outcome = match &result {
-            Ok(cleanup) => {
+        let after = |dirty: String| ops::StateSummary {
+            head: plan.current.head.clone(),
+            dirty,
+        };
+        // ADR-0177: a run that stopped with its own termination unconfirmed
+        // records `Unknown` and hands the caller the *typed* `Termination` —
+        // `child_stopped` / `pid` is what lets a later reconcile prove the
+        // child went away and release the retained lease (ADR-0196 決定 2.4).
+        let (outcome, result) = match result {
+            Ok((cleanup, Some(termination))) => (
+                crate::oplog::OpOutcome::Unknown {
+                    after: after(cleanup.oplog_summary()),
+                    evidence: format!(
+                        "{termination}; process termination is unconfirmed — \
+                         do not retry this operation"
+                    ),
+                },
+                Err(GitError::TerminationUnknown(termination)),
+            ),
+            Ok((cleanup, None)) => {
                 let summary = cleanup.oplog_summary();
-                if cleanup.failed.is_empty() {
+                let outcome = if cleanup.failed.is_empty() {
                     crate::oplog::OpOutcome::Success {
-                        after: ops::StateSummary {
-                            head: plan.current.head.clone(),
-                            dirty: summary,
-                        },
+                        after: after(summary),
                     }
                 } else if cleanup.deleted.is_empty() {
                     crate::oplog::OpOutcome::Failed { error: summary }
                 } else {
                     crate::oplog::OpOutcome::Partial {
-                        after: ops::StateSummary {
-                            head: plan.current.head.clone(),
-                            dirty: summary.clone(),
-                        },
+                        after: after(summary.clone()),
                         error: summary,
                     }
-                }
+                };
+                (outcome, Ok(OperationOutcome::BranchCleanup(cleanup)))
             }
-            Err(error) => crate::oplog::OpOutcome::Failed {
-                error: error.to_string(),
-            },
+            Err(error) => (
+                crate::oplog::OpOutcome::Failed {
+                    error: error.to_string(),
+                },
+                Err(error),
+            ),
         };
-        self.record_run_oplog("branch-cleanup", &plan.current, outcome);
-        result
+        let recording = self.record_run_oplog_with_backups(
+            "branch-cleanup",
+            &plan.current,
+            outcome,
+            Vec::new(),
+            Vec::new(),
+            result.as_ref().err().and_then(|error| {
+                matches!(error, GitError::TerminationUnknown(_))
+                    .then_some(crate::oplog::FailureCode::TerminationUnknown)
+            }),
+        );
+        recording::RunReport {
+            result,
+            recording,
+            stash: None,
+        }
     }
 
     pub fn plan_discard(&self, paths: &[String]) -> Result<OperationPlan, GitError> {

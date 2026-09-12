@@ -224,7 +224,13 @@ pub fn execute_delete_merged_branches(
     plan: &OperationPlan,
     targets: &[CleanupDeleteTarget],
 ) -> Result<CleanupOutcome, GitError> {
-    let result = backend(repo)?.execute_delete_merged_branches(plan, targets);
+    let result = backend(repo)?
+        .execute_delete_merged_branches(plan, targets)
+        .result
+        .map(|outcome| match outcome {
+            OperationOutcome::BranchCleanup(cleanup) => cleanup,
+            other => panic!("unexpected fixture outcome: {other:?}"),
+        });
     refresh_fixture_index(repo, result)
 }
 

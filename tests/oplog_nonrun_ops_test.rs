@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 use kagi_domain::history::{HistoryEntry, OperationKind};
 use kagi_domain::plan_note::HistoryMoveDir;
+use kagi_git::cli::GitCliOutput;
 use kagi_git::oplog::{
     read_oplog_tail, read_oplog_tail_for_repo, recovery, Actor, OpLogEntry, OpOutcome,
 };
@@ -167,6 +168,14 @@ impl Fixture {
             assert_eq!(Path::new(worktree).canonicalize().unwrap(), self.path);
         }
         entries
+    }
+}
+
+/// The run-family outcome branch cleanup always produces.
+fn cleanup(outcome: OperationOutcome) -> kagi_git::ops::CleanupOutcome {
+    match outcome {
+        OperationOutcome::BranchCleanup(cleanup) => cleanup,
+        other => panic!("expected a branch-cleanup outcome, got {other:?}"),
     }
 }
 
@@ -413,6 +422,8 @@ fn cleanup_records_full_tips_and_allows_local_and_remote_recovery() {
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     let outcome = backend
         .execute_delete_merged_branches(&plan, std::slice::from_ref(&target))
+        .result
+        .map(cleanup)
         .unwrap();
     assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
     assert_eq!(outcome.deleted.len(), 1);
@@ -462,6 +473,7 @@ fn untrusted_cleanup_preserves_branch_and_records_failure() {
 
     let error = backend
         .execute_delete_merged_branches(&plan, &[target])
+        .result
         .unwrap_err();
     assert!(error.is_untrusted());
     assert_eq!(git(dir, &["rev-parse", "merged"]), expected);
@@ -531,6 +543,8 @@ fn cleanup_remote_success_local_failure_preserves_recovery_and_records_partial()
 
     let outcome = backend
         .execute_delete_merged_branches(&plan, std::slice::from_ref(&target))
+        .result
+        .map(cleanup)
         .unwrap();
     assert!(git(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
     assert!(git(dir, &["for-each-ref", "refs/remotes/origin/merged"]).is_empty());
@@ -585,6 +599,8 @@ fn cleanup_moved_local_tip_without_deletions_records_failed() {
 
     let outcome = backend
         .execute_delete_merged_branches(&plan, &[target])
+        .result
+        .map(cleanup)
         .unwrap();
     assert!(outcome.deleted.is_empty());
     assert_eq!(outcome.failed.len(), 1);
@@ -599,6 +615,292 @@ fn cleanup_moved_local_tip_without_deletions_records_failed() {
         OpOutcome::Failed { error } => assert!(error.contains(&outcome.failed[0].1)),
         other => panic!("expected Failed with no deleted refs, got {other:?}"),
     }
+}
+
+/// Commands the injected runner saw, so "no fallback push ran" is an
+/// observation and not an inference. One test uses it; `ENV_LOCK` serializes.
+static RUNNER_CALLS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Give the fixture's `merged` branch a remote half, so the cleanup reaches
+/// the `push --delete` the runner answers.
+fn push_target_to(fixture: &Fixture, remote: &TempDir, target: &mut CleanupDeleteTarget) {
+    let dir = &fixture.path;
+    git(remote.path(), &["init", "--bare", "."]);
+    git(
+        dir,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(dir, &["push", "origin", "merged"]);
+    git(dir, &["fetch", "-q", "origin"]);
+    target.remote_tip = target.local_tip.clone();
+}
+
+/// A process group that has already gone: the handle an `Unaccounted`
+/// termination carries, in the state a later reconcile read must be able to
+/// prove. A reaped child leads its own group here — nothing is left to signal.
+fn dead_group() -> u32 {
+    let mut child = Command::new("true")
+        .spawn()
+        .expect("spawn a short-lived child");
+    let group = child.id();
+    child.wait().expect("reap it");
+    group
+}
+
+/// The runner answers the batch delete with a termination the executor *saw*
+/// end — what a `gh`-style transport reports when the process is accounted for
+/// but the repository state is not.
+fn push_stopped(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git::GitError> {
+    RUNNER_CALLS.lock().unwrap().push(args.join(" "));
+    if args.first() == Some(&"push") {
+        return Err(kagi_git::GitError::TerminationUnknown(
+            kagi_git::Termination::stopped("push --delete: the remote closed the connection"),
+        ));
+    }
+    kagi_git::cli::run_git(dir, args)
+}
+
+/// The runner answers with an *unaccounted* termination: the deadline expired,
+/// the kill could not account for the child, and the process group it was
+/// spawned into is the only handle left on it.
+fn push_unaccounted(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git::GitError> {
+    RUNNER_CALLS.lock().unwrap().push(args.join(" "));
+    if args.first() == Some(&"push") {
+        return Err(kagi_git::GitError::TerminationUnknown(
+            kagi_git::Termination::Unaccounted {
+                reason: "push --delete: deadline expired".to_string(),
+                group: dead_group(),
+            },
+        ));
+    }
+    kagi_git::cli::run_git(dir, args)
+}
+
+/// Run one cleanup through the production admission path with `runner`, and
+/// hand back the sessions it settled into plus the operation id.
+fn cleanup_through_the_app(
+    fixture: &Fixture,
+    target: &CleanupDeleteTarget,
+    runner: kagi_git::ops::GitRunner,
+) -> (kagi::app::Sessions, kagi::app::OperationId, OpOutcome) {
+    let dir = &fixture.path;
+    let backend = Backend::open(dir).unwrap();
+    let plan = backend
+        .plan_delete_merged_branches(NOW, std::slice::from_ref(target))
+        .unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let repo_id = backend.write_repo_id().unwrap();
+    // Branch cleanup deletes a *batch* of remote refs, which the single-ref
+    // expectation cannot name — so there is none, and the reconcile read leans
+    // on the process-group proof alone (#702).
+    let remote = backend.remote_expectation("branch-cleanup", &plan);
+    assert!(remote.is_none(), "cleanup has no single-ref expectation");
+    drop(backend);
+
+    let mut sessions = kagi::app::Sessions::new();
+    let session = sessions.attach(dir.clone());
+    let owner = sessions.attachment(session).expect("the tab just attached");
+    let approved = kagi::app::approve_run(
+        &mut sessions,
+        kagi::app::RunRequest {
+            owner,
+            name: "branch-cleanup",
+            path: dir.clone(),
+            repo: repo_id,
+            plan: std::sync::Arc::new(plan.clone()),
+            remote,
+        },
+    )
+    .expect("a fresh session admits the write");
+    let (job_path, job_plan, job_targets) = (dir.clone(), plan, vec![target.clone()]);
+    let job = kagi::app::prepare_run(
+        &mut sessions,
+        approved,
+        kagi::app::LegacyBusy(false),
+        Box::new(move || {
+            let mut backend = Backend::open(&job_path).map_err(|e| e.to_string())?;
+            backend.set_actor(Actor::Cli);
+            Ok(backend.execute_delete_merged_branches_with(&job_plan, &job_targets, runner))
+        }),
+    )
+    .expect("nothing else holds the lease");
+    let id = job.id();
+    let completion = job.run();
+    let recorded = completion.report.recording.entry().outcome.clone();
+    sessions.apply(completion);
+    (sessions, id, recorded)
+}
+
+/// ADR-0177 / ADR-0196 決定 2.4: a `push --delete` whose termination is
+/// unconfirmed stops the cleanup — retrying it per branch would re-run a
+/// deletion that may already have happened — and the `Termination` reaches the
+/// settlement *typed*, because `child_stopped` / `pid` is the whole difference
+/// between a lease with an exit and a lease without one.
+#[test]
+fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // ── The child was accounted for: the scope is free, the receipt is not.
+    RUNNER_CALLS.lock().unwrap().clear();
+    let fixture = Fixture::new();
+    let mut target = fixture.merged_target();
+    let remote = TempDir::new().unwrap();
+    push_target_to(&fixture, &remote, &mut target);
+    let local_tip = git(&fixture.path, &["rev-parse", "merged"]);
+
+    let (mut sessions, id, recorded) = cleanup_through_the_app(&fixture, &target, push_stopped);
+    let pushes: Vec<String> = RUNNER_CALLS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|call| call.starts_with("push "))
+        .cloned()
+        .collect();
+    assert_eq!(
+        pushes.len(),
+        1,
+        "an unconfirmed delete must not be re-run per branch: {pushes:?}"
+    );
+    assert!(
+        matches!(recorded, OpOutcome::Unknown { .. }),
+        "the receipt must be Unknown, not a retryable failure: {recorded:?}"
+    );
+    // The workflow stopped: the local half of the same branch is untouched.
+    assert_eq!(git(&fixture.path, &["rev-parse", "merged"]), local_tip);
+    assert!(
+        !sessions.has_leases(),
+        "a child the executor saw stop releases the scope at settlement"
+    );
+    assert_eq!(sessions.reconcile_ids(), vec![id]);
+    let read = kagi::app::read_reconcile(&sessions, id).expect("the entry is readable");
+    assert!(read.stop_proven(), "the executor already proved the stop");
+    kagi::app::acknowledge(&mut sessions, read).expect("and it can be acknowledged");
+    assert!(sessions.reconcile_ids().is_empty());
+    let records = fixture.records(1, Actor::Cli);
+    assert!(matches!(records[0].outcome, OpOutcome::Unknown { .. }));
+    assert_eq!(
+        records[0].failure_code,
+        Some(kagi_git::oplog::FailureCode::TerminationUnknown)
+    );
+
+    // ── The group could not be accounted for: the scope stays reserved until
+    // a read proves that group is gone, and only then can it be acknowledged.
+    RUNNER_CALLS.lock().unwrap().clear();
+    let fixture = Fixture::new();
+    let mut target = fixture.merged_target();
+    let remote = TempDir::new().unwrap();
+    push_target_to(&fixture, &remote, &mut target);
+
+    let (mut sessions, id, recorded) = cleanup_through_the_app(&fixture, &target, push_unaccounted);
+    assert!(matches!(recorded, OpOutcome::Unknown { .. }));
+    assert!(
+        sessions.has_leases(),
+        "an unaccounted process group retains the scope (ADR-0175)"
+    );
+    assert_eq!(sessions.reconcile_ids(), vec![id]);
+    let read = kagi::app::read_reconcile(&sessions, id)
+        .expect("the group it carries is what makes the entry readable");
+    assert!(
+        read.stop_proven(),
+        "the read asked the OS: that group is gone"
+    );
+    kagi::app::acknowledge(&mut sessions, read).expect("the proven stop releases the scope");
+    assert!(
+        !sessions.has_leases(),
+        "acknowledging a proven-gone group is the exit from the retained lease"
+    );
+    assert!(sessions.reconcile_ids().is_empty());
+}
+
+/// #289 / ADR-0196 決定 2.4: a run job whose task unwinds returns no
+/// completion. Dropping it there would strand the operation — the lease stays
+/// reserved with nothing to acknowledge it against, and the UI's busy mirror
+/// would be cleared under it. The abandonment settles it as `Unknown` through
+/// the same `apply` instead.
+#[test]
+fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let dir = &fixture.path;
+    let target = fixture.merged_target();
+    let backend = Backend::open(dir).unwrap();
+    let plan = backend
+        .plan_delete_merged_branches(NOW, std::slice::from_ref(&target))
+        .unwrap();
+    let repo_id = backend.write_repo_id().unwrap();
+    // Branch cleanup deletes a *batch* of remote refs, which the single-ref
+    // expectation cannot name — so there is none, and the reconcile read leans
+    // on the process-group proof alone (#702).
+    let remote = backend.remote_expectation("branch-cleanup", &plan);
+    assert!(remote.is_none(), "cleanup has no single-ref expectation");
+    drop(backend);
+
+    let mut sessions = kagi::app::Sessions::new();
+    let session = sessions.attach(dir.clone());
+    let owner = sessions.attachment(session).unwrap();
+    let approved = kagi::app::approve_run(
+        &mut sessions,
+        kagi::app::RunRequest {
+            owner,
+            name: "branch-cleanup",
+            path: dir.clone(),
+            repo: repo_id,
+            plan: std::sync::Arc::new(plan),
+            remote,
+        },
+    )
+    .unwrap();
+    let job = kagi::app::prepare_run(
+        &mut sessions,
+        approved,
+        kagi::app::LegacyBusy(false),
+        Box::new(|| panic!("the transport unwound mid-write")),
+    )
+    .unwrap();
+    let id = job.id();
+    // What the UI holds before the task can end: the completion to settle with
+    // if the task never returns one.
+    let abandonment = job.abandonment();
+    let hushed = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).is_err();
+    std::panic::set_hook(hushed);
+    assert!(
+        panicked,
+        "the job must actually unwind for this to be the case"
+    );
+
+    sessions.apply(abandonment.into_completion());
+
+    assert!(
+        sessions.has_leases(),
+        "a panic proves nothing: the writer may still be running (ADR-0175)"
+    );
+    assert_eq!(
+        sessions.reconcile_ids(),
+        vec![id],
+        "and the operation keeps its id rather than being dropped on the floor"
+    );
+    // `Abandoned` is deliberately the one termination with no automatic exit:
+    // kagi lost its own executor, so there is no group to probe and the read
+    // says so instead of offering an acknowledgement that proves nothing.
+    assert_eq!(
+        kagi::app::prepare_reconcile(&sessions, id).err().as_deref(),
+        Some("execution termination is unconfirmed and nothing is left to probe"),
+    );
+    let records = fixture.records(1, Actor::Human);
+    assert_eq!(records[0].op, "branch-cleanup");
+    assert!(
+        matches!(records[0].outcome, OpOutcome::Unknown { .. }),
+        "an abandoned write is Unknown, never a failure: {:?}",
+        records[0].outcome
+    );
 }
 
 #[path = "support/isolated.rs"]

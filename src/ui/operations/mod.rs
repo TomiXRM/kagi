@@ -78,12 +78,14 @@ enum OpDisposition {
 /// (the result belongs to a tab the user has since left). Mirrors the sibling
 /// async guards in `reload.rs` / `mod.rs` — using both signals is strictly
 /// safer than either alone.
-/// Whether a state-changing op may start right now. `busy_op` is the single
-/// in-flight-op latch; a mutation started while another is running is exactly
+/// Whether a state-changing op may start right now. `busy_op` is the
+/// in-flight *write* latch and `planning` the in-flight *plan* latch
+/// (ADR-0196 Wave 3); a mutation started while either is running is exactly
 /// the concurrent-mutation hazard #283 is about, so every entry point that
-/// begins one consults this. Pure so the gate is testable without a Context.
-pub(crate) fn op_may_start(busy_op: Option<&'static str>) -> bool {
-    busy_op.is_none()
+/// begins one consults this — through [`KagiApp::op_latched`]. Pure so the
+/// gate is testable without a Context.
+pub(crate) fn op_may_start(busy_op: Option<&'static str>, planning: Option<&'static str>) -> bool {
+    busy_op.is_none() && planning.is_none()
 }
 
 fn op_result_applies(
@@ -134,7 +136,7 @@ impl KagiApp {
     /// Returns true (and sets the footer) when the caller must bail out.
     pub(crate) fn reject_if_busy(&mut self, cx: &mut Context<Self>) -> bool {
         self.refresh_write_busy();
-        if op_may_start(self.busy_op) && !self.app_sessions.has_leases() {
+        if !self.op_latched() && !self.app_sessions.has_leases() {
             return false;
         }
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
@@ -172,18 +174,26 @@ impl KagiApp {
     {
         let owner_repo = self.repo_path.clone();
         let owner_gen = self.switch_generation;
-        let op_tag = self.busy_op;
+        let op_tag = self.busy_op.or(self.planning);
+        let planning_tag = self.planning;
         cx.spawn(async move |this, acx| {
             let result = task.fallible().await;
             let _ = this.update(acx, move |app, cx| {
-                // Unconditional release (#289): whatever happened to the op,
-                // the global op mutex must not stay latched.
-                app.busy_op = None;
-                app.write_busy_op = None;
-                // Settle first, whatever the tab is doing now (#501).
+                // Settle first, whatever the tab is doing now (#501): the
+                // terminal is what decides whether the latch may drop.
                 if let Some(result) = result.as_ref() {
                     settle(app, result, cx);
                 }
+                // Release (#289) — but a lease that survived the settle means
+                // the writer's termination is unconfirmed and it may still be
+                // running, so its mirror stays with it (ADR-0196 Wave 3).
+                crate::ui::busy::release_finished_latches(
+                    &mut app.busy_op,
+                    &mut app.write_busy_op,
+                    &mut app.planning,
+                    planning_tag,
+                    app.app_sessions.has_leases(),
+                );
                 let still_current = op_result_applies(
                     app.repo_path.as_deref(),
                     app.switch_generation,
@@ -249,15 +259,22 @@ impl KagiApp {
     {
         use crate::app::{self, Delivery, FamilyEvidence, LegacyBusy};
         self.refresh_write_busy();
+        let latched = LegacyBusy(self.op_latched());
         let owner = self
             .active_session()
             .and_then(|id| self.app_sessions.attachment(id));
         let admitted = owner
             .ok_or(app::AdmissionError::StaleApproval)
             .and_then(|owner| {
-                let repo = kagi_git::Backend::open(&repo_path)
-                    .and_then(|backend| backend.write_repo_id())
+                let backend = kagi_git::Backend::open(&repo_path)
                     .map_err(|error| app::AdmissionError::Identity(error.to_string()))?;
+                let repo = backend
+                    .write_repo_id()
+                    .map_err(|error| app::AdmissionError::Identity(error.to_string()))?;
+                // Frozen here, before the write: what the remote should say
+                // afterwards. A reconcile compares against this, never against
+                // whatever the repository holds later (#702 re-review).
+                let remote = backend.remote_expectation(op_name, &plan);
                 app::approve_run(
                     &mut self.app_sessions,
                     app::RunRequest {
@@ -266,16 +283,12 @@ impl KagiApp {
                         path: repo_path.clone(),
                         repo,
                         plan: plan.clone(),
+                        remote,
                     },
                 )
             })
             .and_then(|approved| {
-                app::prepare_run(
-                    &mut self.app_sessions,
-                    approved,
-                    LegacyBusy(self.busy_op.is_some()),
-                    Box::new(execute),
-                )
+                app::prepare_run(&mut self.app_sessions, approved, latched, Box::new(execute))
             });
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
@@ -286,21 +299,23 @@ impl KagiApp {
         };
         self.mark_write_busy(op_name);
         let stamp = job.stamp();
+        // #289: gpui does not propagate a background panic, so the task can end
+        // without a completion. That is not evidence of termination — the write
+        // may have happened — so it settles as `Unknown` through the same
+        // `apply`, which keeps the operation id, retains the lease and parks
+        // the reconcile entry. Clearing the busy mirror here instead would
+        // leave `has_leases()` true with `op_latched()` false.
+        let abandonment = job.abandonment();
         let task = cx.background_spawn(async move { job.run() });
         cx.spawn(async move |this, acx| {
             let completion = task.fallible().await;
             let _ = this.update(acx, move |app, cx| {
-                let Some(completion) = completion else {
-                    // #289: a panicking job must not wedge the UI. The lease
-                    // stays reserved — a panic is not evidence of termination.
-                    klog!("op panicked: {} — busy_op cleared", op_name);
-                    app.busy_op = None;
-                    app.write_busy_op = None;
-                    app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                        "{op_name}: operation failed unexpectedly"
-                    )));
-                    cx.notify();
-                    return;
+                let completion = match completion {
+                    Some(completion) => completion,
+                    None => {
+                        klog!("op panicked: {} — busy_op cleared", op_name);
+                        abandonment.into_completion()
+                    }
                 };
                 let deliveries = app::apply(&mut app.app_sessions, completion);
                 app.refresh_write_busy();
@@ -309,14 +324,19 @@ impl KagiApp {
                     .partition(|d| matches!(d, Delivery::Completed { .. }));
                 let mut failed = false;
                 for delivery in completed {
-                    let Delivery::Completed { report, .. } = delivery else {
+                    let Delivery::Completed { id, report, .. } = delivery else {
                         continue;
                     };
                     let FamilyEvidence::Run(report) = report.evidence else {
                         continue;
                     };
-                    // Settle first, whatever the tab is doing now (#501).
-                    app.notice_recording_failure(op_name, &report.recording, &repo_path);
+                    // Settle first, whatever the tab is doing now (#501). A
+                    // parked reconcile requirement refuses every later write in
+                    // this scope, so the way into it is settlement too — it must
+                    // survive the tab guard below (#702 re-review). So must the
+                    // `Partial` transport hold `settle_run_receipt` registers.
+                    app.settle_run_receipt(op_name, &report, &repo_path);
+                    app.notice_reconcile_required(id, op_name, &repo_path);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     if !current {
@@ -428,9 +448,9 @@ mod tests {
     #[test]
     fn op_may_start_only_when_no_op_is_in_flight() {
         // #283: the single in-flight-op latch is the concurrent-mutation gate.
-        assert!(op_may_start(None), "idle must allow a new op");
+        assert!(op_may_start(None, None), "idle must allow a new op");
         assert!(
-            !op_may_start(Some("merge")),
+            !op_may_start(Some("merge"), None),
             "an op in flight must block a new one"
         );
     }
@@ -463,11 +483,11 @@ mod tests {
         // start_*. Guards the regression where start_pr_merge never read
         // busy_op.
         assert!(
-            !op_may_start(Some("pr-merge")),
+            !op_may_start(Some("pr-merge"), None),
             "a pr-merge in flight must block a new op"
         );
         assert!(
-            !op_may_start(Some("checkout")),
+            !op_may_start(Some("checkout"), None),
             "a local op in flight must block a pr-merge"
         );
     }

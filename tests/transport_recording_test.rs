@@ -182,7 +182,20 @@ fn a_failed_gh_whose_reread_says_merged_is_not_recorded_as_a_failure() {
         HEAD_SHA,
         &merge_plan(),
     );
-    assert!(report.result.is_err(), "gh itself still failed");
+    // ADR-0196 Wave 3: the result follows the receipt, so a merge the server
+    // confirms is `Ok` even though `gh` itself exited non-zero — the lease is
+    // released and no reconcile entry is parked for a merge that is done.
+    assert!(
+        matches!(
+            report.result,
+            Ok(kagi_git::OperationOutcome::PrMerge {
+                confirmed: true,
+                ..
+            })
+        ),
+        "a confirmed merge must not be handed back as a failure: {:?}",
+        report.result
+    );
     let OpOutcome::Success { after } = latest_outcome() else {
         panic!("a merged PR must not be recorded as failed");
     };
@@ -210,7 +223,17 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
         HEAD_SHA,
         &merge_plan(),
     );
-    assert!(report.result.is_err());
+    assert!(
+        matches!(
+            report.result,
+            Ok(kagi_git::OperationOutcome::PrMerge {
+                confirmed: false,
+                ..
+            })
+        ),
+        "merged but unfinished is `Ok` and unconfirmed, never a plain failure: {:?}",
+        report.result
+    );
     let OpOutcome::Partial { after, error } = latest_outcome() else {
         panic!("an unconfirmed branch deletion after a merge must be partial");
     };
@@ -238,7 +261,16 @@ fn a_failed_gh_that_cannot_be_re_read_is_unknown_not_failed() {
         HEAD_SHA,
         &merge_plan(),
     );
-    assert!(report.result.is_err());
+    // The lease-retaining terminal: `apply` keeps the scope reserved and parks
+    // a reconcile entry only because the result says `TerminationUnknown`.
+    assert!(
+        matches!(
+            report.result,
+            Err(kagi_git::GitError::TerminationUnknown(_))
+        ),
+        "an unreadable merge must be handed back as unconfirmed: {:?}",
+        report.result
+    );
     let OpOutcome::Unknown { after, evidence } = latest_outcome() else {
         panic!("an unreadable PR state must be Unknown, never an assumed failure");
     };

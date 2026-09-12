@@ -513,7 +513,7 @@ impl Render for KagiApp {
         // W3-NOTIFY: while a background git op runs, disable every git button
         // so operations never overlap.
         let mut toolbar_state = self.view().toolbar_state.clone();
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             toolbar_state.pull_on = false;
             toolbar_state.push_on = false;
             toolbar_state.stash_on = false;

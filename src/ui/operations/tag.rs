@@ -226,7 +226,7 @@ impl KagiApp {
         let Some(modal) = self.push_tag_modal().cloned() else {
             return;
         };
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }

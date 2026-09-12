@@ -599,8 +599,44 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),
             (
+                "run_unknown_offers_its_reconcile",
+                Box::new(crate::recovery_pull::scenario_run_unknown_offers_its_reconcile),
+            ),
+            (
+                "pull_unknown_notice_survives_a_tab_switch",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_unknown_notice_survives_a_tab_switch,
+                ),
+            ),
+            (
+                "pull_unknown_offers_its_reconcile",
+                Box::new(crate::recovery_pull::scenario_pull_unknown_offers_its_reconcile),
+            ),
+            (
+                "pull_failure_presents_only_the_decisive_receipt",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_presents_only_the_decisive_receipt,
+                ),
+            ),
+            (
+                "pull_completion_drops_when_its_tab_is_left",
+                Box::new(crate::recovery_pull::scenario_pull_completion_drops_when_its_tab_is_left),
+            ),
+            (
+                "pull_blocked_plan_presents_a_core_receipt",
+                Box::new(crate::recovery_pull::scenario_pull_blocked_plan_presents_a_core_receipt),
+            ),
+            (
+                "pull_presents_backend_receipts",
+                Box::new(crate::recovery_pull::scenario_pull_presents_backend_receipts),
+            ),
+            (
                 "pull_auto_stash_failure_restores",
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
+            ),
+            (
+                "cleanup_presents_backend_receipt",
+                Box::new(crate::recovery_operations::scenario_cleanup_presents_backend_receipt),
             ),
             (
                 "cleanup_open_failure",
@@ -625,6 +661,18 @@ mod macos {
             (
                 "oplog_append_failure_visible",
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
+            ),
+            (
+                "pr_merge_write_lease",
+                Box::new(crate::busy_label::scenario_pr_merge_holds_the_write_lease),
+            ),
+            (
+                "pr_merge_admission_keeps_modal",
+                Box::new(crate::busy_label::scenario_pr_merge_admission_keeps_the_modal),
+            ),
+            (
+                "merge_plan_latch",
+                Box::new(crate::busy_label::scenario_merge_plan_latches_planning),
             ),
             (
                 "editor_save_admission",

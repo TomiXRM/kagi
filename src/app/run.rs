@@ -26,6 +26,11 @@ pub struct RunRequest {
     /// Frozen at approval — the lease scope.
     pub repo: RepoId,
     pub plan: Arc<OperationPlan>,
+    /// What this write is about to make true on a remote, frozen here at
+    /// approval (`Backend::remote_expectation`). `None` for a local-only
+    /// operation, and for a remote one whose effect cannot be named — which
+    /// leaves the reconcile read unresolved rather than guessing.
+    pub remote: Option<kagi_git::backend::remote_ref::RemoteExpectation>,
 }
 
 /// Admission for a plan that lives in a modal rather than the plan slot: the
@@ -33,16 +38,27 @@ pub struct RunRequest {
 /// time. The slot is re-issued so a migrated family's pending plan can never
 /// be spent across this write.
 pub fn approve_run(s: &mut Sessions, request: RunRequest) -> Result<Approved, AdmissionError> {
-    if !s.is_attached(request.owner.session) {
+    let owner = request.owner.clone();
+    approve_modal_plan(s, owner, Planned::Run(request))
+}
+
+/// The admission [`approve_run`] and [`approve_pull`](super::approve_pull)
+/// share: both families plan in their modal, so neither has a plan token.
+pub(crate) fn approve_modal_plan(
+    s: &mut Sessions,
+    owner: Attachment,
+    prepared: Planned,
+) -> Result<Approved, AdmissionError> {
+    if !s.is_attached(owner.session) {
         return Err(AdmissionError::StaleApproval);
     }
-    s.confirm_identity(&request.owner)?;
+    s.confirm_identity(&owner)?;
     s.invalidate_plan();
-    s.plan_owner = Some(request.owner.session);
+    s.plan_owner = Some(owner.session);
     s.state = PlanState::Approved;
     Ok(Approved {
         revision: s.revision,
-        prepared: Planned::Run(request),
+        prepared,
     })
 }
 
@@ -64,6 +80,15 @@ impl RunJob {
     /// The owner frozen at admission; the completion is routed by it.
     pub fn stamp(&self) -> OwnerStamp {
         self.stamp
+    }
+    /// The completion to settle with if this job's task never returns one.
+    pub fn abandonment(&self) -> RunAbandonment {
+        RunAbandonment {
+            id: self.id,
+            name: self.request.name,
+            path: self.request.path.clone(),
+            before: self.request.plan.current.clone(),
+        }
     }
     pub fn run(self) -> RunCompletion {
         let report = match (self.execute)() {
@@ -95,6 +120,52 @@ impl RunJob {
 pub struct RunCompletion {
     pub id: OperationId,
     pub report: RunReport,
+}
+
+/// A run whose task ended without a completion — a panicked job (#289).
+///
+/// The write may have happened, so this is `Unknown`, not a failure, and it
+/// settles through the same `apply`: the operation id survives and the lease
+/// is retained. The termination is [`kagi_git::Termination::Abandoned`] —
+/// kagi lost its own executor, so unlike a killed child there is no process
+/// group left to probe, and the scope stays held until the application
+/// restarts. Dropping the task instead would lose the operation as well.
+pub struct RunAbandonment {
+    id: OperationId,
+    name: &'static str,
+    path: PathBuf,
+    before: kagi_git::StateSummary,
+}
+impl RunAbandonment {
+    pub fn into_completion(self) -> RunCompletion {
+        let evidence = format!(
+            "the {} task unwound; whether the write happened cannot be established",
+            self.name
+        );
+        let repo = self.path.display().to_string();
+        let entry = OpLogEntry::new(
+            self.name,
+            repo.clone(),
+            self.before.clone(),
+            OpOutcome::Unknown {
+                after: self.before,
+                evidence: evidence.clone(),
+            },
+        )
+        // The same stamp the backend puts on what it records: an abandoned
+        // write still names the worktree it was running in.
+        .with_worktree(Some(repo));
+        RunCompletion {
+            id: self.id,
+            report: RunReport {
+                result: Err(kagi_git::GitError::TerminationUnknown(
+                    kagi_git::Termination::abandoned(evidence),
+                )),
+                recording: recording::finalize(entry),
+                stash: None,
+            },
+        }
+    }
 }
 
 pub fn prepare_run(

@@ -214,7 +214,7 @@ impl KagiApp {
     }
 
     pub fn open_branch_plan_modal(&mut self, branch_name: String, kind: BranchPlanKind) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -260,7 +260,7 @@ impl KagiApp {
     }
 
     pub fn start_branch_plan(&mut self, cx: &mut Context<Self>) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -383,7 +383,7 @@ impl KagiApp {
 
     pub fn start_set_upstream(&mut self, cx: &mut Context<Self>) {
         self.run_modal_replans(cx);
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -502,7 +502,7 @@ impl KagiApp {
 
     pub fn start_rename_branch(&mut self, cx: &mut Context<Self>) {
         self.run_modal_replans(cx);
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -560,7 +560,7 @@ impl KagiApp {
     }
 
     pub fn open_tracking_checkout_modal(&mut self, remote_branch: String) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -609,7 +609,7 @@ impl KagiApp {
     }
 
     pub fn start_tracking_checkout(&mut self, cx: &mut Context<Self>) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -670,7 +670,7 @@ impl KagiApp {
 
     /// Build a "switch to latest" plan (ADR-0101) and open the confirmation modal.
     pub fn open_switch_to_latest_modal(&mut self, branch_name: String, remote_branch: String) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -718,7 +718,7 @@ impl KagiApp {
     }
 
     pub fn start_switch_to_latest(&mut self, cx: &mut Context<Self>) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -824,7 +824,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let branch_name = branch_name.into();
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -841,7 +841,7 @@ impl KagiApp {
         };
         let generation = self.switch_generation;
         let repo_path = owner.path.clone();
-        self.busy_op = Some("delete-branch-plan");
+        self.planning = Some("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
         klog!("async: delete-branch plan started for {}", branch_name);
 
@@ -868,7 +868,7 @@ impl KagiApp {
                     &owner,
                     current.as_ref(),
                     app.switch_generation == generation,
-                    &mut app.busy_op,
+                    &mut app.planning,
                 ) {
                     cx.notify();
                     return;
@@ -917,7 +917,7 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }

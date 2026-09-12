@@ -193,8 +193,16 @@ impl KagiApp {
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
-        match self.admit_write(name, path) {
-            Ok(guard) => Some(guard),
+        self.refresh_write_busy();
+        let latched = LegacyBusy(self.op_latched());
+        match app::admit(
+            &mut self.reads,
+            self.app_sessions.write_lease(path, latched),
+        ) {
+            Ok(guard) => {
+                self.mark_write_busy(name);
+                Some(guard)
+            }
             Err(error) => {
                 let message = if error == app::AdmissionError::Busy {
                     Msg::OpInProgress.t().to_string()
@@ -208,24 +216,6 @@ impl KagiApp {
                 None
             }
         }
-    }
-    /// [`reserve_write`](Self::reserve_write) without the presentation, for the
-    /// one caller that owns a refusal itself: a repository that cannot be
-    /// opened has no backend to record the attempt, so the UI stays its
-    /// recorder (ADR-0149 "non-run ops") instead of leaving only a toast.
-    pub(crate) fn admit_write(
-        &mut self,
-        name: &'static str,
-        path: &std::path::Path,
-    ) -> Result<app::WriteGuard, app::AdmissionError> {
-        self.refresh_write_busy();
-        let latched = LegacyBusy(self.op_latched());
-        let guard = app::admit(
-            &mut self.reads,
-            self.app_sessions.write_lease(path, latched),
-        )?;
-        self.mark_write_busy(name);
-        Ok(guard)
     }
     pub(crate) fn refresh_write_busy(&mut self) {
         super::super::busy::settle_write_busy(

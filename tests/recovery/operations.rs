@@ -469,26 +469,31 @@ pub fn scenario_cleanup_open_failure(cx: &mut VisualTestAppContext) {
         std::fs::rename(repo.join("git-unavailable"), repo.join(".git")).unwrap();
         assert_eq!(repo_fingerprint(repo), before);
         assert_eq!(repo_fingerprint(other.path()), other_before);
-        let entries = records(repo, "branch-cleanup");
-        assert_eq!(
-            entries.len(),
-            1,
-            "opening failure must persist before the UI ownership guard"
+        // ADR-0196 Wave 3: the cleanup rides the run family now, so a
+        // repository that will not open is refused at *admission* — nothing
+        // ran, nothing was written, and there is no attempt to record. (An
+        // open failure after admission is `RunJob::run`'s own recording, which
+        // lands before the ownership guard the way this used to.)
+        assert!(
+            records(repo, "branch-cleanup").is_empty(),
+            "a refused admission executed nothing, so it records nothing"
         );
-        assert!(matches!(entries[0].outcome, OpOutcome::Failed { .. }));
         cx.read(|cx| {
             let app = app.read(cx);
             if switch_away {
                 assert_eq!(app.active_tab, 1);
                 assert!(app.branch_cleanup_modal().is_none());
             } else {
-                assert!(app.branch_cleanup_modal().unwrap().error.is_some());
+                assert!(
+                    app.branch_cleanup_modal().is_some(),
+                    "a refused admission must keep the confirmation"
+                );
                 assert!(matches!(app.status_footer, FooterStatus::Failed(_)));
             }
         });
         unmount(cx, app, window);
     }
-    eprintln!("[gui-e2e] PASS cleanup_open_failure active/stale durable refusal without mutation");
+    eprintln!("[gui-e2e] PASS cleanup_open_failure active/stale refusal without mutation");
 }
 
 pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {

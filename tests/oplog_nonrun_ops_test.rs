@@ -171,6 +171,14 @@ impl Fixture {
     }
 }
 
+/// The run-family outcome branch cleanup always produces.
+fn cleanup(outcome: OperationOutcome) -> kagi_git::ops::CleanupOutcome {
+    match outcome {
+        OperationOutcome::BranchCleanup(cleanup) => cleanup,
+        other => panic!("expected a branch-cleanup outcome, got {other:?}"),
+    }
+}
+
 fn success(entry: &OpLogEntry) -> &StateSummary {
     match &entry.outcome {
         OpOutcome::Success { after } => after,
@@ -415,6 +423,7 @@ fn cleanup_records_full_tips_and_allows_local_and_remote_recovery() {
     let outcome = backend
         .execute_delete_merged_branches(&plan, std::slice::from_ref(&target))
         .result
+        .map(cleanup)
         .unwrap();
     assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
     assert_eq!(outcome.deleted.len(), 1);
@@ -535,6 +544,7 @@ fn cleanup_remote_success_local_failure_preserves_recovery_and_records_partial()
     let outcome = backend
         .execute_delete_merged_branches(&plan, std::slice::from_ref(&target))
         .result
+        .map(cleanup)
         .unwrap();
     assert!(git(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
     assert!(git(dir, &["for-each-ref", "refs/remotes/origin/merged"]).is_empty());
@@ -590,6 +600,7 @@ fn cleanup_moved_local_tip_without_deletions_records_failed() {
     let outcome = backend
         .execute_delete_merged_branches(&plan, &[target])
         .result
+        .map(cleanup)
         .unwrap();
     assert!(outcome.deleted.is_empty());
     assert_eq!(outcome.failed.len(), 1);
@@ -647,18 +658,54 @@ fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
     git(dir, &["fetch", "-q", "origin"]);
     target.remote_tip = target.local_tip.clone();
     let local_tip = git(dir, &["rev-parse", "merged"]);
-    let mut backend = Backend::open(dir).unwrap();
-    backend.set_actor(Actor::Cli);
+    let backend = Backend::open(dir).unwrap();
     let plan = backend
         .plan_delete_merged_branches(NOW, std::slice::from_ref(&target))
         .unwrap();
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let repo_id = backend.write_repo_id().unwrap();
+    drop(backend);
 
-    let report = backend.execute_delete_merged_branches_with(
-        &plan,
-        std::slice::from_ref(&target),
-        push_termination_unknown,
+    // The production admission path: the cleanup is a run-family write, so the
+    // lease, the owner stamp and the completion all go through `Sessions`.
+    let mut sessions = kagi::app::Sessions::new();
+    let session = sessions.attach(dir.clone());
+    let owner = sessions.attachment(session).expect("the tab just attached");
+    let approved = kagi::app::approve_run(
+        &mut sessions,
+        kagi::app::RunRequest {
+            owner,
+            name: "branch-cleanup",
+            path: dir.clone(),
+            repo: repo_id,
+            plan: std::sync::Arc::new(plan.clone()),
+        },
+    )
+    .expect("a fresh session admits the write");
+    let (job_path, job_plan, job_targets) = (dir.clone(), plan.clone(), vec![target.clone()]);
+    let job = kagi::app::prepare_run(
+        &mut sessions,
+        approved,
+        kagi::app::LegacyBusy(false),
+        Box::new(move || {
+            let mut backend = Backend::open(&job_path).map_err(|e| e.to_string())?;
+            backend.set_actor(Actor::Cli);
+            Ok(backend.execute_delete_merged_branches_with(
+                &job_plan,
+                &job_targets,
+                push_termination_unknown,
+            ))
+        }),
+    )
+    .expect("nothing else holds the lease");
+    let id = job.id();
+    let completion = job.run();
+    let recorded = completion.report.recording.entry().outcome.clone();
+    let result_unconfirmed = matches!(
+        completion.report.result,
+        Err(kagi_git::GitError::TerminationUnknown(_))
     );
+    sessions.apply(completion);
 
     let pushes: Vec<String> = RUNNER_CALLS
         .lock()
@@ -673,30 +720,38 @@ fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
         "an unconfirmed delete must not be re-run per branch: {pushes:?}"
     );
     assert!(
-        matches!(report.recording.entry().outcome, OpOutcome::Unknown { .. }),
-        "the receipt must be Unknown, not a retryable failure: {:?}",
-        report.recording.entry().outcome
+        matches!(recorded, OpOutcome::Unknown { .. }),
+        "the receipt must be Unknown, not a retryable failure: {recorded:?}"
     );
     assert!(
-        matches!(
-            report.result,
-            Err(kagi_git::GitError::TerminationUnknown(_))
-        ),
+        result_unconfirmed,
         "the settled result must carry the unconfirmed termination"
     );
     // The workflow stopped: the local half of the same branch is untouched.
     assert_eq!(git(dir, &["rev-parse", "merged"]), local_tip);
-
-    // What the UI does with that result: the lease stays reserved, so nothing
-    // else can start on top of a delete that may still be in flight.
-    let mut sessions = kagi::app::Sessions::new();
-    let lease = sessions
-        .write_lease(dir, kagi::app::LegacyBusy(false))
-        .expect("a fresh session admits the write");
-    lease.complete_git(&report.result);
+    // And the lifecycle has an exit: the lease stays reserved *and* the
+    // operation is parked for reconcile, so #702's stop-proof acknowledge can
+    // release it. A retained lease with no entry would be a dead end.
     assert!(
         sessions.has_leases(),
         "an unconfirmed termination must retain the write lease (ADR-0177)"
+    );
+    assert_eq!(
+        sessions.reconcile_ids(),
+        vec![id],
+        "and must park a reconcile entry for that operation (ADR-0196 2.4)"
+    );
+    assert_eq!(
+        kagi::app::prepare_reconcile(&sessions, id).err().as_deref(),
+        Some("execution termination is unconfirmed"),
+        "the parked entry waits for the stop proof, it is not lost"
+    );
+    let records = fixture.records(1, Actor::Cli);
+    assert_eq!(records[0].op, "branch-cleanup");
+    assert!(matches!(records[0].outcome, OpOutcome::Unknown { .. }));
+    assert_eq!(
+        records[0].failure_code,
+        Some(kagi_git::oplog::FailureCode::TerminationUnknown)
     );
 }
 

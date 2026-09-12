@@ -375,6 +375,12 @@ impl Sessions {
             .map(|leases| !leases.is_empty())
             .unwrap_or(true)
     }
+    /// Operations parked awaiting reconcile (ADR-0196 決定 2.4). The ids the
+    /// acknowledge path takes to [`prepare_reconcile`]; a retained lease with
+    /// none of these would be a dead end.
+    pub fn reconcile_ids(&self) -> Vec<OperationId> {
+        self.reconcile.keys().copied().collect()
+    }
     /// Reserve before dispatch, not a check-only API. All repositories remain
     /// mutually exclusive until the final writer family migration.
     pub fn write_lease(

@@ -139,7 +139,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             id,
             ReconcileEntry {
                 scope: owner.plan.scope(),
-                plan: Some(owner.plan.clone()),
+                target: ReconcileTarget::Planned(Box::new(owner.plan.clone())),
                 stopped,
                 remote: remote_recovery,
                 pull: pull_recovery,

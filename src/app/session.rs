@@ -151,11 +151,46 @@ pub(crate) struct InFlight {
     pub attachment: OwnerAttachment,
     pub stamp: OwnerStamp,
 }
+/// What a writer's stop has to account for.
+///
+/// An **allowlist** of the lax kind, for the same reason `writes_only_locally`
+/// is one: a writer nobody classified settles under the strict rule. Getting it
+/// the other way round lets a sequencer step be re-run (#702 review 7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuardKind {
+    /// The only mutation is local and idempotent — a fetch's remote-tracking
+    /// refs, an editor save, a savepoint. A stopped process group accounts for
+    /// all of it, so a proven stop releases.
+    GroupOnly,
+    /// A sequencer step: rebase / cherry-pick / merge `--continue`, `--skip`,
+    /// `--abort`. Here "the process stopped" is *not* "the mutation is
+    /// accounted for": a `--skip` that advanced past the commit before the
+    /// termination went unknown must not be re-runnable, or the user loses that
+    /// commit. Even a proven stop retains, until a read has seen the live
+    /// sequencer state.
+    Sequencer,
+}
+impl GuardKind {
+    fn of(op: &str) -> Self {
+        match op {
+            "fetch" | "editor-save" | "snapshot" => Self::GroupOnly,
+            _ => Self::Sequencer,
+        }
+    }
+}
+
+/// What a reconcile read has to look at.
+#[derive(Clone, Debug)]
+pub(crate) enum ReconcileTarget {
+    /// A write that went through the plan pipeline: its plan says what to read.
+    Planned(Box<Planned>),
+    /// A write admitted through [`Sessions::write_lease`]. It has no plan; the
+    /// kind says whether the group probe is the whole read.
+    Guarded { kind: GuardKind, path: PathBuf },
+}
+
 pub(crate) struct ReconcileEntry {
-    /// `None` for a write admitted through [`Sessions::write_lease`] rather
-    /// than the plan pipeline — a fetch, an editor save. It has no plan to read
-    /// back; its whole read is the group probe (#702 review 6).
-    pub plan: Option<Planned>,
+    pub target: ReconcileTarget,
     /// The scope this entry closes. Kept directly: a planless entry has no
     /// `Planned` to derive it from, and the two callers that need it should not
     /// re-derive what admission already decided.
@@ -182,8 +217,11 @@ pub(crate) struct UnaccountedWrite {
     pub scope: WriteScope,
     pub op: &'static str,
     pub path: PathBuf,
-    /// The process group to probe. `None` only for a termination with no
-    /// handle at all, which this path cannot produce.
+    pub kind: GuardKind,
+    /// Did the executor prove the writer stopped? A sequencer parks even then,
+    /// because the stop is not the account.
+    pub stopped: bool,
+    /// The process group to probe, when the stop was not proven.
     pub group: Option<u32>,
 }
 
@@ -397,13 +435,16 @@ impl Sessions {
         parked
             .into_iter()
             .map(|write| {
-                let offer = (write.id, write.op, write.path);
+                let offer = (write.id, write.op, write.path.clone());
                 self.reconcile.insert(
                     write.id,
                     ReconcileEntry {
-                        plan: None,
+                        target: ReconcileTarget::Guarded {
+                            kind: write.kind,
+                            path: write.path,
+                        },
                         scope: write.scope,
-                        stopped: false,
+                        stopped: write.stopped,
                         remote: None,
                         pull: None,
                         child: write.group,
@@ -453,6 +494,9 @@ impl Sessions {
             scope: WriteScope::Local(repo),
             id,
             op: "write",
+            // Unnamed until `for_op`: the strict rule, so a writer that forgets
+            // to name itself is held rather than released.
+            kind: GuardKind::Sequencer,
             path: path.to_path_buf(),
             unaccounted: self.unaccounted_tx.clone(),
         })
@@ -523,13 +567,16 @@ pub struct WriteGuard {
     scope: WriteScope,
     id: OperationId,
     op: &'static str,
+    kind: GuardKind,
     path: PathBuf,
     unaccounted: std::sync::mpsc::Sender<UnaccountedWrite>,
 }
 impl WriteGuard {
-    /// Name the write, for the notice a retained lease raises.
+    /// Name the write. The name also decides which settle rule it is under —
+    /// see [`GuardKind`], where the classification lives.
     pub fn for_op(mut self, op: &'static str) -> Self {
         self.op = op;
+        self.kind = GuardKind::of(op);
         self
     }
     pub fn complete(self) {
@@ -559,9 +606,11 @@ impl WriteGuard {
     pub fn complete_git<R>(self, result: &Result<R, kagi_git::GitError>) {
         match result {
             Err(kagi_git::GitError::TerminationUnknown(t)) => {
-                // A group proven empty cannot write again — release, exactly as
-                // a clean result does.
-                if t.child_stopped() {
+                // A group proven empty cannot write again — release, but only
+                // where the group *is* the account. A sequencer step retains
+                // even then: what it advanced past is not something a process
+                // probe can see (#702 review 7).
+                if t.child_stopped() && self.kind == GuardKind::GroupOnly {
                     self.complete();
                     return;
                 }
@@ -570,6 +619,8 @@ impl WriteGuard {
                     scope: self.scope.clone(),
                     op: self.op,
                     path: self.path.clone(),
+                    kind: self.kind,
+                    stopped: t.child_stopped(),
                     group: t.group(),
                 });
             }

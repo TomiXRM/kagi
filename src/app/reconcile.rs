@@ -38,9 +38,7 @@ impl ReconcileRead {
 }
 pub struct ReconcileJob {
     id: OperationId,
-    /// `None` for a guarded write: nothing was planned, so the group probe
-    /// above is the whole read (#702 review 6).
-    plan: Option<Planned>,
+    target: ReconcileTarget,
     remote: Option<crate::remote::stash::RemoteStashEvidence>,
     pull_stash: Option<kagi_git::backend::stash::StashEvidence>,
     child: Option<u32>,
@@ -69,16 +67,40 @@ impl ReconcileJob {
         // `resolved` is whether the read could account for everything the
         // operation left behind.
         let mut resolved = true;
-        let Some(plan) = self.plan.clone() else {
-            // A guarded write — a fetch, an editor save. It has no plan to read
-            // back, and the probe above already proved the group is gone: there
-            // is nothing left of it to account for.
-            return Ok(ReconcileRead {
-                id: self.id,
-                observation: "the writer's process group is gone".to_string(),
-                stop_proven: true,
-                resolved: true,
-            });
+        let plan = match self.target.clone() {
+            ReconcileTarget::Planned(plan) => *plan,
+            // A guarded write whose only mutation is local and idempotent — a
+            // fetch, an editor save. The probe above already proved the group
+            // is gone; there is nothing left of it to account for.
+            ReconcileTarget::Guarded {
+                kind: GuardKind::GroupOnly,
+                ..
+            } => {
+                return Ok(ReconcileRead {
+                    id: self.id,
+                    observation: "the writer's process group is gone".to_string(),
+                    stop_proven: true,
+                    resolved: true,
+                })
+            }
+            // A sequencer step. A stopped process says nothing about how far
+            // the sequencer got, so the read is the live state itself — and an
+            // unreadable repository is no read at all, which leaves the entry
+            // exactly where it was (#702 review 7).
+            ReconcileTarget::Guarded {
+                kind: GuardKind::Sequencer,
+                path,
+            } => {
+                let snapshot = kagi_git::Backend::open(&path)
+                    .and_then(|backend| backend.conflict_snapshot())
+                    .map_err(|e| e.to_string())?;
+                return Ok(ReconcileRead {
+                    id: self.id,
+                    observation: format!("sequencer={snapshot:?}"),
+                    stop_proven: true,
+                    resolved: true,
+                });
+            }
         };
         let (observation, stop_proven) = match &plan {
             Planned::Remove { plan, .. } => (
@@ -338,7 +360,7 @@ pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<Reconci
     }
     Ok(ReconcileJob {
         id,
-        plan: entry.plan.clone(),
+        target: entry.target.clone(),
         remote: entry.remote.clone(),
         pull_stash: entry.pull.clone(),
         child: entry.child,

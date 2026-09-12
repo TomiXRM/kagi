@@ -529,3 +529,53 @@ fn a_guarded_write_that_cannot_prove_its_stop_parks_the_way_out() {
         "acknowledging is the exit this path never had"
     );
 }
+
+/// A sequencer step is not accounted for by a stopped process.
+///
+/// `git rebase --skip` that advanced past the commit before its termination
+/// went unknown leaves a repository the group probe cannot describe: releasing
+/// on "the process stopped" would let the user run the same skip again and lose
+/// that commit. So a conflict writer retains even on a proven stop, and only a
+/// read of the live sequencer state releases it (#702 review 7). Fetch keeps
+/// the group-only rule — `a_guarded_write_that_cannot_prove_its_stop_parks_the_way_out`
+/// is the other half of this pair.
+#[cfg(unix)]
+#[test]
+fn a_sequencer_step_is_not_released_by_a_stopped_process_alone() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut sessions = Sessions::new();
+
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    guard
+        .for_op("conflict-skip")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            // The executor *did* see the process go. For a fetch that would
+            // release; here it proves nothing about how far the skip got.
+            kagi_git::Termination::stopped("git rebase --skip: deadline expired"),
+        )));
+    assert!(
+        sessions.has_leases(),
+        "a proven stop is not an account of what the sequencer advanced past"
+    );
+
+    let parked = sessions.drain_unaccounted();
+    let [(id, op, _)] = parked.as_slice() else {
+        panic!("the retained lease must come with the entry that releases it");
+    };
+    assert_eq!(*op, "conflict-skip");
+
+    // The read is the live sequencer state, not a process probe.
+    let read = read_reconcile(&sessions, *id).expect("the repository can be read");
+    assert!(
+        read.observation.starts_with("sequencer="),
+        "a sequencer step is reconciled by looking at the sequencer: {}",
+        read.observation
+    );
+    assert!(read.stop_proven() && read.resolved());
+    acknowledge(&mut sessions, read).expect("an observed sequencer releases the scope");
+    assert!(!sessions.has_leases());
+}

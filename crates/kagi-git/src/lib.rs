@@ -37,6 +37,7 @@ pub mod benchmark;
 pub mod blame;
 mod checklist;
 pub mod cli;
+mod conflict_abort;
 pub mod conflicts;
 mod diff;
 mod diffstat;

@@ -1628,6 +1628,107 @@ fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
     );
 }
 
+/// #704: a resolution that has already been **staged** (what Continue does) is
+/// progress to discard, not a mid-conflict edit to protect.
+///
+/// The guard read the conflicted set off `session.files`, which is the LIVE
+/// unmerged list — empty once the resolution is staged. Every resolved path was
+/// then reclassified as a cleanly-merged file the user had edited, so abort
+/// refused and the repository was stuck `MERGING` with no way out of the GUI.
+#[test]
+fn abort_is_not_refused_after_the_resolution_was_staged() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    // Resolve the conflicted path the way Continue does: take a side, stage it.
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("the merge is still in progress");
+    assert!(
+        session.files.is_empty(),
+        "precondition: staging the resolution left nothing unmerged"
+    );
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    execute_conflict_abort(&repo, &session, &buffer)
+        .expect("a staged resolution must not be mistaken for a mid-conflict edit");
+
+    assert!(
+        !dir.join(".git/MERGE_HEAD").exists(),
+        "abort must leave the merge behind"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n",
+        "the resolved path is restored to the pre-merge content"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "base b\n",
+        "the cleanly-merged path is rolled back too"
+    );
+    assert!(
+        !dir.join("added.txt").exists(),
+        "a file the merge added is removed again"
+    );
+}
+
+/// #704 end to end: resolve → stage → unstage → discard leaves the repository
+/// `MERGING` with a clean index and no unmerged entries. Abort must still take
+/// it back to a normal state — that dead end is the whole issue.
+#[test]
+fn abort_recovers_a_merging_repository_after_unstage_and_discard() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+    // The commit panel's Unstage, then Discard all (kagi never runs `git
+    // clean`, so the file the merge added stays behind untracked).
+    git(
+        dir,
+        &[
+            "reset",
+            "-q",
+            "--",
+            "a.txt",
+            "b.txt",
+            "sub/c.txt",
+            "added.txt",
+        ],
+    );
+    git(dir, &["checkout", "--", "a.txt", "b.txt", "sub/c.txt"]);
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "precondition: the repository is still merging"
+    );
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("MERGE_HEAD is still an operation");
+    assert!(session.files.is_empty());
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort must escape the dead end");
+
+    assert!(!dir.join(".git/MERGE_HEAD").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+    assert!(
+        detect_conflict_session(&Repository::open(dir).unwrap()).is_none(),
+        "no operation is in progress once the abort lands"
+    );
+}
+
 /// #369: the staged-edit abort guard must protect the SEQUENCER ops too, not
 /// only merge. A cherry-pick with a conflicted `file.txt` and a cleanly-carried
 /// `b.txt`: staging an edit to `b.txt` mid-conflict must make abort refuse

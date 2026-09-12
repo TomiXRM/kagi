@@ -30,7 +30,7 @@ pub(crate) fn execution_policy() -> kagi_git::backend::ExecutionPolicy {
 }
 
 mod discard;
-pub(crate) use discard::{discard_blocking, DiscardReport};
+pub(crate) use discard::discard_blocking;
 mod pull;
 pub(crate) use pull::{pull_blocking, PullBlockingResult};
 

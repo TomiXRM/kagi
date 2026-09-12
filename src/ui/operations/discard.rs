@@ -315,148 +315,74 @@ impl KagiApp {
         // no ref, so it never enters `operation_history` in ANY repository. Its
         // recovery handle is the oplog entry's backup blob list (ADR-0083), and
         // `Backend::run` writes that entry against `repo_path` above.
-        self.busy_op = Some("discard");
         self.clear_discard_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
         klog!("async: discard started");
 
         let plan = modal.plan.clone();
         let paths = modal.paths.clone();
-        let bg_path = repo_path.clone();
-        let bg_plan = plan.clone();
-        let bg_paths = paths.clone();
-        let task =
-            cx.background_spawn(async move { discard_blocking(&bg_path, &bg_plan, &bg_paths) });
-        let notice_path = repo_path.clone();
-        self.finish_op_on_main_settled(
+        let (bg_path, bg_plan, bg_paths) = (repo_path.clone(), plan.clone(), paths.clone());
+        let wip_path = repo_path.clone();
+        // ADR-0196 Wave 3: the backend's receipt already says Partial when a
+        // target stayed unstaged (#281, `DiscardOutcome::unverified`); the UI
+        // presents it and adds the discard-specific footer.
+        self.finish_run(
             cx,
-            task,
-            move |app, result: &Result<DiscardReport, String>, _cx| {
-                if let Ok(report) = result {
-                    app.notice_recording_failure("discard", &report.run.recording, &notice_path);
-                }
+            "discard",
+            i18n::Op::Discard,
+            plan.clone(),
+            repo_path,
+            move || discard_blocking(&bg_path, &bg_plan, &bg_paths),
+            |outcome| match outcome {
+                kagi_git::OperationOutcome::Discard(d) if d.is_partial() => Some(format!(
+                    "partially applied — {}",
+                    d.error.clone().unwrap_or_default()
+                )),
+                _ => None,
             },
-            move |app, result, cx| {
-                let result = match result {
-                    Ok(report) => {
-                        if app.present_discard_recording_failure(&report, cx) {
-                            app.refresh_worktree_wip_row(&repo_path);
-                            app.reload(cx);
-                            return;
-                        }
-                        report.presentation
-                    }
-                    Err(error) => Err(error),
-                };
-                match result {
-                    // #281: a partial discard mutated the working tree, so the oplog entry
-                    // must carry the after-state (which holds the backup blob SHAs — the
-                    // user's only handle on the overwritten content) AND the UI must
-                    // reload so the display matches what is actually on disk.
-                    Ok((_summary, after, Some(err_msg))) => {
-                        klog!("async: discard partially applied — {}", err_msg);
-                        app.record_op(
-                            "discard",
-                            plan.current.clone(),
-                            OpOutcome::Partial {
-                                after,
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
+            move |app, done, cx| match done {
+                Ok(kagi_git::OperationOutcome::Discard(d)) => {
+                    if d.is_partial() {
                         app.status_footer = FooterStatus::Failed(SharedString::from(format!(
                             "{}: {}",
                             Msg::DiscardPartial.t(),
-                            err_msg
+                            d.error.clone().unwrap_or_default()
                         )));
-                        app.refresh_worktree_wip_row(&repo_path);
-                        app.reload(cx);
-                    }
-                    Ok((summary, after, None)) => {
-                        klog!("async: discard finished");
-                        app.record_op(
-                            "discard",
-                            plan.current.clone(),
-                            OpOutcome::Success { after },
-                            &repo_path,
-                            cx,
-                        );
+                    } else {
+                        let human = if d.backups.len() == 1 {
+                            format!("{} discarded", d.backups[0].path)
+                        } else {
+                            format!("{} files discarded", d.backups.len())
+                        };
                         app.status_footer = FooterStatus::Success(SharedString::from(format!(
                             "discard: {}",
-                            summary
+                            human
                         )));
-                        app.refresh_worktree_wip_row(&repo_path);
-                        app.reload(cx);
                     }
-                    Err(err_msg) => {
-                        klog!("async: discard failed — {}", err_msg);
-                        app.record_op(
-                            "discard",
-                            plan.current.clone(),
-                            OpOutcome::Failed {
-                                error: err_msg.clone(),
-                            },
-                            &repo_path,
-                            cx,
-                        );
-                        app.set_discard_modal(DiscardModal {
-                            // Same status classification the modal already carried.
-                            kinds: modal.kinds.clone(),
-                            plan: plan.clone(),
-                            paths: paths.clone(),
-                            skipped: modal.skipped.clone(),
-                            is_all: modal.is_all,
-                            origin: modal.origin,
-                            error: Some(SharedString::from(err_msg)),
-                            // Force re-arm after a failure: the user is
-                            // re-confirming, so require the two-stage flow again.
-                            confirm_armed: false,
-                        });
-                        // #281: never leave the UI showing a state that may no longer
-                        // exist on disk — re-read even on the pure-failure path.
-                        app.refresh_worktree_wip_row(&repo_path);
-                        app.reload(cx);
-                    }
+                    app.refresh_worktree_wip_row(&wip_path);
+                }
+                Ok(_) => {}
+                Err(failure) => {
+                    app.set_discard_modal(DiscardModal {
+                        // Same status classification the modal already carried.
+                        kinds: modal.kinds.clone(),
+                        plan: plan.clone(),
+                        paths: paths.clone(),
+                        skipped: modal.skipped.clone(),
+                        is_all: modal.is_all,
+                        origin: modal.origin,
+                        error: Some(SharedString::from(failure.message)),
+                        // Force re-arm after a failure: the user is
+                        // re-confirming, so require the two-stage flow again.
+                        confirm_armed: false,
+                    });
+                    // #281: never leave the UI showing a state that may no longer
+                    // exist on disk — re-read even on the pure-failure path.
+                    app.refresh_worktree_wip_row(&wip_path);
+                    app.reload(cx);
                 }
             },
         );
-    }
-
-    /// Presentation only: preserve the attempted receipt and its recovery refs.
-    /// The mutation has already run; never reopen a confirmation to retry it.
-    fn present_discard_recording_failure(
-        &mut self,
-        report: &DiscardReport,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let kagi_git::backend::recording::Recording::Failed { attempted, error } =
-            &report.run.recording
-        else {
-            return false;
-        };
-        let Ok((_, after, partial)) = &report.presentation else {
-            return false;
-        };
-        let mut message = format!("discard: changed but not recorded: {error}");
-        if let Some(partial) = partial {
-            message.push_str(&format!("; {partial}"));
-        }
-        let mut entry = attempted.clone();
-        entry.outcome = OpOutcome::Partial {
-            after: after.clone(),
-            error: message.clone(),
-        };
-        if let Some(panel) = &self.op_log {
-            panel.update(cx, |panel, cx| {
-                panel.push(entry);
-                cx.notify();
-            });
-        }
-        self.push_toast(ToastKind::Error, message.clone(), cx);
-        self.status_footer = FooterStatus::Failed(message.clone().into());
-        klog!("async: discard changed but not recorded — {}", message);
-        true
     }
 }
 

@@ -110,7 +110,7 @@ impl KagiApp {
             plan.clone(),
             repo_path,
             move || rebase_blocking(&bg_path, &bg_plan, &bg_onto),
-            |outcome| Some(format!(" — {}", rebase_summary(outcome))),
+            |outcome| Some(format!("finished — {}", rebase_summary(outcome))),
             move |app, done, _cx| match done {
                 Ok(_) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(

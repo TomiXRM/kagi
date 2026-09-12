@@ -2268,7 +2268,10 @@ mod macos {
             kagi.update(cx, |app, cx| {
                 app.start_discard(cx);
                 if stale {
-                    app.switch_generation += 1;
+                    // ADR-0196: staleness is the owner stamp (session + visit),
+                    // not `switch_generation`. Leaving the tab ends the visit.
+                    let session = app.active_session().expect("attached");
+                    app.app_sessions.depart(session);
                 }
             });
             cx.run_until_parked();

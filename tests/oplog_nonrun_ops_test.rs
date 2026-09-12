@@ -635,16 +635,16 @@ fn push_target_to(fixture: &Fixture, remote: &TempDir, target: &mut CleanupDelet
     target.remote_tip = target.local_tip.clone();
 }
 
-/// A pid that has already been reaped: the handle a `Termination` carries when
-/// the executor could not account for its child, in the state a later
-/// reconcile read must be able to prove.
-fn dead_pid() -> u32 {
+/// A process group that has already gone: the handle an `Unaccounted`
+/// termination carries, in the state a later reconcile read must be able to
+/// prove. A reaped child leads its own group here — nothing is left to signal.
+fn dead_group() -> u32 {
     let mut child = Command::new("true")
         .spawn()
         .expect("spawn a short-lived child");
-    let pid = child.id();
+    let group = child.id();
     child.wait().expect("reap it");
-    pid
+    group
 }
 
 /// The runner answers the batch delete with a termination the executor *saw*
@@ -660,16 +660,16 @@ fn push_stopped(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git::Git
     kagi_git::cli::run_git(dir, args)
 }
 
-/// The runner answers with an *unproven* termination: the deadline expired, the
-/// child could not be reaped, and its pid is the only handle left on it.
-fn push_unproven(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git::GitError> {
+/// The runner answers with an *unaccounted* termination: the deadline expired,
+/// the kill could not account for the child, and the process group it was
+/// spawned into is the only handle left on it.
+fn push_unaccounted(dir: &Path, args: &[&str]) -> Result<GitCliOutput, kagi_git::GitError> {
     RUNNER_CALLS.lock().unwrap().push(args.join(" "));
     if args.first() == Some(&"push") {
         return Err(kagi_git::GitError::TerminationUnknown(
-            kagi_git::Termination {
+            kagi_git::Termination::Unaccounted {
                 reason: "push --delete: deadline expired".to_string(),
-                child_stopped: false,
-                pid: Some(dead_pid()),
+                group: dead_group(),
             },
         ));
     }
@@ -780,31 +780,31 @@ fn cleanup_stops_at_an_unconfirmed_delete_and_keeps_the_lease() {
         Some(kagi_git::oplog::FailureCode::TerminationUnknown)
     );
 
-    // ── The child could not be accounted for: the scope stays reserved until
-    // a read proves the pid is gone, and only then can it be acknowledged.
+    // ── The group could not be accounted for: the scope stays reserved until
+    // a read proves that group is gone, and only then can it be acknowledged.
     RUNNER_CALLS.lock().unwrap().clear();
     let fixture = Fixture::new();
     let mut target = fixture.merged_target();
     let remote = TempDir::new().unwrap();
     push_target_to(&fixture, &remote, &mut target);
 
-    let (mut sessions, id, recorded) = cleanup_through_the_app(&fixture, &target, push_unproven);
+    let (mut sessions, id, recorded) = cleanup_through_the_app(&fixture, &target, push_unaccounted);
     assert!(matches!(recorded, OpOutcome::Unknown { .. }));
     assert!(
         sessions.has_leases(),
-        "an unproven termination retains the scope (ADR-0175)"
+        "an unaccounted process group retains the scope (ADR-0175)"
     );
     assert_eq!(sessions.reconcile_ids(), vec![id]);
     let read = kagi::app::read_reconcile(&sessions, id)
-        .expect("the pid it carries is what makes the entry readable");
+        .expect("the group it carries is what makes the entry readable");
     assert!(
         read.stop_proven(),
-        "the read asked the OS: that child is gone"
+        "the read asked the OS: that group is gone"
     );
     kagi::app::acknowledge(&mut sessions, read).expect("the proven stop releases the scope");
     assert!(
         !sessions.has_leases(),
-        "acknowledging an unproven termination is the exit from the retained lease"
+        "acknowledging a proven-gone group is the exit from the retained lease"
     );
     assert!(sessions.reconcile_ids().is_empty());
 }
@@ -873,7 +873,14 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
     assert_eq!(
         sessions.reconcile_ids(),
         vec![id],
-        "and the operation keeps its id, so the retained lease has an exit"
+        "and the operation keeps its id rather than being dropped on the floor"
+    );
+    // `Abandoned` is deliberately the one termination with no automatic exit:
+    // kagi lost its own executor, so there is no group to probe and the read
+    // says so instead of offering an acknowledgement that proves nothing.
+    assert_eq!(
+        kagi::app::prepare_reconcile(&sessions, id).err().as_deref(),
+        Some("execution termination is unconfirmed and nothing is left to probe"),
     );
     let records = fixture.records(1, Actor::Human);
     assert_eq!(records[0].op, "branch-cleanup");

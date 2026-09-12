@@ -280,35 +280,6 @@ impl Backend {
             ops::stash_identity(&mut backend.repo, None)?.oids
         ))
     }
-    /// The OID a remote currently has for `refname`, or `None` when the remote
-    /// does not have it. `Err` when the remote could not be read at all —
-    /// which is not the same answer and must never pass for one (ADR-0177).
-    ///
-    /// A local snapshot cannot say whether a push landed; this is the only
-    /// thing that can, and it is what the reconcile read for a remote-writing
-    /// operation asks (#702 re-review).
-    pub fn read_remote_ref(
-        path: &Path,
-        remote: &str,
-        refname: &str,
-    ) -> Result<Option<String>, GitError> {
-        ops::check_operand("remote", remote)?;
-        ops::check_operand("ref", refname)?;
-        let out = crate::cli::run_git(path, &["ls-remote", "--", remote, refname])
-            .map_err(|e| crate::cli::context("ls-remote failed", e))?;
-        if out.status != 0 {
-            return Err(GitError::Other(format!(
-                "ls-remote failed (exit {}): {}",
-                out.status,
-                out.stderr.trim()
-            )));
-        }
-        Ok(out
-            .stdout
-            .lines()
-            .find_map(|line| line.split_whitespace().next().map(str::to_string)))
-    }
-
     pub fn unique_stash_index(path: &Path, oid: &str) -> Result<Option<usize>, GitError> {
         let mut backend = Self::open(path)?;
         let identity = ops::stash_identity(&mut backend.repo, None)?;

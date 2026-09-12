@@ -220,6 +220,12 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
         "an unconfirmed writer keeps the scope reserved"
     );
     assert_eq!(
+        s.blocking_reconcile(),
+        Some(id),
+        "and a refusal made while it is parked can name it, so the user is not \
+         told 'no' with no way to say yes"
+    );
+    assert_eq!(
         prepare_reconcile(&s, id).err().as_deref(),
         Some("execution termination is unconfirmed and nothing is left to probe"),
         "the reconcile requirement is registered and says why it cannot be read"
@@ -288,6 +294,7 @@ fn a_reaped_child_is_the_stop_proof_that_reopens_the_scope() {
 /// handle, and the reconcile read asks the OS before it reads anything. This
 /// process's own group is certainly alive, so the read must come back
 /// unresolved *without observing*; a group that is gone must let it through.
+#[cfg(unix)]
 #[test]
 fn an_unaccounted_group_is_proven_stopped_by_going_away() {
     let f = Fixture::new();
@@ -351,6 +358,7 @@ fn an_unaccounted_group_is_proven_stopped_by_going_away() {
     assert!(!s.has_leases());
 }
 
+#[cfg(unix)]
 /// A process group with nothing left in it: spawn a child in its own group,
 /// wait for it, and reuse the id. `kill(-pgid, 0)` then answers ESRCH.
 fn dead_group() -> u32 {
@@ -363,6 +371,7 @@ fn dead_group() -> u32 {
     pid
 }
 
+#[cfg(unix)]
 /// A process group that is certainly alive: our own child, in its own group,
 /// stopped when the guard drops.
 struct LiveGroup(std::process::Child);
@@ -605,15 +614,20 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
     let session = s.attach(f.repo.clone());
     let owner = s.attachment(session).expect("attached");
     let backend = Backend::open(&f.repo).unwrap();
+    let plan = backend.plan_push().expect("plan push");
     let request = RunRequest {
         owner,
         name: "push",
         path: f.repo.clone(),
         repo: backend.write_repo_id().unwrap(),
-        plan: Arc::new(backend.plan_push().expect("plan push")),
-        // ponytail: no per-operation target in `RunRequest`; the read derives
-        // the branch from HEAD, which is what `Operation::Push` pushes.
+        // Frozen before the write, exactly as `finish_run` freezes it.
+        remote: backend.remote_expectation("push", &plan),
+        plan: Arc::new(plan),
     };
+    assert!(
+        request.remote.is_some(),
+        "the fixture must produce a namable remote effect"
+    );
     let second = request.clone();
     let unknown = f.receipt(
         "push",
@@ -639,20 +653,32 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
     let id = job.id();
     apply(&mut s, job.run());
 
-    // The fixture pushed `main` already, so the remote *does* carry the local
-    // tip: the write is confirmed and the scope can be reopened.
+    // The fixture pushed `main` already, so the remote carries what the
+    // expectation named: the write is confirmed and the scope can be reopened.
     let read = read_reconcile(&s, id).expect("readable");
     assert!(
-        read.observation.contains("origin/main=") && read.observation.contains("confirmed=true"),
-        "the read must name the live remote ref, not just HEAD: {}",
+        read.observation.contains("origin/refs/heads/main")
+            && read.observation.contains("confirmed=true"),
+        "the read must compare the frozen expectation against the live ref: {}",
         read.observation
     );
     assert!(read.resolved());
     acknowledge(&mut s, read).expect("a confirmed remote state releases the scope");
 
-    // Now the local branch moves ahead of the remote: the same read can no
-    // longer say the push landed, so it must not let the scope reopen.
-    git(&f.repo, &["commit", "-q", "--allow-empty", "-m", "ahead"]);
+    // An external Git moves the local branch on. A read that compared *current*
+    // values would still find local == remote and call the push landed; the
+    // frozen expectation is what makes that impossible (#702 re-review).
+    git(
+        &f.repo,
+        &["commit", "-q", "--allow-empty", "-m", "moved externally"],
+    );
+    let backend = Backend::open(&f.repo).unwrap();
+    let plan = backend.plan_push().expect("plan push");
+    let moved = RunRequest {
+        remote: backend.remote_expectation("push", &plan),
+        plan: Arc::new(plan),
+        ..second
+    };
     let unknown = f.receipt(
         "push",
         OpOutcome::Unknown {
@@ -666,7 +692,7 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
             "git push timed out",
         ))),
     );
-    let approved = approve_run(&mut s, second).unwrap();
+    let approved = approve_run(&mut s, moved).unwrap();
     let job = prepare_run(
         &mut s,
         approved,
@@ -679,7 +705,7 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
     let read = read_reconcile(&s, id).expect("readable");
     assert!(
         read.observation.contains("confirmed=false"),
-        "the remote does not carry the local tip: {}",
+        "the remote does not carry what this push promised: {}",
         read.observation
     );
     assert!(!read.resolved());
@@ -690,6 +716,71 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
     );
 }
 
+/// Each remote-writing operation is confirmed only by the value frozen at
+/// approval — a tag by its own OID, a deletion by the ref being gone, a
+/// force-push by the sha it promised. A read that compared anything else could
+/// call an unlanded write confirmed (#702 re-review).
+#[test]
+fn every_remote_expectation_is_confirmed_only_by_its_frozen_value() {
+    use kagi_git::backend::remote_ref::{RemoteExpect, RemoteExpectation};
+
+    let oid = RemoteExpectation {
+        remote: "origin".into(),
+        refname: "refs/heads/main".into(),
+        expect: RemoteExpect::Oid("a".repeat(40)),
+    };
+    assert!(oid.matches(Some(&"a".repeat(40))));
+    assert!(
+        !oid.matches(Some(&"b".repeat(40))),
+        "a different tip is not it"
+    );
+    assert!(!oid.matches(None), "an absent ref is not it either");
+
+    let absent = RemoteExpectation {
+        remote: "origin".into(),
+        refname: "refs/heads/gone".into(),
+        expect: RemoteExpect::Absent,
+    };
+    assert!(absent.matches(None));
+    assert!(
+        !absent.matches(Some(&"a".repeat(40))),
+        "a branch that is still there is not deleted"
+    );
+}
+
+/// The four remote-writing operations name their effect from their own typed
+/// plan recovery; everything else names nothing and stays unresolved.
+#[test]
+fn a_remote_effect_is_named_from_the_plan_that_is_about_to_run() {
+    use kagi_git::backend::remote_ref::RemoteExpect;
+
+    let f = Fixture::new();
+    git(&f.repo, &["tag", "v1"]);
+    let backend = Backend::open(&f.repo).unwrap();
+    let head = git(&f.repo, &["rev-parse", "HEAD"]);
+
+    let push = backend
+        .remote_expectation("push", &backend.plan_push().expect("plan push"))
+        .expect("a tracked branch names its push");
+    assert_eq!(push.remote, "origin");
+    assert_eq!(push.refname, "refs/heads/main");
+    assert_eq!(push.expect, RemoteExpect::Oid(head.clone()));
+
+    let tag = backend
+        .remote_expectation(
+            "push-tag",
+            &backend.plan_push_tag("v1").expect("plan push tag"),
+        )
+        .expect("a tag push names its ref");
+    assert_eq!(tag.refname, "refs/tags/v1");
+    assert_eq!(tag.expect, RemoteExpect::Oid(head));
+
+    // A local-only operation has no remote effect to name.
+    assert!(backend
+        .remote_expectation("commit", &backend.plan_commit("x").expect("plan commit"))
+        .is_none());
+}
+
 /// #702 re-review — the proof is about the process *tree*, not one pid.
 ///
 /// A `git push` that was killed can leave a transport helper or a hook still
@@ -698,6 +789,7 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
 /// been reaped while a member of its group is still alive — a pid probe would
 /// call that stopped and let the scope reopen under a writer that is still
 /// going. The group probe must not.
+#[cfg(unix)]
 #[test]
 fn a_surviving_descendant_keeps_the_writer_unstopped() {
     let f = Fixture::new();
@@ -741,6 +833,7 @@ fn a_surviving_descendant_keeps_the_writer_unstopped() {
     );
 }
 
+#[cfg(unix)]
 /// A process group whose **leader has exited and been reaped**, while a member
 /// of it is still alive: `sh` forks a sleeper into its own group and returns.
 /// The sleeper is short-lived, so nothing outlives the test run by long.

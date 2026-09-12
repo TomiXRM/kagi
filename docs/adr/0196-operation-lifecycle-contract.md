@@ -181,7 +181,7 @@ DifferentialManifest {
 | 0 | 契約固定（本書） | **完了** |
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **run family と pull は完了** (#698 #699 #700 + 本 PR、下記メモ)。残: pr-merge / branch-cleanup / plan 系 latch → `busy_op` 除去 |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | run family と pull は移行済み (#698 #699 #700 + #702) だが **Wave 3 は未完了**: 下記「終端未確定の出口」の残件（#703）が閉じるまで受入条件を満たさない。残: pr-merge / branch-cleanup / plan 系 latch → `busy_op` 除去、および #703 |
 | 4 | UI state: `TabUiState` per session | |
 | 5 | crate 抽出（境界安定後のみ） | |
 | 6 | cleanup | |
@@ -212,13 +212,29 @@ stash → pull → pop の複合結果 `PullBlockingResult`、discard は `Disca
 switch-to-latest / set-upstream / rename-branch / delete-remote-branch / push /
 merge(+into) / commit / amend / create-worktree / rebase / reset-current /
 force-with-lease-push / push-tag / branch-plan / delete-branch / discard。
-**終端未確定の出口（全 local family 共通、2026-09-12 追記）**: `run_git` /
-`run_child` は `GitError::TerminationUnknown(kagi_git::Termination { reason,
-child_stopped, pid })` を型のまま返す（`Other` へ潰さない）。`apply` は
-`child_stopped` で lease を解放するか保持するかを決め、どちらでも reconcile entry を
-登録する。保持した場合の出口は `ReconcileJob` が pid の生存を確認して `stop_proven`
-を作ることで、repository snapshot を stop proof とはみなさない。`acknowledge` は
+**終端未確定の出口（全 local family 共通、2026-09-13 改訂）**: `run_git` /
+`run_child` は `GitError::TerminationUnknown(kagi_git::Termination)` を型のまま返す
+（`Other` へ潰さない）。`Termination` は 3 状態で、保持する状態は必ず出口を持つ:
+
+| 状態 | lease | 出口 |
+| --- | --- | --- |
+| `Stopped { reason }` | 解放 | reconcile entry を read → acknowledge |
+| `Unaccounted { reason, group }` | 保持 | `ReconcileJob` が process group の生存を probe し、空になっていれば `stop_proven` |
+| `Abandoned { reason }` | 保持 | **無し（#703）**。kagi が自分の executor を見失った状態で probe する handle が無い |
+
+stop proof は **observation より先**に立てる。group が生きている間は何も読まずに
+unresolved を返す（実行中の snapshot を「停止後の観測」として acknowledge させない）。
+proof は direct child の reap ではなく process group の空である（`run_child` は
+`process_group(0)` で spawn し、deadline では group を kill する）。remote-writing
+operation は承認時に凍結した `RemoteExpectation` を live `ls-remote` と比較して
+`resolved` を決める（local snapshot は remote の状態を語らない）。`acknowledge` は
 `stop_proven` かつ `resolved` の read だけを受け付ける。
+
+**残件 (#703)**: `Abandoned`（task unwind）と probe を持たない platform（Windows）は
+安全側の保持のまま — main の `write_lease` retention と同じ class。executor が
+spawn した process tree を supervisor に所有させ、panic 後も stop proof を作れる
+ようにするまで Wave 3 の受入条件（全 family の host-close / unknown / settle matrix
+統一）は満たさない。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を

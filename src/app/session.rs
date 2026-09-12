@@ -439,6 +439,13 @@ impl Sessions {
     pub fn needs_reconcile(&self, id: OperationId) -> bool {
         self.reconcile.contains_key(&id)
     }
+    /// Any unacknowledged requirement, so a `NeedsReconcile` refusal can hand
+    /// the user the entry that is blocking them rather than only the word.
+    // ponytail: the first one, not "the one for this scope" — a refusal has no
+    // scope in hand, and one entry is enough to get the user into the flow.
+    pub fn blocking_reconcile(&self) -> Option<OperationId> {
+        self.reconcile.keys().copied().next()
+    }
     pub fn is_stale(&self, worktree: &WorktreeId) -> bool {
         self.stale.contains(worktree)
     }

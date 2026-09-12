@@ -443,20 +443,21 @@ pub fn run_git_with_options(
     // the remote. Keep it a `TerminationUnknown` so the app records `Unknown`
     // and never auto-retries (ADR-0177).
     let status = run.status.clone().map_err(|stop| {
-        // A killed-and-collected child cannot write anything more; one the kill
-        // did not account for leaves only its pid to prove it later.
+        // An empty group cannot write anything more; one that still has a
+        // member in it leaves that group as the handle to prove it later.
         let reason = format!("git {} {}", args.join(" "), stop);
-        GitError::TerminationUnknown(Termination::from_stop(reason, &stop, run.pid))
+        GitError::TerminationUnknown(Termination::from_run(reason, &run))
     })?;
     // Exit 0 with a truncated capture is not a successful read: the caller
     // parses this output. Unknown, not success and not a plain failure.
     if let Err(io) = &run.io {
-        // The wait resolved, so the child itself is gone; what is unknown is
-        // whether the capture this caller parses is the whole of its output.
-        return Err(GitError::TerminationUnknown(Termination::stopped(format!(
-            "git {}: {io}",
-            args.join(" ")
-        ))));
+        // The child is gone but something it started still holds the pipes —
+        // a descendant of this write, still running. That is the unaccounted
+        // case, not a stopped one (#702 re-review).
+        return Err(GitError::TerminationUnknown(Termination::from_run(
+            format!("git {}: {io}", args.join(" ")),
+            &run,
+        )));
     }
 
     Ok(GitCliOutput {

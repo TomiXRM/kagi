@@ -105,17 +105,7 @@ impl KagiApp {
                     for step in &report.steps {
                         app.notice_recording_failure("pull", &step.recording, &repo_path);
                     }
-                    if app.app_sessions.needs_reconcile(id) {
-                        app.app_notices.push_back(crate::ui::modals::AppNotice {
-                            message: format!(
-                                "{}: pull: {}",
-                                repo_path.display(),
-                                report.decisive().recording.entry().op
-                            ),
-                            inspect: Some(id),
-                            acknowledge: None,
-                        });
-                    }
+                    app.notice_reconcile_required(id, "pull", &repo_path);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     if !current {

@@ -53,7 +53,7 @@ impl KagiApp {
     pub(crate) fn set_app_notice(&mut self, message: crate::ui::modals::AppNotice) {
         self.active_modal = Some(ActiveModal::AppNotice(message));
     }
-    pub(crate) fn clear_app_notice(&mut self) {
+    pub fn clear_app_notice(&mut self) {
         if self.app_notice().is_some() {
             self.active_modal = None;
         }

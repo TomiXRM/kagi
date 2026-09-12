@@ -138,54 +138,36 @@ fn writes_a_remote(name: &str) -> bool {
     )
 }
 
-/// What a remote-writing run left on the remote, read live.
+/// What a remote-writing run left on the remote, read live and compared
+/// against the expectation frozen at approval.
 ///
-/// The `bool` is whether the remote state is **confirmed**: for a push-shaped
-/// operation that means the remote branch now carries the local tip, which is
-/// the only thing that says the push landed. Anything kagi cannot derive an
-/// expectation for — a tag push, a remote-branch delete, a detached HEAD —
-/// stays unconfirmed: the observation names what the remote holds and the user
-/// decides, but the scope is never reopened on a guess (ADR-0177).
+/// Never against current values. Kagi's lease does not stop an external Git
+/// from moving the local branch back to the remote's old tip, and comparing
+/// "what this repository has now" would then call an unlanded push confirmed
+/// (#702 re-review). An operation whose remote effect could not be named at
+/// approval stays unconfirmed — the observation says what the remote holds and
+/// the user decides, but the scope is never reopened on a guess (ADR-0177).
 fn observe_remote_run(request: &RunRequest) -> Result<(String, bool), String> {
-    let snap = kagi_git::Backend::open(&request.path)
-        .and_then(|mut backend| backend.snapshot(1))
-        .map_err(|e| e.to_string())?;
-    let kagi_git::Head::Attached { branch, target } = &snap.head else {
+    let Some(expected) = request.remote.as_ref() else {
         return Ok((
-            format!("head={} (no branch to compare)", snap.head.display()),
+            format!(
+                "{}: this operation's remote effect was not named at approval, \
+                 so nothing can confirm it",
+                request.name
+            ),
             false,
         ));
     };
-    let Some(upstream) = snap
-        .branches
-        .iter()
-        .find(|candidate| &candidate.name == branch)
-        .and_then(|candidate| candidate.upstream.as_ref())
-    else {
-        return Ok((format!("head={} upstream=none", snap.head.display()), false));
-    };
-    let (remote, remote_branch) = match upstream.remote_branch.split_once('/') {
-        Some(split) => split,
-        None => {
-            return Ok((
-                format!("upstream={} (unparsed)", upstream.remote_branch),
-                false,
-            ))
-        }
-    };
-    let refname = format!("refs/heads/{remote_branch}");
-    let live = kagi_git::Backend::read_remote_ref(&request.path, remote, &refname)
-        .map_err(|e| e.to_string())?;
-    // Only a push can be confirmed this way, and only when the remote already
-    // carries what this repository has. A tag or a deletion has no expectation
-    // to compare against here.
-    let confirmed = request.name == "push" && live.as_deref() == Some(target.as_str());
+    let live =
+        kagi_git::Backend::read_remote_ref(&request.path, &expected.remote, &expected.refname)
+            .map_err(|e| e.to_string())?;
+    let confirmed = expected.matches(live.as_deref());
     Ok((
         format!(
-            "head={} local={} {}={} confirmed={confirmed}",
-            snap.head.display(),
-            target,
-            upstream.remote_branch,
+            "{}/{} expected={} live={} confirmed={confirmed}",
+            expected.remote,
+            expected.refname,
+            expected.describe(),
             live.as_deref().unwrap_or("absent"),
         ),
         confirmed,

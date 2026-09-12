@@ -88,6 +88,8 @@ fn log_stash_event(
     }
 }
 
+mod notices;
+
 impl KagiApp {
     /// Keep the established `footer: ... partially applied` klog contract while
     /// making an Unknown result explicit in the human-facing footer and toast.
@@ -332,24 +334,6 @@ impl KagiApp {
             });
         })
         .detach();
-        cx.notify();
-    }
-    /// An admission the application layer refused: footer, toast and the
-    /// shared app-notice modal, never stderr alone.
-    pub(crate) fn report_admission_refusal(
-        &mut self,
-        error: app::AdmissionError,
-        cx: &mut Context<Self>,
-    ) {
-        let message = if error == app::AdmissionError::Busy {
-            Msg::OpInProgress.t().to_string()
-        } else {
-            error.to_string()
-        };
-        self.status_footer = FooterStatus::Failed(message.clone().into());
-        self.push_toast(ToastKind::Error, message.clone(), cx);
-        self.app_notices.push_back(message.into());
-        self.present_app_notice();
         cx.notify();
     }
     pub(crate) fn deliver_app_result(&mut self, delivery: Delivery, cx: &mut Context<Self>) {
@@ -675,7 +659,7 @@ impl KagiApp {
         // is not stranded after its conflict has been continued.
         self.present_stash_followup(cx);
     }
-    pub(crate) fn confirm_app_notice(&mut self, cx: &mut Context<Self>) {
+    pub fn confirm_app_notice(&mut self, cx: &mut Context<Self>) {
         let Some(notice) = self.app_notice().cloned() else {
             return;
         };

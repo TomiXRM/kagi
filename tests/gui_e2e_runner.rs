@@ -599,6 +599,10 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),
             (
+                "run_unknown_offers_its_reconcile",
+                Box::new(crate::recovery_pull::scenario_run_unknown_offers_its_reconcile),
+            ),
+            (
                 "pull_unknown_notice_survives_a_tab_switch",
                 Box::new(
                     crate::recovery_pull::scenario_pull_unknown_notice_survives_a_tab_switch,

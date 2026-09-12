@@ -115,7 +115,9 @@ impl PullReport {
     /// but was not recorded must never be presented as a clean success (#501),
     /// and that is true of a *child*'s receipt too, not only the decisive one.
     pub fn recording_failed(&self) -> bool {
-        self.announce() != self.terminal.decisive
+        self.steps
+            .iter()
+            .any(|step| matches!(step.recording, recording::Recording::Failed { .. }))
     }
     /// Which receipt speaks for the workflow.
     ///
@@ -214,13 +216,33 @@ mod tests {
              clean decisive receipt must not announce a success for it"
         );
         let all_kept = PullReport::settled(
-            vec![step(kept.clone()), step(kept)],
+            vec![step(kept.clone()), step(kept.clone())],
             PullPresentation::Success {
                 summary: "fast-forward".into(),
             },
             None,
         );
         assert!(!all_kept.recording_failed());
+        // And the decisive receipt's *own* append failing is the same fact: a
+        // clean `pull: …` success must never follow "changed but not recorded".
+        let decisive_lost = PullReport::settled(
+            vec![
+                step(kept.clone()),
+                step(recording::Recording::Failed {
+                    attempted: entry(),
+                    error: "disk full".into(),
+                }),
+            ],
+            PullPresentation::Success {
+                summary: "fast-forward".into(),
+            },
+            None,
+        );
+        assert!(
+            decisive_lost.recording_failed(),
+            "the receipt that speaks for the workflow is the one that was lost"
+        );
+        assert_eq!(decisive_lost.announce(), decisive_lost.decisive_index());
         assert_eq!(
             all_kept.announce(),
             all_kept.decisive_index(),

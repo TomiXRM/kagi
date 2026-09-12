@@ -284,16 +284,19 @@ impl Termination {
             },
         }
     }
-    /// From a runner stop: either the kill accounted for the child, or the
-    /// group it was spawned into is the handle left on it. The one place that
-    /// rule is written.
-    pub fn from_stop(reason: impl Into<String>, stop: &proc::ProcStop, group: u32) -> Self {
-        if stop.reaped() {
+    /// From a finished run: only a process group confirmed **empty** is a stop
+    /// proof. The one place that rule is written.
+    ///
+    /// Not the direct child's reap: a `git push` whose transport helper is
+    /// still writing has a reaped child and an unfinished write, and
+    /// `ProcIo::Unfinished` is exactly that caught in the act (#702 re-review).
+    pub fn from_run(reason: impl Into<String>, run: &proc::ProcRun) -> Self {
+        if run.group_stopped {
             return Self::stopped(reason);
         }
         Self::Unaccounted {
             reason: reason.into(),
-            group,
+            group: run.pid,
         }
     }
     pub fn reason(&self) -> &str {
@@ -542,7 +545,19 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
 
 #[cfg(test)]
 mod termination_tests {
-    use super::{proc::ProcStop, Termination};
+    use super::{proc::ProcRun, Termination};
+
+    /// A finished run whose group is (or is not) confirmed empty.
+    fn run(group_stopped: bool) -> ProcRun {
+        ProcRun {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            status: Ok(0),
+            io: Ok(()),
+            pid: 4242,
+            group_stopped,
+        }
+    }
 
     /// The rule the whole reconcile exit rests on: a child the runner killed
     /// *and collected* cannot write again, so the scope may be released; one it
@@ -551,40 +566,20 @@ mod termination_tests {
     /// the scope for the life of the process or releases it on no evidence.
     #[test]
     fn a_collected_child_is_a_stop_proof_and_an_unaccounted_one_leaves_its_pid() {
-        let collected = Termination::from_stop(
-            "git fetch",
-            &ProcStop::Deadline {
-                secs: 60,
-                reaped: true,
-            },
-            4242,
-        );
-        assert!(
-            collected.child_stopped(),
-            "a reaped child is proven stopped"
-        );
-        assert_eq!(
-            collected.group(),
-            None,
-            "and needs no handle to prove it again"
-        );
+        let empty = Termination::from_run("git fetch", &run(true));
+        assert!(empty.child_stopped(), "an empty group is proven stopped");
+        assert_eq!(empty.group(), None, "and needs no handle to prove it again");
 
-        let unaccounted = Termination::from_stop(
-            "git fetch",
-            &ProcStop::Wait {
-                error: "no child processes".into(),
-                reaped: false,
-            },
-            4242,
-        );
+        let holding = Termination::from_run("git fetch", &run(false));
         assert!(
-            !unaccounted.child_stopped(),
-            "a child the kill did not account for is not proven stopped"
+            !holding.child_stopped(),
+            "a group with something still in it is not proven stopped — reaping \
+             the direct child says nothing about what it started"
         );
         assert_eq!(
-            unaccounted.group(),
+            holding.group(),
             Some(4242),
-            "its process group is the only way a later read can prove it went away"
+            "the group is the only way a later read can prove it went away"
         );
     }
 

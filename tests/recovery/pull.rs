@@ -118,10 +118,31 @@ pub fn scenario_pull_auto_stash_success(cx: &mut VisualTestAppContext) {
 /// but the capture is not proven complete — `run_git`'s `TerminationUnknown`.
 /// `remote.<name>.uploadpack` is what `git fetch` runs for a local remote, and
 /// the CLI hardening does not neutralise it, so this is the real path.
-fn leaky_upload_pack(root: &Path) -> String {
-    let path = root.join("upload-pack.sh");
-    std::fs::write(&path, "#!/bin/sh\nsleep 5 &\nexec git upload-pack \"$@\"\n")
-        .expect("write helper");
+fn wait_for(
+    cx: &mut VisualTestAppContext,
+    mut done: impl FnMut(&mut VisualTestAppContext) -> bool,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if done(cx) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the completion never arrived"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn leaky_helper(root: &Path, program: &str) -> String {
+    let path = root.join(format!("{program}.sh"));
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\nsleep 4 &\nexec git {program} \"$@\"\n"),
+    )
+    .expect("write helper");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -172,13 +193,19 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     // The leak is installed only after the confirmation exists: a dirty Pull
     // fetches before it opens the modal (#625), and that read must succeed —
     // execution's own fetch is the one whose termination must be unproven.
-    let helper = leaky_upload_pack(remote_root.path());
+    let helper = leaky_helper(remote_root.path(), "upload-pack");
     git(repo, &["config", "remote.origin.uploadpack", &helper]);
 
     press_enter(cx, &app, window);
-    wait_idle(cx, &app);
-    cx.advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
+    // Not `wait_idle`: a retained lease deliberately keeps the busy mirror set,
+    // which is the state under test. Wait for the completion itself.
+    wait_for(cx, |cx| {
+        cx.read(|cx| {
+            app.read(cx)
+                .pull_modal()
+                .is_some_and(|modal| modal.error.is_some())
+        })
+    });
 
     assert_eq!(
         records(repo, "stash-pop").len(),
@@ -189,6 +216,14 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
         !output(repo, &["stash", "list"]).is_empty(),
         "the user's work stays in the stash"
     );
+    // The descendant of the fetch is still holding the pipes, so nothing about
+    // this write is proven stopped: the scope stays reserved (ADR-0175).
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).app_sessions.has_leases(),
+            "a writer whose process group is still alive keeps its lease"
+        );
+    });
 
     // The error modal is what the user sees first; the reconcile waits behind
     // it. Dismissing the modal must hand them the way in, not silence.
@@ -208,10 +243,119 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
         );
     });
 
+    // Inspect while the descendant lives: the read must come back with nothing
+    // observed and another look, never an acknowledge.
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    wait_for(cx, |cx| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.read(|cx| app.read(cx).app_notice().is_some())
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let notice = app.app_notice().expect("still unresolved, still offered");
+        assert!(
+            notice.inspect.is_some() && notice.acknowledge.is_none(),
+            "a live process group is not a stop proof: {}",
+            notice.message
+        );
+        assert!(
+            app.app_sessions.has_leases(),
+            "and the scope stays reserved while it runs"
+        );
+    });
+
+    // The descendant exits. Only now is the writer proven stopped, and only now
+    // may the read be acknowledged and the scope released.
+    std::thread::sleep(Duration::from_secs(4));
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    wait_for(cx, |cx| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.read(|cx| {
+            app.read(cx)
+                .app_notice()
+                .is_some_and(|notice| notice.acknowledge.is_some())
+        })
+    });
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            !app.read(cx).app_sessions.has_leases(),
+            "acknowledging a proven-stopped writer releases the scope"
+        );
+    });
+
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS pull_unknown_offers_its_reconcile: no pop, stash kept, reconcile reachable"
     );
+}
+
+/// #702 re-review — the 20 run-pipeline families need the same way in.
+///
+/// `oplog_outcome_from` records `Unknown` for a push whose termination could
+/// not be proven, and `apply` parks a requirement that refuses every later
+/// write in the repository. The notice was wired into the pull family only, so
+/// a push in that state wedged the repository with no way to open the entry.
+/// `finish_run` queues it at settlement now, like `finish_pull` does.
+///
+/// The other entrance — a later write's refusal naming the entry — is asserted
+/// at the application layer (`blocking_reconcile`): reaching it from the GUI
+/// needs a refusal that gets past the `busy_op` pre-check, and a parked
+/// requirement holds that latch too.
+pub fn scenario_run_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    let bare = remote_root.path().join("origin.git");
+    let bare_path = bare.to_str().unwrap();
+
+    git(repo, &["init", "--bare", "-q", bare_path]);
+    git(repo, &["remote", "add", "origin", bare_path]);
+    git(repo, &["push", "-q", "-u", "origin", "main"]);
+    git(repo, &["commit", "-q", "--allow-empty", "-m", "to push"]);
+    // The push's own `git push` leaves a descendant holding the pipes, so its
+    // termination cannot be proven — the real production path.
+    let helper = leaky_helper(remote_root.path(), "receive-pack");
+    git(repo, &["config", "remote.origin.receivepack", &helper]);
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_push_modal(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).push_modal().is_some(),
+            "the fixture must produce a push confirmation"
+        );
+    });
+    press_enter(cx, &app, window);
+    wait_for(cx, |cx| {
+        cx.read(|cx| {
+            app.read(cx)
+                .push_modal()
+                .is_some_and(|modal| modal.error.is_some())
+        })
+    });
+    // The failure modal is what the user sees first; the reconcile waits behind
+    // it, exactly as it does for pull.
+    app.update(cx, |app, _| app.cancel_push_modal());
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.run_until_parked();
+
+    // Entrance 1: the completion itself.
+    cx.read(|cx| {
+        let notice = app
+            .read(cx)
+            .app_notice()
+            .expect("a run completion that parked a requirement offers it");
+        assert!(notice.inspect.is_some(), "{}", notice.message);
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS run_unknown_offers_its_reconcile: the completion opens it");
 }
 
 /// #702 re-review — the reconcile notice is settlement, not presentation.
@@ -241,7 +385,7 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
     git(&other, &["commit", "-q", "-m", "upstream"]);
     git(&other, &["push", "-q", "origin", "main"]);
     git(repo, &["fetch", "-q", "origin"]);
-    let helper = leaky_upload_pack(remote_root.path());
+    let helper = leaky_helper(remote_root.path(), "upload-pack");
     git(repo, &["config", "remote.origin.uploadpack", &helper]);
     let other_tab = build_fixture();
 
@@ -268,12 +412,11 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
         app.start_pull(cx);
         app.switch_repo(1, cx);
     });
-    wait_idle(cx, &app);
-    cx.advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    cx.run_until_parked();
+    wait_for(cx, |cx| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.read(|cx| app.read(cx).app_notice().is_some())
+    });
 
     cx.read(|cx| {
         let notice = app

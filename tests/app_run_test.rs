@@ -76,6 +76,7 @@ impl Fixture {
             path: self.repo.clone(),
             repo: backend.write_repo_id().unwrap(),
             plan: Arc::new(plan),
+            remote: None,
         }
     }
 }
@@ -224,6 +225,7 @@ fn a_second_run_is_refused_while_the_first_holds_the_lease() {
 /// forever, so the scope stayed closed for the life of the process
 /// (#702 review P1). Fault injection is unavailable at this level, so the job
 /// closure stands in for the executor; what it returns is what `run_git` builds.
+#[cfg(unix)]
 #[test]
 fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
     let f = Fixture::new();
@@ -286,6 +288,7 @@ fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
     );
 }
 
+#[cfg(unix)]
 /// A process group with nothing left in it: spawn a child in its own group,
 /// wait for it, and reuse the id. `kill(-pgid, 0)` then answers ESRCH.
 fn dead_group() -> u32 {

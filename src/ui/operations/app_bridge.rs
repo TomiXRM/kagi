@@ -201,7 +201,7 @@ impl KagiApp {
         ) {
             Ok(guard) => {
                 self.mark_write_busy(name);
-                Some(guard)
+                Some(guard.for_op(name))
             }
             Err(error) => {
                 let message = if error == app::AdmissionError::Busy {
@@ -650,6 +650,12 @@ impl KagiApp {
     }
     pub(crate) fn poll_app_jobs(&mut self, cx: &mut Context<Self>) {
         self.refresh_write_busy();
+        // A guarded write whose process group is unaccounted for parked its
+        // requirement from wherever it ran; this is where it becomes something
+        // the user can open (#702 review 6). Same notice as `finish_run`'s.
+        for (id, op, path) in self.app_sessions.drain_unaccounted() {
+            self.notice_reconcile_required(id, op, &path);
+        }
         for delivery in self.app_sessions.drain_abandoned() {
             self.deliver_app_result(delivery, cx);
         }

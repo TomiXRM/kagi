@@ -38,7 +38,9 @@ impl ReconcileRead {
 }
 pub struct ReconcileJob {
     id: OperationId,
-    plan: Planned,
+    /// `None` for a guarded write: nothing was planned, so the group probe
+    /// above is the whole read (#702 review 6).
+    plan: Option<Planned>,
     remote: Option<crate::remote::stash::RemoteStashEvidence>,
     pull_stash: Option<kagi_git::backend::stash::StashEvidence>,
     child: Option<u32>,
@@ -67,7 +69,18 @@ impl ReconcileJob {
         // `resolved` is whether the read could account for everything the
         // operation left behind.
         let mut resolved = true;
-        let (observation, stop_proven) = match &self.plan {
+        let Some(plan) = self.plan.clone() else {
+            // A guarded write — a fetch, an editor save. It has no plan to read
+            // back, and the probe above already proved the group is gone: there
+            // is nothing left of it to account for.
+            return Ok(ReconcileRead {
+                id: self.id,
+                observation: "the writer's process group is gone".to_string(),
+                stop_proven: true,
+                resolved: true,
+            });
+        };
+        let (observation, stop_proven) = match &plan {
             Planned::Remove { plan, .. } => (
                 kagi_git::Backend::read_remove_status(plan).map_err(|e| e.to_string())?,
                 true,
@@ -363,7 +376,7 @@ pub fn acknowledge(sessions: &mut Sessions, read: ReconcileRead) -> Result<(), A
     if !read.resolved {
         return Err(AdmissionError::NeedsReconcile);
     }
-    let scope = entry.plan.scope();
+    let scope = entry.scope.clone();
     sessions.reconcile.remove(&read.id);
     sessions.release_lease(&scope, read.id);
     Ok(())

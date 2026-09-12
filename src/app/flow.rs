@@ -301,10 +301,7 @@ pub fn begin_write(
         return Err(AdmissionError::Busy);
     }
     let scope = approved.prepared.scope();
-    if s.reconcile
-        .values()
-        .any(|entry| entry.plan.scope() == scope)
-    {
+    if s.reconcile.values().any(|entry| entry.scope == scope) {
         return Err(AdmissionError::NeedsReconcile);
     }
     if s.has_leases() {

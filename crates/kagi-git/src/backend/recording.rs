@@ -62,9 +62,21 @@ pub fn oplog_outcome_from(
         // unproven termination is *always* `Unknown`, whatever else is known
         // about it. A `Partial` would say the side effects are accounted for,
         // which is the one thing this error means they are not (#702 review).
-        (Err(GitError::TerminationUnknown(t)), _) => crate::oplog::OpOutcome::Unknown {
-            after: predicted.clone(),
-            evidence: t.reason().to_string(),
+        //
+        // And never the plan's *prediction* as the after-state: an `Unknown`
+        // receipt showing what success would have looked like reads, in the
+        // oplog and in a reconcile, as though the state had been observed
+        // (#702 Codex). A supplied partial after-state is a real observation;
+        // without one, say plainly that nothing was read.
+        (Err(GitError::TerminationUnknown(t)), partial) => crate::oplog::OpOutcome::Unknown {
+            after: partial.clone().unwrap_or_else(|| ops::StateSummary {
+                head: "unobserved".to_string(),
+                dirty: "unobserved".to_string(),
+            }),
+            evidence: match partial {
+                Some(_) => t.reason().to_string(),
+                None => format!("{}; the repository was not re-read", t.reason()),
+            },
         },
         (Err(e), Some(after)) => crate::oplog::OpOutcome::Partial {
             after,
@@ -258,13 +270,26 @@ mod outcome_tests {
         let unproven = Err(GitError::TerminationUnknown(Termination::stopped(
             "git push timed out",
         )));
-        for partial in [None, Some(summary("branch: half-way"))] {
-            let outcome = oplog_outcome_from(&unproven, &predicted, partial);
-            assert!(
-                matches!(outcome, crate::oplog::OpOutcome::Unknown { .. }),
-                "an unproven termination is never Partial or Failed: {outcome:?}"
-            );
-        }
+        // Nothing observed: the receipt says so, and never shows `predicted`.
+        let outcome = oplog_outcome_from(&unproven, &predicted, None);
+        let crate::oplog::OpOutcome::Unknown { after, evidence } = &outcome else {
+            panic!("an unproven termination is never Partial or Failed: {outcome:?}");
+        };
+        assert_ne!(
+            after, &predicted,
+            "an Unknown receipt must not present the plan's prediction as an \
+             observed after-state"
+        );
+        assert_eq!(after.head, "unobserved");
+        assert!(evidence.contains("was not re-read"), "{evidence}");
+
+        // A partial after-state *was* observed, so it is what the receipt keeps.
+        let observed = summary("branch: half-way");
+        let outcome = oplog_outcome_from(&unproven, &predicted, Some(observed.clone()));
+        let crate::oplog::OpOutcome::Unknown { after, .. } = &outcome else {
+            panic!("still Unknown, whatever else is known: {outcome:?}");
+        };
+        assert_eq!(after, &observed);
         // A partial after-state from any *other* error still means Partial.
         let ordinary = Err(GitError::Other("half applied".into()));
         assert!(matches!(

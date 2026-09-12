@@ -152,7 +152,14 @@ pub(crate) struct InFlight {
     pub stamp: OwnerStamp,
 }
 pub(crate) struct ReconcileEntry {
-    pub plan: Planned,
+    /// `None` for a write admitted through [`Sessions::write_lease`] rather
+    /// than the plan pipeline — a fetch, an editor save. It has no plan to read
+    /// back; its whole read is the group probe (#702 review 6).
+    pub plan: Option<Planned>,
+    /// The scope this entry closes. Kept directly: a planless entry has no
+    /// `Planned` to derive it from, and the two callers that need it should not
+    /// re-derive what admission already decided.
+    pub scope: WriteScope,
     pub stopped: bool,
     pub remote: Option<crate::remote::stash::RemoteStashEvidence>,
     /// The auto-stash a pull created and did not restore, as the backend saw
@@ -164,9 +171,27 @@ pub(crate) struct ReconcileEntry {
     /// gone the reconcile read says so and the entry can be acknowledged.
     pub child: Option<u32>,
 }
+/// A write that kept its lease because its process group is unaccounted for.
+///
+/// Sent by [`WriteGuard::complete_git`], which runs wherever the writer does
+/// and has no `Sessions` in hand; drained into `reconcile` on the next UI turn.
+/// The point is that the retained lease never exists without the entry that can
+/// release it (#702 review 6).
+pub(crate) struct UnaccountedWrite {
+    pub id: OperationId,
+    pub scope: WriteScope,
+    pub op: &'static str,
+    pub path: PathBuf,
+    /// The process group to probe. `None` only for a termination with no
+    /// handle at all, which this path cannot produce.
+    pub group: Option<u32>,
+}
+
 pub struct Sessions {
     pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
     abandoned_rx: std::sync::mpsc::Receiver<Completion>,
+    unaccounted_tx: std::sync::mpsc::Sender<UnaccountedWrite>,
+    unaccounted_rx: std::sync::mpsc::Receiver<UnaccountedWrite>,
     pub(crate) plan_errors: Vec<PlanErrorJob>,
     sessions: HashMap<SessionId, TabSession>,
     pub(crate) stash_conflicts: HashMap<SessionId, StashConflict>,
@@ -191,9 +216,12 @@ impl Default for Sessions {
 impl Sessions {
     pub fn new() -> Self {
         let (abandoned_tx, abandoned_rx) = std::sync::mpsc::channel();
+        let (unaccounted_tx, unaccounted_rx) = std::sync::mpsc::channel();
         Self {
             abandoned_tx,
             abandoned_rx,
+            unaccounted_tx,
+            unaccounted_rx,
             plan_errors: Vec::new(),
             sessions: HashMap::new(),
             stash_conflicts: HashMap::new(),
@@ -362,6 +390,29 @@ impl Sessions {
             _ => None,
         }
     }
+    /// Park the requirements that guarded writes reported since the last turn,
+    /// and hand back what the UI has to offer a way into.
+    pub fn drain_unaccounted(&mut self) -> Vec<(OperationId, &'static str, PathBuf)> {
+        let parked: Vec<_> = self.unaccounted_rx.try_iter().collect();
+        parked
+            .into_iter()
+            .map(|write| {
+                let offer = (write.id, write.op, write.path);
+                self.reconcile.insert(
+                    write.id,
+                    ReconcileEntry {
+                        plan: None,
+                        scope: write.scope,
+                        stopped: false,
+                        remote: None,
+                        pull: None,
+                        child: write.group,
+                    },
+                );
+                offer
+            })
+            .collect()
+    }
     pub fn drain_abandoned(&mut self) -> Vec<Delivery> {
         let completions: Vec<_> = self.abandoned_rx.try_iter().collect();
         completions
@@ -391,7 +442,7 @@ impl Sessions {
         if self
             .reconcile
             .values()
-            .any(|entry| entry.plan.scope() == WriteScope::Local(repo.clone()))
+            .any(|entry| entry.scope == WriteScope::Local(repo.clone()))
         {
             return Err(AdmissionError::NeedsReconcile);
         }
@@ -401,6 +452,9 @@ impl Sessions {
             leases: self.leases.clone(),
             scope: WriteScope::Local(repo),
             id,
+            op: "write",
+            path: path.to_path_buf(),
+            unaccounted: self.unaccounted_tx.clone(),
         })
     }
     pub(crate) fn reserve_lease(
@@ -468,8 +522,16 @@ pub struct WriteGuard {
     leases: Arc<Mutex<HashMap<WriteScope, OperationId>>>,
     scope: WriteScope,
     id: OperationId,
+    op: &'static str,
+    path: PathBuf,
+    unaccounted: std::sync::mpsc::Sender<UnaccountedWrite>,
 }
 impl WriteGuard {
+    /// Name the write, for the notice a retained lease raises.
+    pub fn for_op(mut self, op: &'static str) -> Self {
+        self.op = op;
+        self
+    }
     pub fn complete(self) {
         if let Ok(mut leases) = self.leases.lock() {
             if leases.get(&self.scope) == Some(&self.id) {
@@ -483,17 +545,36 @@ impl WriteGuard {
         self.complete();
         result
     }
-    /// CLI errors with unconfirmed process termination must retain the lease —
-    /// and so must a stash whose entry could not be identified (#623): the
-    /// repository did change, kagi just cannot name the entry, so the scope
-    /// stays reserved until the user reconciles.
+    /// Settle a guarded write.
+    ///
+    /// A termination kagi could not prove retains the lease — but never on its
+    /// own: it parks the reconcile requirement that can release it, so this
+    /// path cannot leave a scope closed with no way out (#702 review 6). Before
+    /// that, `TerminationUnknown` retained unconditionally and these writers —
+    /// fetch, editor-save, snapshot, conflict — never went through `apply`, so
+    /// nothing existed to acknowledge.
+    ///
+    /// A stash whose entry could not be identified (#623) also retains: the
+    /// repository did change and kagi cannot name the entry.
     pub fn complete_git<R>(self, result: &Result<R, kagi_git::GitError>) {
-        if !matches!(
-            result,
-            Err(kagi_git::GitError::TerminationUnknown(_)
-                | kagi_git::GitError::StashIdentityUnverified(_))
-        ) {
-            self.complete();
+        match result {
+            Err(kagi_git::GitError::TerminationUnknown(t)) => {
+                // A group proven empty cannot write again — release, exactly as
+                // a clean result does.
+                if t.child_stopped() {
+                    self.complete();
+                    return;
+                }
+                let _ = self.unaccounted.send(UnaccountedWrite {
+                    id: self.id,
+                    scope: self.scope.clone(),
+                    op: self.op,
+                    path: self.path.clone(),
+                    group: t.group(),
+                });
+            }
+            Err(kagi_git::GitError::StashIdentityUnverified(_)) => {}
+            _ => self.complete(),
         }
     }
 }

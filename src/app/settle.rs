@@ -138,7 +138,8 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
         s.reconcile.insert(
             id,
             ReconcileEntry {
-                plan: owner.plan.clone(),
+                scope: owner.plan.scope(),
+                plan: Some(owner.plan.clone()),
                 stopped,
                 remote: remote_recovery,
                 pull: pull_recovery,

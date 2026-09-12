@@ -453,3 +453,79 @@ fn detach_never_releases_a_reservation_or_admits_the_reopened_tab() {
         drop(job);
     }
 }
+
+// ── #702 review 6: a guarded write's unproven termination has an exit ────────
+
+/// A process group with nothing left in it: spawn a child in its own group,
+/// wait for it, reuse the id. `kill(-pgid, 0)` then answers ESRCH.
+#[cfg(unix)]
+fn dead_group() -> u32 {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = std::process::Command::new("true");
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("spawn /usr/bin/true");
+    let pid = child.id();
+    child.wait().expect("reap it");
+    pid
+}
+
+/// The direct Fetch paths never reach `Sessions::apply`: they hold a
+/// `WriteGuard` and call `complete_git`. Once `ops/fetch.rs` returned
+/// `TerminationUnknown` typed, that retained the lease with no entry, no
+/// inspect id and no exit — every later write `Busy` and host close refused
+/// until restart, which main did not do. A group proven empty releases; one
+/// that is not parks the requirement that can release it.
+#[cfg(unix)]
+#[test]
+fn a_guarded_write_that_cannot_prove_its_stop_parks_the_way_out() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let f = Fixture::new();
+    let mut sessions = Sessions::new();
+
+    // A stop the executor proved: released, exactly as a clean result is.
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    guard
+        .for_op("fetch")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            kagi_git::Termination::stopped("git fetch timed out"),
+        )));
+    assert!(
+        !sessions.has_leases(),
+        "an empty group cannot write again: the scope is free"
+    );
+
+    // A stop it could not: the lease is held *and* the requirement is parked.
+    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let group = dead_group();
+    guard
+        .for_op("fetch")
+        .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
+            kagi_git::Termination::Unaccounted {
+                reason: "git fetch: output collection did not finish".into(),
+                group,
+            },
+        )));
+    assert!(
+        sessions.has_leases(),
+        "an unaccounted group holds the scope"
+    );
+    let parked = sessions.drain_unaccounted();
+    let [(id, op, _)] = parked.as_slice() else {
+        panic!("the retained lease must come with the entry that releases it");
+    };
+    assert_eq!(*op, "fetch");
+    assert!(sessions.needs_reconcile(*id), "and the UI can reach it");
+
+    // The group is gone, so the read proves the stop and the ack releases.
+    let read = read_reconcile(&sessions, *id).expect("a group is something a read can check");
+    assert!(read.stop_proven());
+    assert!(read.resolved());
+    acknowledge(&mut sessions, read).expect("a proven stop releases the scope");
+    assert!(
+        !sessions.has_leases(),
+        "acknowledging is the exit this path never had"
+    );
+}

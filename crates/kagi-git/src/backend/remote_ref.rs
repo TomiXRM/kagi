@@ -80,6 +80,15 @@ impl Backend {
         // tip from the ref as it stands now: together, what this push is about
         // to put on the remote. `plan_push` and `plan_push_branch` are the same
         // promise under two operation names (#702 review 4).
+        //
+        // A `-u` push also writes `branch.<name>.remote` / `.merge` locally,
+        // and the remote read says nothing about that half. Deliberately not
+        // part of the confirmation (#702 Codex P2): it is a local, idempotent
+        // config write that destroys nothing, and its absence is not silent —
+        // `plan_push` reads the upstream every time, so the next Push
+        // confirmation shows "no upstream" and offers `-u` again. Holding the
+        // scope closed over a setting the user can see and redo would cost
+        // more than it protects.
         if let PlanTitle::Push(
             PushTitle::Push { branch, remote, .. } | PushTitle::PushBranch { branch, remote, .. },
         ) = &plan.title

@@ -346,6 +346,89 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS preflight_presentation EN/JA stash handler/history Enter, refusal and localized phase");
 }
 
+/// ADR-0196 Wave 3: Branch Cleanup was the last non-run writer deriving its
+/// own oplog entry from the outcome the backend had already recorded. The
+/// receipt comes back on `CleanupReport` now, so the panel shows the durable
+/// entry itself — and the cleanup is admitted through the write lease, which
+/// is what holds quit while the deletions run.
+pub fn scenario_cleanup_presents_backend_receipt(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "merged", "HEAD~1"]);
+    let tip = output(repo, &["rev-parse", "merged"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_branch_cleanup_plan(
+            vec![CleanupDeleteTarget {
+                name: "merged".into(),
+                local_tip: Some(CommitId(tip.clone())),
+                remote_tip: None,
+                status: MergedBranchStatus::FullyMerged,
+            }],
+            cx,
+        );
+        assert!(app.branch_cleanup_modal().unwrap().plan.blockers.is_empty());
+    });
+    app.update(cx, |app, cx| {
+        app.confirm_branch_cleanup(cx);
+        assert!(
+            app.app_sessions.has_leases(),
+            "a dispatched cleanup must hold the write lease (ADR-0196 Wave 3)"
+        );
+        assert!(
+            !app.app_sessions.may_close_host(),
+            "quit must be held while branches are being deleted"
+        );
+    });
+    wait_idle(cx, &app);
+    assert!(output(repo, &["for-each-ref", "refs/heads/merged"]).is_empty());
+    let durable = records(repo, "branch-cleanup");
+    assert_eq!(durable.len(), 1, "one attempt, one durable entry");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.app_sessions.has_leases(),
+            "the lease is released when the cleanup settles"
+        );
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|e| e.op == "branch-cleanup")
+            .collect();
+        assert_eq!(
+            shown.len(),
+            1,
+            "the panel shows the receipt once, not a UI copy"
+        );
+        assert_eq!(
+            shown[0].id, durable[0].id,
+            "the panel entry is the durable receipt"
+        );
+        // A UI copy is built by `OpLogEntry::new`, which sets neither the
+        // worktree nor the actor the backend stamps on what it records.
+        assert_eq!(
+            (
+                shown[0].worktree.as_deref(),
+                shown[0].timestamp,
+                &shown[0].before.head
+            ),
+            (
+                durable[0].worktree.as_deref(),
+                durable[0].timestamp,
+                &durable[0].before.head
+            ),
+            "the panel shows the recorded receipt, not an entry re-derived from the outcome"
+        );
+        assert!(
+            shown[0].worktree.is_some(),
+            "the backend stamps the worktree on what it records"
+        );
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS cleanup_presents_backend_receipt: lease held, receipt presented");
+}
+
 pub fn scenario_cleanup_open_failure(cx: &mut VisualTestAppContext) {
     for switch_away in [false, true] {
         let fixture = build_fixture();

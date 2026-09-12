@@ -157,3 +157,132 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
     let _ = std::fs::remove_file(&lock_path);
     unmount(cx, app, window);
 }
+
+/// ADR-0196 Wave 3: a PR merge is a write, so it is admitted through the
+/// write lease instead of the legacy `busy_op` latch. The lease is what holds
+/// quit and tab-close — the latch never did — and `complete_git` releases it
+/// once the transport reports a known termination.
+pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
+    use kagi_domain::github::{CiState, Mergeable, PullRequest, ReviewState};
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    // No GitHub remote: `gh` refuses locally, so the transport fails fast and
+    // offline. The lease lifecycle is the oracle, not the merge result.
+    let pr = PullRequest {
+        number: 7,
+        title: "a merge that never reaches GitHub".into(),
+        head: "feature".into(),
+        head_sha: "0".repeat(40),
+        base: "main".into(),
+        is_draft: false,
+        ci: CiState::Success,
+        review: ReviewState::Approved,
+        url: "https://github.test/pr/7".into(),
+        author: "tester".into(),
+        reviewers: Vec::new(),
+        body: String::new(),
+        checks: Vec::new(),
+        mergeable: Mergeable::Clean,
+    };
+    app.update(cx, |app, cx| {
+        app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, false, cx);
+        assert!(
+            app.pr_merge_modal()
+                .is_some_and(|m| m.plan.blockers.is_empty()),
+            "the fixture PR must plan cleanly so the merge is actually dispatched"
+        );
+        app.start_pr_merge(cx);
+        // Same UI turn as the dispatch: the lease exists before the transport
+        // can answer, which is exactly what the quit guard reads.
+        assert!(
+            app.app_sessions.has_leases(),
+            "a dispatched pr-merge must hold the write lease (ADR-0196 Wave 3)"
+        );
+        assert!(
+            !app.app_sessions.may_close_host(),
+            "quit must be held while the merge is in flight"
+        );
+        assert_eq!(app.busy_op, Some("pr-merge"), "the busy mirror follows it");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while cx.read(|cx| app.read(cx).app_sessions.has_leases()) {
+        cx.run_until_parked();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the pr-merge lease was never released"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.busy_op, None);
+        assert!(
+            state.app_sessions.may_close_host(),
+            "a settled merge must not keep holding quit"
+        );
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pr_merge_write_lease: lease taken at dispatch, released on settle");
+}
+
+/// ADR-0196 Wave 3: planning is not a write, so it latches `planning` rather
+/// than `busy_op` — but it still owns the modal slot it is about to fill, so
+/// every gate must refuse a second operation while it runs.
+pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["branch", "feature", "HEAD~1"]);
+    let (app, window) = mount(cx, &repo);
+    let original_language = i18n::lang();
+    i18n::set_lang(Lang::En);
+    app.update(cx, |app, cx| {
+        app.open_merge_modal("feature".into(), None, cx);
+        // Same UI turn as the dispatch: nothing has been written, so the write
+        // latch is free — the plan latch is what is held.
+        assert_eq!(app.planning, Some("merge-plan"));
+        assert_eq!(app.busy_op, None, "planning takes no write latch");
+        assert!(
+            !app.app_sessions.has_leases(),
+            "planning takes no write lease either"
+        );
+        assert_eq!(e2e::busy_snackbar_label(app), Some("Planning merge…"));
+        // The gate a second operation consults must see the plan latch: it is
+        // refused on the spot, so this plan keeps the latch and the footer says
+        // why. (A dispatched delete-branch plan would take the latch itself and
+        // land its own modal in the slot this merge plan is about to fill.)
+        app.open_delete_branch_modal("feature", cx);
+        assert_eq!(
+            app.planning,
+            Some("merge-plan"),
+            "a plan in flight must refuse the next operation (#283)"
+        );
+        assert!(app.delete_branch_modal().is_none());
+        assert!(
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(text)
+                if text.as_ref() == i18n::Msg::OpInProgress.t()),
+            "the refusal must say an operation is already in progress: {:?}",
+            app.status_footer
+        );
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while cx.read(|cx| app.read(cx).planning.is_some()) {
+        cx.run_until_parked();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the merge plan never settled"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state.merge_modal().is_some(),
+            "the settled plan opens its modal"
+        );
+        assert_eq!(e2e::busy_snackbar_label(state), None);
+    });
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS merge_plan_latch: planning latches and releases without busy_op");
+}

@@ -763,7 +763,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     // Whether a repository is open (a tab is active).  Welcome = no repo.
     let has_repo = !app.tabs.is_empty() && app.repo_path.is_some();
     // A background git op is running → block state-changing git commands.
-    let busy = app.busy_op.is_some();
+    let busy = app.op_latched();
     // A commit row is currently selected.
     let has_selection = app.selected.is_some();
     // The main diff is open (ADR-0121 B2: a staged headless diff counts too).
@@ -1853,7 +1853,7 @@ impl KagiApp {
             }
             return false;
         }
-        if silent && (self.busy_op.is_some() || self.app_sessions.has_leases()) {
+        if silent && (self.op_latched() || self.app_sessions.has_leases()) {
             return false;
         }
         let repo_path = match self.repo_path.clone() {

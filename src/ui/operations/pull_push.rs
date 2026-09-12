@@ -20,7 +20,7 @@ impl KagiApp {
     /// Build a pull plan and open the confirmation modal.
     pub fn open_pull_modal(&mut self, cx: &mut Context<Self>) {
         // W3-NOTIFY: refuse while a background op runs.
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -358,7 +358,7 @@ impl KagiApp {
     /// W3-NOTIFY: UI-path pull — runs `pull_blocking` on a background thread
     /// so the window stays responsive, with start/finish toasts.
     pub fn start_pull(&mut self, cx: &mut Context<Self>) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -463,7 +463,7 @@ impl KagiApp {
     /// Build a push plan and open the confirmation modal.
     pub fn open_push_modal(&mut self, cx: &mut Context<Self>) {
         // W3-NOTIFY: refuse while a background op runs.
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -525,7 +525,7 @@ impl KagiApp {
 
     /// W3-NOTIFY: UI-path push — background thread + start/finish toasts.
     pub fn start_push(&mut self, cx: &mut Context<Self>) {
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }

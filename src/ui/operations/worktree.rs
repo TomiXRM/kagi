@@ -141,7 +141,7 @@ impl KagiApp {
         // Rebuild from the latest input so a fast type-then-click can't execute
         // a stale plan.
         self.run_modal_replans(cx);
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }

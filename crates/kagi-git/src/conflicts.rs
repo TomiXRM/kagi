@@ -49,8 +49,8 @@ use git2::{Repository, RepositoryState};
 
 use super::cli::run_git;
 use super::log::CommitId;
-// #704: the abort family moved to its own module (its own feature boundary);
-// re-exported here so `conflicts::…` stays the one path callers name.
+// #704: the abort family moved to its own module, re-exported here so
+// `conflicts::…` stays the one path callers name.
 pub(crate) use super::conflict_abort::{execute_conflict_abort, execute_stash_conflict_abort};
 pub use super::conflict_abort::{plan_conflict_abort, AbortOutcome};
 use super::ops::{OperationPlan, StateSummary};

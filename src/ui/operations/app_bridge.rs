@@ -492,12 +492,21 @@ impl KagiApp {
         {
             klog!("executed: {}", report.recording.entry().op);
         }
-        self.present_conflict_recording(attachment.session, report.recording, cx);
+        self.present_conflict_action(
+            attachment.session,
+            report.evidence.action,
+            report.recording,
+            cx,
+        );
     }
 
-    pub(crate) fn present_conflict_recording(
+    /// Present one conflict-family receipt. The action picks the success
+    /// wording: an abort saves nothing, so announcing it as "解決を保存しました"
+    /// was simply false (#704 review).
+    pub(crate) fn present_conflict_action(
         &mut self,
         owner: app::SessionId,
+        action: kagi_domain::conflict_family::ConflictAction,
         recording: kagi_git::backend::recording::Recording,
         cx: &mut Context<Self>,
     ) {
@@ -516,10 +525,12 @@ impl KagiApp {
             } else {
                 ToastKind::Error
             },
-            if success {
-                Msg::EditorSavedResolved.t().to_string()
-            } else {
-                summary.clone()
+            match (success, action) {
+                (true, kagi_domain::conflict_family::ConflictAction::Abort) => {
+                    Msg::ConflictAborted.t().to_string()
+                }
+                (true, _) => Msg::EditorSavedResolved.t().to_string(),
+                (false, _) => summary.clone(),
             },
             cx,
         );

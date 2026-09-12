@@ -398,7 +398,6 @@ pub enum Msg {
     EditorResultOutput,
     EditorAllResolved,
     EditorUnresolvedHunks,
-    EditorMarkerWarning,
     EditorSavedResolved,
     EditorNoTextMerge,
     // ── T-CONFLICT-UI/UX: 3-pane editor controls ──
@@ -422,8 +421,9 @@ pub enum Msg {
     ConflictSectionConflicted,
     ConflictSectionResolved,
     ConflictConfirmAbort,
-    /// #704 header operation strip: the prose after the operation's own name
-    /// (`merge · in progress`, `rebase 2/5 · 進行中`).
+    /// #704: abort success toast, and the strip prose after the operation's
+    /// own name (`merge · in progress`, `rebase 2/5 · 進行中`).
+    ConflictAborted,
     OperationInProgress,
     ConflictExternalTool,
     ConflictExternalToolUnset,
@@ -1361,8 +1361,6 @@ impl Msg {
             (Ja, EditorAllResolved) => "すべての hunk を解決しました",
             (En, EditorUnresolvedHunks) => "hunk(s) still unresolved",
             (Ja, EditorUnresolvedHunks) => "件の hunk が未解決です",
-            (En, EditorMarkerWarning) => "Conflict markers remain — saved as a draft, but you cannot continue until they are removed.",
-            (Ja, EditorMarkerWarning) => "conflict marker が残っています。下書きとして保存しましたが、削除するまで continue できません。",
             (En, EditorSavedResolved) => "Saved. File marked as a resolved candidate.",
             (Ja, EditorSavedResolved) => "保存しました。ファイルを resolved candidate にしました。",
             (En, EditorNoTextMerge) => "No text merge is available for this file (binary or single-sided). Use the conflict list to choose a side.",
@@ -1414,6 +1412,8 @@ impl Msg {
             (Ja, ConflictConfirmSkipHint) => {
                 "スキップするとこのステップの変更と編集中の解決内容が失われます。                 もう一度クリックすると確定します。"
             }
+            (En, ConflictAborted) => "Operation aborted",
+            (Ja, ConflictAborted) => "操作を中止しました",
             (En, ConflictConfirmAbort) => "Confirm abort",
             (Ja, ConflictConfirmAbort) => "中止を確定",
             (En, OperationInProgress) => "in progress",

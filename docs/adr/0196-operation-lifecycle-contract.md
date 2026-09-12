@@ -182,7 +182,9 @@ DifferentialManifest {
 > その revision を凍結した request と Backend の live preflight が一致した場合にのみ
 > 開始する。
 
-read の owner は ADR-0183 の `Reads<TabViewState>`。#704 はこれを破っていた実例で、
+read の owner は ADR-0183 の `Reads<TabViewState>` **ひとつだけ**である。freshness
+guard を持たない経路（repo path しか凍結しない legacy detector など）が同じ観測を
+書けると、古い結果の marshal-back が admission を取り消しうる。#704 はこれを破っていた実例で、
 merge が resolve されると `ConflictView` が破棄され、abort が構造的に到達不能になった
 （`MERGE_HEAD` は残ったまま）。migration README の Conflict C2 から本節を参照する。
 

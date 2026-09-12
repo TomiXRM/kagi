@@ -3,14 +3,15 @@
 //! One detector (`conflicts::detect_conflict_session`), one fingerprint. Every
 //! consumer reads this: the conflict family freezes [`ConflictRevision`] into
 //! its requests and re-reads it live at preflight, and the per-tab read model
-//! carries the pure [`InProgressOperation`] the header strip renders (#704 /
+//! carries the pure [`ObservedOperation`] the header strip renders (#704 /
 //! ADR-0196). Split out of `conflict_ops.rs` so both sides name the same
 //! function rather than growing a second implementation over the same `.git`
 //! files.
 
 use crate::backend::*;
 use kagi_domain::conflict_family::{
-    BufferRevision, ConflictDraft, ConflictObservation, ConflictRevision, InProgressOperation,
+    BufferRevision, ConflictDraft, ConflictObservation, ConflictOperationKind, ConflictRevision,
+    ObservedOperation,
 };
 use sha2::{Digest, Sha256};
 
@@ -25,8 +26,24 @@ impl ConflictSnapshot {
     /// header strip needs to name the operation, show its progress and freeze
     /// an abort request — and nothing that would tempt the UI to re-derive the
     /// observation for itself.
-    pub fn in_progress(&self) -> InProgressOperation {
-        InProgressOperation {
+    pub fn in_progress(&self) -> ObservedOperation {
+        use kagi_domain::plan_note::InProgressOp;
+        ObservedOperation {
+            kind: match self.session.op {
+                conflicts::ConflictOp::Merge { .. } => {
+                    ConflictOperationKind::Repository(InProgressOp::Merge)
+                }
+                conflicts::ConflictOp::Rebase { .. } => {
+                    ConflictOperationKind::Repository(InProgressOp::Rebase)
+                }
+                conflicts::ConflictOp::CherryPick { .. } => {
+                    ConflictOperationKind::Repository(InProgressOp::CherryPick)
+                }
+                conflicts::ConflictOp::Revert { .. } => {
+                    ConflictOperationKind::Repository(InProgressOp::Revert)
+                }
+                conflicts::ConflictOp::StashConflict => ConflictOperationKind::StashApply,
+            },
             observation: self.observation.clone(),
             step: match self.session.op {
                 conflicts::ConflictOp::Rebase { step, total, .. } => Some((step, total)),

@@ -113,13 +113,21 @@ placeholder を出す）。表示の一貫性としては改善。
 
 ### in-progress operation も read である（#704, 2026-09-13）
 
-`TabViewState::operation`（`Option<InProgressOperation>`）は merge / rebase /
+`TabViewState::operation`（`Option<ObservedOperation>`）は merge / rebase /
 cherry-pick / revert / stash-apply が進行中かどうかの観測値で、他の read と同じく
 session が所有する。`on_view_published` は read が着地した owner に対して
 `observe_conflict` も行うので、conflict editor が一度も作られていなくても
 （起動直後に MERGING の repository を開いた場合を含め）abort の admission が成立する。
 規範は ADR-0196「in-progress operation の所有」。#704 はこの規則を破っていた実例で、
 `ConflictView` の有無が abort の到達可能性を決めていた。
+
+**writer は 1 つだけ**。legacy conflict detector
+（`operations/conflict_detect.rs`）は `ConflictView` と stash identity だけを作り、
+`Sessions` の conflict observation には触れない。その async job は repo path しか
+凍結しておらず `SessionId` / `ReadKey` / read revision を持たないので、writer に
+すると「古い `Cleared` が新しい accepted read の後に marshal-back して revision を
+消す」= strip は見えるのに Abort が `StaleApproval`、という #704 の再現経路になる。
+同じ理由で `ConflictView` が凍結する revision も read model のものを使う。
 
 ## 削除したもの
 

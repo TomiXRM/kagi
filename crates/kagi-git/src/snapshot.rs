@@ -68,7 +68,7 @@ pub struct RepoSnapshot {
     /// "is something in progress?" reads this rather than the presence of a
     /// view or pane: the operation outlives the conflict editor, which is
     /// exactly how #704 became a dead end.
-    pub operation: Option<kagi_domain::conflict_family::InProgressOperation>,
+    pub operation: Option<kagi_domain::conflict_family::ObservedOperation>,
 }
 
 // ────────────────────────────────────────────────────────────

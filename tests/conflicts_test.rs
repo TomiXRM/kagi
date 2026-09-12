@@ -1698,7 +1698,7 @@ fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
     let operation = snapshot
         .operation
         .expect("MERGE_HEAD is an operation in progress, resolved or not");
-    assert_eq!(operation.slug(), "merge");
+    assert_eq!(operation.kind.slug(), "merge");
     assert_eq!(operation.unmerged(), 0, "nothing is unmerged any more");
     assert_eq!(operation.step, None, "a merge is a single step");
 
@@ -1712,6 +1712,48 @@ fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
         .expect("snapshot")
         .operation
         .is_none());
+}
+
+/// #704 review: each progress stage names what has actually happened.
+///
+/// The evidence is what tells `apply` whether a failed abort is a refusal or a
+/// reconcile requirement, so a stage reported early is a lie about the
+/// repository: `IndexAndWorktreeWritten` before the checkout claims a working
+/// tree that a checkout failure never wrote, and `Verified` from the executor
+/// claims a verification the Backend has not run yet.
+#[test]
+fn abort_reports_each_stage_only_once_it_has_happened() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    let mut stages = Vec::new();
+    kagi_git::execute_conflict_abort_with_progress(&repo, &session, &buffer, |stage| {
+        stages.push(stage)
+    })
+    .expect("abort");
+
+    use kagi_domain::conflict_family::ConflictProgress as P;
+    assert_eq!(
+        stages,
+        vec![
+            P::IndexWritten,
+            P::IndexAndWorktreeWritten,
+            P::StateCleanupStarted
+        ],
+        "index, then the working tree only after the checkout returned, then \
+         clearing the operation state"
+    );
+    assert!(
+        !stages.contains(&P::Verified),
+        "verification is the Backend's `verify_abort`, not the executor's claim"
+    );
 }
 
 /// #704 end to end: resolve → stage → unstage → discard leaves the repository

@@ -18,6 +18,11 @@
 
 use std::cell::RefCell;
 use std::path::Path;
+
+/// #704: the stale-detector regression applies a detector outcome by hand, to
+/// stand in for a job that started before the read the tab has now accepted.
+/// `ui::operations` is private, so the seam is here with the rest.
+pub use super::operations::conflict_detect::ConflictDetectOutcome;
 use std::rc::Rc;
 use std::sync::Arc;
 

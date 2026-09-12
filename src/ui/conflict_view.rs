@@ -1260,24 +1260,11 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             .detach();
         },
     );
-    // #704: exactly the action the header operation strip dispatches — one
-    // execution path, and one that does not need this entity to survive it.
-    let abort_handler = cx.listener(
-        |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-            let weak_app = view.app.clone();
-            cx.spawn_in(window, async move |_view, acx| {
-                let _ =
-                    weak_app.update_in(acx, |app, _window, cx| app.open_conflict_abort_modal(cx));
-            })
-            .detach();
-        },
-    );
-    let abort_label = Msg::ConflictAbort.t();
-
-    // Continue (filled, gated) + Abort (danger, two-stage) on one row. The
-    // buttons size to content (gpui-component Buttons are flex_shrink_0), so wrap
-    // rather than overflow the fixed-width dashboard when the armed-abort label
-    // grows (T-CONFLICT-DASH-023).
+    // #704: Abort is not here any more. The header operation strip is the one
+    // control, and it is on screen in conflict mode too — a second button
+    // calling the same action only reintroduced the question of which one is
+    // canonical. (The strip cannot be hidden here either: that would put the
+    // primary escape back behind this entity's lifetime, which is the bug.)
     let primary_row = div()
         .flex()
         .flex_row()
@@ -1292,13 +1279,6 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             } else {
                 None
             },
-            cx,
-        ))
-        .child(action_button(
-            abort_label,
-            theme().color_blocker,
-            true,
-            Some(abort_handler),
             cx,
         ));
 

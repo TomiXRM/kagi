@@ -123,7 +123,7 @@ impl Backend {
             ConflictRequest::ResolveDirFile { choice, .. } => {
                 format!("conflict-dir-file:{}", choice.slug())
             }
-            ConflictRequest::Abort { operation, .. } => format!("{operation}-abort"),
+            ConflictRequest::Abort { kind, .. } => format!("{}-abort", kind.slug()),
         };
         recording::finalize(
             crate::oplog::OpLogEntry::new(
@@ -212,11 +212,11 @@ impl Backend {
     /// one. Whether the frozen revision still describes the repository is the
     /// Backend's business, at plan and again at execute.
     pub fn conflict_abort_request(
-        operation: &kagi_domain::conflict_family::InProgressOperation,
+        operation: &kagi_domain::conflict_family::ObservedOperation,
     ) -> ConflictRequest {
         ConflictRequest::Abort {
             revision: operation.revision().clone(),
-            operation: operation.slug().to_string(),
+            kind: operation.kind,
         }
     }
 
@@ -289,8 +289,8 @@ impl Backend {
             // is which operation it is. The revision check above already
             // proved the repository has not moved since the read model
             // observed it; `run_recorded_conflict` re-reads it live.
-            ConflictRequest::Abort { operation, .. } => {
-                if operation != &snapshot.observation.operation {
+            ConflictRequest::Abort { kind, .. } => {
+                if *kind != snapshot.in_progress().kind {
                     return Err(GitError::Other(
                         "conflict operation changed since it was observed".into(),
                     ));
@@ -306,7 +306,7 @@ impl Backend {
                 format!("conflict-dir-file:{}", choice.slug())
             }
             // The oplog name every abort has carried since ADR-0056.
-            ConflictRequest::Abort { operation, .. } => format!("{operation}-abort"),
+            ConflictRequest::Abort { kind, .. } => format!("{}-abort", kind.slug()),
         };
         let before = match &request {
             ConflictRequest::Save {
@@ -348,6 +348,13 @@ impl Backend {
         let mut progress = ConflictProgress::NotStarted;
         let mut after = None;
         let mut recovery = None;
+        // The observation frozen at plan time is what the receipt reports as
+        // `before` on every path out of here — including the one where the
+        // repository can no longer be opened. Rebuilding it from the request
+        // there invented `operation: "unknown"` and, for an abort (which names
+        // no path), an empty path list: the receipt lost the very facts the
+        // plan had already established.
+        let before = plan.observed.clone();
         let backend = match Self::open_with_policy(&plan.repo, policy) {
             Ok(backend) => backend,
             Err(error) => {
@@ -369,23 +376,13 @@ impl Backend {
                     evidence: ConflictEvidence {
                         action,
                         progress,
-                        before: ConflictObservation {
-                            revision: plan.request.revision().clone(),
-                            operation: "unknown".into(),
-                            paths: plan
-                                .request
-                                .path()
-                                .map(Path::to_path_buf)
-                                .into_iter()
-                                .collect(),
-                        },
+                        before,
                         after,
                         detail: error.to_string(),
                     },
                 };
             }
         };
-        let before = plan.observed.clone();
         let result = (|| -> Result<(), GitError> {
             backend.require_trust()?;
             if backend.write_worktree_id()? != plan.worktree
@@ -516,9 +513,9 @@ impl Backend {
                 head: format!("kept {} side of {}", choice.slug(), path.display()),
                 dirty: "staged (stage 0)".into(),
             },
-            ConflictRequest::Abort { operation, .. } => {
+            ConflictRequest::Abort { kind, .. } => {
                 after_state.clone().unwrap_or_else(|_| ops::StateSummary {
-                    head: format!("{operation}: state after the abort is unreadable"),
+                    head: format!("{}: state after the abort is unreadable", kind.slug()),
                     dirty: "unknown".into(),
                 })
             }

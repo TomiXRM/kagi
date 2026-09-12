@@ -20,14 +20,13 @@ src/ui/branch_menu.rs 965
 src/ui/commands.rs 2361
 src/ui/commit_panel_render.rs 1451
 src/ui/conflict_editor.rs 1332
-src/ui/conflict_view.rs 2184
+src/ui/conflict_view.rs 2164
 src/ui/diff_view.rs 1600
 src/ui/inspector.rs 1244
 src/ui/mod.rs 4155
 src/ui/modals.rs 853
 src/ui/operations/branch.rs 1207
 src/ui/operations/commit.rs 1408
-src/ui/operations/conflict.rs 911
 src/ui/operations/modal_state.rs 1118
 src/ui/pr_mode.rs 2387
 src/ui/render.rs 906

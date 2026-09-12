@@ -105,13 +105,19 @@ pub(crate) fn execute_conflict_abort(
 
 /// [`execute_conflict_abort`], reporting how far the mutation got.
 ///
-/// ADR-0196: the family report needs the *evidence*, not only the result. The
-/// callback fires with [`ConflictProgress::IndexAndWorktreeWritten`] as soon as
-/// the restore has touched the repository and with
-/// [`ConflictProgress::Verified`] once the operation state is gone — so a
-/// failure after the first point is settled as `Unknown` (reconcile) rather
-/// than as a retryable `Failed`.
-pub(crate) fn execute_conflict_abort_with_progress(
+/// ADR-0196: the family report needs the *evidence*, not only the result, and
+/// each stage names what has actually happened when it fires —
+/// [`ConflictProgress::IndexWritten`] after the index is written,
+/// [`ConflictProgress::IndexAndWorktreeWritten`] only once the checkout has
+/// returned, [`ConflictProgress::StateCleanupStarted`] when the `.git/`
+/// operation state is about to go — which on the no-`ORIG_HEAD` path is the
+/// only stage there is, because clearing that state is the whole mutation.
+/// Anything past `NotStarted` settles as `Unknown` (reconcile) rather than as
+/// a retryable `Failed`.
+///
+/// `Verified` is deliberately absent: verification is the Backend's
+/// `verify_abort`, which runs after this returns.
+pub fn execute_conflict_abort_with_progress(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
@@ -206,10 +212,13 @@ pub(crate) fn execute_conflict_abort_with_progress(
         }
         // Past this point the repository has been changed: everything that
         // follows must be reported as a started mutation, never as "nothing
-        // happened" (ADR-0196).
-        progress(ConflictProgress::IndexAndWorktreeWritten);
+        // happened" (ADR-0196). The stage names what has *actually* been
+        // written — a checkout that then fails must not leave evidence
+        // claiming the working tree was rewritten.
+        progress(ConflictProgress::IndexWritten);
 
         checkout_paths_from_tree(repo, &tree, &touched)?;
+        progress(ConflictProgress::IndexAndWorktreeWritten);
 
         // Restore the branch ref back to ORIG_HEAD and reattach HEAD to it.
         //
@@ -258,7 +267,9 @@ pub(crate) fn execute_conflict_abort_with_progress(
     }
 
     // 4. Clear merge / sequencer metadata (MERGE_HEAD, CHERRY_PICK_HEAD, etc.).
-    progress(ConflictProgress::IndexAndWorktreeWritten);
+    // With no ORIG_HEAD there was nothing to restore, so this is the first
+    // thing the abort touches and the only stage that describes it.
+    progress(ConflictProgress::StateCleanupStarted);
     repo.cleanup_state()
         .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
 
@@ -278,7 +289,9 @@ pub(crate) fn execute_conflict_abort_with_progress(
         }
     }
 
-    progress(ConflictProgress::Verified);
+    // No `Verified` here: verification is `verify_abort`, which the Backend
+    // runs after this returns. Claiming it from the executor would record a
+    // verified abort for a restore that verification then rejected.
     Ok(AbortOutcome {
         restored_to: orig_sha,
         buffer_preserved_at,
@@ -360,14 +373,15 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
             .write()
             .map_err(|e| GitError::Other(format!("index.write failed: {}", e.message())))?;
     }
-    progress(ConflictProgress::IndexAndWorktreeWritten);
+    progress(ConflictProgress::IndexWritten);
 
     // 5. Restore HEAD content for exactly those paths (force, pathspec-bounded).
     checkout_paths_from_tree(repo, &tree, &paths)?;
+    progress(ConflictProgress::IndexAndWorktreeWritten);
 
     // NOTE: no `cleanup_state`, no ref move, no ORIG_HEAD — there is none. The
-    // stash entry is deliberately left intact.
-    progress(ConflictProgress::Verified);
+    // stash entry is deliberately left intact. `Verified` is the Backend's to
+    // set, after `verify_abort`.
     Ok(AbortOutcome {
         restored_to: Some(head_commit.id().to_string()),
         buffer_preserved_at,

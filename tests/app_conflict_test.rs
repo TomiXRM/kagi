@@ -628,7 +628,7 @@ impl Fixture {
 
     /// The pure observation the header operation strip renders and freezes
     /// into its request — the same value `TabViewState::operation` holds.
-    fn in_progress(&self) -> kagi_domain::conflict_family::InProgressOperation {
+    fn in_progress(&self) -> kagi_domain::conflict_family::ObservedOperation {
         Backend::open(&self.repo)
             .unwrap()
             .conflict_snapshot()
@@ -647,7 +647,7 @@ fn abort_is_admissible_with_no_conflict_view_and_settles_once() {
     // model's observation and nothing else.
     let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
     let operation = fixture.in_progress();
-    assert_eq!(operation.slug(), "merge");
+    assert_eq!(operation.kind.slug(), "merge");
     assert_eq!(operation.unmerged(), 0);
 
     let job = fixture.job(&mut sessions, Backend::conflict_abort_request(&operation));
@@ -746,6 +746,48 @@ fn an_abort_planned_against_a_stale_revision_is_refused_without_mutation() {
         "the Backend re-reads the live revision and refuses a stale abort"
     );
     assert!(fixture.repo.join(".git/MERGE_HEAD").exists());
+}
+
+/// #704 review: a receipt reports the observation the plan froze, even when
+/// the repository can no longer be opened. Rebuilding `before` from the
+/// request there invented `operation: "unknown"` and — for an abort, which
+/// names no path — an empty path list, losing exactly the facts planning had
+/// already established.
+#[test]
+fn a_receipt_keeps_the_planned_observation_when_the_repository_cannot_be_reopened() {
+    let fixture = Fixture::content();
+    fixture.resolve_and_stage();
+    let mut sessions = Sessions::new();
+    let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let planned = fixture.in_progress().observation;
+    let job = fixture.job(
+        &mut sessions,
+        Backend::conflict_abort_request(&fixture.in_progress()),
+    );
+
+    // The worktree goes away between admission and execution.
+    let moved = fixture.repo.with_extension("gone");
+    std::fs::rename(&fixture.repo, &moved).expect("move the repository aside");
+    let completion = job.run();
+    std::fs::rename(&moved, &fixture.repo).expect("put it back for the fixture teardown");
+
+    assert!(
+        matches!(
+            completion.report().recording.entry().outcome,
+            OpOutcome::Failed { .. }
+        ),
+        "nothing ran: {:?}",
+        completion.report().recording.entry().outcome
+    );
+    assert_eq!(
+        completion.report().evidence.before,
+        planned,
+        "the receipt reports what the plan froze, not a reconstruction"
+    );
+    assert_eq!(
+        completion.report().evidence.progress,
+        ConflictProgress::NotStarted
+    );
 }
 
 #[test]

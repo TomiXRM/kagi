@@ -270,6 +270,54 @@ pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS operation strip visible at startup on a stuck MERGING repo");
 }
 
+/// #704 review P1: the legacy conflict detector is keyed on the repository
+/// path alone — no `SessionId`, no read revision — so a `Cleared` it observed
+/// before a newer read can marshal back after that read was accepted. While it
+/// was a writer of `Sessions`' conflict observation, that erased the revision
+/// the strip was still showing and turned the next Abort into a
+/// `StaleApproval`: the #704 dead end from the other end.
+pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e::ConflictDetectOutcome;
+
+    let fixture = stuck_merging_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let observed = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.conflict_state(session).cloned())
+        })
+    };
+    let before = observed(cx).expect("the accepted read gave the owner its observation");
+
+    // A detector job that started before that read now lands.
+    app.update(cx, |app, cx| {
+        app.apply_conflict_detect(ConflictDetectOutcome::Cleared, cx)
+    });
+    app.update(cx, |app, cx| {
+        app.apply_conflict_detect(ConflictDetectOutcome::OpenFailed, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        observed(cx),
+        Some(before),
+        "a stale detector result must not erase the accepted read's observation"
+    );
+
+    // …and Abort still goes through, which is what the erasure used to break.
+    click_control(cx, window, "operation-strip-abort");
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
+    wait_idle(cx, &app);
+    assert!(
+        !repo.join(".git/MERGE_HEAD").exists(),
+        "Abort admission survived the stale detector"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a stale conflict detector cannot revoke Abort (#704)");
+}
+
 pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -301,6 +349,26 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()),
         "the confirmation closes with the operation it confirmed"
     );
+    // #704 review P2: an abort saves nothing, so it must not be announced with
+    // the Save family's wording.
+    let toast = cx
+        .read(|cx| {
+            app.read(cx).toast_stack.as_ref().map(|stack| {
+                stack
+                    .read(cx)
+                    .toasts()
+                    .last()
+                    .map(|toast| toast.message.to_string())
+                    .unwrap_or_default()
+            })
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        toast,
+        kagi::ui::i18n::Msg::ConflictAborted.t(),
+        "the success toast names the abort, not a saved resolution"
+    );
+    assert_ne!(toast, kagi::ui::i18n::Msg::EditorSavedResolved.t());
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
 }

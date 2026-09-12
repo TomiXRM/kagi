@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use crate::plan_note::InProgressOp;
 use crate::resolution::DirFileChoice;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -59,12 +60,11 @@ pub enum ConflictRequest {
     ///
     /// Unlike Save and ResolveDirFile this names no path — it is about the
     /// operation, not a file — and it is admissible whenever one is in
-    /// progress, resolved or not. `operation` is the slug the observation
-    /// carried; the Backend refuses if the live one has become a different
-    /// kind of operation.
+    /// progress, resolved or not. `kind` is what was observed; the Backend
+    /// refuses if the live one has become a different kind of operation.
     Abort {
         revision: ConflictRevision,
-        operation: String,
+        kind: ConflictOperationKind,
     },
 }
 
@@ -141,7 +141,9 @@ pub struct ConflictObservation {
 /// "sequencer": a plain merge is one step and Git keeps no sequencer state
 /// for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InProgressOperation {
+pub struct ObservedOperation {
+    /// Which operation, as the one typed kind the whole codebase shares.
+    pub kind: ConflictOperationKind,
     /// What the repository was observed to be doing. The same value the
     /// conflict family freezes into a request and re-reads at preflight —
     /// carried whole rather than copied field by field, so a read model and
@@ -152,12 +154,7 @@ pub struct InProgressOperation {
     pub step: Option<(usize, usize)>,
 }
 
-impl InProgressOperation {
-    /// `merge` / `rebase` / `cherry-pick` / `revert` / `stash`.
-    pub fn slug(&self) -> &str {
-        &self.observation.operation
-    }
-
+impl ObservedOperation {
     /// The revision an abort request freezes. The Backend re-reads the live
     /// one at preflight and refuses if the two have parted.
     pub fn revision(&self) -> &ConflictRevision {
@@ -171,6 +168,35 @@ impl InProgressOperation {
     }
 }
 
+/// What kind of operation left the repository mid-flight.
+///
+/// One representation, reusing the [`InProgressOp`] that merge blockers
+/// already speak (a pure twin of `git2::RepositoryState`). A conflicted
+/// `stash apply` is deliberately outside it: Git records no `.git/` state for
+/// one, so it is not an in-progress *repository* operation at all — only the
+/// index says it happened (#309).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictOperationKind {
+    Repository(InProgressOp),
+    StashApply,
+}
+
+impl ConflictOperationKind {
+    /// The stable identifier oplog names and requests are built from — the
+    /// same slugs the git layer's `ConflictOp::slug` has always produced.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Repository(InProgressOp::Merge) => "merge",
+            Self::Repository(InProgressOp::Rebase) => "rebase",
+            Self::Repository(InProgressOp::CherryPick) => "cherry-pick",
+            Self::Repository(InProgressOp::Revert) => "revert",
+            Self::Repository(InProgressOp::Bisect) => "bisect",
+            Self::Repository(InProgressOp::Other) => "other",
+            Self::StashApply => "stash",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictProgress {
     NotStarted,
@@ -178,6 +204,10 @@ pub enum ConflictProgress {
     WorktreeWritten,
     IndexWritten,
     IndexAndWorktreeWritten,
+    /// An abort with no `ORIG_HEAD` to restore from has nothing to write —
+    /// clearing the `.git/` operation state is the whole mutation, and this
+    /// is the point past which it has begun (#704).
+    StateCleanupStarted,
     Verified,
 }
 
@@ -188,4 +218,49 @@ pub struct ConflictEvidence {
     pub before: ConflictObservation,
     pub after: Option<ConflictObservation>,
     pub detail: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #704 review: one typed kind, and its slugs are the oplog names
+    /// (`merge-abort`, `rebase-abort`, …) the git layer has always produced.
+    /// Pinned exhaustively so a new [`InProgressOp`] cannot be added without
+    /// deciding what the conflict family calls it.
+    #[test]
+    fn every_operation_kind_has_the_slug_its_oplog_entry_is_named_after() {
+        let all = [
+            (
+                ConflictOperationKind::Repository(InProgressOp::Merge),
+                "merge",
+            ),
+            (
+                ConflictOperationKind::Repository(InProgressOp::Rebase),
+                "rebase",
+            ),
+            (
+                ConflictOperationKind::Repository(InProgressOp::CherryPick),
+                "cherry-pick",
+            ),
+            (
+                ConflictOperationKind::Repository(InProgressOp::Revert),
+                "revert",
+            ),
+            (
+                ConflictOperationKind::Repository(InProgressOp::Bisect),
+                "bisect",
+            ),
+            (
+                ConflictOperationKind::Repository(InProgressOp::Other),
+                "other",
+            ),
+            (ConflictOperationKind::StashApply, "stash"),
+        ];
+        for (kind, slug) in all {
+            assert_eq!(kind.slug(), slug, "{kind:?}");
+        }
+        let slugs: std::collections::BTreeSet<_> = all.iter().map(|(_, slug)| *slug).collect();
+        assert_eq!(slugs.len(), all.len(), "two kinds share an oplog name");
+    }
 }

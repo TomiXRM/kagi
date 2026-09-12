@@ -70,7 +70,7 @@ pub struct TabViewState {
     /// — not from whether a `ConflictView` entity happens to exist. It stays
     /// present after the last conflict is resolved, which is the state the
     /// user could not escape.
-    pub operation: Option<kagi_domain::conflict_family::InProgressOperation>,
+    pub operation: Option<kagi_domain::conflict_family::ObservedOperation>,
     /// HEAD commit OID (hex) for this snapshot, or `None` for an unborn HEAD.
     /// Used to decide whether HEAD-versioned overlays (Analyze, File History)
     /// are stale on a reload — an auto-fetch that only moves remote-tracking
@@ -291,10 +291,13 @@ impl KagiApp {
     /// `MergeResolvedReady` branch itself — decided the answer. #704: the
     /// repository is what knows, and it says so from the first accepted read.
     pub fn merge_commit_ready(&self) -> bool {
-        self.view()
-            .operation
-            .as_ref()
-            .is_some_and(|op| op.slug() == "merge" && op.unmerged() == 0)
+        self.view().operation.as_ref().is_some_and(|op| {
+            op.kind
+                == kagi_domain::conflict_family::ConflictOperationKind::Repository(
+                    kagi_domain::plan_note::InProgressOp::Merge,
+                )
+                && op.unmerged() == 0
+        })
     }
 
     /// End a session and everything that belonged to its display.

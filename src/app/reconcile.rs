@@ -177,7 +177,7 @@ fn writes_only_locally(name: &str) -> bool {
 /// approval stays unconfirmed — the observation says what the remote holds and
 /// the user decides, but the scope is never reopened on a guess (ADR-0177).
 fn observe_remote_run(request: &RunRequest) -> Result<(String, bool), String> {
-    let Some(expected) = request.remote.as_ref() else {
+    if request.remote.is_empty() {
         return Ok((
             format!(
                 "{}: this operation's remote effect was not named at approval, \
@@ -186,21 +186,45 @@ fn observe_remote_run(request: &RunRequest) -> Result<(String, bool), String> {
             ),
             false,
         ));
-    };
-    let live =
-        kagi_git::Backend::read_remote_ref(&request.path, &expected.remote, &expected.refname)
-            .map_err(|e| e.to_string())?;
-    let confirmed = expected.matches(live.as_deref());
-    Ok((
-        format!(
-            "{}/{} expected={} live={} confirmed={confirmed}",
-            expected.remote,
-            expected.refname,
-            expected.describe(),
-            live.as_deref().unwrap_or("absent"),
-        ),
-        confirmed,
-    ))
+    }
+    // Every promise, and all of them: a batch delete that removed three of four
+    // branches is not a confirmed batch delete.
+    let mut confirmed = true;
+    let mut seen = Vec::new();
+    for expectation in &request.remote {
+        let (observation, matched) = observe_expectation(&request.path, expectation)?;
+        confirmed &= matched;
+        seen.push(observation);
+    }
+    Ok((seen.join("; "), confirmed))
+}
+
+/// One promise, checked the way its kind is checked. A ref is `ls-remote`;
+/// #701's pull-request kind is a server re-read through the transport.
+fn observe_expectation(
+    path: &std::path::Path,
+    expectation: &kagi_git::backend::remote_ref::RemoteExpectation,
+) -> Result<(String, bool), String> {
+    use kagi_git::backend::remote_ref::RemoteExpectation;
+    match expectation {
+        RemoteExpectation::Ref {
+            remote,
+            refname,
+            expect,
+        } => {
+            let live = kagi_git::Backend::read_remote_ref(path, remote, refname)
+                .map_err(|e| e.to_string())?;
+            let matched = expect.matches(live.as_deref());
+            Ok((
+                format!(
+                    "{remote}/{refname} expected={} live={} confirmed={matched}",
+                    expect.describe(),
+                    live.as_deref().unwrap_or("absent"),
+                ),
+                matched,
+            ))
+        }
+    }
 }
 
 /// What a pull left behind, read back live: where HEAD and its upstream now

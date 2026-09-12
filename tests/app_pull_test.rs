@@ -625,7 +625,7 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
         plan: Arc::new(plan),
     };
     assert!(
-        request.remote.is_some(),
+        !request.remote.is_empty(),
         "the fixture must produce a namable remote effect"
     );
     let second = request.clone();
@@ -742,11 +742,14 @@ fn a_branch_push_is_resolved_only_by_the_remote() {
         remote: backend.remote_expectation("branch-push", &plan),
         plan: Arc::new(plan),
     };
-    let expectation = request
-        .remote
-        .clone()
-        .expect("a branch push names the ref it is about to move");
-    assert_eq!(expectation.refname, "refs/heads/main");
+    use kagi_git::backend::remote_ref::RemoteExpectation;
+    let [RemoteExpectation::Ref { refname, .. }] = request.remote.as_slice() else {
+        panic!(
+            "a branch push names the one ref it is about to move: {:?}",
+            request.remote
+        );
+    };
+    assert_eq!(refname, "refs/heads/main");
 
     let unknown = |f: &Fixture| {
         f.receipt(
@@ -842,7 +845,7 @@ fn an_unclassified_operation_is_never_acknowledgeable_from_a_local_read() {
         path: f.repo.clone(),
         repo: backend.write_repo_id().unwrap(),
         plan: Arc::new(backend.plan_commit("x").expect("plan commit")),
-        remote: None,
+        remote: Vec::new(),
     };
     let report = f.receipt(
         "some-future-family",
@@ -888,13 +891,9 @@ fn an_unclassified_operation_is_never_acknowledgeable_from_a_local_read() {
 /// call an unlanded write confirmed (#702 re-review).
 #[test]
 fn every_remote_expectation_is_confirmed_only_by_its_frozen_value() {
-    use kagi_git::backend::remote_ref::{RemoteExpect, RemoteExpectation};
+    use kagi_git::backend::remote_ref::RemoteExpect;
 
-    let oid = RemoteExpectation {
-        remote: "origin".into(),
-        refname: "refs/heads/main".into(),
-        expect: RemoteExpect::Oid("a".repeat(40)),
-    };
+    let oid = RemoteExpect::Oid("a".repeat(40));
     assert!(oid.matches(Some(&"a".repeat(40))));
     assert!(
         !oid.matches(Some(&"b".repeat(40))),
@@ -902,11 +901,7 @@ fn every_remote_expectation_is_confirmed_only_by_its_frozen_value() {
     );
     assert!(!oid.matches(None), "an absent ref is not it either");
 
-    let absent = RemoteExpectation {
-        remote: "origin".into(),
-        refname: "refs/heads/gone".into(),
-        expect: RemoteExpect::Absent,
-    };
+    let absent = RemoteExpect::Absent;
     assert!(absent.matches(None));
     assert!(
         !absent.matches(Some(&"a".repeat(40))),
@@ -918,33 +913,38 @@ fn every_remote_expectation_is_confirmed_only_by_its_frozen_value() {
 /// plan recovery; everything else names nothing and stays unresolved.
 #[test]
 fn a_remote_effect_is_named_from_the_plan_that_is_about_to_run() {
-    use kagi_git::backend::remote_ref::RemoteExpect;
+    use kagi_git::backend::remote_ref::{RemoteExpect, RemoteExpectation};
 
     let f = Fixture::new();
     git(&f.repo, &["tag", "v1"]);
     let backend = Backend::open(&f.repo).unwrap();
     let head = git(&f.repo, &["rev-parse", "HEAD"]);
 
-    let push = backend
-        .remote_expectation("push", &backend.plan_push().expect("plan push"))
-        .expect("a tracked branch names its push");
-    assert_eq!(push.remote, "origin");
-    assert_eq!(push.refname, "refs/heads/main");
-    assert_eq!(push.expect, RemoteExpect::Oid(head.clone()));
-
-    let tag = backend
-        .remote_expectation(
+    assert_eq!(
+        backend.remote_expectation("push", &backend.plan_push().expect("plan push")),
+        vec![RemoteExpectation::Ref {
+            remote: "origin".into(),
+            refname: "refs/heads/main".into(),
+            expect: RemoteExpect::Oid(head.clone()),
+        }],
+        "a tracked branch names its push"
+    );
+    assert_eq!(
+        backend.remote_expectation(
             "push-tag",
-            &backend.plan_push_tag("v1").expect("plan push tag"),
-        )
-        .expect("a tag push names its ref");
-    assert_eq!(tag.refname, "refs/tags/v1");
-    assert_eq!(tag.expect, RemoteExpect::Oid(head));
-
+            &backend.plan_push_tag("v1").expect("plan push tag")
+        ),
+        vec![RemoteExpectation::Ref {
+            remote: "origin".into(),
+            refname: "refs/tags/v1".into(),
+            expect: RemoteExpect::Oid(head),
+        }],
+        "a tag push names its ref"
+    );
     // A local-only operation has no remote effect to name.
     assert!(backend
         .remote_expectation("commit", &backend.plan_commit("x").expect("plan commit"))
-        .is_none());
+        .is_empty());
 }
 
 /// #702 re-review — the proof is about the process *tree*, not one pid.

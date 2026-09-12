@@ -6,14 +6,26 @@
 //! Git can move (ADR-0177, #702 re-review).
 use super::*;
 
-/// A remote effect named before it happens: which ref on which remote, and
-/// what it should say afterwards. See [`Backend::remote_expectation`].
+/// A remote effect named before it happens, and how it will be checked.
+///
+/// One variant per *kind of observation*, because not every remote effect is a
+/// ref: a pull-request merge is server state that only the transport can
+/// re-read. `#701` adds `PullRequest { number, expect }`, observed by asking
+/// GitHub again rather than by `ls-remote`; the reconcile read dispatches on
+/// the variant, so adding that kind adds an arm and nothing else.
+///
+/// Operations freeze a **list** of these: a batch remote-branch delete is N
+/// refs that must *all* be gone before it is confirmed.
+/// See [`Backend::remote_expectation`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RemoteExpectation {
-    pub remote: String,
-    /// Fully qualified, e.g. `refs/heads/main` or `refs/tags/v1`.
-    pub refname: String,
-    pub expect: RemoteExpect,
+pub enum RemoteExpectation {
+    /// One ref on one remote, checked with `ls-remote`.
+    Ref {
+        remote: String,
+        /// Fully qualified, e.g. `refs/heads/main` or `refs/tags/v1`.
+        refname: String,
+        expect: RemoteExpect,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,19 +36,19 @@ pub enum RemoteExpect {
     Absent,
 }
 
-impl RemoteExpectation {
+impl RemoteExpect {
     /// Does what the remote actually has match what was promised?
     pub fn matches(&self, live: Option<&str>) -> bool {
-        match &self.expect {
-            RemoteExpect::Oid(oid) => live == Some(oid.as_str()),
-            RemoteExpect::Absent => live.is_none(),
+        match self {
+            Self::Oid(oid) => live == Some(oid.as_str()),
+            Self::Absent => live.is_none(),
         }
     }
     /// What was promised, for the observation string.
     pub fn describe(&self) -> String {
-        match &self.expect {
-            RemoteExpect::Oid(oid) => oid.clone(),
-            RemoteExpect::Absent => "absent".to_string(),
+        match self {
+            Self::Oid(oid) => oid.clone(),
+            Self::Absent => "absent".to_string(),
         }
     }
 }
@@ -51,10 +63,14 @@ impl Backend {
     /// local branch back to the remote's old tip, and comparing current values
     /// would then call an unlanded push "confirmed" (#702 re-review).
     ///
-    /// `None` for an operation whose remote effect cannot be named — a
-    /// push of a branch that is not HEAD, a detached HEAD — which leaves the
-    /// reconcile read unresolved rather than guessing.
-    pub fn remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {
+    /// Empty for an operation whose remote effect cannot be named, which leaves
+    /// the reconcile read unresolved rather than guessing. A list, because one
+    /// operation can promise several refs (a batch delete).
+    pub fn remote_expectation(&self, op: &str, plan: &OperationPlan) -> Vec<RemoteExpectation> {
+        self.one_remote_expectation(op, plan).into_iter().collect()
+    }
+
+    fn one_remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {
         use kagi_domain::plan_note::{
             force_lease::ForceLeaseRecovery, push::PushTitle, remote_branch::RemoteBranchRecovery,
             tag::TagRecovery, PlanTitle, RecoveryKind,
@@ -71,7 +87,7 @@ impl Backend {
             if matches!(op, "push" | "branch-push" | "branch-push-set-upstream") {
                 let refname = format!("refs/heads/{branch}");
                 let oid = self.repo.revparse_single(&refname).ok()?.id().to_string();
-                return Some(RemoteExpectation {
+                return Some(RemoteExpectation::Ref {
                     remote: remote.clone(),
                     refname,
                     expect: RemoteExpect::Oid(oid),
@@ -87,7 +103,7 @@ impl Backend {
                     new_sha,
                     ..
                 })),
-            ) => Some(RemoteExpectation {
+            ) => Some(RemoteExpectation::Ref {
                 remote: remote.clone(),
                 refname: format!("refs/heads/{branch}"),
                 expect: RemoteExpect::Oid(new_sha.clone()),
@@ -99,7 +115,7 @@ impl Backend {
                     branch,
                     ..
                 })),
-            ) => Some(RemoteExpectation {
+            ) => Some(RemoteExpectation::Ref {
                 remote: remote.clone(),
                 refname: format!("refs/heads/{branch}"),
                 expect: RemoteExpect::Absent,
@@ -111,7 +127,7 @@ impl Backend {
                     .ok()?
                     .id()
                     .to_string();
-                Some(RemoteExpectation {
+                Some(RemoteExpectation::Ref {
                     remote: remote.clone(),
                     refname: format!("refs/tags/{name}"),
                     expect: RemoteExpect::Oid(oid),

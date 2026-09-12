@@ -27,10 +27,13 @@ pub struct RunRequest {
     pub repo: RepoId,
     pub plan: Arc<OperationPlan>,
     /// What this write is about to make true on a remote, frozen here at
-    /// approval (`Backend::remote_expectation`). `None` for a local-only
+    /// approval (`Backend::remote_expectation`). Empty for a local-only
     /// operation, and for a remote one whose effect cannot be named — which
     /// leaves the reconcile read unresolved rather than guessing.
-    pub remote: Option<kagi_git::backend::remote_ref::RemoteExpectation>,
+    ///
+    /// A list: one operation can promise several refs, and a reconcile is
+    /// confirmed only when **every** one of them is.
+    pub remote: Vec<kagi_git::backend::remote_ref::RemoteExpectation>,
 }
 
 /// Admission for a plan that lives in a modal rather than the plan slot: the

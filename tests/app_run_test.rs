@@ -76,7 +76,7 @@ impl Fixture {
             path: self.repo.clone(),
             repo: backend.write_repo_id().unwrap(),
             plan: Arc::new(plan),
-            remote: None,
+            remote: Vec::new(),
         }
     }
 }

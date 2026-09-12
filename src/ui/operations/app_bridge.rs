@@ -234,6 +234,9 @@ impl KagiApp {
                 },
             ),
             app::Planned::RemoteStash { .. } => ("remote-stash-drop", Msg::BusyStashDrop),
+            // Run-family writes dispatch through `finish_run`; `prepare` refuses
+            // this one below and the refusal is presented like any other.
+            app::Planned::Run(request) => (request.name, Msg::OpInProgress),
             app::Planned::Conflict { plan, .. } => match plan.request().action() {
                 kagi_domain::conflict_family::ConflictAction::Save => {
                     ("conflict-save", Msg::OpInProgress)
@@ -256,16 +259,7 @@ impl KagiApp {
         ) {
             Ok(job) => job,
             Err(error) => {
-                let message = if error == app::AdmissionError::Busy {
-                    Msg::OpInProgress.t().to_string()
-                } else {
-                    error.to_string()
-                };
-                self.status_footer = FooterStatus::Failed(message.clone().into());
-                self.push_toast(ToastKind::Error, message.clone(), cx);
-                self.app_notices.push_back(message.into());
-                self.present_app_notice();
-                cx.notify();
+                self.report_admission_refusal(error, cx);
                 return;
             }
         };
@@ -338,7 +332,25 @@ impl KagiApp {
         .detach();
         cx.notify();
     }
-    fn deliver_app_result(&mut self, delivery: Delivery, cx: &mut Context<Self>) {
+    /// An admission the application layer refused: footer, toast and the
+    /// shared app-notice modal, never stderr alone.
+    pub(crate) fn report_admission_refusal(
+        &mut self,
+        error: app::AdmissionError,
+        cx: &mut Context<Self>,
+    ) {
+        let message = if error == app::AdmissionError::Busy {
+            Msg::OpInProgress.t().to_string()
+        } else {
+            error.to_string()
+        };
+        self.status_footer = FooterStatus::Failed(message.clone().into());
+        self.push_toast(ToastKind::Error, message.clone(), cx);
+        self.app_notices.push_back(message.into());
+        self.present_app_notice();
+        cx.notify();
+    }
+    pub(crate) fn deliver_app_result(&mut self, delivery: Delivery, cx: &mut Context<Self>) {
         match delivery {
             Delivery::RemovedTarget(target) => {
                 // #528: the worktree no longer exists, so neither should its
@@ -377,6 +389,9 @@ impl KagiApp {
                         return;
                     }
                     app::FamilyEvidence::RemoteStash(_) => return,
+                    // Presented by the `finish_run` that admitted it; a
+                    // completion abandoned by its window has no one to show.
+                    app::FamilyEvidence::Run(_) => return,
                     app::FamilyEvidence::Conflict(report) => {
                         self.deliver_conflict_result(attachment, report, cx);
                         return;

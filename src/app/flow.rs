@@ -24,6 +24,9 @@ pub enum Planned {
         request: ConflictAppRequest,
         policy: kagi_git::backend::ExecutionPolicy,
     },
+    /// ADR-0196 Wave 3: a legacy `Backend::run` write whose plan lives in its
+    /// modal. Admitted through [`approve_run`], not the plan slot.
+    Run(RunRequest),
 }
 impl Planned {
     pub fn owner(&self) -> OwnerAttachment {
@@ -32,6 +35,7 @@ impl Planned {
             Self::Stash { request, .. } => OwnerAttachment::Local(request.owner.clone()),
             Self::RemoteStash { request, .. } => OwnerAttachment::Remote(request.owner.clone()),
             Self::Conflict { request, .. } => OwnerAttachment::Local(request.owner.clone()),
+            Self::Run(request) => OwnerAttachment::Local(request.owner.clone()),
         }
     }
     pub fn scope(&self) -> WriteScope {
@@ -40,6 +44,7 @@ impl Planned {
             Self::Stash { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
             Self::RemoteStash { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
             Self::Conflict { plan, .. } => WriteScope::Local(plan.common_dir().clone()),
+            Self::Run(request) => WriteScope::Local(request.repo.clone()),
         }
     }
     pub fn owner_session(&self) -> SessionId {
@@ -59,6 +64,9 @@ impl Planned {
             // WorktreeId sibling discovery cannot describe a remote repository.
             Self::RemoteStash { .. } => false,
             Self::Conflict { .. } => false,
+            // Conservative: every run-pipeline write may move refs or HEAD, so
+            // every open sibling is told. Index-only families are not here.
+            Self::Run { .. } => true,
         }
     }
 }
@@ -183,6 +191,7 @@ fn identity_matches(s: &Sessions, prepared: &Planned) -> Result<(), AdmissionErr
                 return Err(AdmissionError::StaleApproval);
             }
         }
+        Planned::Run(request) => s.confirm_identity(&request.owner)?,
     }
     Ok(())
 }
@@ -242,6 +251,8 @@ pub fn approve(
         Planned::Stash { policy, .. } => Policy::Stash(*policy),
         Planned::RemoteStash { policy, .. } => Policy::Stash(*policy),
         Planned::Conflict { policy, .. } => Policy::Conflict(*policy),
+        // A run plan has no token to spend; it is admitted by `approve_run`.
+        Planned::Run(_) => return Err(AdmissionError::StaleApproval),
     };
     if current.revision != token.revision || planned_policy != policy.into() {
         return Err(AdmissionError::StaleApproval);
@@ -330,6 +341,12 @@ pub enum Completion {
     Remove(Box<RemoveCompletion>),
     Stash(Box<StashCompletion>),
     Conflict(Box<ConflictCompletion>),
+    Run(Box<RunCompletion>),
+}
+impl From<RunCompletion> for Completion {
+    fn from(c: RunCompletion) -> Self {
+        Self::Run(Box::new(c))
+    }
 }
 impl From<RemoveCompletion> for Completion {
     fn from(c: RemoveCompletion) -> Self {
@@ -352,6 +369,7 @@ pub enum FamilyEvidence {
     Stash(kagi_git::backend::stash::StashReport),
     RemoteStash(crate::remote::stash::RemoteStashReport),
     Conflict(kagi_git::backend::conflict_ops::ConflictReport),
+    Run(kagi_git::backend::recording::RunReport),
 }
 #[derive(Clone, Debug)]
 pub struct ExecutionReport {
@@ -362,6 +380,7 @@ pub enum Job {
     Remove(RemoveJob),
     Stash(StashJob),
     Conflict(ConflictJob),
+    Run(RunJob),
 }
 pub enum Event {
     Remove(kagi_git::backend::remove::RemoveEvent),
@@ -376,6 +395,7 @@ impl Job {
             Self::Remove(job) => job.run_with_events(|e| event(Event::Remove(e))).into(),
             Self::Stash(job) => job.run_with_events(|e| event(Event::Stash(e))).into(),
             Self::Conflict(job) => job.run().into(),
+            Self::Run(job) => job.run().into(),
         }
     }
 }
@@ -389,6 +409,10 @@ pub fn prepare(
         Planned::Stash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
         Planned::RemoteStash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
         Planned::Conflict { .. } => prepare_conflict(s, approved, legacy).map(Job::Conflict),
+        // The run family binds its own blocking core: see `prepare_run`.
+        Planned::Run(_) => Err(AdmissionError::Identity(
+            "run-family writes are prepared through prepare_run".into(),
+        )),
     }
 }
 pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Delivery> {
@@ -439,6 +463,24 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                     evidence: FamilyEvidence::Conflict(c.report),
                 },
                 true,
+                None,
+            )
+        }
+        // A CLI writer whose termination is unconfirmed may still be running:
+        // the scope stays reserved (ADR-0175), exactly as `complete_git` does.
+        Completion::Run(c) => {
+            let c = *c;
+            let stopped = !matches!(
+                c.report.result,
+                Err(kagi_git::GitError::TerminationUnknown(_))
+            );
+            (
+                c.id,
+                ExecutionReport {
+                    recording: c.report.recording.clone(),
+                    evidence: FamilyEvidence::Run(c.report),
+                },
+                stopped,
                 None,
             )
         }
@@ -545,6 +587,18 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             s.stale.insert(target.worktree.clone());
             deliveries.push(Delivery::Invalidate(target));
         }
+        (Planned::Run(request), FamilyEvidence::Run(_)) => {
+            let target = InvalidTarget {
+                worktree: request
+                    .owner
+                    .worktree
+                    .clone()
+                    .expect("a run owner is a local worktree tab"),
+                path: request.owner.path.clone(),
+            };
+            s.stale.insert(target.worktree.clone());
+            deliveries.push(Delivery::Invalidate(target));
+        }
         _ => unreachable!("completion family is fixed by its owned job"),
     }
     // Shared refs / stash / worktree administration make every *open* sibling
@@ -556,6 +610,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             Planned::Stash { plan, .. } => &plan.common_dir,
             Planned::RemoteStash { .. } => unreachable!("remote refs have no local siblings"),
             Planned::Conflict { .. } => unreachable!("conflict writes are worktree-local"),
+            Planned::Run(request) => &request.repo,
         };
         let delivered: Vec<_> = deliveries
             .iter()

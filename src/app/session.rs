@@ -557,6 +557,19 @@ impl ReconcileJob {
                     .map_err(|e| e.to_string())?,
                 true,
             ),
+            Planned::Run(request) => (
+                kagi_git::Backend::open(&request.path)
+                    .and_then(|mut backend| backend.snapshot(1))
+                    .map(|snap| {
+                        format!(
+                            "head={} dirty={}",
+                            snap.head.display(),
+                            snap.status.is_dirty()
+                        )
+                    })
+                    .map_err(|e| e.to_string())?,
+                true,
+            ),
         };
         Ok(ReconcileRead {
             id: self.id,

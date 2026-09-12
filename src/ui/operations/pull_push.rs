@@ -11,6 +11,8 @@ use kagi_domain::plan_note::{
     UntrackedCtx,
 };
 
+mod settle;
+
 use crate::ui::operations::PullConfirmDelivery;
 use crate::ui::*;
 
@@ -376,7 +378,7 @@ impl KagiApp {
                 cx.notify();
                 return;
             }
-            self.busy_op = Some("pull");
+            self.mark_write_busy("pull");
             self.clear_pull_modal();
             self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
             klog!("async: remote pull started");
@@ -442,101 +444,20 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: pull plan has blockers, not executing");
-            self.record_op(
-                "pull",
-                modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo_path,
-                cx,
-            );
+            // #702 review P2: the UI authors no pull outcome at all. A known
+            // blocker is a no-execute receipt like the runtime refusal, written
+            // by the same core factory and only presented here.
+            let refusal = refuse_blocked_pull(&repo_path, &modal.plan);
+            self.present_report("pull", &refusal, &repo_path, cx);
             self.clear_pull_modal();
             cx.notify();
             return;
         }
 
-        self.busy_op = Some("pull");
         self.clear_pull_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
         klog!("async: pull started");
-
-        let plan = modal.plan.clone();
-        let auto_stash = modal.auto_stash;
-        let bg_path = repo_path.clone();
-        let promised_dirty = modal.dirty_digest;
-        let task = cx.background_spawn(async move {
-            pull_blocking(&bg_path, &plan, auto_stash, promised_dirty)
-        });
-        self.finish_op_on_main(cx, task, move |app, result, cx| {
-            app.finish_pull(result, modal, repo_path, cx);
-        });
-    }
-
-    /// Apply the result of a background pull on the main thread.
-    /// `busy_op` is cleared by the `finish_op_on_main` caller before this runs.
-    fn finish_pull(
-        &mut self,
-        result: PullBlockingResult,
-        modal: PullPlanModal,
-        repo_path: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        match result {
-            PullBlockingResult::Success { summary, after } => {
-                klog!("async: pull finished — {}", summary);
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Success { after },
-                    &repo_path,
-                    cx,
-                );
-                self.status_footer =
-                    FooterStatus::Success(SharedString::from(format!("pull: {}", summary)));
-                self.reload_async(false, cx);
-            }
-            PullBlockingResult::Failed { error } => {
-                klog!("async: pull failed — {}", error);
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Failed {
-                        error: error.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                // #493 / ADR-0189: the failure modal survives watcher reloads
-                // and remains until the user explicitly dismisses it.
-                self.set_pull_modal(PullPlanModal {
-                    plan: modal.plan.clone(),
-                    auto_stash: modal.auto_stash,
-                    error: Some(SharedString::from(error)),
-                    dirty_digest: modal.dirty_digest,
-                });
-            }
-            PullBlockingResult::Partial { error, after } => {
-                klog!("async: pull partially applied — {}", error);
-                self.record_op(
-                    "pull",
-                    modal.plan.current.clone(),
-                    OpOutcome::Partial {
-                        after,
-                        error: error.clone(),
-                    },
-                    &repo_path,
-                    cx,
-                );
-                self.set_pull_modal(PullPlanModal {
-                    plan: modal.plan.clone(),
-                    auto_stash: modal.auto_stash,
-                    error: Some(SharedString::from(error)),
-                    dirty_digest: modal.dirty_digest,
-                });
-                self.reload_async(false, cx);
-            }
-        }
+        self.finish_pull(cx, modal, repo_path);
     }
 
     /// Build a push plan and open the confirmation modal.

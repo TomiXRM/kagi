@@ -119,6 +119,20 @@ pub struct ProcRun {
     /// `Ok(())` — `stdout`/`stderr` are everything the child wrote, and all the
     /// input reached it. `Err(_)` — see [`ProcIo`]; the buffers are a prefix.
     pub io: Result<(), ProcIo>,
+    /// The child's process id. On unix it is also the id of the group holding
+    /// everything the child started, because the child is spawned as its own
+    /// group leader — the handle a later read proves stop against when the kill
+    /// could not (ADR-0175). Elsewhere it is just the pid, and
+    /// [`group_alive`] has nothing to ask.
+    pub pid: u32,
+    /// Is the child's whole process **group** confirmed empty?
+    ///
+    /// The only thing that may become `Termination::Stopped`. Reaping the
+    /// direct child is not it: a transport helper or hook it started can still
+    /// be writing, and `ProcIo::Unfinished` is that case caught in the act —
+    /// something in the group is still holding the pipes (#702 re-review).
+    /// Always `false` where there is no probe: no evidence is not "gone".
+    pub group_stopped: bool,
 }
 
 impl ProcRun {
@@ -190,7 +204,17 @@ pub fn run_child(
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
 
+    // Its own process group, so the stop proof can be about everything the
+    // command started — a transport helper, a hook, an ssh — and not just the
+    // one process we hold a handle to (#702 re-review).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn()?;
+    // The child is its own group leader, so the group id is its pid.
+    let pid = child.id();
 
     // Each collector reports through the channel when it is done, so the wait
     // for them can be bounded (a `JoinHandle` cannot). The handles are kept only
@@ -216,7 +240,16 @@ pub fn run_child(
     drop(tx);
 
     let status = wait_or_kill(&mut child, timeout);
+    // A deadline that expires kills the whole group, not just the process we
+    // hold: whatever the command started is part of the same write, and
+    // leaving it running is what makes the termination unprovable.
+    if status.is_err() {
+        kill_group(pid);
+    }
     let (stdout, stderr, io) = collect(&rx, threads.len());
+    // Asked *after* the collectors settle, so a descendant still holding the
+    // pipes is still counted. This is the whole stop proof.
+    let group_stopped = !group_settled(pid, status.is_err());
 
     // Hand off whenever something is still ours to own: an unreaped child, or a
     // read that has not ended. On the ordinary path the collectors are done, so
@@ -242,7 +275,79 @@ pub fn run_child(
         stderr,
         status: status.map(|s| s.code().unwrap_or(-1)),
         io,
+        pid,
+        group_stopped,
     })
+}
+
+/// Stop the whole process group. Called only when the deadline expired: the
+/// command is over either way, and a descendant of it still running is a write
+/// kagi cannot account for.
+#[cfg(unix)]
+fn kill_group(pgid: u32) {
+    // SAFETY: signalling our own child's group; the group id is the child's pid
+    // because `run_child` spawned it as the group leader.
+    unsafe { libc::kill(-(pgid as i32) as libc::pid_t, libc::SIGKILL) };
+}
+#[cfg(not(unix))]
+fn kill_group(_pgid: u32) {}
+
+/// Is anything in `pgid` still alive, after giving a just-killed group a
+/// bounded moment to go? `killed` says whether we signalled it, which is the
+/// only case worth waiting for.
+fn group_settled(pgid: u32, killed: bool) -> bool {
+    if !killed {
+        return group_alive(pgid);
+    }
+    for _ in 0..100 {
+        if !group_alive(pgid) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+/// Is anything in process group `pgid` still alive?
+///
+/// `kill(-pgid, 0)` is the POSIX existence probe applied to a whole group: it
+/// sends no signal. `Ok` or `EPERM` means at least one process in the group is
+/// there; `ESRCH` means the group is empty. This is how a writer that could not
+/// be reaped is finally proven stopped, long after the run that abandoned it
+/// (ADR-0175, #702 review).
+///
+/// The **group**, not the pid: [`run_child`] spawns each child as its own group
+/// leader, so a transport helper or hook that outlived the child it was
+/// spawned from is still counted. Reaping the direct child proves nothing about
+/// those ([`ProcStop::reaped`] says so), and a writer lease must not be
+/// released on a proof that narrow.
+// ponytail: pid reuse can make a recycled group id read as alive, which keeps a
+// scope closed that could have been released. Conservative in the safe
+// direction; a start-time comparison would be the upgrade if it ever bites. A
+// just-exited member reads alive until `run_child`'s janitor reaps it, which is
+// prompt — the janitor owns every child it could not reap itself, so a zombie
+// is never permanent.
+#[cfg(unix)]
+pub fn group_alive(pgid: u32) -> bool {
+    // SAFETY: `kill` with signal 0 performs no action; it only reports whether
+    // the target exists and is signallable. A negative pid targets the group.
+    let rc = unsafe { libc::kill(-(pgid as i32) as libc::pid_t, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+/// Without a probe there is no evidence, and "no evidence" is not "gone".
+///
+/// Reporting alive keeps the scope reserved and the acknowledge refused, which
+/// is the safe half of a wrong answer: a held lease costs the user a restart,
+/// releasing one on no evidence costs them a concurrent write over a mutation
+/// that may still be running (ADR-0175).
+// ponytail: Windows has no process group in this sense, so the reconcile exit
+// there is the safe dead end — held until the application restarts. The upgrade
+// is a job object per child (`CreateJobObject` + `AssignProcessToJobObject` at
+// spawn, `QueryInformationJobObject` for live process ids), which is the
+// Windows equivalent of the group and the only thing that could answer this.
+#[cfg(not(unix))]
+pub fn group_alive(_pgid: u32) -> bool {
+    true
 }
 
 /// Read a child pipe to EOF on its own thread, reporting through `tx`.
@@ -370,6 +475,28 @@ mod tests {
             .unwrap_or(false)
     }
 
+    /// Every child leads its own process group, so the stop proof can be about
+    /// everything the command started rather than the one process we hold a
+    /// handle to (#702 re-review). Without this, `group_alive` and a plain pid
+    /// probe are the same check and a surviving transport helper reads as gone.
+    #[cfg(unix)]
+    #[test]
+    fn a_child_leads_its_own_process_group() {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg("ps -o pgid= -p $$");
+        let run = run_child(&mut cmd, Duration::from_secs(30), None).expect("spawn sh");
+        assert_eq!(run.status, Ok(0), "stderr: {}", run.stderr_lossy());
+        let pgid: u32 = run
+            .stdout_lossy()
+            .trim()
+            .parse()
+            .unwrap_or_else(|e| panic!("pgid from {:?}: {e}", run.stdout_lossy()));
+        assert_eq!(
+            pgid, run.pid,
+            "the child must be its own group leader, so its pid is the group id"
+        );
+    }
+
     #[test]
     fn wait_or_kill_kills_and_reaps_on_timeout() {
         // A child that would otherwise run for 5 minutes: the margins below are
@@ -475,9 +602,11 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes() {
-        // The shell stays alive (`wait`), so the deadline kills *it* — but the
-        // grandchild inherited stdout/stderr, so the reads cannot reach EOF.
-        // Joining them would hang here forever; the caller must still be freed.
+        // The shell stays alive (`wait`) and its grandchild inherited
+        // stdout/stderr, so joining the readers would hang here forever. The
+        // deadline kills the whole *group* (#702 re-review), which is what
+        // frees both the caller and the pipes — and what makes the stop
+        // provable: nothing this command started is left running.
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "sleep 3072 & wait"]);
 
@@ -495,10 +624,10 @@ mod tests {
             "expected a Deadline stop, got {:?}",
             run.status
         );
-        assert_eq!(
-            run.io,
-            Err(ProcIo::Unfinished),
-            "an unfinished capture must say so"
+        assert!(
+            run.group_stopped,
+            "killing the group is the stop proof: nothing the command started \
+             may be left running"
         );
     }
 

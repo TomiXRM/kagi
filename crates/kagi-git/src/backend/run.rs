@@ -61,13 +61,16 @@ impl Backend {
                     // account for it": an unconfirmed termination (#507) and a
                     // stash whose entry a concurrent push made ambiguous
                     // (#623). Same receipt, same reconcile requirement.
-                    if let Err(
-                        GitError::TerminationUnknown(reason)
-                        | GitError::StashIdentityUnverified(reason),
-                    ) = &result
-                    {
-                        evidence.unknown = true;
-                        evidence.observations.push(reason.clone());
+                    match &result {
+                        Err(GitError::TerminationUnknown(t)) => {
+                            evidence.unknown = true;
+                            evidence.observations.push(t.reason().to_string());
+                        }
+                        Err(GitError::StashIdentityUnverified(reason)) => {
+                            evidence.unknown = true;
+                            evidence.observations.push(reason.clone());
+                        }
+                        _ => {}
                     }
                     result
                 }

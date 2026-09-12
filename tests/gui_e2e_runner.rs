@@ -599,6 +599,38 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),
             (
+                "run_unknown_offers_its_reconcile",
+                Box::new(crate::recovery_pull::scenario_run_unknown_offers_its_reconcile),
+            ),
+            (
+                "pull_unknown_notice_survives_a_tab_switch",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_unknown_notice_survives_a_tab_switch,
+                ),
+            ),
+            (
+                "pull_unknown_offers_its_reconcile",
+                Box::new(crate::recovery_pull::scenario_pull_unknown_offers_its_reconcile),
+            ),
+            (
+                "pull_failure_presents_only_the_decisive_receipt",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_presents_only_the_decisive_receipt,
+                ),
+            ),
+            (
+                "pull_completion_drops_when_its_tab_is_left",
+                Box::new(crate::recovery_pull::scenario_pull_completion_drops_when_its_tab_is_left),
+            ),
+            (
+                "pull_blocked_plan_presents_a_core_receipt",
+                Box::new(crate::recovery_pull::scenario_pull_blocked_plan_presents_a_core_receipt),
+            ),
+            (
+                "pull_presents_backend_receipts",
+                Box::new(crate::recovery_pull::scenario_pull_presents_backend_receipts),
+            ),
+            (
                 "pull_auto_stash_failure_restores",
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_failure_restores),
             ),

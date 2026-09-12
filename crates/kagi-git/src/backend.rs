@@ -19,10 +19,11 @@ pub mod backups;
 pub mod conflict_ops;
 mod policy;
 pub mod recording;
+pub mod remote_ref;
 pub mod remove;
 mod run;
-pub use policy::ExecutionPolicy;
 pub mod stash;
+pub use policy::ExecutionPolicy;
 pub use recording::{oplog_outcome_from, recovery_handles};
 
 pub struct Backend {
@@ -839,8 +840,6 @@ impl Backend {
     ) -> Result<OperationOutcome, GitError> {
         self.run_recorded(op, plan).result
     }
-
-    // (see free fn `oplog_outcome_from` below for the result → OpOutcome mapping)
 
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
         staging::plan_commit(&self.repo, message)

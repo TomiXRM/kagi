@@ -230,7 +230,7 @@ pub(crate) fn execute_force_with_lease_push(
 
     let lease_arg = format!("--force-with-lease={}:{}", branch, lease_oid);
     let out = run_git(repo_path, &["push", &lease_arg, "--", &remote, &branch])
-        .map_err(|e| GitError::Other(format!("push failed: {}", e)))?;
+        .map_err(|e| crate::cli::context("push failed", e))?;
 
     if out.status != 0 {
         return Err(GitError::Other(format!(

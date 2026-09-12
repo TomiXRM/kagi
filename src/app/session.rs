@@ -155,6 +155,14 @@ pub(crate) struct ReconcileEntry {
     pub plan: Planned,
     pub stopped: bool,
     pub remote: Option<crate::remote::stash::RemoteStashEvidence>,
+    /// The auto-stash a pull created and did not restore, as the backend saw
+    /// it. `oid` is `None` exactly when the entry could not be identified
+    /// (#623), which is why the evidence — not just an OID — travels here.
+    pub pull: Option<kagi_git::backend::stash::StashEvidence>,
+    /// The child of an unproven termination. While it is alive the writer is
+    /// not proven stopped, so the scope stays reserved (ADR-0175); once it is
+    /// gone the reconcile read says so and the entry can be acknowledged.
+    pub child: Option<u32>,
 }
 pub struct Sessions {
     pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
@@ -423,6 +431,21 @@ impl Sessions {
         self.state = PlanState::Draft;
         self.plan_owner = None;
     }
+    /// Did settlement park a reconcile requirement for this operation?
+    ///
+    /// The UI asks so it can offer the user a way in: an unacknowledged
+    /// requirement refuses every later write in that scope, and a modal the
+    /// user dismisses is not a way back to it.
+    pub fn needs_reconcile(&self, id: OperationId) -> bool {
+        self.reconcile.contains_key(&id)
+    }
+    /// Any unacknowledged requirement, so a `NeedsReconcile` refusal can hand
+    /// the user the entry that is blocking them rather than only the word.
+    // ponytail: the first one, not "the one for this scope" — a refusal has no
+    // scope in hand, and one entry is enough to get the user into the flow.
+    pub fn blocking_reconcile(&self) -> Option<OperationId> {
+        self.reconcile.keys().copied().next()
+    }
     pub fn is_stale(&self, worktree: &WorktreeId) -> bool {
         self.stale.contains(worktree)
     }
@@ -516,91 +539,4 @@ pub enum Delivery {
         stamp: OwnerStamp,
         report: Box<ExecutionReport>,
     },
-}
-
-#[derive(Clone)]
-pub struct ReconcileRead {
-    id: OperationId,
-    pub observation: String,
-    stop_proven: bool,
-}
-pub struct ReconcileJob {
-    id: OperationId,
-    plan: Planned,
-    remote: Option<crate::remote::stash::RemoteStashEvidence>,
-}
-impl ReconcileJob {
-    pub fn run(self) -> Result<ReconcileRead, String> {
-        let (observation, stop_proven) = match &self.plan {
-            Planned::Remove { plan, .. } => (
-                kagi_git::Backend::read_remove_status(plan).map_err(|e| e.to_string())?,
-                true,
-            ),
-            Planned::Stash { plan, .. } => (
-                kagi_git::Backend::read_stash_status(plan).map_err(|e| e.to_string())?,
-                true,
-            ),
-            Planned::RemoteStash { plan, .. } => {
-                let evidence = self
-                    .remote
-                    .as_ref()
-                    .ok_or("remote completion evidence is missing")?;
-                (
-                    crate::remote::stash::reconcile_remote_stash(plan, evidence, self.id.0)?,
-                    true,
-                )
-            }
-            Planned::Conflict { plan, .. } => (
-                kagi_git::Backend::open(plan.repo())
-                    .and_then(|backend| backend.conflict_snapshot())
-                    .map(|snapshot| format!("conflict={snapshot:?}"))
-                    .map_err(|e| e.to_string())?,
-                true,
-            ),
-            Planned::Run(request) => (
-                kagi_git::Backend::open(&request.path)
-                    .and_then(|mut backend| backend.snapshot(1))
-                    .map(|snap| {
-                        format!(
-                            "head={} dirty={}",
-                            snap.head.display(),
-                            snap.status.is_dirty()
-                        )
-                    })
-                    .map_err(|e| e.to_string())?,
-                true,
-            ),
-        };
-        Ok(ReconcileRead {
-            id: self.id,
-            observation,
-            stop_proven,
-        })
-    }
-}
-pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileJob, String> {
-    let entry = sessions.reconcile.get(&id).ok_or("no reconcile request")?;
-    if !entry.stopped && entry.remote.is_none() {
-        return Err("execution termination is unconfirmed".into());
-    }
-    Ok(ReconcileJob {
-        id,
-        plan: entry.plan.clone(),
-        remote: entry.remote.clone(),
-    })
-}
-pub fn read_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileRead, String> {
-    prepare_reconcile(sessions, id)?.run()
-}
-pub fn acknowledge(sessions: &mut Sessions, read: ReconcileRead) -> Result<(), AdmissionError> {
-    let Some(entry) = sessions.reconcile.get(&read.id) else {
-        return Err(AdmissionError::NeedsReconcile);
-    };
-    if !entry.stopped && !read.stop_proven {
-        return Err(AdmissionError::NeedsReconcile);
-    }
-    let scope = entry.plan.scope();
-    sessions.reconcile.remove(&read.id);
-    sessions.release_lease(&scope, read.id);
-    Ok(())
 }

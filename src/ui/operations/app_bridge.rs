@@ -88,6 +88,8 @@ fn log_stash_event(
     }
 }
 
+mod notices;
+
 impl KagiApp {
     /// Keep the established `footer: ... partially applied` klog contract while
     /// making an Unknown result explicit in the human-facing footer and toast.
@@ -237,6 +239,8 @@ impl KagiApp {
             // Run-family writes dispatch through `finish_run`; `prepare` refuses
             // this one below and the refusal is presented like any other.
             app::Planned::Run(request) => (request.name, Msg::OpInProgress),
+            // Same: the pull workflow dispatches through `finish_pull`.
+            app::Planned::Pull(request) => (request.name, Msg::BusyPull),
             app::Planned::Conflict { plan, .. } => match plan.request().action() {
                 kagi_domain::conflict_family::ConflictAction::Save => {
                     ("conflict-save", Msg::OpInProgress)
@@ -332,24 +336,6 @@ impl KagiApp {
         .detach();
         cx.notify();
     }
-    /// An admission the application layer refused: footer, toast and the
-    /// shared app-notice modal, never stderr alone.
-    pub(crate) fn report_admission_refusal(
-        &mut self,
-        error: app::AdmissionError,
-        cx: &mut Context<Self>,
-    ) {
-        let message = if error == app::AdmissionError::Busy {
-            Msg::OpInProgress.t().to_string()
-        } else {
-            error.to_string()
-        };
-        self.status_footer = FooterStatus::Failed(message.clone().into());
-        self.push_toast(ToastKind::Error, message.clone(), cx);
-        self.app_notices.push_back(message.into());
-        self.present_app_notice();
-        cx.notify();
-    }
     pub(crate) fn deliver_app_result(&mut self, delivery: Delivery, cx: &mut Context<Self>) {
         match delivery {
             Delivery::RemovedTarget(target) => {
@@ -391,7 +377,7 @@ impl KagiApp {
                     app::FamilyEvidence::RemoteStash(_) => return,
                     // Presented by the `finish_run` that admitted it; a
                     // completion abandoned by its window has no one to show.
-                    app::FamilyEvidence::Run(_) => return,
+                    app::FamilyEvidence::Run(_) | app::FamilyEvidence::Pull(_) => return,
                     app::FamilyEvidence::Conflict(report) => {
                         self.deliver_conflict_result(attachment, report, cx);
                         return;
@@ -673,14 +659,22 @@ impl KagiApp {
         // is not stranded after its conflict has been continued.
         self.present_stash_followup(cx);
     }
-    pub(crate) fn confirm_app_notice(&mut self, cx: &mut Context<Self>) {
+    pub fn confirm_app_notice(&mut self, cx: &mut Context<Self>) {
         let Some(notice) = self.app_notice().cloned() else {
             return;
         };
         self.clear_app_notice();
         if let Some(read) = notice.acknowledge {
+            // A refusal must not be the end of the road: the requirement is
+            // still parked and still refusing every write in that scope, so the
+            // replacement notice keeps the way back to it (#702 Codex review).
+            let id = read.operation();
             if let Err(error) = app::acknowledge(&mut self.app_sessions, read) {
-                self.app_notices.push_back(error.to_string().into());
+                self.app_notices.push_back(modals::AppNotice {
+                    message: error.to_string(),
+                    inspect: Some(id),
+                    acknowledge: None,
+                });
             }
         } else if let Some(id) = notice.inspect {
             match app::prepare_reconcile(&self.app_sessions, id) {
@@ -690,6 +684,17 @@ impl KagiApp {
                         let result = task.await;
                         let _ = this.update(cx, |app, cx| {
                             match result {
+                                // Only a settled read may be acknowledged. One
+                                // that still cannot account for the writer or
+                                // what it left behind comes back as another
+                                // look, not a button that will be refused.
+                                Ok(read) if !read.settled() => {
+                                    app.app_notices.push_back(modals::AppNotice {
+                                        message: read.observation,
+                                        inspect: Some(id),
+                                        acknowledge: None,
+                                    });
+                                }
                                 Ok(read) => {
                                     app.app_notices.push_back(modals::AppNotice {
                                         message: format!(

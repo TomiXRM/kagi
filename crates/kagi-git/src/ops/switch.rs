@@ -341,7 +341,7 @@ pub(crate) fn execute_switch_to_latest(
     let remote_name = remote_of_ref(remote_branch);
     check_operand("remote", remote_name)?;
     let fetch_out = run_git(repo_path, &["fetch", "--", remote_name])
-        .map_err(|e| GitError::Other(format!("fetch failed: {}", e)))?;
+        .map_err(|e| crate::cli::context("fetch failed", e))?;
     if fetch_out.status != 0 {
         return Err(GitError::Other(format!(
             "fetch failed (exit {}): {}",

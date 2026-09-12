@@ -291,7 +291,7 @@ fn fetch_unknown_retains_but_known_failure_releases() {
         let mut sessions = Sessions::new();
         let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
         let error = if unknown {
-            GitError::TerminationUnknown("timeout".into())
+            GitError::TerminationUnknown(kagi_git::Termination::abandoned("timeout"))
         } else {
             GitError::Other("offline".into())
         };
@@ -310,7 +310,7 @@ fn conflict_c0_termination_unknown_records_unknown_and_retains_owner_lease() {
     let mut sessions = Sessions::new();
     let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
     let result = Err::<(), _>(GitError::TerminationUnknown(
-        "git rebase --continue timed out".into(),
+        kagi_git::Termination::abandoned("git rebase --continue timed out"),
     ));
 
     let outcome = kagi::app::settle_conflict_write(

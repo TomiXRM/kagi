@@ -133,14 +133,13 @@ impl KagiApp {
                         }
                     }
                     app.present_recorded(&decisive.recording, cx);
-                    // An `Unknown` receipt parks a reconcile entry that refuses
-                    // every later write in this scope. Without an inspectable
-                    // notice the user has no way to reach it once the modal is
-                    // dismissed (#702 Codex review).
-                    if matches!(
-                        decisive.recording.entry().outcome,
-                        OpOutcome::Unknown { .. }
-                    ) {
+                    // A parked reconcile requirement refuses every later write
+                    // in this scope. Without an inspectable notice the user has
+                    // no way to reach it once the modal is dismissed (#702
+                    // Codex review). `Unknown` is one way to get one; an
+                    // unproven termination is the other, and it holds the lease
+                    // too — so the question is the requirement, not the outcome.
+                    if app.app_sessions.needs_reconcile(id) {
                         app.app_notices.push_back(crate::ui::modals::AppNotice {
                             message: format!(
                                 "{}: pull: {}",

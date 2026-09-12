@@ -101,6 +101,15 @@ pub fn oplog_outcome_from(
         (Ok(_), _) => crate::oplog::OpOutcome::Success {
             after: predicted.clone(),
         },
+        // ADR-0196 §2.1: an unproven termination always falls to `Unknown`,
+        // never `Failed`. The stash family got this right through
+        // `stash_outcome`; the generic pipeline recorded it as an ordinary
+        // failure, which is a stopped writer — so nothing asked for the
+        // reconciliation the contract requires (#702 review).
+        (Err(GitError::TerminationUnknown(t)), _) => crate::oplog::OpOutcome::Unknown {
+            after: predicted.clone(),
+            evidence: t.reason.clone(),
+        },
         (Err(e), _) => crate::oplog::OpOutcome::Failed {
             error: e.to_string(),
         },

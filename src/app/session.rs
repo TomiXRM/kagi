@@ -431,6 +431,14 @@ impl Sessions {
         self.state = PlanState::Draft;
         self.plan_owner = None;
     }
+    /// Did settlement park a reconcile requirement for this operation?
+    ///
+    /// The UI asks so it can offer the user a way in: an unacknowledged
+    /// requirement refuses every later write in that scope, and a modal the
+    /// user dismisses is not a way back to it.
+    pub fn needs_reconcile(&self, id: OperationId) -> bool {
+        self.reconcile.contains_key(&id)
+    }
     pub fn is_stale(&self, worktree: &WorktreeId) -> bool {
         self.stale.contains(worktree)
     }

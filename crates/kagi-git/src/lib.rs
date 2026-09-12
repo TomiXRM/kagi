@@ -502,5 +502,54 @@ pub(crate) fn resolve_head(repo: &Repository) -> Result<Head, GitError> {
 }
 
 #[cfg(test)]
+mod termination_tests {
+    use super::{proc::ProcStop, Termination};
+
+    /// The rule the whole reconcile exit rests on: a child the runner killed
+    /// *and collected* cannot write again, so the scope may be released; one it
+    /// could not account for leaves its pid as the only handle to prove it
+    /// later (ADR-0175, #702 review P1). Getting this backwards either wedges
+    /// the scope for the life of the process or releases it on no evidence.
+    #[test]
+    fn a_collected_child_is_a_stop_proof_and_an_unaccounted_one_leaves_its_pid() {
+        let collected = Termination::from_stop(
+            "git fetch",
+            &ProcStop::Deadline {
+                secs: 60,
+                reaped: true,
+            },
+            4242,
+        );
+        assert!(collected.child_stopped, "a reaped child is proven stopped");
+        assert_eq!(collected.pid, None, "and needs no handle to prove it again");
+
+        let unaccounted = Termination::from_stop(
+            "git fetch",
+            &ProcStop::Wait {
+                error: "no child processes".into(),
+                reaped: false,
+            },
+            4242,
+        );
+        assert!(
+            !unaccounted.child_stopped,
+            "a child the kill did not account for is not proven stopped"
+        );
+        assert_eq!(
+            unaccounted.pid,
+            Some(4242),
+            "its pid is the only way a later read can prove it went away"
+        );
+    }
+
+    #[test]
+    fn a_plain_reason_is_unproven_by_default() {
+        let t: Termination = "something went wrong".into();
+        assert!(!t.child_stopped, "the conservative default");
+        assert_eq!(t.pid, None);
+    }
+}
+
+#[cfg(test)]
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;

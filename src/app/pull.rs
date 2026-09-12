@@ -137,6 +137,72 @@ impl PullReport {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kagi_git::oplog::OpLogEntry;
+    use kagi_git::{OperationOutcome, StateSummary};
+
+    fn step(recording: recording::Recording) -> RunReport {
+        RunReport {
+            result: Ok(OperationOutcome::Unit),
+            recording,
+            stash: None,
+        }
+    }
+    fn entry() -> OpLogEntry {
+        OpLogEntry::new(
+            "stash-push",
+            "/repo",
+            StateSummary {
+                head: "branch: main".into(),
+                dirty: "dirty".into(),
+            },
+            OpOutcome::Success {
+                after: StateSummary {
+                    head: "branch: main".into(),
+                    dirty: "clean".into(),
+                },
+            },
+        )
+    }
+
+    /// #501, across the whole workflow: a mutation that happened but was not
+    /// recorded must never be presented as a clean success — and a pull's
+    /// children are recorded separately, so a *child*'s append can be the one
+    /// that never landed while the decisive receipt's did.
+    #[test]
+    fn a_child_receipt_that_never_landed_is_not_a_clean_success() {
+        let lost = recording::Recording::Failed {
+            attempted: entry(),
+            error: "disk full".into(),
+        };
+        let kept = recording::Recording::Appended {
+            path: "/log".into(),
+            entry: entry(),
+        };
+        let report = PullReport::settled(
+            vec![step(lost), step(kept.clone())],
+            PullPresentation::Success {
+                summary: "fast-forward".into(),
+            },
+            None,
+        );
+        assert!(
+            report.recording_failed(),
+            "the decisive receipt landed, but the stash-push's did not"
+        );
+        let all_kept = PullReport::settled(
+            vec![step(kept.clone()), step(kept)],
+            PullPresentation::Success {
+                summary: "fast-forward".into(),
+            },
+            None,
+        );
+        assert!(!all_kept.recording_failed());
+    }
+}
+
 /// Admission for the pull workflow. Same rung as [`approve_run`]: the plan
 /// lives in the confirmation modal, so there is no plan slot to spend.
 pub fn approve_pull(s: &mut Sessions, request: PullRequest) -> Result<Approved, AdmissionError> {

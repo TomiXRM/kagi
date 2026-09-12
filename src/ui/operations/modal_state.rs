@@ -44,7 +44,7 @@ impl KagiApp {
             self.active_modal = None;
         }
     }
-    pub(crate) fn app_notice(&self) -> Option<&crate::ui::modals::AppNotice> {
+    pub fn app_notice(&self) -> Option<&crate::ui::modals::AppNotice> {
         match &self.active_modal {
             Some(ActiveModal::AppNotice(message)) => Some(message),
             _ => None,

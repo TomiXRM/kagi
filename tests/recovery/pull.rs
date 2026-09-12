@@ -114,6 +114,106 @@ pub fn scenario_pull_auto_stash_success(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS pull_auto_stash_success: dirty changes restored after Pull");
 }
 
+/// A `git` child that leaves a descendant holding the pipes: the wait resolves,
+/// but the capture is not proven complete — `run_git`'s `TerminationUnknown`.
+/// `remote.<name>.uploadpack` is what `git fetch` runs for a local remote, and
+/// the CLI hardening does not neutralise it, so this is the real path.
+fn leaky_upload_pack(root: &Path) -> String {
+    let path = root.join("upload-pack.sh");
+    std::fs::write(&path, "#!/bin/sh\nsleep 5 &\nexec git upload-pack \"$@\"\n")
+        .expect("write helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path.to_str().expect("utf-8 path").to_string()
+}
+
+/// #702 review P1 + Codex — an unproven termination, end to end.
+///
+/// The whole chain in one scenario: the fetch's `TerminationUnknown` survives
+/// the mapper, so the workflow stops without popping the auto-stash; settlement
+/// keeps the lease and parks a reconcile requirement; and the user is given a
+/// way to reach it — an inspectable notice waiting behind the error modal,
+/// rather than a scope that silently refuses every later write.
+pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    let bare = remote_root.path().join("origin.git");
+    let other = remote_root.path().join("other");
+    let bare_path = bare.to_str().unwrap();
+    let other_path = other.to_str().unwrap();
+
+    git(repo, &["init", "--bare", "-q", bare_path]);
+    git(repo, &["remote", "add", "origin", bare_path]);
+    git(repo, &["push", "-q", "-u", "origin", "main"]);
+    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
+    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
+    git(&other, &["add", "upstream.txt"]);
+    git(&other, &["commit", "-q", "-m", "upstream"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    std::fs::write(repo.join("README.md"), "local staged change\n").unwrap();
+    git(repo, &["add", "README.md"]);
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_pull_modal(cx));
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            app.read(cx)
+                .pull_modal()
+                .is_some_and(|modal| modal.auto_stash),
+            "the fixture must produce a confirmable auto-stash pull"
+        );
+    });
+    // The leak is installed only after the confirmation exists: a dirty Pull
+    // fetches before it opens the modal (#625), and that read must succeed —
+    // execution's own fetch is the one whose termination must be unproven.
+    let helper = leaky_upload_pack(remote_root.path());
+    git(repo, &["config", "remote.origin.uploadpack", &helper]);
+
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        records(repo, "stash-pop").len(),
+        0,
+        "a fetch that is not proven stopped must not be followed by a pop"
+    );
+    assert!(
+        !output(repo, &["stash", "list"]).is_empty(),
+        "the user's work stays in the stash"
+    );
+
+    // The error modal is what the user sees first; the reconcile waits behind
+    // it. Dismissing the modal must hand them the way in, not silence.
+    app.update(cx, |app, _| app.cancel_pull_modal());
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let notice = app
+            .read(cx)
+            .app_notice()
+            .expect("an unacknowledged reconcile must offer itself");
+        assert!(
+            notice.inspect.is_some(),
+            "and it must be the inspectable kind: {}",
+            notice.message
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_unknown_offers_its_reconcile: no pop, stash kept, reconcile reachable"
+    );
+}
+
 /// #702 review P1 — a restored failure must not end on a success.
 ///
 /// `steps` is `stash-push Success → pull Failed → stash-pop Success`, and
@@ -261,24 +361,46 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
     });
     std::fs::remove_dir_all(&bare).unwrap();
 
-    // Confirm and leave, both before the executor runs the job: the completion
-    // certainly arrives while tab B is on screen.
-    press_enter(cx, &app, window);
-    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    // Confirm and leave in one synchronous turn, so the job is queued and has
+    // not run yet: the executor is driven only after the switch, which makes
+    // "the completion arrives while another tab is on screen" the certain order
+    // rather than a hoped-for one (as in `pull_confirm_parks_for_its_tab`).
+    app.update(cx, |app, cx| {
+        app.start_pull(cx);
+        app.switch_repo(1, cx);
+    });
     wait_idle(cx, &app);
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
 
+    let durable = records(repo, "pull");
     assert_eq!(
-        records(repo, "pull").len(),
+        durable.len(),
         1,
         "the write still ran and still recorded itself"
     );
     cx.read(|cx| {
+        let app = app.read(cx);
         assert!(
-            app.read(cx).pull_modal().is_none(),
+            app.pull_modal().is_none(),
             "tab A's failure must not open over tab B"
         );
+        // The receipt is durable either way; what must not happen is its
+        // *presentation* landing on the tab the user is now looking at.
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        assert!(
+            !panel
+                .entries()
+                .iter()
+                .any(|entry| entry.id == durable[0].id),
+            "tab A's receipt must not be presented on tab B"
+        );
+        match &app.status_footer {
+            kagi::ui::FooterStatus::Failed(text) => {
+                assert!(!text.contains("pull"), "nor its footer: {text}")
+            }
+            _ => {}
+        }
     });
 
     unmount(cx, app, window);

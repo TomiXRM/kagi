@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{modals::ActiveModal, CheckoutSelected, FooterStatus, KagiApp};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
-use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{read_oplog_tail_for_repo, FailureCode, OpLogEntry, OpOutcome};
 use kagi_git::{CommitId, OperationKind};
 
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
@@ -779,6 +779,84 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS push_failure_keeps_modal: failure reaches the modal and the oplog");
+}
+
+/// ADR-0196 Wave 2 (#643 A1): the checkout family presents the backend's own
+/// receipt. A preflight refusal is recorded by `run_recorded` with
+/// `failure_code: preflight`; the panel entry must be *that* entry, not one the
+/// UI re-synthesized from the stringified error (which carried no code at all).
+/// Moving HEAD between plan and execute is the offline way to make preflight
+/// refuse.
+pub fn scenario_checkout_presents_backend_receipt(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "feature/one", "HEAD~1"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.open_plan_modal("feature/one"));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .plan_modal()
+            .is_some_and(|m| m.plan.blockers.is_empty())),
+        "the fixture must produce a clean checkout plan so the refusal is preflight's"
+    );
+    git(
+        repo,
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "moved under the plan",
+        ],
+    );
+    let head = output(repo, &["rev-parse", "HEAD"]);
+
+    app.update(cx, |app, cx| app.start_checkout(cx));
+    wait_idle(cx, &app);
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        head,
+        "preflight must refuse the stale plan"
+    );
+    let durable = records(repo, "checkout");
+    assert_eq!(durable.len(), 1, "one attempt, one durable entry");
+    assert!(matches!(durable[0].outcome, OpOutcome::Failed { .. }));
+    assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app
+            .plan_modal()
+            .expect("a refused checkout must re-open the plan modal");
+        assert!(
+            modal.error.is_some(),
+            "the refusal text must reach the modal"
+        );
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|e| e.op == "checkout")
+            .collect();
+        assert_eq!(
+            shown.len(),
+            1,
+            "the panel shows the receipt once, not a UI copy"
+        );
+        assert_eq!(
+            shown[0].id, durable[0].id,
+            "the panel entry is the durable receipt"
+        );
+        assert_eq!(
+            shown[0].failure_code,
+            Some(FailureCode::Preflight),
+            "the presented entry keeps the backend's failure code"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS checkout_presents_backend_receipt: panel shows the recorded receipt");
 }
 
 pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {

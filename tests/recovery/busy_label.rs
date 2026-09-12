@@ -178,6 +178,8 @@ fn unmergeable_pr() -> kagi_domain::github::PullRequest {
         body: String::new(),
         checks: Vec::new(),
         mergeable: Mergeable::Clean,
+        cross_repository: false,
+        base_repo: "o/r".into(),
     }
 }
 

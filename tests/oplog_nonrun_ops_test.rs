@@ -999,11 +999,35 @@ impl Drop for FakeGh {
     }
 }
 
-const PR_JSON: &str = r#"[{"number":501,"title":"reconcile","headRefName":"feat/x",
+/// A same-repository PR. `{fork}` is substituted so the fork-shaped variant
+/// differs from it in exactly the one field that decides the promise.
+const PR_JSON_T: &str = r#"[{"number":501,"title":"reconcile","headRefName":"feat/x",
   "headRefOid":"1111111111111111111111111111111111111111","baseRefName":"main",
   "isDraft":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE",
   "statusCheckRollup":[],"url":"https://example.invalid/pull/501",
-  "author":{"login":"a"},"reviewRequests":[],"body":""}]"#;
+  "author":{"login":"a"},"reviewRequests":[],"body":"",
+  "isCrossRepository":{fork},"baseRepository":{"nameWithOwner":"acme/widgets"}}]"#;
+
+fn pr_json(fork: bool) -> String {
+    PR_JSON_T.replace("{fork}", if fork { "true" } else { "false" })
+}
+
+fn one_pr(fork: bool) -> kagi_domain::github::PullRequest {
+    kagi_git::github::parse_pr_list(&pr_json(fork))
+        .unwrap()
+        .remove(0)
+}
+
+/// A bare remote whose URL identity is `acme/widgets` — the `nameWithOwner`
+/// the PR fixture names as its base repository. Returns the temp root (keep
+/// it alive) and the repository path.
+fn base_repo_remote() -> (TempDir, PathBuf) {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("acme/widgets");
+    std::fs::create_dir_all(&path).unwrap();
+    git(&path, &["init", "--bare", "."]);
+    (root, path)
+}
 
 /// #701: a pr-merge whose server state could not be re-read settles `Unknown`
 /// with the child accounted for — the lease goes, the requirement stays. Its
@@ -1020,7 +1044,7 @@ fn pr_merge_unknown_resolves_only_on_a_merged_re_read() {
     let dir = &fixture.path;
     let bin = dir.join("fake-bin");
 
-    let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
+    let pr = one_pr(false);
     let plan = kagi_git::github::plan_pr_merge(
         &pr,
         kagi_git::github::MergeMethod::Squash,
@@ -1156,22 +1180,16 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
     let dir = &fixture.path;
     let bin = dir.join("fake-bin");
 
-    // The head branch the PR names, on a real `origin` so `ls-remote` answers.
-    let remote_repo = TempDir::new().unwrap();
-    git(remote_repo.path(), &["init", "--bare", "."]);
-    git(
-        dir,
-        &[
-            "remote",
-            "add",
-            "origin",
-            remote_repo.path().to_str().unwrap(),
-        ],
-    );
+    // The head branch the PR names, on a real remote so `ls-remote` answers —
+    // and deliberately *not* named `origin`. `origin` is a convention; the
+    // promise has to name the remote that is the PR's base repository.
+    let (_remote_root, base) = base_repo_remote();
+    let remote_path = base.to_str().unwrap().to_string();
+    git(dir, &["remote", "add", "upstream", &remote_path]);
     git(dir, &["branch", "feat/x"]);
-    git(dir, &["push", "-q", "origin", "feat/x"]);
+    git(dir, &["push", "-q", "upstream", "feat/x"]);
 
-    let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
+    let pr = one_pr(false);
     let plan = kagi_git::github::plan_pr_merge(
         &pr,
         kagi_git::github::MergeMethod::Squash,
@@ -1189,13 +1207,30 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
                 expect: kagi_git::backend::remote_ref::PrExpect::Merged,
             },
             kagi_git::backend::remote_ref::RemoteExpectation::Ref {
-                remote: "origin".to_string(),
+                remote: "upstream".to_string(),
                 refname: "refs/heads/feat/x".to_string(),
                 expect: kagi_git::backend::remote_ref::RemoteExpect::Absent,
             },
         ],
-        "--delete-branch is half the promise and must be frozen with the merge"
+        "--delete-branch is half the promise, on the remote that *is* the base repository"
     );
+    // No remote points at the base repository: nothing about the deletion can
+    // be observed, so nothing at all is frozen — and an empty expectation
+    // never confirms, rather than confirming on the merge alone.
+    git(dir, &["remote", "rename", "upstream", "elsewhere"]);
+    git(
+        dir,
+        &["remote", "set-url", "elsewhere", "/nowhere/other/repo"],
+    );
+    assert!(
+        Backend::open(dir)
+            .unwrap()
+            .remote_expectation("pr-merge", &plan)
+            .is_empty(),
+        "an unobservable deletion must freeze nothing, not a guess at `origin`"
+    );
+    git(dir, &["remote", "set-url", "elsewhere", &remote_path]);
+    git(dir, &["remote", "rename", "elsewhere", "upstream"]);
     drop(backend);
 
     let mut sessions = kagi::app::Sessions::new();
@@ -1261,26 +1296,15 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
 
         // Nor does an unreadable remote settle it (ADR-0177): "could not ask"
         // is not "gone".
-        git(dir, &["remote", "set-url", "origin", "/nonexistent/origin"]);
+        git(dir, &["remote", "set-url", "upstream", "/nonexistent/base"]);
         assert!(
             kagi::app::read_reconcile(&sessions, id).is_err(),
             "a remote that cannot be read confirms nothing"
         );
-        git(
-            dir,
-            &[
-                "remote",
-                "set-url",
-                "origin",
-                remote_repo.path().to_str().unwrap(),
-            ],
-        );
+        git(dir, &["remote", "set-url", "upstream", &remote_path]);
 
         // Both halves kept: only now can the requirement be closed.
-        git(
-            remote_repo.path(),
-            &["update-ref", "-d", "refs/heads/feat/x"],
-        );
+        git(&base, &["update-ref", "-d", "refs/heads/feat/x"]);
         let read = kagi::app::read_reconcile(&sessions, id).unwrap();
         assert!(
             read.resolved(),
@@ -1290,6 +1314,92 @@ fn pr_merge_with_delete_branch_resolves_only_when_the_branch_is_gone() {
         kagi::app::acknowledge(&mut sessions, read).expect("a whole kept promise closes it");
     }
     assert!(sessions.reconcile_ids().is_empty());
+}
+
+/// #701 final review 2: a fork PR's head branch is not in the base repository,
+/// so `refs/heads/<head>` there is absent from the start — and
+/// `RemoteExpect::Absent` would happily call that "deleted". Upstream `gh`
+/// makes it worse: it skips the remote head deletion for a cross-repository PR
+/// but still deletes the *local* branch, which nothing here can account for
+/// yet (#705). So `--delete-branch` is refused at plan time and no deletion
+/// promise is frozen: fail closed rather than confirm a deletion nobody did.
+#[test]
+fn pr_merge_from_a_fork_refuses_to_promise_a_branch_deletion() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let dir = &fixture.path;
+    // The base repository, with no `feat/x` — exactly the shape that makes an
+    // `Absent` expectation confirm without observing anything.
+    let (_remote_root, base) = base_repo_remote();
+    git(dir, &["remote", "add", "upstream", base.to_str().unwrap()]);
+    assert!(
+        git(&base, &["for-each-ref", "refs/heads/feat/x"])
+            .trim()
+            .is_empty(),
+        "the fork's head branch is not in the base repository"
+    );
+
+    let plan = kagi_git::github::plan_pr_merge(
+        &one_pr(true),
+        kagi_git::github::MergeMethod::Squash,
+        true,
+        "branch 'main'".into(),
+    );
+    assert_eq!(
+        plan.disposition,
+        kagi_domain::plan_note::PlanDisposition::Blocked,
+        "a fork merge that promises a branch deletion must not be confirmable"
+    );
+    assert!(
+        plan.blockers.iter().any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Github(
+                kagi_domain::plan_note::GithubNote::ForkDeletesBranch { branch }
+            ) if branch == "feat/x"
+        )),
+        "and it must say why: {:?}",
+        plan.blockers
+    );
+    assert!(
+        matches!(
+            plan.recovery.as_ref().map(|r| &r.kind),
+            Some(kagi_domain::plan_note::RecoveryKind::Github(
+                kagi_domain::plan_note::GithubRecovery::MergePr {
+                    delete_branch: None,
+                    ..
+                }
+            ))
+        ),
+        "a refused option freezes no promise: {:?}",
+        plan.recovery
+    );
+    assert_eq!(
+        Backend::open(dir)
+            .unwrap()
+            .remote_expectation("pr-merge", &plan),
+        vec![
+            kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
+                number: 501,
+                expect: kagi_git::backend::remote_ref::PrExpect::Merged,
+            }
+        ],
+        "no ref that was never there may stand in for a deletion"
+    );
+
+    // Same PR without the option: an ordinary merge is still allowed.
+    let plain = kagi_git::github::plan_pr_merge(
+        &one_pr(true),
+        kagi_git::github::MergeMethod::Squash,
+        false,
+        "branch 'main'".into(),
+    );
+    assert_eq!(
+        plain.disposition,
+        kagi_domain::plan_note::PlanDisposition::Ready
+    );
 }
 
 #[path = "support/isolated.rs"]

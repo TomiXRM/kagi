@@ -25,6 +25,11 @@ pub enum GithubNote {
     /// warning — `--delete-branch` also deletes the local branch when it is
     /// checked out nowhere.
     DeletesBranch { branch: String },
+    /// blocker (#701) — the PR comes from a fork, where `gh pr merge` skips
+    /// the remote head deletion but still deletes the local branch. Neither
+    /// half can be frozen as a checkable promise yet (#705), so the option is
+    /// refused rather than half-kept.
+    ForkDeletesBranch { branch: String },
     /// blocker (#351) — the working-tree file the suggestion anchors to is
     /// gone, or the anchored range is out of bounds.
     SuggestionRangeGone { path: String },
@@ -63,6 +68,10 @@ impl GithubNote {
             }
             GithubNote::DeletesBranch { branch } => format!(
                 "The head branch '{}' will be deleted on the remote (and locally if it is not checked out).",
+                branch
+            ),
+            GithubNote::ForkDeletesBranch { branch } => format!(
+                "This PR comes from a fork: gh does not delete the remote head '{}', and the local branch deletion it would still do is not yet accounted for. Uncheck 'delete branch' and remove it yourself after the merge.",
                 branch
             ),
             GithubNote::SuggestionRangeGone { path } => format!(
@@ -111,10 +120,13 @@ pub enum GithubRecovery {
     /// `delete_branch` is the head branch this merge also promises to delete
     /// (`--delete-branch`), frozen here at plan time and `None` when the merge
     /// keeps it. A reconcile confirms the *whole* promise: merging without
-    /// deleting is not the operation the user approved (#701). Not rendered —
+    /// deleting is not the operation the user approved (#701). `base_repo` is
+    /// the `owner/name` that deletion happens in — a remote *name* would be a
+    /// guess, and `origin` is not always the PR's base. Neither is rendered —
     /// the recovery text is about the merge.
     MergePr {
         number: u64,
+        base_repo: String,
         delete_branch: Option<String>,
     },
     /// A suggestion edits only the working tree; the pre-apply file content is
@@ -185,6 +197,13 @@ mod tests {
             .message_en(),
             "The head branch 'feat/x' will be deleted on the remote (and locally if it is not checked out)."
         );
+        assert_eq!(
+            GithubNote::ForkDeletesBranch {
+                branch: "feat/x".into()
+            }
+            .message_en(),
+            "This PR comes from a fork: gh does not delete the remote head 'feat/x', and the local branch deletion it would still do is not yet accounted for. Uncheck 'delete branch' and remove it yourself after the merge."
+        );
     }
 
     #[test]
@@ -203,6 +222,7 @@ mod tests {
             assert_eq!(
                 GithubRecovery::MergePr {
                     number: 42,
+                    base_repo: "o/r".into(),
                     delete_branch
                 }
                 .message_en(),

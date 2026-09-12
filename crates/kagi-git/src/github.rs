@@ -33,7 +33,8 @@ pub fn gh_available() -> bool {
 
 pub(crate) const FIELDS: &str =
     "number,title,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,\
-statusCheckRollup,url,author,reviewRequests,body,mergeable";
+statusCheckRollup,url,author,reviewRequests,body,mergeable,isCrossRepository,\
+baseRepository,headRepository";
 
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
 /// callers cache it (the sidebar's "Mine" grouping keys on it).
@@ -145,7 +146,23 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
         body: s("body"),
         checks,
         mergeable,
+        // Absent (a reduced field set, or an older `gh`) reads as
+        // cross-repository: the plan then refuses `--delete-branch` rather
+        // than promising a deletion it cannot account for (#701).
+        cross_repository: v
+            .get("isCrossRepository")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(true),
+        base_repo: name_with_owner(v.get("baseRepository")),
     })
+}
+
+/// `{"nameWithOwner": "owner/name"}` → `owner/name`, empty when absent.
+fn name_with_owner(v: Option<&serde_json::Value>) -> String {
+    v.and_then(|r| r.get("nameWithOwner"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Reviews + issue comments for one PR — the "review chat". One `gh pr view`
@@ -342,7 +359,16 @@ pub fn plan_pr_merge(
         }));
     }
     warnings.push(PlanNote::Github(GithubNote::RemoteSideEffect));
-    if delete_branch {
+    // `gh pr merge` skips the *remote* head deletion for a cross-repository
+    // PR but still deletes the local branch, and nothing here can account for
+    // that local effect yet (#705). Refuse the whole option rather than
+    // freeze a promise the transport will not keep (#701 final review 2).
+    let fork_delete = delete_branch && pr.cross_repository;
+    if fork_delete {
+        blockers.push(PlanNote::Github(GithubNote::ForkDeletesBranch {
+            branch: pr.head.clone(),
+        }));
+    } else if delete_branch {
         warnings.push(PlanNote::Github(GithubNote::DeletesBranch {
             branch: pr.head.clone(),
         }));
@@ -372,7 +398,10 @@ pub fn plan_pr_merge(
                 number: pr.number,
                 // Freeze the *whole* promise: a merge that also deletes the
                 // head branch is not confirmed by the merge alone (#701).
-                delete_branch: delete_branch.then(|| pr.head.clone()),
+                // The repository identity, not a remote name — which local
+                // remote points at it is resolved when the promise is checked.
+                base_repo: pr.base_repo.clone(),
+                delete_branch: (delete_branch && !fork_delete).then(|| pr.head.clone()),
             }),
             commands: Vec::new(),
         }),

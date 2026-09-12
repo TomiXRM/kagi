@@ -29,6 +29,10 @@ pub fn note_ja(note: &GithubNote) -> String {
             "head branch をremote で削除します。どこにも checkout されていなければlocal も削除します。\nbranch `{}`",
             branch
         ),
+        GithubNote::ForkDeletesBranch { branch } => format!(
+            "fork からの PR です。gh は remote の head branch を削除せず、local branch だけ削除します。この local 削除はまだ検証できないため拒否します。「branch を削除」を外して merge し、branch は手で削除してください。\nbranch `{}`",
+            branch
+        ),
         GithubNote::SuggestionRangeGone { path } => format!(
             "レビュー対象だった行が作業ツリーにありません。現在のファイルでレビューを開き直してください。\nfile `{}`",
             path

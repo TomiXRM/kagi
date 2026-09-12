@@ -45,6 +45,17 @@ pub enum RemoteExpect {
     Absent,
 }
 
+/// `owner/name` from a remote URL — the last two path segments, `.git`
+/// stripped. Covers both URL shapes Git accepts
+/// (`https://host/o/r.git`, `git@host:o/r.git`).
+fn repo_identity(url: &str) -> String {
+    let url = url.trim_end_matches('/').trim_end_matches(".git");
+    let mut parts = url.rsplit(['/', ':']);
+    let name = parts.next().unwrap_or_default();
+    let owner = parts.next().unwrap_or_default();
+    format!("{owner}/{name}")
+}
+
 impl RemoteExpect {
     /// Does what the remote actually has match what was promised?
     pub fn matches(&self, live: Option<&str>) -> bool {
@@ -105,6 +116,7 @@ impl Backend {
         if op == "pr-merge" {
             if let Some(RecoveryKind::Github(GithubRecovery::MergePr {
                 number,
+                base_repo,
                 delete_branch,
             })) = plan.recovery.as_ref().map(|recovery| &recovery.kind)
             {
@@ -113,8 +125,18 @@ impl Backend {
                     expect: PrExpect::Merged,
                 }];
                 if let Some(branch) = delete_branch {
+                    // Which remote is the PR's base repository? `origin` is a
+                    // convention, not a fact, and asking the wrong remote for
+                    // `refs/heads/<head>` gets "absent" for a ref that was
+                    // never there — a deletion proved by a ref that never
+                    // existed (#701 final review 2). With no remote pointing
+                    // at the base repository, nothing here is observable, so
+                    // freeze *nothing*: an empty expectation never confirms.
+                    let Some(remote) = self.remote_for_repo(base_repo) else {
+                        return Vec::new();
+                    };
                     expectations.push(RemoteExpectation::Ref {
-                        remote: "origin".to_string(),
+                        remote,
                         refname: format!("refs/heads/{branch}"),
                         expect: RemoteExpect::Absent,
                     });
@@ -123,6 +145,32 @@ impl Backend {
             }
         }
         self.one_remote_expectation(op, plan).into_iter().collect()
+    }
+
+    /// The name of the local remote pointing at `owner/name`, or `None`.
+    ///
+    /// GitHub identifies a repository; Git identifies a remote. Only the URL
+    /// joins them, so this compares the last two path segments of each remote
+    /// URL (`.git` stripped) with the identity the plan froze. Empty
+    /// `owner/name` matches nothing — an unknown base repository must not
+    /// silently pick the first remote.
+    fn remote_for_repo(&self, owner_name: &str) -> Option<String> {
+        if owner_name.is_empty() {
+            return None;
+        }
+        let remotes = self.repo.remotes().ok()?;
+        for name in remotes.iter().flatten().flatten() {
+            let matched = self
+                .repo
+                .find_remote(name)
+                .ok()
+                .and_then(|remote| remote.url().ok().map(repo_identity))
+                .is_some_and(|id| id.eq_ignore_ascii_case(owner_name));
+            if matched {
+                return Some(name.to_string());
+            }
+        }
+        None
     }
 
     fn one_remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {

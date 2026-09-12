@@ -56,29 +56,29 @@ impl Backend {
     /// reconcile read unresolved rather than guessing.
     pub fn remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {
         use kagi_domain::plan_note::{
-            force_lease::ForceLeaseRecovery, push::PushRecovery,
-            remote_branch::RemoteBranchRecovery, tag::TagRecovery, RecoveryKind,
+            force_lease::ForceLeaseRecovery, push::PushTitle, remote_branch::RemoteBranchRecovery,
+            tag::TagRecovery, PlanTitle, RecoveryKind,
         };
         let kind = plan.recovery.as_ref().map(|recovery| &recovery.kind);
-        match (op, kind) {
-            // The branch HEAD is on, at the tip it has now: that is what the
-            // push is about to put on the remote.
-            ("push", Some(RecoveryKind::Push(PushRecovery::Push))) => {
-                let Head::Attached { branch, target } = resolve_head(&self.repo).ok()? else {
-                    return None;
-                };
-                // The remote the branch tracks — the one `git push` will use.
-                let upstream = self
-                    .repo
-                    .branch_upstream_remote(&format!("refs/heads/{branch}"))
-                    .ok()?;
-                let remote = std::str::from_utf8(&upstream).ok()?.to_string();
-                Some(RemoteExpectation {
-                    remote,
-                    refname: format!("refs/heads/{branch}"),
-                    expect: RemoteExpect::Oid(target),
-                })
+        // The branch and remote come from the plan's own typed title, and the
+        // tip from the ref as it stands now: together, what this push is about
+        // to put on the remote. `plan_push` and `plan_push_branch` are the same
+        // promise under two operation names (#702 review 4).
+        if let PlanTitle::Push(
+            PushTitle::Push { branch, remote, .. } | PushTitle::PushBranch { branch, remote, .. },
+        ) = &plan.title
+        {
+            if matches!(op, "push" | "branch-push" | "branch-push-set-upstream") {
+                let refname = format!("refs/heads/{branch}");
+                let oid = self.repo.revparse_single(&refname).ok()?.id().to_string();
+                return Some(RemoteExpectation {
+                    remote: remote.clone(),
+                    refname,
+                    expect: RemoteExpect::Oid(oid),
+                });
             }
+        }
+        match (op, kind) {
             (
                 "force-with-lease-push",
                 Some(RecoveryKind::ForceLease(ForceLeaseRecovery::ForceLeasePush {

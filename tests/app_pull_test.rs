@@ -716,6 +716,172 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
     );
 }
 
+/// #702 review 4 — a branch push is a remote write like any other.
+///
+/// The branch-plan family runs `Operation::PushBranch` under its own operation
+/// names, which a denylist of "the four remote writers" did not know: an
+/// unconfirmed branch push fell through to the local-snapshot read and could be
+/// acknowledged without anything ever asking the remote. Classification is an
+/// allowlist of local-only operations now, so this resolves only against the
+/// ref it promised.
+#[test]
+fn a_branch_push_is_resolved_only_by_the_remote() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let session = s.attach(f.repo.clone());
+    let owner = s.attachment(session).expect("attached");
+    let backend = Backend::open(&f.repo).unwrap();
+    let plan = backend
+        .plan_push_branch("main", false)
+        .expect("plan push branch");
+    let request = RunRequest {
+        owner,
+        name: "branch-push",
+        path: f.repo.clone(),
+        repo: backend.write_repo_id().unwrap(),
+        remote: backend.remote_expectation("branch-push", &plan),
+        plan: Arc::new(plan),
+    };
+    let expectation = request
+        .remote
+        .clone()
+        .expect("a branch push names the ref it is about to move");
+    assert_eq!(expectation.refname, "refs/heads/main");
+
+    let unknown = |f: &Fixture| {
+        f.receipt(
+            "branch-push",
+            OpOutcome::Unknown {
+                after: StateSummary {
+                    head: "branch: main".to_string(),
+                    dirty: "unknown".to_string(),
+                },
+                evidence: "git push timed out".to_string(),
+            },
+            Err(GitError::TerminationUnknown(Termination::stopped(
+                "git push timed out",
+            ))),
+        )
+    };
+    let second = request.clone();
+    let report = unknown(&f);
+    let approved = approve_run(&mut s, request).unwrap();
+    let job = prepare_run(
+        &mut s,
+        approved,
+        LegacyBusy(false),
+        Box::new(move || Ok(report)),
+    )
+    .unwrap();
+    let id = job.id();
+    apply(&mut s, job.run());
+
+    // The remote already carries what the plan promised, so the push landed.
+    let read = read_reconcile(&s, id).expect("readable");
+    assert!(
+        read.observation.contains("refs/heads/main") && read.observation.contains("confirmed=true"),
+        "a branch push must be read against the remote, not a local snapshot: {}",
+        read.observation
+    );
+    acknowledge(&mut s, read).expect("a confirmed remote state releases the scope");
+
+    // Move the branch on: the frozen expectation no longer matches, so the
+    // scope must stay closed however tidy the local repository looks.
+    git(
+        &f.repo,
+        &["commit", "-q", "--allow-empty", "-m", "moved on"],
+    );
+    let backend = Backend::open(&f.repo).unwrap();
+    let plan = backend
+        .plan_push_branch("main", false)
+        .expect("plan push branch");
+    let moved = RunRequest {
+        remote: backend.remote_expectation("branch-push", &plan),
+        plan: Arc::new(plan),
+        ..second
+    };
+    let report = unknown(&f);
+    let approved = approve_run(&mut s, moved).unwrap();
+    let job = prepare_run(
+        &mut s,
+        approved,
+        LegacyBusy(false),
+        Box::new(move || Ok(report)),
+    )
+    .unwrap();
+    let id = job.id();
+    apply(&mut s, job.run());
+    let read = read_reconcile(&s, id).expect("readable");
+    assert!(
+        read.observation.contains("confirmed=false"),
+        "{}",
+        read.observation
+    );
+    assert_eq!(
+        acknowledge(&mut s, read).err(),
+        Some(AdmissionError::NeedsReconcile)
+    );
+}
+
+/// #702 review 4 — an operation nobody classified is not acknowledgeable.
+///
+/// The default side of the allowlist. A family added tomorrow, or one whose
+/// remote effect could not be named at approval, gets a read that says so and
+/// an `acknowledge` that refuses — never a local snapshot standing in for a
+/// remote nobody asked.
+#[test]
+fn an_unclassified_operation_is_never_acknowledgeable_from_a_local_read() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let session = s.attach(f.repo.clone());
+    let owner = s.attachment(session).expect("attached");
+    let backend = Backend::open(&f.repo).unwrap();
+    let request = RunRequest {
+        owner,
+        name: "some-future-family",
+        path: f.repo.clone(),
+        repo: backend.write_repo_id().unwrap(),
+        plan: Arc::new(backend.plan_commit("x").expect("plan commit")),
+        remote: None,
+    };
+    let report = f.receipt(
+        "some-future-family",
+        OpOutcome::Unknown {
+            after: StateSummary {
+                head: "branch: main".to_string(),
+                dirty: "unknown".to_string(),
+            },
+            evidence: "timed out".to_string(),
+        },
+        Err(GitError::TerminationUnknown(Termination::stopped(
+            "timed out",
+        ))),
+    );
+    let approved = approve_run(&mut s, request).unwrap();
+    let job = prepare_run(
+        &mut s,
+        approved,
+        LegacyBusy(false),
+        Box::new(move || Ok(report)),
+    )
+    .unwrap();
+    let id = job.id();
+    apply(&mut s, job.run());
+
+    let read = read_reconcile(&s, id).expect("readable");
+    assert!(
+        read.observation.contains("was not named at approval"),
+        "the read must say why it cannot confirm anything: {}",
+        read.observation
+    );
+    assert!(!read.resolved());
+    assert_eq!(
+        acknowledge(&mut s, read).err(),
+        Some(AdmissionError::NeedsReconcile),
+        "an unclassified operation must not be acknowledged from a local read"
+    );
+}
+
 /// Each remote-writing operation is confirmed only by the value frozen at
 /// approval — a tag by its own OID, a deletion by the ref being gone, a
 /// force-push by the sha it promised. A read that compared anything else could

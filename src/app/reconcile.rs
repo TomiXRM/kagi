@@ -93,14 +93,7 @@ impl ReconcileJob {
                     .map_err(|e| e.to_string())?,
                 true,
             ),
-            // A local snapshot cannot say whether a remote ref moved, so a
-            // remote-writing operation is never resolved by one (ADR-0177).
-            Planned::Run(request) if writes_a_remote(request.name) => {
-                let (observation, confirmed) = observe_remote_run(request)?;
-                resolved = confirmed;
-                (observation, true)
-            }
-            Planned::Run(request) => (
+            Planned::Run(request) if writes_only_locally(request.name) => (
                 kagi_git::Backend::open(&request.path)
                     .and_then(|mut backend| backend.snapshot(1))
                     .map(|snap| {
@@ -113,6 +106,13 @@ impl ReconcileJob {
                     .map_err(|e| e.to_string())?,
                 true,
             ),
+            // Everything else may have touched a remote, and a local snapshot
+            // cannot say whether a remote ref moved (ADR-0177).
+            Planned::Run(request) => {
+                let (observation, confirmed) = observe_remote_run(request)?;
+                resolved = confirmed;
+                (observation, true)
+            }
             Planned::Pull(request) => {
                 let (observation, accounted) = observe_pull(request, self.pull_stash.as_ref())?;
                 resolved = accounted;
@@ -127,14 +127,43 @@ impl ReconcileJob {
         })
     }
 }
-/// Does this run-family operation write to a remote?
+/// Operations that write nothing to a remote, and may therefore be reconciled
+/// from a local read.
 ///
-/// The oplog name is the operation's own identity (`Operation::oplog_name`), so
-/// this is a fact about the operation, not a guess from prose.
-fn writes_a_remote(name: &str) -> bool {
+/// An **allowlist**, and that direction is the point: the default is "this may
+/// have moved a remote ref", so an operation nobody classified is unresolved
+/// until someone names its remote effect — not quietly acknowledgeable from a
+/// local snapshot. A denylist missed `branch-push` exactly that way (#702
+/// review 4), and the next family added would have been missed the same way.
+///
+/// A fetch is a read, so the three operations that fetch before writing
+/// locally — `branch-pull-ff` (fetch, then a local fast-forward),
+/// `checkout-tracking` and `switch-to-latest` — belong here deliberately.
+///
+/// Branch cleanup is deliberately **not** here: it deletes remote branches
+/// (`push --delete`), so when #701 moves it onto this family it starts out
+/// unresolved rather than acknowledgeable, which is the safe way round.
+fn writes_only_locally(name: &str) -> bool {
     matches!(
         name,
-        "push" | "push-tag" | "force-with-lease-push" | "delete-remote-branch"
+        "checkout"
+            | "checkout-commit"
+            | "commit"
+            | "amend"
+            | "cherry-pick"
+            | "revert"
+            | "merge"
+            | "rebase"
+            | "reset-current"
+            | "create-branch"
+            | "delete-branch"
+            | "rename-branch"
+            | "set-upstream"
+            | "create-worktree"
+            | "discard"
+            | "branch-pull-ff"
+            | "checkout-tracking"
+            | "switch-to-latest"
     )
 }
 

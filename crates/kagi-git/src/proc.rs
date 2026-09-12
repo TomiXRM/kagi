@@ -421,6 +421,27 @@ mod tests {
             .unwrap_or(false)
     }
 
+    /// Every child leads its own process group, so the stop proof can be about
+    /// everything the command started rather than the one process we hold a
+    /// handle to (#702 re-review). Without this, `group_alive` and a plain pid
+    /// probe are the same check and a surviving transport helper reads as gone.
+    #[test]
+    fn a_child_leads_its_own_process_group() {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg("ps -o pgid= -p $$");
+        let run = run_child(&mut cmd, Duration::from_secs(30), None).expect("spawn sh");
+        assert_eq!(run.status, Ok(0), "stderr: {}", run.stderr_lossy());
+        let pgid: u32 = run
+            .stdout_lossy()
+            .trim()
+            .parse()
+            .unwrap_or_else(|e| panic!("pgid from {:?}: {e}", run.stdout_lossy()));
+        assert_eq!(
+            pgid, run.pid,
+            "the child must be its own group leader, so its pid is the group id"
+        );
+    }
+
     #[test]
     fn wait_or_kill_kills_and_reaps_on_timeout() {
         // A child that would otherwise run for 5 minutes: the margins below are

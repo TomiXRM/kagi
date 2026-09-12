@@ -511,6 +511,11 @@ fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
         read.observation
     );
     assert!(!read.resolved(), "an ambiguous stash is not accounted for");
+    assert!(
+        !read.settled(),
+        "and `settled()` is the whole rule a presenter consumes: a read that \
+         cannot be acknowledged must not be offered as one"
+    );
     assert_eq!(
         acknowledge(&mut s, read).err(),
         Some(AdmissionError::NeedsReconcile),
@@ -683,6 +688,76 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
         Some(AdmissionError::NeedsReconcile),
         "an unconfirmed remote mutation must never become retryable"
     );
+}
+
+/// #702 re-review — the proof is about the process *tree*, not one pid.
+///
+/// A `git push` that was killed can leave a transport helper or a hook still
+/// writing; reaping the direct child says nothing about those
+/// (`ProcStop::reaped`'s own doc says so). Here the group leader has exited and
+/// been reaped while a member of its group is still alive — a pid probe would
+/// call that stopped and let the scope reopen under a writer that is still
+/// going. The group probe must not.
+#[test]
+fn a_surviving_descendant_keeps_the_writer_unstopped() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let orphaned = OrphanedGroup::spawn();
+    let request = f.request(&mut s);
+    let report = PullReport::settled(
+        vec![f.receipt(
+            "pull",
+            OpOutcome::Unknown {
+                after: StateSummary {
+                    head: "branch: main".to_string(),
+                    dirty: "unknown".to_string(),
+                },
+                evidence: "the local child could not be stopped".to_string(),
+            },
+            Err(GitError::TerminationUnknown(Termination::Unaccounted {
+                reason: "the local child could not be stopped".to_string(),
+                group: orphaned.id(),
+            })),
+        )],
+        PullPresentation::Partial {
+            error: "pull: termination unconfirmed".to_string(),
+        },
+        None,
+    );
+    let job = admit(&mut s, request, report);
+    let id = job.id();
+    apply(&mut s, job.run());
+
+    let read = read_reconcile(&s, id).expect("a group is something a read can check");
+    assert!(
+        !read.stop_proven(),
+        "the leader is gone but its group is not: something it started is still \
+         running, and that is exactly what the lease is held against"
+    );
+    assert_eq!(
+        acknowledge(&mut s, read).err(),
+        Some(AdmissionError::NeedsReconcile),
+        "a surviving descendant must not let the scope reopen"
+    );
+}
+
+/// A process group whose **leader has exited and been reaped**, while a member
+/// of it is still alive: `sh` forks a sleeper into its own group and returns.
+/// The sleeper is short-lived, so nothing outlives the test run by long.
+struct OrphanedGroup(u32);
+impl OrphanedGroup {
+    fn spawn() -> Self {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg("sleep 5 &").process_group(0);
+        let mut leader = cmd.spawn().expect("spawn /bin/sh");
+        let pgid = leader.id();
+        leader.wait().expect("the leader exits at once");
+        Self(pgid)
+    }
+    fn id(&self) -> u32 {
+        self.0
+    }
 }
 
 /// The completion is routed by the stamp frozen at admission. Leaving the tab

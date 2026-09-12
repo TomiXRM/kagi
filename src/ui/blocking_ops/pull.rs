@@ -1,4 +1,5 @@
 use kagi_git::backend::recording::{self, RunReport};
+use kagi_git::backend::stash::StashEvidence;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::{GitError, OperationOutcome, OperationPlan, PullOutcome, StashPopOutcome};
 
@@ -62,15 +63,20 @@ fn may_restore_after(result: &Result<OperationOutcome, GitError>) -> bool {
     !matches!(result, Err(GitError::TerminationUnknown(_)))
 }
 
-/// How the auto-stash push ended, as the workflow presents it. `None` means
-/// the entry was created and named, so the pull may go ahead.
+/// How the auto-stash push ended: how the workflow presents it (`None` means
+/// the entry was created and named, so the pull may go ahead), and the entry it
+/// may have left behind.
 ///
 /// Only a *stopped* writer is a plain failure. A stash whose entry could not be
 /// identified (#623) and one whose termination is unproven (ADR-0177) are both
-/// "the work is saved, the pull must not start, and this needs reconciling" —
-/// and both leave an entry the reconcile read has to account for.
-fn classify_stash_push(result: &Result<OperationOutcome, GitError>) -> Option<PullPresentation> {
-    match result {
+/// "the work is saved, the pull must not start, and this needs reconciling".
+///
+/// The recovery context is decided here rather than from the presentation,
+/// because it is a question about the **execution**: a push that *started* may
+/// have created an entry however it then ended, and the reconcile read has to
+/// be able to hunt for it either way (#702 Codex review).
+fn classify_stash_push(push: &RunReport) -> (Option<PullPresentation>, Option<StashEvidence>) {
+    let presentation = match &push.result {
         Ok(OperationOutcome::StashPush { .. }) => None,
         Ok(_) | Err(GitError::StashIdentityUnverified(_)) => Some(PullPresentation::Partial {
             error: i18n::auto_stash_identity_unverified().to_string(),
@@ -81,7 +87,12 @@ fn classify_stash_push(result: &Result<OperationOutcome, GitError>) -> Option<Pu
         Err(error) => Some(PullPresentation::Failed {
             error: i18n::op_failed(i18n::Op::Stash, error),
         }),
-    }
+    };
+    let outstanding = push
+        .stash
+        .clone()
+        .filter(|evidence| presentation.is_some() && evidence.started);
+    (presentation, outstanding)
 }
 
 /// The workflow stopped before it started: one recorded step, and it decides.
@@ -205,22 +216,15 @@ pub(crate) fn pull_blocking(
                 }
             };
             let push = repo.run_recorded(&stash_op, &stash_plan);
-            // What the backend saw of the entry it created. It travels whole,
-            // because the case that needs it most is the one where the OID is
-            // missing (#623) — an OID-only recovery context would be `None`
-            // exactly when a stash is outstanding.
-            let created = push.stash.clone();
-            let stop = classify_stash_push(&push.result);
+            // The evidence travels whole, because the case that needs it most
+            // is the one where the OID is missing (#623) — an OID-only recovery
+            // context would be `None` exactly when a stash is outstanding.
+            let (stop, outstanding) = classify_stash_push(&push);
             if stop.is_none() {
-                stashed = created.clone();
+                stashed = push.stash.clone();
             }
             steps.push(push);
             if let Some(presentation) = stop {
-                // Whether an entry may be outstanding is a question about the
-                // *execution*, not about how it is presented: a stash push that
-                // started may have created one however it then ended (#702
-                // Codex review). The reconcile read hunts for it from here.
-                let outstanding = created.filter(|evidence| evidence.started);
                 return Ok(PullReport::settled(steps, presentation, outstanding));
             }
         }
@@ -387,6 +391,72 @@ fn pop_auto_stash(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn push_report(result: Result<OperationOutcome, GitError>, started: bool) -> RunReport {
+        RunReport {
+            result,
+            recording: recording::Recording::Failed {
+                attempted: OpLogEntry::new(
+                    "stash-push",
+                    "/repo",
+                    kagi_git::StateSummary {
+                        head: "branch: main".into(),
+                        dirty: "dirty".into(),
+                    },
+                    OpOutcome::Failed {
+                        error: "irrelevant".into(),
+                    },
+                ),
+                error: "irrelevant".into(),
+            },
+            stash: Some(StashEvidence {
+                started,
+                ..StashEvidence::default()
+            }),
+        }
+    }
+
+    /// #702 Codex review: whether an entry may be outstanding is a question
+    /// about the execution, not about how the workflow is presented. Every way
+    /// a *started* push can end leaves something for the reconcile read to hunt
+    /// for — including a termination kagi could not prove, which is classified
+    /// `Failed` and used to have its evidence thrown away.
+    #[test]
+    fn a_stash_push_that_started_hands_its_evidence_on_however_it_ended() {
+        let ended = [
+            Err(GitError::TerminationUnknown(
+                kagi_git::Termination::stopped("git stash push timed out"),
+            )),
+            Err(GitError::StashIdentityUnverified("concurrent push".into())),
+            Err(GitError::Other("disk full".into())),
+            Ok(OperationOutcome::Unit),
+        ];
+        for result in ended {
+            let (presentation, outstanding) = classify_stash_push(&push_report(result, true));
+            assert!(
+                presentation.is_some(),
+                "only a named entry lets the pull go ahead"
+            );
+            assert!(
+                outstanding.is_some(),
+                "a push that started may have created an entry: {presentation:?}"
+            );
+        }
+        // A push that never started created nothing to account for.
+        let (_, outstanding) =
+            classify_stash_push(&push_report(Err(GitError::Other("blocked".into())), false));
+        assert!(outstanding.is_none());
+        // And a named entry is not "outstanding": the pull will restore it.
+        let named = push_report(
+            Ok(OperationOutcome::StashPush {
+                oid: "a".repeat(40),
+            }),
+            true,
+        );
+        let (presentation, outstanding) = classify_stash_push(&named);
+        assert!(presentation.is_none());
+        assert!(outstanding.is_none());
+    }
 
     #[test]
     fn an_unconfirmed_pull_never_starts_the_restore() {

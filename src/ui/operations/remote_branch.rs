@@ -100,7 +100,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("delete-remote-branch");
         self.clear_delete_remote_branch_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
             "Deleting remote branch '{}'…",
@@ -113,24 +112,20 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_remote_branch = remote_branch.clone();
-        let task = cx.background_spawn(async move {
-            delete_remote_branch_blocking(&bg_path, &bg_plan, &bg_remote_branch)
-        });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "delete-remote-branch",
             i18n::Op::Delete,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || delete_remote_branch_blocking(&bg_path, &bg_plan, &bg_remote_branch),
             |_| None,
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(
                         "delete-remote-branch: '{}' deleted",
                         remote_branch
                     )));
-                    app.reload(cx);
                 }
                 Err(err_msg) => {
                     app.set_delete_remote_branch_modal(DeleteRemoteBranchModal {

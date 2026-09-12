@@ -292,33 +292,30 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some(op_name);
         self.clear_branch_plan_modal();
         self.status_footer =
             FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
         let bg_path = repo_path.clone();
         let bg_modal = modal.clone();
-        let task = cx.background_spawn(async move { branch_plan_blocking(&bg_path, &bg_modal) });
         let op = match modal.kind {
             BranchPlanKind::PullFfOnly => i18n::Op::Pull,
             BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => i18n::Op::Push,
         };
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             op_name,
             op,
-            modal.plan.current.clone(),
+            modal.plan.clone(),
             repo_path,
+            move || branch_plan_blocking(&bg_path, &bg_modal),
             |_| None,
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(outcome) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(
                         "{}: {}",
                         op_name,
                         branch_plan_summary(&modal.branch_name, outcome)
                     )));
-                    app.reload(cx);
                 }
                 Err(failure) => {
                     app.set_branch_plan_modal(BranchPlanModal {
@@ -415,27 +412,21 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("set-upstream");
         self.clear_set_upstream_modal();
         let branch_name = modal.branch_name.clone();
         let upstream = modal.input.clone();
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
-        let task = cx.background_spawn(async move {
-            set_upstream_blocking(&bg_path, &bg_plan, &branch_name, &upstream)
-        });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "set-upstream",
             i18n::Op::SetUpstream,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || set_upstream_blocking(&bg_path, &bg_plan, &branch_name, &upstream),
             |_| None,
-            move |app, done, cx| match done {
-                Ok(_) => {
-                    app.reload(cx);
-                }
+            move |app, done, _cx| match done {
+                Ok(_) => {}
                 Err(err_msg) => {
                     app.set_set_upstream_modal(SetUpstreamModal {
                         branch_name: modal.branch_name.clone(),
@@ -539,27 +530,21 @@ impl KagiApp {
             );
             return;
         }
-        self.busy_op = Some("rename-branch");
         self.clear_rename_branch_modal();
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let old_name = modal.old_name.clone();
         let new_name = modal.input.clone();
-        let task = cx.background_spawn(async move {
-            rename_branch_blocking(&bg_path, &bg_plan, &old_name, &new_name)
-        });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "rename-branch",
             i18n::Op::Rename,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || rename_branch_blocking(&bg_path, &bg_plan, &old_name, &new_name),
             |_| None,
-            move |app, done, cx| match done {
-                Ok(_) => {
-                    app.reload(cx);
-                }
+            move |app, done, _cx| match done {
+                Ok(_) => {}
                 Err(err_msg) => {
                     app.set_rename_branch_modal(RenameBranchModal {
                         old_name: modal.old_name.clone(),
@@ -652,7 +637,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("checkout");
         self.clear_tracking_checkout_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
         klog!("async: checkout-tracking started");
@@ -661,22 +645,17 @@ impl KagiApp {
         let remote_branch = modal.remote_branch.clone();
         let local_branch = modal.local_branch.clone();
         let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move {
-            checkout_tracking_blocking(&bg_path, &plan, &remote_branch, &local_branch)
-        });
         let note_branch = modal.local_branch.clone();
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "checkout-tracking",
             i18n::Op::CheckoutTracking,
-            modal.plan.current.clone(),
+            modal.plan.clone(),
             repo_path,
+            move || checkout_tracking_blocking(&bg_path, &plan, &remote_branch, &local_branch),
             move |_| Some(format!(" — checkout {}", note_branch)),
-            move |app, done, cx| match done {
-                Ok(_) => {
-                    app.reload(cx);
-                }
+            move |app, done, _cx| match done {
+                Ok(_) => {}
                 Err(err_msg) => {
                     app.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
                         remote_branch: modal.remote_branch.clone(),
@@ -767,7 +746,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("switch");
         self.clear_switch_to_latest_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusySwitchToLatest.t()));
         klog!("async: switch-to-latest started");
@@ -776,22 +754,17 @@ impl KagiApp {
         let branch_name = modal.branch_name.clone();
         let remote_branch = modal.remote_branch.clone();
         let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move {
-            switch_to_latest_blocking(&bg_path, &plan, &branch_name, &remote_branch)
-        });
         let note_branch = modal.branch_name.clone();
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "switch-to-latest",
             i18n::Op::SwitchToLatest,
-            modal.plan.current.clone(),
+            modal.plan.clone(),
             repo_path,
+            move || switch_to_latest_blocking(&bg_path, &plan, &branch_name, &remote_branch),
             move |_| Some(format!(" — switch {}", note_branch)),
-            move |app, done, cx| match done {
-                Ok(_) => {
-                    app.reload(cx);
-                }
+            move |app, done, _cx| match done {
+                Ok(_) => {}
                 Err(err_msg) => {
                     app.set_switch_to_latest_modal(SwitchToLatestPlanModal {
                         branch_name: modal.branch_name.clone(),
@@ -868,7 +841,6 @@ impl KagiApp {
         };
         let generation = self.switch_generation;
         let repo_path = owner.path.clone();
-        self.busy_op = Some("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
         klog!("async: delete-branch plan started for {}", branch_name);
 
@@ -987,7 +959,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("delete-branch");
         self.clear_delete_branch_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
         klog!("async: delete-branch started");

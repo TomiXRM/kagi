@@ -456,7 +456,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("pull");
         self.clear_pull_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
         klog!("async: pull started");
@@ -632,29 +631,26 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("push");
         self.clear_push_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPush.t()));
         klog!("async: push started");
 
         let plan = modal.plan.clone();
         let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move { push_blocking(&bg_path, &plan) });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "push",
             i18n::Op::Push,
-            modal.plan.current.clone(),
+            modal.plan.clone(),
             repo_path,
+            move || push_blocking(&bg_path, &plan),
             |outcome| Some(format!(" — {}", push_summary(outcome))),
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(outcome) => {
                     app.status_footer = FooterStatus::Success(SharedString::from(format!(
                         "push: {}",
                         push_summary(outcome)
                     )));
-                    app.reload_async(false, cx);
                 }
                 // #493 safety review: see `finish_pull` — the failure must reach
                 // the modal, not just the oplog and the footer.

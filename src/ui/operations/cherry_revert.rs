@@ -98,7 +98,6 @@ impl KagiApp {
             None => return,
         };
 
-        self.busy_op = Some("cherry-pick");
         self.clear_cherry_pick_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCherryPick.t()));
         klog!("async: cherry-pick started");
@@ -110,17 +109,15 @@ impl KagiApp {
         let bg_commit = commit_id.clone();
         // T-UNDOREDO-001: capture the branch + tip BEFORE the op (main thread).
         let history_before = self.head_branch_and_sha();
-        let task = cx
-            .background_spawn(async move { cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit) });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "cherry-pick",
             i18n::Op::CherryPick,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit),
             |_| None,
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     if let (Some((branch, before)), Some((_, after_sha))) =
                         (history_before.clone(), app.head_branch_and_sha())
@@ -133,7 +130,6 @@ impl KagiApp {
                             format!("cherry-pick {}", commit_id.short()),
                         );
                     }
-                    app.reload(cx);
                 }
                 Err(err_msg) => {
                     app.set_cherry_pick_modal(CherryPickModal {
@@ -226,7 +222,6 @@ impl KagiApp {
             None => return,
         };
 
-        self.busy_op = Some("revert");
         self.clear_revert_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRevert.t()));
         klog!("async: revert started");
@@ -238,17 +233,15 @@ impl KagiApp {
         let bg_commit = commit_id.clone();
         // T-UNDOREDO-001: capture the branch + tip BEFORE the op (main thread).
         let history_before = self.head_branch_and_sha();
-        let task =
-            cx.background_spawn(async move { revert_blocking(&bg_path, &bg_plan, &bg_commit) });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "revert",
             i18n::Op::Revert,
-            plan.current.clone(),
+            plan.clone(),
             repo_path,
+            move || revert_blocking(&bg_path, &bg_plan, &bg_commit),
             |_| None,
-            move |app, done, cx| match done {
+            move |app, done, _cx| match done {
                 Ok(_) => {
                     if let (Some((branch, before)), Some((_, after_sha))) =
                         (history_before.clone(), app.head_branch_and_sha())
@@ -261,7 +254,6 @@ impl KagiApp {
                             format!("revert {}", commit_id.short()),
                         );
                     }
-                    app.reload(cx);
                 }
                 Err(err_msg) => {
                     app.set_revert_modal(RevertModal {

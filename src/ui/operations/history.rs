@@ -438,7 +438,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("amend");
         self.clear_amend_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyAmend.t()));
         klog!("async: amend started");
@@ -454,15 +453,13 @@ impl KagiApp {
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_msg = message.clone();
-        let task =
-            cx.background_spawn(async move { amend_blocking(&bg_path, &bg_plan, mode, &bg_msg) });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "amend",
             i18n::Op::Amend,
-            plan.current.clone(),
+            plan.clone(),
             repo_path.clone(),
+            move || amend_blocking(&bg_path, &bg_plan, mode, &bg_msg),
             |_| None,
             move |app, done, cx| match done {
                 Ok(outcome) => {
@@ -491,7 +488,6 @@ impl KagiApp {
                     // `reload` re-snapshots the OPEN tab, which shares the ODB and
                     // refs and so must show the rewritten commit.
                     app.refresh_worktree_wip_row(&repo_path);
-                    app.reload(cx);
                 }
                 Err(failure) => {
                     app.set_amend_modal(AmendPlanModal {

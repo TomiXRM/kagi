@@ -1103,7 +1103,6 @@ impl KagiApp {
             return;
         }
 
-        self.busy_op = Some("commit");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
         klog!("async: commit started");
 
@@ -1123,14 +1122,13 @@ impl KagiApp {
             .chars()
             .take(72)
             .collect();
-        let task = cx.background_spawn(async move { commit_blocking(&bg_path, &bg_plan, &bg_msg) });
-        self.finish_recorded(
+        self.finish_run(
             cx,
-            task,
             "commit",
             i18n::Op::Commit,
-            plan.current.clone(),
+            plan.clone(),
             repo_path.clone(),
+            move || commit_blocking(&bg_path, &bg_plan, &bg_msg),
             |_| None,
             move |app, done, cx| match done {
                 Ok(_) => {
@@ -1155,7 +1153,6 @@ impl KagiApp {
                     // ODB and refs. It drops `commit_panel`; right here, since the
                     // worktree is clean and that panel would list nothing.
                     app.refresh_worktree_wip_row(&repo_path);
-                    app.reload(cx);
                 }
                 Err(failure) => {
                     if let Some(entity) = app.commit_panel.clone() {

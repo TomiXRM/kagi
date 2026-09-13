@@ -94,6 +94,13 @@ lifecycle は次の 3 つに限定し、すべて **`KagiApp::release_session`�
 - detach: `TabUiState` の resource を dispose、`Reads::forget`、`Sessions::detach` を一括。
   **detach は `Sessions::{operations, leases, settled, reconcile}` に触れない。**
 
+**owner 不在の fallback（detached cell）は payload が捨てて構わない scalar である間だけ
+安全である。** writer が無いから安全なのではない — `show_welcome()` は session が無い状態で
+`ui_mut()` に書く。`TabUiState` が owner 必須の resource（pane entity、subscription、
+terminal）を持つ前に、`Reads` と同じ immutable empty + write sink の分離か、owner 不在時に
+mutation を拒否する API へ切り替え、その境界を test で固定すること。**S2–S5 で resource を
+移す前の前提条件**とする。
+
 機械的不変条件: `dom(ui) = attached sessions`、`dom(reads) ⊆ attached sessions`、
 detach 後はどちらにも key が残らない。`attach` / `reattach` / `detach` の production callsite を
 tab lifecycle module に限定する（狭い CI rule か field encapsulation）。

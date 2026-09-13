@@ -59,7 +59,7 @@ field を「型」や「描画位置」ではなく、**意味上の owner と�
 | `selected`、scroll handle 群、`branch_groups_collapsed`、`commit_limit`、`diff_caches`、`wip_diffstat`、`last_working_status`、`operation_history`、`history_seed_attempted`、`repo_session`、pane entity | per-session | 表示内容または resource が session に結び付く。`commit_limit` は load-more の cursor であり、A で伸ばした値を B の初回 snapshot に使う現挙動は owner 不在の singleton に由来する偶発的挙動 |
 | `terminal_sessions` | per-session resource | `HashMap<PathBuf, _>` をやめ `TabUiState` の `Option<KagiTerminalSession>` にする。close / detach でのみ drop |
 | `bottom_panel_open` / `bottom_panel_height` / `bottom_tab` | window-global | panel は window chrome。PTY だけが per-session。`switch_repo` は `ensure_terminal` を呼ばないので「B へ switch しただけで B の PTY が生える」ことは現状起きない。**この性質を維持する** — session が無ければ placeholder を出し、render / switch を spawn trigger にしない |
-| `active_modal` | window-global 1 slot | ADR-0093 の「同時に 1 つ」を tab workspace retention より強い不変として残す。repo-scoped variant は frozen `SessionId` / `Attachment` を持ち、tab departure では park せず閉じる |
+| `active_modal` | window-global 1 slot | ADR-0093 の「同時に 1 つ」を tab workspace retention より強い不変として残す。repo-scoped variant は frozen `SessionId` / `Attachment` を持ち、tab departure では park せず閉じる。**ただし現状この不変は成立していない**: `remote_browse_modal` と `update_modal_open`（+ 付随する `update_*`）が独立 field のまま残り、`render` は `ActiveModal` と同時に描画する。Remote Browse 表示中に非同期の `AppNotice` が届けば両方が開き、`confirm_active_modal` / `cancel_active_modal` は前面の Remote Browse ではなく `ActiveModal` を先に処理する。この 2 つも `ActiveModal` の variant へ統合し、confirm / cancel の routing を 1 本にすることを Wave 4 の契約に含める（S3、遅くとも S5 の前） |
 | `modal_section_overrides` | window-global | static section id に対する chrome preference。`modal_list_scroll` は tab ではなく現在の modal slot に従属させ、open / replace で reset |
 | `fetch_in_flight` + `fetch_in_flight_repo` | operation-owned | fetch は既に `reserve_write("fetch", …)` で lease を取る（`commands.rs` / `remote_branch.rs`）。残件は bool + path の routing なので `Option<FetchFlight { owner, waiters }>` に型を与え、path 比較を消す。`TabUiState` へ入れると close が実行 lifecycle を消せるので不可 |
 | `smart_commit` | 分割 | provider / opt-in / model / lang は settings、`ollama_available` / `detected_models` / `claude_available` / `codex_available` は process capability。`smart_commit_detected_for` は owner ではなく memoization key で、probe 入力（PATH / Ollama host）は repo 非依存なので global probe revision へ縮約する。**残る一時状態には owner を与える**: `modal` は `ActiveModal` へ統合（ADR-0093 の 1 slot に従う）、`generating` / `status` は生成を始めた session を凍結して持つ session-owned state にする。今は `workspace.rs` が root の値を active な `CommitPanelView` へ複製し、`operations/commit.rs` の completion も root を書き換えるので、S5 で pane を retain した後にこれを放置すると、生成中に B へ切り替えた B が A の spinner / status を表示し、A で開いた modal の操作が B の panel に向きうる |
@@ -69,13 +69,21 @@ field を「型」や「描画位置」ではなく、**意味上の owner と�
 
 ```text
 TabStores
-  reads: Reads<TabViewState>          // observation。background publish が writer
-  ui:    HashMap<SessionId, TabUiState> // intent / resource。foreground event が writer
+  reads: Reads<TabViewState>            // observation。read の whole-value publish
+  ui:    HashMap<SessionId, TabUiState> // intent / resource。owner を名指しした部分更新
 ```
 
 **`Reads<TabState { view, ui }>` にはしない。** `accept_tab_view` は whole value を publish
 するので、同じ値に intent を入れると背景 read の着地が selection / scroll / entity handle を
 過去へ戻す。
+
+両者を分けるのは「foreground か background か」ではなく **更新の単位**である。`ui` の
+writer は foreground event **と、owner を凍結した background completion の両方**であり、
+後者も正規の writer として `ui[owner]` を更新する。Smart Commit の生成中に B へ切り替えた
+場合、その completion は `ui[A]` の `generating` / `status` を更新しなければならない
+（A に戻ったとき spinner が残る）。**active session へ書き戻してはならない** — それが
+この ADR の防ぐ漏れそのものである。owner の entry が既に detach で消えていれば、その
+completion は捨てる。
 
 lifecycle は次の 3 つに限定し、すべて **`KagiApp::release_session`（`src/ui/tab_view.rs`）を
 拡張した 1 本の API** から行う。
@@ -141,7 +149,7 @@ transition test に分離する。観測できないことを理由に受け入�
 | --- | --- |
 | S1 骨格 | store と lifecycle API（attach / reattach / detach を `release_session` 1 本へ）、`selected` だけ移管、leak matrix harness の最初の行 |
 | S2 identity / callback cutover | `github_*`、cleanup、conflict detector、ecosystem、fetch flight、smart-commit probe を `SessionId` / request token / global revision に分類し直し、path stamp と active-root callback を消す（`file_menu` の対象 path は消さず owner を足す）。**`switch_generation` もここで削除** |
-| S3 選択と位置 | scroll handle 群、`commit_limit`、`branch_groups_collapsed` |
+| S3 選択と位置 + modal slot の統一 | scroll handle 群、`commit_limit`、`branch_groups_collapsed`。あわせて `remote_browse_modal` / `update_modal_open` を `ActiveModal` variant へ統合し、confirm / cancel の routing を 1 本にする（決定 1 の `active_modal` 行）。これは session 所有とは独立なので S1 / S2 と並行してよいが、**S5 より前に済ませる** |
 | S4 read cache と history | `diff_caches`、`wip_diffstat`、`last_working_status`、`operation_history`、history seed |
 | S5 pane / resource retention | 決定 3 を `WorkspaceItem` に適用。`dispose(&mut KagiApp)` を session state の close-time disposal へ狭める |
 | S6 掃除 | `reset_per_repo_ui` と残った path / generation field を削除、ADR-0196 決定 5 と migration README を更新 |

@@ -839,7 +839,6 @@ impl KagiApp {
         else {
             return;
         };
-        let generation = self.switch_generation;
         let repo_path = owner.path.clone();
         self.planning = Some("delete-branch-plan");
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
@@ -864,12 +863,7 @@ impl KagiApp {
                     .active_session()
                     .and_then(|id| app.app_sessions.attachment(id));
                 // Terminalize even stale/failed tasks before the display guard.
-                if !DeleteBranchModal::settle_plan(
-                    &owner,
-                    current.as_ref(),
-                    app.switch_generation == generation,
-                    &mut app.planning,
-                ) {
+                if !DeleteBranchModal::settle_plan(&owner, current.as_ref(), &mut app.planning) {
                     cx.notify();
                     return;
                 }

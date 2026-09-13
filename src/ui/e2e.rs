@@ -430,3 +430,42 @@ pub(crate) fn pr_merge_terminal_fault(
         stash: None,
     })
 }
+
+/// Supply only the transport task; dispatch, owner capture and settlement stay real.
+#[cfg(feature = "gui-e2e")]
+type RemoteRefreshTask = gpui::Task<Result<kagi_git::RepoSnapshot, String>>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static REMOTE_REFRESH: RefCell<Option<RemoteRefreshTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_remote_refresh(task: RemoteRefreshTask) {
+    REMOTE_REFRESH.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_remote_refresh() -> Option<RemoteRefreshTask> {
+    REMOTE_REFRESH.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn defer_file_menu(
+    app: &KagiApp,
+    fi: usize,
+    pos: gpui::Point<gpui::Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let panel = app.commit_panel.as_ref().expect("mounted commit panel");
+    panel.update(cx, |panel, cx| {
+        panel.defer_open_file_menu(fi, pos, window, cx)
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn dispatch_file_menu_discard(
+    app: &mut KagiApp,
+    menu: &super::file_menu::FileMenu,
+    cx: &mut gpui::Context<KagiApp>,
+) {
+    app.dispatch_file_menu_action(menu, super::file_menu::FileMenuAction::Discard, cx);
+}

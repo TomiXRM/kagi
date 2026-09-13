@@ -145,9 +145,8 @@ const COPY: &str = "[[pre_remove]]\ntype = 'copy'\nfrom = 'source'\nto = 'copied
 
 /// ADR-0196 決定 3: the owner frozen at admission is the routing key on delivery.
 ///
-/// The legacy path routed by `repo_path + switch_generation` — a path string
-/// standing in for identity. The stamp must be the one `begin_write` minted,
-/// never re-derived from a sessions map that may have moved on.
+/// The stamp must be the one `begin_write` minted, never re-derived from a
+/// sessions map that may have moved on.
 #[test]
 fn delivery_carries_the_stamp_minted_at_admission() {
     if !crate::test_support::run_isolated() {

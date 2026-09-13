@@ -436,13 +436,13 @@ impl DeleteBranchModal {
     pub fn settle_plan(
         owner: &crate::app::Attachment,
         current: Option<&crate::app::Attachment>,
-        same_generation: bool,
         planning: &mut Option<&'static str>,
     ) -> bool {
         if *planning == Some("delete-branch-plan") {
             *planning = None;
         }
-        same_generation && current == Some(owner)
+        current
+            .is_some_and(|current| current.session == owner.session && current.visit == owner.visit)
     }
 
     /// Returns true when this confirmation only arms; false permits the caller

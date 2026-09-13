@@ -188,7 +188,7 @@ impl KagiApp {
         editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
         editor_fs_prompt_modal: Option<EditorFsPromptModal>,
         editor_delete_confirm_modal: Option<EditorDeleteConfirmModal>,
-        file_menu: Option<(std::path::PathBuf, gpui::Point<gpui::Pixels>)>,
+        file_menu: Option<file_menu::FileMenu>,
         modal_focus: Option<FocusHandle>,
         stash_push_focus: Option<FocusHandle>,
         commit_panel_open: bool,
@@ -402,14 +402,16 @@ impl KagiApp {
             ))
         })
         // ── Unstaged file context menu (right-click → Discard) ──
-        .when_some(file_menu, |el, (path, pos)| {
-            el.child(render_file_menu_overlay(
-                path,
-                pos,
-                window.viewport_size(),
-                cx,
-            ))
-        })
+        .when_some(
+            file_menu.filter(|menu| {
+                self.active_session() == Some(menu.owner)
+                    && self
+                        .commit_panel
+                        .as_ref()
+                        .is_some_and(|panel| panel.read(cx).owner == menu.owner)
+            }),
+            |el, menu| el.child(render_file_menu_overlay(menu, window.viewport_size(), cx)),
+        )
         // ── Commit plan modal overlay (T025) ─────────────
         .when(commit_panel_open && commit_plan_modal.is_some(), |el| {
             if let Some(plan_modal) = commit_plan_modal.clone() {

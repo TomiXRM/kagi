@@ -117,10 +117,8 @@ impl std::fmt::Display for AdmissionError {
 
 /// The delivery owner of one write, frozen at admission (ADR-0196 決定 3).
 ///
-/// Completion is routed by this stamp and never re-resolved: the legacy path
-/// compared `repo_path + switch_generation`, which is a path string standing in
-/// for identity and is exactly what let a completion land on the wrong tab or
-/// be dropped. `session` says *which* tab incarnation, `visit` says which stay
+/// Completion is routed by this stamp and never re-resolved from a path.
+/// `session` says *which* tab incarnation, `visit` says which stay
 /// in it (a completion from an earlier visit may be recorded and shown but
 /// must not seed a proposal for the next one, #557), `operation` ties it to the
 /// one admitted write it belongs to.

@@ -138,8 +138,7 @@ impl KagiApp {
 
     /// The application-layer session on screen (#482 stage 1). `None` on the
     /// Welcome screen. This is the **only** owner test for app-family plans and
-    /// deliveries: `(repo_path, switch_generation)` cannot tell a reopened tab
-    /// from the one that was closed, and a session can.
+    /// deliveries: a path cannot distinguish a reopened tab from its old session.
     pub fn active_session(&self) -> Option<crate::app::SessionId> {
         self.tabs.get(self.active_tab).map(|tab| tab.session)
     }
@@ -166,23 +165,17 @@ impl KagiApp {
     }
 
     /// Switch the active tab to `index` (W6-TABSPEED / ADR-0030).
-    ///
-    /// Stale-while-revalidate: if the target repo's [`TabViewState`] is cached
-    /// it is applied **instantly** (zero-frame swap) and a background revalidate
-    /// refreshes it; otherwise a `Loading <name>…` placeholder + `Busy` footer
-    /// is shown while the snapshot is built on a background thread.  Per-repo UI
-    /// state (selection / diff_caches / main_diff / modals / commit_panel) is
-    /// reset either way, and the FS watcher is re-armed (ADR-0027 generation
-    /// scheme).
+    /// Switches the session-owned read and selection immediately, then revalidates
+    /// in the background. First reads show a Loading placeholder. Legacy panes
+    /// and caches still reset here until their Wave 4 cutover; the watcher is
+    /// re-armed for the new tab (ADR-0027).
     pub fn switch_repo(&mut self, index: usize, cx: &mut Context<Self>) {
         let tab = match self.tabs.get(index) {
             Some(t) => t.clone(),
             None => return,
         };
         // #488: re-selecting the tab that is already on screen is a no-op. A
-        // reset + `switch_generation` bump here would drop the selection, the
-        // undo history and any in-flight operation's presentation callback
-        // (`operations/mod.rs` treats a generation change as stale).
+        // reset here would drop selection, undo history and the owner's visit.
         if index == self.active_tab && self.live_tab_path().as_ref() == Some(&tab.path) {
             return;
         }
@@ -201,7 +194,6 @@ impl KagiApp {
             self.repo_session = None;
             self.remote_view = Some(rv);
             self.reset_per_repo_ui();
-            self.switch_generation = self.switch_generation.wrapping_add(1);
             // #482 stage 2: the remote snapshot belongs to this tab's session
             // and never left it, so there is nothing to copy back. A restored
             // session has no read for it (the SSH snapshot was never persisted)
@@ -231,11 +223,6 @@ impl KagiApp {
         // GitHub Phase 1: refetch PRs for the new repo right away (the
         // ticker alone left the tab at 0 PRs until its next tick).
         self.refresh_github_prs(cx);
-
-        // W6-TABSPEED: bump the switch generation so an in-flight background
-        // *operation* callback from an earlier (superseded) switch discards its
-        // result. Reads no longer use it — they carry their owner in the key.
-        self.switch_generation = self.switch_generation.wrapping_add(1);
 
         // #482 stage 2: "cached" now means "this session already has a read".
         // The swap is the switch itself — `view()` reads a different key — so
@@ -342,8 +329,6 @@ impl KagiApp {
         self.repo_path = None;
         self.repo_session = None;
         self.reset_per_repo_ui();
-        // Supersede any in-flight local background load.
-        self.switch_generation = self.switch_generation.wrapping_add(1);
 
         // #482 stage 2: build the read model first, but publish it only once the
         // tab (and therefore its session) exists — the read belongs to an owner,
@@ -397,6 +382,13 @@ impl KagiApp {
             Some(v) => (v.host.clone(), v.root.clone()),
             None => return,
         };
+        let Some(owner) = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+        else {
+            return;
+        };
+        let key = self.reads.begin(owner.session);
         self.status_footer = FooterStatus::Busy(SharedString::from(format!(
             "Refreshing {}:{root}\u{2026}",
             host.label()
@@ -405,24 +397,37 @@ impl KagiApp {
 
         let (host_load, root_load) = (host.clone(), root.clone());
         let commit_limit = self.commit_limit;
-        // An SSH snapshot takes seconds, and `enter_remote_view` switches the
-        // active tab and tears down the local repo session. Landing that after
-        // the user moved to a local tab yanked them back and dropped their
-        // session mid-work. Same guard `load_repo_async` uses.
-        self.switch_generation = self.switch_generation.wrapping_add(1);
-        let generation = self.switch_generation;
+        #[cfg(feature = "gui-e2e")]
+        let deferred = super::e2e::take_remote_refresh();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(deferred) = deferred {
+                return deferred.await;
+            }
             crate::remote::remote_snapshot(&host_load, &root_load, commit_limit)
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
-            let _ = this.update(acx, |app, cx| match result {
-                _ if app.switch_generation != generation => {}
-                Ok(snap) => app.enter_remote_view(host, root, snap, cx),
-                Err(e) => {
-                    app.status_footer = FooterStatus::Failed(SharedString::from(e));
-                    cx.notify();
+            let _ = this.update(acx, |app, cx| {
+                // Settle only this request; newer refreshes keep their slot.
+                let fresh = app.reads.fail(key);
+                let current = app
+                    .active_session()
+                    .and_then(|id| app.app_sessions.attachment(id));
+                if !fresh
+                    || !current.is_some_and(|current| {
+                        current.session == owner.session && current.visit == owner.visit
+                    })
+                {
+                    return;
+                }
+                match result {
+                    Ok(snap) => app.enter_remote_view(host, root, snap, cx),
+                    Err(e) => {
+                        app.status_footer = FooterStatus::Failed(SharedString::from(e));
+                        cx.notify();
+                    }
                 }
             });
         })
@@ -607,11 +612,6 @@ impl KagiApp {
         }
         let closed = self.tabs.remove(index);
         self.release_session(closed.session);
-        // #625: a Pull confirmation parked for this tab dies with it — there is
-        // no tab left to show it on, and a request must never outlive its owner.
-        self.pending_pull_confirm.remove(&closed.session);
-        self.fetch_pull_confirm_waiters
-            .retain(|session| *session != closed.session);
         // Drop the closed repo's terminal session (PTY closes on drop).
         self.terminal_sessions.remove(&closed.path);
 

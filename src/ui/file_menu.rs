@@ -3,52 +3,114 @@
 //! Behaviour-preserving move — no DOM/style/handler/[kagi]/i18n change.
 
 use super::*;
+/// File-row intent frozen at the row event source. `path` is a repository-
+/// relative file key, not repository identity; `owner` prevents the intent
+/// from being re-routed through a different active tab.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileMenu {
+    pub owner: crate::app::SessionId,
+    pub path: std::path::PathBuf,
+    pub anchor: gpui::Point<gpui::Pixels>,
+}
 
-///
-/// Only attached to eligible rows (tracked, non-conflicted), so the item is
-/// always actionable. Backdrop click dismisses; backdrop AND card `.occlude()`
-/// (click-through bug).
+#[derive(Clone, Copy)]
+pub(crate) enum FileMenuAction {
+    OpenExternal,
+    ShowHistory,
+    Discard,
+}
+
+impl KagiApp {
+    /// Gate every retained menu callback against the exact intent and its
+    /// session owner before consulting active presentation state.
+    pub(crate) fn dispatch_file_menu_action(
+        &mut self,
+        expected: &FileMenu,
+        action: FileMenuAction,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_menu.as_ref() != Some(expected) {
+            return;
+        }
+        let panel_has_owner = self
+            .commit_panel
+            .as_ref()
+            .is_some_and(|panel| panel.read(cx).owner == expected.owner);
+        let owner_is_active = self.active_session() == Some(expected.owner) && panel_has_owner;
+        self.file_menu = None;
+        if !owner_is_active {
+            cx.notify();
+            return;
+        }
+        match action {
+            FileMenuAction::OpenExternal => {
+                self.open_in_external_editor(&expected.path, None, cx);
+            }
+            FileMenuAction::ShowHistory => {
+                self.open_file_history(expected.path.clone(), None, cx);
+            }
+            FileMenuAction::Discard => self.open_discard_modal_for_path(
+                expected.path.clone(),
+                crate::ui::worktree_wip::WriteOrigin::CommitPanel,
+                cx,
+            ),
+        }
+        cx.notify();
+    }
+}
+impl KagiApp {
+    pub(crate) fn open_file_menu(
+        &mut self,
+        menu: FileMenu,
+        panel_repo: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let panel_is_source = self.commit_panel.as_ref().is_some_and(|entity| {
+            let panel = entity.read(cx);
+            panel.owner == menu.owner && panel.repo_path == panel_repo
+        });
+        if self.active_session() == Some(menu.owner) && panel_is_source {
+            self.file_menu = Some(menu);
+            cx.notify();
+        }
+    }
+}
+
 /// Unscaled per-row height of these compact menus (px_3 / py 3 / text_sm).
 const FILE_MENU_ROW_H: f32 = 22.0;
 
 pub(crate) fn render_file_menu_overlay(
-    path: std::path::PathBuf,
-    pos: gpui::Point<gpui::Pixels>,
+    menu: FileMenu,
     viewport: gpui::Size<gpui::Pixels>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let pos =
-        kagi_ui_core::theme::clamp_menu_pos(pos, 190.0, 4.0 + 2.0 * FILE_MENU_ROW_H, viewport);
-    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
-        this.file_menu = None;
-        cx.notify();
+    let pos = kagi_ui_core::theme::clamp_menu_pos(
+        menu.anchor,
+        190.0,
+        4.0 + 2.0 * FILE_MENU_ROW_H,
+        viewport,
+    );
+    let dismiss_menu = menu.clone();
+    let dismiss = cx.listener(move |this, _e: &gpui::MouseDownEvent, _window, cx| {
+        if this.file_menu.as_ref() == Some(&dismiss_menu) {
+            this.file_menu = None;
+            cx.notify();
+        }
     });
     // Issue #286: the menu is keyed by path, so every action targets that exact
     // path regardless of any renumber that happened while it was open.
-    let discard_path = path.clone();
+    let discard_menu = menu.clone();
     let discard_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.file_menu = None;
-        // #476 slice 3: this menu hangs off a commit-panel row, so it discards
-        // in the panel's repository (a linked worktree's, when it shows one).
-        this.open_discard_modal_for_path(
-            discard_path.clone(),
-            crate::ui::worktree_wip::WriteOrigin::CommitPanel,
-            cx,
-        );
-        cx.notify();
+        this.dispatch_file_menu_action(&discard_menu, FileMenuAction::Discard, cx);
     });
     // ADR-0089: open File History for this unstaged file.
-    let history_path = path.clone();
+    let history_menu = menu.clone();
     let history_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.file_menu = None;
-        this.open_file_history(history_path.clone(), None, cx);
-        cx.notify();
+        this.dispatch_file_menu_action(&history_menu, FileMenuAction::ShowHistory, cx);
     });
-    let ext_path = path.clone();
+    let external_menu = menu;
     let wip_ext_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.file_menu = None;
-        this.open_in_external_editor(&ext_path, None, cx);
-        cx.notify();
+        this.dispatch_file_menu_action(&external_menu, FileMenuAction::OpenExternal, cx);
     });
     div()
         .absolute()
@@ -72,7 +134,8 @@ pub(crate) fn render_file_menu_overlay(
                 // W27-UIPOLISH: compact (Zed-style) density — tighter vertical
                 // padding to match the commit/branch context menus.
                 .py(theme::scaled_px(2.))
-                .child(
+                .child(crate::ui::e2e::measure_control(
+                    "file-menu-ext",
                     div()
                         .id("file-menu-ext")
                         .px_3()
@@ -82,8 +145,9 @@ pub(crate) fn render_file_menu_overlay(
                         .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
                         .on_click(wip_ext_click)
                         .child(SharedString::from(Msg::OpenInExternalEditor.t())),
-                )
-                .child(
+                ))
+                .child(crate::ui::e2e::measure_control(
+                    "file-menu-history",
                     div()
                         .id("file-menu-history")
                         .px_3()
@@ -93,8 +157,9 @@ pub(crate) fn render_file_menu_overlay(
                         .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
                         .on_click(history_click)
                         .child(SharedString::from("Show File History")),
-                )
-                .child(
+                ))
+                .child(crate::ui::e2e::measure_control(
+                    "file-menu-discard",
                     div()
                         .id("file-menu-discard")
                         .px_3()
@@ -104,7 +169,7 @@ pub(crate) fn render_file_menu_overlay(
                         .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
                         .on_click(discard_click)
                         .child(SharedString::from("Discard changes…")),
-                ),
+                )),
         )
         .into_any_element()
 }

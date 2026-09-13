@@ -454,6 +454,9 @@ pub struct CommitPanelView {
     /// Weak back-reference to the parent. Used ONLY from deferred listener
     /// closures — NEVER read in a `Render` path.
     pub(crate) app: WeakEntity<KagiApp>,
+    /// Session that created this panel. A linked-worktree panel is still owned
+    /// by its host tab; [`Self::repo_path`] remains the linked worktree target.
+    pub owner: crate::app::SessionId,
     /// Repo root for this panel session; constant for the entity's life.
     /// `pub` so the GUI E2E runner can assert WHICH repository the panel shows
     /// (#473) — a worktree panel that silently reverted to the tab's repo is
@@ -472,7 +475,12 @@ impl CommitPanelView {
     /// Construct the entity for a freshly-opened commit panel. Created in
     /// `KagiApp::open_commit_panel` via `cx.new`; the caller seeds the input
     /// value / draft immediately after.
-    pub fn new(state: CommitPanelState, app: WeakEntity<KagiApp>, repo_path: PathBuf) -> Self {
+    pub fn new(
+        state: CommitPanelState,
+        app: WeakEntity<KagiApp>,
+        repo_path: PathBuf,
+        owner: crate::app::SessionId,
+    ) -> Self {
         Self {
             state,
             title_input: None,
@@ -490,6 +498,7 @@ impl CommitPanelView {
             panel_render_width: 0.0,
             smart_snapshot: SmartCommitState::default(),
             app,
+            owner,
             repo_path,
             foreign: None,
         }

@@ -175,6 +175,21 @@ pane / modal / footer を書き換えられる。これは現 main の switch-ti
 delete-branch plan（`Attachment` の session + visit と planning tag が既にあり generation は
 重複 guard）と remote refresh（対象 remote tab の `SessionId` + owner request slot で accept）。
 
+### S2a 実装
+
+- delete-branch plan は既存 `Attachment`（session + visit）に一本化した。
+  remote refresh も起動時の `Attachment` を凍結し、既存 `Reads` の request slot で
+  同一 session の後発 request を優先する。完了時は slot だけを消費し、
+  owner / visit が一致するときだけ remote snapshot を表示する。
+- fetch は operation-owned な `Option<FetchFlight { owner, waiters }>` に集約した。
+  piggyback と表示先を `SessionId` で判定し、detach は waiter だけを除く。
+  同 owner の dirty Pull は新しい計画・write を開始せず既存 flight に waiter を加える。
+  それ以外の admission は既存 `op_latched` / lease / planning gate を通る。
+- file menu は panel を開いた host session と対象 file path を defer 前に凍結する。
+  表示時と action dispatch 時に owner を検証する。linked-worktree panel の
+  `repo_path` は従来どおり操作先 locator であり、host owner と混同しない。
+- S2b の per-repo evidence / probe、S5 の pane retention、S6 の reset 削除は未着手。
+
 ## 決定 6 — #703 との境界
 
 Wave 4 は #703（abandoned executor の supervisor）より先に開始・land してよい。

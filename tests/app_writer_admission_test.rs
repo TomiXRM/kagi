@@ -101,7 +101,7 @@ impl Fixture {
     }
     fn job(&self, sessions: &mut Sessions) -> RemoveJob {
         let approved = self.approved(sessions);
-        prepare_remove(sessions, approved, LegacyBusy(false)).unwrap()
+        prepare_remove(sessions, approved).unwrap()
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -161,7 +161,7 @@ fn remove_first_refuses_every_writer_before_bytes_or_index_change() {
         let job = f.job(&mut sessions);
         let original = std::fs::read(f.linked.join("file")).unwrap();
         // Every production writer obtains this reservation BEFORE its executor.
-        match sessions.write_lease(&f.linked, LegacyBusy(false)) {
+        match sessions.write_lease(&f.linked) {
             Err(error) => assert_eq!(error, AdmissionError::Busy),
             Ok(guard) => {
                 write(&f, writer, guard);
@@ -191,11 +191,11 @@ fn every_writer_first_blocks_remove_then_releases_on_completion() {
         let f = Fixture::new();
         let mut sessions = Sessions::new();
         let approved = f.approved(&mut sessions);
-        let guard = sessions.write_lease(&f.linked, LegacyBusy(false)).unwrap();
+        let guard = sessions.write_lease(&f.linked).unwrap();
         assert!(sessions.has_leases());
         assert!(!sessions.may_close_host());
         assert!(matches!(
-            prepare_remove(&mut sessions, approved, LegacyBusy(false)),
+            prepare_remove(&mut sessions, approved),
             Err(AdmissionError::Busy)
         ));
         assert_eq!(std::fs::read(f.linked.join("file")).unwrap(), b"original\n");
@@ -244,15 +244,12 @@ fn stopped_unknown_blocks_all_writers_until_read_and_ack() {
         apply(&mut sessions, completion);
         assert!(!sessions.has_leases());
         assert!(matches!(
-            sessions.write_lease(&f.repo, LegacyBusy(false)),
+            sessions.write_lease(&f.repo),
             Err(AdmissionError::NeedsReconcile)
         ));
         let read = read_reconcile(&sessions, id).unwrap();
         acknowledge(&mut sessions, read).unwrap();
-        sessions
-            .write_lease(&f.repo, LegacyBusy(false))
-            .unwrap()
-            .complete();
+        sessions.write_lease(&f.repo).unwrap().complete();
     }
 }
 
@@ -265,7 +262,7 @@ fn dropped_or_panicking_writer_does_not_release_an_unconfirmed_lease() {
     for panic in [false, true] {
         let f = Fixture::new();
         let mut sessions = Sessions::new();
-        let guard = sessions.write_lease(&f.linked, LegacyBusy(false)).unwrap();
+        let guard = sessions.write_lease(&f.linked).unwrap();
         if panic {
             assert!(std::panic::catch_unwind(|| guard.run(|| panic!("writer"))).is_err());
         } else {
@@ -274,7 +271,7 @@ fn dropped_or_panicking_writer_does_not_release_an_unconfirmed_lease() {
         assert!(sessions.has_leases());
         let approved = f.approved(&mut sessions);
         assert!(matches!(
-            prepare_remove(&mut sessions, approved, LegacyBusy(false)),
+            prepare_remove(&mut sessions, approved),
             Err(AdmissionError::Busy)
         ));
     }
@@ -289,7 +286,7 @@ fn fetch_unknown_retains_but_known_failure_releases() {
     for unknown in [false, true] {
         let f = Fixture::new();
         let mut sessions = Sessions::new();
-        let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+        let guard = sessions.write_lease(&f.repo).unwrap();
         let error = if unknown {
             GitError::TerminationUnknown(kagi_git::Termination::abandoned("timeout"))
         } else {
@@ -308,7 +305,7 @@ fn conflict_c0_termination_unknown_records_unknown_and_retains_owner_lease() {
     let _log = TestLog::new();
     let f = Fixture::new();
     let mut sessions = Sessions::new();
-    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let guard = sessions.write_lease(&f.repo).unwrap();
     let result = Err::<(), _>(GitError::TerminationUnknown(
         kagi_git::Termination::abandoned("git rebase --continue timed out"),
     ));
@@ -330,7 +327,7 @@ fn conflict_c0_termination_unknown_records_unknown_and_retains_owner_lease() {
     ));
     assert!(sessions.has_leases(), "the owner lease must remain held");
     assert!(matches!(
-        sessions.write_lease(&f.linked, LegacyBusy(false)),
+        sessions.write_lease(&f.linked),
         Err(AdmissionError::Busy)
     ));
 }
@@ -349,24 +346,17 @@ fn canonical_identity_and_conservative_global_exclusion() {
         Backend::open(&f.linked).unwrap().write_repo_id().unwrap()
     );
     assert!(matches!(
-        sessions.write_lease(&f.repo, LegacyBusy(true)),
-        Err(AdmissionError::Busy)
-    ));
-    assert!(matches!(
-        sessions.write_lease(&f.repo.join("missing"), LegacyBusy(false)),
+        sessions.write_lease(&f.repo.join("missing")),
         Err(AdmissionError::Identity(_))
     ));
     assert!(!sessions.has_leases());
-    let guard = sessions.write_lease(&f.linked, LegacyBusy(false)).unwrap();
+    let guard = sessions.write_lease(&f.linked).unwrap();
     assert!(matches!(
-        sessions.write_lease(&other.repo, LegacyBusy(false)),
+        sessions.write_lease(&other.repo),
         Err(AdmissionError::Busy)
     ));
     std::thread::spawn(move || guard.complete()).join().unwrap();
-    sessions
-        .write_lease(&other.repo, LegacyBusy(false))
-        .unwrap()
-        .complete();
+    sessions.write_lease(&other.repo).unwrap().complete();
 }
 
 #[test]
@@ -384,7 +374,7 @@ fn untrusted_identity_allows_plain_editor_save_but_git_writers_stay_gated() {
         "identity is a read, even untrusted"
     );
     let mut sessions = Sessions::new();
-    let guard = sessions.write_lease(&f.linked, LegacyBusy(false)).unwrap();
+    let guard = sessions.write_lease(&f.linked).unwrap();
     guard.run(|| std::fs::write(f.linked.join("file"), b"plain editor save\n").unwrap());
     assert_eq!(
         std::fs::read(f.linked.join("file")).unwrap(),
@@ -442,7 +432,7 @@ fn detach_never_releases_a_reservation_or_admits_the_reopened_tab() {
         assert!(sessions.has_leases(), "tab close is not execution cancel");
         assert!(!sessions.may_close_host());
 
-        match sessions.write_lease(&f.linked, LegacyBusy(false)) {
+        match sessions.write_lease(&f.linked) {
             Err(error) => assert_eq!(error, AdmissionError::Busy),
             Ok(guard) => {
                 write(&f, writer, guard);
@@ -486,7 +476,7 @@ fn a_guarded_write_that_cannot_prove_its_stop_parks_the_way_out() {
     let mut sessions = Sessions::new();
 
     // A stop the executor proved: released, exactly as a clean result is.
-    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let guard = sessions.write_lease(&f.repo).unwrap();
     guard
         .for_op("fetch")
         .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
@@ -498,7 +488,7 @@ fn a_guarded_write_that_cannot_prove_its_stop_parks_the_way_out() {
     );
 
     // A stop it could not: the lease is held *and* the requirement is parked.
-    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let guard = sessions.write_lease(&f.repo).unwrap();
     let group = dead_group();
     guard
         .for_op("fetch")
@@ -549,7 +539,7 @@ fn a_sequencer_step_is_not_released_by_a_stopped_process_alone() {
     let f = Fixture::new();
     let mut sessions = Sessions::new();
 
-    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let guard = sessions.write_lease(&f.repo).unwrap();
     guard
         .for_op("conflict-skip")
         .complete_git(&Err::<(), _>(GitError::TerminationUnknown(
@@ -582,7 +572,7 @@ fn a_sequencer_step_is_not_released_by_a_stopped_process_alone() {
     // And the default side of the classification: a writer nobody named is
     // held, not released. Getting that backwards is how a sequencer added
     // tomorrow becomes re-runnable.
-    let guard = sessions.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let guard = sessions.write_lease(&f.repo).unwrap();
     guard
         .for_op("some-future-writer")
         .complete_git(&Err::<(), _>(GitError::TerminationUnknown(

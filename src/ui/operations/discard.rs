@@ -203,7 +203,7 @@ impl KagiApp {
     }
 
     /// Confirm the discard: run `discard_blocking` on a background thread
-    /// (busy_op="discard"), then reload. Mirrors `start_pop`.
+    /// (write latch "discard"), then reload. Mirrors `start_pop`.
     ///
     /// Two-stage confirm (T-REARCH-014, mirrors `start_amend`): the first click
     /// only *arms* the red Discard button; the second click executes. Discard is

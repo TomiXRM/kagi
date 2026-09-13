@@ -6,7 +6,7 @@
 //! rows — load-more renumbering, the selected OID agreeing with the detail at
 //! that row, and A→B→A costing no copy of those vectors — are checked against
 //! what the app really publishes.
-use kagi::app::{admit, LegacyBusy, Reads, SessionId, Sessions};
+use kagi::app::{admit, Reads, SessionId, Sessions};
 use kagi::ui::{build_tab_view, TabViewState};
 use kagi_git::{Backend, CommitId};
 use std::path::{Path, PathBuf};
@@ -274,8 +274,7 @@ fn an_admitted_write_refuses_the_read_that_predates_it() {
 
     // A read is in flight when the user starts a write.
     let in_flight = reads.begin(owner);
-    let guard = admit(&mut reads, sessions.write_lease(&repo, LegacyBusy(false)))
-        .expect("the lease is free");
+    let guard = admit(&mut reads, sessions.write_lease(&repo)).expect("the lease is free");
 
     assert!(!reads.is_fresh(in_flight), "admission did not invalidate");
     assert!(!reads.accept(in_flight, view_of(&repo, "alpha", 100)));
@@ -308,11 +307,11 @@ fn a_refused_write_leaves_the_read_in_flight_alone() {
     let mut reads: Reads<TabViewState> = Reads::new();
 
     let held = sessions
-        .write_lease(&repo, LegacyBusy(false))
+        .write_lease(&repo)
         .expect("the first lease is free");
     let in_flight = reads.begin(owner);
     assert!(
-        admit(&mut reads, sessions.write_lease(&repo, LegacyBusy(false))).is_err(),
+        admit(&mut reads, sessions.write_lease(&repo)).is_err(),
         "a second lease must be refused",
     );
     assert!(

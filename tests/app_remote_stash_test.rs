@@ -1,6 +1,6 @@
 use kagi::app::{
-    self, approve, plan_remote_stash_for_test, AdmissionError, LegacyBusy, PlanState,
-    RemoteStashRequest, Sessions, StashPolicy,
+    self, approve, plan_remote_stash_for_test, AdmissionError, PlanState, RemoteStashRequest,
+    Sessions, StashPolicy,
 };
 use kagi::remote::stash::{RemoteAttachment, RemotePlanFixture, RemoteStashFault};
 use kagi_domain::remote::{
@@ -76,7 +76,7 @@ fn prepare(
         panic!("remote plan must be ready")
     };
     let approved = approve(sessions, token.clone(), policy).unwrap();
-    let job = app::prepare(sessions, approved, LegacyBusy(false))?;
+    let job = app::prepare(sessions, approved)?;
     Ok(match job {
         app::Job::Stash(job) => app::Job::Stash(job.with_remote_fault_for_test(fault)),
         _ => unreachable!(),

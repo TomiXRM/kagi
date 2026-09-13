@@ -115,10 +115,6 @@ impl std::fmt::Display for AdmissionError {
     }
 }
 
-/// Temporary compatibility input. Remove at the last family migration.
-#[derive(Clone, Copy)]
-pub struct LegacyBusy(pub bool);
-
 /// The delivery owner of one write, frozen at admission (ADR-0196 決定 3).
 ///
 /// Completion is routed by this stamp and never re-resolved: the legacy path
@@ -475,12 +471,8 @@ impl Sessions {
     }
     /// Reserve before dispatch, not a check-only API. All repositories remain
     /// mutually exclusive until the final writer family migration.
-    pub fn write_lease(
-        &mut self,
-        path: &std::path::Path,
-        legacy: LegacyBusy,
-    ) -> Result<WriteGuard, AdmissionError> {
-        if legacy.0 || self.has_leases() {
+    pub fn write_lease(&mut self, path: &std::path::Path) -> Result<WriteGuard, AdmissionError> {
+        if self.has_leases() {
             return Err(AdmissionError::Busy);
         }
         let repo = kagi_git::Backend::open(path)

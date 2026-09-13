@@ -174,14 +174,13 @@ impl RunAbandonment {
 pub fn prepare_run(
     s: &mut Sessions,
     approved: Approved,
-    legacy: LegacyBusy,
     execute: RunExecute,
 ) -> Result<RunJob, AdmissionError> {
     let Planned::Run(request) = &approved.prepared else {
         return Err(AdmissionError::StaleApproval);
     };
     let request = request.clone();
-    let running = begin_write(s, &approved, legacy)?;
+    let running = begin_write(s, &approved)?;
     Ok(RunJob {
         id: running.operation_id,
         stamp: running.owner_stamp,

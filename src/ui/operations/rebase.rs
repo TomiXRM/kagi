@@ -59,7 +59,7 @@ impl KagiApp {
         self.clear_rebase_current_onto_modal();
     }
 
-    /// Confirm + execute the rebase on a background thread (busy_op), then
+    /// Confirm + execute the rebase on a background thread (write latch), then
     /// reload — a conflict pause and a clean completion both flow through
     /// the same `reload()` call (see module doc).
     pub fn start_rebase(&mut self, cx: &mut Context<Self>) {

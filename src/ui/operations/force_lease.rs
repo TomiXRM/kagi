@@ -49,7 +49,7 @@ impl KagiApp {
 
     /// Two-stage confirm (mirrors `start_reset_current`): the first click
     /// only arms the button; the second click runs the push on a background
-    /// thread (busy_op) and reloads.
+    /// thread (write latch) and reloads.
     pub fn start_force_lease_push(&mut self, cx: &mut Context<Self>) {
         let modal = match self.force_lease_push_modal().cloned() {
             Some(m) => m,

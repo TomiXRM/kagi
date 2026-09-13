@@ -390,14 +390,39 @@ impl KagiApp {
                 crate::remote::remote_pull(&host, &root, &recorded_before)
             });
             let notice_path = oplog_path.clone();
-            self.finish_op_on_main_settled(
-                cx,
-                task,
-                move |app, report: &crate::remote::RemotePullReport, _cx| {
+            // The one write left with no lease to hold: a remote pull has no
+            // `RemoteRepoId` until its own probes run, so the write mirror is
+            // its whole latch (ADR-0196 Wave 3, remaining after #703). Its
+            // completion is spelled out here rather than shared, because the
+            // shape it used to share — the `repo_path + switch_generation`
+            // stale guard — is what Wave 3 removes.
+            let owner = self.active_session();
+            let visit = owner.and_then(|session| self.app_sessions.visit(session));
+            cx.spawn(async move |this, acx| {
+                let report = task.fallible().await;
+                let _ = this.update(acx, move |app, cx| {
+                    app.refresh_write_busy();
+                    let Some(report) = report else {
+                        klog!("op panicked: pull — busy_op cleared");
+                        app.status_footer = FooterStatus::Failed(SharedString::from(
+                            "pull: operation failed \
+                                 unexpectedly",
+                        ));
+                        cx.notify();
+                        return;
+                    };
+                    // Settle first, whatever the tab is doing now (#501): the
+                    // hold a Partial/Unknown transport leaves is what stops the
+                    // button offering the same pull again.
                     app.notice_recording_failure("pull", &report.recording, &notice_path);
                     app.settle_transport(&notice_path, "pull", &report.recording.entry().outcome);
-                },
-                move |app, report, cx| {
+                    if app.active_session() != owner
+                        || owner.and_then(|session| app.app_sessions.visit(session)) != visit
+                    {
+                        klog!("op result dropped: tab switched during op");
+                        cx.notify();
+                        return;
+                    }
                     let recorded_clean = matches!(
                         report.recording,
                         kagi_git::backend::recording::Recording::Appended { .. }
@@ -433,8 +458,11 @@ impl KagiApp {
                             }
                         }
                     }
-                },
-            );
+                    cx.notify();
+                });
+            })
+            .detach();
+            cx.notify();
             return;
         }
 

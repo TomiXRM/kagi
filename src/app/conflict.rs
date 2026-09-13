@@ -135,12 +135,11 @@ impl ConflictCompletion {
 pub fn prepare_conflict(
     sessions: &mut Sessions,
     approved: Approved,
-    legacy: LegacyBusy,
 ) -> Result<ConflictJob, AdmissionError> {
     let Planned::Conflict { plan, .. } = &approved.prepared else {
         return Err(AdmissionError::StaleApproval);
     };
-    let id = reserve(sessions, &approved, legacy)?;
+    let id = reserve(sessions, &approved)?;
     sessions.conflict_states.insert(
         approved.prepared.owner_session(),
         ConflictOwnerState::InFlight {

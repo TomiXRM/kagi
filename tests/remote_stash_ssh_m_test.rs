@@ -5,7 +5,7 @@
 //!   -p kagi --test remote_stash_ssh_m_test -- --ignored --nocapture`
 
 use kagi::app::{
-    self, approve, plan_remote_stash, AdmissionError, LegacyBusy, PlanState, PlanToken, Planned,
+    self, approve, plan_remote_stash, AdmissionError, PlanState, PlanToken, Planned,
     RemoteStashRequest, Sessions, StashPolicy,
 };
 use kagi::remote::stash::RemoteAttachment;
@@ -391,7 +391,7 @@ fn ready(sessions: &mut Sessions, host: &RemoteHost, root: &Path, index: usize) 
 
 fn prepare_job(sessions: &mut Sessions, prepared: ReadyRemote) -> app::Job {
     let approved = approve(sessions, prepared.token, StashPolicy::default()).unwrap();
-    app::prepare(sessions, approved, LegacyBusy(false)).unwrap()
+    app::prepare(sessions, approved).unwrap()
 }
 
 fn remove_if_present(path: &Path) {
@@ -530,7 +530,7 @@ fn remote_stash_drop_over_real_localhost_ssh() {
     let linked_approved =
         approve(&mut sessions, linked_ready.token, StashPolicy::default()).unwrap();
     assert!(matches!(
-        app::prepare(&mut sessions, linked_approved, LegacyBusy(false)),
+        app::prepare(&mut sessions, linked_approved),
         Err(AdmissionError::Busy)
     ));
     let applied = remote_stash_support::assert_remote_completion(
@@ -604,7 +604,7 @@ fn remote_stash_drop_over_real_localhost_ssh() {
     )
     .unwrap();
     assert!(matches!(
-        app::prepare(&mut sessions, linked_approved, LegacyBusy(false)),
+        app::prepare(&mut sessions, linked_approved),
         Err(AdmissionError::NeedsReconcile)
     ));
 

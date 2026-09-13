@@ -144,7 +144,7 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).busy_op.is_none()) {
+        if cx.read(|cx| app.read(cx).write_busy_op.is_none()) {
             break;
         }
         assert!(Instant::now() < deadline, "remove did not settle");

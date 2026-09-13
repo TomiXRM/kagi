@@ -1,7 +1,6 @@
 //! Focused C1 GUI adapters. Run each with its exact KAGI_GUI_E2E_ONLY filter.
 use crate::macos::{git, mount, unmount};
 use gpui::{Focusable, VisualTestAppContext};
-use kagi::app::LegacyBusy;
 use kagi::ui::e2e;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::{Path, PathBuf};
@@ -77,7 +76,7 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).busy_op.is_none()) {
+        if cx.read(|cx| app.read(cx).write_busy_op.is_none()) {
             break;
         }
         assert!(Instant::now() < deadline, "conflict adapter did not settle");
@@ -191,9 +190,7 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
         .expect("D/F conflict view");
 
     let guard = app.update(cx, |app, _| {
-        app.app_sessions
-            .write_lease(Path::new(&repo), LegacyBusy(false))
-            .unwrap()
+        app.app_sessions.write_lease(Path::new(&repo)).unwrap()
     });
     conflict.update(cx, |view, cx| {
         view.writer_busy = true;
@@ -527,6 +524,24 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
+    // gate. A plan in flight takes no lease, so only `planning` refuses it —
+    // and nothing may reach the family while it does.
+    app.update(cx, |app, cx| {
+        app.planning = Some("merge-plan");
+        app.open_conflict_abort_modal(cx);
+        assert!(
+            app.conflict_abort_modal().is_none(),
+            "a plan in flight must refuse the abort confirmation (#283)"
+        );
+        app.confirm_conflict_abort(cx);
+        app.planning = None;
+    });
+    cx.run_until_parked();
+    assert!(
+        repo.join(".git/MERGE_HEAD").exists(),
+        "and a refused abort mutates nothing"
+    );
     click_control(cx, window, "operation-strip-abort");
     cx.run_until_parked();
     assert!(

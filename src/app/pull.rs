@@ -366,14 +366,13 @@ impl PullAbandonment {
 pub fn prepare_pull(
     s: &mut Sessions,
     approved: Approved,
-    legacy: LegacyBusy,
     execute: PullExecute,
 ) -> Result<PullJob, AdmissionError> {
     let Planned::Pull(request) = &approved.prepared else {
         return Err(AdmissionError::StaleApproval);
     };
     let request = request.clone();
-    let running = begin_write(s, &approved, legacy)?;
+    let running = begin_write(s, &approved)?;
     Ok(PullJob {
         id: running.operation_id,
         stamp: running.owner_stamp,

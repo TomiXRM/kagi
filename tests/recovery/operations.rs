@@ -25,7 +25,7 @@ pub(super) fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).busy_op.is_none()) {
+        if cx.read(|cx| app.read(cx).write_busy_op.is_none()) {
             return;
         }
         assert!(
@@ -691,7 +691,7 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
                 "{case}: Esc must clear the modal slot (root focused at Esc: {root_focused})"
             );
             assert!(
-                app.busy_op.is_none(),
+                app.write_busy_op.is_none(),
                 "{case}: the app must stay usable after Esc"
             );
         });
@@ -724,7 +724,7 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
             app.active_modal.is_none(),
             "a confirmation planned in repo A must not survive the switch to repo B"
         );
-        assert!(app.busy_op.is_none());
+        assert!(app.write_busy_op.is_none());
     });
     assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
     assert_eq!(
@@ -851,7 +851,10 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
             modal.error.is_some(),
             "the failure text must be shown in the modal"
         );
-        assert!(app.busy_op.is_none(), "busy must be released on failure");
+        assert!(
+            app.write_busy_op.is_none(),
+            "busy must be released on failure"
+        );
     });
     let durable = records(repo, "push");
     let failed = durable
@@ -1442,7 +1445,7 @@ fn delayed_delete_plan_stays_with_its_owner(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| {
             app.switch_repo(0, cx);
             assert!(app.delete_branch_modal().is_none());
-            assert!(app.busy_op.is_none());
+            assert!(app.write_busy_op.is_none());
             app.open_delete_branch_modal("victim", cx);
         });
         wait_idle(cx, &app);
@@ -1724,11 +1727,7 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     }
     // Admission denial never reaches a mutation or opens a modal.
     press_enter(cx, &app, window);
-    let guard = app.update(cx, |app, _| {
-        app.app_sessions
-            .write_lease(&main, kagi::app::LegacyBusy(false))
-            .unwrap()
-    });
+    let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&main).unwrap());
     let count = records(&main, "stage").len();
     app.update(cx, |app, cx| app.do_stage_file_by_path("f.txt".into(), cx));
     cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));

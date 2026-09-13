@@ -61,7 +61,7 @@ impl KagiApp {
             }
             Ok((plan, kind, into_branch))
         });
-        self.finish_op_on_main(cx, task, move |app, result, _cx| {
+        self.finish_planning(cx, task, "merge-plan", move |app, result, _cx| {
             if app
                 .active_session()
                 .and_then(|id| app.app_sessions.attachment(id))
@@ -169,7 +169,7 @@ impl KagiApp {
             repo.plan_merge_into_branch(&bg_source, &bg_target)
                 .map_err(|e| e.to_string())
         });
-        self.finish_op_on_main(cx, task, move |app, result, _cx| {
+        self.finish_planning(cx, task, "merge-plan", move |app, result, _cx| {
             if app
                 .active_session()
                 .and_then(|id| app.app_sessions.attachment(id))

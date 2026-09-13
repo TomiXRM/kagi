@@ -24,8 +24,11 @@ impl KagiApp {
         modal: PullPlanModal,
         repo_path: PathBuf,
     ) -> bool {
-        use crate::app::{self, Delivery, FamilyEvidence, LegacyBusy, PullPresentation};
+        use crate::app::{self, Delivery, FamilyEvidence, PullPresentation};
         self.refresh_write_busy();
+        // The lease answers for every other writer; the UI latch is what a
+        // planning task in flight is refused by (ADR-0196 Wave 3).
+        let latched = self.op_latched();
         let plan = modal.plan.clone();
         let (auto_stash, promised_dirty) = (modal.auto_stash, modal.dirty_digest);
         let (bg_path, bg_plan) = (repo_path.clone(), plan.clone());
@@ -51,10 +54,12 @@ impl KagiApp {
                 )
             })
             .and_then(|approved| {
+                if latched {
+                    return Err(app::AdmissionError::Busy);
+                }
                 app::prepare_pull(
                     &mut self.app_sessions,
                     approved,
-                    LegacyBusy(self.busy_op.is_some()),
                     Box::new(move || pull_blocking(&bg_path, &bg_plan, auto_stash, promised_dirty)),
                 )
             });

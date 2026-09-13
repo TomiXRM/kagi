@@ -16,7 +16,7 @@ impl KagiApp {
     /// above the status bar). The toast cards live in the `Entity<ToastStack>`
     /// child, so a push / expire re-renders only that subtree instead of all of
     /// `KagiApp` (ADR-0110 Phase 5). The busy snackbar stays here because it is
-    /// driven by `busy_op` (KagiApp state). Returns `None` before the window
+    /// driven by the write latch (KagiApp state). Returns `None` before the window
     /// (and thus the toast entity) exists.
     fn render_toasts(&self) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
@@ -42,7 +42,7 @@ impl KagiApp {
 
     /// A snackbar shown while an async op runs: a continuously spinning sync
     /// icon + a friendly label (user request — a non-blocking alternative to a
-    /// modal busy-spinner). Driven automatically by `busy_op`, so every async
+    /// modal busy-spinner). Driven automatically by the write latch, so every async
     /// op gets one for free.
     fn render_busy_snackbar(&self, label: &'static str) -> gpui::AnyElement {
         let accent = theme().color_branch;

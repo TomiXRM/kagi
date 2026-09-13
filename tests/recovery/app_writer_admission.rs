@@ -1,7 +1,6 @@
 //! Deterministic editor → host admission wiring; real remove contention is G/M.
 use crate::macos::{build_fixture, mount, unmount};
 use gpui::{Focusable, VisualTestAppContext};
-use kagi::app::LegacyBusy;
 use kagi::ui::{i18n::Msg, FooterStatus};
 use std::time::{Duration, Instant};
 
@@ -26,11 +25,7 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
     }
     // Same Sessions API as the bridge; no child process or pending remove
     // future for the real-platform dispatcher to wait on.
-    let guard = app.update(cx, |app, _| {
-        app.app_sessions
-            .write_lease(&repo, LegacyBusy(false))
-            .unwrap()
-    });
+    let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&repo).unwrap());
     cx.update_window(window, |_, window, cx| {
         let input = editor.read(cx).editor.clone().unwrap();
         window.focus(&input.read(cx).focus_handle(cx), cx);

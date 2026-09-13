@@ -349,6 +349,13 @@ pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
     app.busy_snackbar_label()
 }
 
+/// The one gate every state-changing entry point consults (ADR-0196 Wave 3),
+/// so a scenario can assert on it rather than on a field that mirrors it.
+#[cfg(feature = "gui-e2e")]
+pub fn op_latched(app: &KagiApp) -> bool {
+    app.op_latched()
+}
+
 /// Arm one canned pr-merge terminal.
 ///
 /// Without a GitHub remote every `gh` call fails, including the re-read, so a

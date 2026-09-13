@@ -303,7 +303,7 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
 ///
 /// The other entrance — a later write's refusal naming the entry — is asserted
 /// at the application layer (`blocking_reconcile`): reaching it from the GUI
-/// needs a refusal that gets past the `busy_op` pre-check, and a parked
+/// needs a refusal that gets past the busy pre-check, and a parked
 /// requirement holds that latch too.
 pub fn scenario_run_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();

@@ -178,14 +178,12 @@ fn incomplete_push_capture_records_unknown_and_requires_reconcile() {
     ));
     s.apply(c);
     assert!(matches!(
-        s.write_lease(&f.repo, LegacyBusy(false)),
+        s.write_lease(&f.repo),
         Err(AdmissionError::NeedsReconcile)
     ));
     let read = prepare_reconcile(&s, id).unwrap().run().unwrap();
     acknowledge(&mut s, read).unwrap();
-    s.write_lease(&f.repo, LegacyBusy(false))
-        .unwrap()
-        .complete();
+    s.write_lease(&f.repo).unwrap().complete();
     assert_eq!(read_oplog_tail(100).len(), 1);
 }
 
@@ -280,12 +278,10 @@ exec "$real" "$@"
     // The scope stays reserved until the user reconciles.
     s.apply(c);
     assert!(matches!(
-        s.write_lease(&f.repo, LegacyBusy(false)),
+        s.write_lease(&f.repo),
         Err(AdmissionError::NeedsReconcile)
     ));
     let read = prepare_reconcile(&s, id).unwrap().run().unwrap();
     acknowledge(&mut s, read).unwrap();
-    s.write_lease(&f.repo, LegacyBusy(false))
-        .unwrap()
-        .complete();
+    s.write_lease(&f.repo).unwrap().complete();
 }

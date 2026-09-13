@@ -1,7 +1,7 @@
 //! Real root/modal inputs; no executor or approval-state seams.
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
-use kagi::app::{LegacyBusy, PlanState, StashAction};
+use kagi::app::{PlanState, StashAction};
 use kagi::remote::stash::{
     remote_stash_e2e_refreshes, set_remote_stash_e2e_mode, RemoteStashE2eMode,
 };
@@ -102,7 +102,7 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
                 matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
             });
             confirm(cx, &app, window, button);
-            wait(cx, &app, |app| app.busy_op.is_none());
+            wait(cx, &app, |app| app.write_busy_op.is_none());
             let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
                 .into_iter()
                 .filter(|e| e.op == action.name())
@@ -227,11 +227,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
     let snap = snapshot(&repo);
     let before = read_oplog_tail(100).len();
     let (app, window) = mount(cx, &repo);
-    let guard = app.update(cx, |app, _| {
-        app.app_sessions
-            .write_lease(&repo, LegacyBusy(false))
-            .unwrap()
-    });
+    let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&repo).unwrap());
     app.update(cx, |app, cx| {
         app.enter_remote_view(host, "/srv/repo".into(), snap, cx);
         app.open_stash_drop_modal(1, cx);
@@ -269,7 +265,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         });
         confirm(cx, &app, window, duplicate);
         wait(cx, &app, |app| {
-            app.busy_op.is_none() && app.conflict.is_some()
+            app.write_busy_op.is_none() && app.conflict.is_some()
         });
         let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
             .into_iter()
@@ -374,7 +370,7 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
     });
     confirm(cx, &app, window, false);
     wait(cx, &app, |app| {
-        app.busy_op.is_none() && app.conflict.is_some()
+        app.write_busy_op.is_none() && app.conflict.is_some()
     });
 
     let closed = cx.read(|cx| app.read(cx).active_session().unwrap());

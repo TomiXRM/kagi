@@ -56,7 +56,7 @@ impl KagiApp {
 
     /// Two-stage confirm (mirrors `start_discard`): the first click only
     /// arms the button; the second click runs the delete on a background
-    /// thread (busy_op) and reloads.
+    /// thread (write latch) and reloads.
     pub fn start_delete_remote_branch(&mut self, cx: &mut Context<Self>) {
         let modal = match self.delete_remote_branch_modal().cloned() {
             Some(m) => m,

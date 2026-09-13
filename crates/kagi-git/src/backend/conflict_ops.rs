@@ -459,7 +459,7 @@ impl Backend {
                             |value| progress = value,
                         )?
                     } else {
-                        crate::conflict_abort::execute_conflict_abort_with_progress(
+                        crate::conflict_abort::execute_conflict_abort_expecting(
                             &backend.repo,
                             session,
                             &buffer,

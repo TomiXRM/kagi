@@ -1738,14 +1738,12 @@ fn a_rebase_abort_refuses_when_its_destination_branch_moved() {
         .unwrap()
         .expect("observed")
         .observation;
-    let restore = kagi_git::restore_ref(&repo, &session).expect("a rebase restores a branch");
-    assert_eq!(restore.name, "refs/heads/side");
-
-    // Someone moves exactly that branch, and nothing else.
+    // Someone moves exactly the branch this abort would restore, and nothing
+    // else. (`rebase-merge/head-name` names it; the CAS half of the guard is a
+    // unit test in `conflict_abort`, where the frozen expectation lives.)
     let elsewhere = git_output(dir, &["rev-parse", "main"]);
-    git(dir, &["update-ref", &restore.name, &elsewhere]);
+    git(dir, &["update-ref", "refs/heads/side", &elsewhere]);
 
-    // The observation changed, so the frozen plan is refused …
     let live = kagi_git::Backend::open(dir)
         .unwrap()
         .conflict_snapshot()
@@ -1757,23 +1755,8 @@ fn a_rebase_abort_refuses_when_its_destination_branch_moved() {
         "the destination branch's target is part of the revision"
     );
 
-    // … and even a write that got past a check is a compare-and-swap.
-    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
-    let error = kagi_git::execute_conflict_abort_with_progress(
-        &repo,
-        &session,
-        &buffer,
-        Some(&restore),
-        |_| {},
-    )
-    .expect_err("the restore must not overwrite a branch that moved");
-    assert!(
-        format!("{error}").contains("refs/heads/side"),
-        "the refusal names the destination: {error}"
-    );
-
     assert_eq!(
-        git_output(dir, &["rev-parse", &restore.name]),
+        git_output(dir, &["rev-parse", "refs/heads/side"]),
         elsewhere,
         "the branch keeps the OID the other process gave it"
     );
@@ -1855,27 +1838,20 @@ fn abort_reports_each_stage_only_once_it_has_happened() {
 
     use kagi_domain::conflict_family::ConflictProgress as P;
     let mut stages = Vec::new();
-    let expected = kagi_git::restore_ref(&repo, &session);
-    kagi_git::execute_conflict_abort_with_progress(
-        &repo,
-        &session,
-        &buffer,
-        expected.as_ref(),
-        |stage| {
-            // The sequence alone cannot tell this stage from one fired *before*
-            // the checkout — a success run reports the same list either way (#707
-            // re-review). What separates them is the working tree: by the time
-            // this stage is claimed, it already holds the restore target.
-            if stage == P::IndexAndWorktreeWritten {
-                assert_eq!(
+    kagi_git::execute_conflict_abort_with_progress(&repo, &session, &buffer, |stage| {
+        // The sequence alone cannot tell this stage from one fired *before*
+        // the checkout — a success run reports the same list either way (#707
+        // re-review). What separates them is the working tree: by the time
+        // this stage is claimed, it already holds the restore target.
+        if stage == P::IndexAndWorktreeWritten {
+            assert_eq!(
                 std::fs::read_to_string(dir.join("a.txt")).unwrap(),
                 "MAIN a\n",
                 "IndexAndWorktreeWritten was reported before the checkout wrote the working tree"
             );
-            }
-            stages.push(stage)
-        },
-    )
+        }
+        stages.push(stage)
+    })
     .expect("abort");
 
     assert_eq!(

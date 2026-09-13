@@ -17,9 +17,8 @@ use kagi_domain::plan_note::{
     PlanTitle, RecoveryKind,
 };
 
-use super::conflicts::{
-    current_state_summary, read_head_oid, short_sha, ConflictOp, ConflictSession,
-};
+use super::conflict_abort_guard::{mid_conflict_edits, op_touched_paths};
+use super::conflicts::{current_state_summary, short_sha, ConflictOp, ConflictSession};
 use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
 use super::{resolve_head, GitError};
@@ -34,14 +33,19 @@ use super::{resolve_head, GitError};
 /// overwritten. Both halves are fixed from here: the fingerprint folds this in
 /// (so the plan is refused), and the write is a compare-and-swap against
 /// `target` (so the window between preflight and the write is closed too).
+///
+/// Crate-private, and so is the executor that takes one: a caller able to name
+/// the ref could hand the abort any branch whose current OID it knows and have
+/// it moved to `ORIG_HEAD` with HEAD attached to it. The destination is the
+/// *session's* to decide (#707 4th review).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RestoreRef {
+pub(crate) struct RestoreRef {
     /// Full ref name, e.g. `refs/heads/side`.
-    pub name: String,
+    pub(crate) name: String,
     /// Its resolved target when observed. `None` = the ref did not exist, or
     /// is symbolic / unreadable — cases the restore must not silently create
     /// or clobber either.
-    pub target: Option<String>,
+    pub(crate) target: Option<String>,
 }
 
 /// Which ref this abort would rewrite, if any. The one place that decision is
@@ -52,7 +56,7 @@ pub struct RestoreRef {
 /// backend) or `.git/rebase-apply/head-name` (apply backend). Merge /
 /// cherry-pick / revert keep a symbolic HEAD, so `repo.head().name()` already
 /// yields the branch. `None` = genuinely detached, nothing to move.
-pub fn restore_ref(repo: &Repository, session: &ConflictSession) -> Option<RestoreRef> {
+pub(crate) fn restore_ref(repo: &Repository, session: &ConflictSession) -> Option<RestoreRef> {
     let name = match session.op {
         ConflictOp::Rebase { .. } => read_rebase_head_name(repo.path()),
         _ => repo
@@ -145,10 +149,7 @@ pub(crate) fn execute_conflict_abort(
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
 ) -> Result<AbortOutcome, GitError> {
-    // No plan to freeze one, so the expectation is read here: the
-    // compare-and-swap still holds, over a shorter window.
-    let expected = restore_ref(repo, session);
-    execute_conflict_abort_with_progress(repo, session, buffer, expected.as_ref(), |_| {})
+    execute_conflict_abort_with_progress(repo, session, buffer, |_| {})
 }
 
 /// [`execute_conflict_abort`], reporting how far the mutation got.
@@ -169,9 +170,37 @@ pub fn execute_conflict_abort_with_progress(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    progress: impl FnMut(ConflictProgress),
+) -> Result<AbortOutcome, GitError> {
+    // The destination is read here, so no caller can choose it. A plan that
+    // froze one earlier goes through `execute_conflict_abort_expecting`, which
+    // is crate-private for exactly that reason (#707 4th review).
+    let expected = restore_ref(repo, session);
+    execute_conflict_abort_expecting(repo, session, buffer, expected.as_ref(), progress)
+}
+
+/// [`execute_conflict_abort_with_progress`] against an expectation the plan
+/// froze, so the compare-and-swap covers the window between the Backend's live
+/// preflight and the write. Crate-private: `expected` supplies the *OID* to
+/// swap against, never which ref is written — that is `restore_ref`'s, and a
+/// mismatch is refused before anything is touched.
+pub(crate) fn execute_conflict_abort_expecting(
+    repo: &Repository,
+    session: &ConflictSession,
+    buffer: &ResolutionBuffer,
     expected: Option<&RestoreRef>,
     mut progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
+    // Before anything at all, including the buffer autosave: an expectation
+    // that names a ref this session does not restore is a caller trying to
+    // choose the destination, and must leave the repository untouched.
+    let destination = restore_ref(repo, session);
+    if expected.map(|expected| &expected.name) != destination.as_ref().map(|live| &live.name) {
+        return Err(GitError::Other(format!(
+            "abort refused: {} is not the ref this operation restores",
+            expected.map_or("a detached restore", |expected| expected.name.as_str())
+        )));
+    }
     // 1. Preserve the buffer BEFORE touching the repo (never lose partial
     //    work) — but only when there IS live work to preserve.
     //
@@ -285,14 +314,16 @@ pub fn execute_conflict_abort_with_progress(
         // the user detached (#302); `restore_ref` is where that branch is
         // decided, for the fingerprint and for here alike.
         let reflog = format!("abort {}: restore ORIG_HEAD", session.op.slug());
-        match expected {
-            Some(RestoreRef { name, target }) => {
+        match &destination {
+            // The name is the live one; only the OID to swap against came from
+            // the plan, and the guard above proved the two name the same ref.
+            Some(RestoreRef { name, .. }) => {
                 // Compare-and-swap against the OID this ref held when the
                 // operation was observed. The fingerprint covers that value, so
                 // a plan built before an external `git update-ref` is already
                 // refused — this closes the remaining window, between the live
                 // preflight and this write (#707 review).
-                let write = match target {
+                let write = match expected.and_then(|expected| expected.target.as_ref()) {
                     Some(expected_target) => {
                         let expected_oid = git2::Oid::from_str(expected_target).map_err(|e| {
                             GitError::Other(format!(
@@ -463,259 +494,6 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     })
 }
 
-/// Paths among `touched` that are NOT conflicted and that the user edited (or
-/// re-created) during Conflict Mode on top of the operation's output.  These
-/// are the paths the abort's `read_tree` + force-checkout would destroy, so
-/// their presence blocks the abort.
-///
-/// Two kinds of mid-conflict edit are caught:
-///
-/// 1. **Unstaged** — working tree differs from the index (`diff_index_to_workdir`).
-/// 2. **Staged** (#307) — the user edited a non-conflicted file *and* `git add`ed
-///    it, so index == workdir and the diff in (1) sees nothing.  The staged blob
-///    would be silently lost by `index.read_tree(&tree)` and the force-checkout.
-///    Detect it by reconstructing the operation's *own* clean-merge output and
-///    flagging any non-conflicted path whose current index blob differs from it.
-///    Reconstruction (not a raw index→tree diff) is what keeps the operation's
-///    legitimate clean merges — including auto-merged hunks that match neither
-///    parent — from being false-flagged.
-///
-/// Neither kind applies to a path the operation itself conflicted on: abort
-/// discards resolution progress by design. #704: `session.files` is the *live*
-/// unmerged set, which is empty once the resolution has been staged (Continue,
-/// or a `git add` of the resolved file) — so taking it as "the paths that were
-/// conflicted" reclassified every resolved path as a clean merge the user had
-/// edited, and abort refused with no way out of a still-`MERGING` repository.
-/// The operation's own reconstruction is what remembers them, and it is
-/// derived from `MERGE_HEAD` / the sequencer files on disk, so it survives a
-/// restart the way process memory would not.
-///
-/// `orig_oid` / `orig_tree` are ORIG_HEAD's oid and tree (the abort target).
-fn mid_conflict_edits(
-    repo: &Repository,
-    session: &ConflictSession,
-    touched: &[String],
-    orig_oid: git2::Oid,
-    orig_tree: &git2::Tree<'_>,
-) -> Result<Vec<String>, GitError> {
-    let result = reconstruct_op_result(repo, session, orig_oid, orig_tree)?;
-    let mut conflicted: std::collections::BTreeSet<String> = session
-        .files
-        .iter()
-        .filter_map(|f| f.path.to_str().map(str::to_string))
-        .collect();
-    if let Some(result) = &result {
-        for entry in result.conflicts().map_err(|e| {
-            GitError::Other(format!("reconstructed conflicts failed: {}", e.message()))
-        })? {
-            let entry = entry.map_err(|e| {
-                GitError::Other(format!("reconstructed conflict entry: {}", e.message()))
-            })?;
-            for side in [&entry.our, &entry.their, &entry.ancestor] {
-                if let Some(path) = side
-                    .as_ref()
-                    .and_then(|side| std::str::from_utf8(&side.path).ok())
-                {
-                    conflicted.insert(path.to_string());
-                }
-            }
-        }
-    }
-    let non_conflicted: Vec<&str> = touched
-        .iter()
-        .map(String::as_str)
-        .filter(|p| !conflicted.contains(*p))
-        .collect();
-
-    let mut edited: Vec<String> = Vec::new();
-
-    // (1) Unstaged edits: working tree differs from the index.
-    if !non_conflicted.is_empty() {
-        let mut opts = git2::DiffOptions::new();
-        // A file the op deleted and the user re-created shows up as untracked.
-        opts.include_untracked(true);
-        opts.disable_pathspec_match(true);
-        for p in &non_conflicted {
-            opts.pathspec(*p);
-        }
-        let diff = repo
-            .diff_index_to_workdir(None, Some(&mut opts))
-            .map_err(|e| {
-                GitError::Other(format!("diff index → workdir failed: {}", e.message()))
-            })?;
-        edited.extend(
-            diff.deltas()
-                .filter_map(|d| d.new_file().path().or_else(|| d.old_file().path()))
-                .filter_map(|p| p.to_str().map(str::to_string)),
-        );
-    }
-
-    // (2) Staged edits: current index blob differs from the operation's own
-    //     reconstructed clean-merge output (#307).
-    if let Some(result) = &result {
-        let current = repo
-            .index()
-            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-        for p in &non_conflicted {
-            let path = Path::new(p);
-            let cur = current.get_path(path, 0).map(|e| e.id);
-            let res = result.get_path(path, 0).map(|e| e.id);
-            if cur != res {
-                edited.push((*p).to_string());
-            }
-        }
-    }
-
-    edited.sort();
-    edited.dedup();
-    // ponytail: the review also asked to drop paths whose index AND working
-    // tree already equal `orig_tree` (their restore is a no-op). Unreachable
-    // as written: `touched` is `diff(orig_tree → index) ∪ session.files`, so a
-    // path whose index entry equals `orig_tree` is only in it while it is
-    // still unmerged — and unmerged paths are excluded above. Add the
-    // exclusion if `op_touched_paths` ever widens.
-    Ok(edited)
-}
-
-/// First-parent tree of a commit, or `None` for a root commit (no parents).
-fn first_parent_tree<'r>(
-    repo: &'r Repository,
-    oid: git2::Oid,
-) -> Result<Option<git2::Tree<'r>>, GitError> {
-    let commit = repo
-        .find_commit(oid)
-        .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
-    match commit.parent(0) {
-        Ok(parent) => Ok(Some(parent.tree().map_err(|e| {
-            GitError::Other(format!("parent tree lookup failed: {}", e.message()))
-        })?)),
-        Err(_) => Ok(None),
-    }
-}
-
-/// Commit's own tree.
-fn commit_tree<'r>(repo: &'r Repository, oid: git2::Oid) -> Result<git2::Tree<'r>, GitError> {
-    repo.find_commit(oid)
-        .and_then(|c| c.tree())
-        .map_err(|e| GitError::Other(format!("commit tree lookup failed: {}", e.message())))
-}
-
-/// Reconstruct the clean-merge output index of the in-flight operation, so the
-/// staged-edit abort guard (#307) can tell an operation-produced staged entry
-/// from a user's mid-conflict edit to a non-conflicted file. Extended in #369
-/// to the sequencer ops (rebase / cherry-pick / revert), not just merge.
-///
-/// Rebase replays onto current HEAD (onto + applied commits), not ORIG_HEAD,
-/// which is only the abort restoration target. Other ops retain their pre-op tree.
-/// - **merge**: base = merge-base(HEAD, MERGE_HEAD), theirs = MERGE_HEAD tree.
-/// - **cherry-pick / rebase** (replay commit `C`): base = `C^` tree, theirs = `C` tree.
-/// - **revert** (undo commit `C`): base = `C` tree, theirs = `C^` tree.
-fn reconstruct_op_result<'r>(
-    repo: &'r Repository,
-    session: &ConflictSession,
-    orig_oid: git2::Oid,
-    orig_tree: &git2::Tree<'r>,
-) -> Result<Option<git2::Index>, GitError> {
-    // (base_tree, theirs_tree) for the 3-way; `None` base = 2-way / empty base.
-    let (base_tree, theirs_tree): (Option<git2::Tree<'r>>, git2::Tree<'r>) = match session.op {
-        ConflictOp::Merge { .. } => {
-            let Some(merge_oid) = read_head_oid(repo, "MERGE_HEAD") else {
-                return Ok(None);
-            };
-            let base = match repo.merge_base(orig_oid, merge_oid) {
-                Ok(b) => Some(commit_tree(repo, b)?),
-                // Unrelated histories: base-less 2-way merge.
-                Err(_) => None,
-            };
-            (base, commit_tree(repo, merge_oid)?)
-        }
-        // Rebase and cherry-pick both *replay* commit C onto HEAD: base = C^, theirs = C.
-        ConflictOp::CherryPick { .. } | ConflictOp::Rebase { .. } => {
-            let head = if matches!(session.op, ConflictOp::CherryPick { .. }) {
-                "CHERRY_PICK_HEAD"
-            } else {
-                "REBASE_HEAD"
-            };
-            let Some(oid) = read_head_oid(repo, head) else {
-                return Ok(None);
-            };
-            (first_parent_tree(repo, oid)?, commit_tree(repo, oid)?)
-        }
-        // Revert *undoes* commit C: base = C, theirs = C^ (the inverse patch).
-        ConflictOp::Revert { .. } => {
-            let Some(oid) = read_head_oid(repo, "REVERT_HEAD") else {
-                return Ok(None);
-            };
-            let Some(parent) = first_parent_tree(repo, oid)? else {
-                // Reverting a root commit has no parent tree to move toward.
-                return Ok(None);
-            };
-            (Some(commit_tree(repo, oid)?), parent)
-        }
-        // StashConflict has no commit-producing output to reconstruct.
-        ConflictOp::StashConflict => return Ok(None),
-    };
-    let rebase_ours = if matches!(session.op, ConflictOp::Rebase { .. }) {
-        Some(
-            repo.head()
-                .and_then(|head| head.peel_to_tree())
-                .map_err(|e| {
-                    GitError::Other(format!("rebase HEAD tree lookup failed: {}", e.message()))
-                })?,
-        )
-    } else {
-        None
-    };
-    let index = repo
-        .merge_trees(
-            base_tree.as_ref().unwrap_or(orig_tree),
-            rebase_ours.as_ref().unwrap_or(orig_tree),
-            &theirs_tree,
-            None,
-        )
-        .map_err(|e| GitError::Other(format!("merge_trees reconstruct failed: {}", e.message())))?;
-    Ok(Some(index))
-}
-
-/// Every path the in-progress operation wrote into the working tree.
-///
-/// That is the diff between the pre-op `tree` and the operation-result index
-/// (cleanly-merged modifications, additions and deletions), plus the session's
-/// conflicting paths — those carry only stage 1/2/3 entries, so they can be
-/// reported inconsistently by a tree↔index diff and are added explicitly.
-///
-/// Non-UTF-8 paths are dropped: they cannot be expressed as a libgit2
-/// pathspec.  (Tracked separately as issue #293 — the whole codebase loses
-/// non-UTF-8 paths today; this function does not make that worse.)
-fn op_touched_paths(
-    repo: &Repository,
-    tree: &git2::Tree<'_>,
-    session: &ConflictSession,
-) -> Result<Vec<String>, GitError> {
-    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-
-    let diff = repo
-        .diff_tree_to_index(Some(tree), None, None)
-        .map_err(|e| {
-            GitError::Other(format!("diff pre-op tree → index failed: {}", e.message()))
-        })?;
-    for delta in diff.deltas() {
-        for file in [delta.old_file(), delta.new_file()] {
-            if let Some(p) = file.path().and_then(|p| p.to_str()) {
-                paths.insert(p.to_string());
-            }
-        }
-    }
-
-    for file in &session.files {
-        if let Some(p) = file.path.to_str() {
-            paths.insert(p.to_string());
-        }
-    }
-
-    Ok(paths.into_iter().collect())
-}
-
 /// Check `tree` out over exactly `paths` (and nothing else), removing paths the
 /// tree does not contain.
 ///
@@ -788,5 +566,165 @@ fn read_orig_head(repo: &Repository) -> Option<String> {
         None
     } else {
         Some(sha.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// The resolution-buffer autosave directory is process-global, so these
+    /// serialize and point it at their own tempdir (the convention the crate's
+    /// oplog tests already follow).
+    static ENV: Mutex<()> = Mutex::new(());
+
+    struct Isolated {
+        _lock: MutexGuard<'static, ()>,
+        _log: tempfile::TempDir,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl Isolated {
+        fn new() -> Self {
+            let lock = ENV.lock().unwrap_or_else(|error| error.into_inner());
+            let log = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("KAGI_LOG_DIR");
+            std::env::set_var("KAGI_LOG_DIR", log.path());
+            Self {
+                _lock: lock,
+                _log: log,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for Isolated {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("KAGI_LOG_DIR", value),
+                None => std::env::remove_var("KAGI_LOG_DIR"),
+            }
+        }
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .status()
+            .expect("git");
+        // `rebase` exits non-zero on the conflict this fixture wants.
+        let _ = status;
+    }
+
+    fn rev_parse(dir: &Path, rev: &str) -> String {
+        let out = Command::new("git")
+            .args(["rev-parse", rev])
+            .current_dir(dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("rev-parse");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A rebase stopped on a conflict, plus an unrelated `refs/heads/protected`.
+    fn rebase_conflict_with_a_bystander_branch() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main", "."]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(dir.join("file.txt"), "base\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+        git(dir, &["branch", "protected"]);
+        git(dir, &["checkout", "-q", "-b", "side"]);
+        std::fs::write(dir.join("file.txt"), "SIDE\n").unwrap();
+        git(dir, &["commit", "-qam", "side"]);
+        git(dir, &["checkout", "-q", "main"]);
+        std::fs::write(dir.join("file.txt"), "MAIN\n").unwrap();
+        git(dir, &["commit", "-qam", "main"]);
+        git(dir, &["checkout", "-q", "side"]);
+        git(dir, &["rebase", "main"]);
+        tmp
+    }
+
+    /// #707 4th review: the ref an abort rewrites is the session's, never the
+    /// caller's. A well-formed expectation naming an unrelated branch — whose
+    /// current OID the caller does know, so the compare-and-swap itself would
+    /// succeed — must be refused before anything is written. (The type and this
+    /// entry point are crate-private for the same reason; this is the belt.)
+    #[test]
+    fn a_forged_expectation_cannot_choose_which_ref_the_abort_rewrites() {
+        let _isolated = Isolated::new();
+        let tmp = rebase_conflict_with_a_bystander_branch();
+        let dir = tmp.path();
+        let repo = Repository::open(dir).unwrap();
+        let Some(session) = crate::conflicts::detect_conflict_session(&repo) else {
+            // git is too old / behaves differently: nothing to assert about.
+            return;
+        };
+        assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+        let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+        let protected_before = rev_parse(dir, "refs/heads/protected");
+        let side_before = rev_parse(dir, "refs/heads/side");
+        let head_before = rev_parse(dir, "HEAD");
+        let worktree_before = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+        let index_before = std::fs::read(dir.join(".git/index")).unwrap();
+
+        let forged = RestoreRef {
+            name: "refs/heads/protected".to_string(),
+            target: Some(protected_before.clone()),
+        };
+        let error =
+            execute_conflict_abort_expecting(&repo, &session, &buffer, Some(&forged), |_| {})
+                .expect_err("a caller must not name the ref an abort rewrites");
+        assert!(
+            format!("{error}").contains("refs/heads/protected"),
+            "the refusal names the ref it would not touch: {error}"
+        );
+
+        assert_eq!(rev_parse(dir, "refs/heads/protected"), protected_before);
+        assert_eq!(rev_parse(dir, "refs/heads/side"), side_before);
+        assert_eq!(rev_parse(dir, "HEAD"), head_before);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+            worktree_before
+        );
+        assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index_before);
+        assert!(dir.join(".git/rebase-merge").exists());
+    }
+
+    /// The other half: an expectation for the right ref but a stale OID is a
+    /// compare-and-swap failure, not a silent overwrite.
+    #[test]
+    fn a_stale_expected_target_refuses_rather_than_overwriting() {
+        let _isolated = Isolated::new();
+        let tmp = rebase_conflict_with_a_bystander_branch();
+        let dir = tmp.path();
+        let repo = Repository::open(dir).unwrap();
+        let Some(session) = crate::conflicts::detect_conflict_session(&repo) else {
+            return;
+        };
+        let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        let stale = RestoreRef {
+            name: "refs/heads/side".to_string(),
+            target: Some(rev_parse(dir, "refs/heads/protected")),
+        };
+        let side_before = rev_parse(dir, "refs/heads/side");
+
+        let error =
+            execute_conflict_abort_expecting(&repo, &session, &buffer, Some(&stale), |_| {})
+                .expect_err("the swap must not succeed against the wrong old value");
+        assert!(format!("{error}").contains("refs/heads/side"), "{error}");
+        assert_eq!(rev_parse(dir, "refs/heads/side"), side_before);
     }
 }

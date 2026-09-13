@@ -889,16 +889,12 @@ fn an_abort_is_refused_when_its_restore_target_moved_under_the_confirmation() {
 fn a_rebase_abort_is_refused_at_the_boundary_when_its_branch_moved() {
     let fixture = Fixture::rebase();
     let mut sessions = Sessions::new();
-    let (owner, snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let (owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
     let frozen = Backend::conflict_abort_request(&fixture.in_progress());
     let index_before = std::fs::read(fixture.repo.join(".git/index")).unwrap();
     let worktree_before = std::fs::read_to_string(fixture.repo.join("file.txt")).unwrap();
-    let restore = kagi_git::restore_ref(
-        &git2::Repository::open(&fixture.repo).unwrap(),
-        &snapshot.session,
-    )
-    .expect("a rebase restores a branch");
-    assert_eq!(restore.name, "refs/heads/side");
+    // `rebase-merge/head-name` names the branch this abort would restore.
+    let destination = "refs/heads/side";
 
     // Only the destination branch moves.
     let elsewhere = String::from_utf8(
@@ -912,10 +908,7 @@ fn a_rebase_abort_is_refused_at_the_boundary_when_its_branch_moved() {
     .unwrap()
     .trim()
     .to_string();
-    assert!(git(
-        &fixture.repo,
-        &["update-ref", &restore.name, &elsewhere]
-    ));
+    assert!(git(&fixture.repo, &["update-ref", destination, &elsewhere]));
 
     let fresh = Backend::open(&fixture.repo)
         .unwrap()
@@ -946,7 +939,7 @@ fn a_rebase_abort_is_refused_at_the_boundary_when_its_branch_moved() {
     assert_eq!(
         String::from_utf8(
             Command::new("git")
-                .args(["rev-parse", &restore.name])
+                .args(["rev-parse", destination])
                 .current_dir(&fixture.repo)
                 .output()
                 .unwrap()

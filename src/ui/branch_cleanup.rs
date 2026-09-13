@@ -94,13 +94,13 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Recompute the Branch Cleanup table for the current repository on a
-    /// background thread, updating the frozen owner's read and evidence when
-    /// it finishes. A newer scan for that owner supersedes this result.
+    /// Recompute cleanup in the background, updating its frozen owner only
+    /// while both the request token and captured read revision remain current.
     pub fn start_branch_cleanup_scan(&mut self, cx: &mut Context<Self>) {
         let (Some(repo_path), Some(owner)) = (self.repo_path.clone(), self.active_session()) else {
             return;
         };
+        let read_key = self.reads.current_key(owner);
         let Some(ui) = self.ui.get_mut(&owner) else {
             return;
         };
@@ -115,12 +115,8 @@ impl KagiApp {
             let rows = backend
                 .collect_branch_cleanup(now)
                 .map_err(|e| e.to_string())?;
-            // Merged PRs ride along on the same background thread. The rows are
-            // branches that are already merged, so their PRs are never in the
-            // sidebar's *open* list — the two questions need two calls. Empty
-            // when `gh` is unavailable, which just leaves the columns blank;
-            // a *failed* fetch stays an error (#506) so the blank column is
-            // never read as "this branch was merged without a PR".
+            // Merged rows cannot use the sidebar's open-PR evidence. A failed
+            // fetch remains an error (#506); unavailable `gh` leaves it empty.
             let prs = if kagi_git::github::gh_available() {
                 backend.list_merged_prs(MERGED_PR_LIMIT)
             } else {
@@ -137,6 +133,7 @@ impl KagiApp {
             let result = task.await;
             let _ = app.update(acx, |app, cx| {
                 let owner_is_active = app.active_session() == Some(owner);
+                let read_is_fresh = app.reads.is_fresh(read_key);
                 let Some(ui) = app.ui.get_mut(&owner) else {
                     return;
                 };
@@ -144,11 +141,16 @@ impl KagiApp {
                     return;
                 }
                 ui.cleanup_scanning = false;
+                if !read_is_fresh {
+                    if owner_is_active {
+                        cx.notify();
+                    }
+                    return;
+                }
                 match result {
                     Ok((rows, prs)) => {
-                        // #506: keep the last good PR evidence when the fetch
-                        // failed, and say so — an empty column must not pass
-                        // for "fetched fine, no PR".
+                        // #506: retain last-good evidence when fetching fails;
+                        // an empty column must not imply "no PR".
                         let fetched = kagi_git::github::apply_pr_fetch(&mut ui.cleanup_prs, prs);
                         ui.cleanup_prs_stale = match &fetched.error {
                             Some(e) if !e.is_unavailable() => {
@@ -163,9 +165,7 @@ impl KagiApp {
                                 rows.iter().map(|r| r.name.as_str()).collect();
                             app.cleanup_selected.retain(|n| live.contains(n.as_str()));
                         }
-                        // Same contract line ADR-0128 originally emitted from
-                        // build_tab_view — moved here since this is where the
-                        // counts are actually known now.
+                        // ADR-0128's scan-count contract belongs at settlement.
                         use kagi_git::ops::MergedBranchStatus as S;
                         let full = rows.iter().filter(|r| r.status == S::FullyMerged).count();
                         let squash = rows

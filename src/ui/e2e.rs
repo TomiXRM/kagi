@@ -482,12 +482,15 @@ type CleanupScanResult = Result<
 >;
 #[cfg(feature = "gui-e2e")]
 type EcosystemMineResult = Result<kagi_domain::hotspot::RawEcosystem, String>;
+#[cfg(feature = "gui-e2e")]
+type SquashScanResult = Result<Vec<kagi_git::ops::SquashLink>, kagi_git::GitError>;
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static GITHUB_PR_FETCH: RefCell<Option<gpui::Task<PrFetchResult>>> = const { RefCell::new(None) };
     static CLEANUP_SCAN: RefCell<Option<gpui::Task<CleanupScanResult>>> = const { RefCell::new(None) };
     static ECOSYSTEM_MINE: RefCell<Option<gpui::Task<EcosystemMineResult>>> = const { RefCell::new(None) };
+    static SQUASH_SCAN: RefCell<Option<gpui::Task<SquashScanResult>>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -518,4 +521,14 @@ pub fn queue_ecosystem_mine(task: gpui::Task<EcosystemMineResult>) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_ecosystem_mine() -> Option<gpui::Task<EcosystemMineResult>> {
     ECOSYSTEM_MINE.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn queue_squash_scan(task: gpui::Task<SquashScanResult>) {
+    SQUASH_SCAN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_squash_scan() -> Option<gpui::Task<SquashScanResult>> {
+    SQUASH_SCAN.with(|slot| slot.borrow_mut().take())
 }

@@ -124,6 +124,10 @@ mod conflict_evidence_owner;
 mod ecosystem_evidence_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/squash_evidence_owner.rs"]
+mod squash_evidence_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
 mod worktree_graph;
 
@@ -879,6 +883,14 @@ mod macos {
             (
                 "cleanup_evidence_superseded",
                 Box::new(crate::cleanup_evidence_owner::scenario_cleanup_evidence_superseded),
+            ),
+            (
+                "cleanup_evidence_read_revision",
+                Box::new(crate::cleanup_evidence_owner::scenario_cleanup_evidence_read_revision),
+            ),
+            (
+                "squash_evidence_read_revision",
+                Box::new(crate::squash_evidence_owner::scenario_squash_evidence_read_revision),
             ),
             (
                 "conflict_detector_owner_guard",

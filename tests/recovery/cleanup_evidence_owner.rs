@@ -1,6 +1,6 @@
 //! #643 S2b: cleanup scans settle against their frozen session and request token.
 use crate::evidence_support::{deferred, Reply};
-use crate::macos::{build_fixture, mount, unmount};
+use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::VisualTestAppContext;
 use kagi::ui::e2e;
 use kagi_domain::branch_cleanup::{BranchCleanupRow, MergedBranchStatus};
@@ -219,6 +219,211 @@ pub fn scenario_cleanup_evidence_superseded(cx: &mut VisualTestAppContext) {
         assert!(
             !app.ui[&owner].cleanup_prs_stale,
             "successful newest PR evidence remained marked stale",
+        );
+    });
+    unmount(cx, app, window);
+}
+
+pub fn scenario_cleanup_evidence_read_revision(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    let (owner_a, owner_b) = app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b, cx), "open B");
+        (app.tabs[0].session, app.tabs[1].session)
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+
+    let stale = queue_scan(cx);
+    let evidence = vec![pr(70, "last-good")];
+    let (scan_revision, scan_gen, old_read_rows) = app.update(cx, |app, cx| {
+        app.ui.get_mut(&owner_a).unwrap().cleanup_prs = evidence.clone();
+        app.start_branch_cleanup_scan(cx);
+        (
+            app.reads.revision(owner_a),
+            app.ui[&owner_a].cleanup_gen,
+            app.reads
+                .get(Some(owner_a))
+                .rows
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+        )
+    });
+
+    std::fs::write(repo_a.join("read-revision.txt"), "new read\n").unwrap();
+    git(&repo_a, &["add", "read-revision.txt"]);
+    git(&repo_a, &["commit", "-q", "-m", "advance cleanup read"]);
+    let launched_revision = app.update(cx, |app, cx| {
+        app.reload_async(false, cx);
+        let revision = app.reads.revision(owner_a);
+        assert!(
+            revision > scan_revision,
+            "reload_async did not advance A's read revision"
+        );
+        assert_eq!(
+            app.ui[&owner_a].cleanup_gen, scan_gen,
+            "background read incorrectly advanced the cleanup generation"
+        );
+        app.switch_repo(1, cx);
+        assert_eq!(
+            app.active_session(),
+            Some(owner_b),
+            "A must depart before accept"
+        );
+        revision
+    });
+    cx.run_until_parked();
+
+    let (fresh_read_rows, fresh_cleanup_rows) = app.update(cx, |app, _| {
+        assert_eq!(
+            app.active_session(),
+            Some(owner_b),
+            "A's new read did not accept in the background"
+        );
+        assert_eq!(
+            app.reads.revision(owner_a),
+            launched_revision,
+            "the accepted A read is not the launched revision"
+        );
+        assert_eq!(
+            app.ui[&owner_a].cleanup_gen, scan_gen,
+            "background acceptance hid the missing revision guard behind a new generation"
+        );
+        let fresh_read_rows = app
+            .reads
+            .get(Some(owner_a))
+            .rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>();
+        assert_ne!(
+            fresh_read_rows, old_read_rows,
+            "real commit did not replace A's read rows"
+        );
+        assert!(
+            app.reads
+                .get(Some(owner_a))
+                .rows
+                .iter()
+                .any(|row| row.summary == "advance cleanup read"),
+            "A's accepted background read does not contain the real commit"
+        );
+        assert_eq!(
+            app.ui[&owner_a].cleanup_prs, evidence,
+            "accepting the read changed last-good cleanup PR evidence"
+        );
+        assert!(
+            app.ui[&owner_a].cleanup_scanning,
+            "A's held scan did not remain in flight"
+        );
+        (
+            fresh_read_rows,
+            row_names(&app.reads.get(Some(owner_a)).cleanup_rows)
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+        )
+    });
+
+    stale.send(Ok((
+        vec![row("obsolete-deletable")],
+        Ok(vec![pr(71, "obsolete-deletable")]),
+    )));
+    cx.run_until_parked();
+    app.update(cx, |app, _| {
+        assert_eq!(
+            app.active_session(),
+            Some(owner_b),
+            "stale completion changed the active owner"
+        );
+        assert_eq!(
+            app.reads
+                .get(Some(owner_a))
+                .rows
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+            fresh_read_rows,
+            "stale cleanup completion replaced the accepted read rows"
+        );
+        assert_eq!(
+            row_names(&app.reads.get(Some(owner_a)).cleanup_rows),
+            fresh_cleanup_rows
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            "stale cleanup completion overwrote fresh cleanup rows"
+        );
+        assert_eq!(
+            app.ui[&owner_a].cleanup_prs, evidence,
+            "stale cleanup completion overwrote last-good PR evidence"
+        );
+        assert!(
+            !app.ui[&owner_a].cleanup_scanning,
+            "the stale request did not settle its own spinner"
+        );
+    });
+
+    // Inspect the real selection and delete consumers before the switch-triggered
+    // refresh gets an executor turn to replace the read again.
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        assert_eq!(
+            app.reads
+                .get(Some(owner_a))
+                .rows
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+            fresh_read_rows,
+            "returning to A did not expose the accepted read"
+        );
+        assert!(
+            !app.view()
+                .cleanup_rows
+                .iter()
+                .any(|row| row.name == "obsolete-deletable"),
+            "obsolete deletable candidate became visible after returning to A"
+        );
+        app.toggle_cleanup_select_all(cx);
+        assert!(
+            app.cleanup_selected.is_empty(),
+            "obsolete candidate was available to cleanup selection"
+        );
+        app.delete_selected_cleanup_branches(cx);
+        assert!(
+            app.branch_cleanup_modal().is_none(),
+            "obsolete candidate reached the delete-plan consumer"
+        );
+    });
+    cx.run_until_parked();
+
+    let fresh = queue_scan(cx);
+    app.update(cx, |app, cx| app.start_branch_cleanup_scan(cx));
+    fresh.send(Ok((
+        vec![row("current-deletable")],
+        Ok(vec![pr(72, "current-deletable")]),
+    )));
+    cx.run_until_parked();
+    app.update(cx, |app, _| {
+        assert_eq!(
+            row_names(&app.view().cleanup_rows),
+            vec!["current-deletable"],
+            "a scan for the current read revision did not settle"
+        );
+        assert_eq!(
+            app.ui().cleanup_prs,
+            vec![pr(72, "current-deletable")],
+            "fresh cleanup PR evidence did not settle"
+        );
+        assert!(
+            !app.ui().cleanup_scanning,
+            "fresh cleanup scan remained marked in flight"
         );
     });
     unmount(cx, app, window);

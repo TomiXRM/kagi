@@ -121,6 +121,17 @@ The current suite covers:
   can finish; Analyze observes the existing `copy_diagnostic` clipboard output.
   Drain switch-triggered reads before setting an unrelated-tab sentinel, so a
   normal revalidation cannot masquerade as a foreign completion.
+- scan read-revision safety (`tests/recovery/cleanup_evidence_owner.rs`,
+  `tests/recovery/squash_evidence_owner.rs`):
+  `KAGI_GUI_E2E_ONLY=cleanup_evidence_read_revision,squash_evidence_read_revision`.
+  Both hold transport completion, create a real commit, and accept a new read
+  while its owner is background. Cleanup checks rows, PR evidence, and the
+  selection/delete-plan consumers on return. Squash compares commit/lane/edge
+  signatures after returning to the owner, then proves a fresh scan still draws.
+  Its test observer holds render-driven scan re-arming to model completion
+  before the next scan launches; it never changes generation or read revision.
+  Remove each `Reads::is_fresh` guard independently: only that scan's revision
+  scenario must fail while the sibling and existing ownership scenarios pass.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

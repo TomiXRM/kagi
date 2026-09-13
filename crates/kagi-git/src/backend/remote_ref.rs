@@ -336,6 +336,16 @@ impl Backend {
             .current_dir(workdir)
             .output()
             .map_err(|e| GitError::Other(format!("gh: {e}")))?;
+        // A failed command is not an observation, whatever it left on stdout:
+        // a `gh` that prints a perfectly shaped `"ref": null` and exits 1 has
+        // not read the repository (#701 review 6).
+        if !out.status.success() {
+            return Err(unreadable(&format!(
+                "gh exited {} ({})",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
         let body: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| {
             unreadable(&format!(
                 "no answer ({})",

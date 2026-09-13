@@ -1350,10 +1350,14 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
     // "Could not ask" is not "gone" (ADR-0177). A repository the token cannot
     // see answers with GraphQL errors and a null repository — the shape a REST
     // 404 would have flattened into "the ref is absent".
+    // The last of these is the one a structural check alone cannot catch: a
+    // perfectly shaped "the ref is not there" that the command *failed* to
+    // establish. A failed read is not an observation (#701 review 6).
     for body in [
         r#"echo '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND"}]}'; exit 1"#,
         r#"echo '{"data":{"repository":null}}'"#,
         "echo 'gh: HTTP 500' >&2; exit 1",
+        r#"echo '{"data":{"repository":{"ref":null}}}'; exit 1"#,
     ] {
         let _gh = FakeGh::serving_ref(&bin, &log, body);
         assert!(

@@ -1260,11 +1260,26 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             .detach();
         },
     );
-    // #704: Abort is not here any more. The header operation strip is the one
-    // control, and it is on screen in conflict mode too — a second button
-    // calling the same action only reintroduced the question of which one is
-    // canonical. (The strip cannot be hidden here either: that would put the
-    // primary escape back behind this entity's lifetime, which is the bug.)
+    // Abort dispatches `open_conflict_abort_modal` — exactly the action the
+    // header operation strip dispatches, and the strip is hidden while this
+    // editor is mounted (owner ruling on top of #707), so there is one button
+    // on screen and one execution path behind it. Nothing is armed here: the
+    // two stages are the plan confirmation's, so the escape does not depend on
+    // this entity surviving it, which is the #704 bug.
+    let abort_handler = cx.listener(
+        |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
+            let weak_app = view.app.clone();
+            cx.spawn_in(window, async move |_view, acx| {
+                let _ =
+                    weak_app.update_in(acx, |app, _window, cx| app.open_conflict_abort_modal(cx));
+            })
+            .detach();
+        },
+    );
+
+    // Continue (filled, gated) + Abort (danger) on one row. The buttons size to
+    // content (gpui-component Buttons are flex_shrink_0), so wrap rather than
+    // overflow the fixed-width dashboard (T-CONFLICT-DASH-023).
     let primary_row = div()
         .flex()
         .flex_row()
@@ -1280,6 +1295,16 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
                 None
             },
             cx,
+        ))
+        .child(super::e2e::measure_control(
+            "conflict-abort",
+            action_button(
+                Msg::ConflictAbort.t(),
+                theme().color_blocker,
+                true,
+                Some(abort_handler),
+                cx,
+            ),
         ));
 
     let mut col = div()

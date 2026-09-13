@@ -699,6 +699,10 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_operation_strip_startup),
             ),
             (
+                "operation_strip_hidden_in_editor",
+                Box::new(crate::app_conflict::scenario_operation_strip_hidden_in_editor),
+            ),
+            (
                 "operation_strip_abort",
                 Box::new(crate::app_conflict::scenario_operation_strip_abort),
             ),

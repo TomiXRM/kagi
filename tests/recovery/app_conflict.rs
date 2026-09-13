@@ -267,6 +267,57 @@ pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS operation strip visible at startup on a stuck MERGING repo");
 }
 
+/// The owner ruling on top of #707: while the conflict editor is mounted the
+/// strip under the toolbar is redundant, so it is not drawn there and the
+/// dashboard carries the Abort — the same `open_conflict_abort_modal`, the same
+/// two stages. Admission is unchanged: the read model still says an operation is
+/// in progress, only the control's placement moved.
+pub fn scenario_operation_strip_hidden_in_editor(cx: &mut VisualTestAppContext) {
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict.is_some()),
+        "precondition: the conflict editor is mounted"
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).view().operation.is_some()),
+        "admission is still the read model's operation, editor or no editor"
+    );
+
+    // Forget the last frame's bounds, so the next draw is what decides.
+    let id = window.window_id();
+    e2e::clear_control_bounds(id, "operation-strip");
+    e2e::clear_control_bounds(id, "operation-strip-abort");
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        e2e::control_bounds(id, "operation-strip").is_none(),
+        "the strip is redundant while the editor is mounted"
+    );
+    assert!(
+        e2e::control_bounds(id, "operation-strip-abort").is_none(),
+        "so its Abort is not on screen either"
+    );
+
+    // …and the dashboard's Abort opens exactly the same confirmation.
+    click_control(cx, window, "conflict-abort");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
+        "the dashboard Abort opens the plan confirmation"
+    );
+    assert!(
+        repo.join(".git/MERGE_HEAD").exists(),
+        "and the first stage mutates nothing"
+    );
+    app.update(cx, |app, _| app.cancel_conflict_abort());
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS strip hidden in the editor; dashboard Abort opens the same modal");
+}
+
 /// #704 review P1: the legacy conflict detector is keyed on the repository
 /// path alone — no `SessionId`, no read revision — so a `Cleared` it observed
 /// before a newer read can marshal back after that read was accepted. While it

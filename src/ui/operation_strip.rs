@@ -8,6 +8,13 @@
 //! when the conflict editor does. ADR-0135 removed the old permanent banner;
 //! this is not that banner back, it is the operation's own row and it exists
 //! only while an operation does.
+//!
+//! The one place it is not drawn is while the conflict editor is mounted
+//! (owner ruling on top of #707): there the dashboard's own Abort sits with
+//! Continue / Next conflict and dispatches `open_conflict_abort_modal` — this
+//! module's action, unchanged. Admission never moves: it is
+//! `TabViewState::operation` in both placements, so an abort is reachable
+//! whether or not a `ConflictView` exists, which is what #704 was about.
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 

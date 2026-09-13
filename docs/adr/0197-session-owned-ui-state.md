@@ -17,10 +17,12 @@ ADR-0183 は **read model** の所有を解決した。`KagiApp::reads: app::Rea
   （`selected` / `diff_caches` / `wip_diffstat` / `last_working_status` / `github_*` /
   `cleanup_prs*` / `pr_menu` / repo-scoped modal / `conflict*` / `operation_history` /
   `history_seed_attempted`）と `WorkspaceItem::dispose` 9 本を **破棄**する。
-- per-repo 状態のうち 7 つが **path stamp**: `github_prs_for`、`conflict_detected_for`、
+- per-repo 状態のうち 6 つが **path stamp**: `github_prs_for`、`conflict_detected_for`、
   `smart_commit_detected_for`、`ecosystem_inflight`、`fetch_in_flight_repo`、
-  `terminal_sessions: HashMap<PathBuf, _>`、`file_menu`。ADR-0196 決定 3 は path 文字列を
+  `terminal_sessions: HashMap<PathBuf, _>`。ADR-0196 決定 3 は path 文字列を
   locator 以外の identity に使うことを禁じている。
+  （`file_menu` の `PathBuf` は path stamp では**ない** — Discard / File History の対象を
+  行 index の変動から守る repository-relative file key であり、消す対象ではない。決定 1 参照。）
 - `switch_generation` の実 consumer は 2 箇所のみ（`operations/branch.rs`、`tabs.rs` の
   remote refresh）。他は doc comment。
 
@@ -60,7 +62,8 @@ field を「型」や「描画位置」ではなく、**意味上の owner と�
 | `active_modal` | window-global 1 slot | ADR-0093 の「同時に 1 つ」を tab workspace retention より強い不変として残す。repo-scoped variant は frozen `SessionId` / `Attachment` を持ち、tab departure では park せず閉じる |
 | `modal_section_overrides` | window-global | static section id に対する chrome preference。`modal_list_scroll` は tab ではなく現在の modal slot に従属させ、open / replace で reset |
 | `fetch_in_flight` + `fetch_in_flight_repo` | operation-owned | fetch は既に `reserve_write("fetch", …)` で lease を取る（`commands.rs` / `remote_branch.rs`）。残件は bool + path の routing なので `Option<FetchFlight { owner, waiters }>` に型を与え、path 比較を消す。`TabUiState` へ入れると close が実行 lifecycle を消せるので不可 |
-| `smart_commit` | 分割 | provider / opt-in / model / lang は settings、CLI・Ollama availability は process capability。`smart_commit_detected_for` は owner ではなく memoization key で、probe 入力（PATH / Ollama host）は repo 非依存なので global probe revision へ縮約する |
+| `smart_commit` | 分割 | provider / opt-in / model / lang は settings、`ollama_available` / `detected_models` / `claude_available` / `codex_available` は process capability。`smart_commit_detected_for` は owner ではなく memoization key で、probe 入力（PATH / Ollama host）は repo 非依存なので global probe revision へ縮約する。**残る一時状態には owner を与える**: `modal` は `ActiveModal` へ統合（ADR-0093 の 1 slot に従う）、`generating` / `status` は生成を始めた session を凍結して持つ session-owned state にする。今は `workspace.rs` が root の値を active な `CommitPanelView` へ複製し、`operations/commit.rs` の completion も root を書き換えるので、S5 で pane を retain した後にこれを放置すると、生成中に B へ切り替えた B が A の spinner / status を表示し、A で開いた modal の操作が B の panel に向きうる |
+| `file_menu` | per-session | `PathBuf` は repository identity の代用では**なく**、Discard / File History の対象を行 index の変動後も一意に保つ file key（#286）。S2 で消すのは path stamp であってこの対象 path ではない。`{ owner: SessionId, path: PathBuf, anchor }` のように **owner を足し、path は保持する** |
 
 ## 決定 2 — store の形と唯一の disposal seam
 
@@ -137,7 +140,7 @@ transition test に分離する。観測できないことを理由に受け入�
 | slice | 内容 |
 | --- | --- |
 | S1 骨格 | store と lifecycle API（attach / reattach / detach を `release_session` 1 本へ）、`selected` だけ移管、leak matrix harness の最初の行 |
-| S2 identity / callback cutover | `github_*`、cleanup、conflict detector、ecosystem、fetch flight、smart-commit probe を `SessionId` / request token / global revision に分類し直し、path stamp と active-root callback を消す。**`switch_generation` もここで削除** |
+| S2 identity / callback cutover | `github_*`、cleanup、conflict detector、ecosystem、fetch flight、smart-commit probe を `SessionId` / request token / global revision に分類し直し、path stamp と active-root callback を消す（`file_menu` の対象 path は消さず owner を足す）。**`switch_generation` もここで削除** |
 | S3 選択と位置 | scroll handle 群、`commit_limit`、`branch_groups_collapsed` |
 | S4 read cache と history | `diff_caches`、`wip_diffstat`、`last_working_status`、`operation_history`、history seed |
 | S5 pane / resource retention | 決定 3 を `WorkspaceItem` に適用。`dispose(&mut KagiApp)` を session state の close-time disposal へ狭める |

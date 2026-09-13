@@ -280,54 +280,87 @@ impl Backend {
     }
 
     /// The OID `base_repo` (`<host>/<owner>/<repo>`) currently has for
-    /// `refs/heads/<branch>`, `None` when GitHub answers 404, and `Err` for
-    /// every other answer — including "could not ask", which must never pass
-    /// for "gone" (ADR-0177).
+    /// `refs/heads/<branch>`, `None` **only** when GitHub answered that the
+    /// repository is readable and that exact ref is not in it, and `Err` for
+    /// every other answer.
     ///
     /// The repository is addressed directly, so no remote name, no
     /// `remote.<name>.url` and no `url.<base>.insteadOf` sits between the
-    /// frozen promise and what is read (#701 final review 4). `workdir` is
-    /// only `gh`'s working directory, for its auth and host config.
+    /// frozen promise and what is read (#701 review 4). `workdir` is only
+    /// `gh`'s working directory, for its auth and host config.
+    ///
+    /// GraphQL with **variables**, not the REST refs endpoint, because absence
+    /// has to be proof (#701 review 5):
+    ///
+    /// - The branch never enters a URL path. `feature#x` is a valid branch
+    ///   name and `#` is a fragment delimiter, so
+    ///   `repos/o/r/git/ref/heads/feature#x` is sent as `…/heads/feature` — a
+    ///   404 for a ref nobody asked about, read as the absence of one that is
+    ///   still there.
+    /// - A REST 404 does not mean "no such ref": an invisible repository, lost
+    ///   access, or a token without `Contents: read` answers 404 too. A
+    ///   preceding `gh pr view` proves nothing about it — different API,
+    ///   different permission. So absence is only ever the *structured*
+    ///   answer: no `errors`, a non-null `repository`, and a null `ref`.
     pub fn read_github_ref(
         workdir: &Path,
         base_repo: &str,
         branch: &str,
     ) -> Result<Option<String>, GitError> {
+        const QUERY: &str = "query($owner:String!,$name:String!,$ref:String!)\
+{repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{oid}}}}";
+        let unreadable =
+            |what: &str| GitError::Other(format!("gh api graphql {base_repo} {branch}: {what}"));
         let (host, owner_repo) = base_repo
+            .split_once('/')
+            .ok_or_else(|| GitError::Other(format!("not a repository identity: {base_repo}")))?;
+        let (owner, name) = owner_repo
             .split_once('/')
             .ok_or_else(|| GitError::Other(format!("not a repository identity: {base_repo}")))?;
         ops::check_operand("branch", branch)?;
         let out = crate::cli::gh_command()
             .args([
                 "api",
+                "graphql",
                 "--hostname",
                 host,
-                &format!("repos/{owner_repo}/git/ref/heads/{branch}"),
+                "-f",
+                &format!("query={QUERY}"),
+                "-f",
+                &format!("owner={owner}"),
+                "-f",
+                &format!("name={name}"),
+                "-f",
+                &format!("ref=refs/heads/{branch}"),
             ])
             .current_dir(workdir)
             .output()
             .map_err(|e| GitError::Other(format!("gh: {e}")))?;
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        if !out.status.success() {
-            // 404 is an answer: the branch is not there. Anything else — no
-            // `gh`, no auth, no network, a 5xx — is not.
-            return if stderr.contains("HTTP 404") {
-                Ok(None)
-            } else {
-                Err(GitError::Other(format!(
-                    "gh api {base_repo} heads/{branch}: {}",
-                    stderr.trim()
-                )))
-            };
+        let body: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| {
+            unreadable(&format!(
+                "no answer ({})",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        })?;
+        if body.get("errors").is_some() {
+            return Err(unreadable(&body["errors"].to_string()));
         }
-        let value: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout))
-            .map_err(|e| GitError::Other(format!("gh api json: {e}")))?;
-        value
-            .get("object")
-            .and_then(|o| o.get("sha"))
-            .and_then(|s| s.as_str())
-            .map(|sha| Some(sha.to_string()))
-            .ok_or_else(|| GitError::Other(format!("gh api {base_repo}: no object.sha")))
+        // A null repository is "not visible to this token", not "empty".
+        let repository = body
+            .get("data")
+            .and_then(|d| d.get("repository"))
+            .filter(|r| !r.is_null())
+            .ok_or_else(|| unreadable("repository not readable"))?;
+        match repository.get("ref") {
+            Some(r) if r.is_null() => Ok(None),
+            Some(r) => r
+                .get("target")
+                .and_then(|t| t.get("oid"))
+                .and_then(|o| o.as_str())
+                .map(|oid| Some(oid.to_string()))
+                .ok_or_else(|| unreadable("ref without an oid")),
+            None => Err(unreadable("no ref field")),
+        }
     }
 
     /// The OID a remote currently has for `refname`, or `None` when the remote

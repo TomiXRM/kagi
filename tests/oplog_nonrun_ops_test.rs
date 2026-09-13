@@ -990,32 +990,40 @@ impl FakeGh {
         restore
     }
 
-    /// A `gh` that answers *per repository*, logging every argv to `log`.
+    /// A `gh` that answers *per repository and per exact ref*, logging every
+    /// argv to `log`.
     ///
-    /// [`BASE_REPO`] — the one the plan froze — reports the PR merged and its
-    /// head branch present or gone as `branch_present` says. **Any other**
-    /// repository, and any question that names none, gets the false-confirm
-    /// shape: merged, branch 404. So a read that is not pinned to the frozen
-    /// identity resolves, and a pinned one cannot (#701 review 4).
+    /// [`BASE_REPO`] — the one the plan froze — reports the PR merged, and the
+    /// GraphQL ref query answers for [`HEAD_BRANCH`] alone: present, or the
+    /// structured `"ref": null`. **Any other** repository, ref, or host gets
+    /// the false-confirm shape — merged, and a 404 — so a read that is not
+    /// pinned to the frozen identity, or that mangles the branch into a URL,
+    /// resolves; a pinned structured one cannot (#701 reviews 4 and 5).
     fn serving(bin: &Path, log: &Path, branch_present: bool) -> Self {
-        let sha = if branch_present {
-            r#"echo '{"object":{"sha":"1111111111111111111111111111111111111111"}}'"#
+        let answer = if branch_present {
+            r#"{"data":{"repository":{"ref":{"target":{"oid":"1111111111111111111111111111111111111111"}}}}}"#
         } else {
-            "echo 'gh: Not Found (HTTP 404)' >&2; exit 1"
+            r#"{"data":{"repository":{"ref":null}}}"#
         };
+        Self::serving_ref(bin, log, &format!("echo '{answer}'"))
+    }
+
+    /// As [`Self::serving`], but the ref query answers with `body` — for the
+    /// shapes that are *not* an answer: a GraphQL error, a null repository.
+    fn serving_ref(bin: &Path, log: &Path, body: &str) -> Self {
         Self::answering(
             bin,
             &format!(
                 r#"echo "$*" >> {log}
 case "$*" in
-  *"-R {BASE_REPO}"*)                 echo '{{"mergedAt":"2026-09-07T00:00:00Z"}}' ;;
-  *"repos/acme/widgets/git/ref/"*)    if echo "$*" | grep -q -- '--hostname ghe.example'; then
-                                        {sha}
-                                      else
-                                        echo 'gh: Not Found (HTTP 404)' >&2; exit 1
-                                      fi ;;
-  "pr view"*)                         echo '{{"mergedAt":"2026-09-07T00:00:00Z"}}' ;;
-  *)                                  echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+  *"-R {BASE_REPO}"*)
+      echo '{{"mergedAt":"2026-09-07T00:00:00Z"}}' ;;
+  *graphql*"--hostname ghe.example"*"owner=acme"*"name=widgets"*"ref=refs/heads/{HEAD_BRANCH}"*)
+      {body} ;;
+  "pr view"*)
+      echo '{{"mergedAt":"2026-09-07T00:00:00Z"}}' ;;
+  *)
+      echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
 esac"#,
                 log = log.display(),
             ),
@@ -1033,7 +1041,7 @@ impl Drop for FakeGh {
 
 /// A same-repository PR. `{fork}` is substituted so the fork-shaped variant
 /// differs from it in exactly the one field that decides the promise.
-const PR_JSON_T: &str = r#"[{"number":501,"title":"reconcile","headRefName":"feat/x",
+const PR_JSON_T: &str = r#"[{"number":501,"title":"reconcile","headRefName":"feature#x",
   "headRefOid":"1111111111111111111111111111111111111111","baseRefName":"main",
   "isDraft":false,"reviewDecision":"APPROVED","mergeable":"MERGEABLE",
   "statusCheckRollup":[],"url":"https://ghe.example/acme/widgets/pull/501",
@@ -1044,6 +1052,10 @@ const PR_JSON_T: &str = r#"[{"number":501,"title":"reconcile","headRefName":"fea
 const BASE_URL: &str = "https://ghe.example/acme/widgets";
 /// The same repository as `<host>/<owner>/<repo>` — what the plan freezes.
 const BASE_REPO: &str = "ghe.example/acme/widgets";
+/// The PR's head branch. `#` is a valid branch character and a URL fragment
+/// delimiter, so a read that puts it in a path asks about `feature` instead
+/// and reads that ref's absence as this one's (#701 review 5).
+const HEAD_BRANCH: &str = "feature#x";
 /// Same `acme/widgets`, different host: the remote that must never answer.
 const DECOY_URL: &str = "https://github.com/acme/widgets";
 
@@ -1234,7 +1246,7 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
             },
             kagi_git::backend::remote_ref::RemoteExpectation::GithubRef {
                 base_repo: BASE_REPO.to_string(),
-                branch: "feat/x".to_string(),
+                branch: HEAD_BRANCH.to_string(),
                 expect: kagi_git::backend::remote_ref::RemoteExpect::Absent,
             },
         ],
@@ -1300,10 +1312,33 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
         &["config", &format!("url.{DECOY_URL}.insteadOf"), BASE_URL],
     );
 
-    // Merged in the base repository, but its head branch is still there.
+    // Merged in the base repository, but its head branch — whose name a URL
+    // path would truncate at the `#` — is still there.
     {
         let _gh = FakeGh::serving(&bin, &log, true);
-        let read = kagi::app::read_reconcile(&sessions, id).unwrap();
+        let read = kagi::app::read_reconcile(&sessions, id);
+
+        // What was *asked* comes first: a question sent to the decoy, or one
+        // that truncated `feature#x` into a URL path, is answered "merged,
+        // branch gone" — so checking only the verdict would pass by luck.
+        let asked = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            asked.contains(&format!("-R {BASE_REPO}")),
+            "the PR must be read in the frozen repository: {asked}"
+        );
+        assert!(
+            asked.contains("graphql --hostname ghe.example")
+                && asked.contains("owner=acme")
+                && asked.contains("name=widgets")
+                && asked.contains(&format!("ref=refs/heads/{HEAD_BRANCH}")),
+            "and the branch must travel as a GraphQL variable, whole: {asked}"
+        );
+        assert!(
+            !asked.contains("github.com"),
+            "nothing may be asked of the decoy: {asked}"
+        );
+
+        let read = read.expect("the frozen repository answered");
         assert!(
             !read.resolved(),
             "the head branch is still in the base repository: {}",
@@ -1311,31 +1346,23 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
         );
         assert!(kagi::app::acknowledge(&mut sessions, read).is_err());
     }
-    // Every question went to the frozen repository. Without this a read that
-    // asked the decoy would have been answered "merged, branch gone".
-    let asked = std::fs::read_to_string(&log).unwrap();
-    assert!(
-        asked.contains(&format!("-R {BASE_REPO}")),
-        "the PR must be read in the frozen repository: {asked}"
-    );
-    assert!(
-        asked.contains("--hostname ghe.example repos/acme/widgets/git/ref/heads/feat/x"),
-        "and so must the branch: {asked}"
-    );
-    assert!(
-        !asked.contains("github.com"),
-        "nothing may be asked of the decoy: {asked}"
-    );
 
-    // "Could not ask" is not "gone" (ADR-0177): a 500 leaves it unresolved.
-    {
-        let _gh = FakeGh::answering(&bin, "echo 'gh: HTTP 500' >&2; exit 1");
+    // "Could not ask" is not "gone" (ADR-0177). A repository the token cannot
+    // see answers with GraphQL errors and a null repository — the shape a REST
+    // 404 would have flattened into "the ref is absent".
+    for body in [
+        r#"echo '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND"}]}'; exit 1"#,
+        r#"echo '{"data":{"repository":null}}'"#,
+        "echo 'gh: HTTP 500' >&2; exit 1",
+    ] {
+        let _gh = FakeGh::serving_ref(&bin, &log, body);
         assert!(
             kagi::app::read_reconcile(&sessions, id).is_err(),
-            "a repository that cannot be read confirms nothing"
+            "a repository that cannot be read confirms nothing: {body}"
         );
     }
-    // Both halves kept, in the repository that was promised.
+    // Both halves kept: only a structured `"ref": null` from a readable
+    // repository is absence.
     {
         let _gh = FakeGh::serving(&bin, &log, false);
         let read = kagi::app::read_reconcile(&sessions, id).unwrap();
@@ -1383,7 +1410,7 @@ fn pr_merge_from_a_fork_refuses_to_promise_a_branch_deletion() {
             note,
             kagi_domain::plan_note::PlanNote::Github(
                 kagi_domain::plan_note::GithubNote::ForkDeletesBranch { branch }
-            ) if branch == "feat/x"
+            ) if branch == HEAD_BRANCH
         )),
         "and it must say why: {:?}",
         plan.blockers

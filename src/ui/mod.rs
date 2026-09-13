@@ -1243,9 +1243,21 @@ pub struct KagiApp {
     /// Name of the write currently running on a background thread (e.g.
     /// "pull"/"push"): the **mirror** of the lease its admission reserved, kept
     /// for the snackbar label and retired by `refresh_write_busy` once no lease
-    /// survives. Remote pull over SSH holds no lease, so this is also its whole
-    /// latch until it joins a write family (ADR-0196 Wave 3).
+    /// survives. Presentation only — the gate reads the lease itself.
     pub write_busy_op: Option<&'static str>,
+    /// The one write that holds no lease: a remote pull over SSH, whose
+    /// `RemoteRepoId` needs two network probes that cannot run on the UI thread
+    /// before the spawn (ADR-0196 Wave 3; the remote stash family gets its id
+    /// from a background plan job, which a locally-synthesised pull plan has
+    /// no equivalent of). So the pull owns this latch outright: nothing
+    /// lease-derived may clear it — `refresh_write_busy` must not see it — and
+    /// only its own terminal callback (success, failure or panic) releases it.
+    /// [`KagiApp::op_latched`] reads it, so every gate refuses while it is set.
+    /// ponytail: one field, not a family. It goes when remote pull joins one
+    /// with a probed `WriteScope::Remote`, which also gets it quit-hold for
+    /// free (`may_close_host` reads leases, so a remote pull does not hold
+    /// quit today — unchanged by this slice, tracked with the same follow-up).
+    pub remote_write: Option<&'static str>,
     /// ADR-0196 Wave 3: a *planning* task in flight (`merge-plan`,
     /// `delete-branch-plan`). It writes nothing, so it takes no lease — but it
     /// owns the modal slot it will fill, so it latches too. Ask
@@ -1561,6 +1573,7 @@ impl KagiApp {
             pr_mode: None,
             pr_menu: None,
             write_busy_op: None,
+            remote_write: None,
             planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),

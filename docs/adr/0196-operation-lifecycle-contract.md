@@ -276,10 +276,31 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 - `KagiApp::busy_op` フィールドを削除。契約行 `[kagi] op panicked: {} — busy_op cleared`
   は**文言不変**（意味は「latch を解放した」）。
 
-**唯一の例外**: remote pull（SSH、`src/ui/operations/pull_push.rs`）は自前の probe を
-走らせるまで `RemoteRepoId` を持てないため lease を取れない。`write_busy_op` が
-その全 latch であり、だから `op_latched()` は mirror も読む。write family 化は #703 と
-同じ後続 slice。
+**唯一の例外 — lease を取れない write（remote pull over SSH）**:
+`src/ui/operations/pull_push.rs`。`WriteScope::Remote(RemoteRepoId)` を作るには
+`freeze_connection` + `probe_common_dir` の 2 往復が要る。remote stash family は
+これを background の plan job で済ませてから `prepare_stash` で lease を取るが、
+remote pull の plan は cached ahead/behind から**ローカルに合成**されるので相当する
+job が無く、spawn 前の UI thread で probe するしかない = network I/O で UI を止める。
+よって lease は取らず、専用 latch **`KagiApp::remote_write`** を持つ。
+
+規約（#708 review P1、破ると排他が消える）:
+
+- `remote_write` は **lease mirror ではない**。`refresh_write_busy` /
+  `settle_write_busy` に渡してはならない。lease 数から retire すると、`render` →
+  `poll_app_jobs` と全 admission preamble が呼ぶ次の refresh で消え、走行中の
+  `git pull` に 2 本目の write（stage / fetch / conflict abort / 同じ remote への
+  2 本目の pull）が admit されうる。
+- 解放するのは remote pull 自身の terminal callback（success / failure / task
+  panic）**のみ**。op 名の文字列判定はしない — field の所有者が 1 か所だから。
+- `op_latched()` = `has_leases() || remote_write.is_some() || planning.is_some()`。
+  `write_busy_op` は snackbar 用の lease mirror なので gate は読まない。
+- 回帰テストは gui-e2e `remote_pull_latch`（停止可能な fake `ssh` を PATH に置き、
+  `run_ssh` を実際に通す）。
+
+残る差: `may_close_host()` は lease を読むので remote pull は quit を保留**しない**。
+これは本 slice 以前からの状態で、write family 化（#703 と同じ後続 slice）で lease に
+載せれば同時に解消する。
 
 **SubAgent 規律**: family / module / report は単独 owner。shared schema・router・ADR・
 migration summary は integration owner 専有。子 agent は evidence packet（revision、

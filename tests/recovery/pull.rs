@@ -136,6 +136,176 @@ fn wait_for(
     }
 }
 
+/// A stoppable stand-in for the `ssh` binary `run_ssh` spawns through `PATH`.
+///
+/// Every invocation is logged with its argv. A `git … pull` blocks until
+/// `release` appears, so the pull can be held genuinely in flight — the state
+/// the latch exists for — while the remote view's own reads still answer, as a
+/// real host would. No canned-report seam: this goes through `run_ssh`.
+fn blocking_fake_ssh(bin: &Path, release: &Path, calls: &Path) {
+    std::fs::create_dir_all(bin).expect("shim dir");
+    let path = bin.join("ssh");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\n\
+             echo \"$*\" >> {calls:?}\n\
+             case \"$*\" in\n\
+             *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
+             echo 'Already up to date.' ;;\n\
+             *) echo '' ;;\n\
+             esac\n",
+        ),
+    )
+    .expect("write fake ssh");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+/// How many `git … pull` transports the fake host has been asked to run.
+fn ssh_pulls(calls: &Path) -> usize {
+    std::fs::read_to_string(calls)
+        .map(|text| text.lines().filter(|line| line.contains("pull")).count())
+        .unwrap_or(0)
+}
+
+/// #708 review P1: the lease-less remote pull's latch must actually hold.
+///
+/// A remote pull over SSH takes no lease — its `RemoteRepoId` needs network
+/// probes that cannot run on the UI thread before the spawn — so it owns
+/// `remote_write` outright. The bug this pins: while that latch was the
+/// lease-derived `write_busy_op`, `refresh_write_busy()` erased it on the very
+/// next `render` → `poll_app_jobs`, and on every admission preamble, so a
+/// second write (a stage, a fetch, a conflict abort, another pull to the same
+/// remote) could be admitted straight into a running `git pull`.
+pub fn scenario_remote_pull_holds_its_latch(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e;
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().expect("fixture path");
+    // A real behind-by-one, so the remote view plans a pull from its snapshot.
+    let remote_root = tempfile::tempdir().expect("remote root");
+    let bare = remote_root.path().join("origin.git");
+    let other = remote_root.path().join("other");
+    let (bare_path, other_path) = (bare.to_str().unwrap(), other.to_str().unwrap());
+    git(&repo, &["init", "--bare", "-q", bare_path]);
+    git(&repo, &["remote", "add", "origin", bare_path]);
+    git(&repo, &["push", "-q", "-u", "origin", "main"]);
+    git(remote_root.path(), &["clone", "-q", bare_path, other_path]);
+    std::fs::write(other.join("upstream.txt"), "upstream\n").unwrap();
+    git(&other, &["add", "upstream.txt"]);
+    git(&other, &["commit", "-q", "-m", "upstream"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    git(&repo, &["fetch", "-q", "origin"]);
+
+    let shim = tempfile::tempdir().expect("shim root");
+    let release = shim.path().join("release");
+    let calls = shim.path().join("calls");
+    blocking_fake_ssh(shim.path(), &release, &calls);
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var(
+        "PATH",
+        format!(
+            "{}:{}",
+            shim.path().display(),
+            original_path
+                .clone()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .as_ref()
+        ),
+    );
+
+    let snap = kagi_git::Backend::open(&repo)
+        .expect("open fixture")
+        .snapshot(10_000)
+        .expect("snapshot");
+    let host = kagi_domain::remote::RemoteHost {
+        user: Some("kagi-e2e".into()),
+        host: "e2e.invalid".into(),
+        port: None,
+        identity_file: None,
+    };
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.enter_remote_view(host, "/srv/repo".into(), snap, cx);
+        app.open_pull_modal(cx);
+        assert!(
+            app.pull_modal().is_some(),
+            "the remote view is behind by one, so Pull plans"
+        );
+        app.start_pull(cx);
+        assert_eq!(app.remote_write, Some("pull"), "the pull latches itself");
+        assert!(e2e::op_latched(app), "and the gate reads that latch");
+        assert!(
+            !app.app_sessions.has_leases(),
+            "with no lease at all — this is the lease-less writer"
+        );
+    });
+    // Everything below runs between the dispatch and the completion, so it
+    // cannot use `run_until_parked`: the test executor is deterministic, and
+    // pumping it here would wait out the very transport this is about (the
+    // fake `ssh` blocks). `poll_app_jobs` is what a frame runs, and its first
+    // act is the `refresh_write_busy()` that used to erase the latch.
+    app.update(cx, |app, cx| {
+        e2e::poll_app_jobs(app, cx);
+        assert_eq!(
+            app.remote_write,
+            Some("pull"),
+            "a lease-derived retire must not reach the remote latch (#708 P1)"
+        );
+        assert!(e2e::op_latched(app), "so the gate is still latched");
+        // Refused on the silent path, which consults the gate directly…
+        assert!(
+            !app.fetch_async_for(true, None, cx),
+            "no second write may start while the remote pull runs"
+        );
+        // …and on the admission preamble, which calls `refresh_write_busy()`
+        // immediately before asking `op_latched()`.
+        assert!(
+            !app.fetch_async_for(false, None, cx),
+            "not through the admission preamble either"
+        );
+        app.open_pull_modal(cx);
+        assert!(
+            app.pull_modal().is_none(),
+            "and not a second pull to the same remote"
+        );
+    });
+
+    // Only the terminal completion releases it. The transport runs — and
+    // blocks — inside this pump, so the release goes in first.
+    std::fs::write(&release, b"go").expect("release the transport");
+    wait_for(cx, |cx| cx.read(|cx| app.read(cx).remote_write.is_none()));
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            !e2e::op_latched(state),
+            "the gate opens with the completion"
+        );
+        assert!(state.app_sessions.may_close_host());
+    });
+    // Which makes every refusal above provable: had any of them been admitted,
+    // the host would have been asked to pull a second time.
+    assert_eq!(
+        ssh_pulls(&calls),
+        1,
+        "exactly one pull transport ever reached the host"
+    );
+
+    match original_path {
+        Some(path) => std::env::set_var("PATH", path),
+        None => std::env::remove_var("PATH"),
+    }
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS remote_pull_latch: the lease-less pull's latch survives refresh and only its completion clears it"
+    );
+}
+
 fn leaky_helper(root: &Path, program: &str) -> String {
     let path = root.join(format!("{program}.sh"));
     std::fs::write(

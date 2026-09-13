@@ -59,18 +59,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Whether a state-changing op may start right now. A held **lease** is the
-/// truth about an in-flight write, `write_busy` its name mirror (and the sole
-/// latch of the one lease-less writer left, remote pull over SSH), `planning`
-/// the in-flight *plan* latch (ADR-0196 Wave 3). A mutation started while any
-/// of the three holds is exactly the concurrent-mutation hazard #283 is about,
-/// so every entry point that begins one consults this — through
-/// [`KagiApp::op_latched`]. Pure so the gate is testable without a Context.
+/// truth about every write that can take one, `remote_write` is the latch of
+/// the one that cannot (remote pull over SSH), `planning` the in-flight *plan*
+/// latch (ADR-0196 Wave 3). A mutation started while any of the three holds is
+/// exactly the concurrent-mutation hazard #283 is about, so every entry point
+/// that begins one consults this — through [`KagiApp::op_latched`]. Pure so the
+/// gate is testable without a Context.
 pub(crate) fn op_may_start(
     has_leases: bool,
-    write_busy: Option<&'static str>,
+    remote_write: Option<&'static str>,
     planning: Option<&'static str>,
 ) -> bool {
-    !has_leases && write_busy.is_none() && planning.is_none()
+    !has_leases && remote_write.is_none() && planning.is_none()
 }
 
 impl KagiApp {
@@ -375,10 +375,10 @@ mod tests {
             !op_may_start(false, None, Some("merge-plan")),
             "a plan in flight alone must block a new op"
         );
-        // The mirror is the only latch remote pull (lease-less) has.
+        // The remote latch is the only one remote pull (lease-less) has.
         assert!(
             !op_may_start(false, Some("pull"), None),
-            "a lease-less writer's mirror alone must block a new op"
+            "a lease-less writer's own latch alone must block a new op"
         );
     }
 

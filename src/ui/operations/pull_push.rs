@@ -378,7 +378,11 @@ impl KagiApp {
                 cx.notify();
                 return;
             }
-            self.mark_write_busy("pull");
+            // Latched before the spawn and owned by this operation alone: a
+            // remote pull holds no lease, so a lease-derived mirror would be
+            // gone by the next `refresh_write_busy()` and the pull would run
+            // with nothing refusing a second write (#708 review P1).
+            self.mark_remote_write("pull");
             self.clear_pull_modal();
             self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
             klog!("async: remote pull started");
@@ -390,18 +394,19 @@ impl KagiApp {
                 crate::remote::remote_pull(&host, &root, &recorded_before)
             });
             let notice_path = oplog_path.clone();
-            // The one write left with no lease to hold: a remote pull has no
-            // `RemoteRepoId` until its own probes run, so the write mirror is
-            // its whole latch (ADR-0196 Wave 3, remaining after #703). Its
-            // completion is spelled out here rather than shared, because the
-            // shape it used to share — the `repo_path + switch_generation`
-            // stale guard — is what Wave 3 removes.
+            // This completion is spelled out here rather than shared, because
+            // the shape it used to share — the `repo_path + switch_generation`
+            // stale guard — is what Wave 3 removes. It also owns the release of
+            // `remote_write`, which nothing else may touch.
             let owner = self.active_session();
             let visit = owner.and_then(|session| self.app_sessions.visit(session));
             cx.spawn(async move |this, acx| {
                 let report = task.fallible().await;
                 let _ = this.update(acx, move |app, cx| {
-                    app.refresh_write_busy();
+                    // Terminal, whichever way it ended — success, failure, or a
+                    // panicked task (`fallible` yielded `None`). Released here
+                    // and nowhere else, above every early return below.
+                    app.remote_write = None;
                     let Some(report) = report else {
                         klog!("op panicked: pull — busy_op cleared");
                         app.status_footer = FooterStatus::Failed(SharedString::from(

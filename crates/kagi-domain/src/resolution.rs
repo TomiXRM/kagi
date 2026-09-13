@@ -321,6 +321,26 @@ impl ConflictHunk {
             .get_or_insert_with(|| LineSelection::from_choice(current_len, incoming_len, &choice))
     }
 
+    /// Drop back to the undecided state when a *deselect* left nothing taken on
+    /// either side. Clearing the last taken line is not "take neither" — the
+    /// UI has no other way to un-choose, so an empty selection is the state the
+    /// user started from (user report: clicking Incoming twice made the hunk
+    /// take neither side). Only ever called on a deselect, so taking a side
+    /// that happens to have zero lines (a deletion) still counts as resolved.
+    pub fn undecide_if_empty(&mut self) {
+        let empty = self.line_select.as_ref().is_some_and(|selection| {
+            selection
+                .current_taken
+                .iter()
+                .chain(selection.incoming_taken.iter())
+                .all(|taken| !taken)
+        });
+        if empty {
+            self.line_select = None;
+            self.choice = HunkChoice::Unresolved;
+        }
+    }
+
     /// The resolved lines this hunk contributes to the file Result, tagged with
     /// provenance.  An [`HunkChoice::Unresolved`] hunk re-emits the conflict
     /// markers (so an unresolved Result is recognizably unfinished and the
@@ -594,6 +614,9 @@ impl HunkModel {
         for r in &mut self.regions {
             if let Region::Hunk(h) = r {
                 h.ensure_line_selection().set_side(side, taken);
+                if !taken {
+                    h.undecide_if_empty();
+                }
             }
         }
     }
@@ -602,6 +625,9 @@ impl HunkModel {
     pub fn set_hunk_side(&mut self, hunk_index: usize, side: SelectionSide, taken: bool) -> bool {
         self.with_hunk_mut(hunk_index, |h| {
             h.ensure_line_selection().set_side(side, taken);
+            if !taken {
+                h.undecide_if_empty();
+            }
         })
     }
 
@@ -616,6 +642,9 @@ impl HunkModel {
         let mut changed = false;
         self.with_hunk_mut(hunk_index, |h| {
             changed = h.ensure_line_selection().set_line(side, line_index, taken);
+            if changed && !taken {
+                h.undecide_if_empty();
+            }
         }) && changed
     }
 
@@ -717,6 +746,44 @@ b-incoming
 >>>>>>> Incoming
 keep bottom
 ";
+
+    /// Clicking a side on and off again must return the hunk to UNDECIDED, not
+    /// leave it "resolved" with neither side taken (user report).
+    #[test]
+    fn deselecting_the_last_side_returns_the_hunk_to_undecided() {
+        let mut model = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+
+        assert!(model.set_hunk_side(0, SelectionSide::Incoming, true));
+        assert_eq!(model.resolved_hunk_count(), 1);
+        assert_eq!(
+            model
+                .assemble()
+                .iter()
+                .filter(|l| l.text == "a-incoming")
+                .count(),
+            1
+        );
+
+        assert!(model.set_hunk_side(0, SelectionSide::Incoming, false));
+        assert_eq!(
+            model.resolved_hunk_count(),
+            0,
+            "un-choosing the only taken side must not count as resolved",
+        );
+        // An undecided hunk re-emits its conflict markers.
+        assert!(model.assembled_text().contains("<<<<<<<"));
+    }
+
+    /// The same for the per-line control: clearing the last taken line undecides
+    /// the hunk instead of resolving it to nothing.
+    #[test]
+    fn clearing_the_last_taken_line_returns_the_hunk_to_undecided() {
+        let mut model = HunkModel::from_marker_text(TWO_HUNK_ZDIFF3);
+        assert!(model.set_hunk_line(1, SelectionSide::Current, 0, true));
+        assert_eq!(model.resolved_hunk_count(), 1);
+        assert!(model.set_hunk_line(1, SelectionSide::Current, 0, false));
+        assert_eq!(model.resolved_hunk_count(), 0);
+    }
 
     #[test]
     fn text_to_lines_trailing_newline_stable() {

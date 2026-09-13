@@ -1,5 +1,5 @@
 crates/kagi-domain/src/message_gen.rs 895
-crates/kagi-domain/src/resolution.rs 997
+crates/kagi-domain/src/resolution.rs 1064
 crates/kagi-git/src/backend.rs 1734
 crates/kagi-git/src/benchmark/fixture.rs 816
 crates/kagi-git/src/conflicts.rs 2039
@@ -19,8 +19,8 @@ src/ui/branch_cleanup.rs 1046
 src/ui/branch_menu.rs 965
 src/ui/commands.rs 2361
 src/ui/commit_panel_render.rs 1451
-src/ui/conflict_editor.rs 1332
-src/ui/conflict_view.rs 2189
+src/ui/conflict_editor.rs 1697
+src/ui/conflict_view.rs 2204
 src/ui/diff_view.rs 1600
 src/ui/inspector.rs 1244
 src/ui/mod.rs 4161

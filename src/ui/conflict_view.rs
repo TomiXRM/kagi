@@ -70,6 +70,12 @@ pub struct EditorChrome {
     pub inputs: Option<EditorInputs>,
     /// Shared A/B row-list scroll handle; both panes track it for vertical sync.
     pub ab_scroll: UniformListScrollHandle,
+    /// Scroll handle for the Result *preview* row list (ADR-0135 badges).
+    pub result_scroll: UniformListScrollHandle,
+    /// Syntax-highlight cache for the Result preview, keyed by the assembled
+    /// text (which changes on every selection change, unlike the A/B rows).
+    pub result_hl:
+        std::rc::Rc<std::cell::RefCell<Option<crate::ui::conflict_editor::ResultHlCache>>>,
     /// Whether the Result pane is in Edit mode (UX-015).
     pub result_editing: bool,
     /// Whether the destructive "Reset all" is armed (POLISH-042).
@@ -157,6 +163,11 @@ pub struct ConflictView {
     /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
     /// scrolling in the Conflict Editor.
     pub ab_scroll_handle: UniformListScrollHandle,
+    /// See [`EditorChrome::result_scroll`] / [`EditorChrome::result_hl`]; both
+    /// live on the entity so they survive across frames.
+    pub result_scroll_handle: UniformListScrollHandle,
+    pub result_hl:
+        std::rc::Rc<std::cell::RefCell<Option<crate::ui::conflict_editor::ResultHlCache>>>,
     /// See [`EditorChrome::hl_cache`]; the cell lives on the entity so the
     /// cache survives across frames.
     pub hl_cache: std::rc::Rc<std::cell::RefCell<Option<crate::ui::conflict_editor::SideHlCache>>>,
@@ -204,6 +215,8 @@ impl ConflictView {
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
+            result_scroll_handle: UniformListScrollHandle::new(),
+            result_hl: std::rc::Rc::new(std::cell::RefCell::new(None)),
             file_menu: None,
             writer_busy: false,
             intent_token: NEXT_INTENT_TOKEN.fetch_add(1, Ordering::Relaxed),
@@ -611,6 +624,8 @@ impl ConflictView {
                 result: i.result.clone(),
             }),
             ab_scroll: self.ab_scroll_handle.clone(),
+            result_scroll: self.result_scroll_handle.clone(),
+            result_hl: self.result_hl.clone(),
             result_editing: self.result_editing,
             reset_all_armed: self.reset_all_armed,
             ab_split: self.ab_split,

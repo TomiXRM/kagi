@@ -35,18 +35,19 @@
 //! "ours" / "theirs" never appear.  All prose is via [`Msg`] (en + ja).  Sizes
 //! go through [`theme::scaled_px`] so the editor respects zoom.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::{
     canvas, div, prelude::*, px, relative, rgb, uniform_list, AnyElement, Bounds, Context, Pixels,
     SharedString, UniformListScrollHandle, Window,
 };
-use gpui_component::button::Button;
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::{Disableable as _, Sizable as _};
 
-use kagi_git::resolution::{LineOrder, Region, SelectionSide, TriState};
+use kagi_git::resolution::{LineOrder, LineOrigin, Region, SelectionSide, TriState};
 
 use super::button_style::KagiButton;
 use super::conflict_view::ConflictMode;
@@ -197,14 +198,31 @@ fn tool_button<H>(id: &str, label: &str, accent: u32, handler: H, cx: &gpui::App
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    KagiButton::accent(
-        SharedString::from(id.to_string()),
-        SharedString::from(label.to_string()),
+    outline_if_neutral(
+        KagiButton::accent(
+            SharedString::from(id.to_string()),
+            SharedString::from(label.to_string()),
+            accent,
+            cx,
+        ),
         accent,
         cx,
     )
     .small()
     .on_click(handler)
+}
+
+/// `apply_accent` maps a neutral accent to the *ghost* variant: no border, no
+/// fill, so prev/next/external were indistinguishable from the toolbar
+/// background (user report). `.outline()` draws a border too close to the
+/// surface to help, so neutral buttons get the same tinted chip the accent
+/// actions use — a visible fill, in a neutral hue.
+fn outline_if_neutral(btn: Button, accent: u32, cx: &gpui::App) -> Button {
+    if accent == theme().text_sub || accent == theme().text_muted {
+        btn.custom(super::button_style::tinted_action_variant(accent, cx))
+    } else {
+        btn
+    }
 }
 
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).
@@ -219,10 +237,14 @@ fn icon_button<H>(
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    KagiButton::accent_icon(
-        SharedString::from(id.to_string()),
-        icon_path,
-        SharedString::from(label.to_string()),
+    outline_if_neutral(
+        KagiButton::accent_icon(
+            SharedString::from(id.to_string()),
+            icon_path,
+            SharedString::from(label.to_string()),
+            accent,
+            cx,
+        ),
         accent,
         cx,
     )
@@ -438,23 +460,34 @@ fn side_highlights(
 /// combine → parse once → distribute-spans-per-row approach (no sigil offset
 /// here: ranges are row-local from byte 0).
 fn highlight_side_rows(rows: &[SideRow], path: &std::path::Path) -> Vec<RowHl> {
+    let texts: Vec<(usize, &str)> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| match row {
+            SideRow::Line { text, .. } => Some((i, text.as_str())),
+            SideRow::Context { text, .. } => Some((i, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    highlight_rows(rows.len(), &texts, path)
+}
+
+/// Tree-sitter highlight for `row_count` rows, of which `texts` names the ones
+/// that carry code (row index → line text). Shared by the A/B panes and the
+/// Result preview.
+fn highlight_rows(row_count: usize, texts: &[(usize, &str)], path: &std::path::Path) -> Vec<RowHl> {
     use gpui_component::highlighter::SyntaxHighlighter;
     use gpui_component::Rope;
 
-    let mut out: Vec<RowHl> = vec![Vec::new(); rows.len()];
+    let mut out: Vec<RowHl> = vec![Vec::new(); row_count];
     let Some(lang) = super::diff_view::lang_for_path(path) else {
         return out;
     };
 
     let mut line_offsets: Vec<(usize, usize)> = Vec::new(); // (row_index, byte_start)
     let mut combined = String::new();
-    for (i, row) in rows.iter().enumerate() {
-        let text = match row {
-            SideRow::Line { text, .. } => text,
-            SideRow::Context { text, .. } => text,
-            _ => continue,
-        };
-        line_offsets.push((i, combined.len()));
+    for (i, text) in texts {
+        line_offsets.push((*i, combined.len()));
         combined.push_str(text);
         combined.push('\n');
     }
@@ -487,6 +520,9 @@ enum SideRow {
         hunk_index: usize,
         state: TriState,
         order: LineOrder,
+        /// Whether this hunk has a decision yet — drives the red/green marker
+        /// and the "still undecided" red band.
+        resolved: bool,
     },
     Line {
         hunk_index: usize,
@@ -494,6 +530,15 @@ enum SideRow {
         line_no: usize,
         text: String,
         taken: bool,
+        /// Whether this line's hunk has a decision yet (red vs green marker,
+        /// and whether an untaken line wears the undecided red band).
+        resolved: bool,
+        /// Whether to fade this line: it was NOT taken and the other side WAS.
+        dim: bool,
+        /// Byte ranges in `text` that differ from the same-index line on the
+        /// other side of this hunk — the "where do the two sides disagree"
+        /// highlight (word granularity, shared with the diff pane).
+        diff_spans: Arc<Vec<Range<usize>>>,
     },
     /// A non-conflicting context line (a passthrough region) shown identically on
     /// both panes. Rendering these makes each pane show the full ours/theirs file
@@ -529,13 +574,36 @@ fn side_use_all_pill(
         .py(theme::scaled_px(1.))
         .rounded_sm()
         .border_1()
-        .border_color(rgb(if on { accent } else { theme().selected }))
+        .border_color(rgb(if on { accent } else { theme().text_muted }))
+        .bg(rgb(if on {
+            theme().bg_base
+        } else {
+            theme().bg_row_alt
+        }))
         .text_size(theme::scaled_px(9.))
-        .text_color(rgb(if on { accent } else { theme().text_sub }))
+        .text_color(rgb(if on { accent } else { theme().text_main }))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().bg_row_alt)))
         .child(SharedString::from(Msg::EditorUseAll.t()))
         .on_click(handler)
+}
+
+/// Byte ranges in `text` that differ from `other`, the same-index line on the
+/// opposite side of the hunk. Index pairing IS the alignment model here: a line
+/// with no counterpart pairs with `""` and so highlights whole. Identical lines
+/// produce no spans, which is the useful half of the signal — the rows that
+/// carry no highlight are the ones both sides agree on.
+fn intra_line_spans(text: &str, other: &str, side: SelectionSide) -> Vec<Range<usize>> {
+    use kagi_domain::word_diff::{word_diff, Side};
+    let (old, new, want) = match side {
+        SelectionSide::Current => (text, other, Side::Old),
+        SelectionSide::Incoming => (other, text, Side::New),
+    };
+    word_diff(old, new)
+        .into_iter()
+        .filter(|span| span.side == want)
+        .map(|span| span.range)
+        .collect()
 }
 
 fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide) -> Vec<SideRow> {
@@ -564,10 +632,12 @@ fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide)
                     kagi_git::resolution::HunkChoice::BothIncomingFirst => LineOrder::IncomingFirst,
                     _ => LineOrder::CurrentFirst,
                 });
+            let resolved = hunk.is_resolved();
             rows.push(SideRow::HunkHeader {
                 hunk_index,
                 state: hunk.side_state(side),
                 order,
+                resolved,
             });
             let (lines, taken) = match side {
                 SelectionSide::Current => (
@@ -579,6 +649,19 @@ fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide)
                     hunk.line_select.as_ref().map(|s| s.incoming_taken.clone()),
                 ),
             };
+            let other = match side {
+                SelectionSide::Current => &hunk.incoming,
+                SelectionSide::Incoming => &hunk.current,
+            };
+            // Fading an untaken line only makes sense once the OTHER side has
+            // been taken. While a hunk is untouched both sides were untaken, so
+            // both faded to 22% — the conflict rows were the *dimmest* rows in
+            // the pane, which is what made the conflict hard to find (user
+            // report). Untouched hunks now render at full strength.
+            let other_state = hunk.side_state(match side {
+                SelectionSide::Current => SelectionSide::Incoming,
+                SelectionSide::Incoming => SelectionSide::Current,
+            });
             for (line_index, text) in lines.iter().enumerate() {
                 let is_taken = taken
                     .as_ref()
@@ -591,6 +674,13 @@ fn build_side_rows(model: &kagi_git::resolution::HunkModel, side: SelectionSide)
                     line_no,
                     text: text.clone(),
                     taken: is_taken,
+                    resolved,
+                    dim: !is_taken && other_state != TriState::None,
+                    diff_spans: Arc::new(intra_line_spans(
+                        text,
+                        other.get(line_index).map(String::as_str).unwrap_or(""),
+                        side,
+                    )),
                 });
                 line_no += 1;
             }
@@ -674,12 +764,14 @@ fn render_side_rows(
                 hunk_index,
                 state,
                 order,
+                resolved,
             } => render_hunk_header_row(
                 i,
                 path.clone(),
                 hunk_index,
                 state,
                 order,
+                resolved,
                 side,
                 selected_hunk,
                 cx,
@@ -690,6 +782,9 @@ fn render_side_rows(
                 line_no,
                 text,
                 taken,
+                resolved,
+                dim,
+                diff_spans,
             } => render_code_line_row(
                 i,
                 path.clone(),
@@ -698,7 +793,10 @@ fn render_side_rows(
                 line_no,
                 text,
                 highlights.get(i).cloned().unwrap_or_default(),
+                diff_spans,
                 taken,
+                resolved,
+                dim,
                 side,
                 selected_hunk,
                 cx,
@@ -735,10 +833,10 @@ fn render_context_row(
         .border_l(theme::scaled_px(3.))
         .border_color(rgb(theme().bg_base))
         .bg(rgb(theme().bg_base))
+        .child(gutter_marker(None))
         .child(
             div()
-                .pl(theme::scaled_px(3.))
-                .w(theme::scaled_px(42.))
+                .w(theme::scaled_px(34.))
                 .flex_shrink_0()
                 .text_size(theme::scaled_px(11.))
                 .line_height(theme::scaled_px(17.))
@@ -746,7 +844,13 @@ fn render_context_row(
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(format!("{:>4}", line_no))),
         )
-        .child(code_text(text_value, highlights, theme().text_sub))
+        .child(code_text(
+            text_value,
+            highlights,
+            theme().text_sub,
+            &[],
+            gpui::transparent_black(),
+        ))
         .into_any_element()
 }
 
@@ -775,6 +879,7 @@ fn render_hunk_header_row(
     hunk_index: usize,
     state: TriState,
     order: LineOrder,
+    resolved: bool,
     side: SelectionSide,
     selected_hunk: usize,
     cx: &mut Context<ConflictView>,
@@ -806,7 +911,8 @@ fn render_hunk_header_row(
     let band = match state {
         TriState::All => rgb(accent),
         TriState::Partial => rgb(accent),
-        TriState::None => rgb(theme().selected),
+        TriState::None if resolved => rgb(theme().selected),
+        TriState::None => rgb(theme().color_blocker),
     };
     div()
         .id(SharedString::from(format!("side-hunk-{}", row_index)))
@@ -863,15 +969,54 @@ fn render_hunk_header_row(
                 .py(theme::scaled_px(1.))
                 .rounded_sm()
                 .border_1()
-                .border_color(rgb(theme().selected))
+                .border_color(rgb(theme().text_muted))
+                .bg(rgb(theme().bg_base))
                 .text_size(theme::scaled_px(9.))
-                .text_color(rgb(theme().text_sub))
+                .text_color(rgb(theme().text_main))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(theme().bg_row_alt)))
                 .child(SharedString::from(order_label))
                 .on_click(order_click),
         )
         .into_any_element()
+}
+
+/// The gutter marker at the head of every conflicting line, VS Code
+/// breakpoint-style (user request). It marks *where the conflict is*, so it
+/// never disappears — it only changes colour: red while the hunk is undecided,
+/// then the accent of the side that was actually adopted (so the marker answers
+/// "which side is in the Result?", not just "done"). `None` renders the cell
+/// empty, which keeps the code columns aligned across panes.
+fn gutter_marker(color: Option<u32>) -> gpui::Div {
+    div()
+        .flex_shrink_0()
+        .w(theme::scaled_px(16.))
+        .h(theme::scaled_px(17.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .when_some(color, |el, color| {
+            el.child(
+                div()
+                    .w(theme::scaled_px(9.))
+                    .h(theme::scaled_px(9.))
+                    .rounded_full()
+                    .bg(rgb(color)),
+            )
+        })
+}
+
+/// Marker colour for one A/B code line: red while its hunk is undecided, the
+/// side's own accent once this line is part of the Result, and the neutral
+/// band colour for the side that lost.
+fn line_marker_color(resolved: bool, taken: bool, side: SelectionSide) -> u32 {
+    if !resolved {
+        theme().color_blocker
+    } else if taken {
+        side_accent(side)
+    } else {
+        theme().selected
+    }
 }
 
 /// The per-side accent colour (Current = branch, Incoming = remote).
@@ -900,7 +1045,10 @@ fn render_code_line_row(
     line_no: usize,
     text_value: String,
     highlights: RowHl,
+    diff_spans: Arc<Vec<Range<usize>>>,
     taken: bool,
+    resolved: bool,
+    dim: bool,
     side: SelectionSide,
     selected_hunk: usize,
     cx: &mut Context<ConflictView>,
@@ -924,10 +1072,15 @@ fn render_code_line_row(
         .pr(theme::scaled_px(4.))
         .gap_1()
         .border_l(theme::scaled_px(3.))
+        // An untaken line in an UNDECIDED hunk wears the red "still yours to
+        // decide" band; once the hunk has a decision the rejected side drops
+        // back to the neutral band (user request).
         .border_color(if taken {
             rgb(accent)
-        } else {
+        } else if resolved {
             rgb(theme().selected)
+        } else {
+            rgb(theme().color_blocker)
         })
         .bg(rgb(if selected_hunk == hunk_index {
             theme().bg_row_alt
@@ -939,12 +1092,16 @@ fn render_code_line_row(
         .on_click(toggle)
         // Untaken lines keep their syntax colours but fade — Xcode-style
         // "the other side is dimmed", per line. 0.22: at 0.4 the rejected side
-        // still read almost as clearly as the taken one (user report).
-        .when(!taken, |el| el.opacity(0.22))
+        // still read almost as clearly as the taken one (user report). The fade
+        // is on the code, NOT the row: the pin must survive it, or the rejected
+        // side stops showing where the conflict was.
+        .child(gutter_marker(Some(line_marker_color(
+            resolved, taken, side,
+        ))))
         .child(
             div()
-                .pl(theme::scaled_px(3.))
-                .w(theme::scaled_px(42.))
+                .when(dim, |el| el.opacity(0.22))
+                .w(theme::scaled_px(34.))
                 .flex_shrink_0()
                 .text_size(theme::scaled_px(11.))
                 .line_height(theme::scaled_px(17.))
@@ -952,13 +1109,28 @@ fn render_code_line_row(
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(format!("{:>4}", line_no))),
         )
-        .child(code_text(text_value, highlights, theme().text_main))
+        .child(
+            code_text(
+                text_value,
+                highlights,
+                theme().text_main,
+                &diff_spans,
+                side_tint(side, 0.30),
+            )
+            .when(dim, |el| el.opacity(0.22)),
+        )
         .into_any_element()
 }
 
 /// Monospace code text with validated syntax-highlight spans (the same
 /// out-of-bounds guard as the diff renderers).
-fn code_text(text_value: String, highlights: RowHl, base_color: u32) -> gpui::Div {
+fn code_text(
+    text_value: String,
+    highlights: RowHl,
+    base_color: u32,
+    diff_spans: &[Range<usize>],
+    emph_bg: gpui::Hsla,
+) -> gpui::Div {
     let shared = SharedString::from(text_value);
     let el = div()
         .flex_shrink_0()
@@ -967,7 +1139,7 @@ fn code_text(text_value: String, highlights: RowHl, base_color: u32) -> gpui::Di
         .line_height(theme::scaled_px(17.))
         .font_family(terminal::pick_font_family())
         .text_color(rgb(base_color));
-    if highlights.is_empty() {
+    if highlights.is_empty() && diff_spans.is_empty() {
         return el.child(shared);
     }
     let text_str: &str = shared.as_ref();
@@ -981,7 +1153,11 @@ fn code_text(text_value: String, highlights: RowHl, base_color: u32) -> gpui::Di
                 && text_str.is_char_boundary(r.end)
         })
         .collect();
-    el.child(gpui::StyledText::new(shared.clone()).with_highlights(valid))
+    // The word-diff emphasis merges with the syntax runs exactly as in the diff
+    // pane (same helper, same fill + opaque underline), so a conflict row marks
+    // the changed words instead of only the whole side.
+    let merged = super::diff_split::merge_highlights(text_len, &valid, diff_spans, emph_bg);
+    el.child(gpui::StyledText::new(shared.clone()).with_highlights(merged))
 }
 
 fn guidance_pane(msg: &str) -> gpui::AnyElement {
@@ -1063,6 +1239,149 @@ fn pane(
 // ────────────────────────────────────────────────────────────
 // Result pane: Preview (read-only) / Edit (editable) — UX-015
 // ────────────────────────────────────────────────────────────
+
+/// Cache for the Result preview's highlight spans. Unlike the A/B rows the
+/// assembled text changes with every selection, so the key IS the text: the
+/// cheap `String` compare replaces a tree-sitter parse on every frame, and a
+/// real selection change re-parses exactly once.
+pub struct ResultHlCache {
+    key: (std::path::PathBuf, &'static str, String),
+    rows: Arc<Vec<RowHl>>,
+}
+
+fn result_highlights(
+    chrome: &EditorChrome,
+    path: &std::path::Path,
+    lines: &[kagi_git::resolution::ResolvedLine],
+) -> Arc<Vec<RowHl>> {
+    let text: String = lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let key = (path.to_path_buf(), theme().slug, text);
+    {
+        let cache = chrome.result_hl.borrow();
+        if let Some(c) = cache.as_ref() {
+            if c.key == key {
+                return c.rows.clone();
+            }
+        }
+    }
+    let texts: Vec<(usize, &str)> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (i, l.text.as_str()))
+        .collect();
+    let rows = Arc::new(highlight_rows(lines.len(), &texts, path));
+    *chrome.result_hl.borrow_mut() = Some(ResultHlCache {
+        key,
+        rows: rows.clone(),
+    });
+    rows
+}
+
+/// The provenance badge at the head of a Result line: the adopted side's own
+/// accent, filled for Current and a ring for Incoming, so the two read apart by
+/// shape as well as hue (#354). Context and hand-edited lines carry no badge.
+fn origin_badge(origin: LineOrigin) -> gpui::Div {
+    let cell = div()
+        .flex_shrink_0()
+        .w(theme::scaled_px(16.))
+        .h(theme::scaled_px(17.))
+        .flex()
+        .items_center()
+        .justify_center();
+    let dot = |color: u32, filled: bool| {
+        div()
+            .w(theme::scaled_px(9.))
+            .h(theme::scaled_px(9.))
+            .rounded_full()
+            .map(|el| {
+                if filled {
+                    el.bg(rgb(color))
+                } else {
+                    el.border_2().border_color(rgb(color))
+                }
+            })
+    };
+    match origin {
+        LineOrigin::Current => cell.child(dot(side_accent(SelectionSide::Current), true)),
+        LineOrigin::Incoming => cell.child(dot(side_accent(SelectionSide::Incoming), false)),
+        LineOrigin::Manual | LineOrigin::Context => cell,
+    }
+}
+
+/// The read-only Result preview: the assembled output, one row per line, each
+/// tagged with the side it came from (user request — "show me whether Current or
+/// Incoming was adopted, at the head of the line"). Edit mode still uses the
+/// CodeEditor; this list is what Preview shows instead.
+fn render_result_preview(
+    model: &kagi_git::resolution::HunkModel,
+    chrome: &EditorChrome,
+    path: &std::path::Path,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
+    let lines = Arc::new(model.assemble());
+    let highlights = result_highlights(chrome, path, &lines);
+    let scroll = chrome.result_scroll.clone();
+    let row_count = lines.len();
+    div()
+        .id("conflict-result-rows")
+        .relative()
+        .flex_1()
+        .min_h(px(0.))
+        .flex()
+        .flex_col()
+        .overflow_x_scroll()
+        .child(
+            uniform_list(
+                "conflict-result-lines",
+                row_count,
+                cx.processor(move |_this, range: std::ops::Range<usize>, _window, _cx| {
+                    range
+                        .filter_map(|i| lines.get(i).map(|line| (i, line)))
+                        .map(|(i, line)| {
+                            div()
+                                .id(SharedString::from(format!("result-line-{}", i)))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .min_w(relative(1.0))
+                                .h(theme::scaled_px(17.))
+                                .pr(theme::scaled_px(4.))
+                                .gap_1()
+                                .bg(rgb(theme().bg_base))
+                                .child(origin_badge(line.origin))
+                                .child(
+                                    div()
+                                        .w(theme::scaled_px(34.))
+                                        .flex_shrink_0()
+                                        .text_size(theme::scaled_px(11.))
+                                        .line_height(theme::scaled_px(17.))
+                                        .font_family(terminal::pick_font_family())
+                                        .text_color(rgb(theme().text_muted))
+                                        .child(SharedString::from(format!("{:>4}", i + 1))),
+                                )
+                                .child(code_text(
+                                    line.text.clone(),
+                                    highlights.get(i).cloned().unwrap_or_default(),
+                                    theme().text_main,
+                                    &[],
+                                    gpui::transparent_black(),
+                                ))
+                                .into_any_element()
+                        })
+                        .collect()
+                }),
+            )
+            .track_scroll(&scroll)
+            .flex_1()
+            .min_h(px(0.)),
+        )
+        .child(Scrollbar::vertical(&scroll))
+        .into_any_element()
+}
 
 fn render_result_pane(
     mode: &ConflictMode,
@@ -1164,20 +1483,28 @@ fn render_result_pane(
     // different renderers and their font/size drifted). The CodeEditor
     // highlights via the ADR-0133 per-theme pipeline; disabled only skips the
     // interaction handlers and keeps the syntax colours.
-    let preview_body: gpui::AnyElement = div()
-        .flex_grow(1.)
-        .w_full()
-        .min_h(px(0.))
-        // Font via the wrapper text-style cascade (Snapshot-pane pattern, #219).
-        .font_family(terminal::pick_font_family())
-        .child(
-            Input::new(&inputs.result)
-                .disabled(!editing || chrome.writer_busy)
-                .appearance(false)
-                .bordered(false)
-                .h_full(),
-        )
-        .into_any_element();
+    // Preview renders our own rows so each line can carry its provenance badge;
+    // Edit stays the CodeEditor (it has to be a real text buffer).
+    let preview_body: gpui::AnyElement = if editing {
+        div()
+            .flex_grow(1.)
+            .w_full()
+            .min_h(px(0.))
+            // Font via the wrapper text-style cascade (Snapshot-pane pattern, #219).
+            .font_family(terminal::pick_font_family())
+            .child(
+                Input::new(&inputs.result)
+                    .disabled(chrome.writer_busy)
+                    .appearance(false)
+                    .bordered(false)
+                    .h_full(),
+            )
+            .into_any_element()
+    } else if let Some(model) = model {
+        render_result_preview(model, chrome, path, cx)
+    } else {
+        div().flex_grow(1.).into_any_element()
+    };
 
     div()
         .id("conflict-pane-result")
@@ -1284,6 +1611,44 @@ mod side_row_tests {
             }
         }
         (rows.len(), ctx, blank, line)
+    }
+
+    fn spans(rows: &[SideRow]) -> Vec<Vec<Range<usize>>> {
+        rows.iter()
+            .filter_map(|r| match r {
+                SideRow::Line { diff_spans, .. } => Some(diff_spans.as_ref().clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The conflict rows must mark WHERE the two sides disagree: a line that is
+    /// identical on both sides carries no span, and a changed line spans only
+    /// the changed word (not the whole line).
+    #[test]
+    fn diff_spans_mark_only_the_words_that_differ_between_the_sides() {
+        let markers =
+            "ctx\n<<<<<<< Current\nsame\nlet a = 1;\n=======\nsame\nlet a = 2;\n>>>>>>> Incoming\n";
+        let model = HunkModel::from_marker_text(markers);
+
+        let cur = spans(&build_side_rows(&model, SelectionSide::Current));
+        let inc = spans(&build_side_rows(&model, SelectionSide::Incoming));
+
+        assert_eq!(cur.len(), 2);
+        assert!(cur[0].is_empty(), "identical line is not highlighted");
+        assert!(inc[0].is_empty(), "identical line is not highlighted");
+        // "let a = 1;" → only the "1" differs.
+        assert_eq!(cur[1], vec![8..9]);
+        assert_eq!(inc[1], vec![8..9]);
+    }
+
+    /// A line with no counterpart on the other side differs wholesale.
+    #[test]
+    fn unpaired_line_is_highlighted_whole() {
+        let markers = "<<<<<<< Current\nonly\n=======\n>>>>>>> Incoming\n";
+        let model = HunkModel::from_marker_text(markers);
+        let cur = spans(&build_side_rows(&model, SelectionSide::Current));
+        assert_eq!(cur, vec![vec![0..4]]);
     }
 
     /// Bug 1 (scroll clamp) + Bug 2 (preview/editor consistency): both panes must

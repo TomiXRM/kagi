@@ -347,7 +347,7 @@ fn word_emphasis_bg(kind: &DiffLineKind) -> Hsla {
 /// their combined boundary points therefore yields char-boundary intervals,
 /// each tagged with the syntax colour that covers it (if any) plus the emphasis
 /// background (if the interval is inside a changed span).
-fn merge_highlights(
+pub(crate) fn merge_highlights(
     text_len: usize,
     syntax: &[(Range<usize>, HighlightStyle)],
     emphasis: &[Range<usize>],

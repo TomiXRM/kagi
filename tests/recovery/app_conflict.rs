@@ -430,6 +430,99 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
     eprintln!("[gui-e2e] PASS a detector result for another owner is dropped (#707)");
 }
 
+/// #707 re-review P2: a stale "there is no conflict" answer must not tear down
+/// the projection the accepted read still says exists.
+///
+/// Only `Detected` was compared against the accepted observation, so a late
+/// `Cleared` / `MergeResolvedReady` / `OpenFailed` from the same owner dropped
+/// the live `ConflictView` (and, for `OpenFailed`, the stash identity) and left
+/// nothing until the next reload — with the detector not even re-armed.
+pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e::ConflictDetectOutcome;
+
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let view = cx
+        .read(|cx| app.read(cx).conflict.clone())
+        .expect("the live conflict has an editor");
+    let revision = cx
+        .read(|cx| {
+            view.read(cx)
+                .mode
+                .as_ref()
+                .map(|mode| mode.revision.clone())
+        })
+        .expect("with a revision");
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("attached");
+    let observation = cx
+        .read(|cx| app.read(cx).view().operation.clone())
+        .map(|op| op.observation)
+        .expect("the accepted read says an operation is in progress");
+
+    // `Cleared` / `OpenFailed` carry no observation: they disagree with an
+    // accepted read that says an operation is in progress, full stop. A
+    // `MergeResolvedReady` is stale when its own observation is not the
+    // accepted one.
+    let older = kagi_domain::conflict_family::ConflictObservation {
+        revision: kagi_domain::conflict_family::ConflictRevision::from_fingerprint(
+            "an-older-observation".to_string(),
+        ),
+        ..observation.clone()
+    };
+    for stale in [
+        ConflictDetectOutcome::Cleared,
+        ConflictDetectOutcome::OpenFailed,
+        ConflictDetectOutcome::MergeResolvedReady(older),
+    ] {
+        app.update(cx, |app, cx| {
+            app.conflict_detected_for = Some(repo.clone());
+            app.apply_conflict_detect(owner.clone(), stale, cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|cx| app.read(cx).conflict.is_some()),
+            "a stale no-conflict answer must not drop the editor"
+        );
+        assert_eq!(
+            cx.read(|cx| app.read(cx).conflict.as_ref().and_then(|v| v
+                .read(cx)
+                .mode
+                .as_ref()
+                .map(|m| m.revision.clone()))),
+            Some(revision.clone()),
+            "and must not replace what it shows"
+        );
+        assert!(
+            cx.read(|cx| app.read(cx).conflict_detected_for.is_none()),
+            "dropping a stale outcome re-arms the detector"
+        );
+    }
+
+    // The same `MergeResolvedReady` is applied once the read agrees with it:
+    // the guard is about disagreement, not about the variant.
+    std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict.is_none()),
+        "an agreeing outcome still applies"
+    );
+    drop(view);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a stale no-conflict outcome keeps the projection (#707)");
+}
+
 pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let fixture = stuck_merging_fixture();
     let repo = fixture.path().canonicalize().unwrap();

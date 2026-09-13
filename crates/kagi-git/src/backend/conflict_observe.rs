@@ -131,6 +131,25 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
             parts.push(bytes);
         }
     }
+    // #707 review: the ref an abort would *overwrite*, and where it points now.
+    // `head-name` names it, but during a rebase HEAD is detached, so nothing
+    // above says where `refs/heads/<pre-rebase-branch>` currently is — an
+    // external `git update-ref` on it passed preflight and was then clobbered
+    // by the restore. Absent / symbolic / unreadable are their own markers: an
+    // abort must not silently create or overwrite a ref that appeared since.
+    parts.push(b"restore-ref".to_vec());
+    match crate::conflict_abort::restore_ref(repo, &session) {
+        Some(restore) => {
+            parts.push(restore.name.into_bytes());
+            parts.push(
+                restore
+                    .target
+                    .unwrap_or_else(|| "unresolved".into())
+                    .into_bytes(),
+            );
+        }
+        None => parts.push(b"detached".to_vec()),
+    }
     let revision = ConflictRevision::from_fingerprint(digest(parts));
     let paths = session.files.iter().map(|file| file.path.clone()).collect();
     Ok(Some(ConflictSnapshot {

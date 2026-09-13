@@ -23,8 +23,9 @@ pub enum ConflictDetectOutcome {
     /// A merge with MERGE_HEAD but no unmerged entries — resolved, ready to
     /// commit. Only the *editor* has nothing left to show: the merge itself
     /// lives on in the read model, which is what the abort is admitted from
-    /// (#704).
-    MergeResolvedReady,
+    /// (#704). Carries the observation so a stale one can be told from the
+    /// accepted read, like `Detected` (#707 re-review).
+    MergeResolvedReady(kagi_domain::conflict_family::ConflictObservation),
     /// An active conflict/merge with files to resolve.  Boxed: the session +
     /// resolution buffer are large, and this variant is the rare case.
     Detected(Box<ConflictDetected>),
@@ -82,7 +83,7 @@ impl KagiApp {
         // A merge with MERGE_HEAD present but no remaining unmerged index entries
         // is not a conflict to resolve — it is a resolved merge ready to commit.
         if matches!(session.op, kagi_git::ConflictOp::Merge { .. }) && session.files.is_empty() {
-            return ConflictDetectOutcome::MergeResolvedReady;
+            return ConflictDetectOutcome::MergeResolvedReady(snapshot.observation);
         }
 
         // Build / reload the resolution buffer.  A previously-autosaved buffer
@@ -182,7 +183,7 @@ impl KagiApp {
         {
             return;
         }
-        // #707 review P1: and it must describe the repository the tab is
+        // #707 review: and it must describe the repository the tab is
         // *showing*. The accepted read is authoritative (ADR-0183), so a
         // payload observed against an older state is dropped whole — never
         // re-labelled with the accepted revision, which would hand a stale
@@ -190,15 +191,29 @@ impl KagiApp {
         // accepted read yet there is nothing to disagree with: the detector's
         // own observation stands as display, and `Sessions` holding no
         // observation keeps Save and D/F refused until a read lands.
-        if let ConflictDetectOutcome::Detected(detected) = &outcome {
-            if let Some(accepted) = self.view().operation.as_ref() {
-                if accepted.observation != detected.observation {
-                    // The read that superseded it re-detects on its own; this
-                    // re-arm covers the commit points that do not.
-                    self.conflict_detected_for = None;
-                    return;
-                }
+        //
+        // Every outcome is checked, not only `Detected`: a stale "there is no
+        // conflict" answer tears down the editor and (for `OpenFailed`) the
+        // stash identity of a tab whose accepted read says an operation is
+        // very much in progress, and leaves no projection until the next
+        // reload. Fail closed and re-detect instead.
+        let accepted = self.view().operation.as_ref();
+        let stale = match (&outcome, accepted) {
+            (ConflictDetectOutcome::Detected(d), Some(op)) => op.observation != d.observation,
+            (ConflictDetectOutcome::MergeResolvedReady(o), Some(op)) => &op.observation != o,
+            (
+                ConflictDetectOutcome::Detected(_) | ConflictDetectOutcome::MergeResolvedReady(_),
+                None,
+            ) => false,
+            (ConflictDetectOutcome::Cleared | ConflictDetectOutcome::OpenFailed, accepted) => {
+                accepted.is_some()
             }
+        };
+        if stale {
+            // The read that superseded it re-detects on its own; this re-arm
+            // covers the commit points that do not.
+            self.conflict_detected_for = None;
+            return;
         }
         // #704 review P1: this detector must NOT write `Sessions`' conflict
         // observation. Its job is keyed on the repository path alone — no
@@ -236,7 +251,7 @@ impl KagiApp {
                 // the accepted Stage-1 reset delta on re-entry).
                 self.conflict = None;
             }
-            ConflictDetectOutcome::MergeResolvedReady => {
+            ConflictDetectOutcome::MergeResolvedReady(_) => {
                 klog!("conflict-mode: merge resolved — ready to commit");
                 // Only the *editor* has nothing left to show. The merge itself
                 // lives on in the read model (#704).

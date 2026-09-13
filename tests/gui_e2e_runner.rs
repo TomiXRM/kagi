@@ -711,6 +711,10 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_detect_wrong_owner_is_dropped),
             ),
             (
+                "conflict_detect_stale_clear_is_dropped",
+                Box::new(crate::app_conflict::scenario_conflict_detect_stale_clear_is_dropped),
+            ),
+            (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
             ),

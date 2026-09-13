@@ -24,6 +24,51 @@ use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
 use super::{resolve_head, GitError};
 
+/// The ref an abort will move back to `ORIG_HEAD`, and where it pointed when
+/// the operation was observed (#707 review).
+///
+/// A rebase leaves HEAD detached, so nothing else in the conflict fingerprint
+/// says where `refs/heads/<pre-rebase-branch>` currently points — and the
+/// restore used to be a `force` write. An external `git update-ref` on that
+/// branch during the confirmation therefore passed preflight and was silently
+/// overwritten. Both halves are fixed from here: the fingerprint folds this in
+/// (so the plan is refused), and the write is a compare-and-swap against
+/// `target` (so the window between preflight and the write is closed too).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoreRef {
+    /// Full ref name, e.g. `refs/heads/side`.
+    pub name: String,
+    /// Its resolved target when observed. `None` = the ref did not exist, or
+    /// is symbolic / unreadable — cases the restore must not silently create
+    /// or clobber either.
+    pub target: Option<String>,
+}
+
+/// Which ref this abort would rewrite, if any. The one place that decision is
+/// made: the fingerprint and the executor must never disagree about it.
+///
+/// #302: during a rebase HEAD is DETACHED, so `repo.head().name()` is literally
+/// "HEAD"; the pre-op branch name is in `.git/rebase-merge/head-name` (merge
+/// backend) or `.git/rebase-apply/head-name` (apply backend). Merge /
+/// cherry-pick / revert keep a symbolic HEAD, so `repo.head().name()` already
+/// yields the branch. `None` = genuinely detached, nothing to move.
+pub fn restore_ref(repo: &Repository, session: &ConflictSession) -> Option<RestoreRef> {
+    let name = match session.op {
+        ConflictOp::Rebase { .. } => read_rebase_head_name(repo.path()),
+        _ => repo
+            .head()
+            .ok()
+            .and_then(|head| head.name().map(str::to_string).ok())
+            .filter(|name| name != "HEAD"),
+    }?;
+    let target = repo
+        .find_reference(&name)
+        .ok()
+        .and_then(|reference| reference.target())
+        .map(|oid| oid.to_string());
+    Some(RestoreRef { name, target })
+}
+
 /// Outcome of an executed conflict abort.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbortOutcome {
@@ -100,7 +145,10 @@ pub(crate) fn execute_conflict_abort(
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
 ) -> Result<AbortOutcome, GitError> {
-    execute_conflict_abort_with_progress(repo, session, buffer, |_| {})
+    // No plan to freeze one, so the expectation is read here: the
+    // compare-and-swap still holds, over a shorter window.
+    let expected = restore_ref(repo, session);
+    execute_conflict_abort_with_progress(repo, session, buffer, expected.as_ref(), |_| {})
 }
 
 /// [`execute_conflict_abort`], reporting how far the mutation got.
@@ -121,6 +169,7 @@ pub fn execute_conflict_abort_with_progress(
     repo: &Repository,
     session: &ConflictSession,
     buffer: &ResolutionBuffer,
+    expected: Option<&RestoreRef>,
     mut progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
     // 1. Preserve the buffer BEFORE touching the repo (never lose partial
@@ -232,35 +281,39 @@ pub fn execute_conflict_abort_with_progress(
         progress(ConflictProgress::IndexAndWorktreeWritten);
 
         // Restore the branch ref back to ORIG_HEAD and reattach HEAD to it.
-        //
-        // #302: during a rebase HEAD is DETACHED, so `repo.head().name()` is
-        // literally "HEAD" — the old code then wrote `HEAD` as a *direct* ref
-        // pointing at ORIG_HEAD, stranding the user in detached HEAD. Real
-        // `git rebase --abort` returns to the branch. The pre-op branch name is
-        // recorded in `.git/rebase-merge/head-name` (merge backend) or
-        // `.git/rebase-apply/head-name` (apply backend); read it, point that
-        // branch at ORIG_HEAD, and `set_head` to it. Merge / cherry-pick /
-        // revert keep a symbolic HEAD, so `repo.head().name()` already yields
-        // the branch — that path is unchanged. The error is no longer swallowed.
+        // Real `git rebase --abort` returns to the branch rather than leaving
+        // the user detached (#302); `restore_ref` is where that branch is
+        // decided, for the fingerprint and for here alike.
         let reflog = format!("abort {}: restore ORIG_HEAD", session.op.slug());
-        let branch_ref: Option<String> = match session.op {
-            ConflictOp::Rebase { .. } => read_rebase_head_name(repo.path()),
-            _ => repo
-                .head()
-                .ok()
-                .and_then(|h| h.name().map(str::to_string).ok())
-                .filter(|n| n != "HEAD"),
-        };
-        match branch_ref {
-            Some(name) => {
-                repo.reference(&name, oid, true, &reflog).map_err(|e| {
+        match expected {
+            Some(RestoreRef { name, target }) => {
+                // Compare-and-swap against the OID this ref held when the
+                // operation was observed. The fingerprint covers that value, so
+                // a plan built before an external `git update-ref` is already
+                // refused — this closes the remaining window, between the live
+                // preflight and this write (#707 review).
+                let write = match target {
+                    Some(expected_target) => {
+                        let expected_oid = git2::Oid::from_str(expected_target).map_err(|e| {
+                            GitError::Other(format!(
+                                "bad expected target {expected_target}: {}",
+                                e.message()
+                            ))
+                        })?;
+                        repo.reference_matching(name, oid, true, expected_oid, &reflog)
+                    }
+                    // It did not resolve when observed; only create it if that
+                    // is still true, never overwrite what appeared meanwhile.
+                    None => repo.reference(name, oid, false, &reflog),
+                };
+                write.map_err(|e| {
                     GitError::Other(format!(
                         "restore {} to ORIG_HEAD failed: {}",
                         name,
                         e.message()
                     ))
                 })?;
-                repo.set_head(&name).map_err(|e| {
+                repo.set_head(name).map_err(|e| {
                     GitError::Other(format!("reattach HEAD to {} failed: {}", name, e.message()))
                 })?;
             }

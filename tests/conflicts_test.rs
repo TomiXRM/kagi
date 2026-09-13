@@ -1714,6 +1714,79 @@ fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
         .is_none());
 }
 
+/// #707 re-review: a rebase abort must not clobber the branch it restores.
+///
+/// The destination is the ref named in `rebase-merge/head-name` — and during a
+/// rebase HEAD is detached, so nothing else about that branch was in the
+/// fingerprint. An external `git update-ref refs/heads/side <new>` while the
+/// confirmation was open changed nothing the revision covered, passed
+/// preflight, and was then overwritten by a `force` write of `ORIG_HEAD`.
+#[test]
+fn a_rebase_abort_refuses_when_its_destination_branch_moved() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = rebase_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("rebase conflict session");
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+    let frozen = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("observed")
+        .observation;
+    let restore = kagi_git::restore_ref(&repo, &session).expect("a rebase restores a branch");
+    assert_eq!(restore.name, "refs/heads/side");
+
+    // Someone moves exactly that branch, and nothing else.
+    let elsewhere = git_output(dir, &["rev-parse", "main"]);
+    git(dir, &["update-ref", &restore.name, &elsewhere]);
+
+    // The observation changed, so the frozen plan is refused …
+    let live = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("still rebasing")
+        .observation;
+    assert_ne!(
+        live.revision, frozen.revision,
+        "the destination branch's target is part of the revision"
+    );
+
+    // … and even a write that got past a check is a compare-and-swap.
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let error = kagi_git::execute_conflict_abort_with_progress(
+        &repo,
+        &session,
+        &buffer,
+        Some(&restore),
+        |_| {},
+    )
+    .expect_err("the restore must not overwrite a branch that moved");
+    assert!(
+        format!("{error}").contains("refs/heads/side"),
+        "the refusal names the destination: {error}"
+    );
+
+    assert_eq!(
+        git_output(dir, &["rev-parse", &restore.name]),
+        elsewhere,
+        "the branch keeps the OID the other process gave it"
+    );
+    assert!(
+        dir.join(".git/rebase-merge").exists() || dir.join(".git/rebase-apply").exists(),
+        "the rebase is still in progress"
+    );
+    assert!(
+        detect_conflict_session(&Repository::open(dir).unwrap()).is_some(),
+        "and its conflict is untouched"
+    );
+}
+
 /// #707 review: abort must not autosave an empty buffer over a saved one.
 ///
 /// ADR-0057 says abort preserves the partial resolution. Once the resolution
@@ -1782,20 +1855,27 @@ fn abort_reports_each_stage_only_once_it_has_happened() {
 
     use kagi_domain::conflict_family::ConflictProgress as P;
     let mut stages = Vec::new();
-    kagi_git::execute_conflict_abort_with_progress(&repo, &session, &buffer, |stage| {
-        // The sequence alone cannot tell this stage from one fired *before*
-        // the checkout — a success run reports the same list either way (#707
-        // re-review). What separates them is the working tree: by the time
-        // this stage is claimed, it already holds the restore target.
-        if stage == P::IndexAndWorktreeWritten {
-            assert_eq!(
+    let expected = kagi_git::restore_ref(&repo, &session);
+    kagi_git::execute_conflict_abort_with_progress(
+        &repo,
+        &session,
+        &buffer,
+        expected.as_ref(),
+        |stage| {
+            // The sequence alone cannot tell this stage from one fired *before*
+            // the checkout — a success run reports the same list either way (#707
+            // re-review). What separates them is the working tree: by the time
+            // this stage is claimed, it already holds the restore target.
+            if stage == P::IndexAndWorktreeWritten {
+                assert_eq!(
                 std::fs::read_to_string(dir.join("a.txt")).unwrap(),
                 "MAIN a\n",
                 "IndexAndWorktreeWritten was reported before the checkout wrote the working tree"
             );
-        }
-        stages.push(stage)
-    })
+            }
+            stages.push(stage)
+        },
+    )
     .expect("abort");
 
     assert_eq!(

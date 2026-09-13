@@ -29,6 +29,9 @@ enum ConflictPreparedAction {
     /// conflicting file, and this is the rare variant.
     Abort {
         session: Box<conflicts::ConflictSession>,
+        /// #707 review: the ref the restore will rewrite and the OID it held
+        /// when planned, so the write is a compare-and-swap.
+        restore: Option<crate::conflict_abort::RestoreRef>,
     },
 }
 
@@ -290,6 +293,7 @@ impl Backend {
                     ));
                 }
                 ConflictPreparedAction::Abort {
+                    restore: crate::conflict_abort::restore_ref(&backend.repo, &snapshot.session),
                     session: Box::new(snapshot.session.clone()),
                 }
             }
@@ -439,7 +443,7 @@ impl Backend {
                 // (ADR-0057) from the buffer on disk — the editor autosaves
                 // every edit, so this is the same bytes the UI held, and the
                 // abort is admissible with no editor open at all.
-                ConflictPreparedAction::Abort { session } => {
+                ConflictPreparedAction::Abort { session, restore } => {
                     // Not `unwrap_or_else(empty)`: a buffer we failed to read
                     // is not an empty buffer, and treating it as one would
                     // hand the executor something to save over the user's
@@ -459,6 +463,7 @@ impl Backend {
                             &backend.repo,
                             session,
                             &buffer,
+                            restore.as_ref(),
                             |value| progress = value,
                         )?
                     };

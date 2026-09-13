@@ -70,6 +70,36 @@ impl Fixture {
         }
     }
 
+    /// A rebase left mid-conflict: HEAD is detached and the branch an abort
+    /// would restore is named only by `rebase-merge/head-name` (#707).
+    fn rebase() -> Self {
+        let lock = ENV.lock().unwrap_or_else(|error| error.into_inner());
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().canonicalize().unwrap().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        assert!(git(&repo, &["init", "-q", "-b", "main"]));
+        assert!(git(&repo, &["config", "commit.gpgsign", "false"]));
+        std::fs::write(repo.join("file.txt"), "base\n").unwrap();
+        assert!(git(&repo, &["add", "."]));
+        assert!(git(&repo, &["commit", "-qm", "base"]));
+        assert!(git(&repo, &["checkout", "-qb", "side"]));
+        std::fs::write(repo.join("file.txt"), "side\n").unwrap();
+        assert!(git(&repo, &["commit", "-qam", "side"]));
+        assert!(git(&repo, &["checkout", "-q", "main"]));
+        std::fs::write(repo.join("file.txt"), "main\n").unwrap();
+        assert!(git(&repo, &["commit", "-qam", "main"]));
+        assert!(git(&repo, &["checkout", "-q", "side"]));
+        assert!(!git(&repo, &["rebase", "main"]));
+        let old_log = std::env::var_os("KAGI_LOG_DIR");
+        std::env::set_var("KAGI_LOG_DIR", root.path().join("log"));
+        Self {
+            _lock: lock,
+            _root: root,
+            repo,
+            old_log,
+        }
+    }
+
     fn dir_file() -> Self {
         let lock = ENV.lock().unwrap_or_else(|error| error.into_inner());
         let root = tempfile::tempdir().unwrap();
@@ -850,6 +880,91 @@ fn an_abort_is_refused_when_its_restore_target_moved_under_the_confirmation() {
         std::fs::read_to_string(fixture.repo.join(".git/ORIG_HEAD")).unwrap(),
         elsewhere,
         "and left the target where the other process put it"
+    );
+}
+
+/// #707 re-review: the application boundary refuses it too, and the rebase is
+/// left exactly as the other process left it.
+#[test]
+fn a_rebase_abort_is_refused_at_the_boundary_when_its_branch_moved() {
+    let fixture = Fixture::rebase();
+    let mut sessions = Sessions::new();
+    let (owner, snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let frozen = Backend::conflict_abort_request(&fixture.in_progress());
+    let index_before = std::fs::read(fixture.repo.join(".git/index")).unwrap();
+    let worktree_before = std::fs::read_to_string(fixture.repo.join("file.txt")).unwrap();
+    let restore = kagi_git::restore_ref(
+        &git2::Repository::open(&fixture.repo).unwrap(),
+        &snapshot.session,
+    )
+    .expect("a rebase restores a branch");
+    assert_eq!(restore.name, "refs/heads/side");
+
+    // Only the destination branch moves.
+    let elsewhere = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "main"])
+            .current_dir(&fixture.repo)
+            .output()
+            .expect("rev-parse")
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert!(git(
+        &fixture.repo,
+        &["update-ref", &restore.name, &elsewhere]
+    ));
+
+    let fresh = Backend::open(&fixture.repo)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("still rebasing");
+    sessions.observe_conflict(owner, Some(fresh.observation));
+    let owner = sessions.attachment(owner).unwrap();
+    let plan = plan_conflict(
+        &mut sessions,
+        ConflictAppRequest {
+            owner,
+            request: frozen.clone(),
+        },
+        ExecutionPolicy::human(false),
+    );
+    assert!(apply_plan(&mut sessions, plan.run()));
+    assert!(
+        matches!(sessions.plan_state(), PlanState::Error { .. }),
+        "a moved destination branch is a changed observation"
+    );
+    assert!(
+        Backend::plan_recorded_conflict(&fixture.repo, frozen).is_err(),
+        "the Backend refuses it on its own too"
+    );
+    assert!(!sessions.has_leases(), "a refused plan admits no write");
+
+    assert_eq!(
+        String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", &restore.name])
+                .current_dir(&fixture.repo)
+                .output()
+                .unwrap()
+                .stdout
+        )
+        .unwrap()
+        .trim(),
+        elsewhere,
+        "the branch keeps the OID the other process gave it"
+    );
+    assert!(fixture.repo.join(".git/rebase-merge").exists());
+    assert_eq!(
+        std::fs::read(fixture.repo.join(".git/index")).unwrap(),
+        index_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("file.txt")).unwrap(),
+        worktree_before
     );
 }
 

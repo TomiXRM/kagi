@@ -165,6 +165,9 @@ impl KagiApp {
             return;
         };
         let read_key = self.reads.current_key(session);
+        let Some(publish_gen) = self.ui.get(&session).map(|ui| ui.view_publish_gen) else {
+            return;
+        };
 
         let scan = async move {
             kagi_git::Backend::open(&repo_path).and_then(|b| b.collect_squash_links())
@@ -181,7 +184,11 @@ impl KagiApp {
                 // this session's graph, or a newer scan was launched.
                 let still_ours = app.squash_gen == my_gen
                     && app.active_session() == Some(session)
-                    && app.reads.is_fresh(read_key);
+                    && app.reads.is_fresh(read_key)
+                    && app
+                        .ui
+                        .get(&session)
+                        .is_some_and(|ui| ui.view_publish_gen == publish_gen);
                 if !still_ours {
                     return;
                 }

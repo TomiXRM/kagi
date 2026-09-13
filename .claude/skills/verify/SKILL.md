@@ -132,6 +132,16 @@ The current suite covers:
   before the next scan launches; it never changes generation or read revision.
   Remove each `Reads::is_fresh` guard independently: only that scan's revision
   scenario must fail while the sibling and existing ownership scenarios pass.
+- accepted-model generation safety (`tests/recovery/cleanup_publish_owner.rs`,
+  `tests/recovery/squash_publish_owner.rs`):
+  `KAGI_GUI_E2E_ONLY=cleanup_evidence_publish_generation,squash_evidence_publish_generation`.
+  These start a scan after `Reads::begin`, then accept a changed model with the
+  same `ReadKey`; request revision and scan generation deliberately stay equal.
+  Cleanup observes fresh rows, PR evidence, and select/delete consumers. Squash
+  compares commit/lane/edge signatures. The same scenarios cover rejected
+  accepts, another-owner publication, `publish_tab_view`, and `amend_tab_view`.
+  Removing only either publish-generation guard must fail only its matching
+  scenario; the earlier read-revision scenarios must remain green.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

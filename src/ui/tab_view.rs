@@ -276,6 +276,8 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
     pub selected: Option<usize>,
+    /// Identifies the published model, independently of read-request revisions.
+    pub view_publish_gen: u64,
     /// Open-PR evidence belongs to this session, including failures and absence.
     pub github_prs: Vec<kagi_domain::github::PullRequest>,
     pub github_prs_loaded: bool,
@@ -530,6 +532,9 @@ impl KagiApp {
     pub fn amend_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
         let anchor = self.selected_commit(session);
         self.reads.amend(session, view);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+        }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
     }
@@ -539,6 +544,9 @@ impl KagiApp {
     pub fn publish_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
         let anchor = self.selected_commit(session);
         self.reads.publish(session, view);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+        }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
     }
@@ -550,6 +558,9 @@ impl KagiApp {
         let anchor = self.selected_commit(key.session());
         if !self.reads.accept(key, view) {
             return false;
+        }
+        if let Some(ui) = self.ui.get_mut(&key.session()) {
+            ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
         }
         self.reanchor_selection(key.session(), anchor);
         self.on_view_published(key.session());

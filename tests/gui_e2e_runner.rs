@@ -120,12 +120,20 @@ mod cleanup_evidence_owner;
 mod conflict_evidence_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/cleanup_publish_owner.rs"]
+mod cleanup_publish_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/ecosystem_evidence_owner.rs"]
 mod ecosystem_evidence_owner;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/squash_evidence_owner.rs"]
 mod squash_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/squash_publish_owner.rs"]
+mod squash_publish_owner;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
@@ -891,6 +899,18 @@ mod macos {
             (
                 "squash_evidence_read_revision",
                 Box::new(crate::squash_evidence_owner::scenario_squash_evidence_read_revision),
+            ),
+            (
+                "cleanup_evidence_publish_generation",
+                Box::new(
+                    crate::cleanup_publish_owner::scenario_cleanup_evidence_publish_generation,
+                ),
+            ),
+            (
+                "squash_evidence_publish_generation",
+                Box::new(
+                    crate::squash_publish_owner::scenario_squash_evidence_publish_generation,
+                ),
             ),
             (
                 "conflict_detector_owner_guard",

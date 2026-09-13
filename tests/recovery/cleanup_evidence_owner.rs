@@ -74,9 +74,14 @@ pub fn scenario_cleanup_evidence_background_owner(cx: &mut VisualTestAppContext)
     });
     cx.run_until_parked();
 
+    // Settle A's switch-triggered publication before capturing scan evidence;
+    // this scenario isolates background-owner routing, not model replacement.
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+
     let pending = queue_scan(cx);
     app.update(cx, |app, cx| {
-        app.switch_repo(0, cx);
+        assert_eq!(app.active_session(), Some(owner_a));
         app.ui.get_mut(&owner_a).unwrap().cleanup_prs = vec![pr(10, "a-old")];
         app.start_branch_cleanup_scan(cx);
         app.switch_repo(1, cx);

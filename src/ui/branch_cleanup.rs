@@ -94,8 +94,7 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Recompute cleanup in the background, updating its frozen owner only
-    /// while both the request token and captured read revision remain current.
+    /// Recompute cleanup for its captured owner, request, and published view.
     pub fn start_branch_cleanup_scan(&mut self, cx: &mut Context<Self>) {
         let (Some(repo_path), Some(owner)) = (self.repo_path.clone(), self.active_session()) else {
             return;
@@ -107,6 +106,7 @@ impl KagiApp {
         ui.cleanup_gen += 1;
         ui.cleanup_scanning = true;
         let my_gen = ui.cleanup_gen;
+        let publish_gen = ui.view_publish_gen;
         let now = now_secs();
 
         let scan_path = repo_path;
@@ -141,7 +141,7 @@ impl KagiApp {
                     return;
                 }
                 ui.cleanup_scanning = false;
-                if !read_is_fresh {
+                if !read_is_fresh || ui.view_publish_gen != publish_gen {
                     if owner_is_active {
                         cx.notify();
                     }

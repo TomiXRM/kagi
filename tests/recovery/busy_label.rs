@@ -19,12 +19,12 @@ pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
             app.fetch_async(false, cx);
             // Assert in the same UI turn before the completion can be delivered.
             // This is the label consumed by render_busy_snackbar, not the footer.
-            assert!(app.fetch_in_flight);
+            assert!(app.fetch_in_flight.is_some());
             assert_eq!(app.write_busy_op, Some("fetch"));
             assert_eq!(e2e::busy_snackbar_label(app), Some(expected));
         });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        while cx.read(|cx| app.read(cx).fetch_in_flight) {
+        while cx.read(|cx| app.read(cx).fetch_in_flight.is_some()) {
             cx.run_until_parked();
             assert!(std::time::Instant::now() < deadline, "fetch did not settle");
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -35,7 +35,7 @@ pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
         );
         cx.read(|cx| {
             let state = app.read(cx);
-            assert!(!state.fetch_in_flight);
+            assert!(state.fetch_in_flight.is_none());
             assert!(!state.app_sessions.has_leases());
             assert_eq!(state.write_busy_op, None);
             assert_eq!(e2e::busy_snackbar_label(state), None);
@@ -69,7 +69,7 @@ pub fn scenario_fetch_failure_reaches_the_oplog(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.fetch_async(false, cx));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while cx.read(|cx| app.read(cx).fetch_in_flight) {
+    while cx.read(|cx| app.read(cx).fetch_in_flight.is_some()) {
         cx.run_until_parked();
         assert!(std::time::Instant::now() < deadline, "fetch did not settle");
         std::thread::sleep(std::time::Duration::from_millis(2));
@@ -483,7 +483,7 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
             !app.fetch_async_for(true, None, cx),
             "a write must not start while a plan is in flight"
         );
-        assert!(!app.fetch_in_flight);
+        assert!(app.fetch_in_flight.is_none());
         assert!(!app.app_sessions.has_leases());
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);

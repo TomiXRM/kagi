@@ -306,8 +306,8 @@ impl KagiApp {
                     });
                 } else if self.commit_panel.is_none() {
                     let weak_app = cx.weak_entity();
-                    let entity =
-                        cx.new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone()));
+                    let entity = cx
+                        .new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone(), session));
                     self.commit_panel = Some(entity);
                 }
                 self.commit_panel_open = true;

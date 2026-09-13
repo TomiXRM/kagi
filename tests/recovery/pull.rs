@@ -1194,7 +1194,7 @@ pub fn scenario_pull_confirm_parks_for_its_tab(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.open_pull_modal(cx);
         assert!(
-            app.fetch_in_flight,
+            app.fetch_in_flight.is_some(),
             "the confirmation must be waiting on a fetch"
         );
         app.switch_repo(1, cx);
@@ -1259,7 +1259,7 @@ pub fn scenario_pull_confirm_yields_to_another_modal(cx: &mut VisualTestAppConte
     app.update(cx, |app, cx| {
         app.open_pull_modal(cx);
         assert!(
-            app.fetch_in_flight,
+            app.fetch_in_flight.is_some(),
             "the confirmation must be waiting on a fetch"
         );
         app.open_create_branch_modal(kagi_git::CommitId(head.clone()), cx);

@@ -92,6 +92,20 @@ The current suite covers:
   re-anchored to its renumbered row, the Compare pane and its file diff re-read, a
   Commit Panel file diff re-read (closed once nothing is left to show), and the
   Commit Panel kept while the working tree still has something to list.
+- owner-stamped callbacks (`tests/recovery/remote_refresh_owner.rs`,
+  `tests/recovery/fetch_owner.rs`, `tests/recovery/file_menu_owner.rs`):
+  `remote_refresh_departed_owner`, `remote_refresh_newest_request`,
+  `fetch_same_owner_piggybacks`, `fetch_different_owner_does_not_piggyback`,
+  `fetch_owner_display_isolated`, `fetch_detach_retains_flight_and_isolates_reopen`,
+  `file_menu_freezes_path`, and `file_menu_rejects_stale_owner`.
+  Use `KAGI_GUI_E2E_ONLY=remote_refresh_,fetch_same_owner,fetch_different_owner,fetch_owner_display,fetch_detach,file_menu_`.
+  Remote tests queue a yielding transport task through `ui::e2e`, then exercise
+  the real refresh launch and completion; no SSH process blocks the dispatcher.
+  Fetch tests launch a real local fetch and switch/close before draining.
+  File-menu tests defer the real panel callback, renumber rows, click the measured
+  Discard control, and deliver a retained action after changing owners.
+  The existing `unmerged_branch_delete_armed` scenario also rejects delayed
+  plans after departure and revisit while releasing the planning latch.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

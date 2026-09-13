@@ -722,28 +722,28 @@ impl CommitPanelView {
         .detach();
     }
 
-    fn defer_open_file_menu(
+    pub(crate) fn defer_open_file_menu(
         &self,
         fi: usize,
         pos: gpui::Point<gpui::Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // `file_menu` is the shared parent overlay (correction #6b: kept on the
-        // parent — its dismiss/discard/history actions read `app.commit_panel`).
+        // Freeze both identities while the row listener still leases this
+        // panel; the deferred callback must never resolve them from active UI.
+        let Some(path) = self.state.unstaged.get(fi).map(|file| file.path.clone()) else {
+            return;
+        };
+        let menu = file_menu::FileMenu {
+            owner: self.owner,
+            path,
+            anchor: pos,
+        };
+        let panel_repo = self.repo_path.clone();
         let weak_app = self.app.clone();
         cx.spawn_in(window, async move |_v, acx| {
             let _ = weak_app.update_in(acx, |app, _window, cx| {
-                // Issue #286: resolve the row index to a PATH now, at open time,
-                // so a later renumber (external `git add`) can't shift Discard.
-                if let Some(path) = app
-                    .commit_panel
-                    .as_ref()
-                    .and_then(|e| e.read(cx).state.unstaged.get(fi).map(|f| f.path.clone()))
-                {
-                    app.file_menu = Some((path, pos));
-                    cx.notify();
-                }
+                app.open_file_menu(menu, &panel_repo, cx)
             });
         })
         .detach();

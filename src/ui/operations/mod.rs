@@ -92,8 +92,7 @@ impl KagiApp {
     /// place, since a later plan owns whatever it latched.
     ///
     /// Its result belongs to the tab that launched it, identified by the owner
-    /// stamp frozen here — same session, same visit (決定 3) — not by the
-    /// `repo_path + switch_generation` string comparison it replaces.
+    /// stamp frozen here — same session, same visit (決定 3).
     pub(crate) fn finish_planning<R, F>(
         &mut self,
         cx: &mut Context<Self>,
@@ -143,8 +142,7 @@ impl KagiApp {
     /// (`approve_run`, then `begin_write`) reserves the lease and freezes the
     /// owner stamp; the family's blocking core runs as the job; `apply`
     /// settles (lease, reconcile, invalidation) and the completion is
-    /// presented to the tab the stamp names — same tab, same visit — or
-    /// dropped exactly as the legacy `switch_generation` guard dropped it.
+    /// presented to the tab the stamp names — same tab, same visit — or dropped.
     /// The `Invalidate` delivery reloads the owner, so `on_done` no longer
     /// calls `reload`. `finished_note` is the tail of the `async: <op> …`
     /// contract line for a successful result (`None` = `finished`; a family

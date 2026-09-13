@@ -1,8 +1,4 @@
 //! Commit panel: staging, smart-commit, template handling, and the commit operation.
-//!
-//! Extracted verbatim from `ui/mod.rs` (issue #13 Phase 4, P1) as an additional
-//! `impl KagiApp` block. Behaviour and signatures are unchanged; a descendant
-//! module can access `KagiApp` privates so no visibility was widened.
 
 #![allow(clippy::too_many_arguments)]
 use super::staging_failure::StageAction;
@@ -115,20 +111,21 @@ impl KagiApp {
         self.finish_commit_panel_open(entity, repo_path, is_new, window, cx);
     }
 
-    /// Attach (or refresh) the commit-panel entity for `repo_path` — everything
-    /// [`Self::open_commit_panel_at`] does that does **not** need a `Window`.
-    /// Returns the entity and whether it was freshly built. Split out so the GUI
-    /// E2E runner can put a panel up without an `InputState` (`src/ui/e2e.rs`).
+    /// Attach or refresh the panel without its Window-bound inputs (also used by GUI E2E).
     pub(crate) fn attach_commit_panel_at(
         &mut self,
         repo_path: PathBuf,
         foreign: Option<(SharedString, usize)>,
         cx: &mut Context<Self>,
     ) -> (Entity<CommitPanelView>, bool) {
-        // #476: fold the path to its canonical form ONCE, here, so it compares
-        // equal to `self.repo_path` (which `open_repository` canonicalized).
-        // Otherwise `/tmp/x` vs `/private/tmp/x` marks the open repository's
-        // own panel as foreign and sends its writes down the worktree path.
+        let owner = self
+            .active_session()
+            .expect("commit panel requires a session");
+        self.file_menu = None; // Invalidate callbacks retained by the old panel.
+                               // #476: fold the path to its canonical form ONCE, here, so it compares
+                               // equal to `self.repo_path` (which `open_repository` canonicalized).
+                               // Otherwise `/tmp/x` vs `/private/tmp/x` marks the open repository's
+                               // own panel as foreign and sends its writes down the worktree path.
         let repo_path = crate::ui::worktree_wip::canon(repo_path);
         // Reopening (the entity survives a commit-row click — `select` clears
         // `commit_panel_open` but NOT the entity, ADR-0118 Q4): REUSE the existing
@@ -143,10 +140,10 @@ impl KagiApp {
         // the message inputs / draft / template belong to a specific repo, so a
         // panel that switches between the open repo and a linked worktree is
         // rebuilt rather than carried across.
-        let reusable = self
-            .commit_panel
-            .clone()
-            .filter(|e| e.read(cx).repo_path == repo_path);
+        let reusable = self.commit_panel.clone().filter(|e| {
+            let panel = e.read(cx);
+            panel.owner == owner && panel.repo_path == repo_path
+        });
         let (entity, is_new) = if let Some(existing) = reusable {
             let prev_tree_view = existing.read(cx).state.tree_view;
             let mut panel = CommitPanelState::from_repo(&repo_path);
@@ -166,7 +163,7 @@ impl KagiApp {
             let foreign = foreign.clone();
             (
                 cx.new(|_| {
-                    let mut v = CommitPanelView::new(panel, weak_app, repo_path.clone());
+                    let mut v = CommitPanelView::new(panel, weak_app, repo_path.clone(), owner);
                     v.foreign = foreign;
                     v
                 }),

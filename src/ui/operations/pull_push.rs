@@ -19,6 +19,13 @@ use crate::ui::*;
 impl KagiApp {
     /// Build a pull plan and open the confirmation modal.
     pub fn open_pull_modal(&mut self, cx: &mut Context<Self>) {
+        // Attaching a waiter is not admitting another plan or write.
+        if self.view().is_dirty
+            && self.fetch_in_flight.is_some()
+            && self.fetch_async_for(false, self.active_session(), cx)
+        {
+            return;
+        }
         // W3-NOTIFY: refuse while a background op runs.
         if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
@@ -394,10 +401,7 @@ impl KagiApp {
                 crate::remote::remote_pull(&host, &root, &recorded_before)
             });
             let notice_path = oplog_path.clone();
-            // This completion is spelled out here rather than shared, because
-            // the shape it used to share — the `repo_path + switch_generation`
-            // stale guard — is what Wave 3 removes. It also owns the release of
-            // `remote_write`, which nothing else may touch.
+            // This completion owns `remote_write`; no other path may release it.
             let owner = self.active_session();
             let visit = owner.and_then(|session| self.app_sessions.visit(session));
             cx.spawn(async move |this, acx| {

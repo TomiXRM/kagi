@@ -24,7 +24,7 @@
 //! Exits 0 on success, non-zero (panic → 101) on failure.
 //!
 //! Run (opt-in — see the `KAGI_GUI_E2E` guard in `run`):
-//!   KAGI_GUI_E2E=1 CARGO_TARGET_DIR=/Users/tomixrm/Dev/sandbox/git-client/target \
+//!   KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY=remote_refresh_departed_owner \
 //!     cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 //!
 //! Default workspace tests omit this target (including its recovery modules).
@@ -90,6 +90,18 @@ mod read_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/tab_ui_state.rs"]
 mod tab_ui_state;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/remote_refresh_owner.rs"]
+mod remote_refresh_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/fetch_owner.rs"]
+mod fetch_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/file_menu_owner.rs"]
+mod file_menu_owner;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
@@ -795,6 +807,38 @@ mod macos {
             (
                 "tab_ui_state_background_reload",
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
+            ),
+            (
+                "remote_refresh_departed_owner",
+                Box::new(crate::remote_refresh_owner::scenario_remote_refresh_departed_owner),
+            ),
+            (
+                "remote_refresh_newest_request",
+                Box::new(crate::remote_refresh_owner::scenario_remote_refresh_newest_request),
+            ),
+            (
+                "fetch_same_owner_piggybacks",
+                Box::new(crate::fetch_owner::scenario_fetch_same_owner_piggybacks),
+            ),
+            (
+                "fetch_different_owner_does_not_piggyback",
+                Box::new(crate::fetch_owner::scenario_fetch_different_owner_does_not_piggyback),
+            ),
+            (
+                "fetch_detach_retains_flight_and_isolates_reopen",
+                Box::new(crate::fetch_owner::scenario_fetch_detach_retains_flight_and_isolates_reopen),
+            ),
+            (
+                "fetch_owner_display_isolated",
+                Box::new(crate::fetch_owner::scenario_fetch_owner_display_isolated),
+            ),
+            (
+                "file_menu_freezes_path",
+                Box::new(crate::file_menu_owner::scenario_file_menu_freezes_path),
+            ),
+            (
+                "file_menu_rejects_stale_owner",
+                Box::new(crate::file_menu_owner::scenario_file_menu_rejects_stale_owner),
             ),
             (
                 "remote_source_merge_into",
@@ -2360,8 +2404,7 @@ mod macos {
             kagi.update(cx, |app, cx| {
                 app.start_discard(cx);
                 if stale {
-                    // ADR-0196: staleness is the owner stamp (session + visit),
-                    // not `switch_generation`. Leaving the tab ends the visit.
+                    // ADR-0196: leaving the tab ends the owner's visit.
                     let session = app.active_session().expect("attached");
                     app.app_sessions.depart(session);
                 }

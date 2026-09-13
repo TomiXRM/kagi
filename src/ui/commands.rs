@@ -1437,6 +1437,15 @@ pub enum MenuOverlay {
 const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
 const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
 
+/// One fetch operation and the Pull confirmations attached to its frozen owner.
+///
+/// The flight outlives its tab so closing a tab never cancels the write lease.
+/// Detach only prunes that session from `waiters`.
+pub struct FetchFlight {
+    pub owner: crate::app::SessionId,
+    pub waiters: Vec<crate::app::SessionId>,
+}
+
 /// Why a background fetch failed, kept apart from its display text.
 ///
 /// `TerminationUnknown` means the deadline expired before the child was reaped:
@@ -1810,13 +1819,9 @@ impl KagiApp {
         let _ = self.fetch_async_for(silent, None, cx);
     }
 
-    /// [`Self::fetch_async`], plus the tab whose dirty Pull is waiting for this
-    /// fetch to finish before its confirmation can be planned (#625).
-    ///
-    /// The request is a parameter, so it lives in *this* task's closure: an
-    /// unrelated fetch cannot consume it, a reload cannot drop it, and a fetch
-    /// that never starts never creates one. Delivery is
-    /// [`Self::deliver_pull_confirm`].
+    /// [`Self::fetch_async`], plus the tab whose dirty Pull waits for this fetch
+    /// before its confirmation can be planned (#625). The launch request and
+    /// later same-owner requests all live in the flight's waiter list.
     pub fn fetch_async_for(
         &mut self,
         silent: bool,
@@ -1824,27 +1829,15 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> bool {
         self.refresh_write_busy();
-        if self.fetch_in_flight {
-            // A fetch is already running (the 180s auto-fetch, a manual
-            // refresh). Pressing Pull now must not be swallowed and must not
-            // start a second fetch: attach the request to the fetch that is
-            // already on its way, but only when that fetch is refreshing the
-            // repository the request is about — piggybacking on another repo's
-            // fetch would "confirm after fetching" while never having fetched
-            // this repo (#626 review).
-            if let Some(session) = pull_confirm {
-                let same_repo = self
-                    .app_sessions
-                    .attachment(session)
-                    .zip(self.fetch_in_flight_repo.clone())
-                    .is_some_and(|(owner, fetching)| owner.path == fetching);
-                if same_repo {
-                    if !self.fetch_pull_confirm_waiters.contains(&session) {
-                        self.fetch_pull_confirm_waiters.push(session);
-                    }
-                    klog!("pull-confirm: waiting on the fetch already in flight");
-                    return true;
+        if let Some(flight) = self.fetch_in_flight.as_mut() {
+            // A Pull may piggyback only on a fetch launched by this exact tab
+            // incarnation. A path is a locator, not repository identity.
+            if let Some(session) = pull_confirm.filter(|session| *session == flight.owner) {
+                if !flight.waiters.contains(&session) {
+                    flight.waiters.push(session);
                 }
+                klog!("pull-confirm: waiting on the fetch already in flight");
+                return true;
             }
             return false;
         }
@@ -1855,11 +1848,16 @@ impl KagiApp {
             Some(p) => p,
             None => return false,
         };
+        let Some(owner) = self.active_session() else {
+            return false;
+        };
         let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
             return false;
         };
-        self.fetch_in_flight = true;
-        self.fetch_in_flight_repo = Some(repo_path.clone());
+        self.fetch_in_flight = Some(FetchFlight {
+            owner,
+            waiters: pull_confirm.into_iter().collect(),
+        });
         let repo_path_guard = repo_path.clone();
         if !silent {
             self.refresh_spin_started = Some(Instant::now());
@@ -1887,25 +1885,16 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.fetch_in_flight = false;
-                app.fetch_in_flight_repo = None;
+                let Some(flight) = app.fetch_in_flight.take() else {
+                    return;
+                };
                 app.refresh_write_busy();
-                // Requests that attached to this fetch instead of starting one
-                // (#626 review). Drained here, so only a completion delivers
-                // them and none can outlive the fetch they waited on.
-                let waiters = std::mem::take(&mut app.fetch_pull_confirm_waiters);
-                // A fetch takes seconds; the user may have switched tabs. The
-                // apply below stamps `last_fetch_secs` and can trigger a full
-                // reload, both of which would land on the wrong repo — falsely
-                // silencing the fetch-age warning (ADR-0127) for a repo that
-                // was never fetched, and closing that tab's commit panel.
-                if app.repo_path.as_deref() != Some(repo_path_guard.as_path()) {
-                    // The user is on another tab now. The fetch's own display
-                    // side effects belong to the tab that started it, but a Pull
-                    // confirmation waiting on this fetch must still be
-                    // delivered — parked for its tab, not dropped (#626 review).
+                // Terminalize the operation and route every still-attached
+                // waiter even when its owner is no longer on screen. Only the
+                // fetch owner's active session may receive display effects.
+                if app.active_session() != Some(flight.owner) {
                     let error = result.err().map(|failure| failure.message);
-                    for session in pull_confirm.into_iter().chain(waiters) {
+                    for session in flight.waiters {
                         app.deliver_pull_confirm(session, error.clone(), cx);
                     }
                     return;
@@ -1978,20 +1967,16 @@ impl KagiApp {
                         }
                     }
                 }
-                // #625 / ADR-0192: a dirty Pull deferred its confirmation to
-                // this fetch, so the plan can name the paths whose auto-stash
-                // restore would conflict. The request came in with this task,
-                // so only this completion can deliver it; every case (tab not
-                // on screen, another modal open, tab closed, fetch failed) is
-                // decided in one place (#626 review).
-                for session in pull_confirm.into_iter().chain(waiters) {
+                // Every request, including the one that launched this fetch,
+                // is drained with the flight and delivered exactly once.
+                for session in flight.waiters {
                     app.deliver_pull_confirm(session, fetch_error.clone(), cx);
                 }
                 cx.notify();
             });
         })
         .detach();
-        // The request now belongs to the task above: this fetch will deliver it.
+        // The request now belongs to the flight above: this fetch will deliver it.
         true
     }
 

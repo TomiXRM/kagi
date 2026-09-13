@@ -1162,14 +1162,14 @@ fn departed_delete_plan_releases_busy_and_revisit_can_replan() {
     sessions.depart(session_a);
     let current_b = sessions.attachment(session_b).unwrap();
     assert!(
-        !DeleteBranchModal::settle_plan(&owner, Some(&current_b), false, &mut busy),
+        !DeleteBranchModal::settle_plan(&owner, Some(&current_b), &mut busy),
         "A's completion may not install a modal or footer on B"
     );
     assert_eq!(busy, None, "departed plan must release its latch");
     sessions.depart(session_b);
     let revisited_a = sessions.attachment(session_a).unwrap();
     assert!(
-        !DeleteBranchModal::settle_plan(&owner, Some(&revisited_a), true, &mut busy),
+        !DeleteBranchModal::settle_plan(&owner, Some(&revisited_a), &mut busy),
         "the old visit cannot restore a modal on A"
     );
     assert_eq!(busy, None, "A must be free to re-plan");
@@ -1182,7 +1182,6 @@ fn departed_delete_plan_releases_busy_and_revisit_can_replan() {
     assert!(DeleteBranchModal::settle_plan(
         &revisited_a,
         Some(&revisited_a),
-        true,
         &mut busy
     ));
     assert_eq!(busy, None);
@@ -1190,7 +1189,6 @@ fn departed_delete_plan_releases_busy_and_revisit_can_replan() {
     assert!(!DeleteBranchModal::settle_plan(
         &owner,
         Some(&current_b),
-        false,
         &mut busy
     ));
     assert_eq!(

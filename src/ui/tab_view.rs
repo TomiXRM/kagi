@@ -411,6 +411,10 @@ impl KagiApp {
         self.app_sessions.detach(session);
         self.reads.forget(session);
         self.ui.remove(&session);
+        self.pending_pull_confirm.remove(&session);
+        if let Some(flight) = &mut self.fetch_in_flight {
+            flight.waiters.retain(|waiter| *waiter != session);
+        }
     }
 
     /// `Some(label)` while the tab on screen is waiting for its **first** read —

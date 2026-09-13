@@ -45,7 +45,7 @@ pub mod editor_tree_menu;
 pub mod editor_workspace;
 mod external_editor;
 pub mod file_history;
-mod file_menu;
+pub mod file_menu;
 mod fonts;
 mod github;
 pub mod pr_conflicts;
@@ -1183,15 +1183,8 @@ pub struct KagiApp {
     /// constructors have no `cx`; it is created in `open_main_window`'s
     /// `cx.new` closure and is `None` only before the window exists.
     pub toast_stack: Option<Entity<toast_stack::ToastStack>>,
-    /// True while a background fetch is in flight (refresh / auto-fetch),
-    /// so we never stack concurrent fetches.
-    pub fetch_in_flight: bool,
-    /// Which repository the in-flight fetch is refreshing (#625): a Pull
-    /// confirmation may only attach to a fetch that is refreshing its own repo.
-    pub fetch_in_flight_repo: Option<PathBuf>,
-    /// Tabs whose dirty Pull attached to the fetch already in flight instead of
-    /// starting another one. Drained by that fetch's completion (#626 review).
-    pub fetch_pull_confirm_waiters: Vec<crate::app::SessionId>,
+    /// Operation-owned fetch coordination; detach prunes waiters, not execution.
+    pub fetch_in_flight: Option<commands::FetchFlight>,
     /// #625: Pull confirmations whose fetch finished while their tab was not
     /// on screen, waiting for that tab to come back (ADR-0192).
     ///
@@ -1260,11 +1253,8 @@ pub struct KagiApp {
     /// ADR-0140: open tag context menu (right-click on a sidebar tag row).
     pub tag_menu: Option<tag_menu::TagMenuState>,
     pub worktree_menu: Option<worktree_menu::WorktreeMenuState>,
-    /// Unstaged file-row context menu (right-click): (repo-relative path, anchor).
-    /// Offers Discard for eligible (tracked, non-conflicted) rows. Keyed by PATH
-    /// not index (issue #286) so an external `git add` that renumbers `unstaged`
-    /// while the menu is open can never make Discard hit a different file.
-    pub file_menu: Option<(std::path::PathBuf, gpui::Point<gpui::Pixels>)>,
+    /// Owner-stamped file menu; its path survives row renumbering (#286).
+    pub file_menu: Option<file_menu::FileMenu>,
     /// Right-click context menu on an Inspector / Compare changed-file row
     /// (`Some((file_index, cursor_pos))` while open): History / Open in
     /// Editor / Copy Path. Replaces the old right-click-jumps-straight-to-
@@ -1282,11 +1272,6 @@ pub struct KagiApp {
     /// only read on Linux/FreeBSD (dead on other targets).
     #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub platform_menu_open: Option<usize>,
-    // ── W6-TABSPEED: async tab loading ──
-    /// Monotonic switch generation.  Bumped on every async tab switch so a
-    /// stale background load (an earlier switch that lost a rapid-fire race)
-    /// can detect a mismatch and discard its result before applying.
-    pub switch_generation: u64,
     // ── W11-AVATAR: GitHub avatar images (ADR-0037) ──────────────
     /// Resolved-avatar cache (memory images + per-repo fetch guard), grouped
     /// into one cohesive sub-struct (ADR-0118 Phase 5.2).
@@ -1544,9 +1529,7 @@ impl KagiApp {
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
-            fetch_in_flight: false,
-            fetch_in_flight_repo: None,
-            fetch_pull_confirm_waiters: Vec::new(),
+            fetch_in_flight: None,
             pending_pull_confirm: Default::default(),
             auto_fetch_ticker_alive: false,
             github_prs: Vec::new(),
@@ -1578,8 +1561,6 @@ impl KagiApp {
             inspector_visible: true,
             menu_overlay: None,
             platform_menu_open: None,
-            // W6-TABSPEED
-            switch_generation: 0,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI

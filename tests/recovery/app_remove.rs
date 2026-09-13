@@ -28,14 +28,14 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         );
         let (app, window) = mount(cx, &repo);
         // #488 / #528: the target worktree is also open, in a *background* tab.
-        // Removing it must close that tab without re-initializing the session
-        // the operation is attached to (a re-init would strand this very
-        // completion behind a stale `switch_generation`).
-        let (generation, owner, target_tab) = app.update(cx, |app, cx| {
+        // Removing it must not end the operation owner's visit.
+        let (visit, owner, target_tab) = app.update(cx, |app, cx| {
             assert!(app.open_repository(linked.clone(), cx));
             app.switch_repo(0, cx);
             (
-                app.switch_generation,
+                app.app_sessions
+                    .attachment(app.active_session().unwrap())
+                    .map(|owner| owner.visit),
                 app.active_session().unwrap(),
                 app.tabs[1].session,
             )
@@ -99,7 +99,8 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
             );
             assert_eq!(app.active_tab, 0, "the surviving tab stays active");
             assert_eq!(
-                app.switch_generation, generation,
+                app.app_sessions.attachment(owner).map(|owner| owner.visit),
+                visit,
                 "#488: closing a background tab must not re-initialize the session"
             );
             // #482 stage 1: the owner survives a background close untouched, so

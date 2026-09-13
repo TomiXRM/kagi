@@ -97,9 +97,14 @@ lifecycle は次の 3 つに限定し、すべて **`KagiApp::release_session`�
 **owner 不在の fallback（detached cell）は payload が捨てて構わない scalar である間だけ
 安全である。** writer が無いから安全なのではない — `show_welcome()` は session が無い状態で
 `ui_mut()` に書く。`TabUiState` が owner 必須の resource（pane entity、subscription、
-terminal）を持つ前に、`Reads` と同じ immutable empty + write sink の分離か、owner 不在時に
-mutation を拒否する API へ切り替え、その境界を test で固定すること。**S2–S5 で resource を
-移す前の前提条件**とする。
+terminal）を持つ前に、**owner 不在時に mutation を拒否する API**（書き込みを持たない読み取り
+専用の既定値を返し、writer は owner を要求する）へ切り替え、その境界を test で固定すること。
+**S2–S5 で resource を移す前の前提条件**とする。
+
+`Reads` と同じ「immutable empty + write sink」の分離は**この用途では解にならない**。
+`Reads::get_mut(None)`（`src/app/read.rs:260-278`）は永続的な `sink` を返すので、そこへ
+書かれた resource は store ごと drop されるまで生き続け、subscription や terminal は
+動いたままになる。scalar なら捨てられるが、resource は捨てられない。
 
 機械的不変条件: `dom(ui) = attached sessions`、`dom(reads) ⊆ attached sessions`、
 detach 後はどちらにも key が残らない。`attach` / `reattach` / `detach` の production callsite を

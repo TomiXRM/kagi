@@ -765,7 +765,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     // A background git op is running → block state-changing git commands.
     let busy = app.op_latched();
     // A commit row is currently selected.
-    let has_selection = app.selected.is_some();
+    let has_selection = app.ui().selected.is_some();
     // The main diff is open (ADR-0121 B2: a staged headless diff counts too).
     let diff_open = app.main_diff.is_some() || app.pending_headless_diff.is_some();
 
@@ -1628,12 +1628,7 @@ impl KagiApp {
 
             // ── Branch ──────────────────────────────────────────────
             "branch.new" => {
-                let at = self
-                    .selected
-                    .and_then(|i| self.view().details.get(i))
-                    .or_else(|| self.view().details.first())
-                    .map(|d| CommitId(d.full_sha.to_string()));
-                if let Some(id) = at {
+                if let Some(id) = self.selected_or_head_commit() {
                     self.open_create_branch_modal(id, cx);
                 }
             }
@@ -1747,7 +1742,7 @@ impl KagiApp {
     /// Map a `commit.*` menu id to the existing [`CommitAction`] and dispatch it
     /// against the currently-selected commit via `dispatch_commit_action`.
     fn dispatch_selected_commit(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let row = match self.selected {
+        let row = match self.ui().selected {
             Some(r) => r,
             None => return,
         };

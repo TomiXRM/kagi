@@ -56,6 +56,7 @@ impl KagiApp {
         // Remember the currently selected commit so it can be remapped into
         // the new row indexing (or dropped if hidden).
         let selected_id: Option<CommitId> = self
+            .ui()
             .selected
             .and_then(|idx| self.view().rows.get(idx))
             .map(|row| row.id.clone());
@@ -73,7 +74,7 @@ impl KagiApp {
                 view.details = solo.saved_details;
                 view.commit_row_index = solo.saved_row_index;
             }
-            self.selected =
+            self.ui_mut().selected =
                 selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
             self.status_footer = FooterStatus::Idle(SharedString::from("Solo off"));
             self.push_toast(ToastKind::Info, "Solo off", cx);
@@ -144,7 +145,8 @@ impl KagiApp {
         view.rows = rows;
         view.details = details;
         view.commit_row_index = commit_row_index;
-        self.selected = selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
+        self.ui_mut().selected =
+            selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
 
         klog!(
             "solo: {} rows={} (of {})",

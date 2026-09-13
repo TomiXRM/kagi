@@ -88,6 +88,10 @@ mod recovery_layout;
 mod read_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/tab_ui_state.rs"]
+mod tab_ui_state;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
 mod worktree_graph;
 
@@ -785,6 +789,14 @@ mod macos {
                 Box::new(crate::read_owner::scenario_read_owner_ordering),
             ),
             (
+                "tab_ui_state_ownership",
+                Box::new(crate::tab_ui_state::scenario_tab_ui_state_ownership),
+            ),
+            (
+                "tab_ui_state_background_reload",
+                Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
+            ),
+            (
                 "remote_source_merge_into",
                 Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
             ),
@@ -933,7 +945,7 @@ mod macos {
         // production copy path would yield (via the real `graph_copy_value`, so
         // the badge-label decoration — `"main ✓"` etc. — is handled identically).
         let (full_sha, branch) = kagi.update(cx, |app, cx| {
-            app.selected = Some(0);
+            app.ui_mut().selected = Some(0);
             cx.notify();
             let row = &app.view().rows[0];
             let full_sha = row.id.0.clone();

@@ -117,14 +117,14 @@ pub(crate) fn render_rows(
             // This replaces the old MAX_LANES-based clipping.
             let visible_lanes = graph_view::lanes_for_width(graph_col_w);
 
-            // on_click handler: update KagiApp.selected via cx.listener.
+            // on_click handler: update the session's selection via cx.listener.
             let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
                 this.commit_menu = None;
                 this.select(ix);
                 // ADR-0089 Phase 2c: kick off the remote changed-files load now
                 // that we have `cx` (the render trigger is a fallback for
                 // keyboard navigation). Idempotent.
-                if this.remote_view.is_some() && this.selected == Some(ix) {
+                if this.remote_view.is_some() && this.ui().selected == Some(ix) {
                     this.load_remote_changed_files(ix, cx);
                 }
                 cx.notify();

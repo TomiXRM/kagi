@@ -1330,7 +1330,7 @@ impl KagiApp {
     ) {
         use kagi_git::CommitId;
 
-        let selected = match self.selected {
+        let selected = match self.ui().selected {
             Some(s) => s,
             None => return,
         };
@@ -1399,7 +1399,7 @@ impl KagiApp {
             Some(v) => (v.host.clone(), v.root.clone()),
             None => return,
         };
-        let selected = match self.selected {
+        let selected = match self.ui().selected {
             Some(s) => s,
             None => return,
         };

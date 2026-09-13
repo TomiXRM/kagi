@@ -116,7 +116,7 @@ impl KagiApp {
         // for one worktree (`/repo` and `/repo/.git`, a symlink) come back as the
         // session an existing tab already holds. Path comparison above cannot
         // see that, so switch to that tab rather than opening a second one.
-        let session = self.app_sessions.attach(path.clone());
+        let session = self.attach_session(path.clone());
         if let Some(idx) = self.tabs.iter().position(|t| t.session == session) {
             self.switch_repo(idx, cx);
             return true;
@@ -359,16 +359,14 @@ impl KagiApp {
                 // previous refresh stayed keyed under a `SessionId` no tab
                 // names any more, and `close_tab` only ever released the
                 // current one (#482 stage 2 review, item 4).
-                self.reads.forget(self.tabs[i].session);
-                self.tabs[i].session = self
-                    .app_sessions
-                    .reattach(self.tabs[i].session, key.clone());
+                self.tabs[i].session = self.reattach_session(self.tabs[i].session, key.clone());
                 self.tabs[i].remote = Some(rv.clone());
                 i
             }
             None => {
+                let session = self.attach_session(key.clone());
                 self.tabs.push(RepoTab {
-                    session: self.app_sessions.attach(key.clone()),
+                    session,
                     path: key.clone(),
                     name: name.clone(),
                     remote: Some(rv.clone()),
@@ -431,12 +429,13 @@ impl KagiApp {
         .detach();
     }
 
-    /// Reset all per-repo transient UI state (selection / diffs / modals /
-    /// commit panel).  Shared by `switch_repo` (W6-TABSPEED instant-apply path)
-    /// so a cached swap never leaks the previous tab's UI.
+    /// Reset all per-repo transient UI state (diffs / modals / commit panel).
+    /// Shared by `switch_repo` (W6-TABSPEED instant-apply path) so a cached swap
+    /// never leaks the previous tab's UI. #643 Wave 4 S1: the selection is gone
+    /// from here — it is session-owned, so a switch has nothing to clear and
+    /// coming back restores it (ADR-0197).
     fn reset_per_repo_ui(&mut self) {
         self.app_sessions.invalidate_plan();
-        self.selected = None;
         // GitHub PRs are per repo; drop them so the sidebar never shows the
         // previous tab's list. The ticker refetches for the new repo.
         self.github_prs.clear();
@@ -676,7 +675,7 @@ impl KagiApp {
         // carry (and the whole second `KagiApp` it built them from) are gone.
         // T-PERF-RENDER-002: bump the epoch so the sidebar-rows cache misses.
         self.view_epoch = self.view_epoch.wrapping_add(1);
-        self.selected = None;
+        self.ui_mut().selected = None;
         self.diff_caches.clear();
         self.main_diff = None;
         self.wip_diffstat = None;
@@ -1237,8 +1236,9 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         }
         match kagi_git::open_repository(&path) {
             Ok(info) => {
+                let session = app.attach_session(path.clone());
                 app.tabs.push(RepoTab {
-                    session: app.app_sessions.attach(path.clone()),
+                    session,
                     path: path.clone(),
                     name: info.name.clone(),
                     remote: None,

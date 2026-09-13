@@ -317,7 +317,7 @@ impl KagiApp {
         if window.has_focused_input(cx) {
             return;
         }
-        let Some(ix) = self.selected else {
+        let Some(ix) = self.ui().selected else {
             self.status_footer =
                 FooterStatus::Idle(SharedString::from(Msg::CheckoutSelectFirst.t()));
             return;

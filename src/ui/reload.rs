@@ -13,8 +13,6 @@
 
 use gpui::{prelude::*, Context, SharedString};
 
-use kagi_git::CommitId;
-
 use super::commit_panel::{CommitPanelState, CommitPanelView};
 use super::{build_tab_view, FooterStatus, KagiApp, WipDiffStat, COMMIT_PAGE_STEP};
 
@@ -74,7 +72,7 @@ impl KagiApp {
             return;
         };
         let view = build_tab_view(&snap, &repo_name);
-        self.selected = None;
+        self.ui_mut().selected = None;
         self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
@@ -147,13 +145,12 @@ impl KagiApp {
             panel,
         } = data;
 
-        // Capture the CommitId of the currently-selected row before we rebuild,
-        // so we can re-select it after (survives selection across a reload).
-        let prev_commit_id: Option<CommitId> = self
-            .selected
-            .and_then(|idx| self.view().details.get(idx))
-            .map(|detail| CommitId(detail.full_sha.to_string()));
-
+        // The selection survives the rebuild by `CommitId`, but not from here:
+        // `accept_tab_view` re-anchors it for the **owner** of the read, which
+        // is not necessarily the tab on screen. Doing it here would have missed
+        // every background tab's revalidate and left its `selected` on a row
+        // index the rebuild had reassigned to another commit.
+        //
         // Same idea for the two panes a reload used to close outright: an
         // auto-fetch or a watcher reload threw the reader back to the graph
         // mid-hunk, which on a busy repository made a diff unreadable. Both are
@@ -279,14 +276,6 @@ impl KagiApp {
 
         // Baseline for the FS watcher's working-tree path (skip-if-unchanged).
         self.last_working_status = Some(snap.status.clone());
-
-        // Re-resolve selection by CommitId after the graph rebuild.
-        self.selected = None;
-        if let Some(ref cid) = prev_commit_id {
-            if let Some(&new_idx) = self.view().commit_row_index.get(cid) {
-                self.selected = Some(new_idx);
-            }
-        }
 
         // W30-CONFLICT-UI / ADR-0056: re-detect Conflict Mode every reload so a
         // conflict produced by the GUI's own operation OR by external CLI (the

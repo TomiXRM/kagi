@@ -167,7 +167,7 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
         assert_rows_consistent(app, "after reload");
         // The selection was re-resolved by OID, and the detail under it is that
         // commit's — the "selected OID and diff content agree" acceptance.
-        let row = app.selected.expect("selection survived the reload");
+        let row = app.ui().selected.expect("selection survived the reload");
         assert_eq!(app.view().rows[row].id, selected);
         assert_eq!(
             app.view().details[row].full_sha.as_ref(),

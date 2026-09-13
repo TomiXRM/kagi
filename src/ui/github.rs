@@ -220,7 +220,7 @@ impl KagiApp {
             Ok(files) => {
                 klog!("pr-peek: #{} files={}", pr.number, files.len());
                 if let Some(row) = self.row_for_commit_id(&head_tip) {
-                    if self.selected != Some(row) {
+                    if self.ui().selected != Some(row) {
                         self.select(row);
                     }
                 }

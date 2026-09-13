@@ -285,7 +285,7 @@ impl Render for KagiApp {
         // virtual list (rendered specially in the uniform_list processor).
         let has_more_commits = self.commit_limit > 0 && self.view().rows.len() >= self.commit_limit;
         let row_count = self.view().rows.len() + usize::from(has_more_commits);
-        let selected = self.selected;
+        let selected = self.ui().selected;
 
         // W4-TABS / ADR-0028: a non-empty error string still shows the error
         // screen (genuine repo-open failure at startup; headless log compat).
@@ -623,7 +623,7 @@ impl Render for KagiApp {
             // (PR description / review bodies / diff hunks).
             if diff_selection::selected_text().is_none() {
                 if this.root_has_focus(window) {
-                    if let Some(i) = this.selected {
+                    if let Some(i) = this.ui().selected {
                         this.copy_graph_selection(i, cx);
                         return;
                     }

@@ -242,6 +242,38 @@ mod tests {
     use super::*;
     use crate::github::parse_pr_list;
 
+    /// `gh` validates `--json` field names *before* it calls the API and exits
+    /// on the first unknown one, so a bad name in [`FIELDS`] breaks every PR
+    /// fetch above. Fixtures cannot catch that — they hand finished JSON
+    /// straight to `parse_pr_list` (#701 final review 3, where
+    /// `baseRepository` shipped). `--limit 0` is rejected *after* field
+    /// validation, so this negotiates the names without touching the network.
+    ///
+    /// The negative control runs **first** and gates the whole test: without
+    /// it a `gh` that never reports unknown fields would make the real
+    /// assertion vacuously true, and where `gh` cannot answer at all — absent,
+    /// or refusing before it validates anything, as on an unauthenticated CI
+    /// runner — there is nothing to negotiate with and the test skips.
+    #[test]
+    fn field_names_are_accepted_by_gh() {
+        const UNKNOWN: &str = "Unknown JSON field";
+        let ask = |fields: &str| {
+            std::process::Command::new("gh")
+                .args(["pr", "list", "--json", fields, "--limit", "0"])
+                .output()
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out.stderr).into_owned())
+        };
+        if !ask("number,noSuchFieldAtAll").is_some_and(|out| out.contains(UNKNOWN)) {
+            return; // this `gh` cannot tell us; a developer machine's can
+        }
+        let stderr = ask(FIELDS).expect("gh answered a moment ago");
+        assert!(
+            !stderr.contains(UNKNOWN),
+            "FIELDS names something gh pr list does not have: {stderr}"
+        );
+    }
+
     const SAMPLE: &str = r#"[
       {"number":236,"title":"a","headRefName":"feat/a","baseRefName":"main",
        "isDraft":false,"mergeable":"MERGEABLE","author":{"login":"x"}},

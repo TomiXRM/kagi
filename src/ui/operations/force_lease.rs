@@ -66,7 +66,7 @@ impl KagiApp {
             return;
         }
 
-        if self.busy_op.is_some() {
+        if self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }

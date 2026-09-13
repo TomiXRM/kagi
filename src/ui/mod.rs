@@ -1243,6 +1243,11 @@ pub struct KagiApp {
     /// and new plan modals are refused so operations never overlap.
     pub busy_op: Option<&'static str>,
     write_busy_op: Option<&'static str>,
+    /// ADR-0196 Wave 3: a *planning* task in flight (`merge-plan`,
+    /// `delete-branch-plan`). It writes nothing, so it takes no lease — but it
+    /// owns the modal slot it will fill, so it latches like `busy_op`. Read the
+    /// two together through [`KagiApp::op_latched`], never `busy_op` alone.
+    pub planning: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
@@ -1566,6 +1571,7 @@ impl KagiApp {
             pr_menu: None,
             busy_op: None,
             write_busy_op: None,
+            planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),
             modal_replan_gen: 0,
@@ -3138,7 +3144,7 @@ impl KagiApp {
             merged_into_current: false,
             is_pushed: upstream.is_some(),
             detached_head: self.view().status_summary.is_detached,
-            busy: self.busy_op.is_some(),
+            busy: self.op_latched(),
             current_branch,
             is_soloed: self
                 .view()

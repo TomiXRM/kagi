@@ -25,6 +25,11 @@ pub enum GithubNote {
     /// warning — `--delete-branch` also deletes the local branch when it is
     /// checked out nowhere.
     DeletesBranch { branch: String },
+    /// blocker (#701) — the PR comes from a fork, where `gh pr merge` skips
+    /// the remote head deletion but still deletes the local branch. Neither
+    /// half can be frozen as a checkable promise yet (#705), so the option is
+    /// refused rather than half-kept.
+    ForkDeletesBranch { branch: String },
     /// blocker (#351) — the working-tree file the suggestion anchors to is
     /// gone, or the anchored range is out of bounds.
     SuggestionRangeGone { path: String },
@@ -63,6 +68,10 @@ impl GithubNote {
             }
             GithubNote::DeletesBranch { branch } => format!(
                 "The head branch '{}' will be deleted on the remote (and locally if it is not checked out).",
+                branch
+            ),
+            GithubNote::ForkDeletesBranch { branch } => format!(
+                "This PR comes from a fork: gh does not delete the remote head '{}', and the local branch deletion it would still do is not yet accounted for. Uncheck 'delete branch' and remove it yourself after the merge.",
                 branch
             ),
             GithubNote::SuggestionRangeGone { path } => format!(
@@ -107,7 +116,20 @@ impl GithubTitle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubRecovery {
     /// A merged PR can be reverted on GitHub, or locally with `git revert -m 1`.
-    MergePr { number: u64 },
+    ///
+    /// `delete_branch` is the head branch this merge also promises to delete
+    /// (`--delete-branch`), frozen here at plan time and `None` when the merge
+    /// keeps it. A reconcile confirms the *whole* promise: merging without
+    /// deleting is not the operation the user approved (#701). `base_repo` is
+    /// the `<host>/<owner>/<repo>` that deletion happens in — a remote *name*
+    /// would be a guess, `origin` is not always the PR's base, and without the
+    /// host a same-named repository on another host answers instead. Neither
+    /// is rendered — the recovery text is about the merge.
+    MergePr {
+        number: u64,
+        base_repo: String,
+        delete_branch: Option<String>,
+    },
     /// A suggestion edits only the working tree; the pre-apply file content is
     /// backed up to the ODB and recoverable by blob SHA (#351).
     ApplySuggestion,
@@ -117,7 +139,7 @@ impl GithubRecovery {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
-            GithubRecovery::MergePr { number } => format!(
+            GithubRecovery::MergePr { number, .. } => format!(
                 "GitHub keeps a 'Revert' button on #{} after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted.",
                 number
             ),
@@ -176,6 +198,13 @@ mod tests {
             .message_en(),
             "The head branch 'feat/x' will be deleted on the remote (and locally if it is not checked out)."
         );
+        assert_eq!(
+            GithubNote::ForkDeletesBranch {
+                branch: "feat/x".into()
+            }
+            .message_en(),
+            "This PR comes from a fork: gh does not delete the remote head 'feat/x', and the local branch deletion it would still do is not yet accounted for. Uncheck 'delete branch' and remove it yourself after the merge."
+        );
     }
 
     #[test]
@@ -188,9 +217,18 @@ mod tests {
             .message_en(),
             "Merge pull request #42 (squash)"
         );
-        assert_eq!(
-            GithubRecovery::MergePr { number: 42 }.message_en(),
-            "GitHub keeps a 'Revert' button on #42 after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted."
-        );
+        // The frozen branch promise is reconcile material, not display: the
+        // recovery text is the same with and without it.
+        for delete_branch in [None, Some("feat/x".to_string())] {
+            assert_eq!(
+                GithubRecovery::MergePr {
+                    number: 42,
+                    base_repo: "o/r".into(),
+                    delete_branch
+                }
+                .message_en(),
+                "GitHub keeps a 'Revert' button on #42 after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted."
+            );
+        }
     }
 }

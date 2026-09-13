@@ -2311,6 +2311,8 @@ mod stack_tests {
             body: String::new(),
             checks: Vec::new(),
             mergeable: Mergeable::default(),
+            cross_repository: false,
+            base_repo: "o/r".into(),
         }
     }
 

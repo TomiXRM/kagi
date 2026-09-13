@@ -79,14 +79,20 @@ pub enum CleanupRecovery {
     /// `plan_delete_merged_branches` — every deleted tip OID is recorded in
     /// the oplog; the two restore commands are TEMPLATES (`<name>`/`<oid>`
     /// placeholders), not filled in per-branch.
-    CleanupDelete,
+    ///
+    /// `remote_refs` names the remote halves this plan will delete, fully
+    /// qualified (`refs/heads/<name>`), frozen here at plan time. It is what a
+    /// later reconcile compares against: a batch that removed three refs of
+    /// four is not a confirmed batch (#701 / ADR-0177). Empty when every
+    /// target is local-only. Not rendered — recovery text stays a template.
+    CleanupDelete { remote_refs: Vec<String> },
 }
 
 impl CleanupRecovery {
     /// Sole English renderer (byte-identical to the legacy string).
     pub fn message_en(&self) -> String {
         match self {
-            CleanupRecovery::CleanupDelete => {
+            CleanupRecovery::CleanupDelete { .. } => {
                 "Every deleted tip OID is recorded in the oplog. To restore:\n  \
                  git branch <name> <oid>          (local)\n  \
                  git push origin <oid>:refs/heads/<name>   (remote)"
@@ -174,9 +180,13 @@ mod tests {
 
     #[test]
     fn cleanup_delete_recovery() {
-        assert_eq!(
-            CleanupRecovery::CleanupDelete.message_en(),
-            "Every deleted tip OID is recorded in the oplog. To restore:\n  git branch <name> <oid>          (local)\n  git push origin <oid>:refs/heads/<name>   (remote)"
-        );
+        // The frozen refs are reconcile material, not display: the text is the
+        // same template with or without them.
+        for remote_refs in [vec![], vec!["refs/heads/feat/x".to_string()]] {
+            assert_eq!(
+                CleanupRecovery::CleanupDelete { remote_refs }.message_en(),
+                "Every deleted tip OID is recorded in the oplog. To restore:\n  git branch <name> <oid>          (local)\n  git push origin <oid>:refs/heads/<name>   (remote)"
+            );
+        }
     }
 }

@@ -48,6 +48,18 @@ pub struct PullRequest {
     pub checks: Vec<Check>,
     /// Mergeability, as GitHub computes it.
     pub mergeable: Mergeable,
+    /// `isCrossRepository` — the head branch lives in a fork, not in the
+    /// repository the PR targets. `gh pr merge` deliberately skips the remote
+    /// head deletion for these, so `--delete-branch` promises something it
+    /// will not do (#701 final review 2).
+    pub cross_repository: bool,
+    /// `<host>/<owner>/<repo>` of the repository the PR targets — the one
+    /// `gh` operates on — read out of `url`. The host is part of it: the same
+    /// `owner/repo` on github.com and on an Enterprise host are different
+    /// repositories. Which local remote points at it is a separate question;
+    /// the plan freezes this identity, not a remote name. Empty when `url`
+    /// could not be read that way.
+    pub base_repo: String,
 }
 
 /// Which sidebar group a PR belongs to, from the viewer's perspective.
@@ -154,6 +166,28 @@ pub fn fold_ci(conclusions: &[Option<&str>]) -> CiState {
 mod tests {
     use super::*;
 
+    /// A PR that differs only in the fields the stacking rules read.
+    fn mk(n: u64, head: &str, base: &str) -> PullRequest {
+        PullRequest {
+            number: n,
+            title: String::new(),
+            head: head.into(),
+            head_sha: String::new(),
+            base: base.into(),
+            is_draft: false,
+            ci: CiState::None,
+            review: ReviewState::None,
+            url: String::new(),
+            author: String::new(),
+            reviewers: Vec::new(),
+            body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::default(),
+            cross_repository: false,
+            base_repo: "o/r".into(),
+        }
+    }
+
     #[test]
     fn ci_folds_failure_over_pending_over_success() {
         assert_eq!(fold_ci(&[]), CiState::None);
@@ -203,22 +237,6 @@ mod tests {
 
     #[test]
     fn stacked_detection_uses_head_of_another_open_pr() {
-        let mk = |n, head: &str, base: &str| PullRequest {
-            number: n,
-            title: String::new(),
-            head: head.into(),
-            head_sha: String::new(),
-            base: base.into(),
-            is_draft: false,
-            ci: CiState::None,
-            review: ReviewState::None,
-            url: String::new(),
-            author: String::new(),
-            reviewers: Vec::new(),
-            body: String::new(),
-            checks: Vec::new(),
-            mergeable: Mergeable::default(),
-        };
         let prs = vec![mk(1, "feat/a", "main"), mk(2, "feat/b", "feat/a")];
         assert!(!prs[0].is_stacked_on(&prs));
         assert!(prs[1].is_stacked_on(&prs));
@@ -226,22 +244,6 @@ mod tests {
 
     #[test]
     fn stack_order_puts_children_under_their_base() {
-        let mk = |n, head: &str, base: &str| PullRequest {
-            number: n,
-            title: String::new(),
-            head: head.into(),
-            head_sha: String::new(),
-            base: base.into(),
-            is_draft: false,
-            ci: CiState::None,
-            review: ReviewState::None,
-            url: String::new(),
-            author: String::new(),
-            reviewers: Vec::new(),
-            body: String::new(),
-            checks: Vec::new(),
-            mergeable: Mergeable::default(),
-        };
         // 3 stacked on 1; 2 independent; 4 stacked on 3.
         let prs = vec![
             mk(1, "a", "main"),
@@ -262,22 +264,6 @@ mod tests {
     /// of silently dropping them.
     #[test]
     fn stack_order_never_drops_prs_in_a_base_cycle() {
-        let mk = |n, head: &str, base: &str| PullRequest {
-            number: n,
-            title: String::new(),
-            head: head.into(),
-            head_sha: String::new(),
-            base: base.into(),
-            is_draft: false,
-            ci: CiState::None,
-            review: ReviewState::None,
-            url: String::new(),
-            author: String::new(),
-            reviewers: Vec::new(),
-            body: String::new(),
-            checks: Vec::new(),
-            mergeable: Mergeable::default(),
-        };
         // 1 ← 2 ← 1: a two-PR cycle, no root at all.
         let cycle = vec![mk(1, "a", "b"), mk(2, "b", "a")];
         let order = stack_order(&cycle);
@@ -317,6 +303,8 @@ mod tests {
             body: String::new(),
             checks: Vec::new(),
             mergeable: Mergeable::default(),
+            cross_repository: false,
+            base_repo: "o/r".into(),
         };
         let local = vec!["main".to_string()];
         assert_eq!(pr.group_for(Some("alice"), &local), PrGroup::Mine);
@@ -506,6 +494,8 @@ mod attention_tests {
             body: String::new(),
             checks: Vec::new(),
             mergeable: Mergeable::Clean,
+            cross_repository: false,
+            base_repo: "o/r".into(),
         }
     }
 

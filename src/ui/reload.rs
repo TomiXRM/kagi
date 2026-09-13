@@ -214,7 +214,7 @@ impl KagiApp {
         // halves of the rule: the modal the user asked for stays until they act
         // on it, and what they confirm is never the stale plan.
         let keep_pull_error = self.pull_modal().is_some_and(|modal| modal.error.is_some());
-        let replan_dirty_pull = self.busy_op.is_none()
+        let replan_dirty_pull = !self.op_latched()
             && self
                 .pull_modal()
                 .is_some_and(|modal| modal.error.is_none() && modal.auto_stash);

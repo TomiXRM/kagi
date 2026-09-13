@@ -439,15 +439,16 @@ pub struct DeleteBranchModal {
 impl DeleteBranchModal {
     /// Settle the global plan latch before deciding whether to display its
     /// result. Tab departure invalidates approval, not completion. An unrelated
-    /// busy tag is never owned by this plan.
+    /// planning tag is never owned by this plan; the latch is `planning`,
+    /// because planning writes nothing (ADR-0196 Wave 3).
     pub fn settle_plan(
         owner: &crate::app::Attachment,
         current: Option<&crate::app::Attachment>,
         same_generation: bool,
-        busy: &mut Option<&'static str>,
+        planning: &mut Option<&'static str>,
     ) -> bool {
-        if *busy == Some("delete-branch-plan") {
-            *busy = None;
+        if *planning == Some("delete-branch-plan") {
+            *planning = None;
         }
         same_generation && current == Some(owner)
     }

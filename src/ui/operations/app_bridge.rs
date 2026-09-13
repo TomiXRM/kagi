@@ -194,13 +194,15 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
         self.refresh_write_busy();
+        let latched = LegacyBusy(self.op_latched());
         match app::admit(
             &mut self.reads,
-            self.app_sessions
-                .write_lease(path, LegacyBusy(self.busy_op.is_some())),
+            self.app_sessions.write_lease(path, latched),
         ) {
             Ok(guard) => {
                 self.mark_write_busy(name);
+                // #702: the guard names its op, so a retained lease parks an
+                // entry that can say which write it is holding for.
                 Some(guard.for_op(name))
             }
             Err(error) => {
@@ -253,13 +255,10 @@ impl KagiApp {
                 ) => ("conflict-dir-file:keep-file", Msg::OpInProgress),
             },
         };
+        let latched = LegacyBusy(self.op_latched());
         let job = match app::admit(
             &mut self.reads,
-            app::prepare(
-                &mut self.app_sessions,
-                approved,
-                LegacyBusy(self.busy_op.is_some()),
-            ),
+            app::prepare(&mut self.app_sessions, approved, latched),
         ) {
             Ok(job) => job,
             Err(error) => {

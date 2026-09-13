@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use gpui::{AppContext, Context, SharedString};
+use gpui::{Context, SharedString};
 use kagi_domain::github::PullRequest;
 
 use super::i18n::{self, Msg};
@@ -341,77 +341,88 @@ impl KagiApp {
         }
         let (number, method, delete_branch) = (modal.number, modal.method, modal.delete_branch);
         let head_sha = modal.head_sha.clone();
-        self.clear_pr_merge_modal();
-        self.busy_op = Some("pr-merge");
-        self.status_footer = FooterStatus::Busy(SharedString::from(format!(
-            "{} #{}…",
-            Msg::PrModeMerge.t(),
-            number
-        )));
-        cx.notify();
-
+        // ADR-0196 Wave 3: a PR merge is a write, so it rides the run family
+        // like every migrated one — `finish_run` admits it (lease + owner
+        // stamp) and hands the completion to `apply`, which releases the lease
+        // on a known termination and, when the receipt is `Unknown`, keeps it
+        // and parks a reconcile entry. The confirmation is only discarded once
+        // that admission succeeded (it can refuse: Identity / NeedsReconcile).
         let rp = repo_path.clone();
-        let task = cx.background_spawn(async move {
-            kagi_git::github::merge_pr(&rp, number, method, delete_branch, &head_sha, &plan)
-        });
-        // #501: the transport already appended the receipt. The settle half
-        // delivers a failed append even when the tab moved; everything in
-        // `on_done` is presentation only.
-        let notice_repo = repo_path.clone();
-        self.finish_op_on_main_settled(
+        let bg_plan = plan.clone();
+        let dispatched = self.finish_run(
             cx,
-            task,
-            move |app, report: &kagi_git::github::PrMergeReport, _cx| {
-                app.notice_recording_failure("pr-merge", &report.recording, &notice_repo);
-                app.settle_transport(
-                    &notice_repo,
-                    &format!("pr-merge #{number}"),
-                    &report.recording.entry().outcome,
-                );
-            },
-            move |app, report, cx| {
-                // The recorded outcome decides what happened, not the raw `gh`
-                // exit: a non-zero exit whose server re-read says "merged" is a
-                // merge, and must not be presented as a failure (#501).
-                let outcome = report.recording.entry().outcome.clone();
-                let merged = matches!(
-                    outcome,
-                    OpOutcome::Success { .. } | OpOutcome::Partial { .. }
-                );
-                let detail = match &report.result {
-                    Ok(out) => out.clone(),
-                    Err(e) => e.to_string(),
-                };
-                if merged {
-                    klog!("executed: pr-merge #{}", number);
-                } else {
-                    klog!("pr-merge failed: {}", detail);
-                }
-                app.present_recorded(&report.recording, cx);
-                if matches!(outcome, OpOutcome::Success { .. })
-                    && matches!(
-                        report.recording,
-                        kagi_git::backend::recording::Recording::Appended { .. }
-                    )
+            "pr-merge",
+            i18n::Op::Merge,
+            plan.clone(),
+            repo_path,
+            move || {
+                #[cfg(feature = "gui-e2e")]
+                if let Some(report) = crate::ui::e2e::pr_merge_terminal_fault(&rp, number, &bg_plan)
                 {
-                    app.push_toast(
-                        ToastKind::Info,
-                        SharedString::from(if detail.is_empty() {
-                            format!("{} #{}", Msg::PrModeMergeDone.t(), number)
-                        } else {
-                            detail
-                        }),
-                        cx,
-                    );
-                    // The merged PR leaves the open list, and the base
-                    // branch moved — refresh both views.
-                    app.pr_mode_close_tab_for(number, cx);
-                    app.refresh_github_prs(cx);
-                    app.fetch_async(true, cx);
-                } else if matches!(outcome, OpOutcome::Failed { .. }) {
-                    app.push_toast(ToastKind::Error, SharedString::from(detail), cx);
+                    return Ok(report);
+                }
+                Ok(kagi_git::github::merge_pr(
+                    &rp,
+                    number,
+                    method,
+                    delete_branch,
+                    &head_sha,
+                    &bg_plan,
+                ))
+            },
+            |_| None,
+            move |app, done, cx| {
+                // The recorded outcome decided what happened, not the raw `gh`
+                // exit: a non-zero exit whose server re-read says "merged" came
+                // back as `Ok` here (#501). The two indeterminate outcomes are
+                // already settled — `Partial` by the transport hold, `Unknown`
+                // by the reconcile entry `apply` parked — so this half only
+                // presents.
+                match done {
+                    Ok(kagi_git::OperationOutcome::PrMerge {
+                        detail, confirmed, ..
+                    }) => {
+                        klog!("executed: pr-merge #{}", number);
+                        if !confirmed {
+                            return;
+                        }
+                        app.push_toast(
+                            ToastKind::Info,
+                            SharedString::from(if detail.is_empty() {
+                                format!("{} #{}", Msg::PrModeMergeDone.t(), number)
+                            } else {
+                                detail.clone()
+                            }),
+                            cx,
+                        );
+                        // The merged PR leaves the open list, and the base
+                        // branch moved — refresh both views.
+                        app.pr_mode_close_tab_for(number, cx);
+                        app.refresh_github_prs(cx);
+                        app.fetch_async(true, cx);
+                    }
+                    Ok(_) => {}
+                    Err(failure) => {
+                        klog!("pr-merge failed: {}", failure.message);
+                        if failure.code != kagi_git::oplog::FailureCode::TerminationUnknown {
+                            app.push_toast(
+                                ToastKind::Error,
+                                SharedString::from(failure.message),
+                                cx,
+                            );
+                        }
+                    }
                 }
             },
         );
+        if dispatched {
+            self.clear_pr_merge_modal();
+            self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+                "{} #{}…",
+                Msg::PrModeMerge.t(),
+                number
+            )));
+            cx.notify();
+        }
     }
 }

@@ -40,7 +40,7 @@ pub fn title_ja(title: &CleanupTitle) -> String {
 /// Japanese rendering of one cleanup recovery block.
 pub fn recovery_ja(recovery: &CleanupRecovery) -> String {
     match recovery {
-        CleanupRecovery::CleanupDelete => {
+        CleanupRecovery::CleanupDelete { .. } => {
             "削除した各 branch の先端 OID は oplog に記録されます。復元するには:\n  \
              git branch <name> <oid>          (ローカル)\n  \
              git push origin <oid>:refs/heads/<name>   (remote)"

@@ -129,7 +129,7 @@ impl Fixture {
     fn job(&self, sessions: &mut Sessions) -> RemoveJob {
         let token = self.ready(sessions);
         let approved = approve(sessions, token, RemovePolicy::default()).unwrap();
-        prepare_remove(sessions, approved, LegacyBusy(false)).unwrap()
+        prepare_remove(sessions, approved).unwrap()
     }
 }
 fn removed_worktree(deliveries: &[Delivery]) -> kagi_domain::remove::WorktreeId {
@@ -230,11 +230,11 @@ fn begin_write_spends_the_approval_exactly_once() {
     let mut s = Sessions::new();
     let token = f.ready(&mut s);
     let approved = approve(&mut s, token, RemovePolicy::default()).unwrap();
-    let running = begin_write(&mut s, &approved, LegacyBusy(false)).expect("first admission");
+    let running = begin_write(&mut s, &approved).expect("first admission");
     assert_eq!(running.owner_stamp.operation, running.operation_id);
     assert!(s.has_leases(), "admission reserves the scope");
     assert_eq!(
-        begin_write(&mut s, &approved, LegacyBusy(false)).unwrap_err(),
+        begin_write(&mut s, &approved).unwrap_err(),
         AdmissionError::StaleApproval,
         "the plan slot expired with the first admission"
     );
@@ -308,9 +308,7 @@ fn refused_dirty_locked_main_missing() {
         };
         let token = token.clone();
         let approved = approve(&mut s, token, RemovePolicy::default()).unwrap();
-        let done = prepare_remove(&mut s, approved, LegacyBusy(false))
-            .unwrap()
-            .run();
+        let done = prepare_remove(&mut s, approved).unwrap().run();
         assert!(matches!(outcome(&done), OpOutcome::Refused { .. }));
     }
     assert!(f.linked.join("dirty").exists());
@@ -396,16 +394,13 @@ fn duplicate_and_both_legacy_admission_directions() {
     let token = f.ready(&mut s);
     let approved = approve(&mut s, token.clone(), RemovePolicy::default()).unwrap();
     assert!(approve(&mut s, token, RemovePolicy::default()).is_err());
-    assert!(matches!(
-        prepare_remove(&mut s, approved, LegacyBusy(true)),
-        Err(AdmissionError::Busy)
-    ));
+    drop(approved);
     let job = f.job(&mut s);
     assert!(s.has_leases());
     let token = f.ready(&mut s);
     let second = approve(&mut s, token, RemovePolicy::default()).unwrap();
     assert!(matches!(
-        prepare_remove(&mut s, second, LegacyBusy(false)),
+        prepare_remove(&mut s, second),
         Err(AdmissionError::Busy)
     ));
     let done = job.run();
@@ -848,7 +843,7 @@ fn session_identity_survives_close_and_reopen_of_the_same_path() {
     assert_eq!(plan.worktree_id, linked);
     let token = token.clone();
     let approved = approve(&mut s, token, RemovePolicy::default()).unwrap();
-    let job = prepare_remove(&mut s, approved, LegacyBusy(false)).unwrap();
+    let job = prepare_remove(&mut s, approved).unwrap();
 
     // The tab is closed while the executor runs, and a new tab is opened on the
     // same path. Closing is not cancelling: the lease and the operation live on.

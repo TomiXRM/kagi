@@ -174,7 +174,7 @@ impl Fixture {
             panic!("expected Ready, got {:?}", sessions.plan_state());
         };
         let approved = approve(sessions, token.clone(), Policy::Conflict(policy)).unwrap();
-        prepare_conflict(sessions, approved, LegacyBusy(false)).unwrap()
+        prepare_conflict(sessions, approved).unwrap()
     }
 }
 
@@ -204,7 +204,7 @@ fn save_runs_once_records_once_and_applies_verified_observation() {
     let operation = job.id();
     assert!(sessions.has_leases());
     assert!(matches!(
-        sessions.write_lease(&fixture.repo, LegacyBusy(false)),
+        sessions.write_lease(&fixture.repo),
         Err(AdmissionError::Busy)
     ));
     let completion = job.run();
@@ -356,11 +356,7 @@ fn legacy_busy_refuses_approval_and_partial_save_retains_recovery_evidence() {
         panic!()
     };
     let token = token.clone();
-    let approved = approve(&mut sessions, token, Policy::Conflict(policy)).unwrap();
-    assert!(matches!(
-        prepare_conflict(&mut sessions, approved, LegacyBusy(true)),
-        Err(AdmissionError::Busy)
-    ));
+    drop(approve(&mut sessions, token, Policy::Conflict(policy)).unwrap());
 
     sessions.invalidate_plan();
     let request = save_request(&fixture, &mut sessions);
@@ -431,7 +427,7 @@ fn double_approval_is_one_shot_and_old_owner_never_receives_reopened_delivery() 
         approve(&mut sessions, token, Policy::Conflict(policy)),
         Err(AdmissionError::StaleApproval)
     ));
-    let job = prepare_conflict(&mut sessions, approved, LegacyBusy(false)).unwrap();
+    let job = prepare_conflict(&mut sessions, approved).unwrap();
     sessions.detach(old_owner);
     let reopened = sessions.attach(fixture.repo.clone());
     assert_ne!(old_owner, reopened);
@@ -459,9 +455,7 @@ fn existing_shared_writer_blocks_conflict_before_dispatch() {
     let owner = sessions
         .attachment(sessions.sessions_for(&worktree)[0])
         .unwrap();
-    let guard = sessions
-        .write_lease(&fixture.repo, LegacyBusy(false))
-        .unwrap();
+    let guard = sessions.write_lease(&fixture.repo).unwrap();
     let policy = ExecutionPolicy::human(false);
     let plan = plan_conflict(&mut sessions, ConflictAppRequest { owner, request }, policy);
     assert!(apply_plan(&mut sessions, plan.run()));
@@ -471,7 +465,7 @@ fn existing_shared_writer_blocks_conflict_before_dispatch() {
     let token = token.clone();
     let approved = approve(&mut sessions, token, Policy::Conflict(policy)).unwrap();
     assert!(matches!(
-        prepare_conflict(&mut sessions, approved, LegacyBusy(false)),
+        prepare_conflict(&mut sessions, approved),
         Err(AdmissionError::Busy)
     ));
     guard.complete();
@@ -1022,7 +1016,7 @@ fn an_abort_whose_result_cannot_be_measured_is_unknown_and_blocks_retry() {
     sessions.apply(completion);
     assert!(
         matches!(
-            sessions.write_lease(&fixture.repo, LegacyBusy(false)),
+            sessions.write_lease(&fixture.repo),
             Err(AdmissionError::NeedsReconcile)
         ),
         "no further write is admitted against a scope with an unresolved Unknown"
@@ -1033,7 +1027,5 @@ fn an_abort_whose_result_cannot_be_measured_is_unknown_and_blocks_retry() {
         .run()
         .expect("the reconcile read succeeds");
     acknowledge(&mut sessions, read).expect("acknowledging clears the requirement");
-    assert!(sessions
-        .write_lease(&fixture.repo, LegacyBusy(false))
-        .is_ok());
+    assert!(sessions.write_lease(&fixture.repo).is_ok());
 }

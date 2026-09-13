@@ -1853,7 +1853,7 @@ impl KagiApp {
             }
             return false;
         }
-        if silent && (self.op_latched() || self.app_sessions.has_leases()) {
+        if silent && self.op_latched() {
             return false;
         }
         let repo_path = match self.repo_path.clone() {

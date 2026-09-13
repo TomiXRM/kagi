@@ -726,7 +726,6 @@ fn cleanup_through_the_app(
     let job = kagi::app::prepare_run(
         &mut sessions,
         approved,
-        kagi::app::LegacyBusy(false),
         Box::new(move || {
             let mut backend = Backend::open(&job_path).map_err(|e| e.to_string())?;
             backend.set_actor(Actor::Cli);
@@ -926,7 +925,6 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
     let job = kagi::app::prepare_run(
         &mut sessions,
         approved,
-        kagi::app::LegacyBusy(false),
         Box::new(|| panic!("the transport unwound mid-write")),
     )
     .unwrap();
@@ -1128,7 +1126,6 @@ fn pr_merge_unknown_resolves_only_on_a_merged_re_read() {
     let job = kagi::app::prepare_run(
         &mut sessions,
         approved,
-        kagi::app::LegacyBusy(false),
         Box::new(move || {
             const EVIDENCE: &str = "gh failed and the state could not be re-read";
             let entry = OpLogEntry::new(
@@ -1273,7 +1270,6 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
     let job = kagi::app::prepare_run(
         &mut sessions,
         approved,
-        kagi::app::LegacyBusy(false),
         Box::new(move || {
             const EVIDENCE: &str = "gh failed and the state could not be re-read";
             let entry = OpLogEntry::new(

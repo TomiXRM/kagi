@@ -14,7 +14,7 @@ use crate::ui::modal_renderers::*;
 // Toast overlay (ADR-0110 Phase 5): the toast cards render as their own
 // `Entity<ToastStack>` so a push/expire only re-renders this subtree, not
 // the whole `KagiApp`. The busy snackbar stays on `KagiApp` (driven by
-// `busy_op`); see `KagiApp::render_toasts`.
+// the write latch); see `KagiApp::render_toasts`.
 
 /// The big spinning sync icon shared by the busy snackbar and the
 /// sync-flavoured no-op toasts (`ToastKind::Sync`), so every sync-icon

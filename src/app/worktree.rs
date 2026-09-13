@@ -138,12 +138,11 @@ impl RemoveCompletion {
 pub fn prepare_remove(
     sessions: &mut Sessions,
     approved: Approved,
-    legacy: LegacyBusy,
 ) -> Result<RemoveJob, AdmissionError> {
     if !matches!(approved.prepared, Planned::Remove { .. }) {
         return Err(AdmissionError::StaleApproval);
     }
-    let id = reserve(sessions, &approved, legacy)?;
+    let id = reserve(sessions, &approved)?;
     let Planned::Remove { plan, policy, .. } = approved.prepared else {
         unreachable!()
     };

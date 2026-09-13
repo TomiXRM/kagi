@@ -1,5 +1,5 @@
 //! Sole runtime adapter for the first application family.
-use crate::app::{self, Approved, Delivery, LegacyBusy};
+use crate::app::{self, Approved, Delivery};
 use crate::ui::*;
 
 fn log_stash_event(
@@ -194,11 +194,14 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
         self.refresh_write_busy();
-        let latched = LegacyBusy(self.op_latched());
-        match app::admit(
-            &mut self.reads,
-            self.app_sessions.write_lease(path, latched),
-        ) {
+        // The lease answers for every other writer; the UI latch is what a
+        // planning task in flight is refused by (ADR-0196 Wave 3).
+        let admitted = if self.op_latched() {
+            Err(app::AdmissionError::Busy)
+        } else {
+            self.app_sessions.write_lease(path)
+        };
+        match app::admit(&mut self.reads, admitted) {
             Ok(guard) => {
                 self.mark_write_busy(name);
                 // #702: the guard names its op, so a retained lease parks an
@@ -220,11 +223,8 @@ impl KagiApp {
         }
     }
     pub(crate) fn refresh_write_busy(&mut self) {
-        super::super::busy::settle_write_busy(
-            &mut self.busy_op,
-            &mut self.write_busy_op,
-            self.app_sessions.has_leases(),
-        );
+        let has_leases = self.app_sessions.has_leases();
+        super::super::busy::settle_write_busy(&mut self.write_busy_op, has_leases);
     }
     pub(crate) fn dispatch_job(&mut self, approved: Approved, cx: &mut Context<Self>) {
         let (name, label) = match &approved.prepared {
@@ -258,11 +258,12 @@ impl KagiApp {
                 }
             },
         };
-        let latched = LegacyBusy(self.op_latched());
-        let job = match app::admit(
-            &mut self.reads,
-            app::prepare(&mut self.app_sessions, approved, latched),
-        ) {
+        let admitted = if self.op_latched() {
+            Err(app::AdmissionError::Busy)
+        } else {
+            app::prepare(&mut self.app_sessions, approved)
+        };
+        let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
             Err(error) => {
                 self.report_admission_refusal(error, cx);

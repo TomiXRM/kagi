@@ -1240,15 +1240,15 @@ pub struct KagiApp {
     /// Per-keystroke synchronous re-planning (backend open + plan build,
     /// the stash modal even scans status) was the user-reported input lag.
     pub modal_replan_gen: u64,
-    /// Name of the git operation currently running on a background thread
-    /// (e.g. "pull"/"push"). While `Some`, toolbar git buttons are disabled
-    /// and new plan modals are refused so operations never overlap.
-    pub busy_op: Option<&'static str>,
-    write_busy_op: Option<&'static str>,
-    /// ADR-0196 Wave 3: a *planning* task in flight (`merge-plan`,
-    /// `delete-branch-plan`). It writes nothing, so it takes no lease — but it
-    /// owns the modal slot it will fill, so it latches like `busy_op`. Read the
-    /// two together through [`KagiApp::op_latched`], never `busy_op` alone.
+    /// The lease's presentation mirror — the in-flight write's name, for the
+    /// busy snackbar. `refresh_write_busy` retires it; the gate never reads it.
+    pub write_busy_op: Option<&'static str>,
+    /// Exclusion latch for the one write that can hold no lease, remote pull
+    /// over SSH. Rules on [`KagiApp::mark_remote_write`], why in ADR-0196 決定 5.
+    pub remote_write: Option<&'static str>,
+    /// A *planning* task in flight (`merge-plan`, `delete-branch-plan`): no
+    /// lease, but it owns the modal slot. Ask [`KagiApp::op_latched`], never
+    /// one of these three alone (ADR-0196).
     pub planning: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
@@ -1559,8 +1559,8 @@ impl KagiApp {
             github_login: None,
             pr_mode: None,
             pr_menu: None,
-            busy_op: None,
             write_busy_op: None,
+            remote_write: None,
             planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),

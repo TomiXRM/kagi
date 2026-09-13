@@ -349,6 +349,25 @@ pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
     app.busy_snackbar_label()
 }
 
+/// The one gate every state-changing entry point consults (ADR-0196 Wave 3),
+/// so a scenario can assert on it rather than on a field that mirrors it.
+#[cfg(feature = "gui-e2e")]
+pub fn op_latched(app: &KagiApp) -> bool {
+    app.op_latched()
+}
+
+/// What `render` runs every frame, callable on its own.
+///
+/// `run_until_parked` cannot stand in for a frame here: it drains the
+/// background executor, so an operation held deliberately in flight would have
+/// to finish first. #708's P1 is precisely a latch that this call erased while
+/// the writer was still running, so the scenario needs the frame without the
+/// completion.
+#[cfg(feature = "gui-e2e")]
+pub fn poll_app_jobs(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    app.poll_app_jobs(cx);
+}
+
 /// Arm one canned pr-merge terminal.
 ///
 /// Without a GitHub remote every `gh` call fails, including the re-read, so a

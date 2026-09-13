@@ -78,7 +78,7 @@ impl Fixture {
     fn job(&self, s: &mut Sessions, owner: SessionId, action: StashAction) -> StashJob {
         let token = self.ready(s, owner, action);
         let approved = approve(s, token, StashPolicy::default()).unwrap();
-        prepare_stash(s, approved, LegacyBusy(false)).unwrap()
+        prepare_stash(s, approved).unwrap()
     }
     fn ids(&self) -> Vec<String> {
         git(&self.repo, &["stash", "list", "--format=%H"])
@@ -343,19 +343,16 @@ fn admission_both_directions_and_abandoned_job() {
     let f = Fixture::new();
     let mut s = Sessions::new();
     let owner = s.attach(f.repo.clone());
-    let guard = s.write_lease(&f.repo, LegacyBusy(false)).unwrap();
+    let guard = s.write_lease(&f.repo).unwrap();
     let token = f.ready(&mut s, owner, StashAction::Drop { index: 0 });
     let approved = approve(&mut s, token, StashPolicy::default()).unwrap();
     assert!(matches!(
-        prepare_stash(&mut s, approved, LegacyBusy(false)),
+        prepare_stash(&mut s, approved),
         Err(AdmissionError::Busy)
     ));
     guard.complete();
     let job = f.job(&mut s, owner, StashAction::Drop { index: 0 });
-    assert!(matches!(
-        s.write_lease(&f.repo, LegacyBusy(false)),
-        Err(AdmissionError::Busy)
-    ));
+    assert!(matches!(s.write_lease(&f.repo), Err(AdmissionError::Busy)));
     drop(job);
     assert!(s.has_leases());
     assert_eq!(s.drain_abandoned().len(), 2);
@@ -576,7 +573,7 @@ fn cancellation_policy_revision_and_double_confirmation_are_stale() {
     .is_err());
     let approved = approve(&mut s, token.clone(), StashPolicy::default()).unwrap();
     assert!(approve(&mut s, token, StashPolicy::default()).is_err());
-    let job = prepare_stash(&mut s, approved, LegacyBusy(false)).unwrap();
+    let job = prepare_stash(&mut s, approved).unwrap();
     let c = job.run();
     s.apply(c);
     assert_eq!(read_oplog_tail(100).len(), 1);
@@ -623,14 +620,12 @@ fn faults_and_open_failure_record_once_without_delivery_retry() {
         assert_eq!(read_oplog_tail(100).len(), 1);
         if matches!(fault, StashFaultPoint::AfterMutation) {
             assert!(matches!(
-                s.write_lease(&f.repo, LegacyBusy(false)),
+                s.write_lease(&f.repo),
                 Err(AdmissionError::NeedsReconcile)
             ));
             let read = prepare_reconcile(&s, id).unwrap().run().unwrap();
             acknowledge(&mut s, read).unwrap();
-            s.write_lease(&f.repo, LegacyBusy(false))
-                .unwrap()
-                .complete();
+            s.write_lease(&f.repo).unwrap().complete();
         }
     }
     let f = Fixture::new();
@@ -951,11 +946,11 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
         &["remote", "add", "origin", f.repo.to_str().unwrap()],
     );
     for writer in 0..5 {
-        let guard = s.write_lease(&linked, LegacyBusy(false)).unwrap();
+        let guard = s.write_lease(&linked).unwrap();
         let token = f.ready(&mut s, owner, StashAction::Drop { index: 1 });
         let approval = approve(&mut s, token, StashPolicy::default()).unwrap();
         assert!(matches!(
-            prepare_stash(&mut s, approval, LegacyBusy(false)),
+            prepare_stash(&mut s, approval),
             Err(AdmissionError::Busy)
         ));
         assert_eq!(f.ids().len(), 3);
@@ -987,10 +982,7 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
         let job = f.job(&mut s, owner, StashAction::Drop { index: 1 });
         let bytes = std::fs::read(linked.join("file")).unwrap();
         let index = git(&linked, &["ls-files", "--stage"]);
-        assert!(matches!(
-            s.write_lease(&linked, LegacyBusy(false)),
-            Err(AdmissionError::Busy)
-        ));
+        assert!(matches!(s.write_lease(&linked), Err(AdmissionError::Busy)));
         assert_eq!(std::fs::read(linked.join("file")).unwrap(), bytes);
         assert_eq!(git(&linked, &["ls-files", "--stage"]), index);
         drop(job);
@@ -1018,7 +1010,7 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
             let token = token.clone();
             let approval = approve(&mut s, token, RemovePolicy::default()).unwrap();
             assert!(matches!(
-                prepare_remove(&mut s, approval, LegacyBusy(false)),
+                prepare_remove(&mut s, approval),
                 Err(AdmissionError::Busy)
             ));
             drop(stash);
@@ -1031,11 +1023,11 @@ fn all_legacy_writers_and_remove_exclude_stash_in_both_orders() {
             };
             let token = token.clone();
             let approval = approve(&mut s, token, RemovePolicy::default()).unwrap();
-            let remove = prepare_remove(&mut s, approval, LegacyBusy(false)).unwrap();
+            let remove = prepare_remove(&mut s, approval).unwrap();
             let token = f.ready(&mut s, owner, StashAction::Drop { index: 1 });
             let approval = approve(&mut s, token, StashPolicy::default()).unwrap();
             assert!(matches!(
-                prepare_stash(&mut s, approval, LegacyBusy(false)),
+                prepare_stash(&mut s, approval),
                 Err(AdmissionError::Busy)
             ));
             drop(remove);

@@ -338,18 +338,14 @@ impl Drop for StashJob {
         }
     }
 }
-pub fn prepare_stash(
-    s: &mut Sessions,
-    approved: Approved,
-    legacy: LegacyBusy,
-) -> Result<StashJob, AdmissionError> {
+pub fn prepare_stash(s: &mut Sessions, approved: Approved) -> Result<StashJob, AdmissionError> {
     if !matches!(
         approved.prepared,
         Planned::Stash { .. } | Planned::RemoteStash { .. }
     ) {
         return Err(AdmissionError::StaleApproval);
     }
-    let id = reserve(s, &approved, legacy)?;
+    let id = reserve(s, &approved)?;
     match approved.prepared {
         Planned::Stash { plan, policy, .. } => Ok(StashJob::Local(LocalStashJob {
             id,

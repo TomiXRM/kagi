@@ -1,6 +1,6 @@
 # ADR-0196: operation lifecycle を唯一化する — Wave 0 契約の固定
 
-- Status: Accepted (Wave 0 契約; Wave 1–2 実装済み、Wave 3 進行中 — 決定 5 の表を参照)
+- Status: Accepted (Wave 0 契約; Wave 1–3 実装済み、Wave 3 の残件は #703 のみ — 決定 5 の表を参照)
 - Date: 2026-09-12
 - Related: [#643](https://github.com/TomiXRM/kagi/issues/643)（A0 / A1 / A2）、ADR-0104（run pipeline）、ADR-0149（oplog）、ADR-0177（TerminationUnknown）、ADR-0183（session-owned read）、ADR-0195（FailureCode）
 - 適用範囲: `src/app`、`src/ui/operations/*`、`crates/kagi-git/src/backend/*`、`src/remote/*`
@@ -195,7 +195,7 @@ merge が resolve されると `ConflictView` が破棄され、abort が構造�
 | 0 | 契約固定（本書） | **完了** |
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | run family と pull は移行済み (#698 #699 #700 + #702) だが **Wave 3 は未完了**: 下記「終端未確定の出口」の残件（#703）が閉じるまで受入条件を満たさない。残: pr-merge / branch-cleanup / plan 系 latch → `busy_op` 除去、および #703 |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了（#703 を除く）**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702 + 本 slice)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。残るのは下記「終端未確定の出口」の #703（abandoned executor の supervisor）のみで、これが閉じるまで受入条件（全 family の host-close / unknown / settle matrix 統一）は満たさない |
 | 4 | UI state: `TabUiState` per session | |
 | C2 Abort | read-model-derived availability / entity-independent admission / typed report / reconcile | **完了** (#704。Wave 4 の前倒しではなく、ADR-0183 の read ownership と Wave 3 / C2 mutation lifecycle の correctness slice) |
 | 5 | crate 抽出（境界安定後のみ） | |
@@ -258,11 +258,56 @@ spawn した process tree を supervisor に所有させ、panic 後も stop pro
 stash OID を recovery context に残して reconcile を 1 回登録する。#625 の runtime
 refusal は core が `Refused` の no-execute step として記録し、UI は entry を合成しない。
 
-**残り**: (a) 済（上記 pull メモ）。(b) pr-merge / branch-cleanup — ADR-0149 の non-run writer。
-`write_lease`（`reserve_write`）に載せる。(c) merge-plan / delete-branch-plan —
-書き込みではなく planning の UI latch。`busy_op` を `planning` フラグに分けて
-`busy_op` を消す。(a)(b)(c) が済んだら `reject_if_busy` を `has_leases()` に寄せ、
-`busy_op` と `LegacyBusy` を削除（完了条件）。
+**(a)(b)(c) 完了（2026-09-13）**: (a) pull（上記メモ）。(b) pr-merge / branch-cleanup は
+`write_lease`（`reserve_write`）／run family へ。(c) merge-plan / delete-branch-plan は
+書き込みではなく planning の UI latch なので `planning` フラグへ分離。その結果:
+
+- gate は `KagiApp::op_latched()` 一本 = `has_leases() || remote_write.is_some() ||
+  planning.is_some()`。3 項の役割は固定で、混ぜてはならない:
+  - **`has_leases()`** — lease を取れる全 write の真実。
+  - **`remote_write`** — lease を取れない唯一の write（remote pull over SSH）の
+    排他 latch。所有者はその operation だけ（下記「唯一の例外」）。
+  - **`planning`** — 書き込まないが modal slot を占める plan task。
+  - **`write_busy_op` は gate が読まない**。これは lease の *presentation mirror*
+    （snackbar のラベル用）に過ぎず、`refresh_write_busy` が lease 消滅で retire
+    する。gate に足すと lease を二度読むだけで何も足さず、lease-less writer の
+    latch として流用すると refresh に消される（#708 review P1 がこれ）。
+- `LegacyBusy` を全 admission signature から削除。`begin_write` / `write_lease` /
+  `prepare_*` は lease と reconcile だけを根拠に `AdmissionError::Busy` を返す。
+  planning 中の write 拒否は UI 側の `op_latched()` が担う（`reserve_write` /
+  `reserve_stage_write` / `dispatch_job` / `finish_run` / `finish_pull`）。
+- legacy completion helper `finish_op_on_main` / `finish_op_on_main_settled` と
+  `op_result_applies` / `classify_op_result`（`repo_path + switch_generation` 比較）を削除。
+  planning は `KagiApp::finish_planning`（launch 時に凍結した session+visit の owner stamp、
+  自分の tag のときだけ `planning` を解放）へ。
+- `KagiApp::busy_op` フィールドを削除。契約行 `[kagi] op panicked: {} — busy_op cleared`
+  は**文言不変**（意味は「latch を解放した」）。
+
+**唯一の例外 — lease を取れない write（remote pull over SSH）**:
+`src/ui/operations/pull_push.rs`。`WriteScope::Remote(RemoteRepoId)` を作るには
+`freeze_connection` + `probe_common_dir` の 2 往復が要る。remote stash family は
+これを background の plan job で済ませてから `prepare_stash` で lease を取るが、
+remote pull の plan は cached ahead/behind から**ローカルに合成**されるので相当する
+job が無く、spawn 前の UI thread で probe するしかない = network I/O で UI を止める。
+よって lease は取らず、専用 latch **`KagiApp::remote_write`** を持つ。
+
+規約（#708 review P1、破ると排他が消える）:
+
+- `remote_write` は **lease mirror ではない**。`refresh_write_busy` /
+  `settle_write_busy` に渡してはならない。lease 数から retire すると、`render` →
+  `poll_app_jobs` と全 admission preamble が呼ぶ次の refresh で消え、走行中の
+  `git pull` に 2 本目の write（stage / fetch / conflict abort / 同じ remote への
+  2 本目の pull）が admit されうる。
+- 解放するのは remote pull 自身の terminal callback（success / failure / task
+  panic）**のみ**。op 名の文字列判定はしない — field の所有者が 1 か所だから。
+- `op_latched()` = `has_leases() || remote_write.is_some() || planning.is_some()`。
+  `write_busy_op` は snackbar 用の lease mirror なので gate は読まない。
+- 回帰テストは gui-e2e `remote_pull_latch`（停止可能な fake `ssh` を PATH に置き、
+  `run_ssh` を実際に通す）。
+
+残る差: `may_close_host()` は lease を読むので remote pull は quit を保留**しない**。
+これは本 slice 以前からの状態で、write family 化（#703 と同じ後続 slice）で lease に
+載せれば同時に解消する。
 
 **SubAgent 規律**: family / module / report は単独 owner。shared schema・router・ADR・
 migration summary は integration owner 専有。子 agent は evidence packet（revision、
@@ -281,5 +326,5 @@ command、fixture manifest、raw artifact、result、limitation、affected API�
 
 - Wave 1 以降の PR は本 ADR の型名・状態表・identity 表を引用する。**逸脱は本 ADR の改訂を伴う**
 - `FamilyEvidence` に variant を足さない family は移行できない（Wave 2 の完了条件）
-- `LegacyBusy` と `busy_op` の削除が Wave 3 の完了条件
+- `LegacyBusy` と `busy_op` の削除が Wave 3 の完了条件 — **2026-09-13 達成**（残るは #703）
 - 本 ADR の時点で**コードは 1 行も変えていない**。固定したのは型・表・順序だけである

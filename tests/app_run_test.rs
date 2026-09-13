@@ -117,13 +117,7 @@ fn run_write_is_admitted_settled_and_delivered_to_its_owner() {
     let owner = request.owner.clone();
     let plan = request.plan.clone();
     let approved = approve_run(&mut s, request).expect("owner attached and identical");
-    let job = prepare_run(
-        &mut s,
-        approved,
-        LegacyBusy(false),
-        checkout_side(f.repo.clone(), plan),
-    )
-    .expect("admitted");
+    let job = prepare_run(&mut s, approved, checkout_side(f.repo.clone(), plan)).expect("admitted");
     assert!(s.has_leases(), "admission reserves the scope");
     let stamp = job.stamp();
     assert_eq!(stamp.session, owner.session);
@@ -162,7 +156,6 @@ fn open_failure_still_yields_a_receipt_and_releases_the_lease() {
     let job = prepare_run(
         &mut s,
         approved,
-        LegacyBusy(false),
         Box::new(|| Err("repository moved".to_string())),
     )
     .unwrap();
@@ -196,22 +189,10 @@ fn a_second_run_is_refused_while_the_first_holds_the_lease() {
     let first = f.request(&mut s);
     let second = first.clone();
     let approved = approve_run(&mut s, first).unwrap();
-    let _job = prepare_run(
-        &mut s,
-        approved,
-        LegacyBusy(false),
-        Box::new(|| Err("never run".to_string())),
-    )
-    .unwrap();
+    let _job = prepare_run(&mut s, approved, Box::new(|| Err("never run".to_string()))).unwrap();
     let approved = approve_run(&mut s, second).unwrap();
     assert_eq!(
-        prepare_run(
-            &mut s,
-            approved,
-            LegacyBusy(false),
-            Box::new(|| Err("never run".to_string()))
-        )
-        .err(),
+        prepare_run(&mut s, approved, Box::new(|| Err("never run".to_string()))).err(),
         Some(AdmissionError::Busy)
     );
 }
@@ -239,7 +220,6 @@ fn an_unconfirmed_run_is_reconciled_once_its_child_is_proven_gone() {
     let job = prepare_run(
         &mut s,
         approved,
-        LegacyBusy(false),
         Box::new(move || {
             let evidence = "git fetch timed out after 60s".to_string();
             Ok(kagi_git::backend::recording::RunReport {

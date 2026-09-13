@@ -116,7 +116,7 @@ fn fh_diff_pane(view: &Entity<FileHistoryView>, cx: &App) -> Option<Entity<FhDif
 impl KagiApp {
     /// Open the File History view for `rel_path` (repo-relative). ADR-0117: this
     /// builds the `Entity<FileHistoryView>` (in Loading state) and kicks off its
-    /// own async history load (read-only — no `busy_op` gate). ADR-0121 C3: the
+    /// own async history load (read-only — no write-latch gate). ADR-0121 C3: the
     /// pane crate is Git-free, so the app owns the loads — the subscription
     /// below answers the pane's load requests and maps close / jump-to-commit
     /// onto `KagiApp`. Callers: the inspector / main-diff "History" entry

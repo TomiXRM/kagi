@@ -1,7 +1,7 @@
 //! #501 — a transport mutation records at its own execution boundary.
 //!
 //! The regression these guard: the PR merge used to append the oplog only from
-//! the UI completion, and `finish_op_on_main` drops that whole callback when the
+//! the UI completion, and the completion helper drops that whole callback when the
 //! tab switched mid-op (`OpDisposition::DropStale`). A merge that really
 //! happened on GitHub then left no record at all. These tests never run a UI
 //! callback — reaching the assertions IS the stale-completion case.

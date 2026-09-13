@@ -284,21 +284,17 @@ pub fn approve(
 /// Admit one approved write: the single entry every state-changing operation
 /// takes before its task is spawned (ADR-0196 決定 1, #643 A0).
 ///
-/// Checks, in order: the approval is the current one, no legacy writer holds
-/// the global busy slot, the scope has no unresolved `Unknown` awaiting
-/// reconcile, and no lease is held. Then it reserves the lease, freezes the
-/// owner as an [`OwnerStamp`], and expires the plan slot so the same approval
-/// cannot be spent twice.
-pub fn begin_write(
-    s: &mut Sessions,
-    approved: &Approved,
-    legacy: LegacyBusy,
-) -> Result<RunningWrite, AdmissionError> {
+/// Checks, in order: the approval is the current one, the scope has no
+/// unresolved `Unknown` awaiting reconcile, and no lease is held. Then it
+/// reserves the lease, freezes the owner as an [`OwnerStamp`], and expires the
+/// plan slot so the same approval cannot be spent twice.
+///
+/// ADR-0196 Wave 3 完了: the lease is the whole evidence of a write in flight.
+/// There is no legacy busy input any more — the UI's own latch (`op_latched`,
+/// which also covers a planning task) refuses before it gets this far.
+pub fn begin_write(s: &mut Sessions, approved: &Approved) -> Result<RunningWrite, AdmissionError> {
     if approved.revision != s.revision || !matches!(s.state, PlanState::Approved) {
         return Err(AdmissionError::StaleApproval);
-    }
-    if legacy.0 {
-        return Err(AdmissionError::Busy);
     }
     let scope = approved.prepared.scope();
     if s.reconcile.values().any(|entry| entry.scope == scope) {
@@ -339,9 +335,8 @@ pub fn begin_write(
 pub(crate) fn reserve(
     s: &mut Sessions,
     approved: &Approved,
-    legacy: LegacyBusy,
 ) -> Result<OperationId, AdmissionError> {
-    begin_write(s, approved, legacy).map(|running| running.operation_id)
+    begin_write(s, approved).map(|running| running.operation_id)
 }
 #[derive(Clone, Debug)]
 pub enum Completion {
@@ -413,16 +408,12 @@ impl Job {
         }
     }
 }
-pub fn prepare(
-    s: &mut Sessions,
-    approved: Approved,
-    legacy: LegacyBusy,
-) -> Result<Job, AdmissionError> {
+pub fn prepare(s: &mut Sessions, approved: Approved) -> Result<Job, AdmissionError> {
     match &approved.prepared {
-        Planned::Remove { .. } => prepare_remove(s, approved, legacy).map(Job::Remove),
-        Planned::Stash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
-        Planned::RemoteStash { .. } => prepare_stash(s, approved, legacy).map(Job::Stash),
-        Planned::Conflict { .. } => prepare_conflict(s, approved, legacy).map(Job::Conflict),
+        Planned::Remove { .. } => prepare_remove(s, approved).map(Job::Remove),
+        Planned::Stash { .. } => prepare_stash(s, approved).map(Job::Stash),
+        Planned::RemoteStash { .. } => prepare_stash(s, approved).map(Job::Stash),
+        Planned::Conflict { .. } => prepare_conflict(s, approved).map(Job::Conflict),
         // The run family binds its own blocking core: see `prepare_run`.
         Planned::Run(_) => Err(AdmissionError::Identity(
             "run-family writes are prepared through prepare_run".into(),

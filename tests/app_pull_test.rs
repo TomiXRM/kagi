@@ -136,7 +136,7 @@ fn stash_evidence(oid: Option<&str>) -> StashEvidence {
 
 fn admit(s: &mut Sessions, request: PullRequest, report: PullReport) -> PullJob {
     let approved = approve_pull(s, request).expect("owner attached and identical");
-    prepare_pull(s, approved, LegacyBusy(false), Box::new(move || Ok(report))).expect("admitted")
+    prepare_pull(s, approved, Box::new(move || Ok(report))).expect("admitted")
 }
 
 fn completed(deliveries: &[Delivery]) -> (OwnerStamp, PullReport, RunReport) {
@@ -233,13 +233,7 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
     // Registered once, and it is what refuses the next pull on this scope.
     let approved = approve_pull(&mut s, second).unwrap();
     assert_eq!(
-        prepare_pull(
-            &mut s,
-            approved,
-            LegacyBusy(false),
-            Box::new(|| Err("never run".to_string()))
-        )
-        .err(),
+        prepare_pull(&mut s, approved, Box::new(|| Err("never run".to_string()))).err(),
         Some(AdmissionError::NeedsReconcile)
     );
 }
@@ -494,13 +488,7 @@ fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
 
     let approved = approve_pull(&mut s, second.clone()).unwrap();
     assert_eq!(
-        prepare_pull(
-            &mut s,
-            approved,
-            LegacyBusy(false),
-            Box::new(|| Err("never run".to_string()))
-        )
-        .err(),
+        prepare_pull(&mut s, approved, Box::new(|| Err("never run".to_string()))).err(),
         Some(AdmissionError::NeedsReconcile),
         "an unacknowledged Unknown closes the scope to new writes"
     );
@@ -545,13 +533,7 @@ fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
     acknowledge(&mut s, read).expect("an accounted-for stash releases the scope");
     let approved = approve_pull(&mut s, second).unwrap();
     assert!(
-        prepare_pull(
-            &mut s,
-            approved,
-            LegacyBusy(false),
-            Box::new(|| Err("never run".to_string()))
-        )
-        .is_ok(),
+        prepare_pull(&mut s, approved, Box::new(|| Err("never run".to_string()))).is_ok(),
         "acknowledging reopens the scope"
     );
 }
@@ -643,13 +625,7 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
         ))),
     );
     let approved = approve_run(&mut s, request).unwrap();
-    let job = prepare_run(
-        &mut s,
-        approved,
-        LegacyBusy(false),
-        Box::new(move || Ok(unknown)),
-    )
-    .unwrap();
+    let job = prepare_run(&mut s, approved, Box::new(move || Ok(unknown))).unwrap();
     let id = job.id();
     apply(&mut s, job.run());
 
@@ -693,13 +669,7 @@ fn a_remote_write_is_resolved_only_by_the_remote() {
         ))),
     );
     let approved = approve_run(&mut s, moved).unwrap();
-    let job = prepare_run(
-        &mut s,
-        approved,
-        LegacyBusy(false),
-        Box::new(move || Ok(unknown)),
-    )
-    .unwrap();
+    let job = prepare_run(&mut s, approved, Box::new(move || Ok(unknown))).unwrap();
     let id = job.id();
     apply(&mut s, job.run());
     let read = read_reconcile(&s, id).expect("readable");
@@ -769,13 +739,7 @@ fn a_branch_push_is_resolved_only_by_the_remote() {
     let second = request.clone();
     let report = unknown(&f);
     let approved = approve_run(&mut s, request).unwrap();
-    let job = prepare_run(
-        &mut s,
-        approved,
-        LegacyBusy(false),
-        Box::new(move || Ok(report)),
-    )
-    .unwrap();
+    let job = prepare_run(&mut s, approved, Box::new(move || Ok(report))).unwrap();
     let id = job.id();
     apply(&mut s, job.run());
 
@@ -805,13 +769,7 @@ fn a_branch_push_is_resolved_only_by_the_remote() {
     };
     let report = unknown(&f);
     let approved = approve_run(&mut s, moved).unwrap();
-    let job = prepare_run(
-        &mut s,
-        approved,
-        LegacyBusy(false),
-        Box::new(move || Ok(report)),
-    )
-    .unwrap();
+    let job = prepare_run(&mut s, approved, Box::new(move || Ok(report))).unwrap();
     let id = job.id();
     apply(&mut s, job.run());
     let read = read_reconcile(&s, id).expect("readable");
@@ -861,13 +819,7 @@ fn an_unclassified_operation_is_never_acknowledgeable_from_a_local_read() {
         ))),
     );
     let approved = approve_run(&mut s, request).unwrap();
-    let job = prepare_run(
-        &mut s,
-        approved,
-        LegacyBusy(false),
-        Box::new(move || Ok(report)),
-    )
-    .unwrap();
+    let job = prepare_run(&mut s, approved, Box::new(move || Ok(report))).unwrap();
     let id = job.id();
     apply(&mut s, job.run());
 

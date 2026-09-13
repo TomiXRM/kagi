@@ -20,7 +20,7 @@ pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
             // Assert in the same UI turn before the completion can be delivered.
             // This is the label consumed by render_busy_snackbar, not the footer.
             assert!(app.fetch_in_flight);
-            assert_eq!(app.busy_op, Some("fetch"));
+            assert_eq!(app.write_busy_op, Some("fetch"));
             assert_eq!(e2e::busy_snackbar_label(app), Some(expected));
         });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -37,7 +37,7 @@ pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
             let state = app.read(cx);
             assert!(!state.fetch_in_flight);
             assert!(!state.app_sessions.has_leases());
-            assert_eq!(state.busy_op, None);
+            assert_eq!(state.write_busy_op, None);
             assert_eq!(e2e::busy_snackbar_label(state), None);
         });
     }
@@ -184,7 +184,7 @@ fn unmergeable_pr() -> kagi_domain::github::PullRequest {
 }
 
 /// ADR-0196 Wave 3: a PR merge is a write, so it rides the run family — the
-/// lease is what holds quit and tab-close, which the legacy `busy_op` latch
+/// lease is what holds quit and tab-close, which the legacy busy latch
 /// never did. Its two indeterminate terminals have different owners: an
 /// `Unknown` receipt parks a reconcile entry (readable and acknowledgeable,
 /// because both `gh` children exited), while a `Partial` — merged, deletion
@@ -217,7 +217,21 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             !app.app_sessions.may_close_host(),
             "quit must be held while the merge is in flight"
         );
-        assert_eq!(app.busy_op, Some("pr-merge"), "the busy mirror follows it");
+        assert_eq!(
+            app.write_busy_op,
+            Some("pr-merge"),
+            "the busy mirror follows it"
+        );
+        assert!(e2e::op_latched(app), "and the gate is latched");
+        // ADR-0196 Wave 3: the *lease* is the evidence, not the mirror. Drop the
+        // mirror and the gate must still refuse — this is what deleting
+        // the legacy busy field rests on.
+        app.write_busy_op = None;
+        assert!(
+            e2e::op_latched(app),
+            "a held lease alone must latch the gate, with no busy mirror at all"
+        );
+        app.write_busy_op = Some("pr-merge");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while cx.read(|cx| {
@@ -329,7 +343,7 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             state.active_tab, 1,
             "the user is on the tab they switched to"
         );
-        assert_eq!(state.busy_op, None);
+        assert_eq!(state.write_busy_op, None);
         assert!(state.app_sessions.may_close_host());
         assert!(
             state.app_sessions.reconcile_ids().is_empty(),
@@ -412,7 +426,7 @@ pub fn scenario_pr_merge_admission_keeps_the_modal(cx: &mut VisualTestAppContext
         assert!(modal.delete_branch, "the chosen options survive with it");
         assert_eq!(modal.method, kagi_git::github::MergeMethod::Squash);
         assert!(!state.app_sessions.has_leases());
-        assert_eq!(state.busy_op, None);
+        assert_eq!(state.write_busy_op, None);
     });
     assert_eq!(
         kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
@@ -424,7 +438,7 @@ pub fn scenario_pr_merge_admission_keeps_the_modal(cx: &mut VisualTestAppContext
 }
 
 /// ADR-0196 Wave 3: planning is not a write, so it latches `planning` rather
-/// than `busy_op` — but it still owns the modal slot it is about to fill, so
+/// than a write latch — but it still owns the modal slot it is about to fill, so
 /// every gate must refuse a second operation while it runs.
 pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
@@ -438,7 +452,7 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
         // Same UI turn as the dispatch: nothing has been written, so the write
         // latch is free — the plan latch is what is held.
         assert_eq!(app.planning, Some("merge-plan"));
-        assert_eq!(app.busy_op, None, "planning takes no write latch");
+        assert_eq!(app.write_busy_op, None, "planning takes no write latch");
         assert!(
             !app.app_sessions.has_leases(),
             "planning takes no write lease either"
@@ -461,6 +475,16 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
             "the refusal must say an operation is already in progress: {:?}",
             app.status_footer
         );
+        // The other direction, which the lease cannot answer for: a *write*
+        // started while a plan is in flight. Only the plan latch refuses it —
+        // no lease is held here (ADR-0196 Wave 3).
+        assert!(e2e::op_latched(app), "the gate reads the plan latch");
+        assert!(
+            !app.fetch_async_for(true, None, cx),
+            "a write must not start while a plan is in flight"
+        );
+        assert!(!app.fetch_in_flight);
+        assert!(!app.app_sessions.has_leases());
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while cx.read(|cx| app.read(cx).planning.is_some()) {
@@ -481,5 +505,7 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
     });
     i18n::set_lang(original_language);
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS merge_plan_latch: planning latches and releases without busy_op");
+    eprintln!(
+        "[gui-e2e] PASS merge_plan_latch: planning latches and releases without a write latch"
+    );
 }

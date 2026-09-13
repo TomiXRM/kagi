@@ -262,9 +262,16 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 `write_lease`（`reserve_write`）／run family へ。(c) merge-plan / delete-branch-plan は
 書き込みではなく planning の UI latch なので `planning` フラグへ分離。その結果:
 
-- gate は `KagiApp::op_latched()` 一本 = `has_leases() || write_busy_op.is_some() ||
-  planning.is_some()`。**lease が write の真実**、`write_busy_op` はその名前 mirror
-  （snackbar 用、`refresh_write_busy` が lease 消滅で retire）。
+- gate は `KagiApp::op_latched()` 一本 = `has_leases() || remote_write.is_some() ||
+  planning.is_some()`。3 項の役割は固定で、混ぜてはならない:
+  - **`has_leases()`** — lease を取れる全 write の真実。
+  - **`remote_write`** — lease を取れない唯一の write（remote pull over SSH）の
+    排他 latch。所有者はその operation だけ（下記「唯一の例外」）。
+  - **`planning`** — 書き込まないが modal slot を占める plan task。
+  - **`write_busy_op` は gate が読まない**。これは lease の *presentation mirror*
+    （snackbar のラベル用）に過ぎず、`refresh_write_busy` が lease 消滅で retire
+    する。gate に足すと lease を二度読むだけで何も足さず、lease-less writer の
+    latch として流用すると refresh に消される（#708 review P1 がこれ）。
 - `LegacyBusy` を全 admission signature から削除。`begin_write` / `write_lease` /
   `prepare_*` は lease と reconcile だけを根拠に `AdmissionError::Busy` を返す。
   planning 中の write 拒否は UI 側の `op_latched()` が担う（`reserve_write` /

@@ -6,13 +6,22 @@ impl KagiApp {
         self.write_busy_op = Some(name);
     }
 
-    /// Latch the one write that cannot hold a lease (remote pull over SSH).
+    /// Latch the one write that cannot hold a lease: remote pull over SSH,
+    /// whose `WriteScope::Remote(RemoteRepoId)` needs two network probes that
+    /// cannot run on the UI thread before the spawn. (The remote stash family
+    /// gets its id from a background plan job; a pull plan synthesised from a
+    /// cached snapshot has no equivalent.) ADR-0196 決定 5 has the rationale.
     ///
     /// This is **not** a lease mirror, so [`settle_write_busy`] must never see
     /// it: a lease-derived retire would drop it on the very next
     /// `refresh_write_busy()` — which `render` → `poll_app_jobs` and every
     /// admission preamble call — and the pull would run unlatched (#708
-    /// review P1). Only the pull's own terminal callback clears it.
+    /// review P1). Only the pull's own terminal callback clears it, before
+    /// every branch, so success, failure and a panicked task all release.
+    ///
+    /// Known gap, unchanged by this slice: `may_close_host` reads leases, so a
+    /// remote pull does not hold quit. Putting it on a real lease fixes both,
+    /// and is the same follow-up slice as #703.
     pub(crate) fn mark_remote_write(&mut self, name: &'static str) {
         self.remote_write = Some(name);
     }

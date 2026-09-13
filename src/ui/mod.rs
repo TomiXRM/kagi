@@ -1240,28 +1240,15 @@ pub struct KagiApp {
     /// Per-keystroke synchronous re-planning (backend open + plan build,
     /// the stash modal even scans status) was the user-reported input lag.
     pub modal_replan_gen: u64,
-    /// Name of the write currently running on a background thread (e.g.
-    /// "pull"/"push"): the **mirror** of the lease its admission reserved, kept
-    /// for the snackbar label and retired by `refresh_write_busy` once no lease
-    /// survives. Presentation only — the gate reads the lease itself.
+    /// The lease's presentation mirror — the in-flight write's name, for the
+    /// busy snackbar. `refresh_write_busy` retires it; the gate never reads it.
     pub write_busy_op: Option<&'static str>,
-    /// The one write that holds no lease: a remote pull over SSH, whose
-    /// `RemoteRepoId` needs two network probes that cannot run on the UI thread
-    /// before the spawn (ADR-0196 Wave 3; the remote stash family gets its id
-    /// from a background plan job, which a locally-synthesised pull plan has
-    /// no equivalent of). So the pull owns this latch outright: nothing
-    /// lease-derived may clear it — `refresh_write_busy` must not see it — and
-    /// only its own terminal callback (success, failure or panic) releases it.
-    /// [`KagiApp::op_latched`] reads it, so every gate refuses while it is set.
-    /// ponytail: one field, not a family. It goes when remote pull joins one
-    /// with a probed `WriteScope::Remote`, which also gets it quit-hold for
-    /// free (`may_close_host` reads leases, so a remote pull does not hold
-    /// quit today — unchanged by this slice, tracked with the same follow-up).
+    /// Exclusion latch for the one write that can hold no lease, remote pull
+    /// over SSH. Rules on [`KagiApp::mark_remote_write`], why in ADR-0196 決定 5.
     pub remote_write: Option<&'static str>,
-    /// ADR-0196 Wave 3: a *planning* task in flight (`merge-plan`,
-    /// `delete-branch-plan`). It writes nothing, so it takes no lease — but it
-    /// owns the modal slot it will fill, so it latches too. Ask
-    /// [`KagiApp::op_latched`], never one of these fields alone.
+    /// A *planning* task in flight (`merge-plan`, `delete-branch-plan`): no
+    /// lease, but it owns the modal slot. Ask [`KagiApp::op_latched`], never
+    /// one of these three alone (ADR-0196).
     pub planning: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,

@@ -24,7 +24,6 @@ mod mermaid_url;
 mod render;
 mod viz;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -163,13 +162,6 @@ pub struct CachedMine {
     /// HEAD OID the mine was started at (`None` for an unborn HEAD).
     pub head: Option<String>,
 }
-
-/// App-level cache of completed mines, keyed by repository path, so reopening
-/// the view — or switching tabs to another repo and **back** — reuses the
-/// ~minute-long `git log` scan instead of re-running it. Entries persist across
-/// tab switches; an entry is invalidated only when its repo's HEAD actually
-/// moves (see [`CachedMine`]). (ADR-0119)
-pub type EcosystemCache = HashMap<PathBuf, CachedMine>;
 
 /// What the pane asks of its host (ADR-0121 C2). The bin subscribes with
 /// `cx.subscribe` and maps these onto `KagiApp` — the only outward coupling.

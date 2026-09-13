@@ -106,6 +106,42 @@ The current suite covers:
   Discard control, and deliver a retained action after changing owners.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
+- session-owned evidence (`tests/recovery/github_evidence_owner.rs`,
+  `tests/recovery/cleanup_evidence_owner.rs`, `tests/recovery/conflict_evidence_owner.rs`,
+  `tests/recovery/ecosystem_evidence_owner.rs`):
+  `github_evidence_restores`, `github_evidence_background_owner`,
+  `github_evidence_detached_owner`, `cleanup_evidence_background_owner`,
+  `cleanup_evidence_superseded`, `conflict_detector_owner_guard`,
+  `ecosystem_evidence_background_owner`, `ecosystem_evidence_superseded`, and
+  `ecosystem_evidence_detached_samepath`.
+  Filter with `KAGI_GUI_E2E_ONLY=github_evidence_,cleanup_evidence_,conflict_detector_owner_guard,ecosystem_evidence_`.
+  `tests/recovery/evidence_support.rs` supplies yielding replies for queued
+  transport tasks; production launch, owner capture, and settlement still run.
+  PR restoration observes actual sidebar rows before the return-triggered fetch
+  can finish; Analyze observes the existing `copy_diagnostic` clipboard output.
+  Drain switch-triggered reads before setting an unrelated-tab sentinel, so a
+  normal revalidation cannot masquerade as a foreign completion.
+- scan read-revision safety (`tests/recovery/cleanup_evidence_owner.rs`,
+  `tests/recovery/squash_evidence_owner.rs`):
+  `KAGI_GUI_E2E_ONLY=cleanup_evidence_read_revision,squash_evidence_read_revision`.
+  Both hold transport completion, create a real commit, and accept a new read
+  while its owner is background. Cleanup checks rows, PR evidence, and the
+  selection/delete-plan consumers on return. Squash compares commit/lane/edge
+  signatures after returning to the owner, then proves a fresh scan still draws.
+  Its test observer holds render-driven scan re-arming to model completion
+  before the next scan launches; it never changes generation or read revision.
+  Remove each `Reads::is_fresh` guard independently: only that scan's revision
+  scenario must fail while the sibling and existing ownership scenarios pass.
+- accepted-model generation safety (`tests/recovery/cleanup_publish_owner.rs`,
+  `tests/recovery/squash_publish_owner.rs`):
+  `KAGI_GUI_E2E_ONLY=cleanup_evidence_publish_generation,squash_evidence_publish_generation`.
+  These start a scan after `Reads::begin`, then accept a changed model with the
+  same `ReadKey`; request revision and scan generation deliberately stay equal.
+  Cleanup observes fresh rows, PR evidence, and select/delete consumers. Squash
+  compares commit/lane/edge signatures. The same scenarios cover rejected
+  accepts, another-owner publication, `publish_tab_view`, and `amend_tab_view`.
+  Removing only either publish-generation guard must fail only its matching
+  scenario; the earlier read-revision scenarios must remain green.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

@@ -482,15 +482,14 @@ pub enum SidebarRow {
 /// the inputs to [`build_sidebar_rows`].
 ///
 /// `render` recomputes this each frame and only rebuilds `rows` when it changes,
-/// so unchanged frames skip the O(all-refs) clone+collect.  The heavy collection
-/// *contents* (branch names, tag/stash/worktree data) are covered by
-/// `view_epoch`, which `KagiApp` bumps on every read-model write — so this
-/// never has to hash the full ref lists.  The collection lengths are folded in
-/// as an O(1) backstop, and the collapsed sets + filter text (small, and not
-/// tied to `view_epoch`) are hashed directly so collapse toggles and filter
-/// edits invalidate the cache.
+/// so unchanged frames skip the O(all-refs) clone+collect. The session owner is
+/// part of the key so two tabs with equal per-session epochs cannot reuse each
+/// other's rows. Heavy collection contents are covered by `view_epoch` and
+/// `prs_epoch`; collection lengths are an O(1) backstop. The collapsed sets and
+/// filter text are hashed directly because they can change without either epoch.
 #[allow(clippy::too_many_arguments)]
 pub fn sidebar_rows_fingerprint(
+    owner: Option<crate::app::SessionId>,
     view_epoch: u64,
     prs_epoch: u64,
     branches_len: usize,
@@ -504,6 +503,7 @@ pub fn sidebar_rows_fingerprint(
 ) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    owner.hash(&mut hasher);
     view_epoch.hash(&mut hasher);
     prs_epoch.hash(&mut hasher);
     branches_len.hash(&mut hasher);
@@ -1025,10 +1025,9 @@ fn build_local_branch_leaf(
             }
         });
 
-    // GitHub Phase 1: the branch's open PR, as a trailing `#N ✓` chip. Lets
-    // "my branches" carry their PR state right here, so the PR section only
-    // has to matter for other people's PRs.
+    // Show this session's open PR alongside its branch.
     let pr_badge: Option<(SharedString, u32)> = this
+        .ui()
         .github_prs
         .iter()
         .find(|p| p.head == branch_name)

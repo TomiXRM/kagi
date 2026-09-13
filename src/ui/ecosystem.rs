@@ -2,9 +2,9 @@
 //!
 //! The view itself lives in `crates/kagi-ui-ecosystem` (Git-free). This module
 //! keeps the app-owned side: the whole-repo mine (needs `kagi_git::Backend`),
-//! the per-repo cache/inflight/generation fields on `KagiApp`, the Operation
-//! Log row + completion snackbar, and the [`EcosystemEvent`] subscription that
-//! maps the pane's requests (close, toast) onto `KagiApp`.
+//! session-owned cache/inflight/generation data, the Operation Log row +
+//! completion snackbar, and the [`EcosystemEvent`] subscription that maps the
+//! pane's requests (close, toast) onto `KagiApp`.
 
 pub use kagi_ui_ecosystem::*;
 
@@ -14,7 +14,7 @@ impl KagiApp {
     /// Open the full-screen Code Ecosystem view for the current repo and kick
     /// off its async mine. No-op when no repository is open.
     pub fn open_ecosystem_view(&mut self, cx: &mut Context<Self>) {
-        let Some(repo_path) = self.repo_path.clone() else {
+        let (Some(owner), Some(repo_path)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
         // File History outranks Analyze in `resolve_workspace`, so opening
@@ -24,18 +24,21 @@ impl KagiApp {
         self.branch_cleanup_open = false;
         self.pr_mode = None;
         let head = self.view().head_oid.clone();
-        // Reuse a cached mine only if it reflects the current HEAD (instant
-        // reopen, even after switching to another repo tab and back). A cache
-        // mined at a different HEAD is stale → drop it so the mine below isn't
-        // skipped by `start_ecosystem_mine`'s cache guard.
-        let cached = match self.ecosystem_cache.get(&repo_path) {
-            Some(c) if c.head == head => Some(c.raw.clone()),
-            Some(_) => {
-                self.ecosystem_cache.remove(&repo_path);
-                None
-            }
-            None => None,
-        };
+        // HEAD is the cache key inside this owner. A stale cache is discarded;
+        // another session's cache is never consulted.
+        if self
+            .ui()
+            .ecosystem_cache
+            .as_ref()
+            .is_some_and(|cached| cached.head != head)
+        {
+            self.ui_mut().ecosystem_cache = None;
+        }
+        let cached = self
+            .ui()
+            .ecosystem_cache
+            .as_ref()
+            .map(|cached| cached.raw.clone());
         let has_cache = cached.is_some();
         let entity = cx.new(|_| {
             let mut v = EcosystemView::new(repo_path.clone());
@@ -44,14 +47,26 @@ impl KagiApp {
             } // else: stays in the loading state; the app drives the mine
             v
         });
-        // The pane's outward surface: it emits, the app decides (ADR-0121 C2).
-        cx.subscribe(&entity, |app, _view, event, cx| match event {
-            EcosystemEvent::CloseRequested => {
-                app.close_ecosystem_view();
-                cx.notify();
+        // Freeze both the session and entity identity. A retained callback from
+        // a departed/replaced pane cannot close or toast on a foreign pane.
+        let pane_id = entity.entity_id();
+        cx.subscribe(&entity, move |app, _view, event, cx| {
+            let is_current = app.active_session() == Some(owner)
+                && app
+                    .ecosystem
+                    .as_ref()
+                    .is_some_and(|current| current.entity_id() == pane_id);
+            if !is_current {
+                return;
             }
-            EcosystemEvent::DiagnosticCopied => {
-                app.push_toast(ToastKind::Info, Msg::EcoDiagnosticCopied.t(), cx);
+            match event {
+                EcosystemEvent::CloseRequested => {
+                    app.close_ecosystem_view();
+                    cx.notify();
+                }
+                EcosystemEvent::DiagnosticCopied => {
+                    app.push_toast(ToastKind::Info, Msg::EcoDiagnosticCopied.t(), cx);
+                }
             }
         })
         .detach();
@@ -65,33 +80,44 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Start the whole-repo mine for `repo_path` **on the app** (not the view),
-    /// so it keeps running if the user closes the Analyze view, caches the
-    /// result, logs to the Operation Log, and shows a completion snackbar
-    /// (ADR-0119). Single-flighted per repo; no-op if already mining or cached.
+    /// Mine outside the pane lifetime. Evidence settles into its frozen owner;
+    /// window-global completion notices survive tab switches (ADR-0119).
     pub fn start_ecosystem_mine(
         &mut self,
         repo_path: PathBuf,
         head: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if self.ecosystem_inflight.as_ref() == Some(&repo_path)
-            || self.ecosystem_cache.contains_key(&repo_path)
-        {
+        let Some(owner) = self.active_session() else {
             return;
-        }
-        self.ecosystem_inflight = Some(repo_path.clone());
-        // Stamp this mine with a fresh generation token; the completion handler
-        // only accepts the result if this token is still current (guards the
-        // same-repo reload race where an older task could otherwise win).
-        self.ecosystem_gen += 1;
-        let my_gen = self.ecosystem_gen;
+        };
+        let my_gen = {
+            let ui = self.ui_mut();
+            if ui
+                .ecosystem_cache
+                .as_ref()
+                .is_some_and(|cached| cached.head == head)
+                || (ui.ecosystem_inflight && ui.ecosystem_mine_head == head)
+            {
+                return;
+            }
+            ui.ecosystem_inflight = true;
+            ui.ecosystem_gen = ui.ecosystem_gen.wrapping_add(1);
+            ui.ecosystem_mine_head = head.clone();
+            ui.ecosystem_gen
+        };
         klog!("ecosystem: analyzing {}", repo_path.display());
 
         let bg_path = repo_path.clone();
         // Exclude patterns (gitignore syntax) from the user's analyze_ignore file.
         let ignore_patterns = super::settings::analyze_ignore_patterns();
+        #[cfg(feature = "gui-e2e")]
+        let deferred = super::e2e::take_ecosystem_mine();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(deferred) = deferred {
+                return deferred.await;
+            }
             kagi_git::Backend::open(&bg_path)
                 .map_err(|e| e.to_string())
                 .and_then(|b| {
@@ -103,51 +129,50 @@ impl KagiApp {
         cx.spawn(async move |app, acx| {
             let result = task.await;
             let _ = app.update(acx, |app, cx| {
-                // Drop the result if this mine was superseded — either the repo
-                // reloaded (inflight cleared) or a newer same-repo mine took
-                // over (generation bumped). Path alone is not enough: a stale
-                // task for the same path must lose to the newer one.
-                let still_ours = app.ecosystem_gen == my_gen
-                    && app.ecosystem_inflight.as_deref() == Some(repo_path.as_path());
-                if still_ours {
-                    app.ecosystem_inflight = None;
-                }
-                if !still_ours {
+                let active = app.active_session() == Some(owner);
+                let Some(ui) = app.ui.get_mut(&owner) else {
+                    return;
+                };
+                if !ui.ecosystem_inflight || ui.ecosystem_gen != my_gen {
                     return;
                 }
+                ui.ecosystem_inflight = false;
+                ui.ecosystem_mine_head = None;
                 match result {
                     Ok(raw) => {
                         klog!("ecosystem: loaded {} commits", raw.commits.len());
                         let commits = raw.commits.len();
                         let files = raw.loc.len();
-                        app.ecosystem_cache.insert(
-                            repo_path.clone(),
-                            CachedMine {
-                                raw: raw.clone(),
-                                head: head.clone(),
-                            },
-                        );
+                        let pane = if active {
+                            app.ecosystem
+                                .clone()
+                                .filter(|view| view.read(cx).repo_matches(&repo_path))
+                        } else {
+                            None
+                        };
+                        // Move into cache; clone only when a live pane also needs the data.
+                        let pane_raw = pane.as_ref().map(|_| raw.clone());
+                        ui.ecosystem_cache = Some(CachedMine { raw, head });
                         app.record_ecosystem_done(&repo_path, commits, files, cx);
-                        // Update the view only if it is still showing this repo.
-                        if let Some(view) = app.ecosystem.clone() {
-                            view.update(cx, |v, cx| {
-                                if v.repo_matches(&repo_path) {
-                                    v.seed(raw);
-                                    cx.notify();
-                                }
+                        if let Some((view, raw)) = pane.zip(pane_raw) {
+                            view.update(cx, |view, cx| {
+                                view.seed(raw);
+                                cx.notify();
                             });
                         }
                     }
-                    Err(e) => {
-                        klog!("ecosystem: load failed: {}", e);
-                        app.push_toast(ToastKind::Error, format!("Analyze failed: {e}"), cx);
-                        if let Some(view) = app.ecosystem.clone() {
-                            view.update(cx, |v, cx| {
-                                if v.repo_matches(&repo_path) {
-                                    v.set_error(e.clone());
-                                    cx.notify();
-                                }
-                            });
+                    Err(error) => {
+                        klog!("ecosystem: load failed: {}", error);
+                        app.push_toast(ToastKind::Error, format!("Analyze failed: {error}"), cx);
+                        if active {
+                            if let Some(view) = app.ecosystem.clone() {
+                                view.update(cx, |view, cx| {
+                                    if view.repo_matches(&repo_path) {
+                                        view.set_error(error);
+                                        cx.notify();
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -155,6 +180,41 @@ impl KagiApp {
             });
         })
         .detach();
+    }
+
+    /// Revalidate the active session's HEAD-versioned Analyze data.
+    ///
+    /// A changed HEAD invalidates only this owner. An older in-flight request is
+    /// superseded by generation and a replacement is launched only while the
+    /// Analyze pane is open.
+    pub fn revalidate_ecosystem(&mut self, new_head: Option<String>, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let invalidated = {
+            let ui = self.ui_mut();
+            let cache_stale = ui
+                .ecosystem_cache
+                .as_ref()
+                .is_some_and(|cached| cached.head != new_head);
+            if cache_stale {
+                ui.ecosystem_cache = None;
+            }
+            let flight_stale = ui.ecosystem_inflight && ui.ecosystem_mine_head != new_head;
+            if flight_stale {
+                ui.ecosystem_inflight = false;
+                ui.ecosystem_mine_head = None;
+                ui.ecosystem_gen = ui.ecosystem_gen.wrapping_add(1);
+            }
+            cache_stale || flight_stale
+        };
+        let pane_open = self
+            .ecosystem
+            .as_ref()
+            .is_some_and(|view| view.read(cx).repo_matches(&repo_path));
+        if invalidated && pane_open {
+            self.start_ecosystem_mine(repo_path, new_head, cx);
+        }
     }
 
     /// Push a completion snackbar + a read-only Operation Log row for a finished

@@ -104,6 +104,38 @@ mod fetch_owner;
 mod file_menu_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/evidence_support.rs"]
+mod evidence_support;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/github_evidence_owner.rs"]
+mod github_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/cleanup_evidence_owner.rs"]
+mod cleanup_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_evidence_owner.rs"]
+mod conflict_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/cleanup_publish_owner.rs"]
+mod cleanup_publish_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/ecosystem_evidence_owner.rs"]
+mod ecosystem_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/squash_evidence_owner.rs"]
+mod squash_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/squash_publish_owner.rs"]
+mod squash_publish_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
 mod worktree_graph;
 
@@ -839,6 +871,62 @@ mod macos {
             (
                 "file_menu_rejects_stale_owner",
                 Box::new(crate::file_menu_owner::scenario_file_menu_rejects_stale_owner),
+            ),
+            (
+                "github_evidence_restores",
+                Box::new(crate::github_evidence_owner::scenario_github_evidence_restores),
+            ),
+            (
+                "github_evidence_background_owner",
+                Box::new(crate::github_evidence_owner::scenario_github_evidence_background_owner),
+            ),
+            (
+                "github_evidence_detached_owner",
+                Box::new(crate::github_evidence_owner::scenario_github_evidence_detached_owner),
+            ),
+            (
+                "cleanup_evidence_background_owner",
+                Box::new(crate::cleanup_evidence_owner::scenario_cleanup_evidence_background_owner),
+            ),
+            (
+                "cleanup_evidence_superseded",
+                Box::new(crate::cleanup_evidence_owner::scenario_cleanup_evidence_superseded),
+            ),
+            (
+                "cleanup_evidence_read_revision",
+                Box::new(crate::cleanup_evidence_owner::scenario_cleanup_evidence_read_revision),
+            ),
+            (
+                "squash_evidence_read_revision",
+                Box::new(crate::squash_evidence_owner::scenario_squash_evidence_read_revision),
+            ),
+            (
+                "cleanup_evidence_publish_generation",
+                Box::new(
+                    crate::cleanup_publish_owner::scenario_cleanup_evidence_publish_generation,
+                ),
+            ),
+            (
+                "squash_evidence_publish_generation",
+                Box::new(
+                    crate::squash_publish_owner::scenario_squash_evidence_publish_generation,
+                ),
+            ),
+            (
+                "conflict_detector_owner_guard",
+                Box::new(crate::conflict_evidence_owner::scenario_conflict_detector_owner_guard),
+            ),
+            (
+                "ecosystem_evidence_background_owner",
+                Box::new(crate::ecosystem_evidence_owner::scenario_ecosystem_evidence_background_owner),
+            ),
+            (
+                "ecosystem_evidence_superseded",
+                Box::new(crate::ecosystem_evidence_owner::scenario_ecosystem_evidence_superseded),
+            ),
+            (
+                "ecosystem_evidence_detached_samepath",
+                Box::new(crate::ecosystem_evidence_owner::scenario_ecosystem_evidence_detached_samepath),
             ),
             (
                 "remote_source_merge_into",

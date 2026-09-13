@@ -157,11 +157,7 @@ impl WorkspaceItem for EcosystemItem {
         let eco = app.ecosystem.clone()?;
         Some(div().flex_1().min_w(px(0.)).child(eco).into_any_element())
     }
-    // ADR-0119: the EcosystemView entity captures the previous repo's
-    // `repo_path`; drop the view on repo/tab switch like File History. The
-    // mine CACHE (`ecosystem_cache`) is keyed by repo and deliberately kept
-    // across tab switches, so returning to a repo and pressing Analyze reuses
-    // its previous scan instead of recomputing from scratch.
+    // The pane still drops on switch until S5; its session-owned mine data survives.
     fn dispose(&self, app: &mut KagiApp) {
         app.ecosystem = None;
     }
@@ -428,6 +424,7 @@ fn render_inspector_body(
     // GitHub Phase 1: PRs whose head branch (local or origin/) points at this
     // commit — rendered as clickable `#N ✓` chips next to the ref badges.
     let prs_here: Vec<kagi_domain::github::PullRequest> = app
+        .ui()
         .github_prs
         .iter()
         .filter(|pr| {

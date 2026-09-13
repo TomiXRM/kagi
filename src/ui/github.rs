@@ -38,43 +38,53 @@ pub(super) fn fetch_error_text(e: &kagi_git::github::PrFetchError) -> String {
 
 impl KagiApp {
     /// One-shot `gh pr list` refresh for the current repo. Safe to call
-    /// often: results are stamped with the repo they were fetched for and
-    /// dropped if the tab switched mid-flight. Called by the ticker and on
-    /// every tab switch (`switch_repo`) — without the latter, a switch left
-    /// the new tab at 0 PRs until the ticker's next 60s tick (user report).
+    /// often: completion is routed to the session that started it, even when
+    /// another tab is active. Called by the ticker and on every tab switch
+    /// (`switch_repo`) so a new tab does not wait for the next 60s tick.
     pub fn refresh_github_prs(&mut self, cx: &mut Context<Self>) {
-        let Some(repo) = self.repo_path.clone() else {
+        let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
-        if !kagi_git::github::gh_available() {
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_github_pr_fetch();
+        #[cfg(not(feature = "gui-e2e"))]
+        let injected: Option<
+            gpui::Task<
+                Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>,
+            >,
+        > = None;
+        if injected.is_none() && !kagi_git::github::gh_available() {
             return;
         }
         cx.spawn(async move |this, acx| {
-            let repo_for_task = repo.clone();
-            let result = acx
-                .background_executor()
-                .spawn(async move { kagi_git::github::list_open_prs(&repo_for_task) })
-                .await;
-            let _ = this.update(acx, |app, cx| {
-                // The tab may have switched while we were fetching.
-                if app.repo_path.as_ref() != Some(&repo) {
-                    return;
+            let result = match injected {
+                Some(task) => task.await,
+                None => {
+                    acx.background_executor()
+                        .spawn(async move { kagi_git::github::list_open_prs(&repo) })
+                        .await
                 }
+            };
+            let _ = this.update(acx, |app, cx| {
+                let owner_is_active = app.active_session() == Some(owner);
+                let Some(ui) = app.ui.get_mut(&owner) else {
+                    return;
+                };
                 // #506: only a fetch that actually answered may replace the
                 // list. `apply_pr_fetch` holds that rule for both PR callers —
                 // an expired token or an offline machine keeps the last good
                 // data instead of being shown as an empty inbox.
-                let outcome = kagi_git::github::apply_pr_fetch(&mut app.github_prs, result);
+                let outcome = kagi_git::github::apply_pr_fetch(&mut ui.github_prs, result);
                 match &outcome.error {
                     None => {
-                        app.github_error = None;
-                        app.github_unavailable = false;
+                        ui.github_error = None;
+                        ui.github_unavailable = false;
                     }
                     // No GitHub remote: a defined "nothing here" state, not a
                     // failure to report on every 60s tick.
                     Some(e) if e.is_unavailable() => {
-                        app.github_error = None;
-                        app.github_unavailable = true;
+                        ui.github_error = None;
+                        ui.github_unavailable = true;
                     }
                     Some(e) => {
                         // Recorded, not toasted: this also runs on a 60s ticker,
@@ -86,21 +96,25 @@ impl KagiApp {
                         // Once per *distinct* failure: this runs every 60s and
                         // a logged-out session would otherwise repeat the same
                         // contract line forever.
-                        if app.github_error.as_deref() != Some(text.as_str()) {
+                        if ui.github_error.as_deref() != Some(text.as_str()) {
                             klog!("github: error: {}", e);
                         }
-                        app.github_error = Some(SharedString::from(text));
-                        app.github_unavailable = false;
-                        cx.notify();
+                        ui.github_error = Some(text);
+                        ui.github_unavailable = false;
+                        if owner_is_active {
+                            cx.notify();
+                        }
                         return;
                     }
                 }
-                if outcome.changed || app.github_prs_for.as_ref() != Some(&repo) {
-                    klog!("github: prs={}", app.github_prs.len());
-                    app.github_prs_for = Some(repo.clone());
-                    app.github_prs_epoch = app.github_prs_epoch.wrapping_add(1);
+                if outcome.changed || !ui.github_prs_loaded {
+                    klog!("github: prs={}", ui.github_prs.len());
+                    ui.github_prs_loaded = true;
+                    ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
                 }
-                cx.notify();
+                if owner_is_active {
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -136,8 +150,12 @@ impl KagiApp {
                 .await;
             let _ = this.update(acx, |app, cx| {
                 app.github_login = login;
-                // The Mine/Others split depends on it — rebuild the rows.
-                app.github_prs_epoch = app.github_prs_epoch.wrapping_add(1);
+                // The Mine/Others split depends on this global capability.
+                // Every attached session may own cached rows, including an
+                // inactive one whose epoch happens to equal the active tab's.
+                for ui in app.ui.values_mut() {
+                    ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
+                }
                 cx.notify();
             });
             loop {

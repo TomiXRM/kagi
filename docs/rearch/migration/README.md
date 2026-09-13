@@ -78,6 +78,11 @@ zero-copy tab ownership target.
     boundary while retaining the legacy busy bridge for the other conflict actions;
     exact conflict/buffer revisions and the Backend-owned receipt accompany the
     finite completion evidence.
+  - [~] **Operation lifecycle Big Bang — #643 ([ADR-0196](../../adr/0196-operation-lifecycle-contract.md)).**
+    Waves 0–2 complete; Wave 3 complete except the abandoned-executor supervisor (#703).
+    Every write is admitted through `begin_write`/`write_lease` and settled through
+    `apply`; `busy_op`, `LegacyBusy` and the `repo_path + switch_generation` stale
+    guard are gone — the lease is the evidence, the `OwnerStamp` the routing key.
   - [x] **Conflict C2 — #704.** Abort (including the stash-conflict abort) is a typed
     conflict-family action: read-model-derived availability, entity-independent
     admission, progress-aware outcomes with a measured verify, a Backend-owned

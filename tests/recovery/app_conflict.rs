@@ -467,12 +467,17 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
 
     assert!(cx.read(|cx| app.read(cx).conflict.is_none()));
     app.update(cx, |app, cx| {
-        app.apply_conflict_detect(stale_owner, payload, cx)
+        app.ui_mut().conflict_detected = true;
+        app.apply_conflict_detect(stale_owner, payload, cx);
     });
     cx.run_until_parked();
     assert!(
         cx.read(|cx| app.read(cx).conflict.is_none()),
         "a payload from another visit must not build this tab's conflict editor"
+    );
+    assert!(
+        !cx.read(|cx| app.read(cx).ui().conflict_detected),
+        "a stale callback must re-arm only its frozen owner's detector guard"
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS a detector result for another owner is dropped (#707)");
@@ -532,7 +537,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
         ConflictDetectOutcome::MergeResolvedReady(older),
     ] {
         app.update(cx, |app, cx| {
-            app.conflict_detected_for = Some(repo.clone());
+            app.ui_mut().conflict_detected = true;
             app.apply_conflict_detect(owner.clone(), stale, cx);
         });
         cx.run_until_parked();
@@ -550,7 +555,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
             "and must not replace what it shows"
         );
         assert!(
-            cx.read(|cx| app.read(cx).conflict_detected_for.is_none()),
+            !cx.read(|cx| app.read(cx).ui().conflict_detected),
             "dropping a stale outcome re-arms the detector"
         );
     }

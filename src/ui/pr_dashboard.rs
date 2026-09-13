@@ -125,9 +125,10 @@ pub(super) fn refresh_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::
 }
 
 pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let ui = app.ui();
     let login = app.github_login.clone();
     let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
-    let all = app.github_prs.clone();
+    let all = ui.github_prs.clone();
     let buckets = focus_queue(app);
     // Attention is what colours a card and writes its "why" line; the queue
     // already computes both, so the dashboard reads them off it by number
@@ -166,22 +167,22 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .child(
                     div()
                         .text_sm()
-                        .text_color(rgb(if app.github_error.is_some() {
+                        .text_color(rgb(if ui.github_error.is_some() {
                             theme().color_blocker
                         } else {
                             theme().text_muted
                         }))
                         // #506: three different empty screens — a failed fetch,
                         // a repo with no GitHub remote, and a real empty inbox.
-                        .child(SharedString::from(if app.github_error.is_some() {
+                        .child(SharedString::from(if ui.github_error.is_some() {
                             Msg::PrFetchFailed.t()
-                        } else if app.github_unavailable {
+                        } else if ui.github_unavailable {
                             Msg::PrGithubUnavailable.t()
                         } else {
                             Msg::PrPaneEmpty.t()
                         })),
                 )
-                .children(app.github_error.clone().map(|e| {
+                .children(ui.github_error.clone().map(|e| {
                     div()
                         .max_w(theme::scaled_px(420.))
                         .text_xs()
@@ -193,7 +194,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
     } else {
         // #506: the list survived a failed fetch, so it is last-known data —
         // say so above the tiles instead of showing it as fresh.
-        if let Some(detail) = app.github_error.clone() {
+        if let Some(detail) = ui.github_error.clone() {
             body = body.child(
                 div()
                     .px_4()

@@ -469,3 +469,53 @@ pub fn dispatch_file_menu_discard(
 ) {
     app.dispatch_file_menu_action(menu, super::file_menu::FileMenuAction::Discard, cx);
 }
+
+#[cfg(feature = "gui-e2e")]
+type PrFetchResult = Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>;
+#[cfg(feature = "gui-e2e")]
+type CleanupScanResult = Result<
+    (
+        Vec<kagi_domain::branch_cleanup::BranchCleanupRow>,
+        PrFetchResult,
+    ),
+    String,
+>;
+#[cfg(feature = "gui-e2e")]
+type EcosystemMineResult = Result<kagi_domain::hotspot::RawEcosystem, String>;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static GITHUB_PR_FETCH: RefCell<Option<gpui::Task<PrFetchResult>>> = const { RefCell::new(None) };
+    static CLEANUP_SCAN: RefCell<Option<gpui::Task<CleanupScanResult>>> = const { RefCell::new(None) };
+    static ECOSYSTEM_MINE: RefCell<Option<gpui::Task<EcosystemMineResult>>> = const { RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn queue_github_pr_fetch(task: gpui::Task<PrFetchResult>) {
+    GITHUB_PR_FETCH.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_github_pr_fetch() -> Option<gpui::Task<PrFetchResult>> {
+    GITHUB_PR_FETCH.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn queue_cleanup_scan(task: gpui::Task<CleanupScanResult>) {
+    CLEANUP_SCAN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_cleanup_scan() -> Option<gpui::Task<CleanupScanResult>> {
+    CLEANUP_SCAN.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn queue_ecosystem_mine(task: gpui::Task<EcosystemMineResult>) {
+    ECOSYSTEM_MINE.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_ecosystem_mine() -> Option<gpui::Task<EcosystemMineResult>> {
+    ECOSYSTEM_MINE.with(|slot| slot.borrow_mut().take())
+}

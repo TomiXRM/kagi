@@ -1,18 +1,8 @@
 //! Branch Cleanup pane + operations (ADR-0128).
 //!
-//! A center-takeover table of merged/stale branch candidates. The rows live
-//! in the owner's `cleanup_rows` (per-tab) but are **not** snapshot-derived
-//! any more (ADR-0128 follow-up, 2026-07-22): classifying every branch walks
-//! main's first-parent history plus one `merge_base` per branch, which
-//! measured over a second on repos with many long-lived unmerged branches.
-//! Running that synchronously inside every `snapshot()` blocked the UI
-//! thread after *every* git operation (stash, commit, checkout, ...), not
-//! just Branch Cleanup ones. `start_branch_cleanup_scan` now recomputes it on
-//! a background thread after each reload (same shape as the Ecosystem mine,
-//! `ecosystem.rs`), so the table is a beat behind a reload instead of costing
-//! every reload its time. This module owns the pane's open flag, the render,
-//! the copy actions, and the plan → confirm → execute pipeline glue (the ops
-//! live in `kagi_git::ops::branch_cleanup`).
+//! The expensive table scan runs after reload instead of blocking every
+//! repository snapshot. Results update the frozen session's read and evidence;
+//! the pane also owns rendering and plan → confirm → execute pipeline glue.
 //!
 //! Delete affordances follow the domain classification: `FullyMerged` rows
 //! join the bulk action, `SquashMergedLikely` rows are individually deletable,
@@ -104,26 +94,24 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Recompute the Branch Cleanup table for the current repo on a
-    /// background thread, updating the owner's `cleanup_rows` in place when
-    /// it finishes (ADR-0128 follow-up). Call after every reload — same
-    /// "cheap to call repeatedly" shape as `ensure_startup_repo_io`'s
-    /// sub-tasks: no-op with no repo open, and a superseded scan (repo
-    /// changed, or a newer scan started) just drops its result instead of
-    /// clobbering a fresher one.
+    /// Recompute the Branch Cleanup table for the current repository on a
+    /// background thread, updating the frozen owner's read and evidence when
+    /// it finishes. A newer scan for that owner supersedes this result.
     pub fn start_branch_cleanup_scan(&mut self, cx: &mut Context<Self>) {
-        let (Some(repo_path), Some(session)) = (self.repo_path.clone(), self.active_session())
-        else {
+        let (Some(repo_path), Some(owner)) = (self.repo_path.clone(), self.active_session()) else {
             return;
         };
-        self.cleanup_gen += 1;
-        self.cleanup_scanning = true;
-        let my_gen = self.cleanup_gen;
+        let Some(ui) = self.ui.get_mut(&owner) else {
+            return;
+        };
+        ui.cleanup_gen += 1;
+        ui.cleanup_scanning = true;
+        let my_gen = ui.cleanup_gen;
         let now = now_secs();
 
-        let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move {
-            let backend = kagi_git::Backend::open(&bg_path).map_err(|e| e.to_string())?;
+        let scan_path = repo_path;
+        let scan = async move {
+            let backend = kagi_git::Backend::open(&scan_path).map_err(|e| e.to_string())?;
             let rows = backend
                 .collect_branch_cleanup(now)
                 .map_err(|e| e.to_string())?;
@@ -139,37 +127,42 @@ impl KagiApp {
                 Ok(Vec::new())
             };
             Ok::<_, String>((rows, prs))
-        });
+        };
+        #[cfg(feature = "gui-e2e")]
+        let task = super::e2e::take_cleanup_scan().unwrap_or_else(|| cx.background_spawn(scan));
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(scan);
 
         cx.spawn(async move |app, acx| {
             let result = task.await;
             let _ = app.update(acx, |app, cx| {
-                // Drop the result if superseded: another tab is on screen, or
-                // a newer scan (another reload) already started.
-                let still_ours = app.cleanup_gen == my_gen && app.active_session() == Some(session);
-                if !still_ours {
+                let owner_is_active = app.active_session() == Some(owner);
+                let Some(ui) = app.ui.get_mut(&owner) else {
+                    return;
+                };
+                if ui.cleanup_gen != my_gen {
                     return;
                 }
-                app.cleanup_scanning = false;
+                ui.cleanup_scanning = false;
                 match result {
                     Ok((rows, prs)) => {
                         // #506: keep the last good PR evidence when the fetch
                         // failed, and say so — an empty column must not pass
                         // for "fetched fine, no PR".
-                        let fetched = kagi_git::github::apply_pr_fetch(&mut app.cleanup_prs, prs);
-                        app.cleanup_prs_stale = match &fetched.error {
+                        let fetched = kagi_git::github::apply_pr_fetch(&mut ui.cleanup_prs, prs);
+                        ui.cleanup_prs_stale = match &fetched.error {
                             Some(e) if !e.is_unavailable() => {
                                 klog!("branch-cleanup: pr evidence stale: {}", e);
                                 true
                             }
                             _ => false,
                         };
-                        // Drop ticks for branches that are no longer listed:
-                        // a stale name would either do nothing or, worse,
-                        // match a re-created branch the user never ticked.
-                        let live: std::collections::HashSet<&str> =
-                            rows.iter().map(|r| r.name.as_str()).collect();
-                        app.cleanup_selected.retain(|n| live.contains(n.as_str()));
+                        if owner_is_active {
+                            // Selection remains active-root state until S3.
+                            let live: std::collections::HashSet<&str> =
+                                rows.iter().map(|r| r.name.as_str()).collect();
+                            app.cleanup_selected.retain(|n| live.contains(n.as_str()));
+                        }
                         // Same contract line ADR-0128 originally emitted from
                         // build_tab_view — moved here since this is where the
                         // counts are actually known now.
@@ -191,11 +184,16 @@ impl KagiApp {
                             warn,
                             stale
                         );
-                        app.view_mut().cleanup_rows = rows;
-                        cx.notify();
+                        app.reads.get_mut(Some(owner)).cleanup_rows = rows;
+                        if owner_is_active {
+                            cx.notify();
+                        }
                     }
                     Err(e) => {
                         klog!("branch-cleanup: scan failed: {}", e);
+                        if owner_is_active {
+                            cx.notify();
+                        }
                     }
                 }
             });
@@ -642,7 +640,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
         )
         .child(div().flex_1())
         // #506: the PR column is last-known data, not this scan's answer.
-        .children(app.cleanup_prs_stale.then(|| {
+        .children(app.ui().cleanup_prs_stale.then(|| {
             div()
                 .text_xs()
                 .text_color(rgb(theme().color_warning))
@@ -726,7 +724,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             .p_4()
             .text_sm()
             .text_color(rgb(theme().text_muted))
-            .child(SharedString::from(if app.cleanup_scanning {
+            .child(SharedString::from(if app.ui().cleanup_scanning {
                 Msg::CleanupScanning.t()
             } else if app.repo_path.is_some() {
                 Msg::CleanupEmpty.t()
@@ -745,7 +743,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 row_count,
                 cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                     let cols = this.cleanup_cols;
-                    let prs = this.cleanup_prs.clone();
+                    let prs = this.ui().cleanup_prs.clone();
                     let selected = this.cleanup_selected.clone();
                     range
                         .filter_map(|i| {

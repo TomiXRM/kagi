@@ -364,12 +364,9 @@ impl Render for KagiApp {
         // (honouring collapse + filter) so the "sidebar-list" uniform_list can
         // virtualize it. The processor reads the field.
         //
-        // T-PERF-RENDER-002 (ADR-0116 Wave 2): only rebuild when the inputs
-        // change. A cheap, allocation-free fingerprint (view epoch + collection
-        // lengths + collapsed sets + filter text) gates the O(all-refs)
-        // clone+collect so unchanged frames reuse the cached `rows`. The filter
-        // `InputState` has no notification path into `KagiApp`, so its value is
-        // read+folded each frame rather than tracked via the epoch.
+        // ADR-0116: owner + evidence/read epochs and navigator inputs gate the
+        // O(all-refs) clone+collect. Filter InputState does not notify KagiApp,
+        // so its current value is folded in every frame.
         let sidebar_filter_text: String = self
             .sidebar
             .filter
@@ -377,8 +374,9 @@ impl Render for KagiApp {
             .map(|ent| ent.read(cx).value().to_lowercase())
             .unwrap_or_default();
         let sidebar_fingerprint = sidebar::sidebar_rows_fingerprint(
+            self.active_session(),
             self.view_epoch,
-            self.github_prs_epoch,
+            self.ui().github_prs_epoch,
             self.view().branches.len(),
             self.view().remote_branches.len(),
             self.view().tags.len(),
@@ -389,9 +387,9 @@ impl Render for KagiApp {
             &sidebar_filter_text,
         );
         if sidebar_fingerprint != self.sidebar.rows_fingerprint {
-            self.sidebar.rows = sidebar::build_sidebar_rows(
+            let rows = sidebar::build_sidebar_rows(
                 &self.view().branches,
-                &self.github_prs,
+                &self.ui().github_prs,
                 self.github_login.as_deref(),
                 &self.view().remote_branches,
                 &self.view().tags,
@@ -401,6 +399,7 @@ impl Render for KagiApp {
                 &self.branch_groups_collapsed,
                 &sidebar_filter_text,
             );
+            self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
         let sidebar_row_count = self.sidebar.rows.len();

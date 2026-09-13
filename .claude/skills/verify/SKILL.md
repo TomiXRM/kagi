@@ -106,6 +106,21 @@ The current suite covers:
   Discard control, and deliver a retained action after changing owners.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
+- session-owned evidence (`tests/recovery/github_evidence_owner.rs`,
+  `tests/recovery/cleanup_evidence_owner.rs`, `tests/recovery/conflict_evidence_owner.rs`,
+  `tests/recovery/ecosystem_evidence_owner.rs`):
+  `github_evidence_restores`, `github_evidence_background_owner`,
+  `github_evidence_detached_owner`, `cleanup_evidence_background_owner`,
+  `cleanup_evidence_superseded`, `conflict_detector_owner_guard`,
+  `ecosystem_evidence_background_owner`, `ecosystem_evidence_superseded`, and
+  `ecosystem_evidence_detached_samepath`.
+  Filter with `KAGI_GUI_E2E_ONLY=github_evidence_,cleanup_evidence_,conflict_detector_owner_guard,ecosystem_evidence_`.
+  `tests/recovery/evidence_support.rs` supplies yielding replies for queued
+  transport tasks; production launch, owner capture, and settlement still run.
+  PR restoration observes actual sidebar rows before the return-triggered fetch
+  can finish; Analyze observes the existing `copy_diagnostic` clipboard output.
+  Drain switch-triggered reads before setting an unrelated-tab sentinel, so a
+  normal revalidation cannot masquerade as a foreign completion.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

@@ -66,7 +66,7 @@ impl KagiApp {
             .iter()
             .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
             .count();
-        let pr_count = self.github_prs.len();
+        let pr_count = self.ui().github_prs.len();
 
         // Build divider 1: sidebar | main.
         let divider1 = div()

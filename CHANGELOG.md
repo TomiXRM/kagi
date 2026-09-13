@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Delayed remote refreshes, fetch completions, and file-menu actions stay bound to their originating tab session. Reopening the same repository cannot inherit an older fetch's display updates; dirty Pull can join its own in-flight fetch without starting another write. (#643, ADR-0197 S2a)
+- GitHub and Branch Cleanup evidence now stays with its tab session, including results arriving in the background. Analyze caches and scan revisions cannot cross tab incarnations, and a newer HEAD supersedes an older mine. Conflict detection's run-once guard is session-local. (#643, Wave 4 S2b)
 
 ## [0.37.0] — 2026-09-08
 

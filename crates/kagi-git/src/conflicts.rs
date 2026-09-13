@@ -49,10 +49,12 @@ use git2::{Repository, RepositoryState};
 
 use super::cli::run_git;
 use super::log::CommitId;
-// #704: the abort family moved to its own module, re-exported here so
-// `conflicts::…` stays the one path callers name.
+// #704 / #707: the abort family and the ADR-0058 terminology moved to their
+// own modules, re-exported here so `conflicts::…` stays the one path callers
+// name.
 pub(crate) use super::conflict_abort::{execute_conflict_abort, execute_stash_conflict_abort};
 pub use super::conflict_abort::{plan_conflict_abort, AbortOutcome};
+pub use super::conflict_labels::{side_labels, SideLabel, SideLabels};
 use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
 use super::status::working_tree_status;
@@ -113,14 +115,24 @@ pub enum ConflictOp {
 }
 
 impl ConflictOp {
-    /// A short, stable identifier used for oplog `op` names and tests.
+    /// A short, stable identifier used for oplog `op` names and tests —
+    /// derived from [`Self::kind`], so there is one place a slug is decided.
     pub fn slug(&self) -> &'static str {
+        self.kind().slug()
+    }
+
+    /// The pure-domain identity of this operation — the one mapping from
+    /// git2's world to [`ConflictOperationKind`] (#707 review). `slug()` is
+    /// derived from it, so an oplog name and a request kind cannot drift.
+    pub fn kind(&self) -> kagi_domain::conflict_family::ConflictOperationKind {
+        use kagi_domain::conflict_family::ConflictOperationKind as Kind;
+        use kagi_domain::plan_note::InProgressOp as Op;
         match self {
-            ConflictOp::Merge { .. } => "merge",
-            ConflictOp::Rebase { .. } => "rebase",
-            ConflictOp::CherryPick { .. } => "cherry-pick",
-            ConflictOp::Revert { .. } => "revert",
-            ConflictOp::StashConflict => "stash",
+            ConflictOp::Merge { .. } => Kind::Repository(Op::Merge),
+            ConflictOp::Rebase { .. } => Kind::Repository(Op::Rebase),
+            ConflictOp::CherryPick { .. } => Kind::Repository(Op::CherryPick),
+            ConflictOp::Revert { .. } => Kind::Repository(Op::Revert),
+            ConflictOp::StashConflict => Kind::StashApply,
         }
     }
 
@@ -623,131 +635,6 @@ fn entry_is_binary(repo: &Repository, entry: Option<&git2::IndexEntry>) -> bool 
 fn blob_has_nul(content: &[u8]) -> bool {
     let probe = &content[..content.len().min(8 * 1024)];
     probe.contains(&0u8)
-}
-
-// ────────────────────────────────────────────────────────────
-// Terminology (T-CONFLICT-010 / ADR-0058)
-// ────────────────────────────────────────────────────────────
-
-/// A single role + real-name label pair (ADR-0058 two-line label).
-///
-/// `role` is the translatable role word (e.g. "Current branch", "New base");
-/// `name` is the real branch / commit name shown verbatim (never translated).
-/// The words "ours" / "theirs" must never appear in `role`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SideLabel {
-    /// Role word (translatable via Msg in the UI lane).
-    pub role: String,
-    /// Real branch / commit name (verbatim, not translated).
-    pub name: String,
-}
-
-impl SideLabel {
-    fn new(role: &str, name: impl Into<String>) -> Self {
-        SideLabel {
-            role: role.to_string(),
-            name: name.into(),
-        }
-    }
-}
-
-/// The current + incoming side labels for an operation, plus the base and result
-/// roles (the four roles of §2: Base, current, incoming, Result).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SideLabels {
-    /// Left side (index stage 2 = libgit2 "ours") translated to a role name.
-    pub current: SideLabel,
-    /// Right side (index stage 3 = libgit2 "theirs") translated to a role name.
-    pub incoming: SideLabel,
-    /// Base (common ancestor) role label.
-    pub base: SideLabel,
-    /// Result (editable resolution) role label.
-    pub result: SideLabel,
-}
-
-/// Produce the role + real-name labels for an operation (ADR-0058 §2 table).
-///
-/// `current_branch` is the short name of the branch HEAD is on (used for the
-/// merge / cherry-pick / revert "Current branch" / "New base" left label).
-///
-/// The rebase direction swap (libgit2 reports onto as "ours", the replayed
-/// commit as "theirs") is translated here so the UI never has to know: the
-/// left/current label becomes **New base** and the right/incoming label becomes
-/// **Your commit being replayed**.  The strings "ours"/"theirs" never appear.
-pub fn side_labels(op: &ConflictOp, current_branch: &str) -> SideLabels {
-    let base = SideLabel::new("Base", "common ancestor");
-    let result = SideLabel::new("Result", "your resolution");
-
-    match op {
-        ConflictOp::Merge {
-            incoming,
-            incoming_summary,
-        } => SideLabels {
-            current: SideLabel::new("Current branch", current_branch),
-            incoming: SideLabel::new("Merging in", commit_display(incoming, incoming_summary)),
-            base,
-            result,
-        },
-        ConflictOp::Rebase {
-            commit,
-            commit_summary,
-            ..
-        } => SideLabels {
-            // Direction translation: libgit2 "ours" == the rebase target (onto),
-            // surfaced to the user as the New base.
-            current: SideLabel::new("New base", current_branch),
-            // libgit2 "theirs" == the commit being replayed.
-            incoming: SideLabel::new(
-                "Your commit being replayed",
-                commit_display(commit, commit_summary),
-            ),
-            base,
-            result,
-        },
-        ConflictOp::CherryPick {
-            source,
-            source_summary,
-        } => SideLabels {
-            current: SideLabel::new("Current branch", current_branch),
-            incoming: SideLabel::new(
-                "Commit being applied",
-                commit_display(source, source_summary),
-            ),
-            base,
-            result,
-        },
-        ConflictOp::Revert {
-            source,
-            source_summary,
-        } => SideLabels {
-            current: SideLabel::new("Current branch", current_branch),
-            incoming: SideLabel::new(
-                "Changes being undone",
-                commit_display(source, source_summary),
-            ),
-            base,
-            result,
-        },
-        // #309: a stash apply/pop has no incoming commit — the "incoming" side is
-        // the stashed changes themselves. Never "ours"/"theirs" (ADR-0058).
-        ConflictOp::StashConflict => SideLabels {
-            current: SideLabel::new("Current branch", current_branch),
-            incoming: SideLabel::new("Stashed changes", "your stash"),
-            base,
-            result,
-        },
-    }
-}
-
-/// Real-name display for a commit: `"<sha> <summary>"`, `"<sha>"`, or
-/// `"(unknown commit)"` — built with `chars()`-safe concatenation only.
-fn commit_display(sha: &Option<String>, summary: &Option<String>) -> String {
-    match (sha, summary) {
-        (Some(s), Some(sum)) => format!("{} {}", s, sum),
-        (Some(s), None) => s.clone(),
-        (None, Some(sum)) => sum.clone(),
-        (None, None) => "(unknown commit)".to_string(),
-    }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -2070,17 +1957,6 @@ mod tests {
         let labels = side_labels(&op, "main");
         assert_eq!(labels.base.role, "Base");
         assert_eq!(labels.result.role, "Result");
-    }
-
-    #[test]
-    fn commit_display_variants() {
-        assert_eq!(
-            commit_display(&Some("abc".to_string()), &Some("msg".to_string())),
-            "abc msg"
-        );
-        assert_eq!(commit_display(&Some("abc".to_string()), &None), "abc");
-        assert_eq!(commit_display(&None, &Some("msg".to_string())), "msg");
-        assert_eq!(commit_display(&None, &None), "(unknown commit)");
     }
 
     #[test]

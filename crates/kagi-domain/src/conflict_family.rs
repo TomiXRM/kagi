@@ -47,7 +47,7 @@ pub enum ConflictRequest {
         revision: ConflictRevision,
         buffer_revision: BufferRevision,
         draft: ConflictDraft,
-        operation: String,
+        kind: ConflictOperationKind,
         before_hash: String,
         actions: String,
     },
@@ -124,7 +124,10 @@ impl ConflictAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConflictObservation {
     pub revision: ConflictRevision,
-    pub operation: String,
+    /// Which operation — the one typed identity the detector, the read model,
+    /// requests and evidence all share. It was a slug string next to a typed
+    /// `kind`, which could say `Merge` and `"rebase"` at once (#707 review).
+    pub kind: ConflictOperationKind,
     pub paths: Vec<PathBuf>,
 }
 
@@ -142,8 +145,6 @@ pub struct ConflictObservation {
 /// for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObservedOperation {
-    /// Which operation, as the one typed kind the whole codebase shares.
-    pub kind: ConflictOperationKind,
     /// What the repository was observed to be doing. The same value the
     /// conflict family freezes into a request and re-reads at preflight —
     /// carried whole rather than copied field by field, so a read model and
@@ -155,6 +156,11 @@ pub struct ObservedOperation {
 }
 
 impl ObservedOperation {
+    /// Which operation this is.
+    pub fn kind(&self) -> ConflictOperationKind {
+        self.observation.kind
+    }
+
     /// The revision an abort request freezes. The Backend re-reads the live
     /// one at preflight and refuses if the two have parted.
     pub fn revision(&self) -> &ConflictRevision {

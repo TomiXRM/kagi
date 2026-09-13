@@ -1707,6 +1707,9 @@ impl KagiApp {
             return;
         }
         self.conflict_detected_for = Some(repo_path.clone());
+        let Some(owner) = self.detect_owner() else {
+            return;
+        };
 
         // Snapshot the preservation inputs the I/O step needs (prev selection /
         // editing index), then run the read-only Git/index/file I/O synchronously.
@@ -1733,7 +1736,7 @@ impl KagiApp {
             prev_editing_path,
             current_branch,
         );
-        self.apply_conflict_detect(outcome, cx);
+        self.apply_conflict_detect(owner, outcome, cx);
     }
 
     /// T-PERF-RENDER-001: async sibling of [`detect_conflict_mode`].
@@ -1759,6 +1762,9 @@ impl KagiApp {
             return;
         }
         self.conflict_detected_for = Some(repo_path.clone());
+        let Some(owner) = self.detect_owner() else {
+            return;
+        };
 
         // Issue #285: capture the previously-selected/editing files by PATH, not
         // index — a per-file Save re-sorts `session.files`, so a stored index
@@ -1778,10 +1784,6 @@ impl KagiApp {
             .unwrap_or((None, None));
         let current_branch = self.view().status_summary.branch.clone();
 
-        // codex Q5: capture the repo path the task ran against so a repo switch
-        // mid-task discards the stale result at apply time (the `detected_for`
-        // guard alone is insufficient — the guard is set for the NEW repo too).
-        let task_repo = repo_path.clone();
         let task = cx.background_spawn(async move {
             Self::detect_conflict_payload(
                 &repo_path,
@@ -1793,12 +1795,10 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
-                // Repo-match check: drop the result if the repo switched while the
-                // read-only I/O was in flight.
-                if app.repo_path.as_deref() != Some(task_repo.as_path()) {
-                    return;
-                }
-                app.apply_conflict_detect(outcome, cx);
+                // The frozen `Attachment` subsumes the old repo-path guard (codex
+                // Q5): it carries path, SessionId and visit, so a repo switch,
+                // a tab switch and a same-path reopen are all told apart.
+                app.apply_conflict_detect(owner, outcome, cx);
                 cx.notify();
             });
         })

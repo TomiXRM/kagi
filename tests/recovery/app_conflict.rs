@@ -292,11 +292,18 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
     let before = observed(cx).expect("the accepted read gave the owner its observation");
 
     // A detector job that started before that read now lands.
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("the tab is attached");
     app.update(cx, |app, cx| {
-        app.apply_conflict_detect(ConflictDetectOutcome::Cleared, cx)
+        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::Cleared, cx)
     });
     app.update(cx, |app, cx| {
-        app.apply_conflict_detect(ConflictDetectOutcome::OpenFailed, cx)
+        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::OpenFailed, cx)
     });
     cx.run_until_parked();
     assert_eq!(
@@ -316,6 +323,111 @@ pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS a stale conflict detector cannot revoke Abort (#704)");
+}
+
+/// #707 re-review P1: a detector payload read at one observation must never be
+/// re-labelled with another's revision.
+///
+/// R1 is read while `file.txt` is still conflicted. The repository then moves
+/// to R2 and that read is accepted. Landing R1 afterwards used to stamp R1's
+/// session and resolution buffer with R2's revision — after which a Save froze
+/// R1's draft under an identity that both `Sessions` and the Backend accept,
+/// and wrote R1's resolution onto R2.
+pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppContext) {
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+
+    // R1: read while the conflict is live.
+    let r1 = e2e::detect_payload_for_test(&repo, "main");
+    let r1_revision = cx
+        .read(|cx| app.read(cx).view().operation.clone())
+        .map(|op| op.revision().clone())
+        .expect("the mounted read observed the merge");
+
+    // R2: the repository moves on and that read is accepted.
+    std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    let r2_revision = cx
+        .read(|cx| app.read(cx).view().operation.clone())
+        .map(|op| op.revision().clone())
+        .expect("still merging");
+    assert_ne!(r1_revision, r2_revision, "precondition: the state moved");
+
+    // R1 lands late.
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("attached");
+    app.update(cx, |app, cx| app.apply_conflict_detect(owner, r1, cx));
+    cx.run_until_parked();
+
+    let mode_revision = cx.read(|cx| {
+        app.read(cx)
+            .conflict
+            .as_ref()
+            .and_then(|view| view.read(cx).mode.as_ref().map(|m| m.revision.clone()))
+    });
+    assert_ne!(
+        mode_revision.as_ref(),
+        Some(&r2_revision),
+        "a stale payload must not be given the accepted read's revision"
+    );
+    let observed = cx.read(|cx| {
+        let app = app.read(cx);
+        app.active_session()
+            .and_then(|session| app.app_sessions.conflict_state(session).cloned())
+    });
+    assert!(
+        matches!(
+            observed,
+            Some(kagi::app::ConflictOwnerState::Observed(ref o)) if o.revision == r2_revision
+        ),
+        "the accepted read stays the authoritative observation: {observed:?}"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a stale detector payload keeps its own revision (#707)");
+}
+
+/// #707 re-review P1: a detector launched for one tab must not land on another,
+/// even when the path is identical — a close and reopen of the same repository
+/// is a new `SessionId` and a new visit.
+pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppContext) {
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let payload = e2e::detect_payload_for_test(&repo, "main");
+
+    // The owner the job would have frozen, had it launched one visit earlier.
+    let stale_owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .map(|mut owner| {
+            owner.visit += 1;
+            owner
+        })
+        .expect("attached");
+
+    assert!(cx.read(|cx| app.read(cx).conflict.is_none()));
+    app.update(cx, |app, cx| {
+        app.apply_conflict_detect(stale_owner, payload, cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict.is_none()),
+        "a payload from another visit must not build this tab's conflict editor"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a detector result for another owner is dropped (#707)");
 }
 
 pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {

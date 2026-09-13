@@ -560,7 +560,7 @@ impl ConflictView {
             mode.revision.clone(),
             &mode.buffer,
             path,
-            mode.session.op.slug(),
+            mode.session.op.kind(),
             before,
         ) {
             Ok(request) => FrozenConflictIntent::Request {

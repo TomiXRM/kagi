@@ -292,7 +292,7 @@ impl KagiApp {
     /// repository is what knows, and it says so from the first accepted read.
     pub fn merge_commit_ready(&self) -> bool {
         self.view().operation.as_ref().is_some_and(|op| {
-            op.kind
+            op.kind()
                 == kagi_domain::conflict_family::ConflictOperationKind::Repository(
                     kagi_domain::plan_note::InProgressOp::Merge,
                 )

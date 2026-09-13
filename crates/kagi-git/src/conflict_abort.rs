@@ -123,8 +123,19 @@ pub fn execute_conflict_abort_with_progress(
     buffer: &ResolutionBuffer,
     mut progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
-    // 1. Preserve the buffer BEFORE touching the repo (never lose partial work).
-    let buffer_preserved_at = buffer.autosave().ok();
+    // 1. Preserve the buffer BEFORE touching the repo (never lose partial
+    //    work) — but only when there IS live work to preserve.
+    //
+    // With nothing unmerged — the #704 state, where the resolution has already
+    // been staged — a buffer built from the index is empty, and `autosave`
+    // would write that emptiness over the drafts already on disk: the exact
+    // opposite of the ADR-0057 promise this step exists to keep (#707 review).
+    // Nothing new to save, so the existing autosave is left alone.
+    let buffer_preserved_at = if session.files.is_empty() {
+        None
+    } else {
+        buffer.autosave().ok()
+    };
 
     // 2. Resolve ORIG_HEAD (the pre-operation HEAD).
     //
@@ -332,8 +343,19 @@ pub(crate) fn execute_stash_conflict_abort_with_progress(
     buffer: &ResolutionBuffer,
     mut progress: impl FnMut(ConflictProgress),
 ) -> Result<AbortOutcome, GitError> {
-    // 1. Preserve the buffer BEFORE touching the repo (never lose partial work).
-    let buffer_preserved_at = buffer.autosave().ok();
+    // 1. Preserve the buffer BEFORE touching the repo (never lose partial
+    //    work) — but only when there IS live work to preserve.
+    //
+    // With nothing unmerged — the #704 state, where the resolution has already
+    // been staged — a buffer built from the index is empty, and `autosave`
+    // would write that emptiness over the drafts already on disk: the exact
+    // opposite of the ADR-0057 promise this step exists to keep (#707 review).
+    // Nothing new to save, so the existing autosave is left alone.
+    let buffer_preserved_at = if session.files.is_empty() {
+        None
+    } else {
+        buffer.autosave().ok()
+    };
 
     if repo.workdir().is_none() {
         return Err(GitError::Other(

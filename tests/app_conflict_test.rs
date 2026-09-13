@@ -159,7 +159,7 @@ fn save_request(fixture: &Fixture, sessions: &mut Sessions) -> ConflictRequest {
         snapshot.observation.revision,
         &buffer,
         Path::new("file.txt"),
-        snapshot.observation.operation.as_str(),
+        snapshot.observation.kind,
         "",
     )
     .unwrap()
@@ -215,7 +215,7 @@ fn changed_conflict_and_changed_buffer_are_refused_without_mutation() {
             path,
             revision,
             buffer_revision,
-            operation,
+            kind,
             before_hash,
             actions,
             ..
@@ -224,7 +224,7 @@ fn changed_conflict_and_changed_buffer_are_refused_without_mutation() {
             revision,
             buffer_revision,
             draft: ConflictDraft::Text(b"different\n".to_vec()),
-            operation,
+            kind,
             before_hash,
             actions,
         },
@@ -275,7 +275,7 @@ fn marker_draft_refusal_preserves_the_session_suffix_in_the_recording() {
         snapshot.observation.revision,
         &buffer,
         Path::new("file.txt"),
-        snapshot.observation.operation.as_str(),
+        snapshot.observation.kind,
         "",
     )
     .unwrap();
@@ -647,7 +647,7 @@ fn abort_is_admissible_with_no_conflict_view_and_settles_once() {
     // model's observation and nothing else.
     let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
     let operation = fixture.in_progress();
-    assert_eq!(operation.kind.slug(), "merge");
+    assert_eq!(operation.kind().slug(), "merge");
     assert_eq!(operation.unmerged(), 0);
 
     let job = fixture.job(&mut sessions, Backend::conflict_abort_request(&operation));
@@ -755,8 +755,9 @@ fn an_abort_planned_against_a_stale_revision_is_refused_without_mutation() {
 /// already established.
 #[test]
 fn a_receipt_keeps_the_planned_observation_when_the_repository_cannot_be_reopened() {
+    // A live conflict, so the frozen observation names paths a reconstruction
+    // from the request could not supply.
     let fixture = Fixture::content();
-    fixture.resolve_and_stage();
     let mut sessions = Sessions::new();
     let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
     let planned = fixture.in_progress().observation;
@@ -787,6 +788,106 @@ fn a_receipt_keeps_the_planned_observation_when_the_repository_cannot_be_reopene
     assert_eq!(
         completion.report().evidence.progress,
         ConflictProgress::NotStarted
+    );
+}
+
+/// #707 review: the abort's restore *target* is part of the revision.
+///
+/// The confirmation card names where the abort will put HEAD back. If an
+/// external process moves `ORIG_HEAD` while it is open and the fingerprint
+/// does not cover that file, the frozen request and the Backend's live
+/// preflight both pass — and the abort then restores somewhere the user was
+/// never shown.
+#[test]
+fn an_abort_is_refused_when_its_restore_target_moved_under_the_confirmation() {
+    let fixture = Fixture::content();
+    fixture.resolve_and_stage();
+    let mut sessions = Sessions::new();
+    let (owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let frozen = Backend::conflict_abort_request(&fixture.in_progress());
+
+    // Someone moves the restore target while the confirmation is open.
+    let elsewhere = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD~1"])
+            .current_dir(&fixture.repo)
+            .output()
+            .expect("rev-parse")
+            .stdout,
+    )
+    .unwrap();
+    std::fs::write(fixture.repo.join(".git/ORIG_HEAD"), &elsewhere).unwrap();
+
+    let fresh = Backend::open(&fixture.repo)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("still merging");
+    sessions.observe_conflict(owner, Some(fresh.observation));
+    let owner = sessions.attachment(owner).unwrap();
+    let plan = plan_conflict(
+        &mut sessions,
+        ConflictAppRequest {
+            owner,
+            request: frozen.clone(),
+        },
+        ExecutionPolicy::human(false),
+    );
+    assert!(apply_plan(&mut sessions, plan.run()));
+    assert!(
+        matches!(sessions.plan_state(), PlanState::Error { .. }),
+        "a moved restore target is a changed observation"
+    );
+    assert!(
+        Backend::plan_recorded_conflict(&fixture.repo, frozen).is_err(),
+        "the Backend refuses it on its own too"
+    );
+    assert!(
+        fixture.repo.join(".git/MERGE_HEAD").exists(),
+        "the refusal mutated nothing"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join(".git/ORIG_HEAD")).unwrap(),
+        elsewhere,
+        "and left the target where the other process put it"
+    );
+}
+
+/// #707 re-review: the same rule for a job dropped before it ran. The
+/// `conflict_abandoned` receipt rebuilt `before` from the request too, which
+/// for an abort meant `operation: "abandoned"` and no paths at all.
+#[test]
+fn an_abandoned_job_reports_the_planned_observation() {
+    let fixture = Fixture::content();
+    let mut sessions = Sessions::new();
+    let (_owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
+    let planned = fixture.in_progress().observation;
+
+    // Dropped without `run()` — the job reports itself abandoned.
+    drop(fixture.job(
+        &mut sessions,
+        Backend::conflict_abort_request(&fixture.in_progress()),
+    ));
+
+    let deliveries = sessions.drain_abandoned();
+    let report = deliveries
+        .iter()
+        .find_map(|delivery| match delivery {
+            Delivery::Completed { report, .. } => match &report.evidence {
+                FamilyEvidence::Conflict(report) => Some(report),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("the abandoned job settled through the conflict family");
+    assert_eq!(
+        report.evidence.before, planned,
+        "an abandoned receipt reports what the plan froze"
+    );
+    assert_eq!(report.evidence.progress, ConflictProgress::NotStarted);
+    assert!(
+        fixture.repo.join(".git/MERGE_HEAD").exists(),
+        "an abandoned job mutated nothing"
     );
 }
 

@@ -46,6 +46,14 @@ pub struct ConflictDetected {
 }
 
 impl KagiApp {
+    /// The tab a detection run belongs to, frozen at launch (#707 review):
+    /// SessionId, visit and path together, so a result that lands after a
+    /// close and reopen of the same repository is recognisably not this tab's.
+    pub(crate) fn detect_owner(&self) -> Option<crate::app::Attachment> {
+        self.active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+    }
+
     /// Read-only conflict detection: opens the repo, detects the session, builds
     /// the resolution buffer, recomputes per-file status, auto-selects a file, and
     /// materializes zdiff3 markers for the selected content file.  This is the
@@ -53,7 +61,7 @@ impl KagiApp {
     /// so it runs either synchronously (`detect_conflict_mode`) or on a background
     /// thread (`detect_conflict_mode_async`).  `current_branch` and the `prev_*`
     /// preservation indices are captured by the caller from `self`.
-    pub(crate) fn detect_conflict_payload(
+    pub fn detect_conflict_payload(
         repo_path: &Path,
         prev_selected_path: Option<PathBuf>,
         prev_editing_path: Option<PathBuf>,
@@ -160,24 +168,56 @@ impl KagiApp {
     /// time. Needs `cx` (entity create / read / update).
     pub fn apply_conflict_detect(
         &mut self,
+        owner: crate::app::Attachment,
         outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
+        // #707 review P1: a result belongs to the tab that asked for it. The
+        // job froze this exact `Attachment` — SessionId, visit and path — at
+        // launch; a path check alone lets a task started before a close and
+        // reopen of the same repository land on the new owner's conflict
+        // editor and stash state. The visit is what tells those apart.
+        if self.active_session() != Some(owner.session)
+            || self.app_sessions.attachment(owner.session).as_ref() != Some(&owner)
+        {
+            return;
+        }
+        // #707 review P1: and it must describe the repository the tab is
+        // *showing*. The accepted read is authoritative (ADR-0183), so a
+        // payload observed against an older state is dropped whole — never
+        // re-labelled with the accepted revision, which would hand a stale
+        // resolution buffer an identity that admission accepts. With no
+        // accepted read yet there is nothing to disagree with: the detector's
+        // own observation stands as display, and `Sessions` holding no
+        // observation keeps Save and D/F refused until a read lands.
+        if let ConflictDetectOutcome::Detected(detected) = &outcome {
+            if let Some(accepted) = self.view().operation.as_ref() {
+                if accepted.observation != detected.observation {
+                    // The read that superseded it re-detects on its own; this
+                    // re-arm covers the commit points that do not.
+                    self.conflict_detected_for = None;
+                    return;
+                }
+            }
+        }
         // #704 review P1: this detector must NOT write `Sessions`' conflict
         // observation. Its job is keyed on the repository path alone — no
         // `SessionId`, no read revision — so a `Cleared` it observed before a
         // newer accepted read can marshal back afterwards and erase the
         // revision the strip is still showing, turning the next Abort into a
         // `StaleApproval`. `on_view_published` owns it, from accepted `Reads`.
-        if let Some(owner) = self.active_session() {
+        //
+        // The stash identity is the launch owner's, not whoever is active now.
+        {
             let identity = match &outcome {
                 ConflictDetectOutcome::Detected(d) => d.stash_identity.as_slice(),
                 _ => &[],
             };
             if matches!(outcome, ConflictDetectOutcome::OpenFailed) {
-                self.app_sessions.clear_stash_conflict(owner);
+                self.app_sessions.clear_stash_conflict(owner.session);
             } else {
-                self.app_sessions.observe_stash_conflict(owner, identity);
+                self.app_sessions
+                    .observe_stash_conflict(owner.session, identity);
             }
         }
         match outcome {
@@ -222,19 +262,11 @@ impl KagiApp {
                     session.files.len()
                 );
 
-                // Freeze the revision the *read model* holds, not this
-                // detector's own re-read (#704 review P1): `Sessions` learns
-                // the observation from accepted reads only, so a Save frozen
-                // against a different one is refused as a stale approval. The
-                // fallback covers the window before a tab's first read, where
-                // `Sessions` has nothing either and any request is refused.
+                // This session and buffer were read at `observation`, so that
+                // is the revision they get. The guard above already proved it
+                // equals the accepted read's when there is one (#707 review).
                 let mode = conflict_view::ConflictMode {
-                    revision: self
-                        .view()
-                        .operation
-                        .as_ref()
-                        .map(|op| op.revision().clone())
-                        .unwrap_or(observation.revision),
+                    revision: observation.revision,
                     session,
                     buffer,
                     current_branch,
@@ -274,13 +306,9 @@ impl KagiApp {
                     None => {
                         let weak_app = cx.weak_entity();
                         let repo_path = self.repo_path.clone().unwrap_or_default();
-                        let Some(owner) = self
-                            .active_session()
-                            .and_then(|session| self.app_sessions.attachment(session))
-                        else {
-                            self.conflict = None;
-                            return;
-                        };
+                        // The launch owner, re-proved current by the guard at
+                        // the top — not re-resolved here, where a tab that had
+                        // meanwhile been reopened would supply a different one.
                         let entity = cx.new(|_| {
                             let mut v =
                                 conflict_view::ConflictView::new(weak_app, repo_path, owner);
@@ -294,4 +322,12 @@ impl KagiApp {
             }
         }
     }
+}
+
+/// A detector payload read right now, for the #707 regressions that have to
+/// land one observation's payload while a different one is on screen. The
+/// production callers go through `detect_conflict_mode{,_async}`, which freeze
+/// the owner; this is the read half on its own.
+pub fn detect_payload_for_test(repo: &std::path::Path, branch: &str) -> ConflictDetectOutcome {
+    KagiApp::detect_conflict_payload(repo, None, None, branch.to_string())
 }

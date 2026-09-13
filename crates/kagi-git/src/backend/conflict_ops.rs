@@ -119,7 +119,7 @@ impl Backend {
         error: &str,
     ) -> recording::Recording {
         let op_name = match request {
-            ConflictRequest::Save { operation, .. } => format!("conflict-save:{operation}"),
+            ConflictRequest::Save { kind, .. } => format!("conflict-save:{}", kind.slug()),
             ConflictRequest::ResolveDirFile { choice, .. } => {
                 format!("conflict-dir-file:{}", choice.slug())
             }
@@ -164,16 +164,10 @@ impl Backend {
             evidence: ConflictEvidence {
                 action: plan.request.action(),
                 progress: ConflictProgress::NotStarted,
-                before: ConflictObservation {
-                    revision: plan.request.revision().clone(),
-                    operation: "abandoned".into(),
-                    paths: plan
-                        .request
-                        .path()
-                        .map(Path::to_path_buf)
-                        .into_iter()
-                        .collect(),
-                },
+                // #707 review: the plan already froze this. Rebuilding it from
+                // the request dropped the operation and, for an abort, every
+                // affected path.
+                before: plan.observed.clone(),
                 after: None,
                 detail,
             },
@@ -188,7 +182,7 @@ impl Backend {
         revision: ConflictRevision,
         buffer: &ResolutionBuffer,
         path: &Path,
-        operation: &str,
+        kind: kagi_domain::conflict_family::ConflictOperationKind,
         before_text: &str,
     ) -> Result<ConflictRequest, GitError> {
         let draft = buffer.conflict_draft(path).ok_or_else(|| {
@@ -199,7 +193,7 @@ impl Backend {
             revision,
             buffer_revision: buffer_revision(path, &draft),
             draft,
-            operation: operation.to_string(),
+            kind,
             before_hash: short_text_hash(before_text.as_bytes()),
             actions: buffer.conflict_action_summary(path),
         })
@@ -216,7 +210,7 @@ impl Backend {
     ) -> ConflictRequest {
         ConflictRequest::Abort {
             revision: operation.revision().clone(),
-            kind: operation.kind,
+            kind: operation.kind(),
         }
     }
 
@@ -240,10 +234,10 @@ impl Backend {
                 path,
                 buffer_revision: expected,
                 draft,
-                operation,
+                kind,
                 ..
             } => {
-                if operation != &snapshot.observation.operation {
+                if kind != &snapshot.observation.kind {
                     return Err(GitError::Other(
                         "conflict operation changed since it was observed".into(),
                     ));
@@ -290,7 +284,7 @@ impl Backend {
             // proved the repository has not moved since the read model
             // observed it; `run_recorded_conflict` re-reads it live.
             ConflictRequest::Abort { kind, .. } => {
-                if *kind != snapshot.in_progress().kind {
+                if *kind != snapshot.observation.kind {
                     return Err(GitError::Other(
                         "conflict operation changed since it was observed".into(),
                     ));
@@ -301,7 +295,7 @@ impl Backend {
             }
         };
         let op_name = match &request {
-            ConflictRequest::Save { operation, .. } => format!("conflict-save:{operation}"),
+            ConflictRequest::Save { kind, .. } => format!("conflict-save:{}", kind.slug()),
             ConflictRequest::ResolveDirFile { choice, .. } => {
                 format!("conflict-dir-file:{}", choice.slug())
             }
@@ -311,12 +305,12 @@ impl Backend {
         let before = match &request {
             ConflictRequest::Save {
                 path,
-                operation,
+                kind,
                 before_hash,
                 actions,
                 ..
             } => ops::StateSummary {
-                head: format!("session={operation} file={}", path.display()),
+                head: format!("session={} file={}", kind.slug(), path.display()),
                 dirty: format!("hunks=[{actions}] before={before_hash}"),
             },
             ConflictRequest::ResolveDirFile { path, choice, .. } => ops::StateSummary {
@@ -446,9 +440,12 @@ impl Backend {
                 // every edit, so this is the same bytes the UI held, and the
                 // abort is admissible with no editor open at all.
                 ConflictPreparedAction::Abort { session } => {
-                    let buffer = backend
-                        .resolution_buffer_from_repo_with_autosave()
-                        .unwrap_or_else(|_| ResolutionBuffer::new(&plan.repo));
+                    // Not `unwrap_or_else(empty)`: a buffer we failed to read
+                    // is not an empty buffer, and treating it as one would
+                    // hand the executor something to save over the user's
+                    // drafts. Refusing before any mutation is the safe half of
+                    // that choice (#707 review).
+                    let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
                     let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
                     let restored = if stash {
                         crate::conflict_abort::execute_stash_conflict_abort_with_progress(

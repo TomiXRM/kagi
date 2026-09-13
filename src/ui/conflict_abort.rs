@@ -8,9 +8,9 @@
 //! `ConflictView` to exist: the operation comes from the session's read model,
 //! which is the whole point of the issue.
 //!
-//! The modal state and its accessors live beside the action rather than in
-//! `modals.rs` / `modal_state.rs` — the conflict modals are the feature, and
-//! both of those files are at their LOC ceiling.
+//! The modal state structs live here with the action; their accessors live
+//! with every other modal accessor, in `operations/modal_state/conflict.rs`
+//! (#707 review — `active_modal` has one owner).
 
 use std::sync::Arc;
 
@@ -22,7 +22,6 @@ use kagi_git::OperationPlan;
 
 use super::i18n::Msg;
 use super::modal_renderers::render_plan_modal_wrapper_styled;
-use super::modals::ActiveModal;
 use super::theme::theme;
 use super::{KagiApp, ToastKind};
 use crate::app;
@@ -53,48 +52,6 @@ pub struct ConflictAbortModal {
 }
 
 impl KagiApp {
-    #[inline]
-    pub fn conflict_continue_modal(&self) -> Option<&ConflictContinuePlanModal> {
-        match &self.active_modal {
-            Some(ActiveModal::ConflictContinue(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn conflict_continue_modal_mut(&mut self) -> Option<&mut ConflictContinuePlanModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::ConflictContinue(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_conflict_continue_modal(&mut self, m: ConflictContinuePlanModal) {
-        self.active_modal = Some(ActiveModal::ConflictContinue(m));
-    }
-    #[inline]
-    pub fn clear_conflict_continue_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::ConflictContinue(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn conflict_abort_modal(&self) -> Option<&ConflictAbortModal> {
-        match &self.active_modal {
-            Some(ActiveModal::ConflictAbort(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_conflict_abort_modal(&mut self, m: ConflictAbortModal) {
-        self.active_modal = Some(ActiveModal::ConflictAbort(m));
-    }
-    #[inline]
-    pub fn clear_conflict_abort_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::ConflictAbort(_))) {
-            self.active_modal = None;
-        }
-    }
-
     /// Stage one of the abort: show what it will do.
     ///
     /// Admission comes from the read model's `operation`, never from the
@@ -123,7 +80,7 @@ impl KagiApp {
         // #309: a stash conflict is identified by its entry, not by a ref, so
         // the owner has to have observed that identity before it can approve
         // anything against it.
-        if operation.kind == ConflictOperationKind::StashApply {
+        if operation.kind() == ConflictOperationKind::StashApply {
             let identity = repo.stash_conflict_identity().unwrap_or_default();
             if let Some(owner) = self.active_session() {
                 self.app_sessions.observe_stash_conflict(owner, &identity);

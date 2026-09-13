@@ -1698,7 +1698,7 @@ fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
     let operation = snapshot
         .operation
         .expect("MERGE_HEAD is an operation in progress, resolved or not");
-    assert_eq!(operation.kind.slug(), "merge");
+    assert_eq!(operation.kind().slug(), "merge");
     assert_eq!(operation.unmerged(), 0, "nothing is unmerged any more");
     assert_eq!(operation.step, None, "a merge is a single step");
 
@@ -1712,6 +1712,53 @@ fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
         .expect("snapshot")
         .operation
         .is_none());
+}
+
+/// #707 review: abort must not autosave an empty buffer over a saved one.
+///
+/// ADR-0057 says abort preserves the partial resolution. Once the resolution
+/// is staged nothing is unmerged, so a buffer built from the live index is
+/// empty (saved drafts are overlaid only onto paths still in conflict) — and
+/// saving *that* wipes the very drafts the promise protects.
+#[test]
+fn abort_does_not_overwrite_a_saved_resolution_buffer_with_an_empty_one() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+
+    // The user resolved a.txt; the editor autosaved that draft.
+    let saved_at = {
+        let repo = Repository::open(dir).unwrap();
+        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        buffer
+            .apply_choice(Path::new("a.txt"), ResolutionChoice::Incoming)
+            .unwrap();
+        buffer.autosave().expect("autosave the draft")
+    };
+    let draft = std::fs::read_to_string(&saved_at).expect("the draft is on disk");
+    assert!(
+        draft.contains("a.txt"),
+        "precondition: the saved draft holds the resolution"
+    );
+
+    // Continue stages it, so nothing is unmerged any more (the #704 state).
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("the merge is still in progress");
+    assert!(session.files.is_empty(), "precondition: nothing unmerged");
+    let live = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_abort(&repo, &session, &live).expect("abort");
+
+    assert_eq!(
+        std::fs::read_to_string(&saved_at).expect("the draft survives the abort"),
+        draft,
+        "abort preserved the resolution buffer instead of erasing it (ADR-0057)"
+    );
 }
 
 /// #704 review: each progress stage names what has actually happened.
@@ -1733,13 +1780,24 @@ fn abort_reports_each_stage_only_once_it_has_happened() {
     let session = detect_conflict_session(&repo).expect("merge conflict session");
     let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
 
+    use kagi_domain::conflict_family::ConflictProgress as P;
     let mut stages = Vec::new();
     kagi_git::execute_conflict_abort_with_progress(&repo, &session, &buffer, |stage| {
+        // The sequence alone cannot tell this stage from one fired *before*
+        // the checkout — a success run reports the same list either way (#707
+        // re-review). What separates them is the working tree: by the time
+        // this stage is claimed, it already holds the restore target.
+        if stage == P::IndexAndWorktreeWritten {
+            assert_eq!(
+                std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+                "MAIN a\n",
+                "IndexAndWorktreeWritten was reported before the checkout wrote the working tree"
+            );
+        }
         stages.push(stage)
     })
     .expect("abort");
 
-    use kagi_domain::conflict_family::ConflictProgress as P;
     assert_eq!(
         stages,
         vec![

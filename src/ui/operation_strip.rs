@@ -27,12 +27,12 @@ impl KagiApp {
         let label = match operation.step {
             Some((step, total)) => format!(
                 "{} {step}/{total} · {}",
-                operation.kind.slug(),
+                operation.kind().slug(),
                 Msg::OperationInProgress.t()
             ),
             None => format!(
                 "{} · {}",
-                operation.kind.slug(),
+                operation.kind().slug(),
                 Msg::OperationInProgress.t()
             ),
         };

@@ -10,8 +10,7 @@
 
 use crate::backend::*;
 use kagi_domain::conflict_family::{
-    BufferRevision, ConflictDraft, ConflictObservation, ConflictOperationKind, ConflictRevision,
-    ObservedOperation,
+    BufferRevision, ConflictDraft, ConflictObservation, ConflictRevision, ObservedOperation,
 };
 use sha2::{Digest, Sha256};
 
@@ -27,23 +26,7 @@ impl ConflictSnapshot {
     /// an abort request — and nothing that would tempt the UI to re-derive the
     /// observation for itself.
     pub fn in_progress(&self) -> ObservedOperation {
-        use kagi_domain::plan_note::InProgressOp;
         ObservedOperation {
-            kind: match self.session.op {
-                conflicts::ConflictOp::Merge { .. } => {
-                    ConflictOperationKind::Repository(InProgressOp::Merge)
-                }
-                conflicts::ConflictOp::Rebase { .. } => {
-                    ConflictOperationKind::Repository(InProgressOp::Rebase)
-                }
-                conflicts::ConflictOp::CherryPick { .. } => {
-                    ConflictOperationKind::Repository(InProgressOp::CherryPick)
-                }
-                conflicts::ConflictOp::Revert { .. } => {
-                    ConflictOperationKind::Repository(InProgressOp::Revert)
-                }
-                conflicts::ConflictOp::StashConflict => ConflictOperationKind::StashApply,
-            },
             observation: self.observation.clone(),
             step: match self.session.op {
                 conflicts::ConflictOp::Rebase { step, total, .. } => Some((step, total)),
@@ -127,6 +110,14 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
         "REBASE_HEAD",
         "CHERRY_PICK_HEAD",
         "REVERT_HEAD",
+        // #707 review: where an abort would restore *to*. Without these the
+        // fingerprint is blind to an external `ORIG_HEAD` move (or a rebase's
+        // pre-op branch changing) while the confirmation is open, so the
+        // frozen request and the live preflight both pass and the abort then
+        // restores somewhere the user was never shown.
+        "ORIG_HEAD",
+        "rebase-merge/head-name",
+        "rebase-apply/head-name",
         "rebase-merge/done",
         "rebase-merge/git-rebase-todo",
         "rebase-merge/msgnum",
@@ -145,7 +136,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     Ok(Some(ConflictSnapshot {
         observation: ConflictObservation {
             revision,
-            operation: session.op.slug().into(),
+            kind: session.op.kind(),
             paths,
         },
         session,
@@ -277,7 +268,7 @@ pub(crate) fn verify_abort(
     if let Some(live) = observation(repo)? {
         return Err(GitError::Other(format!(
             "{} is still in progress after the abort",
-            live.observation.operation
+            live.observation.kind.slug()
         )));
     }
     let Some(target) = &restored.restored_to else {

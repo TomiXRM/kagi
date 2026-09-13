@@ -38,6 +38,7 @@ pub mod blame;
 mod checklist;
 pub mod cli;
 mod conflict_abort;
+mod conflict_labels;
 // #704: the abort's stage sequence is contract (ADR-0196 evidence), so the
 // progress-reporting executor is observable from outside the crate.
 pub use conflict_abort::execute_conflict_abort_with_progress;

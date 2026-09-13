@@ -57,6 +57,101 @@ fn assert_ui_domain(app: &KagiApp, where_: &str) {
     }
 }
 
+/// The commit `session` currently has selected, resolved through **its own**
+/// read — the point of the assertion is that the row index alone means nothing
+/// once the graph has been rebuilt.
+fn selected_commit(app: &KagiApp, session: kagi::app::SessionId) -> Option<kagi_git::CommitId> {
+    let row = app.ui[&session].selected?;
+    Some(app.reads.get(Some(session)).rows[row].id.clone())
+}
+
+/// ADR-0197 決定 3: a retained selection is not authoritative against a read it
+/// has not been revalidated by. A background tab's revalidate renumbers its rows
+/// just as an active tab's does, so the selection has to be carried across the
+/// accept by `CommitId` — for the **owner** of the read, not for the tab on
+/// screen.
+///
+/// Both halves start a reload owned by B and then switch to A before it lands,
+/// which is the real sequence: `reload_async` freezes its owner at spawn time.
+pub fn scenario_tab_ui_state_background_reload(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_linear_fixture(&root, "alpha");
+    let repo_b = build_linear_fixture(&root, "beta");
+
+    let (kagi, window) = mount(cx, &repo_a);
+    let session_b = kagi.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        app.tabs[1].session
+    });
+    cx.run_until_parked();
+
+    // ── a reload that lands on a background owner re-anchors its selection ──
+    let pinned = kagi.update(cx, |app, _| {
+        assert_eq!(app.active_session(), Some(session_b));
+        app.select(1);
+        selected_commit(app, session_b).expect("B has a selection")
+    });
+
+    // Renumber B's graph: a new commit takes row 0 and pushes everything down.
+    std::fs::write(repo_b.join("f.txt"), "beta 3\n").unwrap();
+    git(&repo_b, &["commit", "-q", "-am", "beta 3"]);
+
+    kagi.update(cx, |app, cx| {
+        app.reload(cx); // owned by B
+        app.switch_repo(0, cx); // → A, before that read lands
+    });
+    cx.run_until_parked();
+
+    kagi.update(cx, |app, _| {
+        assert_eq!(app.reads.get(Some(session_b)).rows.len(), 4, "B reloaded");
+        assert_eq!(
+            app.ui[&session_b].selected,
+            Some(2),
+            "the background reload left B's selection on its pre-rebuild row",
+        );
+        assert_eq!(
+            selected_commit(app, session_b).as_ref(),
+            Some(&pinned),
+            "B's selection now names a different commit than before the reload",
+        );
+    });
+
+    // And the same thing is what the user sees on coming back.
+    kagi.update(cx, |app, cx| app.switch_repo(1, cx));
+    cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        let row = app.ui().selected.expect("B is still selecting something");
+        assert_eq!(
+            app.view().rows[row].id,
+            pinned,
+            "returning to B showed a different commit selected",
+        );
+    });
+
+    // ── the selected commit leaving the graph clears the selection ─────────
+    let dropped = kagi.update(cx, |app, _| {
+        app.select(3); // the oldest commit, which a one-row page cannot hold
+        selected_commit(app, session_b).expect("B has a selection")
+    });
+    assert_ne!(dropped, pinned);
+    kagi.update(cx, |app, cx| {
+        app.commit_limit = 1;
+        app.reload(cx); // owned by B
+        app.switch_repo(0, cx); // → A, before that read lands
+    });
+    cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        assert_eq!(app.reads.get(Some(session_b)).rows.len(), 1, "B was paged");
+        assert_eq!(
+            app.ui[&session_b].selected, None,
+            "B kept a selection for a commit its read no longer has",
+        );
+    });
+
+    unmount(cx, kagi, window);
+}
+
 pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     let root_dir = tempfile::tempdir().expect("tempdir");
     let root = root_dir.path().canonicalize().unwrap();

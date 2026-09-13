@@ -793,6 +793,10 @@ mod macos {
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_ownership),
             ),
             (
+                "tab_ui_state_background_reload",
+                Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
+            ),
+            (
                 "remote_source_merge_into",
                 Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
             ),

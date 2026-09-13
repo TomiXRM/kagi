@@ -464,19 +464,60 @@ impl KagiApp {
         self.publish_tab_view(session, view);
     }
 
+    /// The commit `session` has selected, taken **before** a new read replaces
+    /// its rows.
+    ///
+    /// A row index is not stable across a rebuild, so a landing read has to
+    /// carry the selection by `CommitId` or it silently re-points at whichever
+    /// commit inherited that index. ADR-0197 決定 3: a retained value is not
+    /// authoritative against a read it has not been revalidated by — and the
+    /// owner of the read is not necessarily the tab on screen, so this is keyed
+    /// by `session` rather than reached through [`KagiApp::ui`].
+    fn selected_commit(&self, session: crate::app::SessionId) -> Option<CommitId> {
+        let row = self.ui.get(&session)?.selected?;
+        let detail = self.reads.get(Some(session)).details.get(row)?;
+        Some(CommitId(detail.full_sha.to_string()))
+    }
+
+    /// Put `anchor` back on the read that just landed for `session`: the same
+    /// commit's new row index, or no selection at all when that commit is gone
+    /// from the graph.
+    ///
+    /// Runs for the **owner**, active or not. A background tab's revalidate
+    /// renumbers its rows exactly as an active tab's does, and leaving its
+    /// `selected` on the old index is how returning to it would show a
+    /// different commit selected — and dispatch checkout / cherry-pick / revert
+    /// at that one.
+    fn reanchor_selection(&mut self, session: crate::app::SessionId, anchor: Option<CommitId>) {
+        let row = anchor.and_then(|id| {
+            self.reads
+                .get(Some(session))
+                .commit_row_index
+                .get(&id)
+                .copied()
+        });
+        if let Some(state) = self.ui.get_mut(&session) {
+            state.selected = row;
+        }
+    }
+
     /// Amend the owner's read model **without** superseding a read in flight —
     /// commit-graph paging, which refines what is on screen rather than
     /// observing the repository afresh. A pending full reload still lands and
     /// still does its conflict re-detection and status baseline update.
     pub fn amend_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
+        let anchor = self.selected_commit(session);
         self.reads.amend(session, view);
+        self.reanchor_selection(session, anchor);
         self.on_view_published(session);
     }
 
     /// Publish a freshly-built read model for `session` (bootstrap, remote
     /// snapshot) — supersedes anything in flight for that owner.
     pub fn publish_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
+        let anchor = self.selected_commit(session);
         self.reads.publish(session, view);
+        self.reanchor_selection(session, anchor);
         self.on_view_published(session);
     }
 
@@ -484,9 +525,11 @@ impl KagiApp {
     /// [`crate::app::Reads::begin`]. `false` = superseded: nothing was written
     /// and the caller must drop the result without any display side effect.
     pub fn accept_tab_view(&mut self, key: crate::app::ReadKey, view: TabViewState) -> bool {
+        let anchor = self.selected_commit(key.session());
         if !self.reads.accept(key, view) {
             return false;
         }
+        self.reanchor_selection(key.session(), anchor);
         self.on_view_published(key.session());
         true
     }

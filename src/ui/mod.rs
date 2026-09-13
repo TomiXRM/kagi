@@ -120,7 +120,7 @@ pub use main_diff_pane::MainDiffPane;
 pub use modals::*;
 pub use remote_browse::*;
 pub(crate) use render_helpers::with_vertical_scrollbar;
-pub use tab_view::{build_tab_view, TabViewState};
+pub use tab_view::{build_tab_view, TabUiState, TabViewState};
 use theme::theme;
 pub use types::*;
 
@@ -937,19 +937,18 @@ pub struct KagiApp {
     /// write in place with [`KagiApp::view_mut`], publish a whole new read with
     /// [`KagiApp::publish_tab_view`] / [`KagiApp::accept_tab_view`].
     pub reads: crate::app::Reads<TabViewState>,
+    /// #643 Wave 4 S1 (ADR-0197): each attached session's presentation intent —
+    /// see [`TabUiState`]. Reached only via [`KagiApp::ui`] / [`KagiApp::ui_mut`].
+    pub ui: HashMap<crate::app::SessionId, tab_view::TabUiState>,
+    /// The UI state of "no tab" — what [`KagiApp::ui`] / [`KagiApp::ui_mut`]
+    /// fall back to on the Welcome screen, where no session owns either.
+    ui_detached: tab_view::TabUiState,
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): monotonic counter bumped on every
     /// read-model write so the sidebar can cheaply detect that its inputs
     /// (branches/remotes/tags/stashes/worktrees) may have changed without
     /// hashing the full ref lists each frame.  Read into the sidebar-rows
     /// fingerprint in `render`.
     pub view_epoch: u64,
-    /// Pre-computed commit rows (built once from the snapshot).
-    /// Stash nodes rendered in the graph below the WIP row (ADR-0088).
-    /// Lanes used by stash branch lines (passed to the graph painter so those
-    /// nodes/edges are drawn in the stash colour).
-    /// Pre-computed detail panel data, parallel to `rows`.
-    /// Currently selected row index (None = no selection).
-    pub selected: Option<usize>,
     /// Error or informational message shown instead of the commit list.
     pub error: Option<SharedString>,
     /// Absolute path to the repository root; used for on-demand diff fetches.
@@ -1481,9 +1480,10 @@ impl KagiApp {
             op_log: None,
             op_log_seed,
             reads: crate::app::Reads::new(),
+            ui: HashMap::new(),
+            ui_detached: TabUiState::default(),
             root_focus: None,
             view_epoch: 0,
-            selected: None,
             error: None,
             repo_path: None,
             repo_session: None,
@@ -2231,13 +2231,13 @@ impl KagiApp {
         self.commit_panel_open = false;
 
         // Toggle: clicking the same row again deselects it.
-        if self.selected == Some(index) {
-            self.selected = None;
+        if self.ui().selected == Some(index) {
+            self.ui_mut().selected = None;
             self.main_diff = None;
             self.compare_view = None;
             return;
         }
-        self.selected = Some(index);
+        self.ui_mut().selected = Some(index);
         // Clear any open main diff when the commit selection changes.
         self.main_diff = None;
         self.compare_view = None;
@@ -2275,7 +2275,7 @@ impl KagiApp {
         self.select(index);
         // `select` toggles off when re-selecting the same row; only a freshly
         // selected row needs the on-demand load.
-        if self.selected != Some(index) {
+        if self.ui().selected != Some(index) {
             return;
         }
         if !self.diff_caches.changed_files.contains_key(&index) {
@@ -2373,7 +2373,7 @@ impl KagiApp {
                 .get(file_index)
                 .map(|f| (f.path.clone(), None));
         }
-        let selected = self.selected?;
+        let selected = self.ui().selected?;
         let origin = self.commit_id_for_row(selected);
         self.diff_caches
             .changed_files
@@ -2655,7 +2655,7 @@ impl KagiApp {
             None => return,
         };
         self.close_compare_view();
-        if self.selected != Some(row_index) {
+        if self.ui().selected != Some(row_index) {
             self.select(row_index);
         } else if !self.diff_caches.changed_files.contains_key(&row_index) {
             let files_opt = self.fetch_changed_files(row_index);
@@ -2677,7 +2677,7 @@ impl KagiApp {
             Some(ix) => ix,
             None => return,
         };
-        if self.selected != Some(row_index) {
+        if self.ui().selected != Some(row_index) {
             self.select(row_index);
         }
 
@@ -2751,7 +2751,7 @@ impl KagiApp {
                 // thing to show. Without this, peeking with nothing selected
                 // rendered an empty right pane (user report).
                 if let Some(row) = self.row_for_commit_id(&parent_id) {
-                    if self.selected != Some(row) {
+                    if self.ui().selected != Some(row) {
                         self.select(row);
                     }
                 }
@@ -2783,7 +2783,7 @@ impl KagiApp {
             Some(ix) => ix,
             None => return,
         };
-        if self.selected != Some(row_index) {
+        if self.ui().selected != Some(row_index) {
             self.select(row_index);
         }
 
@@ -2904,7 +2904,7 @@ impl KagiApp {
 
         // Select the row (opens detail panel, emits selected log).
         // `select` toggles on a repeated index; a jump must stay selected.
-        if self.selected != Some(row_ix) {
+        if self.ui().selected != Some(row_ix) {
             self.select(row_ix);
         }
     }
@@ -2932,7 +2932,7 @@ impl KagiApp {
         self.commit_scroll_handle
             .scroll_to_item(row_ix, ScrollStrategy::Center);
         // `select` toggles on a repeated index; a jump must stay selected.
-        if self.selected != Some(row_ix) {
+        if self.ui().selected != Some(row_ix) {
             self.select(row_ix);
         }
     }
@@ -2943,7 +2943,7 @@ impl KagiApp {
         if self.view().rows.get(row_index).is_none() {
             return;
         }
-        if self.selected != Some(row_index) {
+        if self.ui().selected != Some(row_index) {
             self.select(row_index);
         }
         self.commit_menu = Some(CommitMenuState {
@@ -2961,7 +2961,7 @@ impl KagiApp {
             klog!("context-menu: row={} out of range", row_index);
             return;
         }
-        if self.selected != Some(row_index) {
+        if self.ui().selected != Some(row_index) {
             self.select(row_index);
         }
         klog!("context-menu: open row={}", row_index);
@@ -3368,14 +3368,14 @@ impl KagiApp {
         if self.view().rows.is_empty() {
             return;
         }
-        let next = match self.selected {
+        let next = match self.ui().selected {
             None => 0,
             Some(cur) => {
                 let n = cur as i64 + delta;
                 n.clamp(0, self.view().rows.len() as i64 - 1) as usize
             }
         };
-        if self.selected != Some(next) {
+        if self.ui().selected != Some(next) {
             self.commit_scroll_handle
                 .scroll_to_item(next, ScrollStrategy::Center);
             // `select` toggles on a repeated index; guarded above.

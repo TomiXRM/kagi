@@ -50,8 +50,9 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
         }
     };
 
+    let session = app.attach_session(path.clone());
     app.tabs.push(ui::tabs::RepoTab {
-        session: app.app_sessions.attach(path.clone()),
+        session,
         path: path.clone(),
         name: info.name.clone(),
         remote: None,

@@ -175,7 +175,7 @@ impl KagiApp {
         };
         self.commit_panel = Some(entity.clone());
         self.commit_panel_open = true;
-        self.selected = None;
+        self.ui_mut().selected = None;
         self.main_diff = None;
         (entity, is_new)
     }
@@ -1304,7 +1304,7 @@ impl KagiApp {
         match action {
             CommitAction::ShowDetails => {
                 if let Some(row_index) = self.row_for_commit_id(&target) {
-                    if self.selected != Some(row_index) {
+                    if self.ui().selected != Some(row_index) {
                         self.select(row_index);
                     }
                 }

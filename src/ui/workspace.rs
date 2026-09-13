@@ -418,7 +418,7 @@ fn render_inspector_body(
     cx: &mut Context<KagiApp>,
 ) -> Option<AnyElement> {
     // ── Commit metadata ─
-    let selected = app.selected;
+    let selected = app.ui().selected;
     let d = selected.and_then(|i| app.view().details.get(i)).cloned()?;
     let at = CommitId(d.full_sha.as_ref().to_string());
     let selected_badges: Vec<commit_list::RefBadge> = selected
@@ -503,7 +503,7 @@ impl WorkspaceItem for InspectorItem {
         // Changed files + diffstat for the selected commit (vs parent). A cache
         // miss or an unavailable diff both collapse to `None` ("(diff
         // unavailable)"), as the old `Option<Option<..>>` plumbing did.
-        let selected = app.selected;
+        let selected = app.ui().selected;
         let files: Option<Vec<super::FileStatus>> = selected
             .and_then(|i| app.diff_caches.changed_files.get(&i).cloned())
             .flatten();

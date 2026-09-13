@@ -48,7 +48,7 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
             app.select(1);
             app.open_remove_worktree_modal("remove-target".into(), true, cx);
             cx.notify();
-            app.selected
+            app.ui().selected
         });
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -116,7 +116,8 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
                 "the removed worktree's session is detached with its tab"
             );
             assert_eq!(
-                app.selected, selected_before,
+                app.ui().selected,
+                selected_before,
                 "a background close never touches the surviving tab's selection"
             );
         });

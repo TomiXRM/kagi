@@ -7,6 +7,13 @@
 //! worktree — there is no `active_view` field and no `tab_cache`. Adding a field
 //! to per-tab data still needs exactly **2 places**: the `TabViewState` struct
 //! and `build_tab_view`.
+//!
+//! Alongside it, #643 Wave 4 S1 (ADR-0197) adds the other half of "per tab":
+//! [`TabUiState`], the session's **presentation intent**, with the same
+//! `SessionId` key and the same accessor shape ([`KagiApp::ui`] /
+//! [`KagiApp::ui_mut`]). Attach ([`KagiApp::attach_session`],
+//! [`KagiApp::reattach_session`]) and detach ([`KagiApp::release_session`]) are
+//! the only places either store gains or loses a key.
 
 use std::collections::HashMap;
 
@@ -245,6 +252,32 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     }
 }
 
+/// #643 Wave 4 S1 (ADR-0197): one session's **presentation intent** — what the
+/// user pointed at in this tab, as opposed to what the repository said (that is
+/// [`TabViewState`]).
+///
+/// Owned by [`KagiApp::ui`], keyed by `SessionId`, and reachable only through
+/// [`KagiApp::ui`] / [`KagiApp::ui_mut`]. Two open tabs therefore hold two
+/// independent values and a switch cannot leak one into the other — which is
+/// why `reset_per_repo_ui` no longer has to remember to clear the selection.
+///
+/// It deliberately owns **no** operation lifecycle: no lease, no reconcile
+/// entry, no planning slot, no in-flight write. Closing a tab drops this value,
+/// and closing a tab is not cancelling an execution (ADR-0182 / ADR-0197 決定 1).
+///
+/// It is kept as a second map rather than a field of [`TabViewState`] because a
+/// read is published as a whole value: folding intent into it would make a
+/// background read's landing drag the selection back to where it was when that
+/// read started (ADR-0197 決定 2).
+///
+/// S1 moves one field. S2–S5 move the rest (path stamps, scroll and
+/// `commit_limit`, the read caches, the pane entities).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TabUiState {
+    /// Currently selected commit row index (`None` = no selection).
+    pub selected: Option<usize>,
+}
+
 /// Wall-clock now in Unix epoch seconds (right edge of the Activity windows).
 fn now_unix_secs() -> i64 {
     std::time::SystemTime::now()
@@ -300,16 +333,84 @@ impl KagiApp {
         })
     }
 
+    /// This tab's presentation intent — the selection and (from S2 on) the
+    /// scroll, caches and pane resources that belong to the session rather than
+    /// to the screen. The detached default on the Welcome screen.
+    pub fn ui(&self) -> &TabUiState {
+        self.active_session()
+            .and_then(|session| self.ui.get(&session))
+            .unwrap_or(&self.ui_detached)
+    }
+
+    /// Write this tab's presentation intent. The entry is created by
+    /// [`KagiApp::attach_session`], so this only inserts on the paths that
+    /// predate a session (Welcome), where it lands in the detached cell.
+    ///
+    /// A background completion must **not** come through here: it writes to the
+    /// owner it froze when it started, or it is dropped. Reaching for the active
+    /// session in a callback is the leak this store exists to prevent
+    /// (ADR-0197 決定 2).
+    pub fn ui_mut(&mut self) -> &mut TabUiState {
+        match self.active_session() {
+            Some(session) => self.ui.entry(session).or_default(),
+            None => &mut self.ui_detached,
+        }
+    }
+
+    /// What "Branch from here" acts on: the selected commit, or HEAD when
+    /// nothing is selected. The header button and the `branch.new` command had
+    /// the same chain spelled out twice; they now ask the session once.
+    pub fn selected_or_head_commit(&self) -> Option<CommitId> {
+        let details = &self.view().details;
+        self.ui()
+            .selected
+            .and_then(|row| details.get(row))
+            .or_else(|| details.first())
+            .map(|detail| CommitId(detail.full_sha.to_string()))
+    }
+
+    /// Open a display slot for `path` and give it its UI state — the attach half
+    /// of ADR-0197 決定 2's single lifecycle seam.
+    ///
+    /// `Sessions::attach` unifies aliases, so it can hand back a session a tab
+    /// already holds. `entry` is what keeps that case from clearing the existing
+    /// tab's selection: an attach that resolves to a live session initializes
+    /// nothing.
+    pub fn attach_session(&mut self, path: std::path::PathBuf) -> crate::app::SessionId {
+        let session = self.app_sessions.attach(path);
+        self.ui.entry(session).or_default();
+        session
+    }
+
+    /// Same tab slot, fresh incarnation (a remote re-snapshot). The old
+    /// incarnation expires exactly as it would on close — including its UI
+    /// state, which is why this goes through [`KagiApp::release_session`]
+    /// instead of forgetting the read on its own.
+    pub(crate) fn reattach_session(
+        &mut self,
+        session: crate::app::SessionId,
+        path: std::path::PathBuf,
+    ) -> crate::app::SessionId {
+        self.release_session(session);
+        let next = self.app_sessions.reattach(session, path);
+        self.ui.entry(next).or_default();
+        next
+    }
+
     /// End a session and everything that belonged to its display.
     ///
     /// #482 stage 1 drops the conflict/follow-up payloads and the plan slot if
     /// this session owned one, while in-flight executions keep running
     /// (ADR-0175); stage 2 adds the read model, which has the same lifetime —
     /// releasing one without the other is exactly how the remote re-snapshot
-    /// leaked a full rows/details set per refresh.
+    /// leaked a full rows/details set per refresh. #643 Wave 4 S1 adds the UI
+    /// state on the same terms: this is the **only** place a `ui` entry is
+    /// removed, so `dom(ui) = attached sessions` cannot be broken by forgetting
+    /// a call site.
     pub(crate) fn release_session(&mut self, session: crate::app::SessionId) {
         self.app_sessions.detach(session);
         self.reads.forget(session);
+        self.ui.remove(&session);
     }
 
     /// `Some(label)` while the tab on screen is waiting for its **first** read —
@@ -350,7 +451,7 @@ impl KagiApp {
         is_worktree: bool,
         view: TabViewState,
     ) {
-        let session = self.app_sessions.attach(path.to_path_buf());
+        let session = self.attach_session(path.to_path_buf());
         self.tabs.push(super::tabs::RepoTab {
             session,
             path: path.to_path_buf(),

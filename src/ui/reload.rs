@@ -74,7 +74,7 @@ impl KagiApp {
             return;
         };
         let view = build_tab_view(&snap, &repo_name);
-        self.selected = None;
+        self.ui_mut().selected = None;
         self.diff_caches.clear();
         self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
@@ -150,6 +150,7 @@ impl KagiApp {
         // Capture the CommitId of the currently-selected row before we rebuild,
         // so we can re-select it after (survives selection across a reload).
         let prev_commit_id: Option<CommitId> = self
+            .ui()
             .selected
             .and_then(|idx| self.view().details.get(idx))
             .map(|detail| CommitId(detail.full_sha.to_string()));
@@ -281,10 +282,10 @@ impl KagiApp {
         self.last_working_status = Some(snap.status.clone());
 
         // Re-resolve selection by CommitId after the graph rebuild.
-        self.selected = None;
+        self.ui_mut().selected = None;
         if let Some(ref cid) = prev_commit_id {
             if let Some(&new_idx) = self.view().commit_row_index.get(cid) {
-                self.selected = Some(new_idx);
+                self.ui_mut().selected = Some(new_idx);
             }
         }
 

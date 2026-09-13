@@ -629,7 +629,7 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, _| app.select_headless(1));
     cx.run_until_parked();
     assert_eq!(
-        cx.read(|cx| app.read(cx).selected),
+        cx.read(|cx| app.read(cx).ui().selected),
         Some(1),
         "the fall-through needs a non-HEAD row selected behind the modal"
     );
@@ -753,7 +753,7 @@ pub fn scenario_branch_menu_no_checkout_fallthrough(cx: &mut VisualTestAppContex
 
     app.update(cx, |app, _| app.select_headless(1));
     cx.run_until_parked();
-    assert_eq!(cx.read(|cx| app.read(cx).selected), Some(1));
+    assert_eq!(cx.read(|cx| app.read(cx).ui().selected), Some(1));
 
     // Positive control: with no overlay, the registered checkout action opens
     // the expected plan for the selected non-HEAD commit. The no-plan oracle
@@ -775,7 +775,11 @@ pub fn scenario_branch_menu_no_checkout_fallthrough(cx: &mut VisualTestAppContex
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.branch_menu.is_some(), "branch menu must be open");
-        assert_eq!(app.selected, Some(1), "the menu must cover a non-HEAD row");
+        assert_eq!(
+            app.ui().selected,
+            Some(1),
+            "the menu must cover a non-HEAD row"
+        );
     });
 
     // The action path proves the fallback itself has the overlay guard.

@@ -157,7 +157,7 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     cx.read(|app| {
         let app = kagi.read(app);
-        assert_eq!(app.selected, Some(feature_row));
+        assert_eq!(app.ui().selected, Some(feature_row));
         assert_eq!(app.tabs.len(), 1, "branch-name click opened a worktree");
         assert_eq!(app.tabs[app.active_tab].path, fixture.main);
     });
@@ -217,7 +217,7 @@ pub fn scenario_graph_worktree_open(cx: &mut VisualTestAppContext) {
     cx.simulate_mouse_move(win, name.center(), None, gpui::Modifiers::none());
     cx.simulate_click(win, name.center(), gpui::Modifiers::none());
     cx.run_until_parked();
-    cx.read(|app| assert_eq!(kagi.read(app).selected, Some(feature_row)));
+    cx.read(|app| assert_eq!(kagi.read(app).ui().selected, Some(feature_row)));
     crate::recovery_operations::dispatch_checkout_selected(cx, &kagi, win);
     cx.read(|app| {
         let app = kagi.read(app);

@@ -213,18 +213,7 @@ impl KagiApp {
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
             // Resolve target commit: selected row → HEAD commit (first detail).
-            let at = this
-                .selected
-                .and_then(|i| this.view().details.get(i))
-                .map(|d| CommitId(d.full_sha.to_string()))
-                .or_else(|| {
-                    // Fall back to HEAD commit (first detail entry).
-                    this.view()
-                        .details
-                        .first()
-                        .map(|d| CommitId(d.full_sha.to_string()))
-                });
-            if let Some(id) = at {
+            if let Some(id) = this.selected_or_head_commit() {
                 this.open_create_branch_modal(id, cx);
             }
             cx.notify();

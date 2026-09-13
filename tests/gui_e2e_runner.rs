@@ -691,6 +691,30 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_dir_file_boundary),
             ),
             (
+                "operation_strip_startup",
+                Box::new(crate::app_conflict::scenario_operation_strip_startup),
+            ),
+            (
+                "operation_strip_abort",
+                Box::new(crate::app_conflict::scenario_operation_strip_abort),
+            ),
+            (
+                "operation_strip_stale_detector",
+                Box::new(crate::app_conflict::scenario_operation_strip_stale_detector),
+            ),
+            (
+                "conflict_detect_no_revision_laundering",
+                Box::new(crate::app_conflict::scenario_conflict_detect_no_revision_laundering),
+            ),
+            (
+                "conflict_detect_wrong_owner_is_dropped",
+                Box::new(crate::app_conflict::scenario_conflict_detect_wrong_owner_is_dropped),
+            ),
+            (
+                "conflict_detect_stale_clear_is_dropped",
+                Box::new(crate::app_conflict::scenario_conflict_detect_stale_clear_is_dropped),
+            ),
+            (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
             ),

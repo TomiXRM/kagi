@@ -59,6 +59,16 @@ pub struct RepoSnapshot {
     /// by CLI fetches outside kagi). `None` when the repo has never fetched
     /// (no FETCH_HEAD). Drives the status-bar fetch-age indicator (ADR-0127).
     pub last_fetch_secs: Option<i64>,
+    /// The merge / rebase / cherry-pick / revert / stash-apply the repository
+    /// is in the middle of, if any (#704 / ADR-0196).
+    ///
+    /// A plain read, from the one detector
+    /// (`backend::conflict_ops::conflict_observe::observation`) — the conflict
+    /// family freezes the same revision into its requests. Every consumer of
+    /// "is something in progress?" reads this rather than the presence of a
+    /// view or pane: the operation outlives the conflict editor, which is
+    /// exactly how #704 became a dead end.
+    pub operation: Option<kagi_domain::conflict_family::ObservedOperation>,
 }
 
 // ────────────────────────────────────────────────────────────
@@ -149,6 +159,11 @@ fn snapshot_inner(
         worktrees,
         cleanup_rows: Vec::new(),
         last_fetch_secs: last_fetch_secs(repo),
+        // Cheap when nothing is in progress: `detect_conflict_session` reads
+        // `repo.state()` and bails, and only a live operation pays for the
+        // index fingerprint.
+        operation: crate::backend::conflict_ops::conflict_observe::observation(repo)?
+            .map(|snapshot| snapshot.in_progress()),
     })
 }
 

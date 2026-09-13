@@ -391,12 +391,16 @@ pub struct ConflictMode {
     /// Editor (W32 lane reads/owns this; the dashboard only *sets* it when a
     /// Conflicted row is activated).  `None` when no editor file is open.
     pub editing_file: Option<usize>,
-    /// Whether the destructive Abort is armed (two-stage confirm, ADR-0067).
-    pub abort_armed: bool,
-    /// Same for Skip. It permanently drops the current step's changes *and*
-    /// the in-progress resolution buffer, and it used to execute on a single
-    /// click with no confirm at all — the only destructive conflict action
-    /// without one.
+    /// Two-stage Abort used to be armed here (#704 removed it): the arming
+    /// belonged to the entity, so an abort was only reachable while the entity
+    /// existed. It is the plan confirmation now — same two stages, no
+    /// dependency on this view being alive. Skip is still entity-local; it is
+    /// a sequencer step, not an escape hatch.
+    ///
+    /// Whether the destructive Skip is armed (two-stage confirm, ADR-0067).
+    /// It permanently drops the current step's changes *and* the in-progress
+    /// resolution buffer, and it used to execute on a single click with no
+    /// confirm at all — the only destructive conflict action without one.
     pub skip_armed: bool,
 }
 
@@ -556,7 +560,7 @@ impl ConflictView {
             mode.revision.clone(),
             &mode.buffer,
             path,
-            mode.session.op.slug(),
+            mode.session.op.kind(),
             before,
         ) {
             Ok(request) => FrozenConflictIntent::Request {
@@ -878,22 +882,6 @@ impl ConflictView {
             path.display()
         );
         self.marshal_info_toast(msg, cx);
-    }
-
-    /// Two-stage Abort arming (ADR-0067). Returns `true` when already armed (the
-    /// caller should EXECUTE the abort — which reloads, so it must defer to the
-    /// parent); `false` when this click only ARMED it (no reload, repaint only).
-    pub fn abort_request_arm(&mut self) -> bool {
-        let armed = self.mode.as_ref().map(|c| c.abort_armed).unwrap_or(false);
-        if !armed {
-            if let Some(c) = self.mode.as_mut() {
-                c.abort_armed = true;
-            }
-            klog!("conflict-mode: abort armed (second confirm required)");
-            false
-        } else {
-            true
-        }
     }
 
     /// Two-stage Skip arming — the same shape as `abort_request_arm`. Returns
@@ -1272,32 +1260,11 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             .detach();
         },
     );
-    // Abort is two-stage: the first click ARMS (entity-internal, no reload), the
-    // second EXECUTES (reload → defer to parent).
-    let abort_handler = cx.listener(
-        |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
-            if view.abort_request_arm() {
-                // Already armed → execute via the parent (reloads).
-                let weak_app = view.app.clone();
-                cx.spawn_in(window, async move |_view, acx| {
-                    let _ = weak_app.update_in(acx, |app, _window, cx| app.conflict_abort(cx));
-                })
-                .detach();
-            } else {
-                cx.notify();
-            }
-        },
-    );
-    let abort_label = if mode.abort_armed {
-        Msg::ConflictConfirmAbort.t()
-    } else {
-        Msg::ConflictAbort.t()
-    };
-
-    // Continue (filled, gated) + Abort (danger, two-stage) on one row. The
-    // buttons size to content (gpui-component Buttons are flex_shrink_0), so wrap
-    // rather than overflow the fixed-width dashboard when the armed-abort label
-    // grows (T-CONFLICT-DASH-023).
+    // #704: Abort is not here any more. The header operation strip is the one
+    // control, and it is on screen in conflict mode too — a second button
+    // calling the same action only reintroduced the question of which one is
+    // canonical. (The strip cannot be hidden here either: that would put the
+    // primary escape back behind this entity's lifetime, which is the bug.)
     let primary_row = div()
         .flex()
         .flex_row()
@@ -1312,13 +1279,6 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             } else {
                 None
             },
-            cx,
-        ))
-        .child(action_button(
-            abort_label,
-            theme().color_blocker,
-            true,
-            Some(abort_handler),
             cx,
         ));
 
@@ -1338,12 +1298,6 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
         None => (Msg::ConflictContinueReady.t(), theme().color_success),
     };
     col = col.child(dash_note(note, note_color));
-    if mode.abort_armed {
-        col = col.child(dash_note(
-            Msg::ConflictConfirmAbortHint.t(),
-            theme().color_warning,
-        ));
-    }
     if mode.skip_armed {
         col = col.child(dash_note(
             Msg::ConflictConfirmSkipHint.t(),
@@ -2126,7 +2080,6 @@ mod tests {
             current_branch: branch.to_string(),
             selected_file: Some(0),
             editing_file: None,
-            abort_armed: false,
             skip_armed: false,
         }
     }

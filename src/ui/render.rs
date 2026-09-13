@@ -786,12 +786,10 @@ impl Render for KagiApp {
             .children(self.render_tab_strip(cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(
-                toolbar_state,
-                status_summary,
-                self.view().rows.first().map(|r| r.summary.to_string()),
-                cx,
-            ))
+            .child(self.render_header_slot(toolbar_state, status_summary, cx))
+            // ── Operation strip (#704) — present while the repository is in
+            //    the middle of a merge / rebase / cherry-pick / revert. ──
+            .children(self.render_operation_strip(cx))
             // ── Body slot: in Conflict Mode the conflict resolution pane
             //    replaces the normal sidebar | list | panel body. The center is
             //    the A/B hunk editor + Result Preview; the right is always the

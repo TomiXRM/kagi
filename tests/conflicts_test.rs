@@ -1628,6 +1628,299 @@ fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
     );
 }
 
+/// #704: a resolution that has already been **staged** (what Continue does) is
+/// progress to discard, not a mid-conflict edit to protect.
+///
+/// The guard read the conflicted set off `session.files`, which is the LIVE
+/// unmerged list — empty once the resolution is staged. Every resolved path was
+/// then reclassified as a cleanly-merged file the user had edited, so abort
+/// refused and the repository was stuck `MERGING` with no way out of the GUI.
+#[test]
+fn abort_is_not_refused_after_the_resolution_was_staged() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    // Resolve the conflicted path the way Continue does: take a side, stage it.
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("the merge is still in progress");
+    assert!(
+        session.files.is_empty(),
+        "precondition: staging the resolution left nothing unmerged"
+    );
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    execute_conflict_abort(&repo, &session, &buffer)
+        .expect("a staged resolution must not be mistaken for a mid-conflict edit");
+
+    assert!(
+        !dir.join(".git/MERGE_HEAD").exists(),
+        "abort must leave the merge behind"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n",
+        "the resolved path is restored to the pre-merge content"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "base b\n",
+        "the cleanly-merged path is rolled back too"
+    );
+    assert!(
+        !dir.join("added.txt").exists(),
+        "a file the merge added is removed again"
+    );
+}
+
+/// #704 slice 1: the read model keeps the operation after the last conflict is
+/// resolved. `RepoSnapshot::operation` is what the header strip and the
+/// availability of Abort are derived from, so it has to outlive the unmerged
+/// entries — a resolved merge is still a merge in progress.
+#[test]
+fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let mut backend = kagi_git::Backend::open(dir).expect("open");
+    let snapshot = backend.snapshot(10_000).expect("snapshot");
+    let operation = snapshot
+        .operation
+        .expect("MERGE_HEAD is an operation in progress, resolved or not");
+    assert_eq!(operation.kind().slug(), "merge");
+    assert_eq!(operation.unmerged(), 0, "nothing is unmerged any more");
+    assert_eq!(operation.step, None, "a merge is a single step");
+
+    // …and it goes away with the operation, not with the conflicts.
+    let buffer = ResolutionBuffer::from_repo(&Repository::open(dir).unwrap()).unwrap();
+    let session = detect_conflict_session(&Repository::open(dir).unwrap()).unwrap();
+    execute_conflict_abort(&Repository::open(dir).unwrap(), &session, &buffer).expect("abort");
+    let mut backend = kagi_git::Backend::open(dir).expect("reopen");
+    assert!(backend
+        .snapshot(10_000)
+        .expect("snapshot")
+        .operation
+        .is_none());
+}
+
+/// #707 re-review: a rebase abort must not clobber the branch it restores.
+///
+/// The destination is the ref named in `rebase-merge/head-name` — and during a
+/// rebase HEAD is detached, so nothing else about that branch was in the
+/// fingerprint. An external `git update-ref refs/heads/side <new>` while the
+/// confirmation was open changed nothing the revision covered, passed
+/// preflight, and was then overwritten by a `force` write of `ORIG_HEAD`.
+#[test]
+fn a_rebase_abort_refuses_when_its_destination_branch_moved() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = rebase_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("rebase conflict session");
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+    let frozen = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("observed")
+        .observation;
+    // Someone moves exactly the branch this abort would restore, and nothing
+    // else. (`rebase-merge/head-name` names it; the CAS half of the guard is a
+    // unit test in `conflict_abort`, where the frozen expectation lives.)
+    let elsewhere = git_output(dir, &["rev-parse", "main"]);
+    git(dir, &["update-ref", "refs/heads/side", &elsewhere]);
+
+    let live = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("still rebasing")
+        .observation;
+    assert_ne!(
+        live.revision, frozen.revision,
+        "the destination branch's target is part of the revision"
+    );
+
+    assert_eq!(
+        git_output(dir, &["rev-parse", "refs/heads/side"]),
+        elsewhere,
+        "the branch keeps the OID the other process gave it"
+    );
+    assert!(
+        dir.join(".git/rebase-merge").exists() || dir.join(".git/rebase-apply").exists(),
+        "the rebase is still in progress"
+    );
+    assert!(
+        detect_conflict_session(&Repository::open(dir).unwrap()).is_some(),
+        "and its conflict is untouched"
+    );
+}
+
+/// #707 review: abort must not autosave an empty buffer over a saved one.
+///
+/// ADR-0057 says abort preserves the partial resolution. Once the resolution
+/// is staged nothing is unmerged, so a buffer built from the live index is
+/// empty (saved drafts are overlaid only onto paths still in conflict) — and
+/// saving *that* wipes the very drafts the promise protects.
+#[test]
+fn abort_does_not_overwrite_a_saved_resolution_buffer_with_an_empty_one() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+
+    // The user resolved a.txt; the editor autosaved that draft.
+    let saved_at = {
+        let repo = Repository::open(dir).unwrap();
+        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        buffer
+            .apply_choice(Path::new("a.txt"), ResolutionChoice::Incoming)
+            .unwrap();
+        buffer.autosave().expect("autosave the draft")
+    };
+    let draft = std::fs::read_to_string(&saved_at).expect("the draft is on disk");
+    assert!(
+        draft.contains("a.txt"),
+        "precondition: the saved draft holds the resolution"
+    );
+
+    // Continue stages it, so nothing is unmerged any more (the #704 state).
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("the merge is still in progress");
+    assert!(session.files.is_empty(), "precondition: nothing unmerged");
+    let live = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_abort(&repo, &session, &live).expect("abort");
+
+    assert_eq!(
+        std::fs::read_to_string(&saved_at).expect("the draft survives the abort"),
+        draft,
+        "abort preserved the resolution buffer instead of erasing it (ADR-0057)"
+    );
+}
+
+/// #704 review: each progress stage names what has actually happened.
+///
+/// The evidence is what tells `apply` whether a failed abort is a refusal or a
+/// reconcile requirement, so a stage reported early is a lie about the
+/// repository: `IndexAndWorktreeWritten` before the checkout claims a working
+/// tree that a checkout failure never wrote, and `Verified` from the executor
+/// claims a verification the Backend has not run yet.
+#[test]
+fn abort_reports_each_stage_only_once_it_has_happened() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    use kagi_domain::conflict_family::ConflictProgress as P;
+    let mut stages = Vec::new();
+    kagi_git::execute_conflict_abort_with_progress(&repo, &session, &buffer, |stage| {
+        // The sequence alone cannot tell this stage from one fired *before*
+        // the checkout — a success run reports the same list either way (#707
+        // re-review). What separates them is the working tree: by the time
+        // this stage is claimed, it already holds the restore target.
+        if stage == P::IndexAndWorktreeWritten {
+            assert_eq!(
+                std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+                "MAIN a\n",
+                "IndexAndWorktreeWritten was reported before the checkout wrote the working tree"
+            );
+        }
+        stages.push(stage)
+    })
+    .expect("abort");
+
+    assert_eq!(
+        stages,
+        vec![
+            P::IndexWritten,
+            P::IndexAndWorktreeWritten,
+            P::StateCleanupStarted
+        ],
+        "index, then the working tree only after the checkout returned, then \
+         clearing the operation state"
+    );
+    assert!(
+        !stages.contains(&P::Verified),
+        "verification is the Backend's `verify_abort`, not the executor's claim"
+    );
+}
+
+/// #704 end to end: resolve → stage → unstage → discard leaves the repository
+/// `MERGING` with a clean index and no unmerged entries. Abort must still take
+/// it back to a normal state — that dead end is the whole issue.
+#[test]
+fn abort_recovers_a_merging_repository_after_unstage_and_discard() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+    // The commit panel's Unstage, then Discard all (kagi never runs `git
+    // clean`, so the file the merge added stays behind untracked).
+    git(
+        dir,
+        &[
+            "reset",
+            "-q",
+            "--",
+            "a.txt",
+            "b.txt",
+            "sub/c.txt",
+            "added.txt",
+        ],
+    );
+    git(dir, &["checkout", "--", "a.txt", "b.txt", "sub/c.txt"]);
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "precondition: the repository is still merging"
+    );
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("MERGE_HEAD is still an operation");
+    assert!(session.files.is_empty());
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort must escape the dead end");
+
+    assert!(!dir.join(".git/MERGE_HEAD").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+    assert!(
+        detect_conflict_session(&Repository::open(dir).unwrap()).is_none(),
+        "no operation is in progress once the abort lands"
+    );
+}
+
 /// #369: the staged-edit abort guard must protect the SEQUENCER ops too, not
 /// only merge. A cherry-pick with a conflicted `file.txt` and a cleanly-carried
 /// `b.txt`: staging an edit to `b.txt` mid-conflict must make abort refuse

@@ -253,6 +253,9 @@ impl KagiApp {
                 kagi_domain::conflict_family::ConflictAction::ResolveDirFile(
                     kagi_git::DirFileChoice::KeepFile,
                 ) => ("conflict-dir-file:keep-file", Msg::OpInProgress),
+                kagi_domain::conflict_family::ConflictAction::Abort => {
+                    ("conflict-abort", Msg::OpInProgress)
+                }
             },
         };
         let latched = LegacyBusy(self.op_latched());
@@ -285,6 +288,7 @@ impl KagiApp {
             "conflict-save"
             | "conflict-dir-file:keep-directory"
             | "conflict-dir-file:keep-file" => {}
+            "conflict-abort" => self.clear_conflict_abort_modal(),
             _ => unreachable!(),
         }
         self.status_footer = FooterStatus::Busy(SharedString::from(label.t()));
@@ -478,12 +482,31 @@ impl KagiApp {
         report: kagi_git::backend::conflict_ops::ConflictReport,
         cx: &mut Context<Self>,
     ) {
-        self.present_conflict_recording(attachment.session, report.recording, cx);
+        // The abort's long-standing contract line (ADR-0056, documented in
+        // T-ENTITY-CONFLICT-001). #704 moved the execution into the family, so
+        // it is emitted from the receipt instead of from the UI's own run.
+        if matches!(
+            report.evidence.action,
+            kagi_domain::conflict_family::ConflictAction::Abort
+        ) && matches!(report.recording.entry().outcome, OpOutcome::Success { .. })
+        {
+            klog!("executed: {}", report.recording.entry().op);
+        }
+        self.present_conflict_action(
+            attachment.session,
+            report.evidence.action,
+            report.recording,
+            cx,
+        );
     }
 
-    pub(crate) fn present_conflict_recording(
+    /// Present one conflict-family receipt. The action picks the success
+    /// wording: an abort saves nothing, so announcing it as "解決を保存しました"
+    /// was simply false (#704 review).
+    pub(crate) fn present_conflict_action(
         &mut self,
         owner: app::SessionId,
+        action: kagi_domain::conflict_family::ConflictAction,
         recording: kagi_git::backend::recording::Recording,
         cx: &mut Context<Self>,
     ) {
@@ -502,10 +525,12 @@ impl KagiApp {
             } else {
                 ToastKind::Error
             },
-            if success {
-                Msg::EditorSavedResolved.t().to_string()
-            } else {
-                summary.clone()
+            match (success, action) {
+                (true, kagi_domain::conflict_family::ConflictAction::Abort) => {
+                    Msg::ConflictAborted.t().to_string()
+                }
+                (true, _) => Msg::EditorSavedResolved.t().to_string(),
+                (false, _) => summary.clone(),
             },
             cx,
         );

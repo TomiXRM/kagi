@@ -103,7 +103,8 @@ impl KagiApp {
         el
     }
 
-    /// Header slot — the Toolbar bar (T-HT-001 / ADR-0013).
+    /// Header slot — the Toolbar bar (T-HT-001 / ADR-0013). The in-progress
+    /// operation gets its own row below this one (`render_operation_strip`).
     ///
     /// Layout (34 px):
     ///   LEFT:   repo-name | branch → upstream ↑A ↓B
@@ -113,8 +114,6 @@ impl KagiApp {
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
-        // HEAD commit summary for Undo label (first row in commit list). ADR-0013.
-        undo_summary: Option<String>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
@@ -419,9 +418,7 @@ impl KagiApp {
         // ── Undo / Redo tooltips: previewed operation summary (ADR-0081) ────
         // Labels stay the fixed "Undo"/"Redo"; the (possibly long) operation
         // summary is surfaced on hover. Sourced from the operation-history
-        // cursor (peek_undo / peek_redo). `undo_summary` (legacy undo-commit
-        // tooltip) is no longer used now that the button is generalised.
-        let _ = &undo_summary;
+        // cursor (peek_undo / peek_redo).
         let undo_tooltip_text: Option<SharedString> = self
             .operation_history
             .peek_undo()

@@ -1,16 +1,21 @@
 //! Conflict execution stays behind owner trust, including frozen D/F plans.
 use super::*;
 use kagi_domain::conflict_family::{
-    BufferRevision, ConflictDraft, ConflictEvidence, ConflictObservation, ConflictProgress,
-    ConflictRequest, ConflictRevision,
+    ConflictDraft, ConflictEvidence, ConflictObservation, ConflictProgress, ConflictRequest,
+    ConflictRevision,
 };
-use sha2::{Digest, Sha256};
 
-#[derive(Clone, Debug)]
-pub struct ConflictSnapshot {
-    pub session: conflicts::ConflictSession,
-    pub observation: ConflictObservation,
-}
+// Reading the repository — the one operation observation, the fingerprints,
+// and the post-execute verification — lives next door so the per-tab read
+// model and this family can never disagree about what is in progress
+// (#704 / ADR-0196).
+#[path = "conflict_observe.rs"]
+pub mod conflict_observe;
+pub use conflict_observe::ConflictSnapshot;
+use conflict_observe::{
+    buffer_revision, observation, revision_label, short_text_hash, text_mode, verify_abort,
+    verify_dir_file, verify_save,
+};
 
 #[derive(Clone, Debug)]
 enum ConflictPreparedAction {
@@ -20,6 +25,14 @@ enum ConflictPreparedAction {
         expected_mode: u32,
     },
     DirFile(ops::DirFilePlan),
+    /// #704: end the operation. Boxed — a `ConflictSession` carries every
+    /// conflicting file, and this is the rare variant.
+    Abort {
+        session: Box<conflicts::ConflictSession>,
+        /// #707 review: the ref the restore will rewrite and the OID it held
+        /// when planned, so the write is a compare-and-swap.
+        restore: Option<crate::conflict_abort::RestoreRef>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -65,226 +78,16 @@ impl ConflictPlan {
 pub enum ConflictFaultPoint {
     BeforeMutation,
     AfterWorktreeWrite,
+    /// #704: the abort ran, and then the repository could not be read back.
+    /// The one case the receipt must call `Unknown` rather than success or a
+    /// retryable failure — there is no other way to reach it deterministically.
+    AbortAfterStateUnreadable,
 }
 
 #[derive(Clone, Debug)]
 pub struct ConflictReport {
     pub recording: recording::Recording,
     pub evidence: ConflictEvidence,
-}
-
-fn digest(parts: impl IntoIterator<Item = Vec<u8>>) -> String {
-    let mut hash = Sha256::new();
-    for part in parts {
-        hash.update((part.len() as u64).to_be_bytes());
-        hash.update(part);
-    }
-    hex::encode(hash.finalize())
-}
-
-fn buffer_revision(path: &Path, draft: &ConflictDraft) -> BufferRevision {
-    let mut parts = vec![path.as_os_str().as_encoded_bytes().to_vec()];
-    match draft {
-        ConflictDraft::Text(bytes) => {
-            parts.push(b"text".to_vec());
-            parts.push(bytes.clone());
-        }
-        ConflictDraft::Raw { oid, mode } => {
-            parts.push(b"raw".to_vec());
-            parts.push(oid.as_bytes().to_vec());
-            parts.push(mode.to_be_bytes().to_vec());
-        }
-    }
-    BufferRevision::from_fingerprint(digest(parts))
-}
-
-fn revision_label(revision: &ConflictRevision) -> String {
-    revision.as_str().chars().take(12).collect()
-}
-
-fn short_text_hash(bytes: &[u8]) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
-}
-
-fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>, GitError> {
-    let Some(session) = conflicts::detect_conflict_session(repo) else {
-        return Ok(None);
-    };
-    let mut parts = Vec::new();
-    parts.push(format!("{:?}", repo.state()).into_bytes());
-    parts.push(format!("{:?}", session.op).into_bytes());
-    if let Ok(head) = repo.head() {
-        parts.push(head.name_bytes().to_vec());
-        parts.push(
-            head.target()
-                .map(|oid| oid.to_string())
-                .unwrap_or_default()
-                .into_bytes(),
-        );
-    }
-    let mut entries: Vec<Vec<u8>> = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?
-        .iter()
-        .map(|entry| {
-            let mut value = entry.path;
-            value.extend_from_slice(&entry.mode.to_be_bytes());
-            value.extend_from_slice(&entry.flags.to_be_bytes());
-            value.extend_from_slice(entry.id.as_bytes());
-            value
-        })
-        .collect();
-    entries.sort();
-    parts.extend(entries);
-    let git_dir = repo.path();
-    for relative in [
-        "MERGE_HEAD",
-        "REBASE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-        "rebase-merge/done",
-        "rebase-merge/git-rebase-todo",
-        "rebase-merge/msgnum",
-        "rebase-merge/end",
-        "rebase-apply/next",
-        "rebase-apply/last",
-    ] {
-        let path = git_dir.join(relative);
-        if let Ok(bytes) = std::fs::read(path) {
-            parts.push(relative.as_bytes().to_vec());
-            parts.push(bytes);
-        }
-    }
-    let revision = ConflictRevision::from_fingerprint(digest(parts));
-    let paths = session.files.iter().map(|file| file.path.clone()).collect();
-    Ok(Some(ConflictSnapshot {
-        observation: ConflictObservation {
-            revision,
-            operation: session.op.slug().into(),
-            paths,
-        },
-        session,
-    }))
-}
-
-fn text_mode(repo: &Repository, path: &Path) -> u32 {
-    let executable = repo
-        .workdir()
-        .and_then(|root| std::fs::symlink_metadata(root.join(path)).ok())
-        .map(|metadata| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = metadata;
-                false
-            }
-        })
-        .unwrap_or(false);
-    if executable {
-        0o100755
-    } else {
-        0o100644
-    }
-}
-
-fn verify_save(
-    repo: &Repository,
-    path: &Path,
-    draft: &ConflictDraft,
-    expected_mode: u32,
-) -> Result<(), GitError> {
-    let index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-    if index.get_path(path, 1).is_some()
-        || index.get_path(path, 2).is_some()
-        || index.get_path(path, 3).is_some()
-    {
-        return Err(GitError::Other(format!(
-            "{} remains unmerged after save",
-            path.display()
-        )));
-    }
-    let entry = index
-        .get_path(path, 0)
-        .ok_or_else(|| GitError::Other(format!("{} was not staged", path.display())))?;
-    match draft {
-        ConflictDraft::Text(bytes) => {
-            let root = repo
-                .workdir()
-                .ok_or_else(|| GitError::Other("repository has no working tree".into()))?;
-            let actual = std::fs::read(root.join(path))
-                .map_err(|e| GitError::Other(format!("verify {} failed: {e}", path.display())))?;
-            let expected_oid = git2::Oid::hash_object(git2::ObjectType::Blob, bytes)
-                .map_err(|e| GitError::Other(e.to_string()))?;
-            if actual != *bytes || entry.id != expected_oid || entry.mode != expected_mode {
-                return Err(GitError::Other(format!(
-                    "{} bytes, blob, or mode differ after save",
-                    path.display()
-                )));
-            }
-        }
-        ConflictDraft::Raw { oid, mode } => {
-            if entry.id.to_string() != *oid || entry.mode != *mode {
-                return Err(GitError::Other(format!(
-                    "{} raw OID or mode differs after save",
-                    path.display()
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn verify_dir_file(repo: &Repository, plan: &ops::DirFilePlan) -> Result<(), GitError> {
-    let index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-    if index.get_path(&plan.path, 1).is_some()
-        || index.get_path(&plan.path, 2).is_some()
-        || index.get_path(&plan.path, 3).is_some()
-    {
-        return Err(GitError::Other(
-            "directory/file entry remains unmerged".into(),
-        ));
-    }
-    match plan.choice {
-        ops::DirFileChoice::KeepFile => {
-            let entry = index
-                .get_path(&plan.path, 0)
-                .ok_or_else(|| GitError::Other("kept file is absent from index".into()))?;
-            if entry.id != plan.file_oid || entry.mode != plan.file_mode {
-                return Err(GitError::Other("kept file identity differs".into()));
-            }
-            if plan
-                .dir_children
-                .iter()
-                .any(|path| index.get_path(path, 0).is_some())
-            {
-                return Err(GitError::Other("directory children remain in index".into()));
-            }
-        }
-        ops::DirFileChoice::KeepDirectory => {
-            if index.get_path(&plan.path, 0).is_some()
-                || plan
-                    .dir_children
-                    .iter()
-                    .any(|path| index.get_path(path, 0).is_none())
-            {
-                return Err(GitError::Other("kept directory index shape differs".into()));
-            }
-        }
-    }
-    Ok(())
 }
 
 impl Backend {
@@ -319,10 +122,11 @@ impl Backend {
         error: &str,
     ) -> recording::Recording {
         let op_name = match request {
-            ConflictRequest::Save { operation, .. } => format!("conflict-save:{operation}"),
+            ConflictRequest::Save { kind, .. } => format!("conflict-save:{}", kind.slug()),
             ConflictRequest::ResolveDirFile { choice, .. } => {
                 format!("conflict-dir-file:{}", choice.slug())
             }
+            ConflictRequest::Abort { kind, .. } => format!("{}-abort", kind.slug()),
         };
         recording::finalize(
             crate::oplog::OpLogEntry::new(
@@ -330,7 +134,10 @@ impl Backend {
                 path.display().to_string(),
                 ops::StateSummary {
                     head: format!("conflict revision {}", revision_label(request.revision())),
-                    dirty: format!("{} {}", request.action().name(), request.path().display()),
+                    dirty: match request.path() {
+                        Some(path) => format!("{} {}", request.action().name(), path.display()),
+                        None => request.action().name(),
+                    },
                 },
                 crate::oplog::OpOutcome::Refused {
                     blockers: vec![error.into()],
@@ -360,11 +167,10 @@ impl Backend {
             evidence: ConflictEvidence {
                 action: plan.request.action(),
                 progress: ConflictProgress::NotStarted,
-                before: ConflictObservation {
-                    revision: plan.request.revision().clone(),
-                    operation: "abandoned".into(),
-                    paths: vec![plan.request.path().to_path_buf()],
-                },
+                // #707 review: the plan already froze this. Rebuilding it from
+                // the request dropped the operation and, for an abort, every
+                // affected path.
+                before: plan.observed.clone(),
                 after: None,
                 detail,
             },
@@ -379,7 +185,7 @@ impl Backend {
         revision: ConflictRevision,
         buffer: &ResolutionBuffer,
         path: &Path,
-        operation: &str,
+        kind: kagi_domain::conflict_family::ConflictOperationKind,
         before_text: &str,
     ) -> Result<ConflictRequest, GitError> {
         let draft = buffer.conflict_draft(path).ok_or_else(|| {
@@ -390,10 +196,25 @@ impl Backend {
             revision,
             buffer_revision: buffer_revision(path, &draft),
             draft,
-            operation: operation.to_string(),
+            kind,
             before_hash: short_text_hash(before_text.as_bytes()),
             actions: buffer.conflict_action_summary(path),
         })
+    }
+
+    /// The Abort request for an observed in-progress operation (#704).
+    ///
+    /// Takes the pure observation the read model carries, so no caller needs a
+    /// `ConflictSession`, an open editor, or a repository handle to ask for
+    /// one. Whether the frozen revision still describes the repository is the
+    /// Backend's business, at plan and again at execute.
+    pub fn conflict_abort_request(
+        operation: &kagi_domain::conflict_family::ObservedOperation,
+    ) -> ConflictRequest {
+        ConflictRequest::Abort {
+            revision: operation.revision().clone(),
+            kind: operation.kind(),
+        }
     }
 
     pub fn plan_recorded_conflict(
@@ -416,10 +237,10 @@ impl Backend {
                 path,
                 buffer_revision: expected,
                 draft,
-                operation,
+                kind,
                 ..
             } => {
-                if operation != &snapshot.observation.operation {
+                if kind != &snapshot.observation.kind {
                     return Err(GitError::Other(
                         "conflict operation changed since it was observed".into(),
                     ));
@@ -461,28 +282,48 @@ impl Backend {
                     *choice,
                 )?)
             }
+            // #704: abort is about the operation, so the only thing to freeze
+            // is which operation it is. The revision check above already
+            // proved the repository has not moved since the read model
+            // observed it; `run_recorded_conflict` re-reads it live.
+            ConflictRequest::Abort { kind, .. } => {
+                if *kind != snapshot.observation.kind {
+                    return Err(GitError::Other(
+                        "conflict operation changed since it was observed".into(),
+                    ));
+                }
+                ConflictPreparedAction::Abort {
+                    restore: crate::conflict_abort::restore_ref(&backend.repo, &snapshot.session),
+                    session: Box::new(snapshot.session.clone()),
+                }
+            }
         };
         let op_name = match &request {
-            ConflictRequest::Save { operation, .. } => format!("conflict-save:{operation}"),
+            ConflictRequest::Save { kind, .. } => format!("conflict-save:{}", kind.slug()),
             ConflictRequest::ResolveDirFile { choice, .. } => {
                 format!("conflict-dir-file:{}", choice.slug())
             }
+            // The oplog name every abort has carried since ADR-0056.
+            ConflictRequest::Abort { kind, .. } => format!("{}-abort", kind.slug()),
         };
         let before = match &request {
             ConflictRequest::Save {
                 path,
-                operation,
+                kind,
                 before_hash,
                 actions,
                 ..
             } => ops::StateSummary {
-                head: format!("session={operation} file={}", path.display()),
+                head: format!("session={} file={}", kind.slug(), path.display()),
                 dirty: format!("hunks=[{actions}] before={before_hash}"),
             },
             ConflictRequest::ResolveDirFile { path, choice, .. } => ops::StateSummary {
                 head: format!("dir-file conflict {}", path.display()),
                 dirty: format!("choice={}", choice.slug()),
             },
+            ConflictRequest::Abort { .. } => {
+                crate::conflicts::current_state_summary(&backend.repo)?
+            }
         };
         Ok(ConflictPlan {
             repo,
@@ -505,6 +346,13 @@ impl Backend {
         let mut progress = ConflictProgress::NotStarted;
         let mut after = None;
         let mut recovery = None;
+        // The observation frozen at plan time is what the receipt reports as
+        // `before` on every path out of here — including the one where the
+        // repository can no longer be opened. Rebuilding it from the request
+        // there invented `operation: "unknown"` and, for an abort (which names
+        // no path), an empty path list: the receipt lost the very facts the
+        // plan had already established.
+        let before = plan.observed.clone();
         let backend = match Self::open_with_policy(&plan.repo, policy) {
             Ok(backend) => backend,
             Err(error) => {
@@ -526,18 +374,13 @@ impl Backend {
                     evidence: ConflictEvidence {
                         action,
                         progress,
-                        before: ConflictObservation {
-                            revision: plan.request.revision().clone(),
-                            operation: "unknown".into(),
-                            paths: vec![plan.request.path().to_path_buf()],
-                        },
+                        before,
                         after,
                         detail: error.to_string(),
                     },
                 };
             }
         };
-        let before = plan.observed.clone();
         let result = (|| -> Result<(), GitError> {
             backend.require_trust()?;
             if backend.write_worktree_id()? != plan.worktree
@@ -596,6 +439,40 @@ impl Backend {
                     )?);
                     verify_dir_file(&backend.repo, dir_file)?;
                 }
+                // #704: the partial resolution is preserved by the executor
+                // (ADR-0057) from the buffer on disk — the editor autosaves
+                // every edit, so this is the same bytes the UI held, and the
+                // abort is admissible with no editor open at all.
+                ConflictPreparedAction::Abort { session, restore } => {
+                    // Not `unwrap_or_else(empty)`: a buffer we failed to read
+                    // is not an empty buffer, and treating it as one would
+                    // hand the executor something to save over the user's
+                    // drafts. Refusing before any mutation is the safe half of
+                    // that choice (#707 review).
+                    let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
+                    let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
+                    let restored = if stash {
+                        crate::conflict_abort::execute_stash_conflict_abort_with_progress(
+                            &backend.repo,
+                            session,
+                            &buffer,
+                            |value| progress = value,
+                        )?
+                    } else {
+                        crate::conflict_abort::execute_conflict_abort_expecting(
+                            &backend.repo,
+                            session,
+                            &buffer,
+                            restore.as_ref(),
+                            |value| progress = value,
+                        )?
+                    };
+                    verify_abort(&backend.repo, &restored)?;
+                    recovery = restored
+                        .buffer_preserved_at
+                        .as_ref()
+                        .map(|path| format!("resolution buffer preserved at {}", path.display()));
+                }
             }
             progress = ConflictProgress::Verified;
             after = observation(&backend.repo)?.map(|snapshot| snapshot.observation);
@@ -612,6 +489,15 @@ impl Backend {
             .err()
             .map(ToString::to_string)
             .unwrap_or_else(|| recovery.clone().unwrap_or_else(|| "verified".into()));
+        // #704 / ADR-0196: abort records what the repository *is*, measured
+        // after the attempt. `after` above cannot stand in for it — for an
+        // abort `None` is the successful outcome, so it says nothing about
+        // whether the repository could be read at all.
+        let after_state = if fault == Some(ConflictFaultPoint::AbortAfterStateUnreadable) {
+            Err(GitError::Other("injected unreadable after-state".into()))
+        } else {
+            conflicts::current_state_summary(&backend.repo)
+        };
         let observed_after = match &plan.request {
             ConflictRequest::Save {
                 draft, before_hash, ..
@@ -629,8 +515,28 @@ impl Backend {
                 head: format!("kept {} side of {}", choice.slug(), path.display()),
                 dirty: "staged (stage 0)".into(),
             },
+            ConflictRequest::Abort { kind, .. } => {
+                after_state.clone().unwrap_or_else(|_| ops::StateSummary {
+                    head: format!("{}: state after the abort is unreadable", kind.slug()),
+                    dirty: "unknown".into(),
+                })
+            }
         };
+        // A restore whose result cannot be measured is `Unknown`, never a
+        // retryable `Failed`: retrying an abort that may already have moved
+        // the ref is the way to lose the commits it detached. `apply` parks a
+        // reconcile entry for it (ADR-0196 決定 2).
+        let unmeasurable = matches!(plan.request, ConflictRequest::Abort { .. })
+            && progress != ConflictProgress::NotStarted
+            && after_state.is_err();
         let outcome = match &result {
+            _ if unmeasurable => crate::oplog::OpOutcome::Unknown {
+                after: observed_after,
+                evidence: format!(
+                    "{}: the abort had started when the repository became unreadable",
+                    detail
+                ),
+            },
             Ok(()) => crate::oplog::OpOutcome::Success {
                 after: observed_after,
             },
@@ -745,6 +651,16 @@ impl Backend {
         session: &conflicts::ConflictSession,
     ) -> Result<OperationPlan, GitError> {
         conflicts::plan_conflict_abort(&self.repo, session)
+    }
+
+    /// The abort preview for whatever this repository is in the middle of
+    /// (#704). Detects the session itself, so the header operation strip can
+    /// open the confirmation with no `ConflictView` and no conflict editor —
+    /// the state the issue got stuck in.
+    pub fn plan_operation_abort(&self) -> Result<OperationPlan, GitError> {
+        let snapshot = observation(&self.repo)?
+            .ok_or_else(|| GitError::Other("no operation is in progress".into()))?;
+        conflicts::plan_conflict_abort(&self.repo, &snapshot.session)
     }
 
     pub fn execute_conflict_abort(

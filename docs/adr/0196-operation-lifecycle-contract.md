@@ -174,6 +174,20 @@ DifferentialManifest {
 - **同一 topology の 5 category を legacy 経路と新経路の両方で取り、allowlist 外の差を不合格**とする
 - `index` の stat cache 更新（ADR-0193）は allowlist に入れる。これは状態ではなく cache
 
+### 規範 — in-progress operation の所有（#704, 2026-09-13）
+
+> Repository の in-progress operation は session-owned read model の観測値である。
+> View / Entity / pane / modal の存在は lifecycle、action availability、admission の
+> 根拠にしてはならない。UI は `Reads` の観測から action を提示し、mutation は
+> その revision を凍結した request と Backend の live preflight が一致した場合にのみ
+> 開始する。
+
+read の owner は ADR-0183 の `Reads<TabViewState>` **ひとつだけ**である。freshness
+guard を持たない経路（repo path しか凍結しない legacy detector など）が同じ観測を
+書けると、古い結果の marshal-back が admission を取り消しうる。#704 はこれを破っていた実例で、
+merge が resolve されると `ConflictView` が破棄され、abort が構造的に到達不能になった
+（`MERGE_HEAD` は残ったまま）。migration README の Conflict C2 から本節を参照する。
+
 ## 決定 5 — 移行の順序と所有（#643 §4 Wave 表を採用）
 
 | Wave | 内容 | 本 ADR での位置 |
@@ -183,6 +197,7 @@ DifferentialManifest {
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
 | 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | run family と pull は移行済み (#698 #699 #700 + #702) だが **Wave 3 は未完了**: 下記「終端未確定の出口」の残件（#703）が閉じるまで受入条件を満たさない。残: pr-merge / branch-cleanup / plan 系 latch → `busy_op` 除去、および #703 |
 | 4 | UI state: `TabUiState` per session | |
+| C2 Abort | read-model-derived availability / entity-independent admission / typed report / reconcile | **完了** (#704。Wave 4 の前倒しではなく、ADR-0183 の read ownership と Wave 3 / C2 mutation lifecycle の correctness slice) |
 | 5 | crate 抽出（境界安定後のみ） | |
 | 6 | cleanup | |
 

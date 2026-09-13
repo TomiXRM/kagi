@@ -11,7 +11,7 @@ src/ui/operations/branch.rs 6
 src/ui/operations/checkout.rs 2
 src/ui/operations/cherry_revert.rs 2
 src/ui/operations/commit.rs 8
-src/ui/operations/conflict.rs 3
+src/ui/operations/conflict.rs 2
 src/ui/operations/discard.rs 1
 src/ui/operations/force_lease.rs 2
 src/ui/operations/history.rs 4

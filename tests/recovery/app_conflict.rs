@@ -225,3 +225,355 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict D/F disabled while leased → control → exact index/receipt");
 }
+
+/// The #704 dead end, built the way the GUI walks into it: a conflicting
+/// merge, the resolution staged (what Continue does), then the commit panel's
+/// Unstage and Discard all. The repository is left `MERGING` with a clean
+/// index and nothing unmerged — no conflict, no `ConflictView`, and before
+/// this no way out but the CLI.
+fn stuck_merging_fixture() -> tempfile::TempDir {
+    let fixture = content_fixture();
+    let repo = fixture.path();
+    std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
+    git(repo, &["add", "file.txt"]); // Continue stages the resolution
+    git(repo, &["reset", "-q", "--", "file.txt"]); // Unstage
+    git(repo, &["checkout", "--", "file.txt"]); // Discard all
+    assert!(repo.join(".git/MERGE_HEAD").exists());
+    fixture
+}
+
+pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
+    let fixture = stuck_merging_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    // No `detect_conflict_mode` call: the strip comes from the tab's first
+    // accepted read, which is the whole ownership fix.
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict.is_none()),
+        "there is no conflict editor to hang the abort off"
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).view().operation.is_some()),
+        "the read model knows the merge is still in progress"
+    );
+    assert!(
+        e2e::control_bounds(window.window_id(), "operation-strip").is_some(),
+        "the operation strip is on screen from the first frame"
+    );
+    assert!(
+        e2e::control_bounds(window.window_id(), "operation-strip-abort").is_some(),
+        "and it offers the way out"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS operation strip visible at startup on a stuck MERGING repo");
+}
+
+/// #704 review P1: the legacy conflict detector is keyed on the repository
+/// path alone — no `SessionId`, no read revision — so a `Cleared` it observed
+/// before a newer read can marshal back after that read was accepted. While it
+/// was a writer of `Sessions`' conflict observation, that erased the revision
+/// the strip was still showing and turned the next Abort into a
+/// `StaleApproval`: the #704 dead end from the other end.
+pub fn scenario_operation_strip_stale_detector(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e::ConflictDetectOutcome;
+
+    let fixture = stuck_merging_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let observed = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.conflict_state(session).cloned())
+        })
+    };
+    let before = observed(cx).expect("the accepted read gave the owner its observation");
+
+    // A detector job that started before that read now lands.
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("the tab is attached");
+    app.update(cx, |app, cx| {
+        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::Cleared, cx)
+    });
+    app.update(cx, |app, cx| {
+        app.apply_conflict_detect(owner.clone(), ConflictDetectOutcome::OpenFailed, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        observed(cx),
+        Some(before),
+        "a stale detector result must not erase the accepted read's observation"
+    );
+
+    // …and Abort still goes through, which is what the erasure used to break.
+    click_control(cx, window, "operation-strip-abort");
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
+    wait_idle(cx, &app);
+    assert!(
+        !repo.join(".git/MERGE_HEAD").exists(),
+        "Abort admission survived the stale detector"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a stale conflict detector cannot revoke Abort (#704)");
+}
+
+/// #707 re-review P1: a detector payload read at one observation must never be
+/// re-labelled with another's revision.
+///
+/// R1 is read while `file.txt` is still conflicted. The repository then moves
+/// to R2 and that read is accepted. Landing R1 afterwards used to stamp R1's
+/// session and resolution buffer with R2's revision — after which a Save froze
+/// R1's draft under an identity that both `Sessions` and the Backend accept,
+/// and wrote R1's resolution onto R2.
+pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppContext) {
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+
+    // R1: read while the conflict is live.
+    let r1 = e2e::detect_payload_for_test(&repo, "main");
+    let r1_revision = cx
+        .read(|cx| app.read(cx).view().operation.clone())
+        .map(|op| op.revision().clone())
+        .expect("the mounted read observed the merge");
+
+    // R2: the repository moves on and that read is accepted.
+    std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    let r2_revision = cx
+        .read(|cx| app.read(cx).view().operation.clone())
+        .map(|op| op.revision().clone())
+        .expect("still merging");
+    assert_ne!(r1_revision, r2_revision, "precondition: the state moved");
+
+    // R1 lands late.
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("attached");
+    app.update(cx, |app, cx| app.apply_conflict_detect(owner, r1, cx));
+    cx.run_until_parked();
+
+    let mode_revision = cx.read(|cx| {
+        app.read(cx)
+            .conflict
+            .as_ref()
+            .and_then(|view| view.read(cx).mode.as_ref().map(|m| m.revision.clone()))
+    });
+    assert_ne!(
+        mode_revision.as_ref(),
+        Some(&r2_revision),
+        "a stale payload must not be given the accepted read's revision"
+    );
+    let observed = cx.read(|cx| {
+        let app = app.read(cx);
+        app.active_session()
+            .and_then(|session| app.app_sessions.conflict_state(session).cloned())
+    });
+    assert!(
+        matches!(
+            observed,
+            Some(kagi::app::ConflictOwnerState::Observed(ref o)) if o.revision == r2_revision
+        ),
+        "the accepted read stays the authoritative observation: {observed:?}"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a stale detector payload keeps its own revision (#707)");
+}
+
+/// #707 re-review P1: a detector launched for one tab must not land on another,
+/// even when the path is identical — a close and reopen of the same repository
+/// is a new `SessionId` and a new visit.
+pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppContext) {
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let payload = e2e::detect_payload_for_test(&repo, "main");
+
+    // The owner the job would have frozen, had it launched one visit earlier.
+    let stale_owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .map(|mut owner| {
+            owner.visit += 1;
+            owner
+        })
+        .expect("attached");
+
+    assert!(cx.read(|cx| app.read(cx).conflict.is_none()));
+    app.update(cx, |app, cx| {
+        app.apply_conflict_detect(stale_owner, payload, cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict.is_none()),
+        "a payload from another visit must not build this tab's conflict editor"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a detector result for another owner is dropped (#707)");
+}
+
+/// #707 re-review P2: a stale "there is no conflict" answer must not tear down
+/// the projection the accepted read still says exists.
+///
+/// Only `Detected` was compared against the accepted observation, so a late
+/// `Cleared` / `MergeResolvedReady` / `OpenFailed` from the same owner dropped
+/// the live `ConflictView` (and, for `OpenFailed`, the stash identity) and left
+/// nothing until the next reload — with the detector not even re-armed.
+pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e::ConflictDetectOutcome;
+
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let view = cx
+        .read(|cx| app.read(cx).conflict.clone())
+        .expect("the live conflict has an editor");
+    let revision = cx
+        .read(|cx| {
+            view.read(cx)
+                .mode
+                .as_ref()
+                .map(|mode| mode.revision.clone())
+        })
+        .expect("with a revision");
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("attached");
+    let observation = cx
+        .read(|cx| app.read(cx).view().operation.clone())
+        .map(|op| op.observation)
+        .expect("the accepted read says an operation is in progress");
+
+    // `Cleared` / `OpenFailed` carry no observation: they disagree with an
+    // accepted read that says an operation is in progress, full stop. A
+    // `MergeResolvedReady` is stale when its own observation is not the
+    // accepted one.
+    let older = kagi_domain::conflict_family::ConflictObservation {
+        revision: kagi_domain::conflict_family::ConflictRevision::from_fingerprint(
+            "an-older-observation".to_string(),
+        ),
+        ..observation.clone()
+    };
+    for stale in [
+        ConflictDetectOutcome::Cleared,
+        ConflictDetectOutcome::OpenFailed,
+        ConflictDetectOutcome::MergeResolvedReady(older),
+    ] {
+        app.update(cx, |app, cx| {
+            app.conflict_detected_for = Some(repo.clone());
+            app.apply_conflict_detect(owner.clone(), stale, cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.read(|cx| app.read(cx).conflict.is_some()),
+            "a stale no-conflict answer must not drop the editor"
+        );
+        assert_eq!(
+            cx.read(|cx| app.read(cx).conflict.as_ref().and_then(|v| v
+                .read(cx)
+                .mode
+                .as_ref()
+                .map(|m| m.revision.clone()))),
+            Some(revision.clone()),
+            "and must not replace what it shows"
+        );
+        assert!(
+            cx.read(|cx| app.read(cx).conflict_detected_for.is_none()),
+            "dropping a stale outcome re-arms the detector"
+        );
+    }
+
+    // The same `MergeResolvedReady` is applied once the read agrees with it:
+    // the guard is about disagreement, not about the variant.
+    std::fs::write(repo.join("file.txt"), "resolved\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict.is_none()),
+        "an agreeing outcome still applies"
+    );
+    drop(view);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS a stale no-conflict outcome keeps the projection (#707)");
+}
+
+pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
+    let fixture = stuck_merging_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    click_control(cx, window, "operation-strip-abort");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
+        "the first click confirms nothing — it opens the plan"
+    );
+    assert!(repo.join(".git/MERGE_HEAD").exists(), "and mutates nothing");
+    app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
+    wait_idle(cx, &app);
+    assert!(
+        !repo.join(".git/MERGE_HEAD").exists(),
+        "the second stage ends the merge"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("file.txt")).unwrap(),
+        "main\n"
+    );
+    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "merge-abort")
+        .collect();
+    assert_eq!(entries.len(), 1, "the Backend records the abort once");
+    assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    assert!(
+        cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()),
+        "the confirmation closes with the operation it confirmed"
+    );
+    // #704 review P2: an abort saves nothing, so it must not be announced with
+    // the Save family's wording.
+    let toast = cx
+        .read(|cx| {
+            app.read(cx).toast_stack.as_ref().map(|stack| {
+                stack
+                    .read(cx)
+                    .toasts()
+                    .last()
+                    .map(|toast| toast.message.to_string())
+                    .unwrap_or_default()
+            })
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        toast,
+        kagi::ui::i18n::Msg::ConflictAborted.t(),
+        "the success toast names the abort, not a saved resolution"
+    );
+    assert_ne!(toast, kagi::ui::i18n::Msg::EditorSavedResolved.t());
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
+}

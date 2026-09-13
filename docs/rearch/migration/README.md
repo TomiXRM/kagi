@@ -78,8 +78,14 @@ zero-copy tab ownership target.
     boundary while retaining the legacy busy bridge for the other conflict actions;
     exact conflict/buffer revisions and the Backend-owned receipt accompany the
     finite completion evidence.
-  - [ ] **Conflict C2.** Migrate typed Abort flows with progress-aware outcomes,
-    recovery, and Backend-owned recording.
+  - [x] **Conflict C2 — #704.** Abort (including the stash-conflict abort) is a typed
+    conflict-family action: read-model-derived availability, entity-independent
+    admission, progress-aware outcomes with a measured verify, a Backend-owned
+    `ConflictReport`, and `Unknown` → reconcile when the restore started but its
+    result cannot be read back. The in-progress operation is a session-owned read
+    (`TabViewState::operation`) — see the "in-progress operation の所有" note in
+    [ADR-0196](../../adr/0196-operation-lifecycle-contract.md) and the read ownership
+    rule in [ADR-0183](../../adr/0183-session-owned-read-model.md).
   - [ ] **Conflict C3.** Migrate Continue/Skip and reconcile, preserve typed process
     evidence, and remove the remaining direct conflict writers/UI recording.
   - [ ] **#314.** Establish a separate worker proof before any universal dispatch

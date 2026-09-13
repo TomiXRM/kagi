@@ -22,6 +22,7 @@ pub mod commit_list;
 pub mod commit_panel;
 mod commit_panel_render;
 pub mod compare_pane;
+pub mod conflict_abort;
 pub mod conflict_binary_view;
 pub mod conflict_editor;
 pub mod conflict_view;
@@ -75,6 +76,7 @@ mod modal_renderers_plan;
 mod modal_renderers_stash;
 mod modal_shell;
 pub mod modals;
+mod operation_strip;
 mod operations;
 pub mod oplog_panel;
 mod oplog_render;
@@ -1298,8 +1300,8 @@ pub struct KagiApp {
     /// A/B/Result inputs, splits/geometry, and its own `cx.notify()` scope.
     /// Built / dropped by `apply_conflict_detect`; cleared on reload / abort /
     /// tab switch. The per-repo run-once guard (`detected_for`),
-    /// `conflict_merge_pending`, the `conflict_count` badge, and
-    /// `merge_commit_ready` stay on `KagiApp` (separate concerns).
+    /// `conflict_merge_pending` and the `conflict_count` badge stay on
+    /// `KagiApp` (separate concerns).
     pub conflict: Option<Entity<conflict_view::ConflictView>>,
     /// Per-repo run-once guard for conflict detection (was `ConflictState.
     /// detected_for`). Holds the repo path whose conflict state has been detected
@@ -1312,18 +1314,6 @@ pub struct KagiApp {
     /// watcher) — kept off `ConflictState` so the upcoming `ConflictView` entity
     /// flip never has to be leased just to test the gate (ADR-0118 Mechanism B).
     pub conflict_merge_pending: bool,
-    /// #309 one-shot: after a stash-conflict Continue stages the resolution, the
-    /// kept stash's index to offer for dropping. Set before `reload`; consumed
-    /// (via `take`) at the END of the reload apply, so the drop-confirm modal is
-    /// opened AFTER reload's `clear_*_modal()` sweep instead of being wiped by it.
-    /// Set by `detect_conflict_mode` when the in-progress operation is a **merge**
-    /// whose conflicts are all resolved (MERGE_HEAD present, no remaining unmerged
-    /// index entries).  This is the "ready to create the merge commit" state — the
-    /// app shows the commit panel, not an empty Conflict Mode editor.  Used by
-    /// `reload` to keep the merge commit panel alive across the FS-watcher reload
-    /// that the resolution staging itself triggers (otherwise the panel would be
-    /// torn down and re-replaced by an empty conflict view).
-    pub merge_commit_ready: bool,
     /// Auto-update (ADR-0082): the offered update + its source release, set by the
     /// startup background check when a newer stable release exists for this
     /// platform. `None` = up to date / not yet checked / skipped.
@@ -1596,7 +1586,6 @@ impl KagiApp {
             conflict: None,
             conflict_detected_for: None,
             conflict_merge_pending: false,
-            merge_commit_ready: false,
             update_available: None,
             update_checked: false,
             update_modal_open: false,
@@ -1718,6 +1707,9 @@ impl KagiApp {
             return;
         }
         self.conflict_detected_for = Some(repo_path.clone());
+        let Some(owner) = self.detect_owner() else {
+            return;
+        };
 
         // Snapshot the preservation inputs the I/O step needs (prev selection /
         // editing index), then run the read-only Git/index/file I/O synchronously.
@@ -1744,7 +1736,7 @@ impl KagiApp {
             prev_editing_path,
             current_branch,
         );
-        self.apply_conflict_detect(outcome, cx);
+        self.apply_conflict_detect(owner, outcome, cx);
     }
 
     /// T-PERF-RENDER-001: async sibling of [`detect_conflict_mode`].
@@ -1770,6 +1762,9 @@ impl KagiApp {
             return;
         }
         self.conflict_detected_for = Some(repo_path.clone());
+        let Some(owner) = self.detect_owner() else {
+            return;
+        };
 
         // Issue #285: capture the previously-selected/editing files by PATH, not
         // index — a per-file Save re-sorts `session.files`, so a stored index
@@ -1789,10 +1784,6 @@ impl KagiApp {
             .unwrap_or((None, None));
         let current_branch = self.view().status_summary.branch.clone();
 
-        // codex Q5: capture the repo path the task ran against so a repo switch
-        // mid-task discards the stale result at apply time (the `detected_for`
-        // guard alone is insufficient — the guard is set for the NEW repo too).
-        let task_repo = repo_path.clone();
         let task = cx.background_spawn(async move {
             Self::detect_conflict_payload(
                 &repo_path,
@@ -1804,12 +1795,10 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
-                // Repo-match check: drop the result if the repo switched while the
-                // read-only I/O was in flight.
-                if app.repo_path.as_deref() != Some(task_repo.as_path()) {
-                    return;
-                }
-                app.apply_conflict_detect(outcome, cx);
+                // The frozen `Attachment` subsumes the old repo-path guard (codex
+                // Q5): it carries path, SessionId and visit, so a repo switch,
+                // a tab switch and a same-path reopen are all told apart.
+                app.apply_conflict_detect(owner, outcome, cx);
                 cx.notify();
             });
         })
@@ -3275,6 +3264,7 @@ impl KagiApp {
             M::BranchCleanup(_) => self.confirm_branch_cleanup(cx),
             M::Discard(_) => self.start_discard(cx),
             M::ConflictContinue(_) => self.confirm_conflict_continue(cx),
+            M::ConflictAbort(_) => self.confirm_conflict_abort(cx),
             M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
             M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
             M::EditorDeleteConfirm(_) => self.confirm_editor_delete(cx),
@@ -3364,6 +3354,7 @@ impl KagiApp {
             M::BranchCleanup(_) => self.cancel_branch_cleanup_modal(),
             M::Discard(_) => self.cancel_discard_modal(),
             M::ConflictContinue(_) => self.cancel_conflict_continue(),
+            M::ConflictAbort(_) => self.cancel_conflict_abort(),
             M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
             M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),
             M::EditorDeleteConfirm(_) => self.cancel_editor_delete_confirm(),

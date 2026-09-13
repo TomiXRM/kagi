@@ -6,12 +6,17 @@
 //! preserving: `clear_X` only clears when X is the active modal, matching
 //! the old `self.X = None` semantics.
 
+// #707 review: accessors live here, never in the feature modules that open a
+// modal. Split by feature as this file hits its LOC ceiling, not by relocating
+// them somewhere `active_modal` gets touched directly.
+mod conflict;
+mod editor;
+
 use super::super::modals::ActiveModal;
 use super::super::modals::{
     AmendPlanModal, BranchCleanupModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal,
-    ConflictContinuePlanModal, CreateBranchModal, CreateTagModal, CreateWorktreeModal,
-    DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal, EditorDeleteConfirmModal,
-    EditorDirtyGuardModal, EditorFsPromptModal, ForceLeasePushModal, HistoryPlanModal,
+    CreateBranchModal, CreateTagModal, CreateWorktreeModal, DeleteBranchModal,
+    DeleteRemoteBranchModal, DiscardModal, ForceLeasePushModal, HistoryPlanModal,
     LockWorktreeModal, MergePlanModal, PopPlanModal, PrMergeModal, PruneWorktreesModal,
     PullPlanModal, PushPlanModal, PushTagModal, RebaseCurrentOntoModal, RemoveWorktreeModal,
     RenameBranchModal, RepairWorktreesModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
@@ -764,88 +769,6 @@ impl KagiApp {
     #[inline]
     pub fn clear_discard_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::Discard(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn editor_dirty_guard_modal(&self) -> Option<&EditorDirtyGuardModal> {
-        match &self.active_modal {
-            Some(ActiveModal::EditorDirtyGuard(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_editor_dirty_guard_modal(&mut self, m: EditorDirtyGuardModal) {
-        self.active_modal = Some(ActiveModal::EditorDirtyGuard(m));
-    }
-    #[inline]
-    pub fn clear_editor_dirty_guard_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::EditorDirtyGuard(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn conflict_continue_modal(&self) -> Option<&ConflictContinuePlanModal> {
-        match &self.active_modal {
-            Some(ActiveModal::ConflictContinue(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn conflict_continue_modal_mut(&mut self) -> Option<&mut ConflictContinuePlanModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::ConflictContinue(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_conflict_continue_modal(&mut self, m: ConflictContinuePlanModal) {
-        self.active_modal = Some(ActiveModal::ConflictContinue(m));
-    }
-    #[inline]
-    pub fn clear_conflict_continue_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::ConflictContinue(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn editor_fs_prompt_modal(&self) -> Option<&EditorFsPromptModal> {
-        match &self.active_modal {
-            Some(ActiveModal::EditorFsPrompt(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn editor_fs_prompt_modal_mut(&mut self) -> Option<&mut EditorFsPromptModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::EditorFsPrompt(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_editor_fs_prompt_modal(&mut self, m: EditorFsPromptModal) {
-        self.active_modal = Some(ActiveModal::EditorFsPrompt(m));
-    }
-    #[inline]
-    pub fn clear_editor_fs_prompt_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::EditorFsPrompt(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn editor_delete_confirm_modal(&self) -> Option<&EditorDeleteConfirmModal> {
-        match &self.active_modal {
-            Some(ActiveModal::EditorDeleteConfirm(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_editor_delete_confirm_modal(&mut self, m: EditorDeleteConfirmModal) {
-        self.active_modal = Some(ActiveModal::EditorDeleteConfirm(m));
-    }
-    #[inline]
-    pub fn clear_editor_delete_confirm_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::EditorDeleteConfirm(_))) {
             self.active_modal = None;
         }
     }

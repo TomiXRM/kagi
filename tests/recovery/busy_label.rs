@@ -486,6 +486,10 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
         assert!(app.fetch_in_flight.is_none());
         assert!(!app.app_sessions.has_leases());
     });
+    app.update(cx, |app, _| {
+        app.status_footer =
+            kagi::ui::FooterStatus::Busy(gpui::SharedString::from("Planning merge…"));
+    });
     app.update(cx, |app, cx| app.open_remote_browse(cx));
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
@@ -517,6 +521,10 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
             "merge-plan-not-queued: the raw plan must be discarded on contention"
         );
         assert_eq!(state.planning, None, "the planning latch must be released");
+        assert!(
+            !matches!(state.status_footer, kagi::ui::FooterStatus::Busy(_)),
+            "merge-plan-terminates-footer: discarding a contended plan must end its Busy footer"
+        );
         assert!(
             !matches!(
                 state.app_sessions.plan_state(),

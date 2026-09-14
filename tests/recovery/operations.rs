@@ -574,6 +574,13 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
             "do not retry the deleted batch"
         );
         assert!(matches!(&app.status_footer, FooterStatus::Failed(_)));
+        let notice = app
+            .app_notice()
+            .expect("partial outcome must remain visible as a queued notice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "partial-notice-has-no-reconcile-action: Partial does not register reconciliation"
+        );
         assert!(app.bottom_panel_open);
         assert_eq!(app.bottom_tab, kagi::ui::BottomTab::OperationLog);
         let panel = app.op_log.as_ref().unwrap().read(cx);

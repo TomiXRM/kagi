@@ -206,15 +206,14 @@ impl KagiApp {
             let _ = this.update(acx, move |app, cx| {
                 if app.planning == Some(tag) {
                     app.planning = None;
+                    app.status_footer = FooterStatus::Idle(SharedString::from(""));
                 }
                 let current = app.active_session() == owner
                     && owner.and_then(|session| app.app_sessions.visit(session)) == visit;
                 match result {
                     Some(result) if current => match on_done(result) {
                         modal_state::PlanningPresentation::Offer(offer) => {
-                            if app.offer_plan_from_async(*offer) {
-                                app.status_footer = FooterStatus::Idle(SharedString::from(""));
-                            }
+                            app.offer_plan_from_async(*offer);
                         }
                         modal_state::PlanningPresentation::Failed { operation, error } => {
                             app.report_plan_failure(operation, error);
@@ -523,7 +522,7 @@ impl KagiApp {
                     entry.op,
                     crate::ui::oplog_panel::outcome_summary(&entry.outcome)
                 ),
-                Some(id),
+                self.app_sessions.needs_reconcile(id).then_some(id),
             ),
             OpOutcome::Failed { .. } | OpOutcome::Refused { .. } => (
                 override_message

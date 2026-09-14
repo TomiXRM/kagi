@@ -540,10 +540,6 @@ impl KagiApp {
             EditorPendingIntent::Close => {
                 self.close_editor_workspace();
             }
-            EditorPendingIntent::SwitchRepo(path) => {
-                self.close_editor_workspace();
-                self.switch_repo_by_path(&path, cx);
-            }
             EditorPendingIntent::MergeInWorktree {
                 source,
                 target,

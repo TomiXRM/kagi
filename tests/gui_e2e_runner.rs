@@ -827,6 +827,10 @@ mod macos {
                 ),
             ),
             (
+                "conflict_deferred_action_owner",
+                Box::new(crate::app_conflict::scenario_conflict_deferred_action_owner),
+            ),
+            (
                 "conflict_detect_wrong_owner_is_dropped",
                 Box::new(crate::app_conflict::scenario_conflict_detect_wrong_owner_is_dropped),
             ),
@@ -911,6 +915,10 @@ mod macos {
             (
                 "retained_pane_resources",
                 Box::new(crate::pane_resources::scenario_retained_pane_resources),
+            ),
+            (
+                "commit_stage_deferred_owner",
+                Box::new(crate::pane_resources::scenario_commit_stage_deferred_owner),
             ),
             (
                 "read_cache_revalidates_on_activation",
@@ -1885,7 +1893,9 @@ mod macos {
             "fixture: the worktree starts with one untracked file"
         );
 
-        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fp,
@@ -1904,7 +1914,9 @@ mod macos {
             "the worktree's WIP row counts must follow the stage"
         );
 
-        kagi.update(cx, |app, cx| app.do_unstage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_unstage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fingerprint(&wt_path),
@@ -1923,14 +1935,18 @@ mod macos {
         );
 
         // Per-file, by the same panel index the row's button carries.
-        kagi.update(cx, |app, cx| app.do_stage_file(0, cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_file(app.active_session().unwrap(), 0, cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fingerprint(&wt_path).1,
             "A  dirty.txt\n",
             "stage(0) from a worktree panel must stage in the WORKTREE"
         );
-        kagi.update(cx, |app, cx| app.do_unstage_file(0, cx));
+        kagi.update(cx, |app, cx| {
+            app.do_unstage_file(app.active_session().unwrap(), 0, cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fingerprint(&wt_path),
@@ -1949,8 +1965,9 @@ mod macos {
         // still a pure read — `plan → confirm → …` means nothing has happened
         // until the second click, in either repository.
         kagi.update(cx, |app, cx| {
-            app.commit_panel_amend(cx);
-            app.open_discard_all_modal(cx);
+            let owner = app.active_session().unwrap();
+            app.commit_panel_amend(owner, cx);
+            app.open_discard_all_modal(owner, cx);
         });
         cx.run_until_parked();
         assert_eq!(
@@ -2009,7 +2026,9 @@ mod macos {
             !cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
             "the open repo's own panel must NOT be treated as foreign"
         );
-        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         let staged_fp = repo_fingerprint(&repo_path);
         assert_ne!(
@@ -2105,7 +2124,7 @@ mod macos {
             "the panel must be marked foreign for the write ops to resolve it"
         );
         kagi.update(cx, |app, cx| {
-            app.do_stage_all(cx);
+            app.do_stage_all(app.active_session().unwrap(), cx);
             e2e::set_commit_message(app, "wt-a: from the worktree panel", cx);
         });
         cx.run_until_parked();
@@ -2116,7 +2135,9 @@ mod macos {
         );
 
         // The Commit button's path: plan, then (no blockers) commit.
-        kagi.update(cx, |app, cx| app.open_commit_plan_modal(cx));
+        kagi.update(cx, |app, cx| {
+            app.open_commit_plan_modal(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
 
         // ── The worktree moved; nothing else did ────────────────────────────
@@ -2281,10 +2302,14 @@ mod macos {
             cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
             "the panel must be marked foreign for the write ops to resolve it"
         );
-        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
 
-        kagi.update(cx, |app, cx| app.commit_panel_amend(cx));
+        kagi.update(cx, |app, cx| {
+            app.commit_panel_amend(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             head_before,
@@ -2365,7 +2390,9 @@ mod macos {
             "fixture: worktree A must have exactly one unstaged modification to discard"
         );
 
-        kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+        kagi.update(cx, |app, cx| {
+            app.open_discard_all_modal(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         kagi.update(cx, |app, cx| app.start_discard(cx));
         assert_eq!(
@@ -2539,7 +2566,9 @@ mod macos {
             e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
         });
         cx.run_until_parked();
-        kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+        kagi.update(cx, |app, cx| {
+            app.open_discard_all_modal(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
         kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
@@ -2583,7 +2612,9 @@ mod macos {
                 e2e::open_worktree_panel_no_inputs(app, wt_a.clone(), "wt-a", index, cx)
             });
             cx.run_until_parked();
-            kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+            kagi.update(cx, |app, cx| {
+                app.open_discard_all_modal(app.active_session().unwrap(), cx)
+            });
             cx.run_until_parked();
             let log_dir = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
             let log_path = log_dir.join("operations.jsonl");

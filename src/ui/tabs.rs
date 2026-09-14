@@ -177,10 +177,9 @@ impl KagiApp {
         if index == self.active_tab && self.live_tab_path().as_ref() == Some(&tab.path) {
             return;
         }
-        if self.editor_workspace_any_dirty(cx) {
-            self.open_editor_dirty_guard(EditorPendingIntent::SwitchRepo(tab.path.clone()), cx);
-            return;
-        }
+        // ADR-0197 決定 3: a plain tab switch retains the departing owner's
+        // editor and its unsaved buffer, so it must not be gated on dirtiness.
+        // The dirty guard stays only on owner-destroying paths (close / reopen).
         self.depart_active_tab();
         self.active_tab = index;
         self.error = None;
@@ -318,7 +317,9 @@ impl KagiApp {
         // `arm_watcher` returns early.
         self.depart_active_tab();
         self.repo_path = None;
-        self.ui_mut().repo_session = None;
+        // No repo_session write here (P1-a): the departing local owner keeps its
+        // retained session, the remote owner attached below has none by default,
+        // and ui_mut() would panic when Connect Remote runs from Welcome.
         self.reset_per_repo_ui();
 
         // #482 stage 2: build the read model first, but publish it only once the
@@ -595,12 +596,6 @@ impl KagiApp {
             }
             // The active tab itself is gone: really switch to the neighbour.
             crate::app::TabClose::Activate(new_active) => self.switch_repo(new_active, cx),
-        }
-    }
-
-    pub(crate) fn switch_repo_by_path(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if let Some(index) = self.tabs.iter().position(|t| t.path == path) {
-            self.switch_repo(index, cx);
         }
     }
 

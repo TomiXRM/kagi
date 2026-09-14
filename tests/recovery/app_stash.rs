@@ -328,7 +328,11 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
                         .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
                         .unwrap();
                 });
-                app.conflict_continue(window, cx);
+                let owner = app
+                    .active_session()
+                    .and_then(|session| app.app_sessions.attachment(session))
+                    .expect("continue owner");
+                app.conflict_continue(owner, window, cx);
             });
         })
         .unwrap();
@@ -386,7 +390,11 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
                     .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
                     .unwrap();
             });
-            app.conflict_continue(window, cx);
+            let owner = app
+                .active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+                .expect("continue owner");
+            app.conflict_continue(owner, window, cx);
             app.close_tab(0, cx);
         });
     })
@@ -492,7 +500,11 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
                     .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
                     .unwrap();
             });
-            app.conflict_continue(window, cx);
+            let owner = app
+                .active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+                .expect("continue owner");
+            app.conflict_continue(owner, window, cx);
         });
     })
     .unwrap();

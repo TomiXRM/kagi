@@ -10,6 +10,29 @@
 use crate::{app, ui::*};
 
 impl KagiApp {
+    /// A deferred conflict action (button → next tick via `spawn_in`) must be
+    /// dropped when its frozen owner is no longer the exact attachment on
+    /// screen: it would otherwise plan or execute against whatever conflict the
+    /// now-active tab has (ADR-0197 決定 5 / #722 P1-b). Callbacks capture the
+    /// owner at the click and pass it here rather than re-resolving from active.
+    pub(crate) fn conflict_action_owner_on_screen(&self, owner: &crate::app::Attachment) -> bool {
+        self.active_session() == Some(owner.session)
+            && self.app_sessions.attachment(owner.session).as_ref() == Some(owner)
+    }
+
+    /// Marshal a toast from a retained conflict pane, but only while its frozen
+    /// owner is the tab on screen (a background pane's toast must not surface).
+    pub(crate) fn push_conflict_owner_toast(
+        &mut self,
+        owner: &crate::app::Attachment,
+        kind: ToastKind,
+        msg: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conflict_action_owner_on_screen(owner) {
+            self.push_toast(kind, SharedString::from(msg), cx);
+        }
+    }
     /// ADR-0118 / T-ENTITY-CONFLICT-001: read a clone of the active
     /// [`ConflictMode`] out of the `Entity<ConflictView>`, or `None` when there
     /// is no conflict. Safe to call from `KagiApp` listeners / deferred parent
@@ -153,7 +176,15 @@ impl KagiApp {
     /// - **rebase / cherry-pick / revert** → open the `<op> --continue`
     ///   confirmation modal (`conflict_continue_modal`); the sequencer runs only
     ///   when the user confirms (`confirm_conflict_continue`).
-    pub fn conflict_continue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn conflict_continue(
+        &mut self,
+        owner: crate::app::Attachment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }

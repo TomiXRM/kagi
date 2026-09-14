@@ -632,8 +632,6 @@ pub enum EditorPendingIntent {
     CloseTab(std::path::PathBuf),
     /// Close the Editor Workspace (← Graph, toolbar, Cmd-Shift-E).
     Close,
-    /// Switch repository tabs after discarding the whole editor workspace.
-    SwitchRepo(std::path::PathBuf),
     /// Open another worktree and plan its HEAD merge after discarding the
     /// originating editor workspace.
     MergeInWorktree {

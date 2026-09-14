@@ -160,7 +160,10 @@ impl KagiApp {
     /// #476 slice 3: plans against the PANEL's repository (`ADR-0107`'s per-tab
     /// `RepoSession` for the tab's own panel, a short-lived `Backend` for a
     /// linked worktree's) — see `with_commit_panel_repo`.
-    pub fn open_discard_all_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_discard_all_modal(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
+        if self.active_session() != Some(owner) {
+            return;
+        }
         let (eligible, skipped) = self.discard_partition(cx);
         let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&eligible)) {
             Some(p) => p,

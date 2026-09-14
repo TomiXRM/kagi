@@ -270,3 +270,78 @@ pub fn scenario_retained_pane_resources(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS retained_pane_resources");
 }
+
+/// `git diff --cached` file count for `repo` — the authoritative index state,
+/// independent of any panel's in-memory view.
+fn staged_count(repo: &Path) -> usize {
+    let out = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(["diff", "--cached", "--name-only"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git diff --cached");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .count()
+}
+
+/// #722 P1-c: a Commit Panel's Stage/Unstage is deferred to the next tick
+/// (`spawn_in`). If the user switches tabs before it runs, the owner frozen at
+/// the click must keep it from writing the index of the tab now on screen
+/// (ADR-0197 決定 5). `do_stage_file` now takes `owner: SessionId`, so a callback
+/// that omits it cannot compile.
+pub fn scenario_commit_stage_deferred_owner(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_fixture(&root, "stage-a");
+    let repo_b = build_fixture(&root, "stage-b");
+    // Both repos carry an unstaged change so each panel lists a stageable file.
+    std::fs::write(repo_a.join("f.txt"), "stage-a second\nstage-a unstaged\n").unwrap();
+    std::fs::write(repo_b.join("f.txt"), "stage-b second\nstage-b unstaged\n").unwrap();
+
+    let (app, window) = mount(cx, &repo_a);
+    cx.run_until_parked();
+    let owner_a = app.update(cx, |state, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(state, repo_a.clone(), cx);
+        state.active_session().expect("A owner")
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .ui()
+            .commit_panel
+            .as_ref()
+            .is_some_and(|panel| { !panel.read(cx).state.unstaged.is_empty() })),
+        "precondition: A's panel lists an unstaged file"
+    );
+
+    let owner_b = app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open B");
+        kagi::ui::e2e::open_local_panel_no_inputs(state, repo_b.clone(), cx);
+        state.active_session().expect("B owner")
+    });
+    cx.run_until_parked();
+    assert_eq!(staged_count(&repo_a), 0, "A index clean before");
+    assert_eq!(staged_count(&repo_b), 0, "B index clean before");
+
+    // A's deferred Stage lands after the switch to B.
+    app.update(cx, |state, cx| state.do_stage_file(owner_a, 0, cx));
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(app.read(cx).active_session(), Some(owner_b)));
+    assert_eq!(
+        staged_count(&repo_b),
+        0,
+        "stage-deferred-owner: A's Stage wrote B's index"
+    );
+    assert_eq!(
+        staged_count(&repo_a),
+        0,
+        "stage-deferred-owner: A's Stage ran even though A was in the background"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS commit_stage_deferred_owner");
+}

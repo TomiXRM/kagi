@@ -704,7 +704,11 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     // and nothing may reach the family while it does.
     app.update(cx, |app, cx| {
         app.planning = Some("merge-plan");
-        app.open_conflict_abort_modal(cx);
+        let owner = app
+            .active_session()
+            .and_then(|session| app.app_sessions.attachment(session))
+            .expect("abort owner");
+        app.open_conflict_abort_modal(owner, cx);
         assert!(
             app.conflict_abort_modal().is_none(),
             "a plan in flight must refuse the abort confirmation (#283)"
@@ -766,4 +770,77 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     assert_ne!(toast, kagi::ui::i18n::Msg::EditorSavedResolved.t());
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
+}
+
+/// #722 P1-b: a Conflict pane's Abort and two-stage Skip are deferred to the
+/// next tick (`spawn_in`). If the user switches tabs before the task runs, the
+/// owner frozen at the click must keep it from opening a modal or planning
+/// against the tab now on screen (ADR-0197 決定 5). Continue already carried the
+/// owner; this proves Abort and Skip do too — the methods now take
+/// `owner: Attachment`, so a callback that omits it cannot compile.
+pub fn scenario_conflict_deferred_action_owner(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = content_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let owner_a = cx.read(|cx| {
+        let state = app.read(cx);
+        state
+            .active_session()
+            .and_then(|session| state.app_sessions.attachment(session))
+            .expect("A owner")
+    });
+
+    let owner_b = app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        app.active_session().expect("B owner")
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "precondition: B is in conflict"
+    );
+    app.update(cx, |app, _| {
+        app.status_footer = kagi::ui::FooterStatus::Idle(SharedString::from("B deferred sentinel"));
+    });
+
+    // A's deferred Abort lands after the switch to B.
+    app.update(cx, |app, cx| {
+        app.open_conflict_abort_modal(owner_a.clone(), cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.active_session(), Some(owner_b));
+        assert!(
+            state.conflict_abort_modal().is_none(),
+            "abort-deferred-owner: A's Abort opened a modal on B",
+        );
+    });
+
+    // A's deferred Skip lands after the switch to B.
+    app.update(cx, |app, cx| app.conflict_skip(owner_a.clone(), cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            matches!(
+                &state.status_footer,
+                kagi::ui::FooterStatus::Idle(text) if text.as_ref() == "B deferred sentinel"
+            ),
+            "skip-deferred-owner: A's Skip acted on B (footer changed)",
+        );
+        assert!(
+            !kagi::ui::e2e::active_modal_present(state),
+            "skip-deferred-owner: A's Skip opened a modal on B",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_deferred_action_owner");
 }

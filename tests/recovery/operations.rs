@@ -1135,7 +1135,7 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
             .spawn(async { Some(("generated for A".to_string(), true)) }),
     );
     cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| app.smart_generate(window, cx));
+        app.update(cx, |app, cx| app.smart_generate(session_a, window, cx));
     })
     .expect("start A generation");
     assert!(
@@ -1183,7 +1183,7 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
             .spawn(async { Some(("detached result".to_string(), true)) }),
     );
     cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| app.smart_generate(window, cx));
+        app.update(cx, |app, cx| app.smart_generate(session_a, window, cx));
     })
     .expect("start detached generation");
     app.update(cx, |app, cx| {
@@ -2327,10 +2327,10 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
             app.update(cx, |app, cx| match (stage, entry) {
                 (true, "editor") => app.do_stage_file_by_path("f.txt".into(), cx),
                 (false, "editor") => app.do_unstage_file_by_path("f.txt".into(), cx),
-                (true, "batch") => app.do_stage_all(cx),
-                (false, "batch") => app.do_unstage_all(cx),
-                (true, _) => app.do_stage_file(0, cx),
-                (false, _) => app.do_unstage_file(0, cx),
+                (true, "batch") => app.do_stage_all(app.active_session().unwrap(), cx),
+                (false, "batch") => app.do_unstage_all(app.active_session().unwrap(), cx),
+                (true, _) => app.do_stage_file(app.active_session().unwrap(), 0, cx),
+                (false, _) => app.do_unstage_file(app.active_session().unwrap(), 0, cx),
             });
             wait_idle(cx, &app);
             cx.read(|cx| {

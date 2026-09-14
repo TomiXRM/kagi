@@ -9,6 +9,7 @@ pub mod branch;
 pub mod checkout;
 pub mod cherry_revert;
 pub mod commit;
+mod commit_stage;
 pub mod conflict;
 pub mod conflict_detect;
 mod conflict_skip;

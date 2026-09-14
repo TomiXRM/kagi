@@ -6,7 +6,10 @@ impl KagiApp {
     /// Skip the current sequencer step (rebase / cherry-pick / revert) through
     /// the plan pipeline (T-042, ADR-0067): `plan_conflict_skip` → execute →
     /// oplog → re-detect. Merge has no skip.
-    pub fn conflict_skip(&mut self, cx: &mut Context<Self>) {
+    pub fn conflict_skip(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }

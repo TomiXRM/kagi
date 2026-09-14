@@ -377,7 +377,15 @@ impl KagiApp {
     /// ADR-0134: this used to refuse when the message was non-empty. Clicking ✨
     /// is an explicit request — silently keeping the old text and reporting
     /// "message not empty" read as the button being broken (user report).
-    pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn smart_suggest(
+        &mut self,
+        owner: crate::app::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != Some(owner) {
+            return;
+        }
         // #476: the draft describes what is staged in the PANEL's repository.
         // (ADR-0107: the tab's own panel still borrows the per-tab RepoSession
         // rather than re-opening — that is what `with_commit_panel_repo` does.)
@@ -410,10 +418,18 @@ impl KagiApp {
     /// first.  Only when all gates are cleared is the staged diff collected and
     /// sent to loopback Ollama (in the background, with a timeout).  Any failure
     /// falls back **quietly** to the rule-based draft.
-    pub fn smart_generate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn smart_generate(
+        &mut self,
+        owner: crate::app::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != Some(owner) {
+            return;
+        }
         if message_gen::offline() {
             // Offline → straight to rule-based, no modal.
-            self.smart_suggest(window, cx);
+            self.smart_suggest(owner, window, cx);
             return;
         }
         // Gate 1: first-time consent.
@@ -615,107 +631,15 @@ impl KagiApp {
     /// Stage a single file in the commit panel.
     ///
     /// Calls `stage_file` from T024 and then refreshes the staging status.
-    /// Stage every non-conflicted unstaged file (T-UI-002: Stage all).
-    pub fn do_stage_all(&mut self, cx: &mut Context<Self>) {
-        // #476: stage into the PANEL's repository — a linked worktree's, when
-        // the panel shows one — never the tab's.
-        let repo_path = match self.commit_panel_repo_path(cx) {
-            Some(p) => p,
-            None => return,
-        };
-        let paths: Vec<std::path::PathBuf> = match self.ui().commit_panel.as_ref() {
-            Some(e) => {
-                let p = &e.read(cx).state;
-                p.unstaged
-                    .iter()
-                    .filter(|f| !p.is_conflicted(&f.path))
-                    .map(|f| f.path.clone())
-                    .collect()
-            }
-            None => return,
-        };
-        if paths.is_empty() {
+    pub fn do_stage_file(
+        &mut self,
+        owner: crate::app::SessionId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != Some(owner) {
             return;
         }
-        let Some(lease) = self.reserve_stage_write(StageAction::StageAll, &repo_path, &paths, cx)
-        else {
-            return;
-        };
-        let result =
-            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.stage_files(&paths)));
-        self.refresh_write_busy();
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => {
-                self.stage_failure(StageAction::StageAll, &repo_path, &paths, &e, cx);
-                return;
-            }
-        };
-        match result {
-            Ok(n) => {
-                klog!("staged-all: {} file(s)", n);
-                if let Some(entity) = self.ui().commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
-                }
-                self.refresh_wip_diffstat();
-                self.refresh_worktree_wip_row(&repo_path);
-            }
-            Err(e) => {
-                self.stage_failure(StageAction::StageAll, &repo_path, &paths, &e, cx);
-            }
-        }
-    }
-
-    /// Unstage every staged file (T-UI-002: Unstage all).
-    pub fn do_unstage_all(&mut self, cx: &mut Context<Self>) {
-        // #476: unstage in the PANEL's repository, never the tab's.
-        let repo_path = match self.commit_panel_repo_path(cx) {
-            Some(p) => p,
-            None => return,
-        };
-        let paths: Vec<std::path::PathBuf> = match self.ui().commit_panel.as_ref() {
-            Some(e) => e
-                .read(cx)
-                .state
-                .staged
-                .iter()
-                .map(|f| f.path.clone())
-                .collect(),
-            None => return,
-        };
-        if paths.is_empty() {
-            return;
-        }
-        let Some(lease) = self.reserve_stage_write(StageAction::UnstageAll, &repo_path, &paths, cx)
-        else {
-            return;
-        };
-        let result =
-            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.unstage_files(&paths)));
-        self.refresh_write_busy();
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => {
-                self.stage_failure(StageAction::UnstageAll, &repo_path, &paths, &e, cx);
-                return;
-            }
-        };
-        match result {
-            Ok(n) => {
-                klog!("unstaged-all: {} file(s)", n);
-                if let Some(entity) = self.ui().commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
-                }
-                self.refresh_wip_diffstat();
-                self.refresh_worktree_wip_row(&repo_path);
-            }
-            Err(e) => {
-                self.stage_failure(StageAction::UnstageAll, &repo_path, &paths, &e, cx);
-            }
-        }
-    }
-
-    pub fn do_stage_file(&mut self, index: usize, cx: &mut Context<Self>) {
         // #476: stage into the PANEL's repository, never the tab's.
         let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
@@ -784,7 +708,15 @@ impl KagiApp {
     /// Unstage a single file in the commit panel.
     ///
     /// Calls `unstage_file` from T024 and then refreshes the staging status.
-    pub fn do_unstage_file(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn do_unstage_file(
+        &mut self,
+        owner: crate::app::SessionId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != Some(owner) {
+            return;
+        }
         // #476: unstage in the PANEL's repository, never the tab's.
         let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
@@ -973,9 +905,13 @@ impl KagiApp {
     /// T-UI-003: Select a file in the commit panel and open it in the main diff pane.
     pub fn select_commit_panel_file(
         &mut self,
+        owner: crate::app::SessionId,
         file_ref: CommitPanelFileRef,
         cx: &mut Context<Self>,
     ) {
+        if self.active_session() != Some(owner) {
+            return;
+        }
         self.open_main_diff_wip(file_ref, cx);
     }
 
@@ -984,7 +920,10 @@ impl KagiApp {
     /// Uses `plan_commit` from T024.
     /// T026: reads message from InputState if available, else falls back to commit_panel.commit_msg
     /// (used by the headless KAGI_COMMIT_MSG path).
-    pub fn open_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_commit_plan_modal(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
+        if self.active_session() != Some(owner) {
+            return;
+        }
         // #476: plan against the PANEL's repository — a linked worktree's, when
         // the panel shows one — never the tab's.
         if self.commit_panel_repo_path(cx).is_none() {
@@ -1258,7 +1197,10 @@ impl KagiApp {
     /// (which reads `commit_panel` again — safe here on the parent).
     /// #476 slice 3: reads the PANEL's staged set, so a linked worktree's panel
     /// picks its mode from that worktree's index and plans against it.
-    pub fn commit_panel_amend(&mut self, cx: &mut Context<Self>) {
+    pub fn commit_panel_amend(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
+        if self.active_session() != Some(owner) {
+            return;
+        }
         let staged = self
             .ui()
             .commit_panel

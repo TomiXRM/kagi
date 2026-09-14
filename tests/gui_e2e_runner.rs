@@ -943,6 +943,10 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_close_last_tab_welcome_renders),
             ),
             (
+                "remote_connect_keeps_dirty_editor",
+                Box::new(crate::pane_resources::scenario_remote_connect_keeps_dirty_editor),
+            ),
+            (
                 "commit_panel_revalidates_on_activation",
                 Box::new(crate::pane_resources::scenario_commit_panel_revalidates_on_activation),
             ),

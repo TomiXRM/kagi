@@ -1,7 +1,7 @@
 //! ADR-0197 S5: retained pane/resource ownership on real GPUI entities.
 
 use crate::macos::{git, mount, unmount};
-use gpui::{SharedString, VisualTestAppContext};
+use gpui::{Focusable, SharedString, VisualTestAppContext};
 use std::path::{Path, PathBuf};
 
 fn build_fixture(root: &Path, name: &str) -> PathBuf {
@@ -585,4 +585,118 @@ pub fn scenario_close_last_tab_welcome_renders(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS close_last_tab_welcome_renders");
+}
+
+/// #722 P2 (round 3): **Connect Remote must not discard an unsaved buffer.**
+///
+/// `enter_remote_view` keeps the local session attached and merely moves to
+/// another tab, so it is not a path that destroys the editor's owner. It used
+/// to open the dirty guard anyway, whose `EnterRemoteView` arm then called
+/// `close_editor_workspace()` — leaving the user with "abandon the connection"
+/// or "throw away the edit" as the only two choices.
+pub fn scenario_remote_connect_keeps_dirty_editor(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo = build_fixture(&root, "remote-dirty");
+    let (app, window) = mount(cx, &repo);
+    let local = cx.read(|cx| app.read(cx).active_session().expect("local owner"));
+
+    // A dirty editor buffer on the local tab.
+    app.update(cx, |state, cx| state.open_editor_workspace(cx));
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .expect("editor workspace");
+    let target = PathBuf::from("f.txt");
+    editor.update(cx, |view, cx| view.open_tab(target.clone(), cx));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        draw_frame(cx, window);
+        if cx.read(|cx| {
+            let v = editor.read(cx);
+            v.open_path.as_deref() == Some(target.as_path()) && v.editor.is_some()
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "f.txt did not load");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    cx.update_window(window, |_, window, cx| {
+        let input = editor.read(cx).editor.clone().unwrap();
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "x");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| editor.read(cx).dirty),
+        "precondition: the local editor must be dirty"
+    );
+    let edited = cx.read(|cx| {
+        editor
+            .read(cx)
+            .editor
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .value()
+            .to_string()
+    });
+
+    // Connect Remote. Owner-preserving navigation: no prompt, no discard.
+    let host = kagi_domain::remote::RemoteHost::parse("example.test").unwrap();
+    let snap = kagi_git::Backend::open(&repo)
+        .unwrap()
+        .snapshot(100)
+        .unwrap();
+    app.update(cx, |state, cx| {
+        state.enter_remote_view(host, "/srv/repo".into(), snap, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()),
+        "remote-connect-no-prompt: owner-preserving navigation must not ask to \
+         discard the buffer",
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).remote_view.is_some()),
+        "remote-connect-no-prompt: the remote view must actually be entered",
+    );
+    assert_ne!(
+        Some(local),
+        cx.read(|cx| app.read(cx).active_session()),
+        "remote-connect-no-prompt: the remote tab must own the screen now",
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui[&local]
+            .editor_workspace
+            .as_ref()
+            .map(|e| e.entity_id())),
+        Some(editor.entity_id()),
+        "remote-connect-keeps-editor: the departing owner lost its editor",
+    );
+    assert!(
+        cx.read(|cx| editor.read(cx).dirty),
+        "remote-connect-keeps-buffer: the unsaved buffer was discarded",
+    );
+    assert_eq!(
+        edited,
+        cx.read(|cx| {
+            editor
+                .read(cx)
+                .editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .value()
+                .to_string()
+        }),
+        "remote-connect-keeps-buffer: the edited text changed",
+    );
+
+    drop(editor);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS remote_connect_keeps_dirty_editor");
 }

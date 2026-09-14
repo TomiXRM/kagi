@@ -63,7 +63,12 @@ pub(crate) enum RunHistorySummary {
 }
 
 pub(crate) struct CommitPanelFailure {
-    pub(crate) expected: gpui::Entity<crate::ui::commit_panel::CommitPanelView>,
+    /// Weak by type (#722 P1). This travels inside a `RunPresentation` that
+    /// the `finish_run` helper's detached task holds for the whole background
+    /// write, so a strong handle kept a closed tab's `CommitPanelView` — and
+    /// its title/body `InputState` — alive until a large Commit finished.
+    /// Making the field weak makes the strong path fail to compile.
+    pub(crate) expected: gpui::WeakEntity<crate::ui::commit_panel::CommitPanelView>,
     pub(crate) message: SharedString,
 }
 
@@ -512,14 +517,17 @@ impl KagiApp {
             self.consume_commit_panel_message(&repo, cx);
         }
         if let Some(failure) = presentation.commit_panel_failure {
+            // Re-resolve through the *current* pane: same identity means the
+            // owner is still on screen with the panel this failure belongs to.
+            // A closed tab dropped it, so there is nothing to write to.
             let expected = failure.expected.entity_id();
-            if self
+            if let Some(panel) = self
                 .ui()
                 .commit_panel
-                .as_ref()
-                .is_some_and(|panel| panel.entity_id() == expected)
+                .clone()
+                .filter(|panel| panel.entity_id() == expected)
             {
-                failure.expected.update(cx, |panel, _| {
+                panel.update(cx, |panel, _| {
                     if let Some(modal) = &mut panel.state.plan_modal {
                         modal.error = Some(failure.message);
                     }

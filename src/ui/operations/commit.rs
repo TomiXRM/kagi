@@ -946,7 +946,7 @@ impl KagiApp {
             .chars()
             .take(72)
             .collect();
-        let expected_panel = self.ui().commit_panel.clone();
+        let expected_panel = self.ui().commit_panel.as_ref().map(|p| p.downgrade());
         self.finish_run(
             cx,
             "commit",

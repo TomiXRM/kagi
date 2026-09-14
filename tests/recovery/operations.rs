@@ -746,8 +746,23 @@ pub fn scenario_remote_browse_modal_routing(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
     let head = output(repo, &["rev-parse", "HEAD"]);
+    let remote_snapshot = kagi_git::Backend::open(repo)
+        .expect("open fixture")
+        .snapshot(100)
+        .expect("snapshot fixture");
     let (app, window) = mount(cx, repo);
     app.update(cx, |app, _| app.select_headless(1));
+    press_enter(cx, &app, window);
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_some()),
+        "workspace-enter-falls-through-without-modal: Enter must still open checkout when the modal slot is vacant"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_none()),
+        "workspace-escape-still-cancels-modal: Esc must still cancel the workspace checkout modal"
+    );
     kagi::ui::e2e::seed_diff_selection();
 
     app.update(cx, |app, cx| app.open_remote_browse(cx));
@@ -783,6 +798,45 @@ pub fn scenario_remote_browse_modal_routing(cx: &mut VisualTestAppContext) {
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
     assert!(!kagi::ui::e2e::diff_selection_present());
+
+    // The no-tab Welcome path must install the exact same modal-key wrapper.
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .remote_browse()
+            .is_some_and(|modal| modal.error.is_some())),
+        "welcome-modal-enter-confirms-connect: Enter on Welcome must run connection-form validation"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).remote_browse().is_none()),
+        "welcome-modal-escape-closes-remote: Esc on Welcome must close Remote Browse"
+    );
+
+    let host = kagi_domain::remote::RemoteHost::parse("example.test").expect("host");
+    app.update(cx, |app, cx| {
+        app.open_remote_browse(cx);
+        kagi::ui::e2e::prepare_remote_browse_open(app, host, "/srv/repo");
+    });
+    kagi::ui::e2e::queue_remote_open(
+        cx.background_executor
+            .spawn(async move { Ok(("/srv/repo".to_string(), remote_snapshot)) }),
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.remote_browse().is_none() && app.remote_view.is_some(),
+            "welcome-modal-enter-confirms-browse: Enter on Welcome must open the browsed repository"
+        );
+    });
+
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS remote_browse_modal_routing");
 }
@@ -1032,6 +1086,12 @@ pub fn scenario_update_install_lifecycle(cx: &mut VisualTestAppContext) {
             app.tabs.is_empty() && app.update_modal().is_some()
         }),
         "update-welcome-keeps-window-modal: closing the last tab must retain Update on Welcome"
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).update_modal().is_some()),
+        "update-welcome-enter-consumed: Enter on Welcome must route to and retain view-only Update"
     );
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();

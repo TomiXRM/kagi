@@ -252,7 +252,11 @@ impl KagiApp {
         cx.notify();
 
         let view_host = host.clone();
-        let task = cx.background_spawn(async move { remote_open_blocking(&host, &path) });
+        let open = async move { remote_open_blocking(&host, &path) };
+        #[cfg(feature = "gui-e2e")]
+        let task = crate::ui::e2e::take_remote_open().unwrap_or_else(|| cx.background_spawn(open));
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(open);
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {

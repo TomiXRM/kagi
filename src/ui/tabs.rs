@@ -27,7 +27,7 @@ use gpui_component::Sizable as _;
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
 use super::workspace;
-use super::{CloseMainDiff, EditorPendingIntent, FooterStatus, KagiApp, ToastKind};
+use super::{EditorPendingIntent, FooterStatus, KagiApp, ToastKind};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1033,9 +1033,6 @@ impl KagiApp {
         let remote_click = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
             this.open_remote_browse(cx);
         });
-        let close_active_modal = cx.listener(|this, _: &CloseMainDiff, _window, cx| {
-            this.cancel_active_modal(cx);
-        });
 
         // Primary action: open a local repository (filled accent button).
         let open_button = div()
@@ -1142,10 +1139,7 @@ impl KagiApp {
             .size_full()
             .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
-            // The workspace render returns before registering its root actions,
-            // so Welcome must route Escape to the same single modal slot.
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
-            .on_action(close_active_modal)
             // Themed transparent title bar leaves no OS drag area, so let the
             // (otherwise empty) welcome surface drag the window; the buttons'
             // own clicks still take precedence.
@@ -1165,8 +1159,10 @@ impl KagiApp {
             .child(buttons)
             .when_some(recent_section, |el, list| el.child(list));
 
-        self.attach_welcome_window_modals(welcome, window, cx)
-            .into_any()
+        let content = self
+            .attach_welcome_window_modals(welcome, window, cx)
+            .into_any();
+        self.attach_active_modal_key_routing(content, false, cx)
     }
 }
 

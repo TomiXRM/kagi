@@ -500,6 +500,36 @@ pub(crate) fn take_remote_refresh() -> Option<RemoteRefreshTask> {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub type RemoteOpenResult = Result<(String, kagi_git::RepoSnapshot), String>;
+#[cfg(feature = "gui-e2e")]
+type RemoteOpenTask = gpui::Task<RemoteOpenResult>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static REMOTE_OPEN: RefCell<Option<RemoteOpenTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_remote_open(task: RemoteOpenTask) {
+    REMOTE_OPEN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_remote_open() -> Option<RemoteOpenTask> {
+    REMOTE_OPEN.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn prepare_remote_browse_open(
+    app: &mut KagiApp,
+    host: kagi_domain::remote::RemoteHost,
+    path: &str,
+) {
+    let modal = app.remote_browse_mut().expect("Remote Browse must be open");
+    modal.stage = super::remote_browse::RemoteBrowseStage::Browse;
+    modal.host = Some(host);
+    modal.cwd = path.to_string();
+    modal.current_is_repo = true;
+    modal.busy = false;
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn defer_file_menu(
     app: &KagiApp,
     fi: usize,

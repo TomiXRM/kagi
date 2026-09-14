@@ -62,6 +62,7 @@ pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod inspector;
 pub mod main_diff_pane;
 pub mod menu_overlay;
+mod modal_key_routing;
 /// #454: shared modal chrome (card shell + collapsible sections).
 mod modal_copy;
 pub mod modal_plan;

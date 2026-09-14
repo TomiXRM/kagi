@@ -41,7 +41,7 @@ impl KagiApp {
     /// Requeue any unread notice and reset modal-local scroll on replacement.
     fn replace_active_modal(&mut self, modal: ActiveModal) {
         if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
-            self.app_notices.push_back(notice);
+            self.app_notices.push_front(notice);
         }
         self.modal_list_scroll = gpui::UniformListScrollHandle::new();
         self.active_modal.replace(modal);

@@ -318,9 +318,16 @@ impl KagiApp {
                     // resolution buffer carries the undo/redo stack, and the
                     // entity carries the selected file/hunk and scroll, so
                     // swapping in a freshly read `mode` would silently discard
-                    // the user's work even though the repository never moved.
-                    // A changed one is folded in below, in place.
-                    Some(entity) if entity.read(cx).same_observation(&mode) => {
+                    // the user's work. `revision` is a content fingerprint of
+                    // the observed operation, so equality means the repository
+                    // never moved. A changed one is folded in place below.
+                    Some(entity)
+                        if entity
+                            .read(cx)
+                            .mode
+                            .as_ref()
+                            .is_some_and(|current| current.revision == mode.revision) =>
+                    {
                         let _ = entity;
                     }
                     Some(entity) => {

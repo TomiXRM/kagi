@@ -223,17 +223,6 @@ impl ConflictView {
         }
     }
 
-    /// Whether `next` describes the conflict this pane is already showing.
-    /// The revision is a content fingerprint of the observed operation
-    /// (`conflict_observe`), so equality means the repository did not move and
-    /// the retained buffer — undo/redo, selection, scroll — is still correct
-    /// (#722 P2 / ADR-0197 決定 3).
-    pub fn same_observation(&self, next: &ConflictMode) -> bool {
-        self.mode
-            .as_ref()
-            .is_some_and(|current| current.revision == next.revision)
-    }
-
     /// Update the A|B split ratio from the root divider-drag handler (lives on
     /// `KagiApp`, which reads the shared `ab_geom` cell, then pushes the ratio
     /// into the entity via `entity.update`). Child-scoped repaint. Mirrors the

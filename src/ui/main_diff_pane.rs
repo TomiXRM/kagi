@@ -413,6 +413,15 @@ impl KagiApp {
             self.refresh_commit_panel_after_reload(cx);
         }
         self.refresh_overlays_after_reload(self.view().head_oid.clone(), cx);
+        // The conflict pane's observation is the read model's `operation`
+        // (ADR-0196): no operation in progress means the conflict this pane
+        // still shows was resolved or aborted while the tab was away, so the
+        // pane goes with it. A live operation leaves it alone — async
+        // detection folds in a *changed* conflict in place, and an unchanged
+        // one must keep its undo stack and selection (#722 P2).
+        if self.view().operation.is_none() {
+            self.with_ui(|ui| ui.conflict = None);
+        }
         // Every retained pane has now been compared against the accepted read
         // and either re-anchored or rebuilt, so the affordances come back
         // (#722 P2). A failed read never reaches here: the panes stay refused.

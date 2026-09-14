@@ -968,9 +968,13 @@ impl ConflictView {
 
         // Edit mode: pull the user's edits out of the Result editor into the
         // buffer (set_manual_text), then return (do not overwrite their text).
+        // Not when a selection just changed the buffer: `after_selection_change`
+        // zeroes `content_sig` to ask for a refresh, and pulling first would
+        // write the editor's stale text back over the side the user just took
+        // (#722 — reachable whenever the editor was already open, e.g. restored).
         if edit_mode {
             if let Some(inputs) = self.editor_inputs.as_ref() {
-                if inputs.path == path {
+                if inputs.path == path && inputs.content_sig != 0 {
                     let edited = inputs.result.read(cx).value().to_string();
                     if edited != result_text {
                         if let Some(c) = self.mode.as_mut() {

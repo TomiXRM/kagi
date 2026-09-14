@@ -23,6 +23,7 @@ pub mod pull_push;
 pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
+mod smart_generate;
 mod staging_failure;
 pub mod stash;
 pub mod tag;

@@ -947,6 +947,10 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_remote_connect_keeps_dirty_editor),
             ),
             (
+                "smart_generation_close_drops_panel",
+                Box::new(crate::pane_resources::scenario_smart_generation_close_drops_panel),
+            ),
+            (
                 "commit_panel_revalidates_on_activation",
                 Box::new(crate::pane_resources::scenario_commit_panel_revalidates_on_activation),
             ),

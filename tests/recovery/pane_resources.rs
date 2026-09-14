@@ -700,3 +700,112 @@ pub fn scenario_remote_connect_keeps_dirty_editor(cx: &mut VisualTestAppContext)
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS remote_connect_keeps_dirty_editor");
 }
+
+/// A Smart Commit generation the test releases by hand, so a tab can be closed
+/// while the "LLM" is still thinking.
+#[allow(clippy::type_complexity)]
+fn pending_generation(
+    cx: &mut VisualTestAppContext,
+) -> (
+    gpui::Task<Option<(String, bool)>>,
+    impl FnOnce(Option<(String, bool)>),
+) {
+    type Slot = (Option<Option<(String, bool)>>, Option<std::task::Waker>);
+    let state: std::sync::Arc<std::sync::Mutex<Slot>> =
+        std::sync::Arc::new(std::sync::Mutex::new((None, None)));
+    let polled = state.clone();
+    let task = cx
+        .background_executor
+        .spawn(std::future::poll_fn(move |task_cx| {
+            let mut slot = polled.lock().expect("generation slot");
+            match slot.0.take() {
+                Some(reply) => std::task::Poll::Ready(reply),
+                None => {
+                    slot.1 = Some(task_cx.waker().clone());
+                    std::task::Poll::Pending
+                }
+            }
+        }));
+    (task, move |reply| {
+        let mut slot = state.lock().expect("generation slot");
+        slot.0 = Some(reply);
+        if let Some(waker) = slot.1.take() {
+            waker.wake();
+        }
+    })
+}
+
+/// #722 P1 (codex): **an in-flight task must not keep a closed tab's pane
+/// alive.** The Smart Commit completion captured a strong
+/// `Entity<CommitPanelView>`, so closing the tab mid-generation left the panel
+/// and its `InputState` allocated until a slow (or hung) LLM answered — one
+/// leaked pane per closed tab. ADR-0197 決定 2 requires `release_session` to be
+/// the moment the resource dies, so the task holds a weak handle and upgrades
+/// only after the owner entry proves the tab is still open.
+pub fn scenario_smart_generation_close_drops_panel(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_fixture(&root, "smart-a");
+    let repo_b = build_fixture(&root, "smart-b");
+    let (app, window) = mount(cx, &repo_a);
+    let session_a = cx.read(|cx| app.read(cx).active_session().expect("A session"));
+    // A second tab so closing A does not fall back to Welcome.
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open B");
+        state.switch_repo(0, cx);
+    });
+    cx.run_until_parked();
+
+    app.update(cx, |state, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(state, repo_a.clone(), cx);
+        state.smart_commit.llm_enabled = true;
+        state.smart_commit.provider =
+            kagi::ui::smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::Codex);
+    });
+    let (task, finish) = pending_generation(cx);
+    kagi::ui::e2e::queue_smart_generation(task);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |state, cx| state.smart_generate(session_a, window, cx));
+    })
+    .expect("start A generation");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().smart_commit_generating),
+        "precondition: A's generation must still be in flight",
+    );
+    let weak_panel = cx
+        .read(|cx| app.read(cx).ui().commit_panel.clone())
+        .expect("A commit panel")
+        .downgrade();
+
+    // Close A while the generation is still pending.
+    app.update(cx, |state, cx| {
+        let index = state
+            .tabs
+            .iter()
+            .position(|tab| tab.session == session_a)
+            .expect("A tab");
+        state.close_tab(index, cx);
+    });
+    cx.run_until_parked();
+    assert!(
+        weak_panel.upgrade().is_none(),
+        "smart-generation-close-drops-panel: the in-flight generation kept the \
+         closed tab's CommitPanelView alive",
+    );
+
+    // Completing it afterwards is a silent no-op, not a panic or a write.
+    finish(Some(("late result".to_string(), true)));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            !state.ui().smart_commit_generating && state.ui().smart_commit_status.is_none(),
+            "smart-generation-close-drops-panel: a departed completion wrote to \
+             the surviving tab",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS smart_generation_close_drops_panel");
+}

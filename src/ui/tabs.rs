@@ -276,8 +276,20 @@ impl KagiApp {
     /// new one for the active owner (row-index caches, sidebar fingerprint,
     /// background scans) — see `on_view_published`.
     fn on_view_switched(&mut self) {
-        if let Some(session) = self.active_session() {
-            self.on_view_published(session);
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        // A tab switch re-activates an existing read whose commit rows are not
+        // renumbered, so the retained main diff / compare pane stay valid and
+        // must survive `on_view_published`'s row-renumber sweep (ADR-0197 決定
+        // 3). Their derived caches are revalidated separately by
+        // `begin_session_revalidation` plus the activation full read.
+        let main_diff = self.ui().main_diff.clone();
+        let compare_view = self.ui().compare_view.clone();
+        self.on_view_published(session);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.main_diff = main_diff;
+            ui.compare_view = compare_view;
         }
     }
 
@@ -487,6 +499,25 @@ impl KagiApp {
                 match result {
                     Ok((view, wip_diffstat, status)) => {
                         let rows = view.rows.len();
+                        // Retain the active owner's open diff / compare across
+                        // the renumber this read performs, re-anchoring them
+                        // against the new rows (ADR-0197 決定 3) — the same
+                        // capture/restore `apply_reload_data` uses for a reload.
+                        // A background owner's read (below) refreshes data only.
+                        let is_active = app.active_session() == Some(session);
+                        let prev_compare = is_active
+                            .then(|| {
+                                app.ui()
+                                    .compare_view
+                                    .as_ref()
+                                    .map(|p| p.read(cx).view.clone())
+                            })
+                            .flatten();
+                        let prev_diff = if is_active {
+                            app.capture_main_diff(cx)
+                        } else {
+                            None
+                        };
                         // Superseded (a newer read, or a mutation admitted
                         // against this owner) → write nothing, say nothing.
                         if !app.accept_tab_view(key, view) {
@@ -499,6 +530,15 @@ impl KagiApp {
                         app.app_sessions.read_applied(session);
                         if app.active_session() != Some(session) {
                             return; // background owner: data only, no display.
+                        }
+                        app.ui_mut().main_diff = None;
+                        // Compare first: the diff restore looks its file up in
+                        // the refreshed compare list.
+                        if let Some(view) = prev_compare {
+                            app.restore_compare(view, cx);
+                        }
+                        if let Some(prev) = prev_diff {
+                            app.restore_main_diff(prev, cx);
                         }
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =

@@ -150,17 +150,25 @@ impl KagiApp {
         let view = cx.new(|_| FileHistoryView::new(state, geom, panel_width, diff_pane.into()));
         let pane_id = view.entity_id();
 
-        // Outward interaction is admitted only while this pane's frozen owner
-        // is active. The pane's own background reads land through weak entity
-        // handles and may safely complete while inactive.
+        // The pane's own background reads (history / diff) are frozen to this
+        // owner's repository at open time and land in the entity through a weak
+        // handle, so they must run even after the owner goes to the background
+        // (ADR-0197 決定 3): a switch between the request and its delivery would
+        // otherwise strand the pane in Loading forever. The outward interactions
+        // (close, jump) touch root / the active display and are admitted only
+        // while this pane's frozen owner is active and still on screen.
         cx.subscribe(&view, move |app, view, event, cx| {
+            let is_read = matches!(
+                event,
+                FileHistoryEvent::HistoryLoadRequested { .. } | FileHistoryEvent::DiffLoadRequested
+            );
             let is_current = app.active_session() == Some(owner)
                 && app
                     .ui()
                     .file_history
                     .as_ref()
                     .is_some_and(|current| current.entity_id() == pane_id);
-            if !is_current {
+            if !is_read && !is_current {
                 return;
             }
             match event {

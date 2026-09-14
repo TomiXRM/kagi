@@ -116,14 +116,30 @@ impl KagiApp {
         self.pr_mode = None;
         let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(), root_focus));
         let pane_id = view.entity_id();
+        // The pane's own background reads (file list, diff, history, blame,
+        // snapshot) are frozen to this owner's repository at open time and land
+        // in the entity through a weak handle, so they must run even after the
+        // owner goes to the background (ADR-0197 決定 3). The outward
+        // interactions (save, close, dirty guard, toasts) touch root / the
+        // active display and are admitted only while this pane's frozen owner is
+        // active and still on screen.
         cx.subscribe(&view, move |app, view, event, cx| {
+            let is_read = matches!(
+                event,
+                EditorWorkspaceEvent::FilesRequested { .. }
+                    | EditorWorkspaceEvent::DiffRequested { .. }
+                    | EditorWorkspaceEvent::HistoryRequested { .. }
+                    | EditorWorkspaceEvent::HistoryDiffRequested { .. }
+                    | EditorWorkspaceEvent::SnapshotRequested { .. }
+                    | EditorWorkspaceEvent::BlameRequested { .. }
+            );
             let is_current = app.active_session() == Some(owner)
                 && app
                     .ui()
                     .editor_workspace
                     .as_ref()
                     .is_some_and(|current| current.entity_id() == pane_id);
-            if is_current {
+            if is_read || is_current {
                 app.on_editor_workspace_event(view, event, cx);
             }
         })

@@ -13,6 +13,8 @@ use kagi_domain::plan_note::{
 
 mod settle;
 
+use super::modal_state::AsyncPlanOffer;
+use super::RunPresentation;
 use crate::ui::operations::PullConfirmDelivery;
 use crate::ui::*;
 
@@ -140,7 +142,7 @@ impl KagiApp {
             // has to wait for its tab.
             self.record_pull_fetch_failure(session, &error, cx);
             if self.active_session() == Some(session) {
-                self.set_app_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
+                self.enqueue_outcome_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
             } else {
                 self.pending_pull_confirm
                     .insert(session, PullConfirmDelivery::FetchFailed(error));
@@ -153,14 +155,7 @@ impl KagiApp {
             klog!("pull-confirm: parked for its tab");
             return;
         }
-        // "One modal at a time" is structural (ADR-0093). A confirmation that
-        // opened while the fetch ran belongs to a newer decision and may hold
-        // half-typed input, so this request yields instead of replacing it.
-        if self.foreign_modal_open() {
-            klog!("pull-confirm: cancelled (another modal is open)");
-            return;
-        }
-        self.plan_and_open_pull_modal(cx);
+        self.plan_and_offer_pull_modal_from_async(cx);
     }
 
     /// Deliver a parked Pull confirmation to the tab that asked for it, now
@@ -172,24 +167,15 @@ impl KagiApp {
         let Some(parked) = self.pending_pull_confirm.remove(&session) else {
             return;
         };
-        if self.foreign_modal_open() {
-            klog!("pull-confirm: cancelled (another modal is open)");
-            return;
-        }
         match parked {
             PullConfirmDelivery::Confirm => {
                 klog!("pull-confirm: delivered on tab activation");
-                self.plan_and_open_pull_modal(cx);
+                self.plan_and_offer_pull_modal_from_async(cx);
             }
             PullConfirmDelivery::FetchFailed(error) => {
-                self.set_app_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
+                self.enqueue_outcome_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
             }
         }
-    }
-
-    /// Is a modal other than a Pull confirmation on screen?
-    fn foreign_modal_open(&self) -> bool {
-        self.has_active_modal() && self.pull_modal().is_none()
     }
 
     /// #625: a fetch run *for* a Pull confirmation failed, so there is no
@@ -263,6 +249,35 @@ impl KagiApp {
         }
     }
 
+    fn plan_and_offer_pull_modal_from_async(&mut self, cx: &mut Context<Self>) -> bool {
+        match self.build_pull_modal() {
+            Ok(Some(modal)) => {
+                klog!(
+                    "plan: pull blockers={} warnings={}",
+                    modal.plan.blockers.len(),
+                    modal.plan.warnings.len()
+                );
+                self.offer_plan_from_async(AsyncPlanOffer::new(
+                    i18n::Op::Pull,
+                    ActiveModal::Pull(modal),
+                ))
+            }
+            Ok(None) => {
+                self.push_toast(
+                    ToastKind::Sync,
+                    SharedString::from(Msg::AlreadyUpToDatePull.t()),
+                    cx,
+                );
+                self.status_footer = FooterStatus::Idle(SharedString::from(""));
+                false
+            }
+            Err(error) => {
+                self.report_plan_failure(i18n::Op::Pull, error);
+                false
+            }
+        }
+    }
+
     /// Refresh an open dirty-Pull confirmation against reloaded repository
     /// state (#625, ADR-0192).
     ///
@@ -285,7 +300,7 @@ impl KagiApp {
                     modal.plan.blockers.len(),
                     modal.plan.warnings.len()
                 );
-                self.set_pull_modal(modal);
+                self.update_pull_plan_from_async(modal);
             }
             Ok(None) => klog!("replan: pull nothing to pull; keeping the confirmation"),
             Err(error) => klog!("replan: pull failed: {error}"),
@@ -413,10 +428,9 @@ impl KagiApp {
                     app.remote_write = None;
                     let Some(report) = report else {
                         klog!("op panicked: pull — busy_op cleared");
-                        app.status_footer = FooterStatus::Failed(SharedString::from(
-                            "pull: operation failed \
-                                 unexpectedly",
-                        ));
+                        let message = "pull: operation failed unexpectedly";
+                        app.status_footer = FooterStatus::Failed(SharedString::from(message));
+                        app.enqueue_outcome_notice(i18n::recorded_outcome_notice(message).into());
                         cx.notify();
                         return;
                     };
@@ -456,15 +470,12 @@ impl KagiApp {
                             // Unknown/Partial changed the host: re-read rather
                             // than re-offering the same pull.
                             app.refresh_remote_view(cx);
-                            if matches!(report.recording.entry().outcome, OpOutcome::Failed { .. })
-                            {
-                                app.set_pull_modal(PullPlanModal {
-                                    plan: modal.plan.clone(),
-                                    auto_stash: false,
-                                    error: Some(SharedString::from(err_msg)),
-                                    dirty_digest: modal.dirty_digest,
-                                });
-                            }
+                            app.enqueue_run_outcome_notice(
+                                crate::app::OperationId(report.recording.entry().id),
+                                &report.recording,
+                                Some(&err_msg),
+                                None,
+                            );
                         }
                     }
                     cx.notify();
@@ -604,19 +615,11 @@ impl KagiApp {
             repo_path,
             move || push_blocking(&bg_path, &plan),
             |outcome| Some(format!("finished — {}", push_summary(outcome))),
-            move |app, done, _cx| match done {
-                Ok(outcome) => {
-                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                        "push: {}",
-                        push_summary(outcome)
-                    )));
-                }
-                // #493 safety review: see `finish_pull` — the failure must reach
-                // the modal, not just the oplog and the footer.
-                Err(failure) => app.set_push_modal(PushPlanModal {
-                    plan: modal.plan.clone(),
-                    error: Some(SharedString::from(failure.message)),
-                }),
+            move |done| match done {
+                Ok(outcome) => RunPresentation::status(FooterStatus::Success(SharedString::from(
+                    format!("push: {}", push_summary(outcome)),
+                ))),
+                Err(_) => RunPresentation::none(),
             },
         );
     }

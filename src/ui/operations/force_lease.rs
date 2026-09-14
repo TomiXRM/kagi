@@ -5,6 +5,7 @@
 //! the button; the second click runs the push on a background thread and
 //! reloads.
 
+use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
@@ -108,18 +109,11 @@ impl KagiApp {
             repo_path,
             move || force_lease_push_blocking(&bg_path, &bg_plan),
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    app.status_footer =
-                        FooterStatus::Success(SharedString::from("force-with-lease-push: done"));
-                }
-                Err(failure) => {
-                    app.set_force_lease_push_modal(ForceLeasePushModal {
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(failure.message)),
-                        confirm_armed: false,
-                    });
-                }
+            move |done| match done {
+                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
+                    "force-with-lease-push: done",
+                ))),
+                Err(_) => RunPresentation::none(),
             },
         );
     }

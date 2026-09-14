@@ -34,10 +34,10 @@ pub mod plan;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
     auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
-    oplog_write_failed, pull_failed_stash_restored, rebase_repository_settings_may_block_start, Op,
+    oplog_write_failed, plan_not_shown_retry, pull_failed_stash_restored,
+    rebase_repository_settings_may_block_start, recorded_outcome_notice, Op,
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     En,
@@ -2483,7 +2483,7 @@ mod tests {
 
     // The active-language atomic is process-global; serialise the tests that
     // mutate it so they don't race.
-    static LOCK: Mutex<()> = Mutex::new(());
+    pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn slug_roundtrip() {

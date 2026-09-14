@@ -29,6 +29,9 @@ use kagi_domain::remote::{self, RemoteDirEntry, RemoteHost, RemoteRepoSummary};
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 
+static REMOTE_BROWSE_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // ──────────────────────────────────────────────────────────────
 // State
 // ──────────────────────────────────────────────────────────────
@@ -56,6 +59,7 @@ const REMOTE_SNAPSHOT_LIMIT: usize = 10_000;
 /// from the entity lifecycle, matching the other input modals).
 #[derive(Clone)]
 pub struct RemoteBrowseModal {
+    pub(crate) generation: u64,
     pub stage: RemoteBrowseStage,
     pub host_input: String,
     pub host_state: Option<Entity<gpui_component::input::InputState>>,
@@ -77,6 +81,7 @@ pub struct RemoteBrowseModal {
 impl RemoteBrowseModal {
     pub fn new() -> Self {
         Self {
+            generation: 0,
             stage: RemoteBrowseStage::Connect,
             host_input: String::new(),
             host_state: None,
@@ -92,6 +97,11 @@ impl RemoteBrowseModal {
             busy: false,
             error: None,
         }
+    }
+
+    fn with_generation(mut self, generation: u64) -> Self {
+        self.generation = generation;
+        self
     }
 }
 
@@ -109,7 +119,10 @@ impl KagiApp {
     /// Open the "Connect to a remote host" modal (connection form).
     pub fn open_remote_browse(&mut self, cx: &mut Context<Self>) {
         self.modal_focus = Some(cx.focus_handle());
-        self.set_remote_browse(RemoteBrowseModal::new());
+        let generation = REMOTE_BROWSE_GENERATION
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .wrapping_add(1);
+        self.set_remote_browse(RemoteBrowseModal::new().with_generation(generation));
         cx.notify();
     }
 
@@ -131,7 +144,7 @@ impl KagiApp {
     /// background thread (`crate::remote`). On success the modal flips to the
     /// directory browser; on failure it shows the ssh error.
     pub fn start_remote_connect(&mut self, cx: &mut Context<Self>) {
-        let host = {
+        let (host, generation) = {
             let m = match self.remote_browse_mut() {
                 Some(m) => m,
                 None => return,
@@ -166,7 +179,7 @@ impl KagiApp {
             m.busy = true;
             m.error = None;
             m.host = Some(host.clone());
-            host
+            (host, m.generation)
         };
         cx.notify();
 
@@ -174,7 +187,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                if let Some(m) = app.remote_browse_mut() {
+                app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
                         Ok(data) => {
@@ -187,7 +200,7 @@ impl KagiApp {
                         }
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
-                }
+                });
                 cx.notify();
             });
         })
@@ -197,8 +210,11 @@ impl KagiApp {
     /// Navigate the remote browser into `path` (list + repo-detect + summary on
     /// a background thread).
     pub fn remote_browse_navigate(&mut self, path: String, cx: &mut Context<Self>) {
-        let host = match self.remote_browse().and_then(|m| m.host.clone()) {
-            Some(h) => h,
+        let (host, generation) = match self.remote_browse() {
+            Some(m) => match m.host.clone() {
+                Some(host) => (host, m.generation),
+                None => return,
+            },
             None => return,
         };
         if let Some(m) = self.remote_browse_mut() {
@@ -214,7 +230,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                if let Some(m) = app.remote_browse_mut() {
+                app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
                         Ok(data) => {
@@ -226,7 +242,7 @@ impl KagiApp {
                         }
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
-                }
+                });
                 cx.notify();
             });
         })
@@ -238,9 +254,9 @@ impl KagiApp {
     /// background thread, then hand it to [`KagiApp::enter_remote_view`] and close
     /// the modal. Read-only — no working tree, no operations.
     pub fn start_remote_open_repo(&mut self, cx: &mut Context<Self>) {
-        let (host, path) = match self.remote_browse() {
+        let (host, path, generation) = match self.remote_browse() {
             Some(m) if m.current_is_repo && !m.busy => match m.host.clone() {
-                Some(h) => (h, m.cwd.clone()),
+                Some(h) => (h, m.cwd.clone(), m.generation),
                 None => return,
             },
             _ => return,
@@ -260,18 +276,19 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
+                if !app.remote_browse_generation_is(generation) {
+                    return;
+                }
                 match result {
                     Ok((root, snap)) => {
-                        // Close the modal and render the remote repo in the main
-                        // views.
                         app.cancel_remote_browse();
                         app.enter_remote_view(view_host, root, snap, cx);
                     }
                     Err(e) => {
-                        if let Some(m) = app.remote_browse_mut() {
+                        app.update_remote_browse_from_async(generation, |m| {
                             m.busy = false;
                             m.error = Some(SharedString::from(e));
-                        }
+                        });
                     }
                 }
                 cx.notify();

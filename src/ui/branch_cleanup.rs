@@ -16,6 +16,7 @@ use gpui::ClipboardItem;
 use kagi_git::ops::{copy_all_text, BranchCleanupRow, CleanupDeleteTarget, MergedBranchStatus};
 
 use super::modals::BranchCleanupModal;
+use super::operations::RunPresentation;
 use super::*;
 
 // ────────────────────────────────────────────────────────────
@@ -306,7 +307,7 @@ impl KagiApp {
                 Ok(backend.execute_delete_merged_branches(&bg_plan, &bg_targets))
             },
             |_| None,
-            move |app, done, cx| match done {
+            move |done| match done {
                 Ok(kagi_git::OperationOutcome::BranchCleanup(outcome)) => {
                     klog!(
                         "executed: branch-cleanup deleted={} failed={}",
@@ -314,51 +315,24 @@ impl KagiApp {
                         outcome.failed.len()
                     );
                     if outcome.failed.is_empty() {
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                        RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
                             "branch-cleanup: {} deleted, {} failed",
                             outcome.deleted.len(),
                             outcome.failed.len()
-                        )));
+                        ))))
                     } else {
-                        // Show completed halves and failures together, not a retry
-                        // of the original batch: some refs may already be deleted.
-                        app.bottom_panel_open = true;
-                        app.bottom_tab = BottomTab::OperationLog;
-                        if let Some(panel) = app.op_log.clone() {
-                            panel.update(cx, |panel, cx| {
-                                panel.toggle_expanded(0);
-                                cx.notify();
-                            });
-                        }
+                        // Some refs may already be deleted. The durable row is
+                        // the only safe presentation; never offer a raw retry.
+                        RunPresentation::none().open_operation_log()
                     }
                 }
-                Ok(_) => {}
-                // An unconfirmed termination is not a retryable failure: the
-                // modal is a retry affordance, so it stays closed. Settlement
-                // already offered the reconcile that ends it
-                // (`notice_reconcile_required`), so there is nothing to add.
-                Err(failure)
-                    if failure.code == kagi_git::oplog::FailureCode::TerminationUnknown => {}
-                Err(failure) => {
-                    if let Some(m) = self_modal_with_error(&modal, &failure.message) {
-                        app.set_branch_cleanup_modal(m);
-                    }
-                }
+                Ok(_) | Err(_) => RunPresentation::none(),
             },
         );
         if dispatched {
             self.clear_branch_cleanup_modal();
         }
     }
-}
-
-/// Rebuild the modal with an error line (keeps plan + targets for a retry).
-fn self_modal_with_error(modal: &BranchCleanupModal, err: &str) -> Option<BranchCleanupModal> {
-    Some(BranchCleanupModal {
-        targets: modal.targets.clone(),
-        plan: modal.plan.clone(),
-        error: Some(SharedString::from(err.to_string())),
-    })
 }
 
 /// Wall-clock now in Unix seconds (staleness input for collect/plan).

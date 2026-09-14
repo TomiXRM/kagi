@@ -10,6 +10,7 @@
 //! updates a remote-tracking ref, never merges/moves the current branch), so
 //! it fires directly from the menu click.
 
+use super::RunPresentation;
 use crate::ui::blocking_ops::*;
 use crate::ui::*;
 
@@ -120,21 +121,11 @@ impl KagiApp {
             repo_path,
             move || delete_remote_branch_blocking(&bg_path, &bg_plan, &bg_remote_branch),
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                        "delete-remote-branch: '{}' deleted",
-                        remote_branch
-                    )));
-                }
-                Err(err_msg) => {
-                    app.set_delete_remote_branch_modal(DeleteRemoteBranchModal {
-                        remote_branch: remote_branch.clone(),
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(err_msg.message)),
-                        confirm_armed: false,
-                    });
-                }
+            move |done| match done {
+                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
+                    format!("delete-remote-branch: '{}' deleted", remote_branch),
+                ))),
+                Err(_) => RunPresentation::none(),
             },
         );
     }

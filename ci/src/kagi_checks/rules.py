@@ -172,6 +172,44 @@ RULES: tuple[Rule, ...] = (
         samples_ok=("// the backend owns git2; the UI calls kagi_git::Backend\n",),
     ),
     Rule(
+        name="modal-slot-storage",
+        summary="modal replacement stays behind typed modal_state transitions (#718)",
+        pattern=(
+            r"(?:\b[A-Za-z_]\w*\.active_modal\s*(?:=|\.replace\s*\(|\.take\s*\())"
+            r"|(?:&mut\s+[A-Za-z_]\w*\.active_modal\b)"
+            r"|(?:\b(?:app|this)\.set_(?:[A-Za-z_]\w*_modal|remote_browse)\s*\()"
+        ),
+        globs=("src/ui/**/*.rs",),
+        excludes=(
+            "src/ui/operations/modal_state.rs",
+            "src/ui/operations/modal_state/",
+        ),
+        message=(
+            "raw active_modal mutation or async receiver modal replacement bypasses slot "
+            "arbitration — add a typed transition in operations/modal_state*"
+        ),
+        samples=(
+            "app.active_modal = Some(modal);",
+            "self.active_modal.replace(modal);",
+            "match &mut self.active_modal { _ => {} }",
+            (
+                "cx.spawn(async move |this, cx| {\n"
+                "    this.update(cx, |app, _| app.set_push_modal(modal));\n"
+                "})"
+            ),
+        ),
+        samples_ok=(
+            "if app.active_modal.is_none() { offer_plan(); }",
+            "match &app.active_modal { _ => {} }",
+            "self.set_push_modal(modal);",
+        ),
+        path_samples=(
+            ("src/ui/operations/modal_state.rs", True),
+            ("src/ui/operations/modal_state/window.rs", True),
+            ("src/ui/operations/pull_push.rs", False),
+        ),
+    ),
+    Rule(
         name="mcp-gpui",
         summary="crates/kagi-mcp never uses gpui (ADR-0163 / #331)",
         # Sources only; the manifest side is `mcp-gpui-manifest`, which parses

@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
 
+use super::{RunHistory, RunHistorySummary, RunPresentation};
 use crate::ui::*;
 
 impl KagiApp {
@@ -117,27 +118,13 @@ impl KagiApp {
             repo_path,
             move || cherry_pick_blocking(&bg_path, &bg_plan, &bg_commit),
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    if let (Some((branch, before)), Some((_, after_sha))) =
-                        (history_before.clone(), app.head_branch_and_sha())
-                    {
-                        app.record_history(
-                            kagi_git::OperationKind::CherryPick,
-                            &branch,
-                            before,
-                            after_sha,
-                            format!("cherry-pick {}", commit_id.short()),
-                        );
-                    }
-                }
-                Err(err_msg) => {
-                    app.set_cherry_pick_modal(CherryPickModal {
-                        commit_id: commit_id.clone(),
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(err_msg.message)),
-                    });
-                }
+            move |done| match done {
+                Ok(_) => RunPresentation::none().with_history(RunHistory::FromCurrentHead {
+                    kind: kagi_git::OperationKind::CherryPick,
+                    before: history_before,
+                    summary: RunHistorySummary::Fixed(format!("cherry-pick {}", commit_id.short())),
+                }),
+                Err(_) => RunPresentation::none(),
             },
         );
     }
@@ -241,27 +228,13 @@ impl KagiApp {
             repo_path,
             move || revert_blocking(&bg_path, &bg_plan, &bg_commit),
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    if let (Some((branch, before)), Some((_, after_sha))) =
-                        (history_before.clone(), app.head_branch_and_sha())
-                    {
-                        app.record_history(
-                            kagi_git::OperationKind::Revert,
-                            &branch,
-                            before,
-                            after_sha,
-                            format!("revert {}", commit_id.short()),
-                        );
-                    }
-                }
-                Err(err_msg) => {
-                    app.set_revert_modal(RevertModal {
-                        commit_id: commit_id.clone(),
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(err_msg.message)),
-                    });
-                }
+            move |done| match done {
+                Ok(_) => RunPresentation::none().with_history(RunHistory::FromCurrentHead {
+                    kind: kagi_git::OperationKind::Revert,
+                    before: history_before,
+                    summary: RunHistorySummary::Fixed(format!("revert {}", commit_id.short())),
+                }),
+                Err(_) => RunPresentation::none(),
             },
         );
     }

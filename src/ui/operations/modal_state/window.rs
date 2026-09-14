@@ -21,9 +21,29 @@ impl KagiApp {
         }
     }
 
+    pub(crate) fn remote_browse_generation_is(&self, expected: u64) -> bool {
+        self.remote_browse()
+            .is_some_and(|modal| modal.generation == expected)
+    }
+
+    pub(crate) fn update_remote_browse_from_async(
+        &mut self,
+        expected: u64,
+        update: impl FnOnce(&mut RemoteBrowseModal),
+    ) -> bool {
+        self.update_expected_modal(|active| match active {
+            ActiveModal::RemoteBrowse(modal) if modal.generation == expected => {
+                update(modal);
+                Some(())
+            }
+            _ => None,
+        })
+        .is_some()
+    }
+
     #[inline]
     pub fn set_remote_browse(&mut self, modal: RemoteBrowseModal) {
-        self.replace_active_modal(ActiveModal::RemoteBrowse(modal));
+        self.replace_modal_from_user(ActiveModal::RemoteBrowse(modal));
     }
 
     #[inline]
@@ -43,7 +63,7 @@ impl KagiApp {
 
     #[inline]
     pub fn set_update_modal(&mut self, modal: UpdateModal) {
-        self.replace_active_modal(ActiveModal::Update(modal));
+        self.replace_modal_from_user(ActiveModal::Update(modal));
     }
 
     #[inline]

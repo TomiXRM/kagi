@@ -4,6 +4,7 @@
 use super::staging_failure::StageAction;
 use crate::ui::blocking_ops::*;
 
+use super::{CommitPanelFailure, RunHistory, RunHistorySummary, RunPresentation};
 use crate::ui::*;
 
 impl KagiApp {
@@ -1117,6 +1118,7 @@ impl KagiApp {
             .chars()
             .take(72)
             .collect();
+        let expected_panel = self.commit_panel.clone();
         self.finish_run(
             cx,
             "commit",
@@ -1125,43 +1127,33 @@ impl KagiApp {
             repo_path.clone(),
             move || commit_blocking(&bg_path, &bg_plan, &bg_msg),
             |_| None,
-            move |app, done, cx| match done {
+            move |done| match done {
                 Ok(_) => {
-                    app.consume_commit_panel_message(&repo_path, cx);
-                    if let (false, Some((hbranch, before)), Some((_, after_sha))) =
-                        (skip_undo, history_before.clone(), app.head_branch_and_sha())
-                    {
-                        let summary =
-                            format!("commit {} '{}'", after_sha.short(), history_summary_line);
-                        app.record_history(
-                            kagi_git::OperationKind::Commit,
-                            &hbranch,
-                            before,
-                            after_sha,
-                            summary,
-                        );
+                    let presentation = RunPresentation::none()
+                        .consume_commit_message(repo_path.clone())
+                        .refresh_worktree_wip(repo_path.clone());
+                    if skip_undo {
+                        presentation
+                    } else {
+                        presentation.with_history(RunHistory::FromCurrentHead {
+                            kind: kagi_git::OperationKind::Commit,
+                            before: history_before,
+                            summary: RunHistorySummary::Commit(history_summary_line),
+                        })
                     }
-                    // #476: the worktree's WIP row goes clean now (slice 1's
-                    // in-place refresh), and `reload` — the watcher's own
-                    // background re-snapshot path, always on `self.repo_path` —
-                    // gives the OPEN tab the commit, which it shares through the
-                    // ODB and refs. It drops `commit_panel`; right here, since the
-                    // worktree is clean and that panel would list nothing.
-                    app.refresh_worktree_wip_row(&repo_path);
                 }
                 Err(failure) => {
-                    if let Some(entity) = app.commit_panel.clone() {
-                        let error = SharedString::from(failure.message.clone());
-                        entity.update(cx, |v, _| {
-                            if let Some(ref mut modal) = v.state.plan_modal {
-                                modal.error = Some(error);
-                            }
-                        });
+                    let presentation = RunPresentation::status(FooterStatus::Failed(
+                        SharedString::from(failure.message.clone()),
+                    ));
+                    if let Some(expected) = expected_panel {
+                        presentation.update_commit_panel(CommitPanelFailure {
+                            expected,
+                            message: SharedString::from(failure.message.clone()),
+                        })
+                    } else {
+                        presentation
                     }
-                    // Surface commit failures in the status footer too, so the
-                    // error is visible even for the smooth (no-popup) commit path
-                    // where the plan modal isn't shown.
-                    app.status_footer = FooterStatus::Failed(SharedString::from(failure.message));
                 }
             },
         );

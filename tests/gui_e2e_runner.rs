@@ -769,6 +769,10 @@ mod macos {
                 Box::new(crate::busy_label::scenario_merge_plan_latches_planning),
             ),
             (
+                "delete_branch_plan_latch",
+                Box::new(crate::busy_label::scenario_delete_branch_plan_latches_planning),
+            ),
+            (
                 "editor_save_admission",
                 Box::new(crate::app_writer_admission::scenario_editor_save_admission),
             ),

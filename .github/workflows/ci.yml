@@ -42,6 +42,8 @@ jobs:
         check:
           # UI is git2-free (ADR-0072 / ADR-0078)
           - ui-git2
+          # raw ActiveModal storage is owned by the arbitration seam (#718)
+          - modal-slot-storage
           - app-layering
           - fault-test-only
           # kagi-mcp is gpui-free (ADR-0163 / #331)

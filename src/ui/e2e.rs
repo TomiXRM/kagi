@@ -125,6 +125,81 @@ pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
     app.app_notice().map(|notice| notice.message.as_str())
 }
 
+#[cfg(feature = "gui-e2e")]
+pub fn queued_notice_contains(app: &KagiApp, needle: &str) -> bool {
+    app.app_notices
+        .iter()
+        .any(|notice| notice.message.contains(needle))
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn set_remote_browse_host_input(
+    app: &mut KagiApp,
+    value: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let input = app
+        .remote_browse()
+        .and_then(|modal| modal.host_state.clone())
+        .expect("Remote Browse host input must be rendered");
+    input.update(cx, |state, cx| state.set_value(value, window, cx));
+    app.remote_browse_mut()
+        .expect("Remote Browse must still own the slot")
+        .host_input = value.to_string();
+}
+#[cfg(feature = "gui-e2e")]
+pub fn deliver_app_notice(app: &mut KagiApp, message: &str) {
+    app.app_notices.push_back(message.to_string().into());
+    app.present_app_notice();
+}
+#[cfg(feature = "gui-e2e")]
+pub fn present_app_notice(app: &mut KagiApp) {
+    app.present_app_notice();
+}
+#[cfg(feature = "gui-e2e")]
+pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
+    let Some(session) = app.active_session() else {
+        return false;
+    };
+    let Some(read) = crate::app::seed_acknowledge_for_test(&mut app.app_sessions, session) else {
+        return false;
+    };
+    app.app_notices.push_back(super::modals::AppNotice {
+        message: message.to_string(),
+        inspect: None,
+        acknowledge: Some(read),
+    });
+    app.present_app_notice();
+    true
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn app_notice_is_acknowledgeable(app: &KagiApp) -> bool {
+    app.app_notice()
+        .is_some_and(|notice| notice.acknowledge.is_some())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn seed_diff_selection() {
+    super::diff_selection::begin(u64::MAX, 0);
+    super::diff_selection::set_text(u64::MAX, "selected".to_string());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn diff_selection_present() -> bool {
+    super::diff_selection::selected_text().is_some()
+}
+#[cfg(feature = "gui-e2e")]
+pub fn begin_update_install_for_test(app: &mut KagiApp) -> bool {
+    app.begin_update_install()
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn fail_update_install_for_test(app: &mut KagiApp, error: &str) {
+    app.finish_update_install_failure(error);
+}
+
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.
 /// (`gpui_platform` is a normal dep, so the runner cannot call it directly.)
 pub fn platform() -> Rc<dyn Platform> {
@@ -445,6 +520,36 @@ pub fn queue_remote_refresh(task: RemoteRefreshTask) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_remote_refresh() -> Option<RemoteRefreshTask> {
     REMOTE_REFRESH.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub type RemoteOpenResult = Result<(String, kagi_git::RepoSnapshot), String>;
+#[cfg(feature = "gui-e2e")]
+type RemoteOpenTask = gpui::Task<RemoteOpenResult>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static REMOTE_OPEN: RefCell<Option<RemoteOpenTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_remote_open(task: RemoteOpenTask) {
+    REMOTE_OPEN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_remote_open() -> Option<RemoteOpenTask> {
+    REMOTE_OPEN.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn prepare_remote_browse_open(
+    app: &mut KagiApp,
+    host: kagi_domain::remote::RemoteHost,
+    path: &str,
+) {
+    let modal = app.remote_browse_mut().expect("Remote Browse must be open");
+    modal.stage = super::remote_browse::RemoteBrowseStage::Browse;
+    modal.host = Some(host);
+    modal.cwd = path.to_string();
+    modal.current_is_repo = true;
+    modal.busy = false;
 }
 
 #[cfg(feature = "gui-e2e")]

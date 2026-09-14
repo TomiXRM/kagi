@@ -9,7 +9,7 @@ use kagi_domain::plan_note::{PlanNote, PullNote};
 use kagi_git::oplog::{read_oplog_tail_for_repo, recovery, OpOutcome};
 
 use crate::macos::{build_fixture, git, mount, unmount};
-use crate::recovery_operations::{press_enter, wait_idle};
+use crate::recovery_operations::{press_enter, press_key, wait_idle};
 
 fn output(repo: &Path, args: &[&str]) -> String {
     let result = Command::new("git")
@@ -323,11 +323,10 @@ fn leaky_helper(root: &Path, program: &str) -> String {
 
 /// #702 review P1 + Codex — an unproven termination, end to end.
 ///
-/// The whole chain in one scenario: the fetch's `TerminationUnknown` survives
-/// the mapper, so the workflow stops without popping the auto-stash; settlement
-/// keeps the lease and parks a reconcile requirement; and the user is given a
-/// way to reach it — an inspectable notice waiting behind the error modal,
-/// rather than a scope that silently refuses every later write.
+/// The whole chain in one scenario: the fetch's `TerminationUnknown` keeps the
+/// lease and parks a reconcile requirement; settlement presents an inspectable
+/// AppNotice that reaches reconcile without restoring the consumed Pull
+/// confirmation.
 pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -372,8 +371,8 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     wait_for(cx, |cx| {
         cx.read(|cx| {
             app.read(cx)
-                .pull_modal()
-                .is_some_and(|modal| modal.error.is_some())
+                .app_notice()
+                .is_some_and(|notice| notice.inspect.is_some())
         })
     });
 
@@ -386,6 +385,12 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
         !output(repo, &["stash", "list"]).is_empty(),
         "the user's work stays in the stash"
     );
+    assert!(
+        records(repo, "pull")
+            .iter()
+            .any(|entry| matches!(entry.outcome, OpOutcome::Unknown { .. })),
+        "the indeterminate Pull outcome must be durable"
+    );
     // The descendant of the fetch is still holding the pipes, so nothing about
     // this write is proven stopped: the scope stays reserved (ADR-0175).
     cx.read(|cx| {
@@ -395,17 +400,17 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
         );
     });
 
-    // The error modal is what the user sees first; the reconcile waits behind
-    // it. Dismissing the modal must hand them the way in, not silence.
-    app.update(cx, |app, _| app.cancel_pull_modal());
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    cx.run_until_parked();
+    // Settlement presents the reconcile action directly; the consumed Pull
+    // confirmation must not be resurrected in front of it.
     cx.read(|cx| {
         let notice = app
             .read(cx)
             .app_notice()
             .expect("an unacknowledged reconcile must offer itself");
+        assert!(
+            app.read(cx).pull_modal().is_none(),
+            "Unknown must not restore the consumed Pull confirmation"
+        );
         assert!(
             notice.inspect.is_some(),
             "and it must be the inspectable kind: {}",
@@ -504,26 +509,61 @@ pub fn scenario_run_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) 
     wait_for(cx, |cx| {
         cx.read(|cx| {
             app.read(cx)
-                .push_modal()
-                .is_some_and(|modal| modal.error.is_some())
+                .app_notice()
+                .is_some_and(|notice| notice.inspect.is_some())
         })
     });
-    // The failure modal is what the user sees first; the reconcile waits behind
-    // it, exactly as it does for pull.
-    app.update(cx, |app, _| app.cancel_push_modal());
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    cx.run_until_parked();
+    let durable = records(repo, "push");
+    assert_eq!(durable.len(), 1, "one attempt, one durable Push entry");
+    assert!(matches!(durable[0].outcome, OpOutcome::Unknown { .. }));
 
     // Entrance 1: the completion itself.
     cx.read(|cx| {
-        let notice = app
-            .read(cx)
+        let state = app.read(cx);
+        let notice = state
             .app_notice()
             .expect("a run completion that parked a requirement offers it");
         assert!(notice.inspect.is_some(), "{}", notice.message);
+        assert!(
+            state.push_modal().is_none(),
+            "Unknown must not restore the consumed Push confirmation"
+        );
     });
 
+    // The Inspect action runs reconciliation. While the descendant still
+    // owns the pipes it remains inspectable and cannot be acknowledged.
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    wait_for(cx, |cx| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.read(|cx| app.read(cx).app_notice().is_some())
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let notice = app.app_notice().expect("still unresolved, still offered");
+        assert!(notice.inspect.is_some() && notice.acknowledge.is_none());
+        assert!(app.app_sessions.has_leases());
+    });
+
+    std::thread::sleep(Duration::from_secs(4));
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    wait_for(cx, |cx| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.read(|cx| {
+            app.read(cx)
+                .app_notice()
+                .is_some_and(|notice| notice.acknowledge.is_some())
+        })
+    });
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            !app.read(cx).app_sessions.has_leases(),
+            "acknowledging the proven-stopped Push releases its scope"
+        );
+    });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS run_unknown_offers_its_reconcile: the completion opens it");
 }
@@ -609,10 +649,10 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
 /// #702 review P1 — a restored failure must not end on a success.
 ///
 /// `steps` is `stash-push Success → pull Failed → stash-pop Success`, and
-/// presenting each of them announced each of them: the last announcement won,
-/// so the window ended with the Pull failure modal over a `stash-pop: … → …`
+/// the old presentation path announced each receipt: the last announcement won,
+/// so the window ended with a Pull failure modal over a `stash-pop: … → …`
 /// success footer and three toasts. The sibling receipts are panel rows now;
-/// exactly one of them — the decisive one — is presented.
+/// exactly one of them — the decisive Pull AppNotice — is presented.
 pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -664,8 +704,15 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(
-            app.pull_modal().is_some_and(|modal| modal.error.is_some()),
-            "the failure must reach the modal"
+            app.pull_modal().is_none(),
+            "Failed must not restore the consumed Pull confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("the decisive Pull failure must reach AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known Failed outcome does not require reconciliation"
         );
         match &app.status_footer {
             kagi::ui::FooterStatus::Failed(text) => assert!(
@@ -713,7 +760,7 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
 ///
 /// The app-level test proves the stamp is frozen; this one runs the branch that
 /// *acts* on it. Tab A confirms a pull that will fail, the user leaves for tab B
-/// before the completion lands, and the failure modal must not open over tab B.
+/// before the completion lands, and its failure notice must not open over tab B.
 pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -1027,16 +1074,23 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
         "Pull failure must be durable"
     );
     cx.read(|cx| {
-        let modal = app
-            .read(cx)
-            .pull_modal()
-            .expect("failed Pull modal must survive watcher reload");
-        assert!(modal.error.is_some(), "failed Pull must show its error");
+        let app = app.read(cx);
+        assert!(
+            app.pull_modal().is_none(),
+            "Failed must not restore the consumed Pull confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("failed Pull must survive watcher reload as AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known Failed outcome does not require reconciliation"
+        );
     });
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_auto_stash_failure_restores: failed Pull restores changes and keeps its modal"
+        "[gui-e2e] PASS pull_auto_stash_failure_restores: failed Pull restores changes and presents its notice"
     );
 }
 
@@ -1288,6 +1342,199 @@ pub fn scenario_pull_confirm_yields_to_another_modal(cx: &mut VisualTestAppConte
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS pull_confirm_yields_to_another_modal: a modal opened during the fetch is kept"
+    );
+}
+
+/// #718 P2: a production dirty-Pull fetch failure is an asynchronous notice,
+/// not permission to destroy the Remote Browse modal the user opened meanwhile.
+pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight.is_some(),
+            "the dirty Pull must be waiting on its production fetch"
+        );
+        app.open_remote_browse(cx);
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "acknowledge before fetch failure"),
+            "the queued notice must carry a real reconciliation acknowledgement",
+        );
+    });
+
+    // The fetch task has been dispatched but the executor has not run it yet.
+    // Removing the remote makes pull_push::deliver_pull_confirm take its real
+    // FetchFailed -> set_app_notice path while Remote Browse owns the slot.
+    drop(remote_root);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).remote_browse().is_some(),
+            "async-notice-keeps-remote-browse: a Pull fetch failure must wait behind Remote Browse",
+        );
+    });
+
+    app.update(cx, |app, cx| {
+        app.cancel_remote_browse();
+        kagi::ui::e2e::present_app_notice(app);
+        assert!(
+            kagi::ui::e2e::app_notice_is_acknowledgeable(app),
+            "async-notice-preserves-queue-order: the notice already waiting must stay first",
+        );
+        app.confirm_app_notice(cx);
+        assert!(
+            app.app_sessions.reconcile_ids().is_empty(),
+            "async-notice-action-still-executes: the delayed Acknowledge must execute",
+        );
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
+            .expect("the Pull fetch failure notice must follow the acknowledgement");
+        assert!(
+            message.contains("Fetch"),
+            "async-notice-presents-pull-failure: unexpected notice: {message}",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_failure_notice_waits_for_remote_browse: production failure waits behind the occupied slot"
+    );
+}
+
+/// #718 P2: asynchronous notices obey one FIFO rule even when another
+/// AppNotice, rather than a different modal kind, already owns the slot.
+pub fn scenario_pull_failure_notice_waits_for_app_notice(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight.is_some(),
+            "the dirty Pull must be waiting on its production fetch"
+        );
+        kagi::ui::e2e::deliver_app_notice(app, "first plain notice");
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app),
+            Some("first plain notice"),
+            "async-notice-keeps-first-plain: the first plain notice must own the vacant slot",
+        );
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "second actionable notice"),
+            "the second notice must carry a real reconciliation acknowledgement",
+        );
+    });
+
+    // Fail the already-dispatched production fetch while a plain AppNotice is
+    // visible and an actionable notice is already waiting behind it.
+    drop(remote_root);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    app.update(cx, |app, cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app),
+            Some("first plain notice"),
+            "async-notice-does-not-replace-app-notice: the later Pull failure must not replace or discard the visible notice",
+        );
+        app.clear_app_notice();
+        kagi::ui::e2e::present_app_notice(app);
+        assert!(
+            kagi::ui::e2e::app_notice_is_acknowledgeable(app),
+            "async-notice-app-fifo-second: the notice already waiting must be presented second",
+        );
+        app.confirm_app_notice(cx);
+        assert!(
+            app.app_sessions.reconcile_ids().is_empty(),
+            "async-notice-app-action-executes: the queued Acknowledge must still execute",
+        );
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
+            .expect("the production Pull failure must be presented third");
+        assert!(
+            message.contains("Fetch"),
+            "async-notice-app-fifo-third: unexpected third notice: {message}",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_failure_notice_waits_for_app_notice: plain, actionable, and production failure notices stay FIFO"
+    );
+}
+
+/// #718 P2: displacement and explicit dismissal are different events. A plain
+/// production failure displaced before it can be read returns to the queue;
+/// once the user dismisses that same notice, it stays dismissed.
+pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight.is_some(),
+            "the dirty Pull must be waiting on its production fetch"
+        );
+    });
+
+    drop(remote_root);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
+            .expect("the production Pull fetch failure must be visible");
+        assert!(
+            message.contains("Fetch"),
+            "notice-event-separation-seeds-production-failure: unexpected notice: {message}"
+        );
+    });
+
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    assert!(
+        cx.read(|cx| app.read(cx).remote_browse().is_some()),
+        "notice-displacement-opens-new-modal: Remote Browse must displace the visible notice"
+    );
+    app.update(cx, |app, _| {
+        app.cancel_remote_browse();
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx));
+        assert!(
+            message.is_some_and(|message| message.contains("Fetch")),
+            "notice-displacement-plain-is-retained: an unread plain failure must return to the queue; got {message:?}"
+        );
+    });
+
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    app.update(cx, |app, _| kagi::ui::e2e::present_app_notice(app));
+    assert!(
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "notice-dismissal-plain-stays-dismissed: an explicitly dismissed plain failure must not return to the queue"
+    );
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_failure_notice_displacement_vs_dismissal: unread plain failures survive displacement but not user dismissal"
     );
 }
 

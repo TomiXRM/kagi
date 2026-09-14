@@ -64,6 +64,7 @@ pub mod main_diff_pane;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
 mod modal_copy;
+mod modal_key_routing;
 pub mod modal_plan;
 mod modal_renderers;
 mod modal_renderers_commit;
@@ -1003,9 +1004,6 @@ pub struct KagiApp {
     /// accessor methods (`plan_modal()`, `set_plan_modal()`, `clear_plan_modal()`,
     /// `take_plan_modal()`, …) so existing call sites keep their per-modal names.
     pub active_modal: Option<ActiveModal>,
-    /// When `Some`, the remote SSH connect / directory-browse modal is visible
-    /// (ADR-0089 Phase 1).
-    pub remote_browse_modal: Option<RemoteBrowseModal>,
     /// When `Some`, the main views are showing a **remote** repository opened
     /// read-only over SSH (ADR-0089 Phase 2b). `repo_path` is `None` in this
     /// mode, so every local-path operation (checkout/commit/diff/watcher/…)
@@ -1285,11 +1283,12 @@ pub struct KagiApp {
     )>,
     /// Run-once guard for the startup update check.
     pub update_checked: bool,
-    /// Whether the update detail modal is open.
-    pub update_modal_open: bool,
-    /// Whether an install is in progress (disables the confirm button).
+    /// Window-owned update installer state. An install is an operation, not
+    /// modal presentation: closing/replacing the modal must not erase it or
+    /// permit a second installer to start (#718 / ADR-0197).
     pub update_installing: bool,
-    /// Progress / error line shown in the update modal.
+    /// Latest installer progress/failure, retained while the modal is closed so
+    /// reopening Update presents the completion result.
     pub update_status: Option<SharedString>,
     /// Last loaded working-tree status, used by the FS watcher's working-tree
     /// path to skip a refresh when nothing the parent repo cares about changed
@@ -1427,7 +1426,6 @@ impl KagiApp {
             compare_view: None,
             pending_headless_compare: None,
             active_modal: None,
-            remote_browse_modal: None,
             remote_view: None,
             modal_focus: None,
             stash_push_focus: None,
@@ -1510,7 +1508,6 @@ impl KagiApp {
             conflict_merge_pending: false,
             update_available: None,
             update_checked: false,
-            update_modal_open: false,
             update_installing: false,
             update_status: None,
             last_working_status: None,
@@ -1954,17 +1951,32 @@ impl KagiApp {
         .detach();
     }
 
-    /// Download + verify + install the offered update, then relaunch. On failure
-    /// the running install is untouched and the error is shown in the modal.
+    /// Claim the window-owned installer operation. This guard deliberately
+    /// does not depend on modal presentation: closing and reopening Update
+    /// while the task runs must not start a second installer (#718).
+    fn begin_update_install(&mut self) -> bool {
+        if self.update_installing {
+            return false;
+        }
+        self.update_installing = true;
+        self.update_status = Some(SharedString::from("Downloading & verifying…"));
+        true
+    }
+
+    fn finish_update_install_failure(&mut self, error: impl std::fmt::Display) {
+        self.update_installing = false;
+        self.update_status = Some(SharedString::from(format!("Update failed: {error}")));
+    }
+
+    /// Download + verify + install the offered update, then relaunch. A failure
+    /// is retained on the window-owned operation state even if the modal closed.
     fn start_update_install(&mut self, cx: &mut Context<Self>) {
         let Some((plan, release)) = self.update_available.clone() else {
             return;
         };
-        if self.update_installing {
+        if self.update_modal().is_none() || !self.begin_update_install() {
             return;
         }
-        self.update_installing = true;
-        self.update_status = Some(SharedString::from("Downloading & verifying…"));
         cx.notify();
         let task = cx.background_spawn(async move {
             crate::update::install(&plan, &release, &|m| klog!("update: {m}"))
@@ -1978,8 +1990,7 @@ impl KagiApp {
                 }
                 Err(e) => {
                     klog!("update: failed: {e}");
-                    app.update_installing = false;
-                    app.update_status = Some(SharedString::from(format!("Update failed: {e}")));
+                    app.finish_update_install_failure(e);
                     cx.notify();
                 }
             });
@@ -1993,7 +2004,7 @@ impl KagiApp {
             settings::write_setting("update_skipped", Some(&plan.tag));
         }
         self.update_available = None;
-        self.update_modal_open = false;
+        self.cancel_update_modal();
         cx.notify();
     }
 
@@ -2998,7 +3009,7 @@ impl KagiApp {
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
             self.start_commit(cx);
-        } else if self.update_modal_open || self.menu_overlay.is_some() {
+        } else if self.menu_overlay.is_some() {
             // Open but no single confirm action — consume Enter (don't check out
             // a commit), but take no action.
             return true;
@@ -3022,6 +3033,8 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
+            M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
+            M::Update(_) => {}
             M::Checkout(_) => self.start_checkout(cx),
             M::Pull(_) => self.start_pull(cx),
             M::Amend(_) => self.start_amend(cx),
@@ -3081,8 +3094,6 @@ impl KagiApp {
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
             self.cancel_commit_plan_modal(cx);
-        } else if self.update_modal_open {
-            self.update_modal_open = false;
         } else if self.menu_overlay.is_some() {
             self.menu_overlay = None;
         } else {
@@ -3112,6 +3123,8 @@ impl KagiApp {
                 }
                 self.clear_app_notice();
             }
+            M::RemoteBrowse(_) => self.cancel_remote_browse(),
+            M::Update(_) => self.cancel_update_modal(),
             M::Checkout(_) => self.cancel_modal(),
             M::Pull(_) => self.cancel_pull_modal(),
             M::Amend(_) => self.cancel_amend_modal(),

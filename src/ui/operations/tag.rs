@@ -3,6 +3,7 @@
 //! Mirrors `operations/branch.rs`'s create-branch flow minus the
 //! checkout-after option — a tag is a ref only, never checked out.
 
+use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
@@ -282,19 +283,11 @@ impl KagiApp {
                 run()
             },
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    app.status_footer =
-                        FooterStatus::Success(SharedString::from(Msg::PushTagDone.t()));
-                }
-                // The remote refusing a moved tag lands here — its own message
-                // says exactly why, so show it rather than paraphrasing.
-                Err(failure) => app.set_push_tag_modal(PushTagModal {
-                    plan: plan.clone(),
-                    error: Some(SharedString::from(failure.message)),
-                    name: modal.name.clone(),
-                    remote: modal.remote.clone(),
-                }),
+            move |done| match done {
+                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
+                    Msg::PushTagDone.t(),
+                ))),
+                Err(_) => RunPresentation::none(),
             },
         );
     }

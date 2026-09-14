@@ -593,6 +593,22 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "remote_browse_modal_routing",
+                Box::new(crate::recovery_operations::scenario_remote_browse_modal_routing),
+            ),
+            (
+                "window_modal_exclusivity",
+                Box::new(crate::recovery_operations::scenario_window_modal_exclusivity),
+            ),
+            (
+                "app_notice_modal_replacement",
+                Box::new(crate::recovery_operations::scenario_app_notice_modal_replacement),
+            ),
+            (
+                "update_install_lifecycle",
+                Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
+            ),
+            (
                 "branch_menu_no_checkout_fallthrough",
                 Box::new(crate::recovery_operations::scenario_branch_menu_no_checkout_fallthrough),
             ),
@@ -645,6 +661,24 @@ mod macos {
             (
                 "pull_confirm_yields_to_another_modal",
                 Box::new(crate::recovery_pull::scenario_pull_confirm_yields_to_another_modal),
+            ),
+            (
+                "pull_failure_notice_waits_for_remote_browse",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_notice_waits_for_remote_browse,
+                ),
+            ),
+            (
+                "pull_failure_notice_waits_for_app_notice",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_notice_waits_for_app_notice,
+                ),
+            ),
+            (
+                "pull_failure_notice_displacement_vs_dismissal",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_notice_displacement_vs_dismissal,
+                ),
             ),
             (
                 "pull_refuses_when_the_dirty_set_moved",
@@ -725,6 +759,10 @@ mod macos {
             (
                 "merge_plan_latch",
                 Box::new(crate::busy_label::scenario_merge_plan_latches_planning),
+            ),
+            (
+                "delete_branch_plan_latch",
+                Box::new(crate::busy_label::scenario_delete_branch_plan_latches_planning),
             ),
             (
                 "editor_save_admission",

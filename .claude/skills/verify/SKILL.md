@@ -84,6 +84,7 @@ The current suite covers:
   switching, agent provenance, and WIP-to-HEAD connectors;
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
 - modal and branch-menu Enter isolation from the selected commit checkout;
+- modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): Push failures and delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze
   (`KAGI_GUI_E2E_ONLY=workspace_mode_toolbar`, via the `tb-repo-actions` control bound);
@@ -156,12 +157,26 @@ and successful checkout after the sibling detaches.
 App keybindings, command-registry keybindings, and native menus share their
 installation path with `run_app`; component initialization must precede that
 installation so app bindings keep the same precedence. For menu/Enter routing,
-PM can scope `KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough`.
-The menu scenario in `tests/recovery/operations.rs` selects a non-HEAD branch,
-opens its menu, and checks that Enter leaves the checkout modal absent and HEAD
-unchanged. The modal slot is the oracle for absence of `plan: checkout`, as in
-the existing modal scenario. Native foreground/input-focus behavior remains a
-separate Tier B check.
+PM can scope
+`KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough,remote_browse_modal_routing,window_modal_exclusivity,app_notice_modal_replacement,pull_failure_notice_waits_for_remote_browse,pull_failure_notice_waits_for_app_notice,pull_failure_notice_displacement_vs_dismissal,update_install_lifecycle`.
+The menu and modal scenarios in `tests/recovery/operations.rs` select a non-HEAD
+commit and prove Enter cannot fall through to checkout. Remote Browse also proves
+that the shared workspace/Welcome modal-key wrapper routes Enter through both its
+connection and Browse stages, routes Esc to the slot on both surfaces, and keeps
+the workspace's vacant-slot Enter checkout fallback. The window-modal scenario
+records the rendered Remote Browse, Update, and AppNotice overlays: an arriving
+notice waits behind the occupied slot, Update consumes Enter without acting, and
+Esc closes it. The AppNotice replacement scenario proves unrelated modal setters
+preserve both actionable and plain unread notices. The production dirty-Pull
+failure scenarios prove the event distinction: an asynchronous arrival waits
+behind any occupied slot; a plain failure displaced by a newer modal is
+re-presented; the same plain failure stays discarded after the user closes it;
+queued notices retain arrival order; and a delayed Acknowledge still executes.
+The update-lifecycle scenario proves an installer remains window-owned while its
+modal is closed, rejects a second start after reopening, renders a retained
+completion, consumes Enter, and closes via Escape after the last repository tab
+transitions the window to Welcome. Native foreground/input-focus behavior remains
+a separate Tier B check.
 
 The runner's screenshot capture is best-effort only; its assertions, clipboard
 checks, refs, and persisted oplog records are the oracle. It cannot run from the

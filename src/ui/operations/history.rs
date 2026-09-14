@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
 
+use super::{RunHistory, RunPresentation};
 use crate::ui::*;
 
 impl KagiApp {
@@ -450,6 +451,7 @@ impl KagiApp {
         // so a worktree amend recorded here would point Cmd+Z at the wrong
         // branch.
         let skip_undo = self.undo_skipped_for_foreign("amend", &repo_path);
+        let history_branch = self.head_branch_and_sha().map(|(branch, _)| branch);
         let bg_path = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_msg = message.clone();
@@ -461,43 +463,34 @@ impl KagiApp {
             repo_path.clone(),
             move || amend_blocking(&bg_path, &bg_plan, mode, &bg_msg),
             |_| None,
-            move |app, done, cx| match done {
-                Ok(outcome) => {
-                    if let kagi_git::OperationOutcome::Amend(o) = outcome {
-                        if let (false, Some((branch, _))) = (skip_undo, app.head_branch_and_sha()) {
-                            app.record_history(
-                                kagi_git::OperationKind::Amend,
-                                &branch,
-                                o.old.clone(),
-                                o.new.clone(),
-                                format!("amend {} → {}", o.old.short(), o.new.short()),
-                            );
-                        }
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
+            move |done| match done {
+                Ok(kagi_git::OperationOutcome::Amend(outcome)) => {
+                    let presentation = RunPresentation::status(FooterStatus::Success(
+                        SharedString::from(format!(
                             "amend: {} → {} (restore: git reset --soft {})",
-                            o.old.short(),
-                            o.new.short(),
-                            o.old.short()
-                        )));
+                            outcome.old.short(),
+                            outcome.new.short(),
+                            outcome.old.short()
+                        )),
+                    ))
+                    .consume_commit_message(repo_path.clone())
+                    .refresh_worktree_wip(repo_path.clone());
+                    match (skip_undo, history_branch) {
+                        (false, Some(branch)) => presentation.with_history(RunHistory::Exact {
+                            kind: kagi_git::OperationKind::Amend,
+                            branch,
+                            before: outcome.old.clone(),
+                            after: outcome.new.clone(),
+                            summary: format!(
+                                "amend {} → {}",
+                                outcome.old.short(),
+                                outcome.new.short()
+                            ),
+                        }),
+                        _ => presentation,
                     }
-                    // The amend message came out of the commit panel
-                    // (`open_amend_modal`), so it is spent — and the panel now
-                    // survives the reload below when the tree is still dirty.
-                    app.consume_commit_panel_message(&repo_path, cx);
-                    // #476: the worktree's WIP row goes clean in place, then
-                    // `reload` re-snapshots the OPEN tab, which shares the ODB and
-                    // refs and so must show the rewritten commit.
-                    app.refresh_worktree_wip_row(&repo_path);
                 }
-                Err(failure) => {
-                    app.set_amend_modal(AmendPlanModal {
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(failure.message)),
-                        mode,
-                        message: message.clone(),
-                        confirm_armed: false,
-                    });
-                }
+                Ok(_) | Err(_) => RunPresentation::none(),
             },
         );
     }

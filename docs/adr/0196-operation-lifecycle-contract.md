@@ -220,9 +220,10 @@ stash → pull → pop の複合結果 `PullBlockingResult`、discard は `Disca
 `approve_run`（owner attached・凍結 worktree 一致）が plan slot の `approve` の代わり、
 `prepare_run` が `begin_write` で承認を 1 回消費。UI は `KagiApp::finish_run`
 （admission → job → `apply` → stamp の指す tab へ提示、違えば
-`op result dropped`）。**失敗時は reload しない**（reload の sweep が plan modal を
-消す）— reads を stale にするだけ。記録失敗（`Recording::Failed`）時は family の
-成功 footer で「changed but not recorded」を上書きしない（#501）。
+`op result dropped`）。完了通知は foreground modal を置換せず、durable receipt を
+oplog に提示した上で `AppNotice` queue の末尾へ送る。失敗時の reads は stale にし、
+記録失敗（`Recording::Failed`）時は family の成功 footer で「changed but not recorded」
+を上書きしない（#501）。
 載せ替え済み 20 family: checkout / cherry-pick / revert / checkout-tracking /
 switch-to-latest / set-upstream / rename-branch / delete-remote-branch / push /
 merge(+into) / commit / amend / create-worktree / rebase / reset-current /
@@ -282,6 +283,28 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
   自分の tag のときだけ `planning` を解放）へ。
 - `KagiApp::busy_op` フィールドを削除。契約行 `[kagi] op panicked: {} — busy_op cleared`
   は**文言不変**（意味は「latch を解放した」）。
+
+### Modal slot arbitration（#718、2026-09-14）
+
+`active_modal` が一つであることだけでは、非同期 completion が後から user input を
+上書きできる。遷移を modal 型ではなく発生源と鮮度で分ける:
+
+1. 同期 user intent だけが `replace_modal_from_user` で slot を置換できる。
+   押しのけた `AppNotice` は queue 先頭へ戻す。
+2. async plan は `offer_plan_from_async` で空 slot にだけ confirmation を出す。
+   競合時は生 plan を queue せず、`PlanToken` / one-shot approval を失効し、
+   planning latch を解放して fresh plan の再実行案内を queue する。
+3. 実行済み write の terminal outcome は oplog receipt を真実とし、通知を
+   `AppNotice` queue 末尾へ送る。foreground modal は置換しない。
+   `Unknown` / `Partial` の acknowledge / inspect capability は通知に保持する。
+4. async in-place update は expected variant と modal generation / request identity が
+   current の場合だけ payload を更新する。新規 modal を作る能力は持たない。
+
+`finish_run` の family callback は `KagiApp` を受け取らず typed `RunPresentation` を
+返す。`finish_planning` も typed `PlanningPresentation` を返し、owner/visit、vacancy、
+失効、retry notice を中央で処理する。raw `active_modal` mutation は
+`operations/modal_state*` の storage helper に限定し、`modal-slot-storage` gate は
+その module boundary を補助する。
 
 **唯一の例外 — lease を取れない write（remote pull over SSH）**:
 `src/ui/operations/pull_push.rs`。`WriteScope::Remote(RemoteRepoId)` を作るには

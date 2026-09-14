@@ -574,6 +574,13 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
             "do not retry the deleted batch"
         );
         assert!(matches!(&app.status_footer, FooterStatus::Failed(_)));
+        let notice = app
+            .app_notice()
+            .expect("partial outcome must remain visible as a queued notice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "partial-notice-has-no-reconcile-action: Partial does not register reconciliation"
+        );
         assert!(app.bottom_panel_open);
         assert_eq!(app.bottom_tab, kagi::ui::BottomTab::OperationLog);
         let panel = app.op_log.as_ref().unwrap().read(cx);
@@ -739,6 +746,442 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
     );
 }
 
+/// #643: Remote Browse owns Enter/Esc while it occupies the shared modal slot.
+/// A selected non-HEAD commit and a live diff selection make both historical
+/// fallthrough paths observable.
+pub fn scenario_remote_browse_modal_routing(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = output(repo, &["rev-parse", "HEAD"]);
+    let remote_snapshot = kagi_git::Backend::open(repo)
+        .expect("open fixture")
+        .snapshot(100)
+        .expect("snapshot fixture");
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.select_headless(1));
+    press_enter(cx, &app, window);
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_some()),
+        "workspace-enter-falls-through-without-modal: Enter must still open checkout when the modal slot is vacant"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_none()),
+        "workspace-escape-still-cancels-modal: Esc must still cancel the workspace checkout modal"
+    );
+    kagi::ui::e2e::seed_diff_selection();
+
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        head,
+        "remote-browse-enter-preserves-head: Enter must not checkout the selected commit"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.remote_browse()
+                .is_some_and(|modal| modal.error.is_some()),
+            "remote-browse-enter-confirms-front: Enter must run the connection-form validation"
+        );
+    });
+
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).remote_browse().is_none()),
+        "remote-browse-escape-closes-front: Esc must close Remote Browse"
+    );
+    assert!(
+        kagi::ui::e2e::diff_selection_present(),
+        "remote-browse-escape-preserves-diff-selection: Esc must not reach the diff behind the modal"
+    );
+
+    // Clear the process-global selection so later scenarios stay isolated.
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(!kagi::ui::e2e::diff_selection_present());
+
+    // The no-tab Welcome path must install the exact same modal-key wrapper.
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .remote_browse()
+            .is_some_and(|modal| modal.error.is_some())),
+        "welcome-modal-enter-confirms-connect: Enter on Welcome must run connection-form validation"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).remote_browse().is_none()),
+        "welcome-modal-escape-closes-remote: Esc on Welcome must close Remote Browse"
+    );
+
+    let host = kagi_domain::remote::RemoteHost::parse("example.test").expect("host");
+    let stale_snapshot = remote_snapshot.clone();
+    app.update(cx, |app, cx| {
+        app.open_remote_browse(cx);
+        kagi::ui::e2e::prepare_remote_browse_open(app, host.clone(), "/stale");
+    });
+    let stale_timer = cx.background_executor.clone();
+    kagi::ui::e2e::queue_remote_open(cx.background_executor.spawn(async move {
+        stale_timer.timer(Duration::from_secs(1)).await;
+        Ok(("/stale".to_string(), stale_snapshot))
+    }));
+    app.update(cx, |app, cx| app.start_remote_open_repo(cx));
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            kagi::ui::e2e::set_remote_browse_host_input(app, "fresh-instance", window, cx);
+        });
+    })
+    .unwrap();
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.remote_browse()
+                .is_some_and(|modal| modal.host_input == "fresh-instance"),
+            "remote-browse-generation-match-only: stale completion must not mutate or close the reopened instance"
+        );
+        assert!(
+            app.remote_view.is_none(),
+            "remote-browse-stale-open-dropped: stale completion must not enter its repository"
+        );
+    });
+    app.update(cx, |app, _| app.cancel_remote_browse());
+
+    app.update(cx, |app, cx| {
+        app.open_remote_browse(cx);
+        kagi::ui::e2e::prepare_remote_browse_open(app, host, "/srv/repo");
+    });
+    kagi::ui::e2e::queue_remote_open(
+        cx.background_executor
+            .spawn(async move { Ok(("/srv/repo".to_string(), remote_snapshot)) }),
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.remote_browse().is_none() && app.remote_view.is_some(),
+            "welcome-modal-enter-confirms-browse: Enter on Welcome must open the browsed repository"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS remote_browse_modal_routing");
+}
+
+fn fake_update_offer() -> (
+    kagi_domain::update::UpdatePlan,
+    kagi_domain::update::ReleaseInfo,
+) {
+    use kagi_domain::update::{Asset, ReleaseInfo, UpdatePlan, Version};
+
+    let current = Version::parse("1.0.0").unwrap();
+    let latest = Version::parse("1.0.1").unwrap();
+    let asset = Asset {
+        name: "Kagi-test.dmg".to_string(),
+        url: "https://example.invalid/Kagi-test.dmg".to_string(),
+        size: 1,
+    };
+    (
+        UpdatePlan {
+            current,
+            latest: latest.clone(),
+            tag: "v1.0.1".to_string(),
+            notes: "test update".to_string(),
+            asset: asset.clone(),
+        },
+        ReleaseInfo {
+            tag: "v1.0.1".to_string(),
+            version: latest,
+            notes: "test update".to_string(),
+            assets: vec![asset],
+        },
+    )
+}
+
+fn drawn_active_modals(window: AnyWindowHandle) -> Vec<&'static str> {
+    [
+        ("remote", "active-modal/remote-browse"),
+        ("update", "active-modal/update"),
+        ("notice", "active-modal/app-notice"),
+    ]
+    .into_iter()
+    .filter_map(|(label, control)| {
+        kagi::ui::e2e::control_bounds(window.window_id(), control).map(|_| label)
+    })
+    .collect()
+}
+
+fn repaint_active_modals(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    for control in [
+        "active-modal/remote-browse",
+        "active-modal/update",
+        "active-modal/app-notice",
+    ] {
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), control);
+    }
+    paint(cx, window);
+}
+
+/// #643: window-global modals still share one slot. An arriving AppNotice waits
+/// behind the front modal; Enter targets that front modal, and Update consumes
+/// Enter without an action while Esc closes it.
+pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = output(repo, &["rev-parse", "HEAD"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.select_headless(1));
+
+    app.update(cx, |app, cx| {
+        app.open_remote_browse(cx);
+        kagi::ui::e2e::deliver_app_notice(app, "queued behind Remote Browse");
+    });
+    repaint_active_modals(cx, window);
+    assert_eq!(
+        drawn_active_modals(window),
+        vec!["remote"],
+        "single-modal-render-remote-front: an arriving AppNotice must not coexist on screen"
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .remote_browse()
+            .is_some_and(|modal| modal.error.is_some())),
+        "single-modal-enter-targets-remote-front: queued notice must not steal Enter"
+    );
+    assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+
+    app.update(cx, |app, _| {
+        app.update_available = Some(fake_update_offer());
+        app.open_update_modal();
+        kagi::ui::e2e::deliver_app_notice(app, "queued behind Update");
+    });
+    repaint_active_modals(cx, window);
+    assert_eq!(
+        drawn_active_modals(window),
+        vec!["update"],
+        "single-modal-render-update-front: Update and AppNotice must not coexist on screen"
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.update_modal().is_some(),
+            "update-enter-consumed: Enter must leave the view-only modal open"
+        );
+        assert!(!app.update_installing);
+        assert!(app.update_status.is_none());
+    });
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        head,
+        "update-enter-preserves-head: consumed Enter must not checkout the selected commit"
+    );
+
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).update_modal().is_none()),
+        "update-escape-closes-front: Esc must close Update"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS window_modal_exclusivity");
+}
+
+/// #718: modal displacement preserves every unread AppNotice, while explicit
+/// user dismissal requeues only actionable notices. Remote Browse and Update
+/// exercise unrelated setters; the final plain notice distinguishes the events.
+pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+
+    app.update(cx, |app, cx| {
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "ack after remote"),
+            "notice-replacement-seeds-remote-ack: fixture must create an acknowledge action"
+        );
+        app.open_remote_browse(cx);
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| kagi::ui::e2e::app_notice_is_acknowledgeable(app.read(cx))),
+        "notice-replacement-remote-represents-action: closing Remote Browse must re-present the displaced Acknowledge"
+    );
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.app_sessions.reconcile_ids().is_empty(),
+            "notice-replacement-remote-ack-executes: the re-presented Acknowledge must clear its reconcile requirement"
+        );
+    });
+
+    app.update(cx, |app, _| {
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "ack after update"),
+            "notice-replacement-seeds-update-ack: fixture must create an acknowledge action"
+        );
+        app.update_available = Some(fake_update_offer());
+        app.open_update_modal();
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| kagi::ui::e2e::app_notice_is_acknowledgeable(app.read(cx))),
+        "notice-replacement-update-represents-action: closing Update must re-present the displaced Acknowledge"
+    );
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).app_sessions.reconcile_ids().is_empty()),
+        "notice-replacement-update-ack-executes: the second setter must preserve the same executable action"
+    );
+
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::deliver_app_notice(app, "plain information");
+        app.open_remote_browse(cx);
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.read(|cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app.read(cx)),
+            Some("plain information"),
+            "notice-replacement-plain-is-retained: a displaced non-actionable notice must be requeued"
+        );
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "notice-dismissal-plain-is-discarded: a user-dismissed non-actionable notice must not be requeued"
+    );
+
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::deliver_app_notice(app, "arrival A");
+        kagi::ui::e2e::deliver_app_notice(app, "arrival B");
+        app.open_remote_browse(cx);
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.read(|cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app.read(cx)),
+            Some("arrival A"),
+            "notice-displacement-preserves-arrival-order-a: the displaced older notice must return before queued arrivals"
+        );
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.read(|cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app.read(cx)),
+            Some("arrival B"),
+            "notice-displacement-preserves-arrival-order-b: the later waiting notice must follow the displaced notice"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS app_notice_modal_replacement");
+}
+
+/// #718: the update installer is window-owned operation state. Closing or
+/// replacing its presentation cannot erase progress, allow a duplicate start,
+/// or hide a later failure; the same modal remains cancellable on Welcome.
+pub fn scenario_update_install_lifecycle(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+
+    app.update(cx, |app, _| {
+        app.update_available = Some(fake_update_offer());
+        app.open_update_modal();
+        assert!(
+            kagi::ui::e2e::begin_update_install_for_test(app),
+            "update-install-first-start: the idle window operation must start"
+        );
+        app.cancel_update_modal();
+        app.open_update_modal();
+        assert!(
+            !kagi::ui::e2e::begin_update_install_for_test(app),
+            "update-install-no-double-start: reopening the modal must not start a second installer"
+        );
+        app.cancel_update_modal();
+        kagi::ui::e2e::fail_update_install_for_test(app, "simulated failure");
+        app.open_update_modal();
+    });
+    kagi::ui::e2e::clear_control_bounds(window.window_id(), "update/status");
+    paint(cx, window);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.update_installing
+                && app
+                    .update_status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("simulated failure")),
+            "update-install-completion-outlives-modal: completion must update window state after the modal closes"
+        );
+    });
+    assert!(
+        kagi::ui::e2e::control_bounds(window.window_id(), "update/status").is_some(),
+        "update-install-result-visible-after-reopen: reopening must render the retained completion status"
+    );
+
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.tabs.is_empty() && app.update_modal().is_some()
+        }),
+        "update-welcome-keeps-window-modal: closing the last tab must retain Update on Welcome"
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).update_modal().is_some()),
+        "update-welcome-enter-consumed: Enter on Welcome must route to and retain view-only Update"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).update_modal().is_none()),
+        "update-welcome-escape-closes-modal: Esc on Welcome must close the single modal slot"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS update_install_lifecycle");
+}
+
 /// #564: a branch context-menu overlay is not a confirmation modal. Enter
 /// must neither open a checkout plan for the selected commit behind it nor
 /// move HEAD. The registered `CheckoutSelected` action is also dispatched
@@ -810,12 +1253,9 @@ pub fn scenario_branch_menu_no_checkout_fallthrough(cx: &mut VisualTestAppContex
     );
 }
 
-/// #493 safety review: a failed push must reach the **modal** as well as the
-/// oplog and the footer (CLAUDE.md's error rule). `start_push` closes the plan
-/// modal before the background push, so the completion path has to bring it
-/// back with the error — the same thing `start_checkout` / `start_delete_branch`
-/// / `start_amend` / the remote-view pull arm already do. Enter and the button
-/// share this one completion path, so driving it once covers both.
+/// #718 P1: a failed push is a terminal outcome, not permission to replace
+/// whichever foreground modal the user opened while the write ran. The failure
+/// stays durable in the oplog and waits as an AppNotice behind Remote Browse.
 ///
 /// The failure is offline and deterministic: push to a bare remote, delete the
 /// remote, then commit — the upstream ref still resolves (so the plan is clean
@@ -825,6 +1265,8 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     let repo = fixture.path();
     let remote_dir = tempfile::tempdir().expect("remote tempdir");
     let bare = remote_dir.path().join("target.git");
+    let original_language = kagi::ui::i18n::lang();
+    kagi::ui::i18n::set_lang(kagi::ui::i18n::Lang::En);
     let bare_str = bare.to_str().unwrap();
     git(repo, &["init", "--bare", "-q", bare_str]);
     git(repo, &["remote", "add", "origin", bare_str]);
@@ -845,22 +1287,46 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     );
 
     app.update(cx, |app, cx| app.start_push(cx));
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            kagi::ui::e2e::set_remote_browse_host_input(app, "typed-host", window, cx);
+        });
+    })
+    .unwrap();
     wait_idle(cx, &app);
     cx.read(|cx| {
         let app = app.read(cx);
-        let modal = app
-            .push_modal()
-            .expect("a failed push must re-open the plan modal, not only record the failure");
         assert!(
-            modal.error.is_some(),
-            "the failure text must be shown in the modal"
+            app.remote_browse()
+                .is_some_and(|modal| modal.host_input == "typed-host"),
+            "push-failure-preserves-remote-input: terminal completion must not replace foreground input"
+        );
+        assert!(
+            kagi::ui::e2e::queued_notice_contains(app, "Push failed"),
+            "push-failure-queues-notice: failure must wait behind the occupied modal slot"
         );
         assert!(
             app.write_busy_op.is_none(),
             "busy must be released on failure"
         );
     });
+    app.update(cx, |app, _| {
+        app.cancel_remote_browse();
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    assert!(
+        cx.read(|cx| kagi::ui::e2e::app_notice_message(app.read(cx))
+            .is_some_and(|message| message.contains("Push failed"))),
+        "push-failure-presents-waiting-notice: closing the foreground must reveal the failure"
+    );
     let durable = records(repo, "push");
+    assert_eq!(
+        durable.len(),
+        1,
+        "the push attempt must have one durable receipt"
+    );
     let failed = durable
         .iter()
         .find(|e| matches!(e.outcome, OpOutcome::Failed { .. }))
@@ -886,8 +1352,9 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
         "a failed push must not touch the repository"
     );
 
+    kagi::ui::i18n::set_lang(original_language);
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS push_failure_keeps_modal: failure reaches the modal and the oplog");
+    eprintln!("[gui-e2e] PASS push_failure_keeps_modal: Remote Browse wins; failure waits");
 }
 
 /// ADR-0196 Wave 2 (#643 A1): the checkout family presents the backend's own
@@ -935,12 +1402,16 @@ pub fn scenario_checkout_presents_backend_receipt(cx: &mut VisualTestAppContext)
     assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
     cx.read(|cx| {
         let app = app.read(cx);
-        let modal = app
-            .plan_modal()
-            .expect("a refused checkout must re-open the plan modal");
         assert!(
-            modal.error.is_some(),
-            "the refusal text must reach the modal"
+            app.plan_modal().is_none(),
+            "Failed must not restore the consumed checkout confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("the checkout failure must reach AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known checkout failure does not require reconciliation"
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         let shown: Vec<_> = panel
@@ -1016,12 +1487,16 @@ pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppConte
     assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
     cx.read(|cx| {
         let app = app.read(cx);
-        let modal = app
-            .cherry_pick_modal()
-            .expect("a refused cherry-pick must re-open the plan modal");
         assert!(
-            modal.error.is_some(),
-            "the refusal text must reach the modal"
+            app.cherry_pick_modal().is_none(),
+            "Failed must not restore the consumed cherry-pick confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("the cherry-pick failure must reach AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known cherry-pick failure does not require reconciliation"
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         let shown: Vec<_> = panel

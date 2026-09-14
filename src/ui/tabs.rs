@@ -1022,12 +1022,16 @@ impl KagiApp {
 
     /// Render the Welcome screen shown when no tab is open (ADR-0028).
     /// Centred "Open Repository…" button + description.
-    pub fn render_welcome(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub fn render_welcome(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let open_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.pick_repository(window, cx);
         });
         let remote_click = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
-            this.open_remote_browse_modal(cx);
+            this.open_remote_browse(cx);
         });
 
         // Primary action: open a local repository (filled accent button).
@@ -1135,6 +1139,7 @@ impl KagiApp {
             .size_full()
             .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
+            .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
             // Themed transparent title bar leaves no OS drag area, so let the
             // (otherwise empty) welcome surface drag the window; the buttons'
             // own clicks still take precedence.
@@ -1154,18 +1159,10 @@ impl KagiApp {
             .child(buttons)
             .when_some(recent_section, |el, list| el.child(list));
 
-        // The Welcome screen short-circuits the normal render before the modal
-        // layer, so overlay the remote-browse modal here when it is open.
-        let modal_focus = self.modal_focus.clone();
-        welcome
-            .when_some(self.remote_browse_modal.clone(), |el, modal| {
-                el.child(super::remote_browse::render_remote_browse_modal(
-                    modal,
-                    modal_focus,
-                    cx,
-                ))
-            })
-            .into_any()
+        let content = self
+            .attach_welcome_window_modals(welcome, window, cx)
+            .into_any();
+        self.attach_active_modal_key_routing(content, false, cx)
     }
 }
 

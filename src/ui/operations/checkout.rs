@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
 
+use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
@@ -274,16 +275,7 @@ impl KagiApp {
             repo_path,
             move || checkout_blocking(&bg_path, &bg_plan, &bg_target),
             |_| None,
-            move |app, done, _cx| {
-                if let Err(failure) = done {
-                    app.set_plan_modal(CheckoutPlanModal {
-                        stash_first: false,
-                        target: target.clone(),
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(failure.message)),
-                    });
-                }
-            },
+            |_| RunPresentation::none(),
         );
     }
 

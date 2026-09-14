@@ -704,7 +704,7 @@ impl KagiApp {
                         self.update_available.as_ref().map(|(p, _)| p.tag.clone()),
                         |el, tag| {
                             let open = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
-                                this.update_modal_open = true;
+                                this.open_update_modal();
                                 cx.notify();
                             });
                             el.child(

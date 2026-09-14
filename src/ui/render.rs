@@ -317,7 +317,7 @@ impl Render for KagiApp {
         // view (ADR-0089 Phase 2b) has no local tab but still renders the
         // workspace from its applied snapshot.
         if self.tabs.is_empty() && self.remote_view.is_none() {
-            let welcome = self.render_welcome(cx).into_any();
+            let welcome = self.render_welcome(window, cx).into_any();
             return self.platform_window_shell(welcome, cx);
         }
 
@@ -421,7 +421,7 @@ impl Render for KagiApp {
         let create_branch_modal = self.create_branch_modal().cloned();
         let create_tag_modal = self.create_tag_modal().cloned();
         let create_worktree_modal = self.create_worktree_modal().cloned();
-        let remote_browse_modal = self.remote_browse_modal.clone();
+        let remote_browse = self.remote_browse().cloned();
         let delete_branch_modal = self.delete_branch_modal().cloned();
         let delete_remote_branch_modal = self.delete_remote_branch_modal().cloned();
         let reset_current_modal = self.reset_current_modal().cloned();
@@ -557,59 +557,6 @@ impl Render for KagiApp {
             cx.notify();
         });
 
-        // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
-        let close_main_diff = cx.listener(|this, _: &CloseMainDiff, _window, cx| {
-            // Esc cancels an open modal first (user request: Esc = cancel).
-            if this.cancel_active_modal(cx) {
-                return;
-            }
-            // R1: a diff line selection is the most transient state — clear it
-            // before anything gets closed.
-            if diff_selection::clear() {
-                cx.notify();
-                return;
-            }
-            if this.close_coauthor_menu(cx) {
-                return;
-            }
-            if this.inspector_file_menu.is_some() {
-                this.inspector_file_menu = None;
-                cx.notify();
-                return;
-            }
-            if this.pr_menu.is_some() {
-                this.pr_menu = None;
-                cx.notify();
-                return;
-            }
-            if this.tag_menu.is_some() {
-                this.tag_menu = None;
-                cx.notify();
-                return;
-            }
-            if this.pr_mode.is_some() {
-                // One step back, like every other branch of this cascade: an
-                // open PR returns to the dashboard, and only a second Esc
-                // leaves PR mode.
-                if this.pr_mode.as_ref().is_some_and(|m| m.active.is_some()) {
-                    this.pr_mode_home(cx);
-                } else {
-                    this.toggle_pr_mode(cx);
-                }
-                return;
-            }
-            if this.commit_menu.is_some() {
-                this.commit_menu = None;
-                cx.notify();
-            } else if this.branch_menu.is_some() {
-                this.branch_menu = None;
-                cx.notify();
-            } else if this.main_diff.is_some() {
-                this.close_main_diff();
-                cx.notify();
-            }
-        });
-
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
         // No-ops when the workspace is closed or the buffer is clean.
         // R1: ⌘C — copy the diff line selection (kept across the copy so the
@@ -661,8 +608,6 @@ impl Render for KagiApp {
             .on_drag_move::<DividerDrag>(divider_drag_move)
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
-            // T-UI-003: Esc closes the main diff view.
-            .on_action(close_main_diff)
             .on_action(copy_diff_selection)
             .on_action(save_editor_file)
             // Arrows: step diff files while the main diff is open, otherwise
@@ -748,33 +693,6 @@ impl Render for KagiApp {
                 }
                 cx.notify();
             }))
-            // Enter checks out the selected commit. Handled as a raw key on
-            // the root (the "enter" KeyBinding never dispatched — its
-            // key_char "\n" takes a different path through the keymap than
-            // chord keys like the arrows). All overlay/input guards live in
-            // checkout_selected_commit.
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                if std::env::var("KAGI_DEBUG_KEYS").as_deref() == Ok("1") {
-                    eprintln!(
-                        "[kagi] key: {:?} char={:?}",
-                        e.keystroke.key, e.keystroke.key_char
-                    );
-                }
-                let ks = &e.keystroke;
-                if ks.key == "enter"
-                    && !ks.modifiers.platform
-                    && !ks.modifiers.control
-                    && !ks.modifiers.alt
-                    && !ks.modifiers.shift
-                {
-                    // Enter approves an open modal (user request); otherwise it
-                    // checks out the selected commit.
-                    if !this.confirm_active_modal(cx) {
-                        this.checkout_selected_commit(window, cx);
-                    }
-                    cx.notify();
-                }
-            }))
             // ── W5-MENU / ADR-0029: conditional command handlers ──────────
             // Each menu action's handler is registered on the focused root ONLY
             // when `command_state == Enabled`.  gpui's macOS menu validation
@@ -854,7 +772,6 @@ impl Render for KagiApp {
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx));
 
-        // ── Modal / popover overlay layer (extracted: T-SPLIT-RENDER-001) ──
         let root = self.attach_modal_overlays(
             root,
             plan_modal,
@@ -875,7 +792,8 @@ impl Render for KagiApp {
             create_tag_modal,
             create_worktree_modal,
             unlock_worktree_modal,
-            remote_browse_modal,
+            remote_browse,
+            self.update_modal().cloned(),
             stash_push_modal,
             stash_apply_modal,
             cherry_pick_modal,
@@ -900,13 +818,14 @@ impl Render for KagiApp {
             cx,
         );
 
-        root
+        let content = root
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             // ── W3-NOTIFY: toast stack (above everything) ──────
             .children(self.render_toasts())
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
             .children(self.render_platform_menu_dropdown(cx))
-            .into_any()
+            .into_any();
+        self.attach_active_modal_key_routing(content, true, cx)
     }
 }

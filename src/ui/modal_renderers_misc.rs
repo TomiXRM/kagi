@@ -180,7 +180,7 @@ pub(crate) fn render_update_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.update_modal_open = false;
+        this.cancel_update_modal();
         cx.notify();
     });
     let update_now = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
@@ -303,13 +303,14 @@ pub(crate) fn render_update_modal(
     }
 
     if let Some(s) = status {
-        body = body.child(
+        body = body.child(super::e2e::measure_control(
+            "update/status",
             div()
                 .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_warning))
                 .child(s),
-        );
+        ));
     }
 
     // Buttons row.

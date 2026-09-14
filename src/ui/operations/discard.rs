@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
 
+use super::RunPresentation;
 use crate::ui::*;
 
 /// Pure partition decision for "Discard all": a row goes to `skipped` if it is
@@ -340,47 +341,28 @@ impl KagiApp {
                 )),
                 _ => None,
             },
-            move |app, done, cx| match done {
+            move |done| match done {
                 Ok(kagi_git::OperationOutcome::Discard(d)) => {
-                    if d.is_partial() {
-                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
+                    let status = if d.is_partial() {
+                        FooterStatus::Failed(SharedString::from(format!(
                             "{}: {}",
                             Msg::DiscardPartial.t(),
                             d.error.clone().unwrap_or_default()
-                        )));
+                        )))
                     } else {
                         let human = if d.backups.len() == 1 {
                             format!("{} discarded", d.backups[0].path)
                         } else {
                             format!("{} files discarded", d.backups.len())
                         };
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "discard: {}",
-                            human
-                        )));
-                    }
-                    app.refresh_worktree_wip_row(&wip_path);
+                        FooterStatus::Success(SharedString::from(format!("discard: {}", human)))
+                    };
+                    RunPresentation::status(status).refresh_worktree_wip(wip_path.clone())
                 }
-                Ok(_) => {}
-                Err(failure) => {
-                    app.set_discard_modal(DiscardModal {
-                        // Same status classification the modal already carried.
-                        kinds: modal.kinds.clone(),
-                        plan: plan.clone(),
-                        paths: paths.clone(),
-                        skipped: modal.skipped.clone(),
-                        is_all: modal.is_all,
-                        origin: modal.origin,
-                        error: Some(SharedString::from(failure.message)),
-                        // Force re-arm after a failure: the user is
-                        // re-confirming, so require the two-stage flow again.
-                        confirm_armed: false,
-                    });
-                    // #281: never leave the UI showing a state that may no longer
-                    // exist on disk — re-read even on the pure-failure path.
-                    app.refresh_worktree_wip_row(&wip_path);
-                    app.reload(cx);
-                }
+                Ok(_) => RunPresentation::none(),
+                Err(_) => RunPresentation::none()
+                    .refresh_worktree_wip(wip_path.clone())
+                    .reload(),
             },
         );
     }

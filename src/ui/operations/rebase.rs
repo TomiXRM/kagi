@@ -8,6 +8,7 @@
 //! special routing here — the same call that picks up a completed rebase
 //! also picks up a paused one.
 
+use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
@@ -111,34 +112,19 @@ impl KagiApp {
             repo_path,
             move || rebase_blocking(&bg_path, &bg_plan, &bg_onto),
             |outcome| Some(format!("finished — {}", rebase_summary(outcome))),
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                        "rebase: onto '{}'",
-                        onto
-                    )));
-                    // Re-runs conflict-mode detection unconditionally — a
-                    // rebase paused at a conflict enters Conflict Mode here,
-                    // exactly like a conflicting merge (see module doc).
+            move |done| match done {
+                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
+                    format!("rebase: onto '{}'", onto),
+                ))),
+                Err(failure)
+                    if failure.code
+                        == kagi_git::oplog::FailureCode::RebaseBlockedByRepoSettings =>
+                {
+                    RunPresentation::none().outcome_notice(
+                        i18n::rebase_repository_settings_may_block_start().to_string(),
+                    )
                 }
-                Err(failure) => {
-                    // The typed code, not the prose (ADR-0195): a rebase that
-                    // could not start because Kagi disabled repository settings
-                    // gets its own guidance.
-                    let error = if failure.code
-                        == kagi_git::oplog::FailureCode::RebaseBlockedByRepoSettings
-                    {
-                        i18n::rebase_repository_settings_may_block_start().to_string()
-                    } else {
-                        failure.message
-                    };
-                    app.set_rebase_current_onto_modal(RebaseCurrentOntoModal {
-                        onto: onto.clone(),
-                        branch: modal.branch.clone(),
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(error)),
-                    });
-                }
+                Err(_) => RunPresentation::none(),
             },
         );
     }

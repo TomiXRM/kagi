@@ -486,6 +486,19 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
         assert!(app.fetch_in_flight.is_none());
         assert!(!app.app_sessions.has_leases());
     });
+    app.update(cx, |app, _| {
+        app.status_footer =
+            kagi::ui::FooterStatus::Busy(gpui::SharedString::from("Planning merge…"));
+    });
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            e2e::set_remote_browse_host_input(app, "merge-wins", window, cx);
+        });
+    })
+    .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while cx.read(|cx| app.read(cx).planning.is_some()) {
         cx.run_until_parked();
@@ -498,14 +511,120 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
     cx.read(|cx| {
         let state = app.read(cx);
         assert!(
-            state.merge_modal().is_some(),
-            "the settled plan opens its modal"
+            state
+                .remote_browse()
+                .is_some_and(|modal| modal.host_input == "merge-wins"),
+            "merge-plan-preserves-remote-input: an async plan must not replace foreground input"
+        );
+        assert!(
+            state.merge_modal().is_none(),
+            "merge-plan-not-queued: the raw plan must be discarded on contention"
+        );
+        assert_eq!(state.planning, None, "the planning latch must be released");
+        assert!(
+            !matches!(state.status_footer, kagi::ui::FooterStatus::Busy(_)),
+            "merge-plan-terminates-footer: discarding a contended plan must end its Busy footer"
+        );
+        assert!(
+            !matches!(
+                state.app_sessions.plan_state(),
+                kagi::app::PlanState::Ready { .. }
+            ),
+            "merge-plan-token-invalidated: no confirmable plan token may survive contention"
+        );
+        assert!(
+            e2e::queued_notice_contains(state, "Merge plan was not shown"),
+            "merge-plan-queues-retry-notice: contention must explain how to obtain a fresh plan"
         );
         assert_eq!(e2e::busy_snackbar_label(state), None);
     });
+    app.update(cx, |app, _| {
+        app.cancel_remote_browse();
+        e2e::present_app_notice(app);
+    });
+    assert!(
+        cx.read(|cx| e2e::app_notice_message(app.read(cx))
+            .is_some_and(|message| message.contains("Merge plan was not shown"))),
+        "merge-plan-presents-retry-notice: closing the foreground reveals the retry action"
+    );
     i18n::set_lang(original_language);
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS merge_plan_latch: planning latches and releases without a write latch"
+        "[gui-e2e] PASS merge_plan_latch: Remote Browse wins; latch releases; retry notice waits"
+    );
+}
+
+/// A custom Delete Branch planner has the same slot/latch/footer contract as
+/// `finish_planning`: a foreground modal wins, and the discarded plan leaves
+/// no stale confirmation or Busy presentation behind.
+pub fn scenario_delete_branch_plan_latches_planning(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["branch", "victim", "HEAD~1"]);
+    let (app, window) = mount(cx, &repo);
+    let original_language = i18n::lang();
+    i18n::set_lang(Lang::En);
+    app.update(cx, |app, cx| {
+        app.open_delete_branch_modal("victim", cx);
+        assert_eq!(app.planning, Some("delete-branch-plan"));
+        assert_eq!(
+            e2e::busy_snackbar_label(app),
+            Some("Planning branch deletion…")
+        );
+        app.open_remote_browse(cx);
+    });
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            e2e::set_remote_browse_host_input(app, "delete-wins", window, cx);
+        });
+    })
+    .unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while cx.read(|cx| app.read(cx).planning.is_some()) {
+        cx.run_until_parked();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the Delete Branch plan never settled"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state
+                .remote_browse()
+                .is_some_and(|modal| modal.host_input == "delete-wins"),
+            "delete-plan-preserves-remote-input: the foreground modal and its input must survive"
+        );
+        assert!(
+            state.delete_branch_modal().is_none(),
+            "delete-plan-not-queued: the contended raw plan must be discarded"
+        );
+        assert_eq!(state.planning, None, "the planning latch must be released");
+        assert!(
+            !matches!(state.status_footer, kagi::ui::FooterStatus::Busy(_)),
+            "delete-plan-terminates-footer: latch release must terminate its Busy footer"
+        );
+        assert!(
+            e2e::queued_notice_contains(state, "Delete plan was not shown"),
+            "delete-plan-queues-retry-notice: contention must explain how to obtain a fresh plan"
+        );
+    });
+    app.update(cx, |app, _| {
+        app.cancel_remote_browse();
+        e2e::present_app_notice(app);
+    });
+    assert!(
+        cx.read(|cx| e2e::app_notice_message(app.read(cx))
+            .is_some_and(|message| message.contains("Delete plan was not shown"))),
+        "delete-plan-presents-retry-notice: closing the foreground reveals the retry action"
+    );
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS delete_branch_plan_latch: Remote Browse wins; latch and footer terminate"
     );
 }

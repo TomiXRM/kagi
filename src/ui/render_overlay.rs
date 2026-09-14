@@ -146,6 +146,38 @@ impl gpui::Render for toast_stack::ToastStack {
 // `gpui::list` + a selectable detail block, and this file keeps the toasts.
 
 impl KagiApp {
+    /// The Welcome screen returns before the normal overlay compositor, so
+    /// window-global modals need the same single-slot rendering here.
+    pub(super) fn attach_welcome_window_modals(
+        &self,
+        el: gpui::Div,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let modal_focus = self.modal_focus.clone();
+        el.when_some(self.remote_browse().cloned(), |el, modal| {
+            el.child(super::e2e::measure_control(
+                "active-modal/remote-browse",
+                render_remote_browse(modal, modal_focus, cx),
+            ))
+        })
+        .when_some(self.update_modal(), |el, _modal| {
+            let Some((plan, _)) = self.update_available.as_ref() else {
+                return el;
+            };
+            el.child(super::e2e::measure_control(
+                "active-modal/update",
+                render_update_modal(
+                    plan.clone(),
+                    self.update_installing,
+                    self.update_status.clone(),
+                    window,
+                    cx,
+                ),
+            ))
+        })
+    }
+
     /// Modal / popover overlay layer (above the body, below the status bar).
     /// Extracted verbatim from `render` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3)
     /// so the entry `render` reads as composition. The pre-cloned modal state is
@@ -172,7 +204,8 @@ impl KagiApp {
         create_tag_modal: Option<CreateTagModal>,
         create_worktree_modal: Option<CreateWorktreeModal>,
         unlock_worktree_modal: Option<UnlockWorktreeModal>,
-        remote_browse_modal: Option<RemoteBrowseModal>,
+        remote_browse: Option<RemoteBrowseModal>,
+        update_modal: Option<UpdateModal>,
         stash_push_modal: Option<StashPushModal>,
         stash_apply_modal: Option<StashApplyModal>,
         cherry_pick_modal: Option<CherryPickModal>,
@@ -251,25 +284,28 @@ impl KagiApp {
         })
         // ── Worktree lifecycle confirmations (issue #340) ──
         .when_some(self.app_notice().cloned(), |el, notice| {
-            el.child(modal_renderers::modal_overlay(
-                div()
-                    .p_4()
-                    .bg(rgb(theme().bg_base))
-                    .child(notice.message)
-                    .child(
-                        div()
-                            .id("app-notice-dismiss")
-                            .child(if notice.inspect.is_some() {
-                                Msg::AppReconcileInspect.t()
-                            } else if notice.acknowledge.is_some() {
-                                Msg::AppReconcileConfirm.t()
-                            } else {
-                                Msg::AppNoticeDismiss.t()
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.confirm_app_notice(cx);
-                            })),
-                    ),
+            el.child(super::e2e::measure_control(
+                "active-modal/app-notice",
+                modal_renderers::modal_overlay(
+                    div()
+                        .p_4()
+                        .bg(rgb(theme().bg_base))
+                        .child(notice.message)
+                        .child(
+                            div()
+                                .id("app-notice-dismiss")
+                                .child(if notice.inspect.is_some() {
+                                    Msg::AppReconcileInspect.t()
+                                } else if notice.acknowledge.is_some() {
+                                    Msg::AppReconcileConfirm.t()
+                                } else {
+                                    Msg::AppNoticeDismiss.t()
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.confirm_app_notice(cx);
+                                })),
+                        ),
+                ),
             ))
         })
         .when_some(self.remove_worktree_modal().cloned(), |el, modal| {
@@ -319,8 +355,11 @@ impl KagiApp {
             el.child(render_create_worktree_modal(modal, modal_focus.clone(), cx))
         })
         // ── Remote SSH browse modal overlay (ADR-0089) ───
-        .when_some(remote_browse_modal, |el, modal| {
-            el.child(render_remote_browse_modal(modal, modal_focus.clone(), cx))
+        .when_some(remote_browse, |el, modal| {
+            el.child(super::e2e::measure_control(
+                "active-modal/remote-browse",
+                render_remote_browse(modal, modal_focus.clone(), cx),
+            ))
         })
         // ── Stash push modal overlay ─────────────────────
         .when_some(stash_push_modal, |el, modal| {
@@ -425,21 +464,20 @@ impl KagiApp {
             el.child(render_smart_commit_modal(modal, cx))
         })
         // ── Auto-update modal overlay (ADR-0082) ──────────
-        .when_some(
-            if self.update_modal_open {
-                self.update_available.as_ref().map(|(p, _)| {
-                    (
-                        p.clone(),
-                        self.update_installing,
-                        self.update_status.clone(),
-                    )
-                })
-            } else {
-                None
-            },
-            |el, (plan, installing, status)| {
-                el.child(render_update_modal(plan, installing, status, window, cx))
-            },
-        )
+        .when_some(update_modal, |el, _modal| {
+            let Some((plan, _)) = self.update_available.as_ref() else {
+                return el;
+            };
+            el.child(super::e2e::measure_control(
+                "active-modal/update",
+                render_update_modal(
+                    plan.clone(),
+                    self.update_installing,
+                    self.update_status.clone(),
+                    window,
+                    cx,
+                ),
+            ))
+        })
     }
 }

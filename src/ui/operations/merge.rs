@@ -1,5 +1,7 @@
 //! Merge planning, drag destinations, and confirmed execution.
 
+use super::modal_state::{AsyncPlanOffer, PlanningPresentation};
+use super::{RunHistory, RunHistorySummary, RunPresentation};
 use crate::ui::blocking_ops::*;
 use crate::ui::*;
 
@@ -61,27 +63,19 @@ impl KagiApp {
             }
             Ok((plan, kind, into_branch))
         });
-        self.finish_planning(cx, task, "merge-plan", move |app, result, _cx| {
-            if app
-                .active_session()
-                .and_then(|id| app.app_sessions.attachment(id))
-                .as_ref()
-                != Some(&owner)
-            {
-                return;
-            }
-            match result {
-                Ok((plan, kind, into_branch)) => {
-                    klog!(
-                        "plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
-                        target,
-                        plan.blockers.len(),
-                        plan.warnings.len(),
-                        plan.preview_files.len(),
-                        kind
-                    );
-                    app.status_footer = FooterStatus::Idle(SharedString::from(""));
-                    app.set_merge_modal(MergePlanModal {
+        self.finish_planning(cx, task, "merge-plan", move |result| match result {
+            Ok((plan, kind, into_branch)) => {
+                klog!(
+                    "plan: merge {} blockers={} warnings={} preview_files={} kind={:?}",
+                    target,
+                    plan.blockers.len(),
+                    plan.warnings.len(),
+                    plan.preview_files.len(),
+                    kind
+                );
+                PlanningPresentation::Offer(Box::new(AsyncPlanOffer::new(
+                    i18n::Op::Merge,
+                    ActiveModal::Merge(MergePlanModal {
                         owner,
                         target,
                         into_branch,
@@ -89,10 +83,13 @@ impl KagiApp {
                         kind,
                         off_branch: false,
                         error: None,
-                    });
-                }
-                Err(e) => app.report_plan_failure(i18n::Op::Merge, e),
+                    }),
+                )))
             }
+            Err(error) => PlanningPresentation::Failed {
+                operation: i18n::Op::Merge,
+                error,
+            },
         });
     }
 
@@ -169,26 +166,18 @@ impl KagiApp {
             repo.plan_merge_into_branch(&bg_source, &bg_target)
                 .map_err(|e| e.to_string())
         });
-        self.finish_planning(cx, task, "merge-plan", move |app, result, _cx| {
-            if app
-                .active_session()
-                .and_then(|id| app.app_sessions.attachment(id))
-                .as_ref()
-                != Some(&owner)
-            {
-                return;
-            }
-            match result {
-                Ok((plan, _kind)) => {
-                    klog!(
-                        "plan: merge-into {} -> {} blockers={} warnings={}",
-                        source,
-                        target,
-                        plan.blockers.len(),
-                        plan.warnings.len()
-                    );
-                    app.status_footer = FooterStatus::Idle(SharedString::from(""));
-                    app.set_merge_modal(MergePlanModal {
+        self.finish_planning(cx, task, "merge-plan", move |result| match result {
+            Ok((plan, _kind)) => {
+                klog!(
+                    "plan: merge-into {} -> {} blockers={} warnings={}",
+                    source,
+                    target,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                PlanningPresentation::Offer(Box::new(AsyncPlanOffer::new(
+                    i18n::Op::Merge,
+                    ActiveModal::Merge(MergePlanModal {
                         owner,
                         target: source,
                         into_branch: target,
@@ -196,10 +185,13 @@ impl KagiApp {
                         kind: kagi_git::MergeKind::MergeCommit,
                         off_branch: true,
                         error: None,
-                    });
-                }
-                Err(e) => app.report_plan_failure(i18n::Op::Merge, e),
+                    }),
+                )))
             }
+            Err(error) => PlanningPresentation::Failed {
+                operation: i18n::Op::Merge,
+                error,
+            },
         });
     }
 
@@ -380,39 +372,13 @@ impl KagiApp {
                     )
                 ))
             },
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    // Record for undo/redo only when the merge actually moved
-                    // the branch ref (clean merge / fast-forward). A merge
-                    // left in conflict has not moved HEAD, so before==after
-                    // and record_history is a no-op.
-                    if let (Some((branch, before)), Some((_, after_sha))) =
-                        (history_before.clone(), app.head_branch_and_sha())
-                    {
-                        app.record_history(
-                            kagi_git::OperationKind::Merge,
-                            &branch,
-                            before,
-                            after_sha,
-                            format!("merge {}", history_target),
-                        );
-                    }
-                    // reload() resets the conflict-mode detection guard and
-                    // re-runs detect_conflict_mode(); a merge that left
-                    // conflict markers (MergeKind::Conflicts) therefore enters
-                    // Conflict Mode here. Non-conflict merges stay Normal.
-                }
-                Err(failure) => {
-                    app.set_merge_modal(MergePlanModal {
-                        owner: modal.owner.clone(),
-                        target: modal.target.clone(),
-                        into_branch: modal.into_branch.clone(),
-                        plan: modal.plan.clone(),
-                        kind: modal.kind.clone(),
-                        off_branch: modal.off_branch,
-                        error: Some(SharedString::from(failure.message)),
-                    });
-                }
+            move |done| match done {
+                Ok(_) => RunPresentation::none().with_history(RunHistory::FromCurrentHead {
+                    kind: kagi_git::OperationKind::Merge,
+                    before: history_before,
+                    summary: RunHistorySummary::Fixed(format!("merge {}", history_target)),
+                }),
+                Err(_) => RunPresentation::none(),
             },
         );
     }

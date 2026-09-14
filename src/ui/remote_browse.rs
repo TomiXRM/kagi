@@ -4,7 +4,7 @@
 //! deliberately split into focused view modules). It holds:
 //!
 //! - the modal state ([`RemoteBrowseModal`]),
-//! - its renderer ([`render_remote_browse_modal`]) — built from the
+//! - its renderer ([`render_remote_browse`]) — built from the
 //!   **longbridge `gpui-component`** widgets already vendored as a dependency
 //!   (`Button`, `Input`) rather than hand-rolled `div`s, so the dialog matches
 //!   the rest of the component-based UI,
@@ -28,6 +28,9 @@ use kagi_domain::remote::{self, RemoteDirEntry, RemoteHost, RemoteRepoSummary};
 
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
+
+static REMOTE_BROWSE_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 // ──────────────────────────────────────────────────────────────
 // State
@@ -56,6 +59,7 @@ const REMOTE_SNAPSHOT_LIMIT: usize = 10_000;
 /// from the entity lifecycle, matching the other input modals).
 #[derive(Clone)]
 pub struct RemoteBrowseModal {
+    pub(crate) generation: u64,
     pub stage: RemoteBrowseStage,
     pub host_input: String,
     pub host_state: Option<Entity<gpui_component::input::InputState>>,
@@ -77,6 +81,7 @@ pub struct RemoteBrowseModal {
 impl RemoteBrowseModal {
     pub fn new() -> Self {
         Self {
+            generation: 0,
             stage: RemoteBrowseStage::Connect,
             host_input: String::new(),
             host_state: None,
@@ -93,6 +98,11 @@ impl RemoteBrowseModal {
             error: None,
         }
     }
+
+    fn with_generation(mut self, generation: u64) -> Self {
+        self.generation = generation;
+        self
+    }
 }
 
 impl Default for RemoteBrowseModal {
@@ -107,23 +117,35 @@ impl Default for RemoteBrowseModal {
 
 impl KagiApp {
     /// Open the "Connect to a remote host" modal (connection form).
-    pub fn open_remote_browse_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_remote_browse(&mut self, cx: &mut Context<Self>) {
         self.modal_focus = Some(cx.focus_handle());
-        self.remote_browse_modal = Some(RemoteBrowseModal::new());
+        let generation = REMOTE_BROWSE_GENERATION
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .wrapping_add(1);
+        self.set_remote_browse(RemoteBrowseModal::new().with_generation(generation));
         cx.notify();
     }
 
     /// Close the remote browse modal without making any changes.
-    pub fn cancel_remote_browse_modal(&mut self) {
-        self.remote_browse_modal = None;
+    pub fn cancel_remote_browse(&mut self) {
+        self.clear_remote_browse();
+    }
+
+    /// Confirm the action presented by the current remote-browse stage.
+    pub fn confirm_remote_browse(&mut self, cx: &mut Context<Self>) {
+        match self.remote_browse().map(|modal| modal.stage) {
+            Some(RemoteBrowseStage::Connect) => self.start_remote_connect(cx),
+            Some(RemoteBrowseStage::Browse) => self.start_remote_open_repo(cx),
+            None => {}
+        }
     }
 
     /// Validate the connection form, then connect + list the home directory on a
     /// background thread (`crate::remote`). On success the modal flips to the
     /// directory browser; on failure it shows the ssh error.
     pub fn start_remote_connect(&mut self, cx: &mut Context<Self>) {
-        let host = {
-            let m = match self.remote_browse_modal.as_mut() {
+        let (host, generation) = {
+            let m = match self.remote_browse_mut() {
                 Some(m) => m,
                 None => return,
             };
@@ -157,7 +179,7 @@ impl KagiApp {
             m.busy = true;
             m.error = None;
             m.host = Some(host.clone());
-            host
+            (host, m.generation)
         };
         cx.notify();
 
@@ -165,7 +187,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                if let Some(m) = app.remote_browse_modal.as_mut() {
+                app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
                         Ok(data) => {
@@ -178,7 +200,7 @@ impl KagiApp {
                         }
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
-                }
+                });
                 cx.notify();
             });
         })
@@ -188,15 +210,14 @@ impl KagiApp {
     /// Navigate the remote browser into `path` (list + repo-detect + summary on
     /// a background thread).
     pub fn remote_browse_navigate(&mut self, path: String, cx: &mut Context<Self>) {
-        let host = match self
-            .remote_browse_modal
-            .as_ref()
-            .and_then(|m| m.host.clone())
-        {
-            Some(h) => h,
+        let (host, generation) = match self.remote_browse() {
+            Some(m) => match m.host.clone() {
+                Some(host) => (host, m.generation),
+                None => return,
+            },
             None => return,
         };
-        if let Some(m) = self.remote_browse_modal.as_mut() {
+        if let Some(m) = self.remote_browse_mut() {
             if m.busy {
                 return;
             }
@@ -209,7 +230,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                if let Some(m) = app.remote_browse_modal.as_mut() {
+                app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
                         Ok(data) => {
@@ -221,7 +242,7 @@ impl KagiApp {
                         }
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
-                }
+                });
                 cx.notify();
             });
         })
@@ -233,36 +254,41 @@ impl KagiApp {
     /// background thread, then hand it to [`KagiApp::enter_remote_view`] and close
     /// the modal. Read-only — no working tree, no operations.
     pub fn start_remote_open_repo(&mut self, cx: &mut Context<Self>) {
-        let (host, path) = match self.remote_browse_modal.as_ref() {
+        let (host, path, generation) = match self.remote_browse() {
             Some(m) if m.current_is_repo && !m.busy => match m.host.clone() {
-                Some(h) => (h, m.cwd.clone()),
+                Some(h) => (h, m.cwd.clone(), m.generation),
                 None => return,
             },
             _ => return,
         };
-        if let Some(m) = self.remote_browse_modal.as_mut() {
+        if let Some(m) = self.remote_browse_mut() {
             m.busy = true;
             m.error = None;
         }
         cx.notify();
 
         let view_host = host.clone();
-        let task = cx.background_spawn(async move { remote_open_blocking(&host, &path) });
+        let open = async move { remote_open_blocking(&host, &path) };
+        #[cfg(feature = "gui-e2e")]
+        let task = crate::ui::e2e::take_remote_open().unwrap_or_else(|| cx.background_spawn(open));
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(open);
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
+                if !app.remote_browse_generation_is(generation) {
+                    return;
+                }
                 match result {
                     Ok((root, snap)) => {
-                        // Close the modal and render the remote repo in the main
-                        // views.
-                        app.cancel_remote_browse_modal();
+                        app.cancel_remote_browse();
                         app.enter_remote_view(view_host, root, snap, cx);
                     }
                     Err(e) => {
-                        if let Some(m) = app.remote_browse_modal.as_mut() {
+                        app.update_remote_browse_from_async(generation, |m| {
                             m.busy = false;
                             m.error = Some(SharedString::from(e));
-                        }
+                        });
                     }
                 }
                 cx.notify();
@@ -294,7 +320,7 @@ fn labeled_input(
         .children(state.map(|st| Input::new(st).small()))
 }
 
-pub(crate) fn render_remote_browse_modal(
+pub(crate) fn render_remote_browse(
     modal: RemoteBrowseModal,
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
@@ -308,7 +334,7 @@ pub(crate) fn render_remote_browse_modal(
         let app = app.clone();
         move |_e: &ClickEvent, window: &mut Window, cx: &mut App| {
             app.update(cx, |this, cx| {
-                this.cancel_remote_browse_modal();
+                this.cancel_remote_browse();
                 if let Some(fh) = this.root_focus.clone() {
                     window.focus(&fh, cx);
                 }
@@ -419,7 +445,7 @@ pub(crate) fn render_remote_browse_modal(
                 let app = app.clone();
                 move |_e: &ClickEvent, _w: &mut Window, cx: &mut App| {
                     app.update(cx, |this, cx| {
-                        if let Some(m) = this.remote_browse_modal.as_mut() {
+                        if let Some(m) = this.remote_browse_mut() {
                             m.stage = RemoteBrowseStage::Connect;
                             m.error = None;
                         }
@@ -634,7 +660,7 @@ pub(crate) fn render_remote_browse_modal(
     // Escape cancels (mirrors the other input modals).
     let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
         if e.keystroke.key == "escape" {
-            this.cancel_remote_browse_modal();
+            this.cancel_remote_browse();
             if let Some(fh) = this.root_focus.clone() {
                 window.focus(&fh, cx);
             }

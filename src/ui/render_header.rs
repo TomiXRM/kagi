@@ -245,9 +245,9 @@ impl KagiApp {
         // Undo — operation-history undo (T-UNDOREDO-001, ADR-0081). Enabled per
         // the in-session history cursor (can_undo). Click opens the undo plan
         // modal (preview → confirm runs the safe ref move).
-        let undo_on = self.operation_history.can_undo();
+        let undo_on = self.ui().operation_history.can_undo();
         let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if this.operation_history.can_undo() {
+            if this.ui().operation_history.can_undo() {
                 if !this.reject_if_busy(cx) {
                     this.open_history_undo_modal();
                 }
@@ -258,9 +258,9 @@ impl KagiApp {
         });
 
         // Redo — operation-history redo. Enabled per can_redo().
-        let redo_on = self.operation_history.can_redo();
+        let redo_on = self.ui().operation_history.can_redo();
         let redo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if this.operation_history.can_redo() {
+            if this.ui().operation_history.can_redo() {
                 if !this.reject_if_busy(cx) {
                     this.open_history_redo_modal();
                 }
@@ -409,10 +409,12 @@ impl KagiApp {
         // summary is surfaced on hover. Sourced from the operation-history
         // cursor (peek_undo / peek_redo).
         let undo_tooltip_text: Option<SharedString> = self
+            .ui()
             .operation_history
             .peek_undo()
             .map(|e| SharedString::from(format!("Undo: {}", e.summary)));
         let redo_tooltip_text: Option<SharedString> = self
+            .ui()
             .operation_history
             .peek_redo()
             .map(|e| SharedString::from(format!("Redo: {}", e.summary)));

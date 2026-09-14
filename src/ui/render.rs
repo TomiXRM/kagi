@@ -326,8 +326,8 @@ impl Render for KagiApp {
         // selection path (click / keyboard / jump) uniformly.
         if self.remote_view.is_some() {
             if let Some(i) = selected {
-                if !self.diff_caches.changed_files.contains_key(&i)
-                    && !self.diff_caches.remote_inflight.contains(&i)
+                if !self.ui().diff_caches.changed_files.contains_key(&i)
+                    && !self.ui().diff_caches.remote_inflight.contains(&i)
                 {
                     self.load_remote_changed_files(i, cx);
                 }
@@ -337,8 +337,8 @@ impl Render for KagiApp {
             // changed files + diffstat off the UI thread (once per row), so no
             // selection path (click / keyboard / jump) blocks the frame. `select`
             // only records the selection; this fires the async load.
-            if !self.diff_caches.changed_files.contains_key(&i)
-                && !self.diff_caches.local_inflight.contains(&i)
+            if !self.ui().diff_caches.changed_files.contains_key(&i)
+                && !self.ui().diff_caches.local_inflight.contains(&i)
             {
                 self.load_local_changed_files(i, cx);
             }
@@ -349,7 +349,7 @@ impl Render for KagiApp {
         // ADR-0121 B2: the changed-files / diffstat / badges / compare inputs
         // for the Inspector are re-derived by `workspace::InspectorItem` in
         // its render — render_body no longer takes them.
-        let wip_diffstat = self.wip_diffstat;
+        let wip_diffstat = self.ui().wip_diffstat;
 
         // ADR-0121 B2 (merge): both clones gone — the scroll handle lives in
         // MainDiffPane, and the Inspector re-derives compare inputs itself.
@@ -672,7 +672,7 @@ impl Render for KagiApp {
             // keybinding's `!Input && !Terminal` predicate already keeps these
             // off text fields and the terminal.
             .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
-                if this.operation_history.can_undo() {
+                if this.ui().operation_history.can_undo() {
                     if !this.reject_if_busy(cx) {
                         this.open_history_undo_modal();
                     }
@@ -683,7 +683,7 @@ impl Render for KagiApp {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
-                if this.operation_history.can_redo() {
+                if this.ui().operation_history.can_redo() {
                     if !this.reject_if_busy(cx) {
                         this.open_history_redo_modal();
                     }

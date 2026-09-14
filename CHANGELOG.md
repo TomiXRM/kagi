@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - GitHub and Branch Cleanup evidence now stays with its tab session, including results arriving in the background. Analyze caches and scan revisions cannot cross tab incarnations, and a newer HEAD supersedes an older mine. Conflict detection's run-once guard is session-local. (#643, Wave 4 S2b)
 - Cleanup and squash scan results are now bound to their owner's read revision as well as their scan generation. A read accepted in the background cannot be overwritten by obsolete deletion candidates, PR evidence, or squash connectors. (#717)
 - Cleanup and squash scans also track the exact published read model, closing the race where a scan and an accepted full load shared one read-request revision. (#717)
+- Read caches, working-tree status, WIP diffstat, and undo history now belong to their tab session. Returning to a tab immediately distrusts retained cache payloads, rejects late results from the previous activation, and publishes a fresh full read; each tab restores only its own history, while undo/redo still live-preflight the branch and expected ref before writing. Pane entities remain unchanged for the dedicated retention slice. (#643, ADR-0197 S4)
 
 ## [0.37.0] — 2026-09-08
 

@@ -859,6 +859,7 @@ impl KagiApp {
                 file_index,
             } => {
                 let len = self
+                    .ui()
                     .diff_caches
                     .changed_files
                     .get(&row_index)
@@ -1343,6 +1344,7 @@ impl KagiApp {
             None => return,
         };
         let files = match self
+            .ui()
             .diff_caches
             .changed_files
             .get(&selected)
@@ -1363,6 +1365,7 @@ impl KagiApp {
         // commits to compare the same file previously recomputed the full git2
         // tree-diff + hunk extraction on every toggle. Hit the cache first.
         if let Some(cached) = self
+            .ui()
             .diff_caches
             .file_content
             .get(&(selected, file_index))
@@ -1381,7 +1384,8 @@ impl KagiApp {
         match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => {
                 let arc = std::sync::Arc::new(file_diff);
-                self.diff_caches
+                self.ui_mut()
+                    .diff_caches
                     .file_content
                     .insert((selected, file_index), arc.clone());
                 self.set_commit_main_diff(&arc, &path, selected, file_index, cx);
@@ -1408,6 +1412,7 @@ impl KagiApp {
             None => return,
         };
         let path = match self
+            .ui()
             .diff_caches
             .changed_files
             .get(&selected)

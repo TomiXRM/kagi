@@ -11,18 +11,24 @@ use super::{RunHistory, RunPresentation};
 use crate::ui::*;
 
 impl KagiApp {
-    /// ADR-0084: hydrate the in-session [`OperationHistory`] from the current
-    /// branch's reflog when it is **empty** (freshly-opened repo, or after a
-    /// branch switch which clears the per-repo stack). This makes Cmd+Z work
-    /// immediately, even on operations performed outside this session.
+    /// ADR-0084: hydrate this session's [`OperationHistory`] from its current
+    /// branch reflog when the stack is **empty**. Switching tabs retains each
+    /// session's precise in-process stack; only a new/empty incarnation needs
+    /// reflog history. This makes Cmd+Z available for operations performed
+    /// outside Kagi without replacing a retained stack.
     ///
-    /// Only seeds when empty — an in-session stack (with precise summaries) is
-    /// never clobbered. Reflog read failures are logged and ignored (best-effort).
+    /// Reflog read failures are logged and ignored (best-effort).
     pub(crate) fn seed_history_from_reflog(&mut self, backend: &kagi_git::Backend) {
-        if !self.operation_history.is_empty() {
+        if !self.ui().operation_history.is_empty() {
             return;
         }
-        self.apply_reflog_seed(backend.history_from_reflog().map_err(|e| e.to_string()));
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        self.apply_reflog_seed_for(
+            session,
+            backend.history_from_reflog().map_err(|e| e.to_string()),
+        );
     }
 
     /// T-PERF-RENDER-001: async sibling of [`seed_history_from_reflog`].
@@ -35,9 +41,12 @@ impl KagiApp {
     /// in `render()`.  The "only seed when empty" check is re-evaluated at apply
     /// time so an in-session stack built while the read was in flight is preserved.
     pub(crate) fn seed_history_from_reflog_async(&mut self, cx: &mut Context<Self>) {
-        if !self.operation_history.is_empty() {
+        if !self.ui().operation_history.is_empty() {
             return;
         }
+        let Some(session) = self.active_session() else {
+            return;
+        };
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
@@ -49,22 +58,28 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                // Re-check the only-when-empty guard: a record_history during the
-                // background read must not be clobbered.
-                if !app.operation_history.is_empty() {
+                // Re-check the owner rather than the active tab: a record made
+                // while the read was in flight must not be clobbered, and a
+                // detached owner's completion is discarded.
+                if !app
+                    .ui
+                    .get(&session)
+                    .is_some_and(|ui| ui.operation_history.is_empty())
+                {
                     return;
                 }
-                app.apply_reflog_seed(result);
+                app.apply_reflog_seed_for(session, result);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// Apply a reflog read result to the in-session history (shared by the sync
-    /// and async seed paths).  Caller guarantees the history is currently empty.
-    pub(crate) fn apply_reflog_seed(
+    /// Apply a reflog read result to one session's history. The caller has
+    /// re-checked that owner's history is empty.
+    pub(crate) fn apply_reflog_seed_for(
         &mut self,
+        session: crate::app::SessionId,
         result: Result<Vec<kagi_git::HistoryEntry>, String>,
     ) {
         match result {
@@ -74,7 +89,9 @@ impl KagiApp {
                         "[kagi] history: seeded {} entries from reflog",
                         entries.len()
                     );
-                    self.operation_history = kagi_git::OperationHistory::seeded(entries);
+                    if let Some(ui) = self.ui.get_mut(&session) {
+                        ui.operation_history = kagi_git::OperationHistory::seeded(entries);
+                    }
                 }
             }
             Err(e) => {
@@ -108,19 +125,21 @@ impl KagiApp {
             before.short(),
             after.short()
         );
-        self.operation_history.record(kagi_git::HistoryEntry {
-            kind,
-            branch: branch.to_string(),
-            before,
-            after,
-            summary,
-        });
+        self.ui_mut()
+            .operation_history
+            .record(kagi_git::HistoryEntry {
+                kind,
+                branch: branch.to_string(),
+                before,
+                after,
+                summary,
+            });
     }
 
     /// Open the Undo plan modal for the entry at the history cursor (the most
     /// recent applied operation). Builds a [`Backend::plan_undo`] preview.
     pub fn open_history_undo_modal(&mut self) {
-        let entry = match self.operation_history.peek_undo().cloned() {
+        let entry = match self.ui().operation_history.peek_undo().cloned() {
             Some(e) => e,
             None => {
                 self.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
@@ -132,7 +151,7 @@ impl KagiApp {
 
     /// Open the Redo plan modal for the entry just past the cursor.
     pub fn open_history_redo_modal(&mut self) {
-        let entry = match self.operation_history.peek_redo().cloned() {
+        let entry = match self.ui().operation_history.peek_redo().cloned() {
             Some(e) => e,
             None => {
                 self.status_footer = FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
@@ -256,9 +275,9 @@ impl KagiApp {
             Ok(outcome) => {
                 // Advance/retreat the cursor only after the ref move succeeds.
                 if modal.is_undo {
-                    self.operation_history.undo();
+                    self.ui_mut().operation_history.undo();
                 } else {
-                    self.operation_history.redo();
+                    self.ui_mut().operation_history.redo();
                 }
                 self.clear_history_modal();
                 let after = StateSummary {

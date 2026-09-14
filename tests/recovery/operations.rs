@@ -163,7 +163,7 @@ pub fn scenario_history_persists(cx: &mut VisualTestAppContext) {
     let text = std::fs::read(repo.join("README.md")).unwrap();
     let (app, window) = mount(cx, repo);
     app.update(cx, |app, cx| {
-        app.operation_history = Default::default();
+        app.ui_mut().operation_history = Default::default();
         app.record_history(
             OperationKind::Commit,
             "main",
@@ -307,7 +307,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
         let after = output(repo, &["rev-parse", "HEAD"]);
         let (app, window) = mount(cx, repo);
         let plan = app.update(cx, |app, _| {
-            app.operation_history = Default::default();
+            app.ui_mut().operation_history = Default::default();
             app.record_history(
                 OperationKind::Commit,
                 "main",

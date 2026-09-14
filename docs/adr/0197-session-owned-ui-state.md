@@ -190,6 +190,25 @@ delete-branch plan（`Attachment` の session + visit と planning tag が既に
   `repo_path` は従来どおり操作先 locator であり、host owner と混同しない。
 - S2b の per-repo evidence / probe、S5 の pane retention、S6 の reset 削除は未着手。
 
+### S4 実装
+
+- `diff_caches`、`wip_diffstat`、`last_working_status`、`operation_history`、
+  `history_seed_attempted` を `SessionId` keyed `TabUiState` へ移管した。
+  `DiffCaches` は `HashMap` / `HashSet` / `Arc<FileDiff>` だけを持つ再計算可能 data
+  cache であり、entity / subscription / task / focus handle / watcher / terminal resource
+  は含まない。このため S5 の close-time disposal を先行させない。
+- activate 時は retained cache payload を clear し `cache_epoch` を進め、同時に
+  owner の full read を開始する。full read が返す snapshot、WIP diffstat、
+  working-tree status だけを新しい authoritative state とし、旧 epoch の遅延 cache
+  completion は破棄する。entry ごとの generation stamp より、異種 cache 全体を同じ
+  freshness 境界で扱える clear + full-read を採用した。
+- operation history は tab 切替で retain する。ただし undo / redo は retained entry を
+  信用して ref を動かさず、plan と execute-time preflight の双方で branch identity、
+  expected source OID、target reachability を live repository に再検証する。
+- `main_diff` / `compare_view` を含む pane entity とその subscription / focus lifecycle
+  は root のまま残した。retained entity callback の owner cutover と close-time disposal
+  は S5 の範囲であり、S4 で data cache と混在させない。
+
 ## 決定 6 — #703 との境界
 
 Wave 4 は #703（abandoned executor の supervisor）より先に開始・land してよい。

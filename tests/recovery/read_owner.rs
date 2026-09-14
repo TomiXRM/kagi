@@ -366,7 +366,8 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
             "the baseline read predates the conflict",
         );
         assert!(
-            app.last_working_status
+            app.ui()
+                .last_working_status
                 .as_ref()
                 .is_some_and(|s| s.conflicted.is_empty()),
             "the reload's baseline predates the conflict",
@@ -389,7 +390,8 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
         // processing, and `last_working_status` is written by nothing else, so
         // it is the honest witness that the reload has not applied yet.
         assert!(
-            app.last_working_status
+            app.ui()
+                .last_working_status
                 .as_ref()
                 .is_some_and(|s| s.conflicted.is_empty()),
             "the reload applied before the synchronous paging call — the \
@@ -403,7 +405,8 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
             "the full reload was refused by paging — the conflict went unseen",
         );
         assert!(
-            app.last_working_status
+            app.ui()
+                .last_working_status
                 .as_ref()
                 .is_some_and(|s| !s.conflicted.is_empty()),
             "the reload's working-tree baseline never landed",

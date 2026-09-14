@@ -398,7 +398,8 @@ pub fn latest_persisted_op() -> Option<(String, String)> {
 /// would not do: `reload` legitimately seeds this stack from the tab's own
 /// branch reflog whenever it is empty — ADR-0084.)
 pub fn undo_head(app: &KagiApp) -> Option<(String, String, String)> {
-    app.operation_history
+    app.ui()
+        .operation_history
         .peek_undo()
         .map(|e| (e.branch.clone(), e.after.0.clone(), e.summary.clone()))
 }

@@ -143,6 +143,14 @@ The current suite covers:
   accepts, another-owner publication, `publish_tab_view`, and `amend_tab_view`.
   Removing only either publish-generation guard must fail only its matching
   scenario; the earlier read-revision scenarios must remain green.
+- session-owned read caches and history (`tests/recovery/cache_history_owner.rs`):
+  `KAGI_GUI_E2E_ONLY=read_cache_revalidates_on_activation,operation_history_session_and_stale_ref`.
+  The cache scenario retains A's cache while B is active, changes A externally,
+  then proves activation clears every stale payload before the owner full read
+  publishes the new WIP/status snapshot. The history scenario proves A and B
+  expose separate undo stacks, A restores its stack and seed guard, and an
+  externally moved branch is refused without changing the live ref.
+
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

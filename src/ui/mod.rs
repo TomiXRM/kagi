@@ -962,13 +962,6 @@ pub struct KagiApp {
     /// because `run()` needs `&mut self` and the session is `Rc`, not
     /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
     pub repo_session: Option<kagi_git::session::RepoSession>,
-    /// Per-row diff / changed-files cache cluster (T-DECOMP-002, ADR-0118).
-    /// The five formerly-flat fields (`changed_files` / `file_content` /
-    /// `remote_inflight` / `local_inflight` / `diffstat`) now move and
-    /// invalidate as a unit via `diff_caches.clear()`.
-    pub diff_caches: diff_cache::DiffCaches,
-    /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
-    pub wip_diffstat: Option<WipDiffStat>,
     /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
     /// of the commit graph list.  Cleared when `selected` changes or on reload.
     /// ADR-0121 B2: now a fat entity (`main_diff_pane.rs`) that owns the
@@ -1090,17 +1083,6 @@ pub struct KagiApp {
     /// `open_main_window` moves it into the `op_log` entity. Read by the
     /// `KAGI_BOTTOM` headless dump before the window exists; empty afterwards.
     pub op_log_seed: VecDeque<OpLogEntry>,
-    // ── T-UNDOREDO-001 / ADR-0081: Operation Undo / Redo history ──
-    /// In-session undo/redo stack of ref-moving operations (commit, merge,
-    /// cherry-pick, revert, amend, undo-commit). Entries record the branch and
-    /// the before/after commit SHAs; undo/redo move the branch ref between them
-    /// via the safe pipeline. Lost on quit (reflog is the durable backstop).
-    pub operation_history: kagi_git::OperationHistory,
-    /// Whether the reflog-seed of `operation_history` has been attempted for the
-    /// current repo (ADR-0084). Set on the first render with a repo open so undo
-    /// works on a freshly-opened repo (the initial CLI/snapshot path never calls
-    /// `reload()`); reset on reload / tab switch so the next repo re-seeds.
-    pub history_seed_attempted: bool,
     /// Set while an Undo/Redo plan modal is open; carries the entry being
     /// previewed and whether it is an undo (`true`) or redo (`false`).
     /// (Stored in `active_modal` — see the `history_modal()` accessor.)
@@ -1290,11 +1272,6 @@ pub struct KagiApp {
     /// Latest installer progress/failure, retained while the modal is closed so
     /// reopening Update presents the completion result.
     pub update_status: Option<SharedString>,
-    /// Last loaded working-tree status, used by the FS watcher's working-tree
-    /// path to skip a refresh when nothing the parent repo cares about changed
-    /// (e.g. churn inside a nested worktree, which `working_tree_status` treats as
-    /// opaque). Set on every `reload`.
-    pub last_working_status: Option<kagi_git::WorkingTreeStatus>,
     /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
     /// modal, shown when Continue routes a rebase / cherry-pick / revert.
     /// (Stored in `active_modal` — see the `conflict_continue_modal()` accessor.)
@@ -1418,8 +1395,6 @@ impl KagiApp {
             error: None,
             repo_path: None,
             repo_session: None,
-            diff_caches: diff_cache::DiffCaches::default(),
-            wip_diffstat: None,
             main_diff: None,
             pending_headless_diff: None,
             pending_headless_md_preview: None,
@@ -1449,8 +1424,6 @@ impl KagiApp {
             smart_commit_detected_for: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: DEFAULT_COMMIT_LIMIT,
-            operation_history: kagi_git::OperationHistory::new(),
-            history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
             active_tab: 0,
@@ -1510,7 +1483,6 @@ impl KagiApp {
             update_checked: false,
             update_installing: false,
             update_status: None,
-            last_working_status: None,
             file_history: None,
             file_history_head: None,
             ecosystem: None,
@@ -1563,22 +1535,20 @@ impl KagiApp {
     /// used to run synchronously in `render()` — conflict detection, undo/redo
     /// reflog seeding, and the auto-fetch ticker.  Called from the reload /
     /// tab-switch / app-init commit points (`switch_repo`, `open_main_window`)
-    /// rather than every frame.  Each sub-task carries its own run-once guard
-    /// (`ui().conflict_detected`, `history_seed_attempted`, `auto_fetch_ticker_alive`)
-    /// — reset on tab switch / reload exactly as before — so repeated calls are
-    /// cheap no-ops and the emitted `[kagi]` contract lines fire once per repo.
+    /// rather than every frame. Each sub-task carries its own run-once guard
+    /// (`ui().conflict_detected`, `ui().history_seed_attempted`,
+    /// `auto_fetch_ticker_alive`) so repeated calls are cheap no-ops and the
+    /// emitted `[kagi]` contract lines fire once per session.
     pub fn ensure_startup_repo_io(&mut self, cx: &mut Context<Self>) {
         // W30-CONFLICT-UI: detect Conflict Mode once per session cycle (no-op when
         // already detected this cycle). The watcher / post-operation paths force
         // re-detection via the synchronous `reload()`.
         self.detect_conflict_mode_async(cx);
 
-        // ADR-0084: seed the undo/redo history from the reflog once per repo so
-        // Cmd+Z works on a freshly-opened repo (the initial CLI/snapshot path
-        // never calls `reload()`). Only-when-empty, so it never clobbers an
-        // in-session stack.
-        if !self.history_seed_attempted {
-            self.history_seed_attempted = true;
+        // ADR-0084: seed the undo/redo history from the reflog once per session.
+        // Only-when-empty, so it never clobbers an in-session stack.
+        if !self.ui().history_seed_attempted {
+            self.ui_mut().history_seed_attempted = true;
             self.seed_history_from_reflog_async(cx);
         }
 
@@ -2082,18 +2052,22 @@ impl KagiApp {
         if self.ui().selected != Some(index) {
             return;
         }
-        if !self.diff_caches.changed_files.contains_key(&index) {
+        if !self.ui().diff_caches.changed_files.contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.diff_caches.changed_files.insert(index, files_opt);
+            self.ui_mut()
+                .diff_caches
+                .changed_files
+                .insert(index, files_opt);
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             if let Some(stats) = self.fetch_diffstat(index) {
-                self.diff_caches.diffstat.insert(index, stats);
+                self.ui_mut().diff_caches.diffstat.insert(index, stats);
             }
         } else {
             // Already cached — still emit the log (matches the old select()).
             let n = self
+                .ui()
                 .diff_caches
                 .changed_files
                 .get(&index)
@@ -2106,7 +2080,7 @@ impl KagiApp {
         // T018: emit tree structure log when KAGI_SELECT_FIRST=1.
         if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") {
             const MAX_FILES: usize = 100;
-            if let Some(Some(files)) = self.diff_caches.changed_files.get(&index) {
+            if let Some(Some(files)) = self.ui().diff_caches.changed_files.get(&index) {
                 let truncated: Vec<_> = files.iter().take(MAX_FILES).cloned().collect();
                 let rows = file_tree::build_file_tree(&truncated);
                 for row in &rows {
@@ -2179,7 +2153,8 @@ impl KagiApp {
         }
         let selected = self.ui().selected?;
         let origin = self.commit_id_for_row(selected);
-        self.diff_caches
+        self.ui()
+            .diff_caches
             .changed_files
             .get(&selected)
             .and_then(|v| v.as_ref())
@@ -2228,6 +2203,7 @@ impl KagiApp {
                 file_index,
             } => {
                 let path = self
+                    .ui()
                     .diff_caches
                     .changed_files
                     .get(row_index)
@@ -2263,11 +2239,15 @@ impl KagiApp {
     fn load_remote_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
         // Idempotent: skip if already loaded or a load is in flight, so it is
         // safe to call from both the click handler and the render trigger.
-        if self.diff_caches.changed_files.contains_key(&index)
-            || self.diff_caches.remote_inflight.contains(&index)
+        if self.ui().diff_caches.changed_files.contains_key(&index)
+            || self.ui().diff_caches.remote_inflight.contains(&index)
         {
             return;
         }
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        let cache_epoch = self.ui().cache_epoch;
         let (host, root) = match &self.remote_view {
             Some(v) => (v.host.clone(), v.root.clone()),
             None => return,
@@ -2276,7 +2256,7 @@ impl KagiApp {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
-        self.diff_caches.remote_inflight.insert(index);
+        self.ui_mut().diff_caches.remote_inflight.insert(index);
 
         let task = cx.background_spawn(async move {
             crate::remote::remote_commit_changed_files(&host, &root, &sha)
@@ -2285,14 +2265,20 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.diff_caches.remote_inflight.remove(&index);
+                let Some(ui) = app.ui.get_mut(&session) else {
+                    return;
+                };
+                if ui.cache_epoch != cache_epoch {
+                    return;
+                }
+                ui.diff_caches.remote_inflight.remove(&index);
                 match result {
                     Ok(files) => {
-                        app.diff_caches.changed_files.insert(index, Some(files));
+                        ui.diff_caches.changed_files.insert(index, Some(files));
                     }
                     Err(e) => {
                         klog!("remote changed-files error: {e}");
-                        app.diff_caches.changed_files.insert(index, None);
+                        ui.diff_caches.changed_files.insert(index, None);
                     }
                 }
                 cx.notify();
@@ -2313,11 +2299,15 @@ impl KagiApp {
     /// (the captured SHA no longer matches the row), so a late load can't show
     /// the wrong commit's files.
     fn load_local_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.diff_caches.changed_files.contains_key(&index)
-            || self.diff_caches.local_inflight.contains(&index)
+        if self.ui().diff_caches.changed_files.contains_key(&index)
+            || self.ui().diff_caches.local_inflight.contains(&index)
         {
             return;
         }
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        let cache_epoch = self.ui().cache_epoch;
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
@@ -2326,7 +2316,7 @@ impl KagiApp {
         };
         let sha = detail.full_sha.as_ref().to_string();
         let sha_guard = sha.clone();
-        self.diff_caches.local_inflight.insert(index);
+        self.ui_mut().diff_caches.local_inflight.insert(index);
 
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).ok()?;
@@ -2342,25 +2332,31 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.diff_caches.local_inflight.remove(&index);
-                // Drop the result if a reload remapped this row to another commit.
                 let still_current = app
-                    .view()
+                    .reads
+                    .get(Some(session))
                     .details
                     .get(index)
                     .is_some_and(|d| d.full_sha.as_ref() == sha_guard);
+                let Some(ui) = app.ui.get_mut(&session) else {
+                    return;
+                };
+                if ui.cache_epoch != cache_epoch {
+                    return;
+                }
+                ui.diff_caches.local_inflight.remove(&index);
                 if !still_current {
                     return;
                 }
                 let (files, stats, generated) = result.unwrap_or((None, None, None));
                 let n = files.as_ref().map(|v| v.len()).unwrap_or(0);
                 klog!("changed files: {}", n);
-                app.diff_caches.changed_files.insert(index, files);
+                ui.diff_caches.changed_files.insert(index, files);
                 if let Some(stats) = stats {
-                    app.diff_caches.diffstat.insert(index, stats);
+                    ui.diff_caches.diffstat.insert(index, stats);
                 }
                 if let Some(generated) = generated {
-                    app.diff_caches.generated.insert(index, generated);
+                    ui.diff_caches.generated.insert(index, generated);
                 }
                 cx.notify();
             });
@@ -2411,11 +2407,11 @@ impl KagiApp {
 
     pub fn refresh_wip_diffstat(&mut self) {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        // When no repo is open (session is None), wip_diffstat is cleared.
-        self.wip_diffstat = self
+        let stat = self
             .repo_session
             .as_ref()
-            .map(|s| Self::wip_diffstat_from_backend(s.backend()));
+            .map(|session| Self::wip_diffstat_from_backend(session.backend()));
+        self.ui_mut().wip_diffstat = stat;
     }
 
     /// Same value, computed off the UI thread.
@@ -2425,8 +2421,13 @@ impl KagiApp {
     /// showed nothing at all while it ran. Nothing depends on the badge being
     /// present in the first frame.
     pub fn start_wip_diffstat_scan(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.active_session() else {
+            self.ui_mut().wip_diffstat = None;
+            return;
+        };
+        let cache_epoch = self.ui().cache_epoch;
         let Some(repo_path) = self.repo_path.clone() else {
-            self.wip_diffstat = None;
+            self.ui_mut().wip_diffstat = None;
             return;
         };
         let task = cx.background_spawn(async move {
@@ -2437,8 +2438,14 @@ impl KagiApp {
         cx.spawn(async move |app, acx| {
             let stat = task.await;
             let _ = app.update(acx, |app, cx| {
-                if app.wip_diffstat != stat {
-                    app.wip_diffstat = stat;
+                let Some(ui) = app.ui.get_mut(&session) else {
+                    return;
+                };
+                if ui.cache_epoch != cache_epoch {
+                    return;
+                }
+                if ui.wip_diffstat != stat {
+                    ui.wip_diffstat = stat;
                     cx.notify();
                 }
             });
@@ -2461,13 +2468,16 @@ impl KagiApp {
         self.close_compare_view();
         if self.ui().selected != Some(row_index) {
             self.select(row_index);
-        } else if !self.diff_caches.changed_files.contains_key(&row_index) {
+        } else if !self.ui().diff_caches.changed_files.contains_key(&row_index) {
             let files_opt = self.fetch_changed_files(row_index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.diff_caches.changed_files.insert(row_index, files_opt);
+            self.ui_mut()
+                .diff_caches
+                .changed_files
+                .insert(row_index, files_opt);
             if let Some(stats) = self.fetch_diffstat(row_index) {
-                self.diff_caches.diffstat.insert(row_index, stats);
+                self.ui_mut().diff_caches.diffstat.insert(row_index, stats);
             }
         }
     }

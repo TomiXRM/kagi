@@ -719,4 +719,25 @@ impl KagiApp {
             }
         }
     }
+
+    /// The read model on screen changed owner (a tab switch). Same UI reaction
+    /// as publishing a new read for the active owner (row-index caches, sidebar
+    /// fingerprint, background scans) — see [`KagiApp::on_view_published`] — but
+    /// a switch re-activates an *existing* read whose commit rows are not
+    /// renumbered, so the retained main diff / compare pane stay valid and must
+    /// survive that method's row-renumber sweep (ADR-0197 決定 3). Their derived
+    /// caches are revalidated separately by `begin_session_revalidation` plus
+    /// the activation full read.
+    pub(crate) fn on_view_switched(&mut self) {
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        let main_diff = self.ui().main_diff.clone();
+        let compare_view = self.ui().compare_view.clone();
+        self.on_view_published(session);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.main_diff = main_diff;
+            ui.compare_view = compare_view;
+        }
+    }
 }

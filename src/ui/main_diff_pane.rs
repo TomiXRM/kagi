@@ -19,7 +19,9 @@ use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
 use gpui_component::button::Button;
 use gpui_component::Sizable as _;
 
-use super::diff_view::{build_main_diff_view, MainDiffSource, MainDiffView, RowHighlights};
+use super::diff_view::{
+    build_main_diff_view, CompareView, MainDiffSource, MainDiffView, RowHighlights,
+};
 use super::render_helpers::{new_diff_list_state, render_diff_list};
 use super::KagiApp;
 
@@ -350,5 +352,43 @@ impl KagiApp {
         view.images = self.diff_images_for(&file_diff, &source, &path);
         self.ui_mut().main_diff = Some(pane);
         self.show_main_diff(view, cx);
+    }
+}
+
+/// The active owner's open Compare + Main Diff panes, captured before a read
+/// renumbers the commit rows so both can be re-anchored against the new rows
+/// afterwards (ADR-0197 決定 3). Shared by the reload apply path
+/// (`apply_reload_data`) and the tab-switch / activation read
+/// (`load_repo_async`), which otherwise duplicated this capture/restore.
+pub(crate) struct OpenPanes {
+    compare: Option<CompareView>,
+    main_diff: Option<MainDiffRestore>,
+}
+
+impl KagiApp {
+    /// Capture the active owner's open panes before a renumbering read. Only
+    /// meaningful when that read's owner is the tab on screen.
+    pub(crate) fn capture_open_panes(&self, cx: &Context<Self>) -> OpenPanes {
+        OpenPanes {
+            compare: self
+                .ui()
+                .compare_view
+                .as_ref()
+                .map(|pane| pane.read(cx).view.clone()),
+            main_diff: self.capture_main_diff(cx),
+        }
+    }
+
+    /// Put the captured panes back, re-anchored against the rows the read
+    /// installed. Compare first: the diff restore looks its file up in the
+    /// refreshed compare list. A source that no longer resolves stays closed.
+    pub(crate) fn restore_open_panes(&mut self, panes: OpenPanes, cx: &mut Context<Self>) {
+        self.ui_mut().main_diff = None;
+        if let Some(view) = panes.compare {
+            self.restore_compare(view, cx);
+        }
+        if let Some(prev) = panes.main_diff {
+            self.restore_main_diff(prev, cx);
+        }
     }
 }

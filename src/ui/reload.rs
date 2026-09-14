@@ -160,12 +160,7 @@ impl KagiApp {
         // that no longer resolves closes cleanly, but `prev_diff` keeps the
         // same entity alive and restoration reuses it. Compare stays in its
         // owner slot and is updated in place.
-        let prev_compare = self
-            .ui()
-            .compare_view
-            .as_ref()
-            .map(|p| p.read(cx).view.clone());
-        let prev_diff = self.capture_main_diff(cx);
+        let open_panes = self.capture_open_panes(cx);
 
         // #482 stage 2: hand the rebuilt read model to its owner first. A
         // superseded reload (a newer read, or a mutation admitted while this one
@@ -203,15 +198,7 @@ impl KagiApp {
             return;
         }
 
-        self.ui_mut().main_diff = None;
-        // Compare first: the diff restore looks its file up in the refreshed
-        // compare list.
-        if let Some(view) = prev_compare {
-            self.restore_compare(view, cx);
-        }
-        if let Some(prev) = prev_diff {
-            self.restore_main_diff(prev, cx);
-        }
+        self.restore_open_panes(open_panes, cx);
         // ADR-0119 follow-up: the full-screen Analyze + File History overlays are
         // HEAD-versioned and refreshed *in place* after the snapshot is applied
         // (see `refresh_overlays_after_reload`), only when HEAD actually moved.

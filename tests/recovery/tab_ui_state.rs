@@ -397,4 +397,5 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     });
 
     unmount(cx, kagi, window);
+    eprintln!("[gui-e2e] PASS tab_ui_state_ownership");
 }

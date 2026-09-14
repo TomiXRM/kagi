@@ -41,7 +41,6 @@ impl KagiApp {
         self.active_modal.is_some()
     }
 
-
     /// Drop the active modal when it belongs to the repository being switched
     /// away from (#492). Called by `reset_per_repo_ui` / `show_welcome`; see
     /// [`ActiveModal::is_repo_scoped`] for the classification.

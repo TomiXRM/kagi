@@ -12,7 +12,7 @@ impl KagiApp {
 
     #[inline]
     pub fn set_smart_commit_modal(&mut self, modal: SmartCommitModal) {
-        self.replace_active_modal(ActiveModal::SmartCommit(modal));
+        self.replace_modal_from_user(ActiveModal::SmartCommit(modal));
     }
 
     #[inline]

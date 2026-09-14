@@ -33,5 +33,5 @@ src/ui/render.rs 827
 src/ui/render_header.rs 814
 src/ui/settings_view.rs 823
 src/ui/sidebar.rs 2006
-src/ui/tabs.rs 1192
+src/ui/tabs.rs 1232
 src/ui/workspace.rs 1007

@@ -423,28 +423,28 @@ impl KagiApp {
         })
     }
 
-    /// This tab's presentation intent — the selection and (from S2 on) the
-    /// scroll, caches and pane resources that belong to the session rather than
-    /// to the screen. The detached default on the Welcome screen.
+    /// Read the active session's presentation state. Welcome rendering receives
+    /// an immutable default; no writer can put a resource into that value.
     pub fn ui(&self) -> &TabUiState {
         self.active_session()
             .and_then(|session| self.ui.get(&session))
-            .unwrap_or(&self.ui_detached)
+            .unwrap_or(&self.ui_default)
     }
 
-    /// Write this tab's presentation intent. The entry is created by
-    /// [`KagiApp::attach_session`], so this only inserts on the paths that
-    /// predate a session (Welcome), where it lands in the detached cell.
+    /// Return the active session's writer, or reject mutation when no session
+    /// owns the screen. Resource-bearing state must never use a detached sink.
+    pub(crate) fn active_ui_mut(&mut self) -> Option<&mut TabUiState> {
+        let session = self.active_session()?;
+        self.ui.get_mut(&session)
+    }
+
+    /// Write the active session's state.
     ///
-    /// A background completion must **not** come through here: it writes to the
-    /// owner it froze when it started, or it is dropped. Reaching for the active
-    /// session in a callback is the leak this store exists to prevent
-    /// (ADR-0197 決定 2).
+    /// Background completion must use its frozen owner with `ui.get_mut`; it
+    /// must not resolve ownership through this foreground-only accessor.
     pub fn ui_mut(&mut self) -> &mut TabUiState {
-        match self.active_session() {
-            Some(session) => self.ui.entry(session).or_default(),
-            None => &mut self.ui_detached,
-        }
+        self.active_ui_mut()
+            .expect("TabUiState mutation requires an attached active session")
     }
 
     /// What "Branch from here" acts on: the selected commit, or HEAD when

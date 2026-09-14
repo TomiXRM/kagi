@@ -659,7 +659,6 @@ impl KagiApp {
         // carry (and the whole second `KagiApp` it built them from) are gone.
         // T-PERF-RENDER-002: bump the epoch so the sidebar-rows cache misses.
         self.view_epoch = self.view_epoch.wrapping_add(1);
-        self.ui_mut().selected = None;
         // #492: a confirmation is bound to the repo it was planned against —
         // its plan, paths, stash indices and OIDs all came from that repo, while
         // the confirm methods read `self.repo_path` at Enter time. Dropping the
@@ -677,7 +676,6 @@ impl KagiApp {
         // behind the Welcome overlay.
         self.conflict = None;
         self.conflict_merge_pending = false;
-        self.ui_mut().conflict_detected = false;
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
     }
 

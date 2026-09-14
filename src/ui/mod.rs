@@ -938,12 +938,11 @@ pub struct KagiApp {
     /// write in place with [`KagiApp::view_mut`], publish a whole new read with
     /// [`KagiApp::publish_tab_view`] / [`KagiApp::accept_tab_view`].
     pub reads: crate::app::Reads<TabViewState>,
-    /// #643 Wave 4 S1 (ADR-0197): each attached session's presentation intent —
-    /// see [`TabUiState`]. Reached only via [`KagiApp::ui`] / [`KagiApp::ui_mut`].
+    /// #643 Wave 4 (ADR-0197): each attached session's presentation intent and
+    /// resources. `ui_default` is immutable through the public accessors; it
+    /// exists only so Welcome rendering can read default presentation values.
     pub ui: HashMap<crate::app::SessionId, tab_view::TabUiState>,
-    /// The UI state of "no tab" — what [`KagiApp::ui`] / [`KagiApp::ui_mut`]
-    /// fall back to on the Welcome screen, where no session owns either.
-    ui_detached: tab_view::TabUiState,
+    ui_default: tab_view::TabUiState,
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): monotonic counter bumped on every
     /// read-model write so the sidebar can cheaply detect that its inputs
     /// (branches/remotes/tags/stashes/worktrees) may have changed without
@@ -1361,7 +1360,7 @@ impl KagiApp {
             op_log_seed,
             reads: crate::app::Reads::new(),
             ui: HashMap::new(),
-            ui_detached: TabUiState::default(),
+            ui_default: TabUiState::default(),
             root_focus: None,
             view_epoch: 0,
             error: None,

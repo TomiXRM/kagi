@@ -399,3 +399,28 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] PASS tab_ui_state_ownership");
 }
+
+pub fn scenario_tab_ui_state_rejects_detached_writer(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(
+            kagi::ui::e2e::active_ui_writer_available(app),
+            "attached-ui-writer-is-available: active session lost its writer"
+        );
+        app.close_tab(0, cx);
+        assert!(app.tabs.is_empty(), "fixture did not reach Welcome");
+        assert!(
+            !kagi::ui::e2e::active_ui_writer_available(app),
+            "detached-ui-writer-is-rejected: Welcome exposed a resource sink"
+        );
+        assert!(
+            app.ui().selected.is_none(),
+            "detached-ui-read-default: Welcome cannot read default state"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS tab_ui_state_rejects_detached_writer");
+}

@@ -681,3 +681,9 @@ pub fn queue_squash_scan(task: gpui::Task<SquashScanResult>) {
 pub(crate) fn take_squash_scan() -> Option<gpui::Task<SquashScanResult>> {
     SQUASH_SCAN.with(|slot| slot.borrow_mut().take())
 }
+
+/// ADR-0197 S5 prerequisite: ownerless state has no writable fallback cell.
+#[cfg(feature = "gui-e2e")]
+pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
+    app.active_ui_mut().is_some()
+}

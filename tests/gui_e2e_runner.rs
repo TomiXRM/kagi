@@ -891,6 +891,10 @@ mod macos {
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
             ),
             (
+                "tab_ui_state_rejects_detached_writer",
+                Box::new(crate::tab_ui_state::scenario_tab_ui_state_rejects_detached_writer),
+            ),
+            (
                 "read_cache_revalidates_on_activation",
                 Box::new(
                     crate::cache_history_owner::scenario_read_cache_revalidates_on_activation,

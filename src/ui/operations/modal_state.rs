@@ -69,14 +69,11 @@ impl KagiApp {
         }
     }
     pub(crate) fn set_app_notice(&mut self, message: crate::ui::modals::AppNotice) {
-        // Notices are asynchronous arrivals, not permission to interrupt the
-        // modal the user is already operating. The queue drain checks the same
-        // vacancy before popping, so this fallback cannot rotate forever.
-        if self
-            .active_modal
-            .as_ref()
-            .is_some_and(|modal| !matches!(modal, ActiveModal::AppNotice(_)))
-        {
+        // Notices are asynchronous arrivals, not permission to interrupt
+        // anything already occupying the modal slot — including an earlier
+        // notice. The drain checks the same vacancy before popping, so this
+        // fallback cannot rotate forever.
+        if self.active_modal.is_some() {
             self.app_notices.push_back(message);
             return;
         }

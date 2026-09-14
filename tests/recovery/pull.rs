@@ -1356,6 +1356,73 @@ pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestA
     );
 }
 
+/// #718 P2: asynchronous notices obey one FIFO rule even when another
+/// AppNotice, rather than a different modal kind, already owns the slot.
+pub fn scenario_pull_failure_notice_waits_for_app_notice(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight.is_some(),
+            "the dirty Pull must be waiting on its production fetch"
+        );
+        kagi::ui::e2e::deliver_app_notice(app, "first plain notice");
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app),
+            Some("first plain notice"),
+            "async-notice-keeps-first-plain: the first plain notice must own the vacant slot",
+        );
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "second actionable notice"),
+            "the second notice must carry a real reconciliation acknowledgement",
+        );
+    });
+
+    // Fail the already-dispatched production fetch while a plain AppNotice is
+    // visible and an actionable notice is already waiting behind it.
+    drop(remote_root);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    app.update(cx, |app, cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app),
+            Some("first plain notice"),
+            "async-notice-does-not-replace-app-notice: the later Pull failure must not replace or discard the visible notice",
+        );
+        app.clear_app_notice();
+        kagi::ui::e2e::present_app_notice(app);
+        assert!(
+            kagi::ui::e2e::app_notice_is_acknowledgeable(app),
+            "async-notice-app-fifo-second: the notice already waiting must be presented second",
+        );
+        app.confirm_app_notice(cx);
+        assert!(
+            app.app_sessions.reconcile_ids().is_empty(),
+            "async-notice-app-action-executes: the queued Acknowledge must still execute",
+        );
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
+            .expect("the production Pull failure must be presented third");
+        assert!(
+            message.contains("Fetch"),
+            "async-notice-app-fifo-third: unexpected third notice: {message}",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_failure_notice_waits_for_app_notice: plain, actionable, and production failure notices stay FIFO"
+    );
+}
+
 /// #625 P1: the confirmation's promise is checked before anything is stashed.
 ///
 /// After the modal is on screen an editor saves *another* path the update also

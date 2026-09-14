@@ -669,6 +669,12 @@ mod macos {
                 ),
             ),
             (
+                "pull_failure_notice_waits_for_app_notice",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_notice_waits_for_app_notice,
+                ),
+            ),
+            (
                 "pull_refuses_when_the_dirty_set_moved",
                 Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),

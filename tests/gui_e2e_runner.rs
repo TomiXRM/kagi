@@ -947,6 +947,10 @@ mod macos {
                 Box::new(crate::remote_refresh_owner::scenario_remote_refresh_departed_owner),
             ),
             (
+                "remote_connect_owner",
+                Box::new(crate::remote_refresh_owner::scenario_remote_connect_owner),
+            ),
+            (
                 "remote_refresh_newest_request",
                 Box::new(crate::remote_refresh_owner::scenario_remote_refresh_newest_request),
             ),

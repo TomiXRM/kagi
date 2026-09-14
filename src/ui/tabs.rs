@@ -654,12 +654,12 @@ impl KagiApp {
     /// overlay.
     fn show_welcome(&mut self) {
         self.error = None;
-        // #482 stage 2: with no tab there is no session, so `view()` is already
-        // the empty read model — the twenty blank field assignments this used to
-        // carry (and the whole second `KagiApp` it built them from) are gone.
+        // With no tab, `view()` is already the empty read model (#482).
         // T-PERF-RENDER-002: bump the epoch so the sidebar-rows cache misses.
         self.view_epoch = self.view_epoch.wrapping_add(1);
         self.ui_mut().selected = None;
+        // MainDiff remains root-owned until ADR-0197 S5.
+        self.main_diff = None;
         // #492: a confirmation is bound to the repo it was planned against —
         // its plan, paths, stash indices and OIDs all came from that repo, while
         // the confirm methods read `self.repo_path` at Enter time. Dropping the

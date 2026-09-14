@@ -183,3 +183,129 @@ pub fn scenario_operation_history_session_and_stale_ref(cx: &mut VisualTestAppCo
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS operation_history_session_and_stale_ref");
 }
+
+pub fn scenario_background_operation_history_owner(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().expect("canonical A");
+    let repo_b = fixture_b.path().canonicalize().expect("canonical B");
+    git(&repo_a, &["checkout", "-q", "-b", "side", "HEAD~1"]);
+    std::fs::write(repo_a.join("first.txt"), "first\n").expect("write first");
+    git(&repo_a, &["add", "first.txt"]);
+    git(&repo_a, &["commit", "-q", "-m", "first side"]);
+    let first = output(&repo_a, &["rev-parse", "HEAD"]);
+    std::fs::write(repo_a.join("second.txt"), "second\n").expect("write second");
+    git(&repo_a, &["add", "second.txt"]);
+    git(&repo_a, &["commit", "-q", "-m", "second side"]);
+    let second = output(&repo_a, &["rev-parse", "HEAD"]);
+    git(&repo_a, &["checkout", "-q", "main"]);
+
+    let (app, window) = mount(cx, &repo_a);
+    cx.run_until_parked();
+    let (session_a, session_b) = app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b, cx), "open B");
+        let session_a = app.tabs[0].session;
+        let session_b = app.tabs[1].session;
+        app.ui.get_mut(&session_a).expect("A ui").operation_history = Default::default();
+        app.ui.get_mut(&session_b).expect("B ui").operation_history = Default::default();
+        app.switch_repo(0, cx);
+        app.open_cherry_pick_modal(CommitId(first));
+        (session_a, session_b)
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(
+            app.cherry_pick_modal()
+                .is_some_and(|modal| modal.plan.blockers.is_empty()),
+            "background-history-fixture: first cherry-pick plan is blocked"
+        );
+        app.start_cherry_pick(cx);
+        app.switch_repo(1, cx);
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(
+            app.ui[&session_b]
+                .operation_history
+                .peek_undo()
+                .is_none_or(|entry| entry.kind != OperationKind::CherryPick),
+            "background-history-does-not-leak-to-active: B received A's operation"
+        );
+        assert!(
+            app.ui[&session_a]
+                .operation_history
+                .peek_undo()
+                .is_some_and(|entry| entry.kind == OperationKind::CherryPick),
+            "background-history-records-frozen-owner: A lost its departed completion"
+        );
+        app.switch_repo(0, cx);
+        assert!(
+            app.ui().operation_history.peek_undo().is_some(),
+            "background-history-restores-on-return: A cannot undo its completed operation"
+        );
+        app.open_cherry_pick_modal(CommitId(second));
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(
+            app.cherry_pick_modal()
+                .is_some_and(|modal| modal.plan.blockers.is_empty()),
+            "detached-history-fixture: second cherry-pick plan is blocked"
+        );
+        app.start_cherry_pick(cx);
+        app.switch_repo(1, cx);
+        let a_index = app
+            .tabs
+            .iter()
+            .position(|tab| tab.session == session_a)
+            .expect("A tab");
+        app.close_tab(a_index, cx);
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, _| {
+        assert!(
+            !app.ui.contains_key(&session_a),
+            "detached-history-drops-owner: closed A retained UI history"
+        );
+        assert!(
+            app.ui[&session_b]
+                .operation_history
+                .peek_undo()
+                .is_none_or(|entry| entry.kind != OperationKind::CherryPick),
+            "detached-history-does-not-fall-through: closed A wrote B's history"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS background_operation_history_owner");
+}
+
+pub fn scenario_welcome_drops_root_main_diff(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    cx.run_until_parked();
+    let weak = app.update(cx, |app, cx| {
+        app.select_headless(0);
+        app.open_main_diff_commit(0, cx);
+        let weak = app
+            .main_diff
+            .as_ref()
+            .expect("main diff opened")
+            .downgrade();
+        app.close_tab(0, cx);
+        assert!(app.tabs.is_empty(), "Welcome still has a tab");
+        assert!(
+            app.main_diff.is_none(),
+            "welcome-clears-root-main-diff: root MainDiffPane survived the last tab"
+        );
+        weak
+    });
+    cx.run_until_parked();
+    assert!(
+        weak.upgrade().is_none(),
+        "welcome-drops-root-main-diff-entity: MainDiffPane remained alive"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS welcome_drops_root_main_diff");
+}

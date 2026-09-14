@@ -342,6 +342,8 @@ impl KagiApp {
                     .into_iter()
                     .partition(|d| matches!(d, Delivery::Completed { .. }));
                 let mut failed = false;
+                let mut on_done = Some(on_done);
+                let mut finished_note = Some(finished_note);
                 for delivery in completed {
                     let Delivery::Completed { id, report, .. } = delivery else {
                         continue;
@@ -349,6 +351,10 @@ impl KagiApp {
                     let FamilyEvidence::Run(report) = report.evidence else {
                         continue;
                     };
+                    let on_done = on_done.take().expect("one completion per admitted write");
+                    let finished_note = finished_note
+                        .take()
+                        .expect("one completion per admitted write");
                     // Settle first, whatever the tab is doing now (#501). A
                     // parked reconcile requirement refuses every later write in
                     // this scope, so the way into it is settlement too — it must
@@ -358,32 +364,43 @@ impl KagiApp {
                     app.notice_reconcile_required(id, op_name, &repo_path);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
-                    if !current {
-                        klog!("op result dropped: tab switched during op");
-                        continue;
-                    }
-                    failed = report.result.is_err();
-                    let (presentation, failure_message, recorded_status) = match &report.result {
-                        Ok(outcome) => {
-                            klog!(
-                                "async: {} {}",
-                                op_name,
-                                finished_note(outcome).unwrap_or_else(|| "finished".to_string())
-                            );
-                            app.present_recorded(&report.recording, cx);
-                            let recorded_status = app.status_footer.clone();
-                            (on_done(Ok(outcome)), None, Some(recorded_status))
-                        }
+                    let (mut presentation, failure_message, finished) = match &report.result {
+                        Ok(outcome) => (
+                            on_done(Ok(outcome)),
+                            None,
+                            Some(finished_note(outcome).unwrap_or_else(|| "finished".to_string())),
+                        ),
                         Err(error) => {
                             let failure = OpFailure {
                                 message: crate::ui::i18n::op_failed(op, error),
                                 code: FailureCode::from(error),
                             };
-                            klog!("async: {} failed — {}", op_name, failure.message);
-                            app.present_recorded(&report.recording, cx);
                             let message = failure.message.clone();
                             (on_done(Err(&failure)), Some(message), None)
                         }
+                    };
+                    app.record_run_history_for(
+                        stamp.session,
+                        &repo_path,
+                        presentation.history.take(),
+                    );
+                    if !current {
+                        klog!("op result dropped: tab switched during op");
+                        continue;
+                    }
+                    failed = report.result.is_err();
+                    let recorded_status = if let Some(finished) = finished {
+                        klog!("async: {} {}", op_name, finished);
+                        app.present_recorded(&report.recording, cx);
+                        Some(app.status_footer.clone())
+                    } else {
+                        klog!(
+                            "async: {} failed — {}",
+                            op_name,
+                            failure_message.as_deref().unwrap_or_default()
+                        );
+                        app.present_recorded(&report.recording, cx);
+                        None
                     };
                     let notice_override = presentation.outcome_notice.clone();
                     app.apply_run_presentation(presentation, cx);
@@ -424,35 +441,45 @@ impl KagiApp {
         true
     }
 
-    fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
-        if let Some(history) = presentation.history {
-            match history {
-                RunHistory::FromCurrentHead {
-                    kind,
-                    before,
-                    summary,
-                } => {
-                    if let (Some((branch, before)), Some((_, after))) =
-                        (before, self.head_branch_and_sha())
-                    {
-                        let summary = match summary {
-                            RunHistorySummary::Fixed(summary) => summary,
-                            RunHistorySummary::Commit(subject) => {
-                                format!("commit {} '{}'", after.short(), subject)
-                            }
-                        };
-                        self.record_history(kind, &branch, before, after, summary);
-                    }
+    fn record_run_history_for(
+        &mut self,
+        owner: crate::app::SessionId,
+        repo_path: &std::path::Path,
+        history: Option<RunHistory>,
+    ) {
+        let Some(history) = history else {
+            return;
+        };
+        match history {
+            RunHistory::FromCurrentHead {
+                kind,
+                before,
+                summary,
+            } => {
+                let after = kagi_git::Backend::open(repo_path).ok().and_then(|backend| {
+                    Some((backend.head_shorthand()?, backend.head_commit_id()?))
+                });
+                if let (Some((branch, before)), Some((_, after))) = (before, after) {
+                    let summary = match summary {
+                        RunHistorySummary::Fixed(summary) => summary,
+                        RunHistorySummary::Commit(subject) => {
+                            format!("commit {} '{}'", after.short(), subject)
+                        }
+                    };
+                    self.record_history_for(owner, kind, &branch, before, after, summary);
                 }
-                RunHistory::Exact {
-                    kind,
-                    branch,
-                    before,
-                    after,
-                    summary,
-                } => self.record_history(kind, &branch, before, after, summary),
             }
+            RunHistory::Exact {
+                kind,
+                branch,
+                before,
+                after,
+                summary,
+            } => self.record_history_for(owner, kind, &branch, before, after, summary),
         }
+    }
+
+    fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
         if let Some(repo) = presentation.consume_commit_message {
             self.consume_commit_panel_message(&repo, cx);
         }

@@ -260,30 +260,27 @@ impl KagiApp {
             );
         }
 
-        // T-COMMIT-016: probe for a local Ollama server (reachability only;
-        // no diff is sent). Runs at most once per repo, off the UI thread.
+        // T-COMMIT-016: probe process-global generation capabilities
+        // (reachability only; no diff is sent). Runs once unless refreshed.
         self.ensure_smart_commit_detection(cx);
     }
 
-    /// Probe for a reachable local Ollama server in the background.
+    /// Probe process-global Smart Commit capabilities in the background.
     ///
     /// Reachability only — a single short GET to `/api/tags`; the staged diff is
-    /// **never** sent here.  Runs at most once per repo path, off the UI thread.
-    /// On success the panel shows "Local LLM available".  No-op when
+    /// **never** sent here. `$PATH` and the Ollama host are repository-independent,
+    /// so opening another repository does not start another probe. No-op when
     /// `KAGI_OFFLINE=1`.
-    ///
-    /// `pub(crate)` so other open paths (e.g. the Settings overlay) can ensure a
-    /// probe has run before they try to render the model picker.
     pub(crate) fn ensure_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
-        // #476: the run-once key is the repository the panel authors messages
-        // for — the panel's own when it shows a linked worktree.
-        let Some(repo_path) = self.commit_panel_repo_path(cx) else {
-            return;
-        };
-        if self.smart_commit_detected_for.as_deref() == Some(repo_path.as_path()) {
+        self.start_smart_commit_detection(false, cx);
+    }
+
+    fn start_smart_commit_detection(&mut self, force: bool, cx: &mut Context<Self>) {
+        if !force && self.smart_commit_probe_revision != 0 {
             return;
         }
-        self.smart_commit_detected_for = Some(repo_path);
+        self.smart_commit_probe_revision = self.smart_commit_probe_revision.wrapping_add(1).max(1);
+        let revision = self.smart_commit_probe_revision;
 
         // CLI availability is just a PATH scan (instant, no spawn, no network),
         // so detect it inline even when offline — "is it installed" is unrelated
@@ -317,6 +314,9 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let (available, models) = task.await;
             let _ = this.update(acx, |app, cx| {
+                if app.smart_commit_probe_revision != revision {
+                    return;
+                }
                 app.smart_commit.ollama_available = available;
                 app.smart_commit.detected_models = models;
                 eprintln!(
@@ -332,16 +332,9 @@ impl KagiApp {
         .detach();
     }
 
-    /// Force a fresh Ollama probe by clearing the per-repo run-once guard, then
-    /// running [`ensure_smart_commit_detection`].
-    ///
-    /// Used by the Settings overlay: the model picker is only usable once
-    /// `detected_models` is populated, and detection otherwise runs lazily from
-    /// the commit panel.  Re-probing also lets a server started *after* the panel
-    /// was first opened become visible without a restart.
+    /// Force a fresh global capability probe.
     pub(crate) fn refresh_smart_commit_detection(&mut self, cx: &mut Context<Self>) {
-        self.smart_commit_detected_for = None;
-        self.ensure_smart_commit_detection(cx);
+        self.start_smart_commit_detection(true, cx);
     }
 
     /// Write `msg` into the commit-message Input (and the headless mirror).
@@ -404,7 +397,7 @@ impl KagiApp {
             klog!("smart-suggest: {}", msg);
         }
         self.smart_commit_set_msg(&msg, window, cx);
-        self.smart_commit.status = Some("Rule-based suggestion inserted".to_string());
+        self.ui_mut().smart_commit_status = Some("Rule-based suggestion inserted".to_string());
         cx.notify();
     }
 
@@ -423,7 +416,7 @@ impl KagiApp {
         }
         // Gate 1: first-time consent.
         if !self.smart_commit.llm_enabled {
-            self.smart_commit.modal = Some(smart_commit::SmartCommitModal::Consent);
+            self.set_smart_commit_modal(smart_commit::SmartCommitModal::Consent);
             cx.notify();
             return;
         }
@@ -445,18 +438,19 @@ impl KagiApp {
         let models = self.smart_commit.detected_models.clone();
         if models.is_empty() {
             // No models installed → nothing to pick; fall back quietly.
-            self.smart_commit.status = Some("No local models found — using rule-based".to_string());
+            self.ui_mut().smart_commit_status =
+                Some("No local models found — using rule-based".to_string());
             cx.notify();
             return;
         }
-        self.smart_commit.modal = Some(smart_commit::SmartCommitModal::ModelPicker { models });
+        self.set_smart_commit_modal(smart_commit::SmartCommitModal::ModelPicker { models });
         cx.notify();
     }
 
     /// Consent dialog confirmed: enable LLM, then proceed to model selection.
     pub fn confirm_smart_consent(&mut self, cx: &mut Context<Self>) {
+        self.clear_smart_commit_modal();
         self.smart_commit.set_enabled(true);
-        self.smart_commit.modal = None;
         klog!("smart-commit: llm enabled (consent given)");
         // Move on to picking a model (always confirm at least once per ADR).
         if self.smart_commit.model.is_none() {
@@ -473,15 +467,15 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_smart_commit_modal();
         self.smart_commit.set_model(model.clone());
-        self.smart_commit.modal = None;
         klog!("smart-commit: model selected = {}", model);
         self.run_smart_generation(window, cx);
     }
 
     /// Dismiss any Smart Commit modal without action.
     pub fn cancel_smart_modal(&mut self, cx: &mut Context<Self>) {
-        self.smart_commit.modal = None;
+        self.clear_smart_commit_modal();
         cx.notify();
     }
 
@@ -513,20 +507,21 @@ impl KagiApp {
         let want_body = true;
         let host = smart_commit::SmartCommitState::ollama_host();
         let provider = self.smart_commit.provider;
-        // T-ENTITY-COMMITPANEL-001 (correction #5): bump the entity's generation
-        // guard and capture it. A stale result whose `gen` no longer matches the
-        // entity's is dropped.
-        let cp_entity = self.commit_panel.clone();
-        let gen = match cp_entity.as_ref() {
-            Some(e) => e.update(cx, |v, _| {
-                v.gen = v.gen.wrapping_add(1);
-                v.gen
-            }),
-            None => return,
+        // The initiating panel freezes the session that owns both the spinner
+        // and the completion status. A tab switch cannot redirect either.
+        let Some(cp_entity) = self.commit_panel.clone() else {
+            return;
         };
-
-        self.smart_commit.generating = true;
-        self.smart_commit.status = Some(match provider {
+        let owner = cp_entity.read(cx).owner;
+        let gen = cp_entity.update(cx, |v, _| {
+            v.gen = v.gen.wrapping_add(1);
+            v.gen
+        });
+        let Some(ui) = self.ui.get_mut(&owner) else {
+            return;
+        };
+        ui.smart_commit_generating = true;
+        ui.smart_commit_status = Some(match provider {
             smart_commit::SmartProvider::Ollama => "Generating with local LLM…".to_string(),
             smart_commit::SmartProvider::Cli(p) => {
                 format!("Generating with {}…", p.display_name())
@@ -534,7 +529,7 @@ impl KagiApp {
         });
         cx.notify();
 
-        let task = cx.background_spawn(async move {
+        let generation = async move {
             let repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
                 Ok(r) => r,
                 Err(_) => return None,
@@ -566,35 +561,36 @@ impl KagiApp {
                 }
             };
             Some((msg, used_llm))
-        });
+        };
+        #[cfg(feature = "gui-e2e")]
+        let task = crate::ui::e2e::take_smart_generation()
+            .unwrap_or_else(|| cx.background_spawn(generation));
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(generation);
 
         cx.spawn(async move |this, acx| {
             let out = task.await;
             let _ = this.update(acx, |app, cx| {
-                app.smart_commit.generating = false;
-                // The panel may have been dropped (tab switch / reload) while the
-                // generation ran. Bail (status update is moot without a panel).
-                let Some(entity) = cp_entity.clone() else {
-                    cx.notify();
+                // A closed owner is gone, not a detached fallback destination.
+                // Reopening the same path gets a new SessionId and cannot
+                // inherit this completion.
+                let stale = cp_entity.read(cx).gen != gen;
+                let Some(ui) = app.ui.get_mut(&owner) else {
                     return;
                 };
+                ui.smart_commit_generating = false;
                 match out {
                     Some((msg, used_llm)) if !msg.trim().is_empty() => {
-                        // Correction #5: drop the result only if a NEWER generate
-                        // superseded this one (bumped `gen`). ADR-0134 removed the
-                        // "is it still empty?" guard: the click is an explicit
-                        // request to replace whatever is in the inputs.
-                        let stale = entity.read(cx).gen != gen;
+                        // Drop only a result superseded by a newer generation.
                         if !stale {
                             // The Input's set_value needs `&mut Window`, which is
-                            // unavailable here. Mirror into the panel state and
-                            // queue the message on the entity; the next render
-                            // (which has a Window) pushes it into the Input.
-                            entity.update(cx, |v, _| {
+                            // unavailable here. Mirror into the initiating panel
+                            // entity; its next render pushes it into the Input.
+                            cp_entity.update(cx, |v, _| {
                                 v.state.commit_msg = msg.clone();
                                 v.pending_smart_msg = Some(msg.clone());
                             });
-                            app.smart_commit.status = Some(if used_llm {
+                            ui.smart_commit_status = Some(if used_llm {
                                 "Generated with local LLM".to_string()
                             } else {
                                 "LLM unavailable — used rule-based".to_string()
@@ -602,11 +598,13 @@ impl KagiApp {
                         }
                     }
                     _ => {
-                        app.smart_commit.status =
+                        ui.smart_commit_status =
                             Some("Generation failed — edit manually".to_string());
                     }
                 }
-                cx.notify();
+                if app.active_session() == Some(owner) {
+                    cx.notify();
+                }
             });
         })
         .detach();

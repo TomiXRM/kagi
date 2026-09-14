@@ -394,9 +394,8 @@ impl KagiApp {
             host.label()
         )));
         cx.notify();
-
         let (host_load, root_load) = (host.clone(), root.clone());
-        let commit_limit = self.commit_limit;
+        let commit_limit = self.ui[&owner.session].commit_limit;
         #[cfg(feature = "gui-e2e")]
         let deferred = super::e2e::take_remote_refresh();
         let task = cx.background_spawn(async move {
@@ -482,7 +481,6 @@ impl KagiApp {
         self.operation_history = kagi_git::OperationHistory::new();
         self.history_seed_attempted = false;
     }
-
     /// Snapshot + build the [`TabViewState`] on a background thread
     /// (`RepoSnapshot` is `Send`), then hand it to its **owner** on the main
     /// thread (#482 stage 2): the read is bound to `session` and to the read
@@ -500,7 +498,9 @@ impl KagiApp {
         let key = self.reads.begin(session);
         let bg_path = path.clone();
         let bg_name = name.clone();
-        let commit_limit = self.commit_limit;
+        let commit_limit = self.ui[&session].commit_limit;
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::record_tab_load_commit_limit(session, commit_limit);
         let task = cx.background_spawn(async move {
             let mut backend = kagi_git::Backend::open(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;

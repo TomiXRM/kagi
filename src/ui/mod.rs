@@ -1425,9 +1425,7 @@ impl KagiApp {
         // ADR-0084: seed the undo/redo history from the reflog once per session.
         // Only-when-empty, so it never clobbers an in-session stack.
         if !self.ui().history_seed_attempted {
-            if let Some(ui) = self.ui_mut() {
-                ui.history_seed_attempted = true;
-            }
+            self.with_ui(|ui| ui.history_seed_attempted = true);
             self.seed_history_from_reflog_async(cx);
         }
 
@@ -1545,9 +1543,7 @@ impl KagiApp {
         let current = self.ui().graph_scroll_x;
         let next = (current - dx).clamp(0.0, max);
         if (next - current).abs() > 0.1 {
-            if let Some(ui) = self.ui_mut() {
-                ui.graph_scroll_x = next;
-            }
+            self.with_ui(|ui| ui.graph_scroll_x = next);
             cx.notify();
         }
     }
@@ -1881,18 +1877,16 @@ impl KagiApp {
     /// Also closes the commit panel since commit selection and commit panel are exclusive.
     pub fn select(&mut self, index: usize) {
         // Close commit panel when selecting a normal commit row.
-        if let Some(ui) = self.ui_mut() {
-            ui.commit_panel_open = false;
-        }
+        self.with_ui(|ui| ui.commit_panel_open = false);
 
         // Toggle: clicking the same row again deselects it.
         let deselect = self.ui().selected == Some(index);
-        if let Some(ui) = self.ui_mut() {
+        self.with_ui(|ui| {
             ui.selected = if deselect { None } else { Some(index) };
             // Clear any open main diff when the commit selection changes.
             ui.main_diff = None;
             ui.compare_view = None;
-        }
+        });
         if deselect {
             return;
         }
@@ -1937,14 +1931,10 @@ impl KagiApp {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            if let Some(ui) = self.ui_mut() {
-                ui.diff_caches.changed_files.insert(index, files_opt);
-            }
+            self.with_ui(|ui| ui.diff_caches.changed_files.insert(index, files_opt));
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             if let Some(stats) = self.fetch_diffstat(index) {
-                if let Some(ui) = self.ui_mut() {
-                    ui.diff_caches.diffstat.insert(index, stats);
-                }
+                self.with_ui(|ui| ui.diff_caches.diffstat.insert(index, stats));
             }
         } else {
             // Already cached — still emit the log (matches the old select()).
@@ -2113,9 +2103,7 @@ impl KagiApp {
     /// follow-toggle / select now live on the entity (`reload` / `step` /
     /// `select`).
     pub fn close_file_history(&mut self) {
-        if let Some(ui) = self.ui_mut() {
-            ui.file_history = None;
-        }
+        self.with_ui(|ui| ui.file_history = None);
     }
 
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
@@ -2141,9 +2129,7 @@ impl KagiApp {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
-        if let Some(ui) = self.ui_mut() {
-            ui.diff_caches.remote_inflight.insert(index);
-        }
+        self.with_ui(|ui| ui.diff_caches.remote_inflight.insert(index));
 
         let task = cx.background_spawn(async move {
             crate::remote::remote_commit_changed_files(&host, &root, &sha)
@@ -2203,9 +2189,7 @@ impl KagiApp {
         };
         let sha = detail.full_sha.as_ref().to_string();
         let sha_guard = sha.clone();
-        if let Some(ui) = self.ui_mut() {
-            ui.diff_caches.local_inflight.insert(index);
-        }
+        self.with_ui(|ui| ui.diff_caches.local_inflight.insert(index));
 
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).ok()?;
@@ -2301,9 +2285,7 @@ impl KagiApp {
             .repo_session
             .as_ref()
             .map(|session| Self::wip_diffstat_from_backend(session.backend()));
-        if let Some(ui) = self.ui_mut() {
-            ui.wip_diffstat = stat;
-        }
+        self.with_ui(|ui| ui.wip_diffstat = stat);
     }
 
     /// Same value, computed off the UI thread.
@@ -2346,10 +2328,10 @@ impl KagiApp {
     }
 
     pub fn close_compare_view(&mut self) {
-        if let Some(ui) = self.ui_mut() {
+        self.with_ui(|ui| {
             ui.compare_view = None;
             ui.main_diff = None;
-        }
+        });
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
         self.pending_headless_compare = None;
     }
@@ -2366,13 +2348,9 @@ impl KagiApp {
             let files_opt = self.fetch_changed_files(row_index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            if let Some(ui) = self.ui_mut() {
-                ui.diff_caches.changed_files.insert(row_index, files_opt);
-            }
+            self.with_ui(|ui| ui.diff_caches.changed_files.insert(row_index, files_opt));
             if let Some(stats) = self.fetch_diffstat(row_index) {
-                if let Some(ui) = self.ui_mut() {
-                    ui.diff_caches.diffstat.insert(row_index, stats);
-                }
+                self.with_ui(|ui| ui.diff_caches.diffstat.insert(row_index, stats));
             }
         }
     }
@@ -2411,9 +2389,7 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                if let Some(ui) = self.ui_mut() {
-                    ui.main_diff = None;
-                }
+                self.with_ui(|ui| ui.main_diff = None);
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::Head,
@@ -2466,9 +2442,7 @@ impl KagiApp {
                         self.select(row);
                     }
                 }
-                if let Some(ui) = self.ui_mut() {
-                    ui.main_diff = None;
-                }
+                self.with_ui(|ui| ui.main_diff = None);
                 let title = SharedString::from(format!("stash@{{{}}}", index));
                 let view = CompareView {
                     base: parent_id,
@@ -2533,9 +2507,7 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                if let Some(ui) = self.ui_mut() {
-                    ui.main_diff = None;
-                }
+                self.with_ui(|ui| ui.main_diff = None);
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::WorkingTree,

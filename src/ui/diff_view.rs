@@ -1384,11 +1384,8 @@ impl KagiApp {
         match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => {
                 let arc = std::sync::Arc::new(file_diff);
-                if let Some(ui) = self.ui_mut() {
-                    ui.diff_caches
-                        .file_content
-                        .insert((selected, file_index), arc.clone());
-                }
+                let key = (selected, file_index);
+                self.with_ui(|ui| ui.diff_caches.file_content.insert(key, arc.clone()));
                 self.set_commit_main_diff(&arc, &path, selected, file_index, cx);
             }
             Err(e) => {
@@ -1447,9 +1444,7 @@ impl KagiApp {
     /// T-UI-003: Close the main diff view and return to the commit graph.
     /// No-op when main_diff is None.
     pub fn close_main_diff(&mut self) {
-        if let Some(ui) = self.ui_mut() {
-            ui.main_diff = None;
-        }
+        self.with_ui(|ui| ui.main_diff = None);
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
         self.pending_headless_diff = None;
     }

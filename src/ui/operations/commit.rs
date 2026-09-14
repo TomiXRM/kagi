@@ -173,12 +173,7 @@ impl KagiApp {
                 true,
             )
         };
-        if let Some(ui) = self.ui_mut() {
-            ui.commit_panel = Some(entity.clone());
-            ui.commit_panel_open = true;
-            ui.selected = None;
-            ui.main_diff = None;
-        }
+        self.with_ui(|ui| ui.open_commit_panel(entity.clone()));
         (entity, is_new)
     }
 
@@ -409,9 +404,7 @@ impl KagiApp {
             klog!("smart-suggest: {}", msg);
         }
         self.smart_commit_set_msg(&msg, window, cx);
-        if let Some(ui) = self.ui_mut() {
-            ui.smart_commit_status = Some("Rule-based suggestion inserted".to_string());
-        }
+        self.with_ui(|ui| ui.set_smart_commit_status("Rule-based suggestion inserted"));
         cx.notify();
     }
 
@@ -460,10 +453,9 @@ impl KagiApp {
         let models = self.smart_commit.detected_models.clone();
         if models.is_empty() {
             // No models installed → nothing to pick; fall back quietly.
-            if let Some(ui) = self.ui_mut() {
-                ui.smart_commit_status =
-                    Some("No local models found — using rule-based".to_string());
-            }
+            self.with_ui(|ui| {
+                ui.set_smart_commit_status("No local models found — using rule-based")
+            });
             cx.notify();
             return;
         }
@@ -1161,10 +1153,10 @@ impl KagiApp {
                 self.present_report("merge-commit", &report, &repo_path, cx);
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
-                if let Some(ui) = self.ui_mut() {
+                self.with_ui(|ui| {
                     ui.conflict_merge_pending = false;
                     ui.commit_panel_open = false;
-                }
+                });
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.plan_modal = None);
                 }

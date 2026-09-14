@@ -879,3 +879,78 @@ pub fn scenario_commit_panel_refuses_during_activation(cx: &mut VisualTestAppCon
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS commit_panel_refuses_during_activation");
 }
+
+/// #722 P1 (codex re-review): the same lifetime bug as the Smart Commit one,
+/// reached through a **helper**. `run_commit` handed a strong
+/// `Entity<CommitPanelView>` to the `on_done` callback it passes to
+/// `finish_run`, and `finish_run` does the `cx.spawn` internally — so the
+/// handle lived for the whole background write. Closing the tab during a
+/// large Commit left the panel and its `InputState` allocated until the
+/// commit finished. `CommitPanelFailure::expected` is a `WeakEntity` now, so
+/// the strong path no longer type-checks.
+pub fn scenario_commit_close_drops_panel(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_fixture(&root, "commit-a");
+    let repo_b = build_fixture(&root, "commit-b");
+    std::fs::write(repo_a.join("f.txt"), "commit-a third\n").unwrap();
+    git(&repo_a, &["add", "."]);
+
+    let (app, window) = mount(cx, &repo_a);
+    let session_a = cx.read(|cx| app.read(cx).active_session().expect("A session"));
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open B");
+        state.switch_repo(0, cx);
+    });
+    cx.run_until_parked();
+    app.update(cx, |state, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(state, repo_a.clone(), cx);
+    });
+    cx.run_until_parked();
+    let weak_panel = cx
+        .read(|cx| app.read(cx).ui().commit_panel.clone())
+        .expect("A commit panel")
+        .downgrade();
+    app.update(cx, |state, cx| {
+        if let Some(panel) = state.ui().commit_panel.clone() {
+            panel.update(cx, |v, _| v.state.commit_msg = "from A".to_string());
+        }
+        state.start_commit(cx);
+    });
+
+    // The write is still queued on the background executor. Close A now.
+    app.update(cx, |state, cx| {
+        let index = state
+            .tabs
+            .iter()
+            .position(|tab| tab.session == session_a)
+            .expect("A tab");
+        state.close_tab(index, cx);
+    });
+    assert!(
+        weak_panel.upgrade().is_none(),
+        "commit-close-drops-panel: the in-flight Commit kept the closed tab's \
+         CommitPanelView alive",
+    );
+
+    // Letting it finish must not panic, and must not touch B's panel.
+    cx.run_until_parked();
+    assert!(
+        weak_panel.upgrade().is_none(),
+        "commit-close-drops-panel: the completion resurrected the closed panel",
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state
+                .ui()
+                .commit_panel
+                .as_ref()
+                .is_none_or(|panel| panel.read(cx).repo_path == repo_b),
+            "commit-close-drops-panel: A's completion reached B's panel",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS commit_close_drops_panel");
+}

@@ -951,6 +951,10 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_smart_generation_close_drops_panel),
             ),
             (
+                "commit_close_drops_panel",
+                Box::new(crate::pane_resources::scenario_commit_close_drops_panel),
+            ),
+            (
                 "commit_panel_refuses_during_activation",
                 Box::new(crate::pane_resources::scenario_commit_panel_refuses_during_activation),
             ),

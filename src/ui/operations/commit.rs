@@ -380,7 +380,10 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.pane_mutation_admitted(owner) {
+        // Owner only, not the full mutation seam: composing a draft message
+        // writes no repository state, so it is on the seam's allow list even
+        // while the panes are revalidating (#722 P2).
+        if self.active_session() != Some(owner) {
             return;
         }
         // #476: the draft describes what is staged in the PANEL's repository.
@@ -421,7 +424,8 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.pane_mutation_admitted(owner) {
+        // Owner only — see `smart_suggest`: drafting is not a repo mutation.
+        if self.active_session() != Some(owner) {
             return;
         }
         if message_gen::offline() {

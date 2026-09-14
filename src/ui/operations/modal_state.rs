@@ -38,7 +38,10 @@ impl KagiApp {
     pub(crate) fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
     }
-    /// Requeue any unread notice and reset modal-local scroll on replacement.
+    /// Replace the shared slot without losing or reordering an unread notice.
+    /// A displaced notice arrived before everything already waiting, so it
+    /// returns to the queue front. Escape remains a separate user-dismissal
+    /// event in `cancel_open_modal` (#718 / ADR-0196).
     fn replace_active_modal(&mut self, modal: ActiveModal) {
         if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
             self.app_notices.push_front(notice);

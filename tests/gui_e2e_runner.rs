@@ -951,6 +951,14 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_smart_generation_close_drops_panel),
             ),
             (
+                "commit_panel_refuses_during_activation",
+                Box::new(crate::pane_resources::scenario_commit_panel_refuses_during_activation),
+            ),
+            (
+                "conflict_pane_survives_activation",
+                Box::new(crate::app_conflict::scenario_conflict_pane_survives_activation),
+            ),
+            (
                 "commit_panel_revalidates_on_activation",
                 Box::new(crate::pane_resources::scenario_commit_panel_revalidates_on_activation),
             ),

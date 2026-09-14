@@ -809,3 +809,59 @@ pub fn scenario_smart_generation_close_drops_panel(cx: &mut VisualTestAppContext
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS smart_generation_close_drops_panel");
 }
+
+/// #722 P2: while the activation read is in flight the retained Commit Panel
+/// is still on screen showing the lists it had *before* the tab was left, so
+/// its writes are refused until the read is accepted. On a large repository or
+/// a slow disk that window is long enough to Stage against a list that no
+/// longer describes the index.
+pub fn scenario_commit_panel_refuses_during_activation(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_fixture(&root, "reval-a");
+    let repo_b = build_fixture(&root, "reval-b");
+    std::fs::write(repo_a.join("f.txt"), "reval-a second\nreval-a unstaged\n").unwrap();
+
+    let (app, window) = mount(cx, &repo_a);
+    let owner_a = app.update(cx, |state, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(state, repo_a.clone(), cx);
+        state.active_session().expect("A owner")
+    });
+    cx.run_until_parked();
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open B");
+    });
+    cx.run_until_parked();
+    assert_eq!(staged_count(&repo_a), 0, "A index clean before");
+
+    // Return to A but do NOT settle the activation read: this is the window
+    // the user sees the retained panel in.
+    app.update(cx, |state, cx| state.switch_repo(0, cx));
+    assert!(
+        cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        "precondition: A's panes must be awaiting their activation read",
+    );
+    app.update(cx, |state, cx| state.do_stage_file(owner_a, 0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        staged_count(&repo_a),
+        0,
+        "panel-refused-while-revalidating: a Stage ran against the pre-switch list",
+    );
+
+    // The read has now been accepted, so the same click works.
+    assert!(
+        !cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        "the accepted read must re-enable the panel",
+    );
+    app.update(cx, |state, cx| state.do_stage_file(owner_a, 0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        staged_count(&repo_a),
+        1,
+        "panel-reenabled-after-read: Stage stayed refused after revalidation",
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS commit_panel_refuses_during_activation");
+}

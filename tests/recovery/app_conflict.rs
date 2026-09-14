@@ -531,16 +531,24 @@ pub fn scenario_conflict_revalidates_after_external_abort(cx: &mut VisualTestApp
     cx.run_until_parked();
     git(&repo_a, &["merge", "--abort"]);
     app.update(cx, |state, cx| state.switch_repo(0, cx));
+    // #722 P2: the retained pane survives the switch — undo/redo, the selected
+    // file/hunk and scroll all live in this entity — but it is *paused*: not
+    // authoritative, and every mutation it offers is refused until the
+    // activation read lands.
     assert!(
-        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
-        "conflict-activation-revalidation: stale editor remained actionable before read",
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "conflict-activation-retained: the pane was destroyed instead of paused",
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        "conflict-activation-paused: a stale pane stayed actionable before the read",
     );
     app.update(cx, |state, cx| {
         state.apply_conflict_detect(old_visit, old_payload, cx);
     });
     assert!(
-        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
-        "conflict-old-visit-rejected: departed completion restored stale editor",
+        cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        "conflict-old-visit-rejected: a departed completion re-enabled the stale pane",
     );
     cx.run_until_parked();
     cx.read(|cx| {
@@ -843,4 +851,110 @@ pub fn scenario_conflict_deferred_action_owner(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict_deferred_action_owner");
+}
+
+/// #722 P2: an activation whose observation is **unchanged** must change
+/// nothing. The old code discarded the whole `ConflictView` on every
+/// activation, and even the in-place re-detect swapped in a freshly read
+/// `mode` — either way the `ResolutionBuffer`'s undo/redo stack, the selected
+/// file/hunk and the scroll position were lost on a plain tab round trip,
+/// though the repository had not moved. ADR-0197 決定 3 says retained state is
+/// non-authoritative until revalidated, not that it must be destroyed.
+pub fn scenario_conflict_pane_survives_activation(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = build_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |state, cx| state.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let pane = cx
+        .read(|cx| app.read(cx).ui().conflict.clone())
+        .expect("A conflict pane");
+    let path = cx.read(|cx| {
+        pane.read(cx).mode.as_ref().expect("A mode").session.files[0]
+            .path
+            .clone()
+    });
+
+    // Do real work in the editor: pick a side (which pushes an undo entry) and
+    // move the hunk cursor off its default.
+    pane.update(cx, |view, _| {
+        view.conflict_open_editor(&path);
+        view.editing = Some(path.clone());
+        view.selected_hunk = 3;
+        view.mode
+            .as_mut()
+            .expect("mode")
+            .buffer
+            .apply_choice(&path, kagi_git::ResolutionChoice::Incoming)
+            .expect("apply a side choice");
+    });
+    assert!(
+        cx.read(|cx| pane
+            .read(cx)
+            .mode
+            .as_ref()
+            .expect("mode")
+            .buffer
+            .has_resolution(&path)),
+        "precondition: the buffer carries the applied resolution",
+    );
+
+    // A plain tab round trip. The repository is untouched throughout.
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open clean B");
+    });
+    cx.run_until_parked();
+    app.update(cx, |state, cx| state.switch_repo(0, cx));
+    cx.run_until_parked();
+
+    let same_entity = cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .conflict
+            .as_ref()
+            .map(|e| e.entity_id())
+            .expect("A conflict pane after the round trip")
+            == pane.entity_id()
+    });
+    assert!(
+        same_entity,
+        "conflict-unchanged-keeps-entity: an unchanged observation rebuilt the pane",
+    );
+    assert!(
+        !cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        "conflict-unchanged-reenables: the accepted read left the pane refused",
+    );
+    cx.read(|cx| {
+        let view = pane.read(cx);
+        assert_eq!(
+            view.editing.as_deref(),
+            Some(path.as_path()),
+            "conflict-unchanged-keeps-selection: the edited file was reset",
+        );
+        assert_eq!(
+            view.selected_hunk, 3,
+            "conflict-unchanged-keeps-selection: the hunk cursor was reset",
+        );
+        assert!(
+            view.mode
+                .as_ref()
+                .expect("mode")
+                .buffer
+                .has_resolution(&path),
+            "conflict-unchanged-keeps-buffer: the applied resolution was discarded",
+        );
+    });
+    // The undo stack is the part a fresh buffer could never carry.
+    let undone = pane.update(cx, |view, _| {
+        view.mode.as_mut().expect("mode").buffer.undo(&path)
+    });
+    assert!(
+        undone,
+        "conflict-unchanged-keeps-undo: the undo stack did not survive activation",
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_pane_survives_activation");
 }

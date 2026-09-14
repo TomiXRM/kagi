@@ -313,8 +313,16 @@ impl KagiApp {
                     .get(&owner.session)
                     .and_then(|ui| ui.conflict.clone())
                 {
-                    // Re-detect: update the existing entity in place so its
-                    // edited state and geometry survive.
+                    // Re-detect against a retained pane. An **unchanged**
+                    // observation must change nothing at all (#722 P2): the
+                    // resolution buffer carries the undo/redo stack, and the
+                    // entity carries the selected file/hunk and scroll, so
+                    // swapping in a freshly read `mode` would silently discard
+                    // the user's work even though the repository never moved.
+                    // A changed one is folded in below, in place.
+                    Some(entity) if entity.read(cx).same_observation(&mode) => {
+                        let _ = entity;
+                    }
                     Some(entity) => {
                         entity.update(cx, |v, _| {
                             let prev_editing = v.editing.clone();

@@ -275,15 +275,15 @@ impl Render for KagiApp {
             let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
             // W28: clamp against the scaled lane pitch (matches scroll_graph_by).
             let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
-            if self.graph_scroll_x > max {
-                self.graph_scroll_x = max;
+            if self.ui().graph_scroll_x > max {
+                self.ui_mut().graph_scroll_x = max;
             }
         }
-
         // When the walk filled the current limit there may be more history to
         // pull in, so we append one extra "load more" row at the bottom of the
         // virtual list (rendered specially in the uniform_list processor).
-        let has_more_commits = self.commit_limit > 0 && self.view().rows.len() >= self.commit_limit;
+        let commit_limit = self.ui().commit_limit;
+        let has_more_commits = commit_limit > 0 && self.view().rows.len() >= commit_limit;
         let row_count = self.view().rows.len() + usize::from(has_more_commits);
         let selected = self.ui().selected;
 
@@ -383,7 +383,7 @@ impl Render for KagiApp {
             self.view().stashes.len(),
             self.view().worktrees.len(),
             &self.sidebar.collapsed,
-            &self.branch_groups_collapsed,
+            &self.ui().branch_groups_collapsed,
             &sidebar_filter_text,
         );
         if sidebar_fingerprint != self.sidebar.rows_fingerprint {
@@ -396,7 +396,7 @@ impl Render for KagiApp {
                 &self.view().stashes,
                 &self.view().worktrees,
                 &self.sidebar.collapsed,
-                &self.branch_groups_collapsed,
+                &self.ui().branch_groups_collapsed,
                 &sidebar_filter_text,
             );
             self.sidebar.rows = rows;
@@ -528,7 +528,7 @@ impl Render for KagiApp {
         let graph_col_w = self.graph_col_w;
 
         // T028: clone scroll handle for wiring into uniform_list via track_scroll.
-        let commit_scroll_handle = self.commit_scroll_handle.clone();
+        let commit_scroll_handle = self.ui().commit_scroll_handle.clone();
 
         // T023: divider drag-move handler — the full per-divider math lives in
         // `handle_divider_drag` (extracted in T-SPLIT-RENDER-001); placed on the

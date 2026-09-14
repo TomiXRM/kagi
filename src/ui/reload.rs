@@ -14,7 +14,9 @@
 use gpui::{prelude::*, Context, SharedString};
 
 use super::commit_panel::{CommitPanelState, CommitPanelView};
-use super::{build_tab_view, FooterStatus, KagiApp, WipDiffStat, COMMIT_PAGE_STEP};
+use super::{
+    build_tab_view, FooterStatus, KagiApp, WipDiffStat, COMMIT_PAGE_STEP, DEFAULT_COMMIT_LIMIT,
+};
 
 impl KagiApp {
     /// Reload all display data from the repository at `repo_path`.
@@ -56,7 +58,7 @@ impl KagiApp {
                 return;
             }
         };
-        let snap = match repo.snapshot_repairing_stat_cache(self.commit_limit) {
+        let snap = match repo.snapshot_repairing_stat_cache(self.ui().commit_limit) {
             Ok(s) => s,
             Err(e) => {
                 klog!("reload: snapshot error: {}", e);
@@ -106,14 +108,15 @@ impl KagiApp {
         let key = self.reads.begin(session);
         let want_panel = self.conflict_merge_pending;
         let want_reflog = self.ui().operation_history.is_empty();
-        let data = match read_reload_data(&repo_path, self.commit_limit, want_panel, want_reflog) {
-            Ok(d) => d,
-            Err(msg) => {
-                self.reads.fail(key);
-                klog!("reload: {}", msg);
-                return Err(msg);
-            }
-        };
+        let data =
+            match read_reload_data(&repo_path, self.ui().commit_limit, want_panel, want_reflog) {
+                Ok(d) => d,
+                Err(msg) => {
+                    self.reads.fail(key);
+                    klog!("reload: {}", msg);
+                    return Err(msg);
+                }
+            };
         self.apply_reload_data(key, repo_path, data, false, cx);
         Ok(())
     }
@@ -380,7 +383,8 @@ impl KagiApp {
         let Some(session) = self.active_session() else {
             return;
         };
-        self.commit_limit = self.commit_limit.saturating_add(COMMIT_PAGE_STEP);
+        let commit_limit = self.ui().commit_limit.saturating_add(COMMIT_PAGE_STEP);
+        self.ui_mut().commit_limit = commit_limit;
 
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
@@ -389,7 +393,7 @@ impl KagiApp {
                 return;
             }
         };
-        let snap = match repo.snapshot_repairing_stat_cache(self.commit_limit) {
+        let snap = match repo.snapshot_repairing_stat_cache(commit_limit) {
             Ok(s) => s,
             Err(e) => {
                 klog!("load more: snapshot error: {}", e);
@@ -405,7 +409,7 @@ impl KagiApp {
         self.amend_tab_view(session, view);
         klog!(
             "load more: limit={} rows={}",
-            self.commit_limit,
+            commit_limit,
             self.view().rows.len()
         );
         cx.notify();
@@ -513,7 +517,10 @@ impl KagiApp {
         // from clobbering the correct post-op view (#287). The tab-switch half
         // of the old guard is now structural: the key names its owner.
         let key = self.reads.begin(session);
-        let commit_limit = self.commit_limit;
+        let commit_limit = self
+            .ui
+            .get(&session)
+            .map_or(DEFAULT_COMMIT_LIMIT, |ui| ui.commit_limit);
         let want_panel = self.conflict_merge_pending;
         let want_reflog = self.ui().operation_history.is_empty();
         let apply_path = bg_path.clone();

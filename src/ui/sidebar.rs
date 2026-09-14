@@ -972,10 +972,9 @@ fn build_group_header(
     let glabel = SharedString::from(format!("{} {} ({})", arrow, label_text, count));
     let key_for_toggle = key.to_string();
     let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        if this.branch_groups_collapsed.contains(&key_for_toggle) {
-            this.branch_groups_collapsed.remove(&key_for_toggle);
-        } else {
-            this.branch_groups_collapsed.insert(key_for_toggle.clone());
+        let collapsed = &mut this.ui_mut().branch_groups_collapsed;
+        if !collapsed.remove(&key_for_toggle) {
+            collapsed.insert(key_for_toggle.clone());
         }
         cx.notify();
     });

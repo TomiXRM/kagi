@@ -33,6 +33,7 @@ use std::sync::Arc;
 thread_local! {
     static CONFIRM_BOUNDS: RefCell<std::collections::HashMap<gpui::WindowId, gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
     static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, String), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
+    static TAB_LOAD_LIMITS: RefCell<std::collections::HashMap<crate::app::SessionId, usize>> = RefCell::new(Default::default());
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpui::Pixels>) {
@@ -51,6 +52,16 @@ pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpu
 #[cfg(feature = "gui-e2e")]
 pub fn clear_control_bounds(id: gpui::WindowId, name: &str) {
     CONTROL_BOUNDS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_tab_load_commit_limit(session: crate::app::SessionId, limit: usize) {
+    TAB_LOAD_LIMITS.with(|limits| {
+        limits.borrow_mut().insert(session, limit);
+    });
+}
+#[cfg(feature = "gui-e2e")]
+pub fn tab_load_commit_limit(session: crate::app::SessionId) -> Option<usize> {
+    TAB_LOAD_LIMITS.with(|limits| limits.borrow().get(&session).copied())
 }
 pub(crate) fn measure_control(
     name: impl Into<String>,
@@ -521,6 +532,38 @@ pub fn queue_remote_refresh(task: RemoteRefreshTask) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_remote_refresh() -> Option<RemoteRefreshTask> {
     REMOTE_REFRESH.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
+pub type SmartGenerationResult = Option<(String, bool)>;
+#[cfg(feature = "gui-e2e")]
+type SmartGenerationTask = gpui::Task<SmartGenerationResult>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SMART_GENERATION: RefCell<Option<SmartGenerationTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_smart_generation(task: SmartGenerationTask) {
+    SMART_GENERATION.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_smart_generation() -> Option<SmartGenerationTask> {
+    SMART_GENERATION.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    app.ensure_smart_commit_detection(cx);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn seed_modal_list_scroll(app: &KagiApp, item: usize) {
+    app.modal_list_scroll
+        .scroll_to_item(item, gpui::ScrollStrategy::Center);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn modal_list_scroll_top(app: &KagiApp) -> usize {
+    app.modal_list_scroll.logical_scroll_top_index()
 }
 
 #[cfg(feature = "gui-e2e")]

@@ -17,7 +17,7 @@
 //!
 //! Later slices add their own rows here (scroll, caches, pane entities).
 use crate::macos::{build_fixture, git, mount, unmount};
-use gpui::VisualTestAppContext;
+use gpui::{ScrollStrategy, VisualTestAppContext};
 use kagi::ui::KagiApp;
 use std::path::{Path, PathBuf};
 
@@ -31,6 +31,18 @@ fn build_linear_fixture(root: &Path, name: &str) -> PathBuf {
         std::fs::write(repo.join("f.txt"), format!("{name} {i}\n")).unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", &format!("{name} {i}")]);
+    }
+    if name == "alpha" {
+        // Keep enough concurrent lanes to make horizontal graph scroll valid;
+        // otherwise render correctly clamps any synthetic offset back to zero.
+        for i in 0..40 {
+            let branch = format!("side-{i}");
+            git(&repo, &["checkout", "-q", "-b", &branch, "HEAD~2"]);
+            std::fs::write(repo.join(format!("side-{i}.txt")), format!("{i}\n")).unwrap();
+            git(&repo, &["add", "."]);
+            git(&repo, &["commit", "-q", "-m", &branch]);
+            git(&repo, &["checkout", "-q", "main"]);
+        }
     }
     repo.canonicalize().unwrap()
 }
@@ -136,7 +148,7 @@ pub fn scenario_tab_ui_state_background_reload(cx: &mut VisualTestAppContext) {
     });
     assert_ne!(dropped, pinned);
     kagi.update(cx, |app, cx| {
-        app.commit_limit = 1;
+        app.ui_mut().commit_limit = 1;
         app.reload(cx); // owned by B
         app.switch_repo(0, cx); // → A, before that read lands
     });
@@ -163,12 +175,67 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
 
     let (kagi, window) = mount(cx, &repo_a);
 
-    let (session_a, session_b) = kagi.update(cx, |app, cx| {
-        assert!(app.open_repository(repo_b.clone(), cx), "open B");
-        (app.tabs[0].session, app.tabs[1].session)
+    let session_a = kagi.read_with(cx, |app, _| app.active_session().expect("A session"));
+    let a_limit = kagi.update(cx, |app, cx| {
+        app.load_more_commits(cx);
+        let ui = app.ui_mut();
+        ui.graph_scroll_x = 42.0;
+        ui.branch_groups_collapsed.insert("local:feature".into());
+        ui.commit_limit
     });
+
+    let session_b = kagi.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        app.tabs[1].session
+    });
+    // Seed the retained owner's list positions while it is off-screen. This
+    // isolates session ownership from each list's viewport clamping behavior.
+    let a_cleanup_name = "feature/old".to_owned();
+    let b_initial_limit = kagi.read_with(cx, |app, _| {
+        assert_eq!(app.active_session(), Some(session_b));
+        assert_eq!(
+            app.ui().graph_scroll_x,
+            0.0,
+            "A graph position leaked into B"
+        );
+        assert_eq!(
+            app.ui().commit_scroll_handle.logical_scroll_top_index(),
+            0,
+            "A commit scroll leaked into B",
+        );
+        assert_eq!(
+            app.ui().cleanup_scroll.logical_scroll_top_index(),
+            0,
+            "A cleanup scroll leaked into B",
+        );
+        assert!(
+            !app.ui().branch_groups_collapsed.contains("local:feature"),
+            "A branch fold leaked into B",
+        );
+        assert!(
+            app.ui().cleanup_selected.is_empty(),
+            "A cleanup selection leaked into B",
+        );
+        app.ui().commit_limit
+    });
+    assert_ne!(
+        a_limit, b_initial_limit,
+        "B inherited A's paged commit limit"
+    );
+    assert_eq!(
+        kagi::ui::e2e::tab_load_commit_limit(session_b),
+        Some(b_initial_limit),
+        "tab-load-commit-limit-owner: B's first read did not use B's default limit",
+    );
     assert_ne!(session_a, session_b, "each tab is its own owner");
     cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        let ui = app.ui.get_mut(&session_a).expect("A ui");
+        ui.commit_scroll_handle
+            .scroll_to_item(2, ScrollStrategy::Center);
+        ui.cleanup_scroll.scroll_to_item(1, ScrollStrategy::Center);
+        ui.cleanup_selected.insert(a_cleanup_name.clone());
+    });
 
     // ── the selection belongs to the tab that made it ─────────────────────
     kagi.update(cx, |app, _| {
@@ -183,6 +250,10 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     kagi.update(cx, |app, cx| {
         app.switch_repo(0, cx); // → A
         assert_eq!(app.active_session(), Some(session_a));
+        assert!(
+            app.ui().cleanup_selected.contains(&a_cleanup_name),
+            "A cleanup selection was lost on the first restore",
+        );
         assert_eq!(
             app.ui().selected,
             None,
@@ -190,6 +261,10 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
         );
         app.select(2);
         assert_eq!(app.ui().selected, Some(2));
+        assert!(
+            app.ui().cleanup_selected.contains(&a_cleanup_name),
+            "selecting a commit cleared A cleanup selection",
+        );
 
         app.switch_repo(1, cx); // → B
         assert_eq!(
@@ -203,6 +278,34 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             app.ui().selected,
             Some(2),
             "A→B→A did not restore A's selection",
+        );
+        assert_eq!(
+            app.ui().commit_limit,
+            a_limit,
+            "A's commit limit was not restored"
+        );
+        assert_eq!(
+            app.ui().graph_scroll_x,
+            42.0,
+            "A's graph position was not restored"
+        );
+        assert_eq!(
+            app.ui().commit_scroll_handle.logical_scroll_top_index(),
+            2,
+            "A's commit scroll was not restored",
+        );
+        assert_eq!(
+            app.ui().cleanup_scroll.logical_scroll_top_index(),
+            1,
+            "A's cleanup scroll was not restored",
+        );
+        assert!(
+            app.ui().branch_groups_collapsed.contains("local:feature"),
+            "A's branch fold was not restored",
+        );
+        assert!(
+            app.ui().cleanup_selected.contains(&a_cleanup_name),
+            "A's cleanup selection was not restored",
         );
     });
 
@@ -294,4 +397,5 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     });
 
     unmount(cx, kagi, window);
+    eprintln!("[gui-e2e] PASS tab_ui_state_ownership");
 }

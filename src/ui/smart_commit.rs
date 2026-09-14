@@ -99,7 +99,8 @@ pub enum SmartCommitModal {
     },
 }
 
-/// All Smart-Commit UI state held on `KagiApp`.
+/// Process/window-global Smart Commit capabilities plus persisted settings.
+/// The modal lives in `ActiveModal`; generation status lives in `TabUiState`.
 #[derive(Clone, Debug)]
 pub struct SmartCommitState {
     /// Whether an Ollama server was detected at startup (`Local LLM available`).
@@ -118,12 +119,6 @@ pub struct SmartCommitState {
     pub model: Option<String>,
     /// Output language (persisted; remembered like the draft per ADR-0042).
     pub lang: Lang,
-    /// Active modal, if any.
-    pub modal: Option<SmartCommitModal>,
-    /// True while a background generation is in flight (button shows "…").
-    pub generating: bool,
-    /// Transient status line under the buttons (toast-level, not a blocker).
-    pub status: Option<String>,
 }
 
 impl Default for SmartCommitState {
@@ -137,9 +132,6 @@ impl Default for SmartCommitState {
             llm_enabled: false,
             model: None,
             lang: Lang::En,
-            modal: None,
-            generating: false,
-            status: None,
         }
     }
 }

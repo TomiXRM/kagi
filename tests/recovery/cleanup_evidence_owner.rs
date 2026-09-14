@@ -94,7 +94,7 @@ pub fn scenario_cleanup_evidence_background_owner(cx: &mut VisualTestAppContext)
         let ui_b = app.ui.get_mut(&owner_b).unwrap();
         ui_b.cleanup_prs = vec![pr(20, "b-row")];
         ui_b.cleanup_prs_stale = false;
-        app.cleanup_selected.insert("b-selected".into());
+        ui_b.cleanup_selected.insert("b-selected".into());
     });
 
     pending.send(Ok((
@@ -115,7 +115,7 @@ pub fn scenario_cleanup_evidence_background_owner(cx: &mut VisualTestAppContext)
             "A's background PR evidence overwrote B's evidence",
         );
         assert!(
-            app.cleanup_selected.contains("b-selected"),
+            app.ui().cleanup_selected.contains("b-selected"),
             "A's background cleanup completion pruned B's selection",
         );
         assert_eq!(
@@ -397,7 +397,7 @@ pub fn scenario_cleanup_evidence_read_revision(cx: &mut VisualTestAppContext) {
         );
         app.toggle_cleanup_select_all(cx);
         assert!(
-            app.cleanup_selected.is_empty(),
+            app.ui().cleanup_selected.is_empty(),
             "obsolete candidate was available to cleanup selection"
         );
         app.delete_selected_cleanup_branches(cx);

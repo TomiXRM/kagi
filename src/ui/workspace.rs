@@ -361,10 +361,8 @@ impl WorkspaceItem for CommitPanelItem {
     fn is_open(&self, app: &KagiApp) -> bool {
         app.commit_panel_open && app.commit_panel.is_some()
     }
-    // ADR-0118: push the parent-owned render inputs into the entity, then
-    // embed it as a self-rendering child. `active_wip` mirrors the old
-    // `cp_active_wip(this)` (derived from the open main diff); the entity may
-    // not read the parent's `main_diff` from its own render path (re-entrancy).
+    // Push owner-scoped inputs into the child; derive `active_wip` here to
+    // avoid a re-entrant parent read from the entity's render path.
     fn render(
         &self,
         app: &mut KagiApp,
@@ -382,18 +380,20 @@ impl WorkspaceItem for CommitPanelItem {
             _ => None,
         };
         let smart = app.smart_commit.clone();
+        let smart_ui = &app.ui[&entity.read(cx).owner];
         let panel_width = app.panel_width;
         entity.update(cx, |v, _| {
             v.active_wip = active_wip;
             v.panel_render_width = panel_width;
             v.smart_snapshot = smart;
+            v.smart_generating = smart_ui.smart_commit_generating;
+            v.smart_status = smart_ui.smart_commit_status.clone();
         });
         Some(entity.into_any_element())
     }
     fn dispose(&self, app: &mut KagiApp) {
         app.commit_panel_open = false;
-        // ADR-0118: dropping the single `commit_panel` entity also drops its
-        // `commit_input` / template inputs / draft state (all entity-owned).
+        // Dropping the panel entity also drops all entity-owned inputs and drafts.
         app.commit_panel = None;
     }
 }

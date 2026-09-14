@@ -397,9 +397,9 @@ impl CommitPanelState {
 /// `cx.notify()`.
 ///
 /// Parent-owned (NOT moved here): `commit_panel_open` (visibility gate set by the
-/// graph `select`), `conflict_merge_pending`, the shared `file_menu` overlay, and
-/// the cross-cutting `smart_commit` / `smart_commit_detected_for` state (read by
-/// the Settings overlay + command palette, so it stays on `KagiApp`).
+/// graph `select`), `conflict_merge_pending`, the shared `file_menu` overlay,
+/// and process-global Smart Commit capabilities/settings (read by Settings and
+/// the command palette, so they stay on `KagiApp`).
 pub struct CommitPanelView {
     /// The staging lists / stats / trees / selection / plan-modal data.
     pub state: CommitPanelState,
@@ -451,6 +451,9 @@ pub struct CommitPanelView {
     /// command palette); the entity only READS it to render the toolbar, so a
     /// clone snapshot avoids reading the parent from the entity's render path.
     pub smart_snapshot: SmartCommitState,
+    /// Session-owned generation presentation, pushed alongside capabilities.
+    pub smart_generating: bool,
+    pub smart_status: Option<String>,
     /// Weak back-reference to the parent. Used ONLY from deferred listener
     /// closures — NEVER read in a `Render` path.
     pub(crate) app: WeakEntity<KagiApp>,
@@ -497,6 +500,8 @@ impl CommitPanelView {
             active_wip: None,
             panel_render_width: 0.0,
             smart_snapshot: SmartCommitState::default(),
+            smart_generating: false,
+            smart_status: None,
             app,
             owner,
             repo_path,

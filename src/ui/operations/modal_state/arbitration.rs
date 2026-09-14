@@ -48,11 +48,13 @@ impl KagiApp {
         if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
             self.app_notices.push_front(notice);
         }
+        self.modal_list_scroll = gpui::UniformListScrollHandle::new();
         self.active_modal.replace(modal);
     }
 
     pub(crate) fn offer_plan_from_async(&mut self, offer: AsyncPlanOffer) -> bool {
         if self.active_modal.is_none() {
+            self.modal_list_scroll = gpui::UniformListScrollHandle::new();
             self.active_modal = Some(offer.modal);
             return true;
         }

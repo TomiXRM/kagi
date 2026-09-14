@@ -15,9 +15,9 @@
 //! [`KagiApp::reattach_session`]) and detach ([`KagiApp::release_session`]) are
 //! the only places either store gains or loses a key.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use gpui::SharedString;
+use gpui::{SharedString, UniformListScrollHandle};
 
 use kagi_git::{CommitId, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree};
 
@@ -270,12 +270,29 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 /// background read's landing drag the selection back to where it was when that
 /// read started (ADR-0197 決定 2).
 ///
-/// S1 owns selection; S2b adds disposable evidence; S4 adds recomputable read
-/// caches and the pure undo/redo cursor. Pane entities remain root-owned until S5.
-#[derive(Clone, Default)]
+/// S1 owns selection; S2b adds disposable evidence and cache data. S3b adds
+/// disposable positioning handles after classifying `UniformListScrollHandle`
+/// as plain `Rc<RefCell<...>>` state with no task, subscription, entity, or
+/// callback lifecycle. S4 adds recomputable read caches and the pure undo/redo
+/// cursor. Pane entities remain root-owned until S5 (ADR-0197).
+#[derive(Clone)]
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
     pub selected: Option<usize>,
+    /// Main commit-list position and the graph walk limit that produced it.
+    pub commit_scroll_handle: UniformListScrollHandle,
+    pub commit_limit: usize,
+    /// Horizontal graph viewport position.
+    pub graph_scroll_x: f32,
+    /// Sidebar branch/PR groups collapsed by this tab.
+    pub branch_groups_collapsed: HashSet<String>,
+    /// Branch Cleanup list position and checked branch names.
+    pub cleanup_scroll: UniformListScrollHandle,
+    pub cleanup_selected: HashSet<String>,
+    /// Smart Commit generation status belongs to the session whose panel
+    /// initiated it; background completion never writes through the active tab.
+    pub smart_commit_generating: bool,
+    pub smart_commit_status: Option<String>,
     /// Identifies the published model, independently of read-request revisions.
     pub view_publish_gen: u64,
     /// Invalidates async cache writers on activation and row renumbering.
@@ -308,6 +325,43 @@ pub struct TabUiState {
     pub ecosystem_inflight: bool,
     pub ecosystem_gen: u64,
     pub ecosystem_mine_head: Option<String>,
+}
+
+impl Default for TabUiState {
+    fn default() -> Self {
+        Self {
+            selected: None,
+            commit_scroll_handle: UniformListScrollHandle::new(),
+            commit_limit: super::DEFAULT_COMMIT_LIMIT,
+            graph_scroll_x: 0.0,
+            branch_groups_collapsed: HashSet::from([super::sidebar::PR_GROUP_OTHERS.to_string()]),
+            cleanup_scroll: UniformListScrollHandle::new(),
+            smart_commit_generating: false,
+            smart_commit_status: None,
+            cleanup_selected: HashSet::new(),
+            view_publish_gen: 0,
+            cache_epoch: 0,
+            diff_caches: super::diff_cache::DiffCaches::default(),
+            wip_diffstat: None,
+            last_working_status: None,
+            operation_history: kagi_git::OperationHistory::new(),
+            history_seed_attempted: false,
+            github_prs: Vec::new(),
+            github_prs_loaded: false,
+            github_error: None,
+            github_unavailable: false,
+            github_prs_epoch: 0,
+            cleanup_gen: 0,
+            cleanup_scanning: false,
+            cleanup_prs: Vec::new(),
+            cleanup_prs_stale: false,
+            conflict_detected: false,
+            ecosystem_cache: None,
+            ecosystem_inflight: false,
+            ecosystem_gen: 0,
+            ecosystem_mine_head: None,
+        }
+    }
 }
 
 /// Wall-clock now in Unix epoch seconds (right edge of the Activity windows).

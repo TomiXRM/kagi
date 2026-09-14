@@ -12,6 +12,7 @@
 mod arbitration;
 mod conflict;
 mod editor;
+mod smart;
 mod window;
 
 use super::super::modals::ActiveModal;

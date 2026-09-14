@@ -609,6 +609,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_app_notice_modal_replacement),
             ),
             (
+                "smart_commit_generation_owner",
+                Box::new(crate::recovery_operations::scenario_smart_commit_generation_owner),
+            ),
+            (
+                "smart_commit_modal_and_probe",
+                Box::new(crate::recovery_operations::scenario_smart_commit_modal_and_probe),
+            ),
+            (
                 "update_install_lifecycle",
                 Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
             ),

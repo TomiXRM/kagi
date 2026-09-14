@@ -1042,6 +1042,32 @@ pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
         "notice-dismissal-plain-is-discarded: a user-dismissed non-actionable notice must not be requeued"
     );
 
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::deliver_app_notice(app, "arrival A");
+        kagi::ui::e2e::deliver_app_notice(app, "arrival B");
+        app.open_remote_browse(cx);
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.read(|cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app.read(cx)),
+            Some("arrival A"),
+            "notice-displacement-preserves-arrival-order-a: the displaced older notice must return before queued arrivals"
+        );
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.read(|cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app.read(cx)),
+            Some("arrival B"),
+            "notice-displacement-preserves-arrival-order-b: the later waiting notice must follow the displaced notice"
+        );
+    });
+
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS app_notice_modal_replacement");
 }

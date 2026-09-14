@@ -81,17 +81,29 @@ pub fn scenario_retained_pane_resources(cx: &mut VisualTestAppContext) {
         );
     });
 
-    // Editor: the file read updates the retained entity, not B's pane/footer.
+    // Editor: the file read and a git-backed background read (History) update
+    // the retained entity, not B's pane / footer. The History load is requested
+    // while A is active but delivered after the switch, proving the pane's own
+    // reads land in their frozen owner even in the background (ADR-0197 決定 3).
     let editor = app.update(cx, |state, cx| {
         state.switch_repo(0, cx);
         state.close_file_history();
         state.open_editor_workspace(cx);
         let pane = state.ui().editor_workspace.clone().expect("A editor");
         pane.update(cx, |view, cx| view.open_tab(PathBuf::from("f.txt"), cx));
-        state.switch_repo(1, cx);
-        state.status_footer = kagi::ui::FooterStatus::Idle(SharedString::from("B editor sentinel"));
         pane
     });
+    cx.update_window(window, |_, window, cx| {
+        editor.update(cx, |view, cx| {
+            view.set_right_tab(kagi_ui_editor::RightPaneTab::History, window, cx)
+        });
+        app.update(cx, |state, cx| {
+            state.switch_repo(1, cx);
+            state.status_footer =
+                kagi::ui::FooterStatus::Idle(SharedString::from("B editor sentinel"));
+        });
+    })
+    .expect("editor window");
     cx.run_until_parked();
     cx.read(|cx| {
         let state = app.read(cx);
@@ -103,6 +115,14 @@ pub fn scenario_retained_pane_resources(cx: &mut VisualTestAppContext) {
         assert!(
             editor.read(cx).content.is_some(),
             "editor-background-owner: A file completion did not land in A"
+        );
+        assert!(
+            editor
+                .read(cx)
+                .history
+                .as_ref()
+                .is_some_and(|history| !history.entries.is_empty()),
+            "editor-background-read-owner: A History load did not land in A"
         );
         assert_eq!(
             state.ui[&owner_a]

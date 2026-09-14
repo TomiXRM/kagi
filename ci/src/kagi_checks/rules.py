@@ -173,10 +173,11 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         name="modal-slot-storage",
-        summary="raw modal-slot mutation stays in modal_state (#718)",
+        summary="modal replacement stays behind typed modal_state transitions (#718)",
         pattern=(
             r"(?:\b[A-Za-z_]\w*\.active_modal\s*(?:=|\.replace\s*\(|\.take\s*\())"
             r"|(?:&mut\s+[A-Za-z_]\w*\.active_modal\b)"
+            r"|(?:\b(?:app|this)\.set_(?:[A-Za-z_]\w*_modal|remote_browse)\s*\()"
         ),
         globs=("src/ui/**/*.rs",),
         excludes=(
@@ -184,17 +185,23 @@ RULES: tuple[Rule, ...] = (
             "src/ui/operations/modal_state/",
         ),
         message=(
-            "raw active_modal mutation bypasses slot arbitration — add a typed "
-            "transition in operations/modal_state*"
+            "raw active_modal mutation or async receiver modal replacement bypasses slot "
+            "arbitration — add a typed transition in operations/modal_state*"
         ),
         samples=(
             "app.active_modal = Some(modal);",
             "self.active_modal.replace(modal);",
             "match &mut self.active_modal { _ => {} }",
+            (
+                "cx.spawn(async move |this, cx| {\n"
+                "    this.update(cx, |app, _| app.set_push_modal(modal));\n"
+                "})"
+            ),
         ),
         samples_ok=(
             "if app.active_modal.is_none() { offer_plan(); }",
             "match &app.active_modal { _ => {} }",
+            "self.set_push_modal(modal);",
         ),
         path_samples=(
             ("src/ui/operations/modal_state.rs", True),

@@ -815,7 +815,13 @@ impl KagiApp {
                     .active_session()
                     .and_then(|id| app.app_sessions.attachment(id));
                 // Terminalize even stale/failed tasks before the display guard.
-                if !DeleteBranchModal::settle_plan(&owner, current.as_ref(), &mut app.planning) {
+                let owned_plan = app.planning == Some("delete-branch-plan");
+                let current_owner =
+                    DeleteBranchModal::settle_plan(&owner, current.as_ref(), &mut app.planning);
+                if owned_plan {
+                    app.status_footer = FooterStatus::Idle(SharedString::from(""));
+                }
+                if !current_owner {
                     cx.notify();
                     return;
                 }
@@ -828,7 +834,7 @@ impl KagiApp {
                             branch_name,
                             plan.blockers.len()
                         );
-                        let offered = app.offer_plan_from_async(AsyncPlanOffer::new(
+                        app.offer_plan_from_async(AsyncPlanOffer::new(
                             i18n::Op::Delete,
                             ActiveModal::DeleteBranch(DeleteBranchModal {
                                 owner,
@@ -838,9 +844,6 @@ impl KagiApp {
                                 error: None,
                             }),
                         ));
-                        if offered {
-                            app.status_footer = FooterStatus::Idle(SharedString::from(""));
-                        }
                     }
                     Err(error) => {
                         app.report_plan_failure(i18n::Op::Delete, error);

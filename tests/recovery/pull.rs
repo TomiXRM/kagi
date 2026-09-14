@@ -323,11 +323,10 @@ fn leaky_helper(root: &Path, program: &str) -> String {
 
 /// #702 review P1 + Codex — an unproven termination, end to end.
 ///
-/// The whole chain in one scenario: the fetch's `TerminationUnknown` survives
-/// the mapper, so the workflow stops without popping the auto-stash; settlement
-/// keeps the lease and parks a reconcile requirement; and the user is given a
-/// way to reach it — an inspectable notice waiting behind the error modal,
-/// rather than a scope that silently refuses every later write.
+/// The whole chain in one scenario: the fetch's `TerminationUnknown` keeps the
+/// lease and parks a reconcile requirement; settlement presents an inspectable
+/// AppNotice that reaches reconcile without restoring the consumed Pull
+/// confirmation.
 pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -372,8 +371,8 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
     wait_for(cx, |cx| {
         cx.read(|cx| {
             app.read(cx)
-                .pull_modal()
-                .is_some_and(|modal| modal.error.is_some())
+                .app_notice()
+                .is_some_and(|notice| notice.inspect.is_some())
         })
     });
 
@@ -386,6 +385,12 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
         !output(repo, &["stash", "list"]).is_empty(),
         "the user's work stays in the stash"
     );
+    assert!(
+        records(repo, "pull")
+            .iter()
+            .any(|entry| matches!(entry.outcome, OpOutcome::Unknown { .. })),
+        "the indeterminate Pull outcome must be durable"
+    );
     // The descendant of the fetch is still holding the pipes, so nothing about
     // this write is proven stopped: the scope stays reserved (ADR-0175).
     cx.read(|cx| {
@@ -395,17 +400,17 @@ pub fn scenario_pull_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext)
         );
     });
 
-    // The error modal is what the user sees first; the reconcile waits behind
-    // it. Dismissing the modal must hand them the way in, not silence.
-    app.update(cx, |app, _| app.cancel_pull_modal());
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    cx.run_until_parked();
+    // Settlement presents the reconcile action directly; the consumed Pull
+    // confirmation must not be resurrected in front of it.
     cx.read(|cx| {
         let notice = app
             .read(cx)
             .app_notice()
             .expect("an unacknowledged reconcile must offer itself");
+        assert!(
+            app.read(cx).pull_modal().is_none(),
+            "Unknown must not restore the consumed Pull confirmation"
+        );
         assert!(
             notice.inspect.is_some(),
             "and it must be the inspectable kind: {}",
@@ -504,26 +509,61 @@ pub fn scenario_run_unknown_offers_its_reconcile(cx: &mut VisualTestAppContext) 
     wait_for(cx, |cx| {
         cx.read(|cx| {
             app.read(cx)
-                .push_modal()
-                .is_some_and(|modal| modal.error.is_some())
+                .app_notice()
+                .is_some_and(|notice| notice.inspect.is_some())
         })
     });
-    // The failure modal is what the user sees first; the reconcile waits behind
-    // it, exactly as it does for pull.
-    app.update(cx, |app, _| app.cancel_push_modal());
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
-    cx.run_until_parked();
+    let durable = records(repo, "push");
+    assert_eq!(durable.len(), 1, "one attempt, one durable Push entry");
+    assert!(matches!(durable[0].outcome, OpOutcome::Unknown { .. }));
 
     // Entrance 1: the completion itself.
     cx.read(|cx| {
-        let notice = app
-            .read(cx)
+        let state = app.read(cx);
+        let notice = state
             .app_notice()
             .expect("a run completion that parked a requirement offers it");
         assert!(notice.inspect.is_some(), "{}", notice.message);
+        assert!(
+            state.push_modal().is_none(),
+            "Unknown must not restore the consumed Push confirmation"
+        );
     });
 
+    // The Inspect action runs reconciliation. While the descendant still
+    // owns the pipes it remains inspectable and cannot be acknowledged.
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    wait_for(cx, |cx| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.read(|cx| app.read(cx).app_notice().is_some())
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let notice = app.app_notice().expect("still unresolved, still offered");
+        assert!(notice.inspect.is_some() && notice.acknowledge.is_none());
+        assert!(app.app_sessions.has_leases());
+    });
+
+    std::thread::sleep(Duration::from_secs(4));
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    wait_for(cx, |cx| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.read(|cx| {
+            app.read(cx)
+                .app_notice()
+                .is_some_and(|notice| notice.acknowledge.is_some())
+        })
+    });
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            !app.read(cx).app_sessions.has_leases(),
+            "acknowledging the proven-stopped Push releases its scope"
+        );
+    });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS run_unknown_offers_its_reconcile: the completion opens it");
 }
@@ -609,10 +649,10 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
 /// #702 review P1 — a restored failure must not end on a success.
 ///
 /// `steps` is `stash-push Success → pull Failed → stash-pop Success`, and
-/// presenting each of them announced each of them: the last announcement won,
-/// so the window ended with the Pull failure modal over a `stash-pop: … → …`
+/// the old presentation path announced each receipt: the last announcement won,
+/// so the window ended with a Pull failure modal over a `stash-pop: … → …`
 /// success footer and three toasts. The sibling receipts are panel rows now;
-/// exactly one of them — the decisive one — is presented.
+/// exactly one of them — the decisive Pull AppNotice — is presented.
 pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -664,8 +704,15 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(
-            app.pull_modal().is_some_and(|modal| modal.error.is_some()),
-            "the failure must reach the modal"
+            app.pull_modal().is_none(),
+            "Failed must not restore the consumed Pull confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("the decisive Pull failure must reach AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known Failed outcome does not require reconciliation"
         );
         match &app.status_footer {
             kagi::ui::FooterStatus::Failed(text) => assert!(
@@ -713,7 +760,7 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
 ///
 /// The app-level test proves the stamp is frozen; this one runs the branch that
 /// *acts* on it. Tab A confirms a pull that will fail, the user leaves for tab B
-/// before the completion lands, and the failure modal must not open over tab B.
+/// before the completion lands, and its failure notice must not open over tab B.
 pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -1027,16 +1074,23 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
         "Pull failure must be durable"
     );
     cx.read(|cx| {
-        let modal = app
-            .read(cx)
-            .pull_modal()
-            .expect("failed Pull modal must survive watcher reload");
-        assert!(modal.error.is_some(), "failed Pull must show its error");
+        let app = app.read(cx);
+        assert!(
+            app.pull_modal().is_none(),
+            "Failed must not restore the consumed Pull confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("failed Pull must survive watcher reload as AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known Failed outcome does not require reconciliation"
+        );
     });
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_auto_stash_failure_restores: failed Pull restores changes and keeps its modal"
+        "[gui-e2e] PASS pull_auto_stash_failure_restores: failed Pull restores changes and presents its notice"
     );
 }
 

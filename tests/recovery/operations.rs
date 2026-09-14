@@ -1402,12 +1402,16 @@ pub fn scenario_checkout_presents_backend_receipt(cx: &mut VisualTestAppContext)
     assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
     cx.read(|cx| {
         let app = app.read(cx);
-        let modal = app
-            .plan_modal()
-            .expect("a refused checkout must re-open the plan modal");
         assert!(
-            modal.error.is_some(),
-            "the refusal text must reach the modal"
+            app.plan_modal().is_none(),
+            "Failed must not restore the consumed checkout confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("the checkout failure must reach AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known checkout failure does not require reconciliation"
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         let shown: Vec<_> = panel
@@ -1483,12 +1487,16 @@ pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppConte
     assert_eq!(durable[0].failure_code, Some(FailureCode::Preflight));
     cx.read(|cx| {
         let app = app.read(cx);
-        let modal = app
-            .cherry_pick_modal()
-            .expect("a refused cherry-pick must re-open the plan modal");
         assert!(
-            modal.error.is_some(),
-            "the refusal text must reach the modal"
+            app.cherry_pick_modal().is_none(),
+            "Failed must not restore the consumed cherry-pick confirmation"
+        );
+        let notice = app
+            .app_notice()
+            .expect("the cherry-pick failure must reach AppNotice");
+        assert!(
+            notice.inspect.is_none() && notice.acknowledge.is_none(),
+            "a known cherry-pick failure does not require reconciliation"
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         let shown: Vec<_> = panel

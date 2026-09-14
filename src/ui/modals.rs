@@ -1,6 +1,4 @@
 //! Modal state structs and the ActiveModal enum (ADR-0076 / ADR-0114).
-//!
-//! Renderer functions extracted to modal_renderers.rs.
 
 use gpui::{Entity, SharedString};
 use gpui_component::input::InputState;
@@ -14,7 +12,11 @@ pub use super::modal_plan::ModalPlan;
 pub(crate) use super::modal_plan::{
     plan_or_exec_error, plan_outcome, session_unavailable, SESSION_UNAVAILABLE,
 };
-
+#[derive(Clone, Default)]
+pub struct UpdateModal {
+    pub installing: bool,
+    pub status: Option<SharedString>,
+}
 // ──────────────────────────────────────────────────────────────
 // CheckoutPlanModal — state for the plan confirmation overlay (T013)
 // ──────────────────────────────────────────────────────────────
@@ -754,6 +756,8 @@ impl From<String> for AppNotice {
 }
 
 pub enum ActiveModal {
+    RemoteBrowse(super::remote_browse::RemoteBrowseModal),
+    Update(UpdateModal),
     AppNotice(AppNotice),
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
@@ -798,17 +802,13 @@ pub enum ActiveModal {
 }
 
 impl ActiveModal {
-    /// True when this confirmation belongs to the repo it was opened for and
-    /// must be dropped when the active repo changes (#492). A modal's plan,
-    /// paths, stash indices and OIDs all came from one repo, but the confirm
-    /// methods read `self.repo_path` at Enter time — so a survivor would apply
-    /// repo A's plan to repo B. `AppNotice` is the only app-scoped modal: it
-    /// reports a finished operation that names its own repo. Exhaustive on
-    /// purpose: a new variant must declare its scope before it compiles.
+    /// True for confirmation state that must be dropped with its repository.
+    /// Window-global variants are false; the exhaustive match forces every new
+    /// variant to declare its scope (#492 / ADR-0197).
     pub fn is_repo_scoped(&self) -> bool {
         use ActiveModal as M;
         match self {
-            M::AppNotice(_) => false,
+            M::AppNotice(_) | M::RemoteBrowse(_) | M::Update(_) => false,
             M::Checkout(_)
             | M::Pull(_)
             | M::Amend(_)

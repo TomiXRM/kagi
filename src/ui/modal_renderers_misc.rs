@@ -180,7 +180,7 @@ pub(crate) fn render_update_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.update_modal_open = false;
+        this.cancel_update_modal();
         cx.notify();
     });
     let update_now = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {

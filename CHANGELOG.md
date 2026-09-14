@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Delayed remote refreshes, fetch completions, and file-menu actions stay bound to their originating tab session. Reopening the same repository cannot inherit an older fetch's display updates; dirty Pull can join its own in-flight fetch without starting another write. (#643, ADR-0197 S2a)
+- Remote Browse and Update now occupy the same modal slot as repository confirmations and app notices. Enter and Escape can no longer fall through to a selected commit or diff while either modal is open, and independently-rendered modal stacks are no longer possible. (#643, ADR-0197 S3a)
 
 ## [0.37.0] — 2026-09-08
 

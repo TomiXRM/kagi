@@ -561,6 +561,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "remote_browse_modal_routing",
+                Box::new(crate::recovery_operations::scenario_remote_browse_modal_routing),
+            ),
+            (
+                "window_modal_exclusivity",
+                Box::new(crate::recovery_operations::scenario_window_modal_exclusivity),
+            ),
+            (
                 "branch_menu_no_checkout_fallthrough",
                 Box::new(crate::recovery_operations::scenario_branch_menu_no_checkout_fallthrough),
             ),

@@ -739,6 +739,179 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
     );
 }
 
+/// #643: Remote Browse owns Enter/Esc while it occupies the shared modal slot.
+/// A selected non-HEAD commit and a live diff selection make both historical
+/// fallthrough paths observable.
+pub fn scenario_remote_browse_modal_routing(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = output(repo, &["rev-parse", "HEAD"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.select_headless(1));
+    kagi::ui::e2e::seed_diff_selection();
+
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        head,
+        "remote-browse-enter-preserves-head: Enter must not checkout the selected commit"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.remote_browse()
+                .is_some_and(|modal| modal.error.is_some()),
+            "remote-browse-enter-confirms-front: Enter must run the connection-form validation"
+        );
+    });
+
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).remote_browse().is_none()),
+        "remote-browse-escape-closes-front: Esc must close Remote Browse"
+    );
+    assert!(
+        kagi::ui::e2e::diff_selection_present(),
+        "remote-browse-escape-preserves-diff-selection: Esc must not reach the diff behind the modal"
+    );
+
+    // Clear the process-global selection so later scenarios stay isolated.
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(!kagi::ui::e2e::diff_selection_present());
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS remote_browse_modal_routing");
+}
+
+fn fake_update_offer() -> (
+    kagi_domain::update::UpdatePlan,
+    kagi_domain::update::ReleaseInfo,
+) {
+    use kagi_domain::update::{Asset, ReleaseInfo, UpdatePlan, Version};
+
+    let current = Version::parse("1.0.0").unwrap();
+    let latest = Version::parse("1.0.1").unwrap();
+    let asset = Asset {
+        name: "Kagi-test.dmg".to_string(),
+        url: "https://example.invalid/Kagi-test.dmg".to_string(),
+        size: 1,
+    };
+    (
+        UpdatePlan {
+            current,
+            latest: latest.clone(),
+            tag: "v1.0.1".to_string(),
+            notes: "test update".to_string(),
+            asset: asset.clone(),
+        },
+        ReleaseInfo {
+            tag: "v1.0.1".to_string(),
+            version: latest,
+            notes: "test update".to_string(),
+            assets: vec![asset],
+        },
+    )
+}
+
+fn drawn_active_modals(window: AnyWindowHandle) -> Vec<&'static str> {
+    [
+        ("remote", "active-modal/remote-browse"),
+        ("update", "active-modal/update"),
+        ("notice", "active-modal/app-notice"),
+    ]
+    .into_iter()
+    .filter_map(|(label, control)| {
+        kagi::ui::e2e::control_bounds(window.window_id(), control).map(|_| label)
+    })
+    .collect()
+}
+
+fn repaint_active_modals(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    for control in [
+        "active-modal/remote-browse",
+        "active-modal/update",
+        "active-modal/app-notice",
+    ] {
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), control);
+    }
+    paint(cx, window);
+}
+
+/// #643: window-global modals still share one slot. An arriving AppNotice waits
+/// behind the front modal; Enter targets that front modal, and Update consumes
+/// Enter without an action while Esc closes it.
+pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = output(repo, &["rev-parse", "HEAD"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.select_headless(1));
+
+    app.update(cx, |app, cx| {
+        app.open_remote_browse(cx);
+        kagi::ui::e2e::deliver_app_notice(app, "queued behind Remote Browse");
+    });
+    repaint_active_modals(cx, window);
+    assert_eq!(
+        drawn_active_modals(window),
+        vec!["remote"],
+        "single-modal-render-remote-front: an arriving AppNotice must not coexist on screen"
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app
+            .read(cx)
+            .remote_browse()
+            .is_some_and(|modal| modal.error.is_some())),
+        "single-modal-enter-targets-remote-front: queued notice must not steal Enter"
+    );
+    assert_eq!(output(repo, &["rev-parse", "HEAD"]), head);
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+
+    app.update(cx, |app, _| {
+        app.update_available = Some(fake_update_offer());
+        app.open_update_modal();
+        kagi::ui::e2e::deliver_app_notice(app, "queued behind Update");
+    });
+    repaint_active_modals(cx, window);
+    assert_eq!(
+        drawn_active_modals(window),
+        vec!["update"],
+        "single-modal-render-update-front: Update and AppNotice must not coexist on screen"
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .update_modal()
+            .expect("update-enter-consumed: Enter must leave the view-only modal open");
+        assert!(!modal.installing);
+        assert!(modal.status.is_none());
+    });
+    assert_eq!(
+        output(repo, &["rev-parse", "HEAD"]),
+        head,
+        "update-enter-preserves-head: consumed Enter must not checkout the selected commit"
+    );
+
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).update_modal().is_none()),
+        "update-escape-closes-front: Esc must close Update"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS window_modal_exclusivity");
+}
+
 /// #564: a branch context-menu overlay is not a confirmation modal. Enter
 /// must neither open a checkout plan for the selected commit behind it nor
 /// move HEAD. The registered `CheckoutSelected` action is also dispatched

@@ -125,6 +125,23 @@ pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
     app.app_notice().map(|notice| notice.message.as_str())
 }
 
+#[cfg(feature = "gui-e2e")]
+pub fn deliver_app_notice(app: &mut KagiApp, message: &str) {
+    app.app_notices.push_back(message.to_string().into());
+    app.present_app_notice();
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn seed_diff_selection() {
+    super::diff_selection::begin(u64::MAX, 0);
+    super::diff_selection::set_text(u64::MAX, "selected".to_string());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn diff_selection_present() -> bool {
+    super::diff_selection::selected_text().is_some()
+}
+
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.
 /// (`gpui_platform` is a normal dep, so the runner cannot call it directly.)
 pub fn platform() -> Rc<dyn Platform> {

@@ -1546,7 +1546,7 @@ impl KagiApp {
             "file.cloneRepository" => { /* placeholder — disabled, never dispatched */ }
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
             "repo.createSnapshot" => self.create_snapshot_now(cx),
-            "file.connectRemote" => self.open_remote_browse_modal(cx),
+            "file.connectRemote" => self.open_remote_browse(cx),
             "file.refresh" => {
                 // ADR-0089 Phase 2b: a remote read-only view re-snapshots over
                 // SSH instead of touching a local repo.

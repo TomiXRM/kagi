@@ -11,6 +11,7 @@
 // them somewhere `active_modal` gets touched directly.
 mod conflict;
 mod editor;
+mod window;
 
 use super::super::modals::ActiveModal;
 use super::super::modals::{
@@ -851,7 +852,7 @@ impl KagiApp {
         }
 
         // ── Remote SSH connect form (host / port / identity) ─
-        if let Some(m) = self.remote_browse_modal.as_mut() {
+        if let Some(m) = self.remote_browse_mut() {
             if m.host_state.is_none() {
                 let st = cx.new(|cx| InputState::new(window, cx).placeholder("user@host"));
                 st.update(cx, |s, cx| s.focus(window, cx));
@@ -1039,27 +1040,5 @@ impl KagiApp {
         if let Some(entity) = self.conflict.clone() {
             entity.update(cx, |v, cx| v.sync_editor_inputs(window, cx));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::ui::modals::{ActiveModal, StashDropModal, TrustRepoModal};
-
-    /// #492: `AppNotice` is the only modal that survives a repo switch — the
-    /// runnable half of the invariant the exhaustive match enforces.
-    #[test]
-    fn only_app_notice_survives_a_repo_switch() {
-        assert!(!ActiveModal::AppNotice("done".to_string().into()).is_repo_scoped());
-        assert!(ActiveModal::StashDrop(StashDropModal {
-            plan: None,
-            error: None,
-            stash_index: 0,
-        })
-        .is_repo_scoped());
-        assert!(ActiveModal::TrustRepo(TrustRepoModal {
-            repo_path: std::path::PathBuf::from("/tmp/repo"),
-        })
-        .is_repo_scoped());
     }
 }

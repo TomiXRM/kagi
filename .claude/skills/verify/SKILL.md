@@ -120,12 +120,15 @@ and successful checkout after the sibling detaches.
 App keybindings, command-registry keybindings, and native menus share their
 installation path with `run_app`; component initialization must precede that
 installation so app bindings keep the same precedence. For menu/Enter routing,
-PM can scope `KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough`.
-The menu scenario in `tests/recovery/operations.rs` selects a non-HEAD branch,
-opens its menu, and checks that Enter leaves the checkout modal absent and HEAD
-unchanged. The modal slot is the oracle for absence of `plan: checkout`, as in
-the existing modal scenario. Native foreground/input-focus behavior remains a
-separate Tier B check.
+PM can scope
+`KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough,remote_browse_modal_routing,window_modal_exclusivity`.
+The menu and modal scenarios in `tests/recovery/operations.rs` select a non-HEAD
+commit and prove Enter cannot fall through to checkout. Remote Browse also proves
+that Enter runs its frontmost validation and Esc does not clear the diff selection
+behind it. The window-modal scenario records the rendered Remote Browse, Update,
+and AppNotice overlays: an arriving notice waits behind the occupied slot, Update
+consumes Enter without acting, and Esc closes it. Native foreground/input-focus
+behavior remains a separate Tier B check.
 
 The runner's screenshot capture is best-effort only; its assertions, clipboard
 checks, refs, and persisted oplog records are the oracle. It cannot run from the

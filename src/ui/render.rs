@@ -317,7 +317,7 @@ impl Render for KagiApp {
         // view (ADR-0089 Phase 2b) has no local tab but still renders the
         // workspace from its applied snapshot.
         if self.tabs.is_empty() && self.remote_view.is_none() {
-            let welcome = self.render_welcome(cx).into_any();
+            let welcome = self.render_welcome(window, cx).into_any();
             return self.platform_window_shell(welcome, cx);
         }
 
@@ -422,7 +422,7 @@ impl Render for KagiApp {
         let create_branch_modal = self.create_branch_modal().cloned();
         let create_tag_modal = self.create_tag_modal().cloned();
         let create_worktree_modal = self.create_worktree_modal().cloned();
-        let remote_browse_modal = self.remote_browse_modal.clone();
+        let remote_browse = self.remote_browse().cloned();
         let delete_branch_modal = self.delete_branch_modal().cloned();
         let delete_remote_branch_modal = self.delete_remote_branch_modal().cloned();
         let reset_current_modal = self.reset_current_modal().cloned();
@@ -855,7 +855,6 @@ impl Render for KagiApp {
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx));
 
-        // ── Modal / popover overlay layer (extracted: T-SPLIT-RENDER-001) ──
         let root = self.attach_modal_overlays(
             root,
             plan_modal,
@@ -876,7 +875,8 @@ impl Render for KagiApp {
             create_tag_modal,
             create_worktree_modal,
             unlock_worktree_modal,
-            remote_browse_modal,
+            remote_browse,
+            self.update_modal().cloned(),
             stash_push_modal,
             stash_apply_modal,
             cherry_pick_modal,

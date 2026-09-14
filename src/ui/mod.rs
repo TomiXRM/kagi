@@ -1003,9 +1003,6 @@ pub struct KagiApp {
     /// accessor methods (`plan_modal()`, `set_plan_modal()`, `clear_plan_modal()`,
     /// `take_plan_modal()`, …) so existing call sites keep their per-modal names.
     pub active_modal: Option<ActiveModal>,
-    /// When `Some`, the remote SSH connect / directory-browse modal is visible
-    /// (ADR-0089 Phase 1).
-    pub remote_browse_modal: Option<RemoteBrowseModal>,
     /// When `Some`, the main views are showing a **remote** repository opened
     /// read-only over SSH (ADR-0089 Phase 2b). `repo_path` is `None` in this
     /// mode, so every local-path operation (checkout/commit/diff/watcher/…)
@@ -1307,12 +1304,6 @@ pub struct KagiApp {
     )>,
     /// Run-once guard for the startup update check.
     pub update_checked: bool,
-    /// Whether the update detail modal is open.
-    pub update_modal_open: bool,
-    /// Whether an install is in progress (disables the confirm button).
-    pub update_installing: bool,
-    /// Progress / error line shown in the update modal.
-    pub update_status: Option<SharedString>,
     /// Last loaded working-tree status, used by the FS watcher's working-tree
     /// path to skip a refresh when nothing the parent repo cares about changed
     /// (e.g. churn inside a nested worktree, which `working_tree_status` treats as
@@ -1480,7 +1471,6 @@ impl KagiApp {
             compare_view: None,
             pending_headless_compare: None,
             active_modal: None,
-            remote_browse_modal: None,
             remote_view: None,
             modal_focus: None,
             stash_push_focus: None,
@@ -1569,9 +1559,6 @@ impl KagiApp {
             conflict_merge_pending: false,
             update_available: None,
             update_checked: false,
-            update_modal_open: false,
-            update_installing: false,
-            update_status: None,
             last_working_status: None,
             file_history: None,
             file_history_head: None,
@@ -2148,11 +2135,14 @@ impl KagiApp {
         let Some((plan, release)) = self.update_available.clone() else {
             return;
         };
-        if self.update_installing {
+        let Some(update) = self.update_modal_mut() else {
+            return;
+        };
+        if update.installing {
             return;
         }
-        self.update_installing = true;
-        self.update_status = Some(SharedString::from("Downloading & verifying…"));
+        update.installing = true;
+        update.status = Some(SharedString::from("Downloading & verifying…"));
         cx.notify();
         let task = cx.background_spawn(async move {
             crate::update::install(&plan, &release, &|m| klog!("update: {m}"))
@@ -2166,9 +2156,11 @@ impl KagiApp {
                 }
                 Err(e) => {
                     klog!("update: failed: {e}");
-                    app.update_installing = false;
-                    app.update_status = Some(SharedString::from(format!("Update failed: {e}")));
-                    cx.notify();
+                    if let Some(update) = app.update_modal_mut() {
+                        update.installing = false;
+                        update.status = Some(SharedString::from(format!("Update failed: {e}")));
+                        cx.notify();
+                    }
                 }
             });
         })
@@ -2181,7 +2173,7 @@ impl KagiApp {
             settings::write_setting("update_skipped", Some(&plan.tag));
         }
         self.update_available = None;
-        self.update_modal_open = false;
+        self.cancel_update_modal();
         cx.notify();
     }
 
@@ -3186,7 +3178,7 @@ impl KagiApp {
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
             self.start_commit(cx);
-        } else if self.update_modal_open || self.menu_overlay.is_some() {
+        } else if self.menu_overlay.is_some() {
             // Open but no single confirm action — consume Enter (don't check out
             // a commit), but take no action.
             return true;
@@ -3210,6 +3202,8 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
+            M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
+            M::Update(_) => {}
             M::Checkout(_) => self.start_checkout(cx),
             M::Pull(_) => self.start_pull(cx),
             M::Amend(_) => self.start_amend(cx),
@@ -3269,8 +3263,6 @@ impl KagiApp {
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
         {
             self.cancel_commit_plan_modal(cx);
-        } else if self.update_modal_open {
-            self.update_modal_open = false;
         } else if self.menu_overlay.is_some() {
             self.menu_overlay = None;
         } else {
@@ -3300,6 +3292,8 @@ impl KagiApp {
                 }
                 self.clear_app_notice();
             }
+            M::RemoteBrowse(_) => self.cancel_remote_browse(),
+            M::Update(_) => self.cancel_update_modal(),
             M::Checkout(_) => self.cancel_modal(),
             M::Pull(_) => self.cancel_pull_modal(),
             M::Amend(_) => self.cancel_amend_modal(),

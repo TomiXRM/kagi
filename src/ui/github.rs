@@ -9,6 +9,7 @@ use gpui::{Context, SharedString};
 use kagi_domain::github::PullRequest;
 
 use super::i18n::{self, Msg};
+use super::operations::RunPresentation;
 use super::types::ToastKind;
 use super::{CompareTarget, CompareView, FooterStatus, KagiApp, OpOutcome};
 
@@ -389,47 +390,24 @@ impl KagiApp {
                 ))
             },
             |_| None,
-            move |app, done, cx| {
+            move |done| match done {
                 // The recorded outcome decided what happened, not the raw `gh`
-                // exit: a non-zero exit whose server re-read says "merged" came
-                // back as `Ok` here (#501). The two indeterminate outcomes are
-                // already settled — `Partial` by the transport hold, `Unknown`
-                // by the reconcile entry `apply` parked — so this half only
-                // presents.
-                match done {
-                    Ok(kagi_git::OperationOutcome::PrMerge {
-                        detail, confirmed, ..
-                    }) => {
-                        klog!("executed: pr-merge #{}", number);
-                        if !confirmed {
-                            return;
-                        }
-                        app.push_toast(
-                            ToastKind::Info,
-                            SharedString::from(if detail.is_empty() {
-                                format!("{} #{}", Msg::PrModeMergeDone.t(), number)
-                            } else {
-                                detail.clone()
-                            }),
-                            cx,
-                        );
-                        // The merged PR leaves the open list, and the base
-                        // branch moved — refresh both views.
-                        app.pr_mode_close_tab_for(number, cx);
-                        app.refresh_github_prs(cx);
-                        app.fetch_async(true, cx);
+                // exit. Indeterminate outcomes are already settled by the
+                // transport hold or reconcile entry.
+                Ok(kagi_git::OperationOutcome::PrMerge {
+                    detail, confirmed, ..
+                }) => {
+                    klog!("executed: pr-merge #{}", number);
+                    if *confirmed {
+                        RunPresentation::none().github_merge(number, detail.clone())
+                    } else {
+                        RunPresentation::none()
                     }
-                    Ok(_) => {}
-                    Err(failure) => {
-                        klog!("pr-merge failed: {}", failure.message);
-                        if failure.code != kagi_git::oplog::FailureCode::TerminationUnknown {
-                            app.push_toast(
-                                ToastKind::Error,
-                                SharedString::from(failure.message),
-                                cx,
-                            );
-                        }
-                    }
+                }
+                Ok(_) => RunPresentation::none(),
+                Err(failure) => {
+                    klog!("pr-merge failed: {}", failure.message);
+                    RunPresentation::none()
                 }
             },
         );

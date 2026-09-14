@@ -9,6 +9,7 @@
 // #707 review: accessors live here, never in the feature modules that open a
 // modal. Split by feature as this file hits its LOC ceiling, not by relocating
 // them somewhere `active_modal` gets touched directly.
+mod arbitration;
 mod conflict;
 mod editor;
 mod window;
@@ -25,6 +26,7 @@ use super::super::modals::{
     TrackingCheckoutPlanModal, TrustRepoModal, UnlockWorktreeModal,
 };
 use super::super::KagiApp;
+pub(crate) use arbitration::{AsyncPlanOffer, AsyncPlanToken, PlanningPresentation};
 use gpui::{AppContext as _, Context, Window};
 use gpui_component::input::InputState;
 
@@ -36,16 +38,6 @@ use gpui_component::input::InputState;
 impl KagiApp {
     pub(crate) fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
-    }
-    /// Replace the shared slot without losing or reordering an unread notice.
-    /// A displaced notice arrived before everything already waiting, so it
-    /// returns to the queue front. Escape remains a separate user-dismissal
-    /// event in `cancel_open_modal` (#718 / ADR-0196).
-    fn replace_active_modal(&mut self, modal: ActiveModal) {
-        if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
-            self.app_notices.push_front(notice);
-        }
-        self.active_modal.replace(modal);
     }
 
     /// Drop the active modal when it belongs to the repository being switched
@@ -75,7 +67,7 @@ impl KagiApp {
             self.app_notices.push_back(message);
             return;
         }
-        self.replace_active_modal(ActiveModal::AppNotice(message));
+        self.replace_modal_from_user(ActiveModal::AppNotice(message));
     }
     pub fn clear_app_notice(&mut self) {
         if self.app_notice().is_some() {
@@ -120,7 +112,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_plan_modal(&mut self, m: CheckoutPlanModal) {
-        self.replace_active_modal(ActiveModal::Checkout(m));
+        self.replace_modal_from_user(ActiveModal::Checkout(m));
     }
     #[inline]
     pub fn clear_plan_modal(&mut self) {
@@ -137,7 +129,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_pull_modal(&mut self, m: PullPlanModal) {
-        self.replace_active_modal(ActiveModal::Pull(m));
+        self.replace_modal_from_user(ActiveModal::Pull(m));
     }
     #[inline]
     pub fn clear_pull_modal(&mut self) {
@@ -154,7 +146,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_amend_modal(&mut self, m: AmendPlanModal) {
-        self.replace_active_modal(ActiveModal::Amend(m));
+        self.replace_modal_from_user(ActiveModal::Amend(m));
     }
     #[inline]
     pub fn clear_amend_modal(&mut self) {
@@ -171,7 +163,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_pop_modal(&mut self, m: PopPlanModal) {
-        self.replace_active_modal(ActiveModal::Pop(m));
+        self.replace_modal_from_user(ActiveModal::Pop(m));
     }
     #[inline]
     pub fn clear_pop_modal(&mut self) {
@@ -188,7 +180,7 @@ impl KagiApp {
     }
 
     pub fn set_pr_merge_modal(&mut self, m: PrMergeModal) {
-        self.replace_active_modal(ActiveModal::PrMerge(m));
+        self.replace_modal_from_user(ActiveModal::PrMerge(m));
     }
 
     pub fn clear_pr_merge_modal(&mut self) {
@@ -205,7 +197,7 @@ impl KagiApp {
     }
 
     pub fn set_push_tag_modal(&mut self, m: PushTagModal) {
-        self.replace_active_modal(ActiveModal::PushTag(m));
+        self.replace_modal_from_user(ActiveModal::PushTag(m));
     }
 
     pub fn clear_push_tag_modal(&mut self) {
@@ -222,7 +214,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_trust_repo_modal(&mut self, m: TrustRepoModal) {
-        self.replace_active_modal(ActiveModal::TrustRepo(m));
+        self.replace_modal_from_user(ActiveModal::TrustRepo(m));
     }
     #[inline]
     pub fn clear_trust_repo_modal(&mut self) {
@@ -239,7 +231,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_stash_drop_modal(&mut self, m: StashDropModal) {
-        self.replace_active_modal(ActiveModal::StashDrop(m));
+        self.replace_modal_from_user(ActiveModal::StashDrop(m));
     }
     #[inline]
     pub fn clear_stash_drop_modal(&mut self) {
@@ -256,7 +248,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_unlock_worktree_modal(&mut self, m: UnlockWorktreeModal) {
-        self.replace_active_modal(ActiveModal::UnlockWorktree(m));
+        self.replace_modal_from_user(ActiveModal::UnlockWorktree(m));
     }
     #[inline]
     pub fn clear_unlock_worktree_modal(&mut self) {
@@ -281,7 +273,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_remove_worktree_modal(&mut self, m: RemoveWorktreeModal) {
-        self.replace_active_modal(ActiveModal::RemoveWorktree(m));
+        self.replace_modal_from_user(ActiveModal::RemoveWorktree(m));
     }
     #[inline]
     pub fn clear_remove_worktree_modal(&mut self) {
@@ -305,7 +297,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_lock_worktree_modal(&mut self, m: LockWorktreeModal) {
-        self.replace_active_modal(ActiveModal::LockWorktree(m));
+        self.replace_modal_from_user(ActiveModal::LockWorktree(m));
     }
     #[inline]
     pub fn clear_lock_worktree_modal(&mut self) {
@@ -329,7 +321,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_prune_worktrees_modal(&mut self, m: PruneWorktreesModal) {
-        self.replace_active_modal(ActiveModal::PruneWorktrees(m));
+        self.replace_modal_from_user(ActiveModal::PruneWorktrees(m));
     }
     #[inline]
     pub fn clear_prune_worktrees_modal(&mut self) {
@@ -353,7 +345,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_repair_worktrees_modal(&mut self, m: RepairWorktreesModal) {
-        self.replace_active_modal(ActiveModal::RepairWorktrees(m));
+        self.replace_modal_from_user(ActiveModal::RepairWorktrees(m));
     }
     #[inline]
     pub fn clear_repair_worktrees_modal(&mut self) {
@@ -377,7 +369,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_push_modal(&mut self, m: PushPlanModal) {
-        self.replace_active_modal(ActiveModal::Push(m));
+        self.replace_modal_from_user(ActiveModal::Push(m));
     }
     #[inline]
     pub fn clear_push_modal(&mut self) {
@@ -394,7 +386,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_branch_plan_modal(&mut self, m: BranchPlanModal) {
-        self.replace_active_modal(ActiveModal::BranchPlan(m));
+        self.replace_modal_from_user(ActiveModal::BranchPlan(m));
     }
     #[inline]
     pub fn clear_branch_plan_modal(&mut self) {
@@ -418,7 +410,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_set_upstream_modal(&mut self, m: SetUpstreamModal) {
-        self.replace_active_modal(ActiveModal::SetUpstream(m));
+        self.replace_modal_from_user(ActiveModal::SetUpstream(m));
     }
     #[inline]
     pub fn clear_set_upstream_modal(&mut self) {
@@ -442,7 +434,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_rename_branch_modal(&mut self, m: RenameBranchModal) {
-        self.replace_active_modal(ActiveModal::RenameBranch(m));
+        self.replace_modal_from_user(ActiveModal::RenameBranch(m));
     }
     #[inline]
     pub fn clear_rename_branch_modal(&mut self) {
@@ -459,7 +451,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_merge_modal(&mut self, m: MergePlanModal) {
-        self.replace_active_modal(ActiveModal::Merge(m));
+        self.replace_modal_from_user(ActiveModal::Merge(m));
     }
     #[inline]
     pub fn clear_merge_modal(&mut self) {
@@ -476,7 +468,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_tracking_checkout_modal(&mut self, m: TrackingCheckoutPlanModal) {
-        self.replace_active_modal(ActiveModal::TrackingCheckout(m));
+        self.replace_modal_from_user(ActiveModal::TrackingCheckout(m));
     }
     #[inline]
     pub fn clear_tracking_checkout_modal(&mut self) {
@@ -493,7 +485,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_switch_to_latest_modal(&mut self, m: SwitchToLatestPlanModal) {
-        self.replace_active_modal(ActiveModal::SwitchToLatest(m));
+        self.replace_modal_from_user(ActiveModal::SwitchToLatest(m));
     }
     #[inline]
     pub fn clear_switch_to_latest_modal(&mut self) {
@@ -517,7 +509,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_create_branch_modal(&mut self, m: CreateBranchModal) {
-        self.replace_active_modal(ActiveModal::CreateBranch(m));
+        self.replace_modal_from_user(ActiveModal::CreateBranch(m));
     }
     #[inline]
     pub fn clear_create_branch_modal(&mut self) {
@@ -541,7 +533,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_create_tag_modal(&mut self, m: CreateTagModal) {
-        self.replace_active_modal(ActiveModal::CreateTag(m));
+        self.replace_modal_from_user(ActiveModal::CreateTag(m));
     }
     #[inline]
     pub fn clear_create_tag_modal(&mut self) {
@@ -565,7 +557,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_create_worktree_modal(&mut self, m: CreateWorktreeModal) {
-        self.replace_active_modal(ActiveModal::CreateWorktree(m));
+        self.replace_modal_from_user(ActiveModal::CreateWorktree(m));
     }
     #[inline]
     pub fn clear_create_worktree_modal(&mut self) {
@@ -589,7 +581,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_stash_push_modal(&mut self, m: StashPushModal) {
-        self.replace_active_modal(ActiveModal::StashPush(m));
+        self.replace_modal_from_user(ActiveModal::StashPush(m));
     }
     #[inline]
     pub fn clear_stash_push_modal(&mut self) {
@@ -613,7 +605,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_stash_apply_modal(&mut self, m: StashApplyModal) {
-        self.replace_active_modal(ActiveModal::StashApply(m));
+        self.replace_modal_from_user(ActiveModal::StashApply(m));
     }
     #[inline]
     pub fn clear_stash_apply_modal(&mut self) {
@@ -630,7 +622,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_cherry_pick_modal(&mut self, m: CherryPickModal) {
-        self.replace_active_modal(ActiveModal::CherryPick(m));
+        self.replace_modal_from_user(ActiveModal::CherryPick(m));
     }
     #[inline]
     pub fn clear_cherry_pick_modal(&mut self) {
@@ -647,7 +639,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_revert_modal(&mut self, m: RevertModal) {
-        self.replace_active_modal(ActiveModal::Revert(m));
+        self.replace_modal_from_user(ActiveModal::Revert(m));
     }
     #[inline]
     pub fn clear_revert_modal(&mut self) {
@@ -664,7 +656,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_history_modal(&mut self, m: HistoryPlanModal) {
-        self.replace_active_modal(ActiveModal::History(m));
+        self.replace_modal_from_user(ActiveModal::History(m));
     }
     #[inline]
     pub fn clear_history_modal(&mut self) {
@@ -681,7 +673,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_delete_branch_modal(&mut self, m: DeleteBranchModal) {
-        self.replace_active_modal(ActiveModal::DeleteBranch(m));
+        self.replace_modal_from_user(ActiveModal::DeleteBranch(m));
     }
     #[inline]
     pub fn clear_delete_branch_modal(&mut self) {
@@ -698,7 +690,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_delete_remote_branch_modal(&mut self, m: DeleteRemoteBranchModal) {
-        self.replace_active_modal(ActiveModal::DeleteRemoteBranch(m));
+        self.replace_modal_from_user(ActiveModal::DeleteRemoteBranch(m));
     }
     #[inline]
     pub fn clear_delete_remote_branch_modal(&mut self) {
@@ -715,7 +707,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_reset_current_modal(&mut self, m: ResetCurrentModal) {
-        self.replace_active_modal(ActiveModal::ResetCurrent(m));
+        self.replace_modal_from_user(ActiveModal::ResetCurrent(m));
     }
     #[inline]
     pub fn clear_reset_current_modal(&mut self) {
@@ -732,7 +724,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_force_lease_push_modal(&mut self, m: ForceLeasePushModal) {
-        self.replace_active_modal(ActiveModal::ForceLeasePush(m));
+        self.replace_modal_from_user(ActiveModal::ForceLeasePush(m));
     }
     #[inline]
     pub fn clear_force_lease_push_modal(&mut self) {
@@ -749,7 +741,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_rebase_current_onto_modal(&mut self, m: RebaseCurrentOntoModal) {
-        self.replace_active_modal(ActiveModal::RebaseCurrentOnto(m));
+        self.replace_modal_from_user(ActiveModal::RebaseCurrentOnto(m));
     }
     #[inline]
     pub fn clear_rebase_current_onto_modal(&mut self) {
@@ -766,7 +758,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_branch_cleanup_modal(&mut self, m: BranchCleanupModal) {
-        self.replace_active_modal(ActiveModal::BranchCleanup(m));
+        self.replace_modal_from_user(ActiveModal::BranchCleanup(m));
     }
     #[inline]
     pub fn clear_branch_cleanup_modal(&mut self) {
@@ -783,7 +775,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_discard_modal(&mut self, m: DiscardModal) {
-        self.replace_active_modal(ActiveModal::Discard(m));
+        self.replace_modal_from_user(ActiveModal::Discard(m));
     }
     #[inline]
     pub fn clear_discard_modal(&mut self) {

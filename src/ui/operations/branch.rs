@@ -7,6 +7,8 @@
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
 
+use super::modal_state::AsyncPlanOffer;
+use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
@@ -309,22 +311,15 @@ impl KagiApp {
             repo_path,
             move || branch_plan_blocking(&bg_path, &bg_modal),
             |_| None,
-            move |app, done, _cx| match done {
+            move |done| match done {
                 Ok(outcome) => {
-                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
                         "{}: {}",
                         op_name,
                         branch_plan_summary(&modal.branch_name, outcome)
-                    )));
+                    ))))
                 }
-                Err(failure) => {
-                    app.set_branch_plan_modal(BranchPlanModal {
-                        kind: modal.kind.clone(),
-                        branch_name: modal.branch_name.clone(),
-                        plan: modal.plan.clone(),
-                        error: Some(SharedString::from(failure.message)),
-                    });
-                }
+                Err(_) => RunPresentation::none(),
             },
         );
     }
@@ -425,18 +420,7 @@ impl KagiApp {
             repo_path,
             move || set_upstream_blocking(&bg_path, &bg_plan, &branch_name, &upstream),
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {}
-                Err(err_msg) => {
-                    app.set_set_upstream_modal(SetUpstreamModal {
-                        branch_name: modal.branch_name.clone(),
-                        input: modal.input.clone(),
-                        input_state: None,
-                        plan: ModalPlan::Ready(plan.clone()),
-                        error: Some(SharedString::from(err_msg.message)),
-                    });
-                }
-            },
+            |_| RunPresentation::none(),
         );
     }
 
@@ -543,19 +527,7 @@ impl KagiApp {
             repo_path,
             move || rename_branch_blocking(&bg_path, &bg_plan, &old_name, &new_name),
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {}
-                Err(err_msg) => {
-                    app.set_rename_branch_modal(RenameBranchModal {
-                        old_name: modal.old_name.clone(),
-                        input: modal.input.clone(),
-                        input_state: None,
-                        validation: modal.validation.clone(),
-                        plan: ModalPlan::Ready(plan.clone()),
-                        error: Some(SharedString::from(err_msg.message)),
-                    });
-                }
-            },
+            |_| RunPresentation::none(),
         );
     }
 
@@ -654,17 +626,7 @@ impl KagiApp {
             repo_path,
             move || checkout_tracking_blocking(&bg_path, &plan, &remote_branch, &local_branch),
             move |_| Some(format!("finished — checkout {}", note_branch)),
-            move |app, done, _cx| match done {
-                Ok(_) => {}
-                Err(err_msg) => {
-                    app.set_tracking_checkout_modal(TrackingCheckoutPlanModal {
-                        remote_branch: modal.remote_branch.clone(),
-                        local_branch: modal.local_branch.clone(),
-                        plan: modal.plan.clone(),
-                        error: Some(SharedString::from(err_msg.message)),
-                    });
-                }
-            },
+            |_| RunPresentation::none(),
         );
     }
 
@@ -763,17 +725,7 @@ impl KagiApp {
             repo_path,
             move || switch_to_latest_blocking(&bg_path, &plan, &branch_name, &remote_branch),
             move |_| Some(format!("finished — switch {}", note_branch)),
-            move |app, done, _cx| match done {
-                Ok(_) => {}
-                Err(err_msg) => {
-                    app.set_switch_to_latest_modal(SwitchToLatestPlanModal {
-                        branch_name: modal.branch_name.clone(),
-                        remote_branch: modal.remote_branch.clone(),
-                        plan: modal.plan.clone(),
-                        error: Some(SharedString::from(err_msg.message)),
-                    });
-                }
-            },
+            |_| RunPresentation::none(),
         );
     }
 
@@ -876,20 +828,22 @@ impl KagiApp {
                             branch_name,
                             plan.blockers.len()
                         );
-                        app.status_footer = FooterStatus::Idle(SharedString::from(""));
-                        app.set_delete_branch_modal(DeleteBranchModal {
-                            owner,
-                            confirm_armed: false,
-                            branch_name,
-                            plan: std::sync::Arc::new(plan),
-                            error: None,
-                        });
+                        let offered = app.offer_plan_from_async(AsyncPlanOffer::new(
+                            i18n::Op::Delete,
+                            ActiveModal::DeleteBranch(DeleteBranchModal {
+                                owner,
+                                confirm_armed: false,
+                                branch_name,
+                                plan: std::sync::Arc::new(plan),
+                                error: None,
+                            }),
+                        ));
+                        if offered {
+                            app.status_footer = FooterStatus::Idle(SharedString::from(""));
+                        }
                     }
-                    Err(e) => {
-                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                            "delete-branch plan error: {}",
-                            e
-                        )));
+                    Err(error) => {
+                        app.report_plan_failure(i18n::Op::Delete, error);
                     }
                 }
                 cx.notify();
@@ -980,26 +934,17 @@ impl KagiApp {
             repo_path,
             move || delete_branch_blocking(&bg_owner, &bg_plan, &bg_branch),
             |_| None,
-            move |app, done, _cx| match done {
+            move |done| match done {
                 Ok(kagi_git::OperationOutcome::DeleteBranch { reference, .. }) => {
                     if removes_pinning_worktree {
                         klog!("executed: delete-branch removed pinning worktree");
                     }
-                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
+                    RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
                         "delete-branch: '{}' deleted (restore: git branch {} {reference})",
                         branch_name, branch_name
-                    )));
+                    ))))
                 }
-                Ok(_) => {}
-                Err(failure) => {
-                    app.set_delete_branch_modal(DeleteBranchModal {
-                        owner,
-                        confirm_armed: false,
-                        branch_name: branch_name.clone(),
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(failure.message)),
-                    });
-                }
+                Ok(_) | Err(_) => RunPresentation::none(),
             },
         );
     }

@@ -7,6 +7,8 @@
 #![allow(clippy::too_many_arguments)]
 use crate::ui::blocking_ops::*;
 
+use super::modal_state::AsyncPlanOffer;
+use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
@@ -231,7 +233,7 @@ impl KagiApp {
             },
             |_| None,
             // The `Invalidate` delivery reloads; a failure left the record.
-            |_, _, _| {},
+            |_| RunPresentation::none(),
         );
     }
 
@@ -319,14 +321,7 @@ impl KagiApp {
             let completion = task.await;
             let _ = this.update(cx, |app, cx| {
                 if app::apply_plan(&mut app.app_sessions, completion) {
-                    // A different modal opened while planning owns the UI now.
-                    // Check only accepted completions: stale jobs must not
-                    // invalidate a newer remove request's revision.
-                    if app.has_active_modal() && app.remove_worktree_modal().is_none() {
-                        app.app_sessions.invalidate_plan();
-                    } else {
-                        app.show_remove_plan();
-                    }
+                    app.show_remove_plan();
                 }
                 cx.notify();
             });
@@ -349,12 +344,18 @@ impl KagiApp {
                     name,
                     delete_branch
                 );
-                self.set_remove_worktree_modal(RemoveWorktreeModal {
-                    plan: preview,
-                    error: None,
-                    name,
-                    delete_branch,
-                });
+                self.offer_plan_from_async(
+                    AsyncPlanOffer::new(
+                        i18n::Op::RemoveWorktree,
+                        ActiveModal::RemoveWorktree(RemoveWorktreeModal {
+                            plan: preview,
+                            error: None,
+                            name,
+                            delete_branch,
+                        }),
+                    )
+                    .with_session_token(),
+                );
             }
             PlanState::Error { error, .. } => {
                 let message = i18n::op_plan_failed(i18n::Op::RemoveWorktree, error);

@@ -819,6 +819,41 @@ pub fn scenario_remote_browse_modal_routing(cx: &mut VisualTestAppContext) {
     );
 
     let host = kagi_domain::remote::RemoteHost::parse("example.test").expect("host");
+    let stale_snapshot = remote_snapshot.clone();
+    app.update(cx, |app, cx| {
+        app.open_remote_browse(cx);
+        kagi::ui::e2e::prepare_remote_browse_open(app, host.clone(), "/stale");
+    });
+    let stale_timer = cx.background_executor.clone();
+    kagi::ui::e2e::queue_remote_open(cx.background_executor.spawn(async move {
+        stale_timer.timer(Duration::from_secs(1)).await;
+        Ok(("/stale".to_string(), stale_snapshot))
+    }));
+    app.update(cx, |app, cx| app.start_remote_open_repo(cx));
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            kagi::ui::e2e::set_remote_browse_host_input(app, "fresh-instance", window, cx);
+        });
+    })
+    .unwrap();
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.remote_browse()
+                .is_some_and(|modal| modal.host_input == "fresh-instance"),
+            "remote-browse-generation-match-only: stale completion must not mutate or close the reopened instance"
+        );
+        assert!(
+            app.remote_view.is_none(),
+            "remote-browse-stale-open-dropped: stale completion must not enter its repository"
+        );
+    });
+    app.update(cx, |app, _| app.cancel_remote_browse());
+
     app.update(cx, |app, cx| {
         app.open_remote_browse(cx);
         kagi::ui::e2e::prepare_remote_browse_open(app, host, "/srv/repo");
@@ -1211,12 +1246,9 @@ pub fn scenario_branch_menu_no_checkout_fallthrough(cx: &mut VisualTestAppContex
     );
 }
 
-/// #493 safety review: a failed push must reach the **modal** as well as the
-/// oplog and the footer (CLAUDE.md's error rule). `start_push` closes the plan
-/// modal before the background push, so the completion path has to bring it
-/// back with the error — the same thing `start_checkout` / `start_delete_branch`
-/// / `start_amend` / the remote-view pull arm already do. Enter and the button
-/// share this one completion path, so driving it once covers both.
+/// #718 P1: a failed push is a terminal outcome, not permission to replace
+/// whichever foreground modal the user opened while the write ran. The failure
+/// stays durable in the oplog and waits as an AppNotice behind Remote Browse.
 ///
 /// The failure is offline and deterministic: push to a bare remote, delete the
 /// remote, then commit — the upstream ref still resolves (so the plan is clean
@@ -1226,6 +1258,8 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     let repo = fixture.path();
     let remote_dir = tempfile::tempdir().expect("remote tempdir");
     let bare = remote_dir.path().join("target.git");
+    let original_language = kagi::ui::i18n::lang();
+    kagi::ui::i18n::set_lang(kagi::ui::i18n::Lang::En);
     let bare_str = bare.to_str().unwrap();
     git(repo, &["init", "--bare", "-q", bare_str]);
     git(repo, &["remote", "add", "origin", bare_str]);
@@ -1246,22 +1280,46 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     );
 
     app.update(cx, |app, cx| app.start_push(cx));
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            kagi::ui::e2e::set_remote_browse_host_input(app, "typed-host", window, cx);
+        });
+    })
+    .unwrap();
     wait_idle(cx, &app);
     cx.read(|cx| {
         let app = app.read(cx);
-        let modal = app
-            .push_modal()
-            .expect("a failed push must re-open the plan modal, not only record the failure");
         assert!(
-            modal.error.is_some(),
-            "the failure text must be shown in the modal"
+            app.remote_browse()
+                .is_some_and(|modal| modal.host_input == "typed-host"),
+            "push-failure-preserves-remote-input: terminal completion must not replace foreground input"
+        );
+        assert!(
+            kagi::ui::e2e::queued_notice_contains(app, "Push failed"),
+            "push-failure-queues-notice: failure must wait behind the occupied modal slot"
         );
         assert!(
             app.write_busy_op.is_none(),
             "busy must be released on failure"
         );
     });
+    app.update(cx, |app, _| {
+        app.cancel_remote_browse();
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    assert!(
+        cx.read(|cx| kagi::ui::e2e::app_notice_message(app.read(cx))
+            .is_some_and(|message| message.contains("Push failed"))),
+        "push-failure-presents-waiting-notice: closing the foreground must reveal the failure"
+    );
     let durable = records(repo, "push");
+    assert_eq!(
+        durable.len(),
+        1,
+        "the push attempt must have one durable receipt"
+    );
     let failed = durable
         .iter()
         .find(|e| matches!(e.outcome, OpOutcome::Failed { .. }))
@@ -1287,8 +1345,9 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
         "a failed push must not touch the repository"
     );
 
+    kagi::ui::i18n::set_lang(original_language);
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS push_failure_keeps_modal: failure reaches the modal and the oplog");
+    eprintln!("[gui-e2e] PASS push_failure_keeps_modal: Remote Browse wins; failure waits");
 }
 
 /// ADR-0196 Wave 2 (#643 A1): the checkout family presents the backend's own

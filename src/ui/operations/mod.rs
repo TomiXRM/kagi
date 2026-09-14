@@ -30,6 +30,7 @@ pub mod worktree;
 
 use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;
+use crate::ui::{BottomTab, ToastKind};
 
 /// A failure handed to a family's `on_done` by [`KagiApp::finish_recorded`]:
 /// the localized text plus the receipt's typed code (ADR-0195), so a family
@@ -37,6 +38,101 @@ use crate::ui::types::FooterStatus;
 pub(crate) struct OpFailure {
     pub message: String,
     pub code: FailureCode,
+}
+
+pub(crate) enum RunHistory {
+    FromCurrentHead {
+        kind: kagi_git::OperationKind,
+        before: Option<(String, kagi_git::CommitId)>,
+        summary: RunHistorySummary,
+    },
+    Exact {
+        kind: kagi_git::OperationKind,
+        branch: String,
+        before: kagi_git::CommitId,
+        after: kagi_git::CommitId,
+        summary: String,
+    },
+}
+
+pub(crate) enum RunHistorySummary {
+    Fixed(String),
+    Commit(String),
+}
+
+pub(crate) struct CommitPanelFailure {
+    pub(crate) expected: gpui::Entity<crate::ui::commit_panel::CommitPanelView>,
+    pub(crate) message: SharedString,
+}
+
+pub(crate) struct GithubMergePresentation {
+    number: u64,
+    detail: String,
+}
+
+#[derive(Default)]
+pub(crate) struct RunPresentation {
+    status: Option<FooterStatus>,
+    history: Option<RunHistory>,
+    consume_commit_message: Option<PathBuf>,
+    refresh_worktree_wip: Option<PathBuf>,
+    reload: bool,
+    open_operation_log: bool,
+    github_merge: Option<GithubMergePresentation>,
+    commit_panel_failure: Option<CommitPanelFailure>,
+    outcome_notice: Option<String>,
+}
+
+impl RunPresentation {
+    pub(crate) fn none() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn status(status: FooterStatus) -> Self {
+        Self {
+            status: Some(status),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn with_history(mut self, history: RunHistory) -> Self {
+        self.history = Some(history);
+        self
+    }
+
+    pub(crate) fn consume_commit_message(mut self, repo: PathBuf) -> Self {
+        self.consume_commit_message = Some(repo);
+        self
+    }
+
+    pub(crate) fn refresh_worktree_wip(mut self, repo: PathBuf) -> Self {
+        self.refresh_worktree_wip = Some(repo);
+        self
+    }
+
+    pub(crate) fn reload(mut self) -> Self {
+        self.reload = true;
+        self
+    }
+
+    pub(crate) fn open_operation_log(mut self) -> Self {
+        self.open_operation_log = true;
+        self
+    }
+
+    pub(crate) fn github_merge(mut self, number: u64, detail: String) -> Self {
+        self.github_merge = Some(GithubMergePresentation { number, detail });
+        self
+    }
+    pub(crate) fn update_commit_panel(mut self, failure: CommitPanelFailure) -> Self {
+        self.commit_panel_failure = Some(failure);
+        self
+    }
+
+    pub(crate) fn outcome_notice(mut self, message: String) -> Self {
+        self.outcome_notice = Some(message);
+        self
+    }
 }
 
 /// A Pull confirmation that could not be delivered when its fetch finished,
@@ -101,7 +197,7 @@ impl KagiApp {
         on_done: F,
     ) where
         R: 'static,
-        F: FnOnce(&mut Self, R, &mut Context<Self>) + 'static,
+        F: FnOnce(R) -> modal_state::PlanningPresentation + 'static,
     {
         let owner = self.active_session();
         let visit = owner.and_then(|session| self.app_sessions.visit(session));
@@ -114,7 +210,16 @@ impl KagiApp {
                 let current = app.active_session() == owner
                     && owner.and_then(|session| app.app_sessions.visit(session)) == visit;
                 match result {
-                    Some(result) if current => on_done(app, result, cx),
+                    Some(result) if current => match on_done(result) {
+                        modal_state::PlanningPresentation::Offer(offer) => {
+                            if app.offer_plan_from_async(*offer) {
+                                app.status_footer = FooterStatus::Idle(SharedString::from(""));
+                            }
+                        }
+                        modal_state::PlanningPresentation::Failed { operation, error } => {
+                            app.report_plan_failure(operation, error);
+                        }
+                    },
                     Some(_) => klog!("op result dropped: tab switched during op"),
                     // #289: gpui does not propagate a background panic, so the
                     // task can end without a result. The latch is released
@@ -143,8 +248,9 @@ impl KagiApp {
     /// owner stamp; the family's blocking core runs as the job; `apply`
     /// settles (lease, reconcile, invalidation) and the completion is
     /// presented to the tab the stamp names — same tab, same visit — or dropped.
-    /// The `Invalidate` delivery reloads the owner, so `on_done` no longer
-    /// calls `reload`. `finished_note` is the tail of the `async: <op> …`
+    /// The `Invalidate` delivery reloads the owner. `on_done` receives no
+    /// `KagiApp`; it returns typed status/history/follow-up presentation only.
+    /// `finished_note` is the tail of the `async: <op> …`
     /// contract line for a successful result (`None` = `finished`; a family
     /// with a historical ` — <summary>` suffix or a "partially applied" verb
     /// returns the whole tail). Returns `false` when admission refused; the
@@ -164,8 +270,7 @@ impl KagiApp {
     where
         X: FnOnce() -> Result<RunReport, String> + Send + 'static,
         N: FnOnce(&OperationOutcome) -> Option<String> + 'static,
-        F: for<'a> FnOnce(&mut Self, Result<&'a OperationOutcome, OpFailure>, &mut Context<Self>)
-            + 'static,
+        F: for<'a> FnOnce(Result<&'a OperationOutcome, &'a OpFailure>) -> RunPresentation + 'static,
     {
         use crate::app::{self, Delivery, FamilyEvidence};
         self.refresh_write_busy();
@@ -259,7 +364,7 @@ impl KagiApp {
                         continue;
                     }
                     failed = report.result.is_err();
-                    match &report.result {
+                    let (presentation, failure_message, recorded_status) = match &report.result {
                         Ok(outcome) => {
                             klog!(
                                 "async: {} {}",
@@ -267,14 +372,8 @@ impl KagiApp {
                                 finished_note(outcome).unwrap_or_else(|| "finished".to_string())
                             );
                             app.present_recorded(&report.recording, cx);
-                            let presented = app.status_footer.clone();
-                            on_done(app, Ok(outcome), cx);
-                            // A mutation that happened but was not recorded is
-                            // presented as "changed but not recorded" (#501); a
-                            // family's own success footer must not paper over it.
-                            if matches!(report.recording, Recording::Failed { .. }) {
-                                app.status_footer = presented;
-                            }
+                            let recorded_status = app.status_footer.clone();
+                            (on_done(Ok(outcome)), None, Some(recorded_status))
                         }
                         Err(error) => {
                             let failure = OpFailure {
@@ -283,7 +382,21 @@ impl KagiApp {
                             };
                             klog!("async: {} failed — {}", op_name, failure.message);
                             app.present_recorded(&report.recording, cx);
-                            on_done(app, Err(failure), cx);
+                            let message = failure.message.clone();
+                            (on_done(Err(&failure)), Some(message), None)
+                        }
+                    };
+                    let notice_override = presentation.outcome_notice.clone();
+                    app.apply_run_presentation(presentation, cx);
+                    app.enqueue_run_outcome_notice(
+                        id,
+                        &report.recording,
+                        failure_message.as_deref(),
+                        notice_override,
+                    );
+                    if matches!(report.recording, Recording::Failed { .. }) {
+                        if let Some(recorded_status) = recorded_status {
+                            app.status_footer = recorded_status;
                         }
                     }
                     // One completion per admitted write.
@@ -310,6 +423,125 @@ impl KagiApp {
         .detach();
         cx.notify();
         true
+    }
+
+    fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
+        if let Some(history) = presentation.history {
+            match history {
+                RunHistory::FromCurrentHead {
+                    kind,
+                    before,
+                    summary,
+                } => {
+                    if let (Some((branch, before)), Some((_, after))) =
+                        (before, self.head_branch_and_sha())
+                    {
+                        let summary = match summary {
+                            RunHistorySummary::Fixed(summary) => summary,
+                            RunHistorySummary::Commit(subject) => {
+                                format!("commit {} '{}'", after.short(), subject)
+                            }
+                        };
+                        self.record_history(kind, &branch, before, after, summary);
+                    }
+                }
+                RunHistory::Exact {
+                    kind,
+                    branch,
+                    before,
+                    after,
+                    summary,
+                } => self.record_history(kind, &branch, before, after, summary),
+            }
+        }
+        if let Some(repo) = presentation.consume_commit_message {
+            self.consume_commit_panel_message(&repo, cx);
+        }
+        if let Some(failure) = presentation.commit_panel_failure {
+            let expected = failure.expected.entity_id();
+            if self
+                .commit_panel
+                .as_ref()
+                .is_some_and(|panel| panel.entity_id() == expected)
+            {
+                failure.expected.update(cx, |panel, _| {
+                    if let Some(modal) = &mut panel.state.plan_modal {
+                        modal.error = Some(failure.message);
+                    }
+                });
+            }
+        }
+        if let Some(repo) = presentation.refresh_worktree_wip {
+            self.refresh_worktree_wip_row(&repo);
+        }
+        if presentation.reload {
+            self.reload(cx);
+        }
+        if presentation.open_operation_log {
+            self.bottom_panel_open = true;
+            self.bottom_tab = BottomTab::OperationLog;
+            if let Some(panel) = self.op_log.clone() {
+                panel.update(cx, |panel, cx| {
+                    panel.toggle_expanded(0);
+                    cx.notify();
+                });
+            }
+        }
+        if let Some(merged) = presentation.github_merge {
+            self.push_toast(
+                ToastKind::Info,
+                SharedString::from(if merged.detail.is_empty() {
+                    format!("{} #{}", Msg::PrModeMergeDone.t(), merged.number)
+                } else {
+                    merged.detail
+                }),
+                cx,
+            );
+            self.pr_mode_close_tab_for(merged.number, cx);
+            self.refresh_github_prs(cx);
+            self.fetch_async(true, cx);
+        }
+        if let Some(status) = presentation.status {
+            self.status_footer = status;
+        }
+    }
+
+    pub(crate) fn enqueue_run_outcome_notice(
+        &mut self,
+        id: crate::app::OperationId,
+        recording: &Recording,
+        failure_message: Option<&str>,
+        override_message: Option<String>,
+    ) {
+        use kagi_git::oplog::OpOutcome;
+        let entry = recording.entry();
+        let (message, inspect) = match &entry.outcome {
+            OpOutcome::Success { .. } | OpOutcome::Unknown { .. } => return,
+            OpOutcome::Partial { .. } => (
+                format!(
+                    "{}: {}",
+                    entry.op,
+                    crate::ui::oplog_panel::outcome_summary(&entry.outcome)
+                ),
+                Some(id),
+            ),
+            OpOutcome::Failed { .. } | OpOutcome::Refused { .. } => (
+                override_message
+                    .or_else(|| failure_message.map(str::to_owned))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{}: {}",
+                            entry.op,
+                            crate::ui::oplog_panel::outcome_summary(&entry.outcome)
+                        )
+                    }),
+                None,
+            ),
+        };
+        let mut notice =
+            crate::ui::modals::AppNotice::from(crate::ui::i18n::recorded_outcome_notice(message));
+        notice.inspect = inspect;
+        self.enqueue_outcome_notice(notice);
     }
 
     /// Synchronous twin of [`KagiApp::finish_recorded`] for the inline

@@ -5,6 +5,7 @@
 //! the button; the second click runs the reset on a background thread and
 //! reloads.
 
+use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
@@ -115,21 +116,11 @@ impl KagiApp {
             repo_path,
             move || reset_current_blocking(&bg_path, &bg_plan, &bg_target),
             |_| None,
-            move |app, done, _cx| match done {
-                Ok(_) => {
-                    app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                        "reset-current: now at {}",
-                        target.short()
-                    )));
-                }
-                Err(failure) => {
-                    app.set_reset_current_modal(ResetCurrentModal {
-                        target: target.clone(),
-                        plan: plan.clone(),
-                        error: Some(SharedString::from(failure.message)),
-                        confirm_armed: false,
-                    });
-                }
+            move |done| match done {
+                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
+                    format!("reset-current: now at {}", target.short()),
+                ))),
+                Err(_) => RunPresentation::none(),
             },
         );
     }

@@ -1,4 +1,5 @@
 //! Local and remote stash intent adapters.
+use super::modal_state::{AsyncPlanOffer, AsyncPlanToken};
 use crate::app::{self, PlanState, Planned, StashAction, StashPolicy, StashRequest};
 use crate::ui::*;
 impl KagiApp {
@@ -16,12 +17,16 @@ impl KagiApp {
         let Some(payload) = self.app_sessions.take_stash_followup(owner) else {
             return;
         };
-        self.set_stash_drop_modal(StashDropModal {
-            stash_index: 0,
-            plan: None,
-            error: None,
-        });
-        self.begin_stash_plan_with_oid(StashAction::Drop { index: 0 }, Some(payload.oid), cx);
+        if self.offer_plan_from_async(AsyncPlanOffer::new(
+            i18n::Op::Stash,
+            ActiveModal::StashDrop(StashDropModal {
+                stash_index: 0,
+                plan: None,
+                error: None,
+            }),
+        )) {
+            self.begin_stash_plan_with_oid(StashAction::Drop { index: 0 }, Some(payload.oid), cx);
+        }
     }
     pub fn open_stash_push_modal(&mut self, cx: &mut Context<Self>) {
         if self.stash_push_focus.is_none() {
@@ -121,7 +126,7 @@ impl KagiApp {
                         app.show_remote_stash_plan(index, cx);
                     }
                 } else if current_completion {
-                    app.app_sessions.invalidate_plan();
+                    app.discard_contended_plan_from_async(i18n::Op::Stash, AsyncPlanToken::Session);
                 }
                 cx.notify();
             });
@@ -148,7 +153,7 @@ impl KagiApp {
             self.status_footer = FooterStatus::Failed(error.clone());
             self.push_toast(ToastKind::Error, error.clone(), cx);
         }
-        self.set_stash_drop_modal(StashDropModal {
+        self.update_stash_drop_plan_from_async(StashDropModal {
             stash_index: index,
             plan,
             error,
@@ -191,7 +196,10 @@ impl KagiApp {
                 if app.active_session() != Some(owner.session) || !app.stash_modal_matches(&action)
                 {
                     if completion.is_current(&app.app_sessions) {
-                        app.app_sessions.invalidate_plan();
+                        app.discard_contended_plan_from_async(
+                            stash_plan_operation(&action),
+                            AsyncPlanToken::Session,
+                        );
                     }
                 } else if app::apply_plan(&mut app.app_sessions, completion) {
                     app.show_stash_plan(&action, cx);
@@ -239,7 +247,10 @@ impl KagiApp {
     }
     fn show_stash_plan(&mut self, action: &StashAction, cx: &mut Context<Self>) {
         if !self.stash_modal_matches(action) {
-            self.app_sessions.invalidate_plan();
+            self.discard_contended_plan_from_async(
+                stash_plan_operation(action),
+                AsyncPlanToken::Session,
+            );
             return;
         }
         let (plan, error, resolved) = match self.app_sessions.plan_state() {
@@ -314,26 +325,29 @@ impl KagiApp {
         }
         match action {
             StashAction::Push { .. } => {
-                if let Some(m) = self.stash_push_modal_mut() {
-                    m.plan = plan;
-                    m.error = error;
-                }
+                self.update_stash_push_plan_from_async(plan, error);
             }
-            StashAction::Apply { index } => self.set_stash_apply_modal(StashApplyModal {
-                index: *index,
-                plan,
-                error,
-            }),
-            StashAction::Pop { index } => self.set_pop_modal(PopPlanModal {
-                stash_index: *index,
-                plan,
-                error,
-            }),
-            StashAction::Drop { index } => self.set_stash_drop_modal(StashDropModal {
-                stash_index: *index,
-                plan,
-                error,
-            }),
+            StashAction::Apply { index } => {
+                self.update_stash_apply_plan_from_async(StashApplyModal {
+                    index: *index,
+                    plan,
+                    error,
+                });
+            }
+            StashAction::Pop { index } => {
+                self.update_stash_pop_plan_from_async(PopPlanModal {
+                    stash_index: *index,
+                    plan,
+                    error,
+                });
+            }
+            StashAction::Drop { index } => {
+                self.update_stash_drop_plan_from_async(StashDropModal {
+                    stash_index: *index,
+                    plan,
+                    error,
+                });
+            }
         }
     }
     fn confirm_stash(&mut self, cx: &mut Context<Self>) {
@@ -452,5 +466,13 @@ impl KagiApp {
 
     pub fn start_stash_drop(&mut self, cx: &mut Context<Self>) {
         self.confirm_stash(cx);
+    }
+}
+
+fn stash_plan_operation(action: &StashAction) -> i18n::Op {
+    match action {
+        StashAction::Push { .. } => i18n::Op::StashPush,
+        StashAction::Apply { .. } => i18n::Op::StashApply,
+        StashAction::Pop { .. } | StashAction::Drop { .. } => i18n::Op::Stash,
     }
 }

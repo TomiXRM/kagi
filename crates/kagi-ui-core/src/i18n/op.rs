@@ -176,6 +176,33 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
         Lang::Ja => format!("{} の plan に失敗しました: {}", op.t(), err),
     }
 }
+
+/// A fresh plan lost the shared modal slot to a newer user decision. The plan
+/// is invalidated rather than queued because its repository assumptions may
+/// already be stale when the foreground modal closes.
+pub fn plan_not_shown_retry(op: Op) -> String {
+    match lang() {
+        Lang::En => format!(
+            "{} plan was not shown because another dialog took priority. Run {} again for a fresh plan.",
+            op.t(),
+            op.t()
+        ),
+        Lang::Ja => format!(
+            "別のダイアログを優先したため、{} の plan は表示しませんでした。最新の plan を作るには {} をもう一度実行してください。",
+            op.t(),
+            op.t()
+        ),
+    }
+}
+
+pub fn recorded_outcome_notice(message: impl std::fmt::Display) -> String {
+    match lang() {
+        Lang::En => format!("{message}. Review Operation Log before deciding whether to retry."),
+        Lang::Ja => {
+            format!("{message}。再実行するか判断する前に Operation Log を確認してください。")
+        }
+    }
+}
 /// Rebase failed before starting while Kagi had neutralised dynamically named
 /// repository settings.
 pub fn rebase_repository_settings_may_block_start() -> &'static str {
@@ -259,5 +286,22 @@ pub fn auto_stash_missing() -> &'static str {
     match lang() {
         Lang::En => "The auto-stash moved or disappeared before restoration.",
         Lang::Ja => "復元前に auto-stash が移動または消失しました。",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn async_slot_notices_switch_language() {
+        let _guard = super::super::tests::LOCK.lock().unwrap();
+        super::super::set_lang_no_persist(Lang::En);
+        assert!(plan_not_shown_retry(Op::Merge).starts_with("Merge plan was not shown"));
+        assert!(recorded_outcome_notice("Push failed").contains("Review Operation Log"));
+        super::super::set_lang_no_persist(Lang::Ja);
+        assert!(plan_not_shown_retry(Op::Merge).contains("merge の plan"));
+        assert!(recorded_outcome_notice("push に失敗しました").contains("Operation Log"));
+        super::super::set_lang_no_persist(Lang::En);
     }
 }

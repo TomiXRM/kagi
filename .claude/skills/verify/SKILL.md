@@ -84,6 +84,7 @@ The current suite covers:
   switching, agent provenance, and WIP-to-HEAD connectors;
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
 - modal and branch-menu Enter isolation from the selected commit checkout;
+- modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,remote_browse_modal_routing`): Push failures and delayed Merge plans wait behind Remote Browse without losing its input, stale plan state, latches, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze
   (`KAGI_GUI_E2E_ONLY=workspace_mode_toolbar`, via the `tb-repo-actions` control bound);

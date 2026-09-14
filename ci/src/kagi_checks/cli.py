@@ -150,6 +150,9 @@ def check_ui_git2() -> int:
     return _run_rule(_rule("ui-git2"))
 
 
+def check_modal_slot_storage() -> int:
+    return _run_rule(_rule("modal-slot-storage"))
+
 def check_app_layering() -> int:
     return _run_rule(_rule("app-layering"))
 

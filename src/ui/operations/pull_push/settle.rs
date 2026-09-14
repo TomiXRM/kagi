@@ -15,7 +15,7 @@ impl KagiApp {
     /// Pull is three writes wearing one confirmation, so the blocking core owns
     /// every receipt it produced and names the one that decided the workflow —
     /// which is not always the last one run. This presents that decisive
-    /// receipt and applies the terminal's footer / modal policy; it never
+    /// receipt and applies the terminal's footer / notice policy; it never
     /// synthesizes an entry of its own. Returns `false` when admission refused
     /// (the refusal is already presented).
     pub(super) fn finish_pull(
@@ -156,7 +156,7 @@ impl KagiApp {
                         }
                     }
                     let recording_failed = report.recording_failed();
-                    match report.terminal.presentation {
+                    match &report.terminal.presentation {
                         PullPresentation::Success { summary } => {
                             // A mutation that happened but was not recorded is
                             // presented as "changed but not recorded" (#501),
@@ -168,13 +168,10 @@ impl KagiApp {
                                 ));
                             }
                         }
-                        // #493 / ADR-0189: the failure modal survives watcher
-                        // reloads and remains until the user dismisses it. The
-                        // footer under it is the decisive receipt's, never a
-                        // trailing child's success.
                         PullPresentation::Failed { error }
                         | PullPresentation::Partial { error } => {
-                            app.reopen_pull_modal(&plan, auto_stash, promised_dirty, error);
+                            let decisive = &report.steps[announce_at].recording;
+                            app.enqueue_run_outcome_notice(id, decisive, Some(error), None);
                         }
                     }
                     // One completion per admitted write.
@@ -182,9 +179,9 @@ impl KagiApp {
                 }
                 for delivery in rest {
                     match delivery {
-                        // A failed write reopened its modal with the error; the
-                        // reload sweep would clear it. Mark the reads stale and
-                        // let the next reload pick them up.
+                        // A failed write's terminal notice stays queued while a
+                        // foreground modal owns the slot. Mark the reads stale
+                        // and let the next reload pick them up.
                         Delivery::Invalidate(target) if failed => {
                             for session in app.app_sessions.sessions_for(&target.worktree) {
                                 app.reads.invalidate(session);
@@ -223,21 +220,5 @@ impl KagiApp {
                 cx.notify();
             });
         }
-    }
-
-    /// Put the confirmation back with the workflow's own message on it.
-    fn reopen_pull_modal(
-        &mut self,
-        plan: &std::sync::Arc<kagi_git::OperationPlan>,
-        auto_stash: bool,
-        dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
-        error: String,
-    ) {
-        self.set_pull_modal(PullPlanModal {
-            plan: plan.clone(),
-            auto_stash,
-            error: Some(SharedString::from(error)),
-            dirty_digest,
-        });
     }
 }

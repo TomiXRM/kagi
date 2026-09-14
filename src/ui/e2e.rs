@@ -126,6 +126,29 @@ pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub fn queued_notice_contains(app: &KagiApp, needle: &str) -> bool {
+    app.app_notices
+        .iter()
+        .any(|notice| notice.message.contains(needle))
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn set_remote_browse_host_input(
+    app: &mut KagiApp,
+    value: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let input = app
+        .remote_browse()
+        .and_then(|modal| modal.host_state.clone())
+        .expect("Remote Browse host input must be rendered");
+    input.update(cx, |state, cx| state.set_value(value, window, cx));
+    app.remote_browse_mut()
+        .expect("Remote Browse must still own the slot")
+        .host_input = value.to_string();
+}
+#[cfg(feature = "gui-e2e")]
 pub fn deliver_app_notice(app: &mut KagiApp, message: &str) {
     app.app_notices.push_back(message.to_string().into());
     app.present_app_notice();

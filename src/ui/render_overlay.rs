@@ -459,8 +459,8 @@ impl KagiApp {
                 el
             }
         })
-        // ── Smart Commit modal overlay (T-COMMIT-016) ────
-        .when_some(self.smart_commit.modal.clone(), |el, modal| {
+        // ── Smart Commit modal overlay (single ActiveModal slot) ────
+        .when_some(self.smart_commit_modal().cloned(), |el, modal| {
             el.child(render_smart_commit_modal(modal, cx))
         })
         // ── Auto-update modal overlay (ADR-0082) ──────────

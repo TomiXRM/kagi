@@ -225,7 +225,11 @@ fn accept_while_background_invalidates_same_revision_scan(cx: &mut VisualTestApp
             .any(|row| row.name == "obsolete-deletable"));
         app.toggle_cleanup_select_all(cx);
         assert_eq!(
-            app.cleanup_selected.iter().cloned().collect::<Vec<_>>(),
+            app.ui()
+                .cleanup_selected
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec!["fresh-deletable"],
             "select-all consumed obsolete cleanup evidence"
         );

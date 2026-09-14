@@ -806,6 +806,8 @@ impl CommitPanelView {
         let body_input = self.body_input.clone();
         let coauthor_menu = self.coauthor_menu.clone();
         let smart = self.smart_snapshot.clone();
+        let smart_generating = self.smart_generating;
+        let smart_status = self.smart_status.clone();
         let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
         let staged_scroll_handle = self.staged_scroll_handle.clone();
 
@@ -1068,13 +1070,13 @@ impl CommitPanelView {
             // Sparkles — generate a commit message. Uses the local LLM when it is
             // usable (green), otherwise the rule-based draft.
             let llm_on = smart.llm_offered();
-            let suggest_enabled = !staged_empty && !smart.generating;
+            let suggest_enabled = !staged_empty && !smart_generating;
             let suggest_color = if llm_on {
                 theme().color_success
             } else {
                 theme().color_branch
             };
-            let suggest_btn: gpui::AnyElement = if smart.generating {
+            let suggest_btn: gpui::AnyElement = if smart_generating {
                 // Spin the same icon rather than swapping in a text spinner, so
                 // the row does not change width mid-generation.
                 use gpui::AnimationExt as _;
@@ -1426,7 +1428,7 @@ impl CommitPanelView {
                     // Transient smart-commit status. Its own full-width line:
                     // inside the right-aligned icon group it pushed the icons
                     // sideways as the text appeared (user report).
-                    .when_some(smart.status.clone(), |el, status| {
+                    .when_some(smart_status, |el, status| {
                         el.child(
                             div()
                                 .text_xs()

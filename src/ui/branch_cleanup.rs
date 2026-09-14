@@ -51,8 +51,9 @@ impl KagiApp {
 
     /// Tick / untick one row.
     pub fn toggle_cleanup_selection(&mut self, name: String, cx: &mut Context<Self>) {
-        if !self.cleanup_selected.remove(&name) {
-            self.cleanup_selected.insert(name);
+        let selected = &mut self.ui_mut().cleanup_selected;
+        if !selected.remove(&name) {
+            selected.insert(name);
         }
         cx.notify();
     }
@@ -67,10 +68,10 @@ impl KagiApp {
             .filter(|r| r.delete_target().is_some())
             .map(|r| r.name.clone())
             .collect();
-        if all.iter().all(|n| self.cleanup_selected.contains(n)) {
-            self.cleanup_selected.clear();
+        if all.iter().all(|n| self.ui().cleanup_selected.contains(n)) {
+            self.ui_mut().cleanup_selected.clear();
         } else {
-            self.cleanup_selected = all.into_iter().collect();
+            self.ui_mut().cleanup_selected = all.into_iter().collect();
         }
         cx.notify();
     }
@@ -81,7 +82,7 @@ impl KagiApp {
             .view()
             .cleanup_rows
             .iter()
-            .filter(|r| self.cleanup_selected.contains(&r.name))
+            .filter(|r| self.ui().cleanup_selected.contains(&r.name))
             .filter_map(|r| r.delete_target())
             .collect();
         self.open_branch_cleanup_plan(targets, cx);
@@ -90,7 +91,7 @@ impl KagiApp {
     /// Close the Branch Cleanup table.
     pub fn close_branch_cleanup_view(&mut self, cx: &mut Context<Self>) {
         self.branch_cleanup_open = false;
-        self.cleanup_selected.clear();
+        self.ui_mut().cleanup_selected.clear();
         cx.notify();
     }
 
@@ -159,12 +160,9 @@ impl KagiApp {
                             }
                             _ => false,
                         };
-                        if owner_is_active {
-                            // Selection remains active-root state until S3.
-                            let live: std::collections::HashSet<&str> =
-                                rows.iter().map(|r| r.name.as_str()).collect();
-                            app.cleanup_selected.retain(|n| live.contains(n.as_str()));
-                        }
+                        let live: std::collections::HashSet<&str> =
+                            rows.iter().map(|r| r.name.as_str()).collect();
+                        ui.cleanup_selected.retain(|n| live.contains(n.as_str()));
                         // ADR-0128's scan-count contract belongs at settlement.
                         use kagi_git::ops::MergedBranchStatus as S;
                         let full = rows.iter().filter(|r| r.status == S::FullyMerged).count();
@@ -538,14 +536,16 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
     let rows = app.view().cleanup_rows.clone();
     let cols = app.cleanup_cols;
     let bulk_count = rows.iter().filter(|r| r.bulk_deletable).count();
-    let selected_count = app.cleanup_selected.len();
+    let selected_count = app.ui().cleanup_selected.len();
     let selectable: Vec<&str> = rows
         .iter()
         .filter(|r| r.delete_target().is_some())
         .map(|r| r.name.as_str())
         .collect();
-    let all_selected =
-        !selectable.is_empty() && selectable.iter().all(|n| app.cleanup_selected.contains(*n));
+    let all_selected = !selectable.is_empty()
+        && selectable
+            .iter()
+            .all(|n| app.ui().cleanup_selected.contains(*n));
 
     // ── Header: title + delete + copy-all + close ───────────────
     //
@@ -733,7 +733,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             }))
             .into_any_element()
     } else {
-        let scroll_handle = app.cleanup_scroll.clone();
+        let scroll_handle = app.ui().cleanup_scroll.clone();
         let scrollbar_handle = scroll_handle.clone();
         super::with_vertical_scrollbar(
             "branch-cleanup-scroll",
@@ -744,7 +744,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
                 cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                     let cols = this.cleanup_cols;
                     let prs = this.ui().cleanup_prs.clone();
-                    let selected = this.cleanup_selected.clone();
+                    let selected = this.ui().cleanup_selected.clone();
                     range
                         .filter_map(|i| {
                             this.view().cleanup_rows.get(i).cloned().map(|row| {

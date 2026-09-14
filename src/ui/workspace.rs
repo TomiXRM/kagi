@@ -382,11 +382,18 @@ impl WorkspaceItem for CommitPanelItem {
             _ => None,
         };
         let smart = app.smart_commit.clone();
+        let (smart_generating, smart_status) = app
+            .ui
+            .get(&entity.read(cx).owner)
+            .map(|ui| (ui.smart_commit_generating, ui.smart_commit_status.clone()))
+            .unwrap_or((false, None));
         let panel_width = app.panel_width;
         entity.update(cx, |v, _| {
             v.active_wip = active_wip;
             v.panel_render_width = panel_width;
             v.smart_snapshot = smart;
+            v.smart_generating = smart_generating;
+            v.smart_status = smart_status;
         });
         Some(entity.into_any_element())
     }

@@ -172,7 +172,7 @@ impl KagiApp {
             // accumulation the stash rows do with `passing_lanes`.
             let row_targets: Vec<graph_wip::WipTarget> = params.iter().map(|p| p.0).collect();
             let wip_lanes = graph_wip::lanes_for_rows(&self.view().wip_lanes, &row_targets);
-            let graph_scroll_x = self.graph_scroll_x;
+            let graph_scroll_x = self.ui().graph_scroll_x;
             let mut passing: Vec<(usize, usize)> = Vec::new();
             let mut rows: Vec<gpui::AnyElement> = Vec::with_capacity(params.len());
             for (i, (_, color_idx, label, count, ds, click, is_worktree)) in
@@ -367,7 +367,7 @@ impl KagiApp {
         let stash_graph_row_els = self.render_stash_graph_rows(
             badge_col_w,
             graph_col_w,
-            self.graph_scroll_x,
+            self.ui().graph_scroll_x,
             &wip_passing_lanes,
             cx,
         );
@@ -416,7 +416,7 @@ impl KagiApp {
                                 this.badge_col_w,
                                 this.graph_col_w,
                                 compact,
-                                this.graph_scroll_x,
+                                this.ui().graph_scroll_x,
                                 &this.view().stash_graph_lanes,
                                 this.view()
                                     .branch_solo

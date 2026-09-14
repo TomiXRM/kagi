@@ -759,6 +759,7 @@ impl From<String> for AppNotice {
 pub enum ActiveModal {
     RemoteBrowse(super::remote_browse::RemoteBrowseModal),
     Update(UpdateModal),
+    SmartCommit(super::smart_commit::SmartCommitModal),
     AppNotice(AppNotice),
     Checkout(CheckoutPlanModal),
     Pull(PullPlanModal),
@@ -810,7 +811,8 @@ impl ActiveModal {
         use ActiveModal as M;
         match self {
             M::AppNotice(_) | M::RemoteBrowse(_) | M::Update(_) => false,
-            M::Checkout(_)
+            M::SmartCommit(_)
+            | M::Checkout(_)
             | M::Pull(_)
             | M::Amend(_)
             | M::Pop(_)

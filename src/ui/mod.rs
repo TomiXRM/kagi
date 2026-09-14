@@ -1053,22 +1053,11 @@ pub struct KagiApp {
     /// `Some(entity)` = cached panel state. Read its data via `e.read(cx).state`.
     pub commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
     // ── T-COMMIT-016: Smart Commit Message (W14-SMART) ───────────
-    /// Smart Commit state: rule-based always on, LLM opt-in + detection. Stays on
-    /// `KagiApp` (read by the Settings overlay + command palette, written by the
-    /// background detection probe — cross-cutting, not commit-panel-private).
+    /// Process/window-global Smart Commit capabilities and persisted settings.
+    /// The detection revision is zero until the first global capability probe;
+    /// refresh increments it so stale probe completions can be rejected.
     pub smart_commit: smart_commit::SmartCommitState,
-    /// Guard so Ollama detection runs at most once per repo path.
-    pub smart_commit_detected_for: Option<PathBuf>,
-    // ── T028: branch jump (scroll to commit) ─────────────────
-    /// Scroll handle for the "commit-list" uniform_list.
-    /// Stored in KagiApp so it persists across render frames.
-    pub commit_scroll_handle: UniformListScrollHandle,
-    /// Current commit-walk limit for the main graph. Starts at
-    /// [`DEFAULT_COMMIT_LIMIT`] and grows by [`COMMIT_PAGE_STEP`] each time the
-    /// user clicks "load more" at the bottom of the commit list. All paths that
-    /// rebuild the main view (`reload`, `reload_external`, tab load) snapshot at
-    /// this limit so loaded-more commits survive a refresh.
-    pub commit_limit: usize,
+    pub smart_commit_probe_revision: u64,
     /// Maps local branch name → the CommitId it points to.
     /// Built at snapshot time; used by jump_to_branch.
     /// Maps CommitId → row index in `self.view().rows`.
@@ -1135,10 +1124,6 @@ pub struct KagiApp {
     /// Issue #352: index of the highlighted row in the command palette's current
     /// (filtered) result list. Reset to 0 on open and on every query change.
     pub command_palette_selected: usize,
-    /// Horizontal scroll offset (px) of the graph column. Lanes hidden by a
-    /// narrow column width are revealed by horizontal scrolling (clamped in
-    /// render against the current lane count).
-    pub graph_scroll_x: f32,
     // ── W2-INSPECTOR: Changed-files display mode ─────────────────
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.
@@ -1166,13 +1151,6 @@ pub struct KagiApp {
     /// Remote-tracking branches from the snapshot (for REMOTE BRANCHES section).
     /// Tags from the snapshot (for TAGS section).
     /// Worktrees from the snapshot (for WORKTREES section).
-    /// W13-BRANCHTREE: collapsed branch *groups* (the `/`-prefix sub-trees
-    /// inside LOCAL / REMOTE BRANCHES). Keys are dynamic strings of the form
-    /// `local:feat` / `remote:origin` — hence a separate `HashSet<String>`
-    /// rather than the `&'static str` `sidebar.collapsed` set.
-    /// Default-expanded (a key present ⇒ that group is collapsed), mirroring
-    /// `sidebar.collapsed` semantics. Preserved across reloads.
-    pub branch_groups_collapsed: HashSet<String>,
     // ── W3-NOTIFY: snackbar toasts + async-op state ──────────────
     /// Toast notification stack — an `Entity<ToastStack>` (ADR-0110 Phase 5) so
     /// a push/expire re-renders only the overlay subtree, not the whole app.
@@ -1317,8 +1295,6 @@ pub struct KagiApp {
     pub branch_cleanup_open: bool,
     /// ADR-0128: Branch Cleanup table column widths (persisted).
     pub cleanup_cols: branch_cleanup::CleanupCols,
-    /// ADR-0128: scroll position of the Branch Cleanup uniform list.
-    pub cleanup_scroll: UniformListScrollHandle,
     /// #454 Phase 1: modal sections whose open/closed state the user has
     /// *flipped away from its default*, keyed by the static section id passed
     /// to `modal_renderers::modal_section`. Storing overrides (not absolute
@@ -1331,10 +1307,6 @@ pub struct KagiApp {
     /// `uniform_list` so a plan touching thousands of files stays scrollable
     /// (and cheap) instead of being silently cut to the first 10 rows.
     pub modal_list_scroll: UniformListScrollHandle,
-    /// Branch names ticked in the cleanup table. Deleting "the selected ones"
-    /// is the middle ground between the bulk button and the per-row trash
-    /// (user request).
-    pub cleanup_selected: std::collections::HashSet<String>,
     /// ADR-0139: same guard for the background squash-link scan that draws the
     /// graph's ghost connectors. A result whose token no longer matches is
     /// dropped — its row indices belong to a graph that has been rebuilt.
@@ -1446,9 +1418,7 @@ impl KagiApp {
             commit_panel_open: false,
             commit_panel: None,
             smart_commit: smart_commit::SmartCommitState::load(),
-            smart_commit_detected_for: None,
-            commit_scroll_handle: UniformListScrollHandle::new(),
-            commit_limit: DEFAULT_COMMIT_LIMIT,
+            smart_commit_probe_revision: 0,
             operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,
             terminal_sessions: HashMap::new(),
@@ -1465,12 +1435,6 @@ impl KagiApp {
             analyze_ignore_input: None,
             command_palette_input: None,
             command_palette_selected: 0,
-            graph_scroll_x: 0.0,
-            // W2-SIDEBAR
-            // GitHub Phase 1: the "Others" PR sub-group starts collapsed — a
-            // busy repo has dozens of other people's PRs and they'd bury the
-            // sections below.
-            branch_groups_collapsed: HashSet::from([sidebar::PR_GROUP_OTHERS.to_string()]),
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
@@ -1516,10 +1480,8 @@ impl KagiApp {
             ecosystem: None,
             branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
-            cleanup_scroll: UniformListScrollHandle::new(),
             modal_section_overrides: std::collections::HashSet::new(),
             modal_list_scroll: UniformListScrollHandle::new(),
-            cleanup_selected: std::collections::HashSet::new(),
             squash_gen: 0,
             scans_stale: true,
             editor_workspace: None,
@@ -1693,9 +1655,10 @@ impl KagiApp {
         // W28: scroll content extent uses the scaled lane pitch so a fully
         // zoomed graph can still be scrolled to reveal its rightmost lanes.
         let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
-        let next = (self.graph_scroll_x - dx).clamp(0.0, max);
-        if (next - self.graph_scroll_x).abs() > 0.1 {
-            self.graph_scroll_x = next;
+        let current = self.ui().graph_scroll_x;
+        let next = (current - dx).clamp(0.0, max);
+        if (next - current).abs() > 0.1 {
+            self.ui_mut().graph_scroll_x = next;
             cx.notify();
         }
     }
@@ -2703,7 +2666,8 @@ impl KagiApp {
         klog!("jump: {} -> row {}", branch_name, row_ix);
 
         // Scroll the list so the row is visible (centered in viewport).
-        self.commit_scroll_handle
+        self.ui()
+            .commit_scroll_handle
             .scroll_to_item(row_ix, ScrollStrategy::Center);
 
         // Select the row (opens detail panel, emits selected log).
@@ -2733,7 +2697,8 @@ impl KagiApp {
             }
         };
         klog!("jump: commit {} -> row {}", target.short(), row_ix);
-        self.commit_scroll_handle
+        self.ui()
+            .commit_scroll_handle
             .scroll_to_item(row_ix, ScrollStrategy::Center);
         // `select` toggles on a repeated index; a jump must stay selected.
         if self.ui().selected != Some(row_ix) {
@@ -3001,9 +2966,7 @@ impl KagiApp {
             cx.notify();
             return true;
         }
-        if self.smart_commit.modal.is_some() {
-            self.confirm_smart_consent(cx);
-        } else if self
+        if self
             .commit_panel
             .as_ref()
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
@@ -3035,6 +2998,10 @@ impl KagiApp {
             M::AppNotice(_) => self.confirm_app_notice(cx),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Update(_) => {}
+            M::SmartCommit(smart_commit::SmartCommitModal::Consent) => {
+                self.confirm_smart_consent(cx)
+            }
+            M::SmartCommit(smart_commit::SmartCommitModal::ModelPicker { .. }) => {}
             M::Checkout(_) => self.start_checkout(cx),
             M::Pull(_) => self.start_pull(cx),
             M::Amend(_) => self.start_amend(cx),
@@ -3086,9 +3053,7 @@ impl KagiApp {
             cx.notify();
             return true;
         }
-        if self.smart_commit.modal.is_some() {
-            self.cancel_smart_modal(cx);
-        } else if self
+        if self
             .commit_panel
             .as_ref()
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
@@ -3125,6 +3090,7 @@ impl KagiApp {
             }
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Update(_) => self.cancel_update_modal(),
+            M::SmartCommit(_) => self.clear_smart_commit_modal(),
             M::Checkout(_) => self.cancel_modal(),
             M::Pull(_) => self.cancel_pull_modal(),
             M::Amend(_) => self.cancel_amend_modal(),
@@ -3182,7 +3148,8 @@ impl KagiApp {
             }
         };
         if self.ui().selected != Some(next) {
-            self.commit_scroll_handle
+            self.ui()
+                .commit_scroll_handle
                 .scroll_to_item(next, ScrollStrategy::Center);
             // `select` toggles on a repeated index; guarded above.
             self.select(next);

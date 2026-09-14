@@ -540,14 +540,14 @@ pub fn scenario_conflict_revalidates_after_external_abort(cx: &mut VisualTestApp
         "conflict-activation-retained: the pane was destroyed instead of paused",
     );
     assert!(
-        cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        cx.read(|cx| app.read(cx).ui().panes_revalidating()),
         "conflict-activation-paused: a stale pane stayed actionable before the read",
     );
     app.update(cx, |state, cx| {
         state.apply_conflict_detect(old_visit, old_payload, cx);
     });
     assert!(
-        cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        cx.read(|cx| app.read(cx).ui().panes_revalidating()),
         "conflict-old-visit-rejected: a departed completion re-enabled the stale pane",
     );
     cx.run_until_parked();
@@ -923,7 +923,7 @@ pub fn scenario_conflict_pane_survives_activation(cx: &mut VisualTestAppContext)
         "conflict-unchanged-keeps-entity: an unchanged observation rebuilt the pane",
     );
     assert!(
-        !cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        !cx.read(|cx| app.read(cx).ui().panes_revalidating()),
         "conflict-unchanged-reenables: the accepted read left the pane refused",
     );
     cx.read(|cx| {

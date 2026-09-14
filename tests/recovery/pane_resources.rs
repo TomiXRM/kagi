@@ -838,7 +838,7 @@ pub fn scenario_commit_panel_refuses_during_activation(cx: &mut VisualTestAppCon
     // the user sees the retained panel in.
     app.update(cx, |state, cx| state.switch_repo(0, cx));
     assert!(
-        cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        cx.read(|cx| app.read(cx).ui().panes_revalidating()),
         "precondition: A's panes must be awaiting their activation read",
     );
     app.update(cx, |state, cx| state.do_stage_file(owner_a, 0, cx));
@@ -865,7 +865,7 @@ pub fn scenario_commit_panel_refuses_during_activation(cx: &mut VisualTestAppCon
 
     // The read has now been accepted, so the same click works.
     assert!(
-        !cx.read(|cx| app.read(cx).ui().panes_revalidating),
+        !cx.read(|cx| app.read(cx).ui().panes_revalidating()),
         "the accepted read must re-enable the panel",
     );
     app.update(cx, |state, cx| state.do_stage_file(owner_a, 0, cx));

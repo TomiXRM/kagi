@@ -15,6 +15,7 @@
 //! they keep their own `MainDiffView` + `ListState` fields and render via
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
+use super::tab_ui_state_ops::PaneRevalidation;
 use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
 use gpui_component::button::Button;
 use gpui_component::Sizable as _;
@@ -402,13 +403,17 @@ impl KagiApp {
         }
     }
 
-    /// Revalidate **every** retained pane against the read that was just
-    /// accepted, then re-admit their mutations. Reached from exactly one
-    /// place — `render` draining `panes_stale`, which `on_view_published`
-    /// sets — so activation load, manual reload (Cmd+R), the watcher and a
-    /// remote refresh all revalidate the same set. Adding a retained pane
-    /// means adding it here (ADR-0197 決定 3 / #722).
+    /// Revalidate **every** retained pane of the tab on screen against the
+    /// read that was just published, then re-admit their mutations. `render`
+    /// calls this every frame and it runs only for [`PaneRevalidation::Queued`],
+    /// which the three publish seams set — so activation load, manual reload
+    /// (Cmd+R), the watcher and a remote refresh all revalidate the same set,
+    /// while re-showing a cached read on tab switch queues nothing. Adding a
+    /// retained pane means adding it here (ADR-0197 決定 3 / #722).
     pub(crate) fn revalidate_retained_panes(&mut self, cx: &mut Context<Self>) {
+        if self.ui().pane_revalidation != PaneRevalidation::Queued {
+            return;
+        }
         // Main Diff / Compare: re-anchor against the new rows. Capturing now
         // is equivalent to capturing before the read — accepting a read does
         // not touch the panes, so they still carry the pre-read source.
@@ -430,18 +435,19 @@ impl KagiApp {
             // Resolved or aborted while the tab was away — the pane goes.
             self.with_ui(|ui| {
                 ui.conflict = None;
-                ui.conflict_revalidated = true;
+                ui.pane_revalidation = PaneRevalidation::Settled;
             });
-        } else if !self.ui().conflict_revalidated {
+        } else {
             // Re-detect against the accepted read and stay refused until
             // `apply_conflict_detect` confirms the observation matches. It is
             // not enough that *an* operation is in progress: a conflict that
             // moved to another revision would otherwise re-admit Continue /
             // Skip against the old `ResolutionBuffer` (#722 P1).
-            self.with_ui(|ui| ui.conflict_detected = false);
+            self.with_ui(|ui| {
+                ui.conflict_detected = false;
+                ui.pane_revalidation = PaneRevalidation::AwaitingConflict;
+            });
             self.detect_conflict_mode_async(cx);
-            return;
         }
-        self.with_ui(|ui| ui.panes_revalidating = false);
     }
 }

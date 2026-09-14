@@ -320,18 +320,11 @@ pub struct TabUiState {
     pub cleanup_prs_stale: bool,
     /// Re-armed when retained conflict authority is invalidated or its read changes.
     pub conflict_detected: bool,
-    /// Retained panes are on screen but **not authoritative** until an
-    /// activation read is accepted (ADR-0197 決定 3 / #722 P2). While set, the
-    /// panes keep their entities — and so their undo stacks, selection and
-    /// scroll — but every mutation affordance they offer is refused.
-    pub panes_revalidating: bool,
-    /// The Conflict pane needs an **asynchronous** check: only a detector run
-    /// against the accepted read can say whether the retained `ConflictMode`
-    /// still describes the repository. Until that lands, the pane stays
-    /// refused even though the read itself is accepted, so a conflict that
-    /// moved to another revision while the tab was away can never re-admit
-    /// Continue / Skip against the old `ResolutionBuffer` (#722 P1).
-    pub conflict_revalidated: bool,
+    /// Where the retained panes are in being re-checked against the read. Not
+    /// [`PaneRevalidation::Settled`] = on screen but **not authoritative**: the
+    /// entities (undo stacks, selection, scroll) stay, every mutation they
+    /// offer is refused (ADR-0197 決定 3 / #722).
+    pub pane_revalidation: super::tab_ui_state_ops::PaneRevalidation,
     /// Recomputable Analyze evidence; the pane entity is owned below.
     pub ecosystem_cache: Option<super::ecosystem::CachedMine>,
     pub ecosystem_inflight: bool,
@@ -382,8 +375,7 @@ impl Default for TabUiState {
             cleanup_prs: Vec::new(),
             cleanup_prs_stale: false,
             conflict_detected: false,
-            panes_revalidating: false,
-            conflict_revalidated: false,
+            pane_revalidation: Default::default(),
             ecosystem_cache: None,
             ecosystem_inflight: false,
             ecosystem_gen: 0,
@@ -418,7 +410,7 @@ impl KagiApp {
     /// **stop**, not **destroy**: recomputable caches are dropped, but every
     /// pane entity stays alive, so undo/redo, the selected file/hunk and
     /// scroll all survive a tab round trip. What the panes lose is the right
-    /// to *act*: `panes_revalidating` refuses their mutations until the read
+    /// to *act*: `pane_revalidation` refuses their mutations until the read
     /// lands. `revalidate_retained_panes` then compares the new observation —
     /// unchanged panes are simply re-enabled, changed ones are rebuilt there
     /// and (for conflict) by the re-armed detection below.
@@ -428,7 +420,7 @@ impl KagiApp {
             ui.diff_caches.clear();
             ui.wip_diffstat = None;
             ui.last_working_status = None;
-            ui.panes_revalidating = true;
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::AwaitingRead;
             ui.conflict_merge_pending = false;
             // Re-arm detection: its outcome decides whether the retained
             // conflict pane is updated in place or replaced.
@@ -666,6 +658,7 @@ impl KagiApp {
         self.reads.amend(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::Queued;
         }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
@@ -678,6 +671,7 @@ impl KagiApp {
         self.reads.publish(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::Queued;
         }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
@@ -693,6 +687,7 @@ impl KagiApp {
         }
         if let Some(ui) = self.ui.get_mut(&key.session()) {
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::Queued;
         }
         self.reanchor_selection(key.session(), anchor);
         self.on_view_published(key.session());
@@ -718,17 +713,6 @@ impl KagiApp {
             .as_ref()
             .map(|operation| operation.observation.clone());
         self.app_sessions.observe_conflict(session, observed);
-        // #722: every path that replaces an owner's read model — activation
-        // load, manual reload (Cmd+R), the watcher's full reload, a remote
-        // refresh — reaches one of the three publish seams, and all three land
-        // here. So the revalidation transition is owned here rather than at
-        // each accept site, where a path that forgot it left the panes refused
-        // for good. The panes are non-authoritative from this moment until
-        // `revalidate_retained_panes` has checked them against this read.
-        if let Some(ui) = self.ui.get_mut(&session) {
-            ui.panes_revalidating = true;
-            ui.conflict_revalidated = false;
-        }
         if self.active_session() != Some(session) {
             return;
         }

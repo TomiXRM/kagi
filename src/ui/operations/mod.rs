@@ -205,14 +205,7 @@ impl KagiApp {
     /// them. Pure display — scroll, divider drags, closing a pane — does not
     /// come through here.
     pub(crate) fn pane_mutation_admitted(&self, owner: crate::app::SessionId) -> bool {
-        self.active_session() == Some(owner) && !self.ui().panes_revalidating
-    }
-
-    /// Mark `session`'s retained panes non-authoritative (#722 P2).
-    pub(crate) fn mark_panes_revalidating(&mut self, session: crate::app::SessionId) {
-        if let Some(ui) = self.ui.get_mut(&session) {
-            ui.panes_revalidating = true;
-        }
+        self.active_session() == Some(owner) && !self.ui().panes_revalidating()
     }
 
     /// Complete a **planning** task: the last shape of background work that is

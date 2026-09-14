@@ -180,11 +180,11 @@ impl Render for KagiApp {
             super::LAST_WIN_H.store(h, std::sync::atomic::Ordering::Relaxed);
         }
 
-        // The view was replaced (reload, tab switch, load-more, external git
-        // change): revalidate the retained panes, then re-arm the scans (#722).
+        // A published read owes the retained panes a pass (#722; no-op unless
+        // queued), and a replaced view re-arms the scans that decorate it.
+        self.revalidate_retained_panes(cx);
         if self.scans_stale {
             self.scans_stale = false;
-            self.revalidate_retained_panes(cx);
             self.start_branch_cleanup_scan(cx);
             self.start_squash_link_scan(cx);
             self.start_wip_diffstat_scan(cx);

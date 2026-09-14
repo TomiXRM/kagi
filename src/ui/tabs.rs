@@ -194,10 +194,11 @@ impl KagiApp {
             self.remote_view = Some(rv);
             self.reset_per_repo_ui();
             self.begin_session_revalidation(tab.session);
-            // #482 stage 2: the remote snapshot belongs to this tab's session
-            // and never left it, so there is nothing to copy back. A restored
-            // session has no read for it (the SSH snapshot was never persisted)
-            // and simply shows the empty view until the user reconnects.
+            self.queue_pane_revalidation(tab.session); // no read follows: the snapshot is it
+                                                       // #482 stage 2: the remote snapshot belongs to this tab's session
+                                                       // and never left it, so there is nothing to copy back. A restored
+                                                       // session has no read for it (the SSH snapshot was never persisted)
+                                                       // and simply shows the empty view until the user reconnects.
             self.on_view_switched();
             self.save_session();
             self.log_tabs();

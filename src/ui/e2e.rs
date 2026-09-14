@@ -248,7 +248,10 @@ pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {
     // ADR-0107: the per-tab session every real launch has (`tabs.rs`). Without
     // it the staging / diff paths that go through `repo_session` silently
     // no-op, which would let a scenario pass for the wrong reason (#473).
-    app.ui_mut().repo_session = kagi_git::session::RepoSession::open(repo_path).ok();
+    let session = kagi_git::session::RepoSession::open(repo_path).ok();
+    if let Some(ui) = app.ui_mut() {
+        ui.repo_session = session;
+    }
     Ok(app)
 }
 
@@ -695,5 +698,5 @@ pub(crate) fn take_squash_scan() -> Option<gpui::Task<SquashScanResult>> {
 /// ADR-0197 S5 prerequisite: ownerless state has no writable fallback cell.
 #[cfg(feature = "gui-e2e")]
 pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
-    app.active_ui_mut().is_some()
+    app.ui_mut().is_some()
 }

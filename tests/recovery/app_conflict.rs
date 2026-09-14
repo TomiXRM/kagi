@@ -583,7 +583,7 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
 
     assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
     app.update(cx, |app, cx| {
-        app.ui_mut().conflict_detected = true;
+        app.ui_mut().expect("active session").conflict_detected = true;
         app.apply_conflict_detect(stale_owner, payload, cx);
     });
     cx.run_until_parked();
@@ -653,7 +653,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
         ConflictDetectOutcome::MergeResolvedReady(older),
     ] {
         app.update(cx, |app, cx| {
-            app.ui_mut().conflict_detected = true;
+            app.ui_mut().expect("active session").conflict_detected = true;
             app.apply_conflict_detect(owner.clone(), stale, cx);
         });
         cx.run_until_parked();

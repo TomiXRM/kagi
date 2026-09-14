@@ -1425,7 +1425,9 @@ impl KagiApp {
         // ADR-0084: seed the undo/redo history from the reflog once per session.
         // Only-when-empty, so it never clobbers an in-session stack.
         if !self.ui().history_seed_attempted {
-            self.ui_mut().history_seed_attempted = true;
+            if let Some(ui) = self.ui_mut() {
+                ui.history_seed_attempted = true;
+            }
             self.seed_history_from_reflog_async(cx);
         }
 
@@ -1543,7 +1545,9 @@ impl KagiApp {
         let current = self.ui().graph_scroll_x;
         let next = (current - dx).clamp(0.0, max);
         if (next - current).abs() > 0.1 {
-            self.ui_mut().graph_scroll_x = next;
+            if let Some(ui) = self.ui_mut() {
+                ui.graph_scroll_x = next;
+            }
             cx.notify();
         }
     }
@@ -1877,19 +1881,21 @@ impl KagiApp {
     /// Also closes the commit panel since commit selection and commit panel are exclusive.
     pub fn select(&mut self, index: usize) {
         // Close commit panel when selecting a normal commit row.
-        self.ui_mut().commit_panel_open = false;
+        if let Some(ui) = self.ui_mut() {
+            ui.commit_panel_open = false;
+        }
 
         // Toggle: clicking the same row again deselects it.
-        if self.ui().selected == Some(index) {
-            self.ui_mut().selected = None;
-            self.ui_mut().main_diff = None;
-            self.ui_mut().compare_view = None;
+        let deselect = self.ui().selected == Some(index);
+        if let Some(ui) = self.ui_mut() {
+            ui.selected = if deselect { None } else { Some(index) };
+            // Clear any open main diff when the commit selection changes.
+            ui.main_diff = None;
+            ui.compare_view = None;
+        }
+        if deselect {
             return;
         }
-        self.ui_mut().selected = Some(index);
-        // Clear any open main diff when the commit selection changes.
-        self.ui_mut().main_diff = None;
-        self.ui_mut().compare_view = None;
 
         if let Some(detail) = self.view().details.get(index) {
             let parent_count = detail.parent_ids.len();
@@ -1931,13 +1937,14 @@ impl KagiApp {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.ui_mut()
-                .diff_caches
-                .changed_files
-                .insert(index, files_opt);
+            if let Some(ui) = self.ui_mut() {
+                ui.diff_caches.changed_files.insert(index, files_opt);
+            }
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             if let Some(stats) = self.fetch_diffstat(index) {
-                self.ui_mut().diff_caches.diffstat.insert(index, stats);
+                if let Some(ui) = self.ui_mut() {
+                    ui.diff_caches.diffstat.insert(index, stats);
+                }
             }
         } else {
             // Already cached — still emit the log (matches the old select()).
@@ -2106,7 +2113,9 @@ impl KagiApp {
     /// follow-toggle / select now live on the entity (`reload` / `step` /
     /// `select`).
     pub fn close_file_history(&mut self) {
-        self.ui_mut().file_history = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.file_history = None;
+        }
     }
 
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
@@ -2132,7 +2141,9 @@ impl KagiApp {
             Some(d) => d.full_sha.as_ref().to_string(),
             None => return,
         };
-        self.ui_mut().diff_caches.remote_inflight.insert(index);
+        if let Some(ui) = self.ui_mut() {
+            ui.diff_caches.remote_inflight.insert(index);
+        }
 
         let task = cx.background_spawn(async move {
             crate::remote::remote_commit_changed_files(&host, &root, &sha)
@@ -2192,7 +2203,9 @@ impl KagiApp {
         };
         let sha = detail.full_sha.as_ref().to_string();
         let sha_guard = sha.clone();
-        self.ui_mut().diff_caches.local_inflight.insert(index);
+        if let Some(ui) = self.ui_mut() {
+            ui.diff_caches.local_inflight.insert(index);
+        }
 
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).ok()?;
@@ -2288,7 +2301,9 @@ impl KagiApp {
             .repo_session
             .as_ref()
             .map(|session| Self::wip_diffstat_from_backend(session.backend()));
-        self.ui_mut().wip_diffstat = stat;
+        if let Some(ui) = self.ui_mut() {
+            ui.wip_diffstat = stat;
+        }
     }
 
     /// Same value, computed off the UI thread.
@@ -2298,13 +2313,13 @@ impl KagiApp {
     /// showed nothing at all while it ran. Nothing depends on the badge being
     /// present in the first frame.
     pub fn start_wip_diffstat_scan(&mut self, cx: &mut Context<Self>) {
+        // #722 P1: no owner means no writable state — return rather than write
+        // a default, which is what the `Option` return now forces.
         let Some(session) = self.active_session() else {
-            self.ui_mut().wip_diffstat = None;
             return;
         };
         let cache_epoch = self.ui().cache_epoch;
         let Some(repo_path) = self.repo_path.clone() else {
-            self.ui_mut().wip_diffstat = None;
             return;
         };
         let task = cx.background_spawn(async move {
@@ -2331,10 +2346,12 @@ impl KagiApp {
     }
 
     pub fn close_compare_view(&mut self) {
-        self.ui_mut().compare_view = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.compare_view = None;
+            ui.main_diff = None;
+        }
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
         self.pending_headless_compare = None;
-        self.ui_mut().main_diff = None;
     }
 
     pub fn show_changed_files_for_commit(&mut self, target: CommitId) {
@@ -2349,12 +2366,13 @@ impl KagiApp {
             let files_opt = self.fetch_changed_files(row_index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.ui_mut()
-                .diff_caches
-                .changed_files
-                .insert(row_index, files_opt);
+            if let Some(ui) = self.ui_mut() {
+                ui.diff_caches.changed_files.insert(row_index, files_opt);
+            }
             if let Some(stats) = self.fetch_diffstat(row_index) {
-                self.ui_mut().diff_caches.diffstat.insert(row_index, stats);
+                if let Some(ui) = self.ui_mut() {
+                    ui.diff_caches.diffstat.insert(row_index, stats);
+                }
             }
         }
     }
@@ -2393,7 +2411,9 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                self.ui_mut().main_diff = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = None;
+                }
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::Head,
@@ -2446,7 +2466,9 @@ impl KagiApp {
                         self.select(row);
                     }
                 }
-                self.ui_mut().main_diff = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = None;
+                }
                 let title = SharedString::from(format!("stash@{{{}}}", index));
                 let view = CompareView {
                     base: parent_id,
@@ -2511,7 +2533,9 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                self.ui_mut().main_diff = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = None;
+                }
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::WorkingTree,

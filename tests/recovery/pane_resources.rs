@@ -503,3 +503,86 @@ pub fn scenario_commit_panel_revalidates_on_activation(cx: &mut VisualTestAppCon
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS commit_panel_revalidates_on_activation");
 }
+
+/// Render one frame, driving the `scans_stale` arm that calls
+/// `start_wip_diffstat_scan` (`render.rs:186`).
+fn draw_frame(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle) {
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .expect("draw frame");
+    cx.run_until_parked();
+}
+
+/// #722 P1 (round 3): **starting with no tab must not panic.**
+///
+/// A normal launch with no saved session (`main.rs:170`) and a failed
+/// repository open (`main.rs:200`) both build `KagiApp::with_error`, which has
+/// no tab and therefore no session owning the screen. The first render
+/// processes `scans_stale` and reaches `start_wip_diffstat_scan`; while that
+/// wrote a default through the active writer it panicked *before Welcome was
+/// ever drawn*, so a new install could not start the app at all.
+///
+/// Every scenario before this one mounted an open repository, which is exactly
+/// why 23/23 green CI and this crash were not a contradiction.
+pub fn scenario_welcome_startup_renders(cx: &mut VisualTestAppContext) {
+    for (label, state) in [
+        ("welcome-no-session", kagi::ui::KagiApp::with_error("")),
+        (
+            "welcome-open-failed",
+            kagi::ui::KagiApp::with_error("could not open repository"),
+        ),
+    ] {
+        let (app, window) = crate::macos::mount_state(cx, state);
+        assert!(
+            cx.read(|cx| app.read(cx).active_session().is_none()),
+            "{label}: precondition — Welcome must have no owning session",
+        );
+        // The mount's own first frame is the one that used to panic: reaching
+        // this line at all means Welcome rendered. `scans_stale` being consumed
+        // proves that frame really ran the arm, rather than skipping it.
+        assert!(
+            !cx.read(|cx| app.read(cx).scans_stale),
+            "{label}: the first frame never reached the scan arm, so the crash \
+             path was not exercised",
+        );
+        // Re-arm and draw again: the repeat render must stay owner-free too.
+        app.update(cx, |state, _| state.scans_stale = true);
+        draw_frame(cx, window);
+        assert!(
+            !cx.read(|cx| app.read(cx).scans_stale),
+            "{label}: the re-armed frame never reached the scan arm",
+        );
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS welcome_startup_renders");
+}
+
+/// #722 P1 (round 3): closing the **last** tab returns to Welcome, so every
+/// render after it runs with no owning session too.
+pub fn scenario_close_last_tab_welcome_renders(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo = build_fixture(&root, "welcome-close");
+    let (app, window) = mount(cx, &repo);
+    assert!(
+        cx.read(|cx| app.read(cx).active_session().is_some()),
+        "precondition: the mounted repo owns the screen"
+    );
+
+    app.update(cx, |state, cx| state.close_tab(0, cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).active_session().is_none()),
+        "close-last-tab-welcome: closing the last tab must release its session",
+    );
+
+    // The post-close frame is the one that used to panic.
+    app.update(cx, |state, _| state.scans_stale = true);
+    draw_frame(cx, window);
+    assert!(
+        !cx.read(|cx| app.read(cx).scans_stale),
+        "close-last-tab-welcome: the post-close frame never reached the scan arm",
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS close_last_tab_welcome_renders");
+}

@@ -617,12 +617,12 @@ pub struct DiscardModal {
 /// Pending action to run once the user confirms discarding a dirty Editor
 /// Workspace buffer (T-WS-EDITOR-002 §5, unsaved-changes guard).
 ///
-/// Spec changes (user): switching the tree source or FILE is a view/tab
-/// action, NOT destructive — a dirty buffer survives as its tab, so there
-/// is no SwitchSource/SelectFile intent. The guard covers the genuinely
-/// destructive paths only: replacing an edit with disk text (Reload),
-/// closing a dirty tab (CloseTab), and dropping the whole workspace (Close
-/// or repo-context changes).
+/// Rule (round 3): the guard fires ONLY on paths that destroy the editor's
+/// owner — replacing an edit with disk text (Reload), closing a dirty tab
+/// (CloseTab), dropping the whole workspace (Close), and closing the tab that
+/// owns it (CloseRepoTab). Navigation that keeps the owner alive — switching
+/// tree source or FILE, switching repo, Connect Remote, or opening a worktree
+/// — never prompts: the session retains its buffer (ADR-0197).
 #[derive(Clone, Debug)]
 pub enum EditorPendingIntent {
     /// Discard the buffer and re-read the open file from disk (the
@@ -632,25 +632,10 @@ pub enum EditorPendingIntent {
     CloseTab(std::path::PathBuf),
     /// Close the Editor Workspace (← Graph, toolbar, Cmd-Shift-E).
     Close,
-    /// Open another worktree and plan its HEAD merge after discarding the
-    /// originating editor workspace.
-    MergeInWorktree {
-        source: String,
-        target: String,
-        path: std::path::PathBuf,
-        /// Origin attachment before navigation, including its departure revision.
-        owner: crate::app::Attachment,
-    },
     /// Close a repository tab after discarding the whole editor workspace.
     /// #482 stage 1: the tab to close is named by its session, so a guard the
     /// user resolves later can never close a tab reopened on the same path.
     CloseRepoTab(crate::app::SessionId),
-    /// Enter a remote read-only repo after discarding the local editor workspace.
-    EnterRemoteView {
-        host: kagi_domain::remote::RemoteHost,
-        root: String,
-        snap: std::sync::Arc<kagi_git::RepoSnapshot>,
-    },
 }
 
 /// State for the Editor Workspace "unsaved changes" confirmation

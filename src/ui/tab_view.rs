@@ -424,8 +424,10 @@ impl KagiApp {
         if self.active_session() != Some(session) {
             return;
         }
-        self.ui_mut().main_diff = None;
-        self.ui_mut().compare_view = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.main_diff = None;
+            ui.compare_view = None;
+        }
         self.commit_menu = None;
         self.inspector_file_menu = None;
     }
@@ -463,20 +465,16 @@ impl KagiApp {
             .unwrap_or(&self.ui_default)
     }
 
-    /// Return the active session's writer, or reject mutation when no session
-    /// owns the screen. Resource-bearing state must never use a detached sink.
-    pub(crate) fn active_ui_mut(&mut self) -> Option<&mut TabUiState> {
+    /// The active session's writer, or `None` when no session owns the screen —
+    /// the Welcome screen, a failed repository open, or the gap between the last
+    /// tab closing and the next opening. Resource-bearing state must never use a
+    /// detached sink, so mutation is *rejected* by returning `None` rather than
+    /// crashing (ADR-0197 決定 2): every caller writes only inside `if let Some`.
+    /// Background completion must instead use its frozen owner with
+    /// `ui.get_mut`, never this foreground accessor.
+    pub fn ui_mut(&mut self) -> Option<&mut TabUiState> {
         let session = self.active_session()?;
         self.ui.get_mut(&session)
-    }
-
-    /// Write the active session's state.
-    ///
-    /// Background completion must use its frozen owner with `ui.get_mut`; it
-    /// must not resolve ownership through this foreground-only accessor.
-    pub fn ui_mut(&mut self) -> &mut TabUiState {
-        self.active_ui_mut()
-            .expect("TabUiState mutation requires an attached active session")
     }
 
     /// What "Branch from here" acts on: the selected commit, or HEAD when

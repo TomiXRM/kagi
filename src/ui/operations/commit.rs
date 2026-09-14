@@ -173,10 +173,12 @@ impl KagiApp {
                 true,
             )
         };
-        self.ui_mut().commit_panel = Some(entity.clone());
-        self.ui_mut().commit_panel_open = true;
-        self.ui_mut().selected = None;
-        self.ui_mut().main_diff = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.commit_panel = Some(entity.clone());
+            ui.commit_panel_open = true;
+            ui.selected = None;
+            ui.main_diff = None;
+        }
         (entity, is_new)
     }
 
@@ -407,7 +409,9 @@ impl KagiApp {
             klog!("smart-suggest: {}", msg);
         }
         self.smart_commit_set_msg(&msg, window, cx);
-        self.ui_mut().smart_commit_status = Some("Rule-based suggestion inserted".to_string());
+        if let Some(ui) = self.ui_mut() {
+            ui.smart_commit_status = Some("Rule-based suggestion inserted".to_string());
+        }
         cx.notify();
     }
 
@@ -456,8 +460,10 @@ impl KagiApp {
         let models = self.smart_commit.detected_models.clone();
         if models.is_empty() {
             // No models installed → nothing to pick; fall back quietly.
-            self.ui_mut().smart_commit_status =
-                Some("No local models found — using rule-based".to_string());
+            if let Some(ui) = self.ui_mut() {
+                ui.smart_commit_status =
+                    Some("No local models found — using rule-based".to_string());
+            }
             cx.notify();
             return;
         }
@@ -1155,8 +1161,10 @@ impl KagiApp {
                 self.present_report("merge-commit", &report, &repo_path, cx);
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
-                self.ui_mut().conflict_merge_pending = false;
-                self.ui_mut().commit_panel_open = false;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict_merge_pending = false;
+                    ui.commit_panel_open = false;
+                }
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.plan_modal = None);
                 }

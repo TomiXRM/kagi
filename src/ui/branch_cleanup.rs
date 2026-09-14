@@ -52,9 +52,11 @@ impl KagiApp {
 
     /// Tick / untick one row.
     pub fn toggle_cleanup_selection(&mut self, name: String, cx: &mut Context<Self>) {
-        let selected = &mut self.ui_mut().cleanup_selected;
-        if !selected.remove(&name) {
-            selected.insert(name);
+        if let Some(ui) = self.ui_mut() {
+            let selected = &mut ui.cleanup_selected;
+            if !selected.remove(&name) {
+                selected.insert(name);
+            }
         }
         cx.notify();
     }
@@ -70,9 +72,11 @@ impl KagiApp {
             .map(|r| r.name.clone())
             .collect();
         if all.iter().all(|n| self.ui().cleanup_selected.contains(n)) {
-            self.ui_mut().cleanup_selected.clear();
-        } else {
-            self.ui_mut().cleanup_selected = all.into_iter().collect();
+            if let Some(ui) = self.ui_mut() {
+                ui.cleanup_selected.clear();
+            }
+        } else if let Some(ui) = self.ui_mut() {
+            ui.cleanup_selected = all.into_iter().collect();
         }
         cx.notify();
     }
@@ -92,7 +96,9 @@ impl KagiApp {
     /// Close the Branch Cleanup table.
     pub fn close_branch_cleanup_view(&mut self, cx: &mut Context<Self>) {
         self.branch_cleanup_open = false;
-        self.ui_mut().cleanup_selected.clear();
+        if let Some(ui) = self.ui_mut() {
+            ui.cleanup_selected.clear();
+        }
         cx.notify();
     }
 

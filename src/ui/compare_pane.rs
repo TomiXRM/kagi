@@ -35,7 +35,11 @@ impl KagiApp {
                 p.view = view;
                 cx.notify();
             }),
-            None => self.ui_mut().compare_view = Some(cx.new(|_| ComparePane { view })),
+            None => {
+                if let Some(ui) = self.ui_mut() {
+                    ui.compare_view = Some(cx.new(|_| ComparePane { view }));
+                }
+            }
         }
     }
 

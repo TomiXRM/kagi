@@ -191,7 +191,9 @@ impl KagiApp {
                     .active_session()
                     .expect("main diff requires an attached session");
                 let pane = cx.new(|_| MainDiffPane::new(view, weak, owner));
-                self.ui_mut().main_diff = Some(pane.clone());
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = Some(pane.clone());
+                }
                 pane
             }
         }
@@ -274,7 +276,9 @@ impl KagiApp {
                         file_index,
                     }
                 });
-                self.ui_mut().main_diff = Some(pane);
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = Some(pane);
+                }
             }
             // The compare list was re-read first (`restore_compare`); find the
             // same file in it again — its index moves as files enter and leave
@@ -289,7 +293,9 @@ impl KagiApp {
                 else {
                     return;
                 };
-                self.ui_mut().main_diff = Some(pane);
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = Some(pane);
+                }
                 self.open_main_diff_compare(file_index, cx);
             }
             MainDiffSource::Staged { path } => {
@@ -350,7 +356,9 @@ impl KagiApp {
         };
         let mut view = build_main_diff_view(&file_diff, &path, 0, source.clone());
         view.images = self.diff_images_for(&file_diff, &source, &path);
-        self.ui_mut().main_diff = Some(pane);
+        if let Some(ui) = self.ui_mut() {
+            ui.main_diff = Some(pane);
+        }
         self.show_main_diff(view, cx);
     }
 }
@@ -383,7 +391,9 @@ impl KagiApp {
     /// installed. Compare first: the diff restore looks its file up in the
     /// refreshed compare list. A source that no longer resolves stays closed.
     pub(crate) fn restore_open_panes(&mut self, panes: OpenPanes, cx: &mut Context<Self>) {
-        self.ui_mut().main_diff = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.main_diff = None;
+        }
         if let Some(view) = panes.compare {
             self.restore_compare(view, cx);
         }

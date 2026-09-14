@@ -32,7 +32,9 @@ impl KagiApp {
             .as_ref()
             .is_some_and(|cached| cached.head != head)
         {
-            self.ui_mut().ecosystem_cache = None;
+            if let Some(ui) = self.ui_mut() {
+                ui.ecosystem_cache = None;
+            }
         }
         let cached = self
             .ui()
@@ -71,7 +73,9 @@ impl KagiApp {
             }
         })
         .detach();
-        self.ui_mut().ecosystem = Some(entity);
+        if let Some(ui) = self.ui_mut() {
+            ui.ecosystem = Some(entity);
+        }
         klog!("ecosystem: opened");
         // No (fresh) cache → start (or join) the app-owned mine, which survives
         // the view being closed and notifies on completion.
@@ -93,7 +97,9 @@ impl KagiApp {
             return;
         };
         let my_gen = {
-            let ui = self.ui_mut();
+            let Some(ui) = self.ui_mut() else {
+                return;
+            };
             if ui
                 .ecosystem_cache
                 .as_ref()
@@ -194,7 +200,9 @@ impl KagiApp {
             return;
         };
         let invalidated = {
-            let ui = self.ui_mut();
+            let Some(ui) = self.ui_mut() else {
+                return;
+            };
             let cache_stale = ui
                 .ecosystem_cache
                 .as_ref()
@@ -268,6 +276,8 @@ impl KagiApp {
 
     /// Close the Ecosystem view (the app-owned mine keeps running if in flight).
     pub fn close_ecosystem_view(&mut self) {
-        self.ui_mut().ecosystem = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.ecosystem = None;
+        }
     }
 }

@@ -188,7 +188,9 @@ impl KagiApp {
         //    the cached snapshot. No local path, no Backend, no watcher. ──
         if let Some(rv) = tab.remote.clone() {
             self.repo_path = None;
-            self.ui_mut().repo_session = None;
+            if let Some(ui) = self.ui_mut() {
+                ui.repo_session = None;
+            }
             self.remote_view = Some(rv);
             self.reset_per_repo_ui();
             self.begin_session_revalidation(tab.session);
@@ -213,7 +215,10 @@ impl KagiApp {
         // ADR-0107 / ADR-0197: open the owner's repository session once. A
         // returning tab reuses the session it retained while inactive.
         if self.ui().repo_session.is_none() {
-            self.ui_mut().repo_session = kagi_git::session::RepoSession::open(&tab.path).ok();
+            let session = kagi_git::session::RepoSession::open(&tab.path).ok();
+            if let Some(ui) = self.ui_mut() {
+                ui.repo_session = session;
+            }
         }
 
         // Clear only repository-scoped root presentation. Session-owned panes
@@ -288,17 +293,6 @@ impl KagiApp {
         snap: kagi_git::RepoSnapshot,
         cx: &mut Context<Self>,
     ) {
-        if self.editor_workspace_any_dirty(cx) {
-            self.open_editor_dirty_guard(
-                EditorPendingIntent::EnterRemoteView {
-                    host,
-                    root,
-                    snap: std::sync::Arc::new(snap),
-                },
-                cx,
-            );
-            return;
-        }
         let name = root
             .trim_end_matches('/')
             .rsplit('/')
@@ -1176,7 +1170,10 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         .min(app.tabs.len() - 1);
     app.active_tab = active;
     app.repo_path = Some(app.tabs[active].path.clone());
-    app.ui_mut().repo_session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
+    let session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
+    if let Some(ui) = app.ui_mut() {
+        ui.repo_session = session;
+    }
     app.error = None;
     app.reload_prelaunch();
     app.prompt_trust_if_untrusted(); // ADR-0160: prompt on restore too.

@@ -243,7 +243,9 @@ impl KagiApp {
                         self.select(row);
                     }
                 }
-                self.ui_mut().main_diff = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = None;
+                }
                 let view = CompareView {
                     base,
                     target: CompareTarget::Commit(head_tip),

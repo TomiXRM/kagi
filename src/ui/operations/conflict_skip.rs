@@ -113,7 +113,9 @@ impl KagiApp {
         if ran {
             // The repository may have moved even without a clean success.
             self.reload(cx);
-            self.ui_mut().conflict_detected = false;
+            if let Some(ui) = self.ui_mut() {
+                ui.conflict_detected = false;
+            }
             self.detect_conflict_mode(cx);
         }
         if let Some(err_msg) = failure.filter(|_| !termination_unknown) {

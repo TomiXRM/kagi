@@ -52,8 +52,10 @@ impl KagiApp {
         match kagi_git::trust::trust_repo(&modal.repo_path) {
             Ok(()) => {
                 klog!("repo trusted: {}", modal.repo_path.display());
-                self.ui_mut().repo_session =
-                    kagi_git::session::RepoSession::open(&modal.repo_path).ok();
+                let session = kagi_git::session::RepoSession::open(&modal.repo_path).ok();
+                if let Some(ui) = self.ui_mut() {
+                    ui.repo_session = session;
+                }
             }
             Err(e) => {
                 klog!("trust grant failed: {e}");

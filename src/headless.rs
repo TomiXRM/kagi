@@ -62,7 +62,10 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
     app.active_tab = app.tabs.len() - 1;
     app.repo_path = Some(path.clone());
     // ADR-0107 / ADR-0197: the attached owner retains its repository session.
-    app.ui_mut().repo_session = kagi_git::session::RepoSession::open(&path).ok();
+    let session = kagi_git::session::RepoSession::open(&path).ok();
+    if let Some(ui) = app.ui_mut() {
+        ui.repo_session = session;
+    }
     // Rebuild the heavyweight per-repo display state from a fresh snapshot.
     app.reload_prelaunch();
     app.log_tabs();
@@ -178,8 +181,10 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
         if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1") {
             app_state.bottom_tab = ui::BottomTab::Terminal;
             if let Some(rp) = app_state.repo_path.clone() {
-                app_state.ui_mut().terminal_session =
-                    Some(ui::terminal::KagiTerminalSession::new(rp));
+                let terminal = ui::terminal::KagiTerminalSession::new(rp);
+                if let Some(ui) = app_state.ui_mut() {
+                    ui.terminal_session = Some(terminal);
+                }
             }
         }
 

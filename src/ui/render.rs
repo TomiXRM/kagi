@@ -275,7 +275,9 @@ impl Render for KagiApp {
             // W28: clamp against the scaled lane pitch (matches scroll_graph_by).
             let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
             if self.ui().graph_scroll_x > max {
-                self.ui_mut().graph_scroll_x = max;
+                if let Some(ui) = self.ui_mut() {
+                    ui.graph_scroll_x = max;
+                }
             }
         }
         // When the walk filled the current limit there may be more history to

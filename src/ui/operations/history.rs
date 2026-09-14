@@ -293,9 +293,11 @@ impl KagiApp {
             Ok(outcome) => {
                 // Advance/retreat the cursor only after the ref move succeeds.
                 if modal.is_undo {
-                    self.ui_mut().operation_history.undo();
-                } else {
-                    self.ui_mut().operation_history.redo();
+                    if let Some(ui) = self.ui_mut() {
+                        ui.operation_history.undo();
+                    }
+                } else if let Some(ui) = self.ui_mut() {
+                    ui.operation_history.redo();
                 }
                 self.clear_history_modal();
                 let after = StateSummary {

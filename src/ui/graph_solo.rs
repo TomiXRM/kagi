@@ -76,8 +76,10 @@ impl KagiApp {
                 view.details = solo.saved_details;
                 view.commit_row_index = solo.saved_row_index;
             }
-            self.ui_mut().selected =
-                selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
+            let sel = selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
+            if let Some(ui) = self.ui_mut() {
+                ui.selected = sel;
+            }
             self.status_footer = FooterStatus::Idle(SharedString::from("Solo off"));
             self.push_toast(ToastKind::Info, "Solo off", cx);
             return;
@@ -147,8 +149,10 @@ impl KagiApp {
         view.rows = rows;
         view.details = details;
         view.commit_row_index = commit_row_index;
-        self.ui_mut().selected =
-            selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
+        let sel = selected_id.and_then(|id| self.view().commit_row_index.get(&id).copied());
+        if let Some(ui) = self.ui_mut() {
+            ui.selected = sel;
+        }
 
         klog!(
             "solo: {} rows={} (of {})",

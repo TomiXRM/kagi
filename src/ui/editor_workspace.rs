@@ -144,7 +144,9 @@ impl KagiApp {
             }
         })
         .detach();
-        self.ui_mut().editor_workspace = Some(view.clone());
+        if let Some(ui) = self.ui_mut() {
+            ui.editor_workspace = Some(view.clone());
+        }
         klog!("editor-ws: open");
         view.update(cx, |v, cx| v.start_load(cx));
         cx.notify();
@@ -442,7 +444,9 @@ impl KagiApp {
     /// Close the Editor workspace (drops the entity; Graph mode is derived
     /// from `editor_workspace.is_none()`).
     pub fn close_editor_workspace(&mut self) {
-        self.ui_mut().editor_workspace = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.editor_workspace = None;
+        }
     }
 
     /// True when `session`'s retained Editor Workspace has unsaved buffers.
@@ -550,22 +554,6 @@ impl KagiApp {
             EditorPendingIntent::Close => {
                 self.close_editor_workspace();
             }
-            EditorPendingIntent::MergeInWorktree {
-                source,
-                target,
-                path,
-                owner,
-            } => {
-                if self
-                    .active_session()
-                    .and_then(|session| self.app_sessions.attachment(session))
-                    .as_ref()
-                    == Some(&owner)
-                {
-                    self.close_editor_workspace();
-                    self.open_merge_in_worktree(source, target, path, cx);
-                }
-            }
             EditorPendingIntent::CloseRepoTab(session) => {
                 // Discard confirmed: drop the target owner's editor (not the
                 // active tab's) so the close does not re-prompt, then close it.
@@ -573,10 +561,6 @@ impl KagiApp {
                     ui.editor_workspace = None;
                 }
                 self.close_tab_by_session(session, cx);
-            }
-            EditorPendingIntent::EnterRemoteView { host, root, snap } => {
-                self.close_editor_workspace();
-                self.enter_remote_view(host, root, (*snap).clone(), cx);
             }
         }
         cx.notify();

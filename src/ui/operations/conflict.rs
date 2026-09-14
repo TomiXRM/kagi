@@ -321,7 +321,9 @@ impl KagiApp {
                     }
                     entity.update(cx, |v, _| v.state.commit_msg = message.clone());
                 }
-                self.ui_mut().conflict_merge_pending = true;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict_merge_pending = true;
+                }
             }
             kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
@@ -463,7 +465,9 @@ impl KagiApp {
                 );
                 self.clear_conflict_continue_modal();
                 self.reload(cx);
-                self.ui_mut().conflict_detected = false;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict_detected = false;
+                }
                 self.detect_conflict_mode(cx);
             }
             Err(e) => {

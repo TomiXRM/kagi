@@ -375,7 +375,9 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.ui_mut().conflict = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict = None;
+                }
                 return;
             }
         };
@@ -385,7 +387,9 @@ impl KagiApp {
         if self.ui().conflict_detected {
             return;
         }
-        self.ui_mut().conflict_detected = true;
+        if let Some(ui) = self.ui_mut() {
+            ui.conflict_detected = true;
+        }
 
         // Snapshot the preservation inputs the I/O step needs (prev selection /
         // editing index), then run the read-only Git/index/file I/O synchronously.
@@ -428,7 +432,9 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.ui_mut().conflict = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict = None;
+                }
                 return;
             }
         };
@@ -438,7 +444,9 @@ impl KagiApp {
         if self.ui().conflict_detected {
             return;
         }
-        self.ui_mut().conflict_detected = true;
+        if let Some(ui) = self.ui_mut() {
+            ui.conflict_detected = true;
+        }
 
         // Issue #285: capture the previously-selected/editing files by PATH, not
         // index — a per-file Save re-sorts `session.files`, so a stored index

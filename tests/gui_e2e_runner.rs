@@ -474,7 +474,17 @@ mod macos {
         cx: &mut VisualTestAppContext,
         repo_path: &Path,
     ) -> (Entity<KagiApp>, AnyWindowHandle) {
-        let app_state = e2e::app_state(repo_path).expect("build app_state");
+        mount_state(cx, e2e::app_state(repo_path).expect("build app_state"))
+    }
+
+    /// Mount an already-built `KagiApp`. The Welcome / no-session startup
+    /// (`KagiApp::with_error`, `main.rs:170`) has no repository to mount from,
+    /// and every scenario before #722 started from an open repo — which is why
+    /// CI never rendered a frame with no owning session.
+    pub(super) fn mount_state(
+        cx: &mut VisualTestAppContext,
+        app_state: KagiApp,
+    ) -> (Entity<KagiApp>, AnyWindowHandle) {
         let cell: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::new(RefCell::new(None));
         let build_cell = cell.clone();
         let window = open_offscreen(cx, size(px(1440.0), px(900.0)), move |window, cx| {
@@ -925,6 +935,14 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_close_tab_editor_dirty_owner),
             ),
             (
+                "welcome_startup_renders",
+                Box::new(crate::pane_resources::scenario_welcome_startup_renders),
+            ),
+            (
+                "close_last_tab_welcome_renders",
+                Box::new(crate::pane_resources::scenario_close_last_tab_welcome_renders),
+            ),
+            (
                 "commit_panel_revalidates_on_activation",
                 Box::new(crate::pane_resources::scenario_commit_panel_revalidates_on_activation),
             ),
@@ -1191,7 +1209,7 @@ mod macos {
         // production copy path would yield (via the real `graph_copy_value`, so
         // the badge-label decoration — `"main ✓"` etc. — is handled identically).
         let (full_sha, branch) = kagi.update(cx, |app, cx| {
-            app.ui_mut().selected = Some(0);
+            app.ui_mut().expect("active session").selected = Some(0);
             cx.notify();
             let row = &app.view().rows[0];
             let full_sha = row.id.0.clone();

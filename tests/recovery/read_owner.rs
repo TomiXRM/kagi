@@ -177,7 +177,7 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
 
     // ── load-more: the page grows, existing rows keep their indices ───────
     let before: Vec<CommitId> = kagi.update(cx, |app, cx| {
-        app.ui_mut().commit_limit = 2;
+        app.ui_mut().expect("active session").commit_limit = 2;
         app.reload_checked(cx).expect("reload at the smaller limit");
         app.view().rows.iter().map(|r| r.id.clone()).collect()
     });
@@ -195,7 +195,7 @@ pub fn scenario_read_owner_switch(cx: &mut VisualTestAppContext) {
 
     // ── solo: rows are filtered in place and restored from the saved set ───
     kagi.update(cx, |app, cx| {
-        app.ui_mut().commit_limit = 10_000;
+        app.ui_mut().expect("active session").commit_limit = 10_000;
         app.reload_checked(cx).expect("reload at the full limit");
     });
     cx.run_until_parked();
@@ -353,7 +353,7 @@ pub fn scenario_read_owner_ordering(cx: &mut VisualTestAppContext) {
             "the fixture must start un-conflicted",
         );
         // One row on screen, so paging below has something to grow.
-        app.ui_mut().commit_limit = 1;
+        app.ui_mut().expect("active session").commit_limit = 1;
         app.reload_checked(cx).expect("reload at the smaller limit");
         app.view().rows.len()
     });

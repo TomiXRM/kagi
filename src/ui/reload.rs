@@ -74,9 +74,11 @@ impl KagiApp {
             return;
         };
         let view = build_tab_view(&snap, &repo_name);
-        self.ui_mut().selected = None;
-        self.ui_mut().main_diff = None;
-        self.ui_mut().compare_view = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.selected = None;
+            ui.main_diff = None;
+            ui.compare_view = None;
+        }
         self.publish_tab_view(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.wip_diffstat = Some(wip_diffstat);
@@ -259,7 +261,9 @@ impl KagiApp {
         self.worktree_menu = None;
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
-            self.ui_mut().conflict_merge_pending = false;
+            if let Some(ui) = self.ui_mut() {
+                ui.conflict_merge_pending = false;
+            }
             self.refresh_commit_panel_after_reload(cx);
         }
 
@@ -270,7 +274,9 @@ impl KagiApp {
         // conflict produced by the GUI's own operation OR by external CLI (the
         // watcher path runs through here now too) puts the app into / out of
         // Conflict Mode. Force re-detection by invalidating the run-once guard.
-        self.ui_mut().conflict_detected = false;
+        if let Some(ui) = self.ui_mut() {
+            ui.conflict_detected = false;
+        }
         self.detect_conflict_mode(cx);
 
         // Re-resolve the continued-merge flow after detection.
@@ -298,17 +304,23 @@ impl KagiApp {
                     let weak_app = cx.weak_entity();
                     let entity = cx
                         .new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone(), session));
-                    self.ui_mut().commit_panel = Some(entity);
+                    if let Some(ui) = self.ui_mut() {
+                        ui.commit_panel = Some(entity);
+                    }
                 }
-                self.ui_mut().commit_panel_open = true;
-                self.ui_mut().conflict = None;
-                self.ui_mut().conflict_merge_pending = true;
+                if let Some(ui) = self.ui_mut() {
+                    ui.commit_panel_open = true;
+                    ui.conflict = None;
+                    ui.conflict_merge_pending = true;
+                }
             } else {
                 // The merge commit was created (MERGE_HEAD gone) or aborted — end
                 // the flow and drop the commit-panel entity.
-                self.ui_mut().conflict_merge_pending = false;
-                self.ui_mut().commit_panel_open = false;
-                self.ui_mut().commit_panel = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict_merge_pending = false;
+                    ui.commit_panel_open = false;
+                    ui.commit_panel = None;
+                }
             }
         }
 
@@ -372,7 +384,9 @@ impl KagiApp {
             return;
         };
         let commit_limit = self.ui().commit_limit.saturating_add(COMMIT_PAGE_STEP);
-        self.ui_mut().commit_limit = commit_limit;
+        if let Some(ui) = self.ui_mut() {
+            ui.commit_limit = commit_limit;
+        }
 
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
@@ -426,7 +440,9 @@ impl KagiApp {
     /// panel read (already plumbed for the merge case) in instead.
     pub(crate) fn refresh_commit_panel_after_reload(&mut self, cx: &mut Context<Self>) {
         let Some(entity) = self.ui().commit_panel.clone() else {
-            self.ui_mut().commit_panel_open = false;
+            if let Some(ui) = self.ui_mut() {
+                ui.commit_panel_open = false;
+            }
             return;
         };
         let nothing_left = entity.update(cx, |v, _| {
@@ -435,8 +451,10 @@ impl KagiApp {
             v.state.staged.is_empty() && v.state.unstaged.is_empty()
         });
         if nothing_left {
-            self.ui_mut().commit_panel_open = false;
-            self.ui_mut().commit_panel = None;
+            if let Some(ui) = self.ui_mut() {
+                ui.commit_panel_open = false;
+                ui.commit_panel = None;
+            }
         }
     }
 
@@ -469,7 +487,9 @@ impl KagiApp {
         if let Some(fh) = self.ui().file_history.clone() {
             if self.ui().file_history_head != new_head {
                 fh.update(cx, |v, cx| v.reload(false, cx));
-                self.ui_mut().file_history_head = new_head;
+                if let Some(ui) = self.ui_mut() {
+                    ui.file_history_head = new_head;
+                }
             }
         }
     }

@@ -202,10 +202,13 @@ impl KagiApp {
 
         // Kick off the initial load on the (now fully-constructed) entity.
         view.update(cx, |v, cx| v.request_load(origin, true, cx));
-        self.ui_mut().file_history = Some(view);
         // Record the HEAD this history reflects so a later reload only reloads it
         // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
-        self.ui_mut().file_history_head = self.view().head_oid.clone();
+        let head = self.view().head_oid.clone();
+        if let Some(ui) = self.ui_mut() {
+            ui.file_history = Some(view);
+            ui.file_history_head = head;
+        }
     }
 
     /// Run the async history load the pane requested and marshal the result

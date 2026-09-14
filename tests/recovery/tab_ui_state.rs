@@ -148,7 +148,7 @@ pub fn scenario_tab_ui_state_background_reload(cx: &mut VisualTestAppContext) {
     });
     assert_ne!(dropped, pinned);
     kagi.update(cx, |app, cx| {
-        app.ui_mut().commit_limit = 1;
+        app.ui_mut().expect("active session").commit_limit = 1;
         app.reload(cx); // owned by B
         app.switch_repo(0, cx); // → A, before that read lands
     });
@@ -178,7 +178,7 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     let session_a = kagi.read_with(cx, |app, _| app.active_session().expect("A session"));
     let a_limit = kagi.update(cx, |app, cx| {
         app.load_more_commits(cx);
-        let ui = app.ui_mut();
+        let ui = app.ui_mut().expect("active session");
         ui.graph_scroll_x = 42.0;
         ui.branch_groups_collapsed.insert("local:feature".into());
         ui.commit_limit

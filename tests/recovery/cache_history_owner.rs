@@ -128,7 +128,7 @@ pub fn scenario_operation_history_session_and_stale_ref(cx: &mut VisualTestAppCo
 
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
-        app.ui_mut().operation_history = Default::default();
+        app.ui_mut().expect("active session").operation_history = Default::default();
         app.record_history(
             OperationKind::Commit,
             "main",
@@ -136,7 +136,7 @@ pub fn scenario_operation_history_session_and_stale_ref(cx: &mut VisualTestAppCo
             CommitId(after.clone()),
             "A retained operation",
         );
-        app.ui_mut().history_seed_attempted = true;
+        app.ui_mut().expect("active session").history_seed_attempted = true;
         app.switch_repo(1, cx);
         assert!(
             kagi::ui::e2e::undo_head(app)

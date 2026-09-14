@@ -9,7 +9,7 @@ use kagi_domain::plan_note::{PlanNote, PullNote};
 use kagi_git::oplog::{read_oplog_tail_for_repo, recovery, OpOutcome};
 
 use crate::macos::{build_fixture, git, mount, unmount};
-use crate::recovery_operations::{press_enter, wait_idle};
+use crate::recovery_operations::{press_enter, press_key, wait_idle};
 
 fn output(repo: &Path, args: &[&str]) -> String {
     let result = Command::new("git")
@@ -1420,6 +1420,67 @@ pub fn scenario_pull_failure_notice_waits_for_app_notice(cx: &mut VisualTestAppC
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS pull_failure_notice_waits_for_app_notice: plain, actionable, and production failure notices stay FIFO"
+    );
+}
+
+/// #718 P2: displacement and explicit dismissal are different events. A plain
+/// production failure displaced before it can be read returns to the queue;
+/// once the user dismisses that same notice, it stays dismissed.
+pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight.is_some(),
+            "the dirty Pull must be waiting on its production fetch"
+        );
+    });
+
+    drop(remote_root);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
+            .expect("the production Pull fetch failure must be visible");
+        assert!(
+            message.contains("Fetch"),
+            "notice-event-separation-seeds-production-failure: unexpected notice: {message}"
+        );
+    });
+
+    app.update(cx, |app, cx| app.open_remote_browse(cx));
+    assert!(
+        cx.read(|cx| app.read(cx).remote_browse().is_some()),
+        "notice-displacement-opens-new-modal: Remote Browse must displace the visible notice"
+    );
+    app.update(cx, |app, _| {
+        app.cancel_remote_browse();
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx));
+        assert!(
+            message.is_some_and(|message| message.contains("Fetch")),
+            "notice-displacement-plain-is-retained: an unread plain failure must return to the queue; got {message:?}"
+        );
+    });
+
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    app.update(cx, |app, _| kagi::ui::e2e::present_app_notice(app));
+    assert!(
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "notice-dismissal-plain-stays-dismissed: an explicitly dismissed plain failure must not return to the queue"
+    );
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_failure_notice_displacement_vs_dismissal: unread plain failures survive displacement but not user dismissal"
     );
 }
 

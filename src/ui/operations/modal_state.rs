@@ -37,15 +37,13 @@ impl KagiApp {
     pub(crate) fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
     }
-    /// Replace the shared modal slot without losing an unresolved recovery
-    /// action. Plain informational notices are intentionally ephemeral; a
-    /// notice carrying Inspect/Acknowledge returns to the queue for later
-    /// presentation (#718 / ADR-0196).
+    /// Replace the shared modal slot without losing an unread notice. A modal
+    /// that displaces AppNotice must queue it regardless of actions because the
+    /// user did not dismiss it. Escape follows the separate actionable-only
+    /// dismissal rule in `cancel_open_modal` (#718 / ADR-0196).
     fn replace_active_modal(&mut self, modal: ActiveModal) {
         if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
-            if notice.inspect.is_some() || notice.acknowledge.is_some() {
-                self.app_notices.push_back(notice);
-            }
+            self.app_notices.push_back(notice);
         }
         self.active_modal.replace(modal);
     }

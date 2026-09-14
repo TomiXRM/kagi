@@ -967,9 +967,9 @@ pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS window_modal_exclusivity");
 }
 
-/// #718: every ActiveModal setter preserves an actionable AppNotice before
-/// replacing the shared slot. Remote Browse and Update exercise two unrelated
-/// setters; a plain informational notice remains intentionally disposable.
+/// #718: modal displacement preserves every unread AppNotice, while explicit
+/// user dismissal requeues only actionable notices. Remote Browse and Update
+/// exercise unrelated setters; the final plain notice distinguishes the events.
 pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
@@ -1027,9 +1027,19 @@ pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
     paint(cx, window);
+    cx.read(|cx| {
+        assert_eq!(
+            kagi::ui::e2e::app_notice_message(app.read(cx)),
+            Some("plain information"),
+            "notice-replacement-plain-is-retained: a displaced non-actionable notice must be requeued"
+        );
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
     assert!(
         cx.read(|cx| app.read(cx).app_notice().is_none()),
-        "notice-replacement-plain-is-disposable: a non-actionable notice must not be requeued"
+        "notice-dismissal-plain-is-discarded: a user-dismissed non-actionable notice must not be requeued"
     );
 
     unmount(cx, app, window);

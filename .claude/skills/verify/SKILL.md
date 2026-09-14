@@ -157,7 +157,7 @@ App keybindings, command-registry keybindings, and native menus share their
 installation path with `run_app`; component initialization must precede that
 installation so app bindings keep the same precedence. For menu/Enter routing,
 PM can scope
-`KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough,remote_browse_modal_routing,window_modal_exclusivity,app_notice_modal_replacement,pull_failure_notice_waits_for_remote_browse,pull_failure_notice_waits_for_app_notice,update_install_lifecycle`.
+`KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough,remote_browse_modal_routing,window_modal_exclusivity,app_notice_modal_replacement,pull_failure_notice_waits_for_remote_browse,pull_failure_notice_waits_for_app_notice,pull_failure_notice_displacement_vs_dismissal,update_install_lifecycle`.
 The menu and modal scenarios in `tests/recovery/operations.rs` select a non-HEAD
 commit and prove Enter cannot fall through to checkout. Remote Browse also proves
 that the shared workspace/Welcome modal-key wrapper routes Enter through both its
@@ -166,12 +166,12 @@ the workspace's vacant-slot Enter checkout fallback. The window-modal scenario
 records the rendered Remote Browse, Update, and AppNotice overlays: an arriving
 notice waits behind the occupied slot, Update consumes Enter without acting, and
 Esc closes it. The AppNotice replacement scenario proves unrelated modal setters
-preserve and re-present an executable reconciliation Acknowledge while plain
-messages stay disposable. The production dirty-Pull failure scenarios prove the
-inverse race: `pull_push` delivers its failure through `set_app_notice`; Remote
-Browse and an earlier plain AppNotice stay open, queued notices retain arrival
-order across render-time drains, and a delayed Acknowledge still executes. The
-update-lifecycle scenario proves an installer remains window-owned while its
+preserve both actionable and plain unread notices. The production dirty-Pull
+failure scenarios prove the event distinction: an asynchronous arrival waits
+behind any occupied slot; a plain failure displaced by a newer modal is
+re-presented; the same plain failure stays discarded after the user closes it;
+queued notices retain arrival order; and a delayed Acknowledge still executes.
+The update-lifecycle scenario proves an installer remains window-owned while its
 modal is closed, rejects a second start after reopening, renders a retained
 completion, consumes Enter, and closes via Escape after the last repository tab
 transitions the window to Welcome. Native foreground/input-focus behavior remains

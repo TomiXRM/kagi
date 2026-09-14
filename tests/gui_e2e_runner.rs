@@ -675,6 +675,12 @@ mod macos {
                 ),
             ),
             (
+                "pull_failure_notice_displacement_vs_dismissal",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_notice_displacement_vs_dismissal,
+                ),
+            ),
+            (
                 "pull_refuses_when_the_dirty_set_moved",
                 Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),

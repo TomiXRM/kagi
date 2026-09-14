@@ -102,7 +102,7 @@ impl Render for MainDiffPane {
             let owner = this.owner;
             this.app
                 .update(cx, move |app, cx| {
-                    if app.active_session() == Some(owner) {
+                    if app.pane_mutation_admitted(owner) {
                         app.open_file_history_from_main_diff(source, cx);
                         cx.notify();
                     }
@@ -125,7 +125,7 @@ impl Render for MainDiffPane {
             let owner = this.owner;
             this.app
                 .update(cx, move |app, cx| {
-                    if app.active_session() == Some(owner) {
+                    if app.pane_mutation_admitted(owner) {
                         if let Some((path, _)) = app.main_diff_source_ref(&source, cx) {
                             app.open_in_external_editor(&path, None, cx);
                         }

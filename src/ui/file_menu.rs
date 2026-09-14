@@ -37,7 +37,7 @@ impl KagiApp {
             .commit_panel
             .as_ref()
             .is_some_and(|panel| panel.read(cx).owner == expected.owner);
-        let owner_is_active = self.active_session() == Some(expected.owner) && panel_has_owner;
+        let owner_is_active = self.pane_mutation_admitted(expected.owner) && panel_has_owner;
         self.file_menu = None;
         if !owner_is_active {
             cx.notify();
@@ -51,6 +51,7 @@ impl KagiApp {
                 self.open_file_history(expected.path.clone(), None, cx);
             }
             FileMenuAction::Discard => self.open_discard_modal_for_path(
+                expected.owner,
                 expected.path.clone(),
                 crate::ui::worktree_wip::WriteOrigin::CommitPanel,
                 cx,

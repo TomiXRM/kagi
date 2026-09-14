@@ -12,7 +12,7 @@ use crate::ui::*;
 impl KagiApp {
     /// Stage every non-conflicted unstaged file (T-UI-002: Stage all).
     pub fn do_stage_all(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         // #476: stage into the PANEL's repository — a linked worktree's, when
@@ -66,7 +66,7 @@ impl KagiApp {
 
     /// Unstage every staged file (T-UI-002: Unstage all).
     pub fn do_unstage_all(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         // #476: unstage in the PANEL's repository, never the tab's.

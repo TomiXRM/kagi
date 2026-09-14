@@ -116,10 +116,14 @@ impl KagiApp {
     /// modal so `start_discard` executes against the repository this planned.
     pub fn open_discard_modal_for_path(
         &mut self,
+        owner: crate::app::SessionId,
         path: std::path::PathBuf,
         origin: worktree_wip::WriteOrigin,
         cx: &mut Context<Self>,
     ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let paths = vec![path.to_string_lossy().replace('\\', "/")];
         let planned = match self.with_write_repo(origin, cx, |repo| repo.plan_discard(&paths)) {
             Some(p) => p,
@@ -161,7 +165,7 @@ impl KagiApp {
     /// `RepoSession` for the tab's own panel, a short-lived `Backend` for a
     /// linked worktree's) — see `with_commit_panel_repo`.
     pub fn open_discard_all_modal(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
-        if self.active_session() != Some(owner) || self.ui().panes_revalidating {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         let (eligible, skipped) = self.discard_partition(cx);

@@ -473,11 +473,11 @@ impl KagiApp {
                 match result {
                     Ok((view, wip_diffstat, status)) => {
                         let rows = view.rows.len();
-                        // Retain the active owner's open panes across the
-                        // renumber this read performs, re-anchoring them against
-                        // the new rows (ADR-0197 決定 3) — the shared
-                        // capture/restore `apply_reload_data` also uses.
-                        let open_panes = app.capture_open_panes(cx);
+                        // Capture/restore belongs to the read's owner, not the
+                        // tab on screen: this read renumbers `session`'s rows,
+                        // so `session`'s panes are the ones to re-anchor (P2).
+                        let owns_screen = app.active_session() == Some(session);
+                        let open_panes = owns_screen.then(|| app.capture_open_panes(cx));
                         // Superseded (a newer read, or a mutation admitted
                         // against this owner) → write nothing, say nothing.
                         if !app.accept_tab_view(key, view) {
@@ -488,9 +488,12 @@ impl KagiApp {
                             ui.last_working_status = Some(status);
                         }
                         app.app_sessions.read_applied(session);
-                        if app.active_session() != Some(session) {
-                            return; // background owner: data only, no display.
-                        }
+                        let Some(open_panes) = open_panes else {
+                            // Background owner: re-anchoring needs its read on
+                            // screen, so refuse its panes until it returns.
+                            app.mark_panes_revalidating(session);
+                            return;
+                        };
                         app.revalidate_retained_panes(open_panes, cx);
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =

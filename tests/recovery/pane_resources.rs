@@ -842,6 +842,20 @@ pub fn scenario_commit_panel_refuses_during_activation(cx: &mut VisualTestAppCon
         "precondition: A's panes must be awaiting their activation read",
     );
     app.update(cx, |state, cx| state.do_stage_file(owner_a, 0, cx));
+    // The row menu's single-file Discard plans against the same stale list.
+    app.update(cx, |state, cx| {
+        state.open_discard_modal_for_path(
+            owner_a,
+            PathBuf::from("f.txt"),
+            kagi::ui::worktree_wip::WriteOrigin::CommitPanel,
+            cx,
+        );
+    });
+    assert!(
+        !cx.read(|cx| kagi::ui::e2e::active_modal_present(app.read(cx))),
+        "panel-refused-while-revalidating: the row menu planned a Discard \
+         against the pre-switch list",
+    );
     cx.run_until_parked();
     assert_eq!(
         staged_count(&repo_a),

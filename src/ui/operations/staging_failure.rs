@@ -125,10 +125,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
         self.refresh_write_busy();
-        // #722 P2: until the activation read is accepted the panel's lists
-        // describe the pre-switch repository, so every staging write from it is
-        // refused here — the one admission point all six entry points share.
-        let admitted = if self.op_latched() || self.ui().panes_revalidating {
+        let admitted = if self.op_latched() {
             Err(app::AdmissionError::Busy)
         } else {
             self.app_sessions.write_lease(repo)

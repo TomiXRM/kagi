@@ -2325,8 +2325,12 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
             };
             let count = records(repo, op).len();
             app.update(cx, |app, cx| match (stage, entry) {
-                (true, "editor") => app.do_stage_file_by_path("f.txt".into(), cx),
-                (false, "editor") => app.do_unstage_file_by_path("f.txt".into(), cx),
+                (true, "editor") => {
+                    app.do_stage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
+                }
+                (false, "editor") => {
+                    app.do_unstage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
+                }
                 (true, "batch") => app.do_stage_all(app.active_session().unwrap(), cx),
                 (false, "batch") => app.do_unstage_all(app.active_session().unwrap(), cx),
                 (true, _) => app.do_stage_file(app.active_session().unwrap(), 0, cx),
@@ -2376,7 +2380,9 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     press_enter(cx, &app, window);
     let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&main).unwrap());
     let count = records(&main, "stage").len();
-    app.update(cx, |app, cx| app.do_stage_file_by_path("f.txt".into(), cx));
+    app.update(cx, |app, cx| {
+        app.do_stage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
+    });
     cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));
     assert_eq!(records(&main, "stage").len(), count + 1);
     assert!(records(&main, "stage")

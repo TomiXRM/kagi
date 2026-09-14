@@ -184,6 +184,32 @@ impl KagiApp {
         true
     }
 
+    /// The one gate every **owner-targeted pane mutation** passes through
+    /// (ADR-0197 決定 3 / 決定 5).
+    ///
+    /// Round 1 gave each of these actions an explicit `owner` argument so a
+    /// deferred click could not act on whatever tab is now on screen. That
+    /// same argument answers the second question too — whether that owner's
+    /// retained panes are authoritative yet — so both live here rather than
+    /// at each entry point. Adding a guard per entry is what let staging get
+    /// the revalidation check while the single-file Discard did not, exactly
+    /// as Continue once had an owner guard that Abort and Skip lacked.
+    ///
+    /// Refused when the frozen owner is not the tab on screen, or when that
+    /// owner's panes are still awaiting the activation read that re-anchors
+    /// them. Pure display — scroll, divider drags, closing a pane — does not
+    /// come through here.
+    pub(crate) fn pane_mutation_admitted(&self, owner: crate::app::SessionId) -> bool {
+        self.active_session() == Some(owner) && !self.ui().panes_revalidating
+    }
+
+    /// Mark `session`'s retained panes non-authoritative (#722 P2).
+    pub(crate) fn mark_panes_revalidating(&mut self, session: crate::app::SessionId) {
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.panes_revalidating = true;
+        }
+    }
+
     /// Complete a **planning** task: the last shape of background work that is
     /// not a write (ADR-0196 Wave 3). It holds no lease, so all it releases is
     /// its own `planning` tag — and only while that tag is still the one in

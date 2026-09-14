@@ -19,9 +19,8 @@ impl KagiApp {
     /// It is also refused while the owner's panes await their activation read
     /// (#722 P2): the pane on screen still describes the pre-switch repository.
     pub(crate) fn conflict_action_owner_on_screen(&self, owner: &crate::app::Attachment) -> bool {
-        self.active_session() == Some(owner.session)
+        self.pane_mutation_admitted(owner.session)
             && self.app_sessions.attachment(owner.session).as_ref() == Some(owner)
-            && !self.ui().panes_revalidating
     }
 
     /// Marshal a toast from a retained conflict pane, but only while its frozen
@@ -84,7 +83,7 @@ impl KagiApp {
         let current_owner = self
             .active_session()
             .and_then(|session| self.app_sessions.attachment(session));
-        if self.ui().panes_revalidating
+        if !self.pane_mutation_admitted(owner.session)
             || !conflict_intent_matches(
                 current_token,
                 current_revision,

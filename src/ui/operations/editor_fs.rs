@@ -369,6 +369,12 @@ impl KagiApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The tree belongs to the tab on screen, so that session is the owner
+        // the write seam checks (#722 P2) — its retained listing is the one
+        // these actions would act on.
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         match action {
             EditorTreeAction::PreviewMarkdown(path) => {
                 if let Some(ews) = self.ui().editor_workspace.clone() {
@@ -393,14 +399,17 @@ impl KagiApp {
             EditorTreeAction::CopyRelativePath(path) => self.copy_editor_relative_path(&path, cx),
             EditorTreeAction::Reveal(path) => self.reveal_editor_path_in_finder(&path),
             EditorTreeAction::History(path) => self.open_file_history(path, None, cx),
-            EditorTreeAction::Stage(path) => self.do_stage_file_by_path(path, cx),
-            EditorTreeAction::Unstage(path) => self.do_unstage_file_by_path(path, cx),
+            EditorTreeAction::Stage(path) => self.do_stage_file_by_path(owner, path, cx),
+            EditorTreeAction::Unstage(path) => self.do_unstage_file_by_path(owner, path, cx),
             // #476 slice 3: the tree lists the TAB's files (like `Stage` /
             // `Unstage` above, which resolve `self.repo_path`), so its discard
             // must too — never a commit panel that happens to show a worktree.
-            EditorTreeAction::Discard(path) => {
-                self.open_discard_modal_for_path(path, worktree_wip::WriteOrigin::EditorTree, cx)
-            }
+            EditorTreeAction::Discard(path) => self.open_discard_modal_for_path(
+                owner,
+                path,
+                worktree_wip::WriteOrigin::EditorTree,
+                cx,
+            ),
             EditorTreeAction::AddGitignore(path) => self.add_editor_gitignore(&path, cx),
             EditorTreeAction::NewFile(base) => {
                 self.open_editor_fs_prompt(EditorFsPromptKind::NewFile, base, String::new(), cx)

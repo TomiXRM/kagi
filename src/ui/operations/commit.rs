@@ -380,7 +380,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         // #476: the draft describes what is staged in the PANEL's repository.
@@ -421,7 +421,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         if message_gen::offline() {
@@ -504,7 +504,7 @@ impl KagiApp {
         index: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         // #476: stage into the PANEL's repository, never the tab's.
@@ -581,7 +581,7 @@ impl KagiApp {
         index: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         // #476: unstage in the PANEL's repository, never the tab's.
@@ -656,7 +656,15 @@ impl KagiApp {
     /// index). Refreshes the commit panel (if open) AND the editor workspace
     /// tree explicitly: `git add` is index-only and never touches the
     /// filesystem, so the FS watcher would never observe it.
-    pub fn do_stage_file_by_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+    pub fn do_stage_file_by_path(
+        &mut self,
+        owner: crate::app::SessionId,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -713,7 +721,15 @@ impl KagiApp {
     }
 
     /// Unstage `path` directly — the `do_stage_file_by_path` counterpart.
-    pub fn do_unstage_file_by_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+    pub fn do_unstage_file_by_path(
+        &mut self,
+        owner: crate::app::SessionId,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -776,7 +792,7 @@ impl KagiApp {
         file_ref: CommitPanelFileRef,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         self.open_main_diff_wip(file_ref, cx);
@@ -788,7 +804,7 @@ impl KagiApp {
     /// T026: reads message from InputState if available, else falls back to commit_panel.commit_msg
     /// (used by the headless KAGI_COMMIT_MSG path).
     pub fn open_commit_plan_modal(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         // #476: plan against the PANEL's repository — a linked worktree's, when
@@ -1067,7 +1083,7 @@ impl KagiApp {
     /// #476 slice 3: reads the PANEL's staged set, so a linked worktree's panel
     /// picks its mode from that worktree's index and plans against it.
     pub fn commit_panel_amend(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
-        if self.active_session() != Some(owner) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
         let staged = self

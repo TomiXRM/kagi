@@ -402,29 +402,46 @@ impl KagiApp {
         }
     }
 
-    /// Revalidate every retained pane against the snapshot a read just installed:
-    /// re-anchor the Main Diff / Compare panes, then refresh the Commit Panel's
-    /// file lists and the HEAD-versioned overlays. The reload path and the
-    /// activation read both call this so they revalidate the same set (ADR-0197
-    /// 決定 3 / #722 P2), not just the diff panes.
-    pub(crate) fn revalidate_retained_panes(&mut self, panes: OpenPanes, cx: &mut Context<Self>) {
+    /// Revalidate **every** retained pane against the read that was just
+    /// accepted, then re-admit their mutations. Reached from exactly one
+    /// place — `render` draining `panes_stale`, which `on_view_published`
+    /// sets — so activation load, manual reload (Cmd+R), the watcher and a
+    /// remote refresh all revalidate the same set. Adding a retained pane
+    /// means adding it here (ADR-0197 決定 3 / #722).
+    pub(crate) fn revalidate_retained_panes(&mut self, cx: &mut Context<Self>) {
+        // Main Diff / Compare: re-anchor against the new rows. Capturing now
+        // is equivalent to capturing before the read — accepting a read does
+        // not touch the panes, so they still carry the pre-read source.
+        let panes = self.capture_open_panes(cx);
         self.restore_open_panes(panes, cx);
         if !self.ui().conflict_merge_pending {
             self.refresh_commit_panel_after_reload(cx);
         }
+        // Analyze + File History (HEAD-versioned, refreshed in place).
         self.refresh_overlays_after_reload(self.view().head_oid.clone(), cx);
-        // The conflict pane's observation is the read model's `operation`
-        // (ADR-0196): no operation in progress means the conflict this pane
-        // still shows was resolved or aborted while the tab was away, so the
-        // pane goes with it. A live operation leaves it alone — async
-        // detection folds in a *changed* conflict in place, and an unchanged
-        // one must keep its undo stack and selection (#722 P2).
+        // Editor Workspace: the watcher does not follow a background tab, so
+        // its tree / buffers / external-change banner are as stale as anything
+        // else here and only this read says what the worktree now holds.
+        self.revalidate_editor_workspace(cx);
+        // Conflict is the one pane whose check is asynchronous: the read model
+        // says whether an operation is in progress, but only a detector run
+        // against *this* read can say whether it is still the same conflict.
         if self.view().operation.is_none() {
-            self.with_ui(|ui| ui.conflict = None);
+            // Resolved or aborted while the tab was away — the pane goes.
+            self.with_ui(|ui| {
+                ui.conflict = None;
+                ui.conflict_revalidated = true;
+            });
+        } else if !self.ui().conflict_revalidated {
+            // Re-detect against the accepted read and stay refused until
+            // `apply_conflict_detect` confirms the observation matches. It is
+            // not enough that *an* operation is in progress: a conflict that
+            // moved to another revision would otherwise re-admit Continue /
+            // Skip against the old `ResolutionBuffer` (#722 P1).
+            self.with_ui(|ui| ui.conflict_detected = false);
+            self.detect_conflict_mode_async(cx);
+            return;
         }
-        // Every retained pane has now been compared against the accepted read
-        // and either re-anchored or rebuilt, so the affordances come back
-        // (#722 P2). A failed read never reaches here: the panes stay refused.
         self.with_ui(|ui| ui.panes_revalidating = false);
     }
 }

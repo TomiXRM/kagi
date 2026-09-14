@@ -98,6 +98,7 @@ pub mod settings_view;
 pub mod sidebar;
 pub mod smart_commit;
 pub mod stash_menu;
+mod tab_ui_state_ops;
 mod tab_view;
 pub mod tabs;
 pub mod tag_menu;

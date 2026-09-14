@@ -449,6 +449,19 @@ impl KagiApp {
         }
     }
 
+    /// Re-read the Editor Workspace against the accepted read (#722 P2). The
+    /// FS watcher only follows the tab on screen, so a worktree change made
+    /// while this owner was in the background never reached the pane: its
+    /// tree, clean buffers and external-change banner are still the pre-switch
+    /// ones until this runs. Dirty buffers are not clobbered —
+    /// `on_worktree_changed` raises the banner for those instead.
+    pub(crate) fn revalidate_editor_workspace(&mut self, cx: &mut Context<Self>) {
+        let Some(view) = self.ui().editor_workspace.clone() else {
+            return;
+        };
+        view.update(cx, |v, cx| v.on_worktree_changed(cx));
+    }
+
     /// True when `session`'s retained Editor Workspace has unsaved buffers.
     /// Parameterized by session because `close_tab(index)` can target a
     /// background tab, not the one on screen (#722 P1 round 2 / ADR-0197 決定 5):

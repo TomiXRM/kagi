@@ -374,6 +374,20 @@ impl KagiApp {
                 }
             }
         }
+        // #722 P1: this detector ran against the accepted read (the guard at
+        // the top drops any result that does not), so the retained conflict
+        // pane has now been checked — updated in place, rebuilt, or dropped.
+        // That releases the asynchronous half of the revalidation gate. The
+        // synchronous half is `panes_stale`: whichever half finishes last
+        // re-admits the pane's mutations, so a conflict that moved to another
+        // revision can never re-admit Continue / Skip on the old buffer.
+        let sync_done = !self.scans_stale;
+        if let Some(ui) = self.ui.get_mut(&owner.session) {
+            ui.conflict_revalidated = true;
+            if sync_done {
+                ui.panes_revalidating = false;
+            }
+        }
     }
     /// Detect (or clear) Conflict Mode for the active session.
     ///

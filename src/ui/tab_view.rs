@@ -325,6 +325,13 @@ pub struct TabUiState {
     /// panes keep their entities — and so their undo stacks, selection and
     /// scroll — but every mutation affordance they offer is refused.
     pub panes_revalidating: bool,
+    /// The Conflict pane needs an **asynchronous** check: only a detector run
+    /// against the accepted read can say whether the retained `ConflictMode`
+    /// still describes the repository. Until that lands, the pane stays
+    /// refused even though the read itself is accepted, so a conflict that
+    /// moved to another revision while the tab was away can never re-admit
+    /// Continue / Skip against the old `ResolutionBuffer` (#722 P1).
+    pub conflict_revalidated: bool,
     /// Recomputable Analyze evidence; the pane entity is owned below.
     pub ecosystem_cache: Option<super::ecosystem::CachedMine>,
     pub ecosystem_inflight: bool,
@@ -376,6 +383,7 @@ impl Default for TabUiState {
             cleanup_prs_stale: false,
             conflict_detected: false,
             panes_revalidating: false,
+            conflict_revalidated: false,
             ecosystem_cache: None,
             ecosystem_inflight: false,
             ecosystem_gen: 0,
@@ -392,37 +400,6 @@ impl Default for TabUiState {
             commit_panel_open: false,
             main_diff: None,
             compare_view: None,
-        }
-    }
-}
-
-impl TabUiState {
-    /// Show `panel` as this session's commit panel. Commit *selection* and the
-    /// commit panel are mutually exclusive, and the open diff belongs to the
-    /// selection, so both are cleared here rather than at each call site.
-    pub fn open_commit_panel(&mut self, panel: Entity<super::commit_panel::CommitPanelView>) {
-        self.commit_panel = Some(panel);
-        self.commit_panel_open = true;
-        self.selected = None;
-        self.main_diff = None;
-    }
-
-    /// Replace the Smart Commit status line.
-    pub fn set_smart_commit_status(&mut self, msg: &str) {
-        self.smart_commit_status = Some(msg.to_string());
-    }
-
-    /// Collapse a sidebar group, or expand it when it is already collapsed.
-    pub fn toggle_branch_group(&mut self, key: &str) {
-        if !self.branch_groups_collapsed.remove(key) {
-            self.branch_groups_collapsed.insert(key.to_string());
-        }
-    }
-
-    /// Tick / untick one Branch Cleanup row.
-    pub fn toggle_cleanup_selection(&mut self, name: String) {
-        if !self.cleanup_selected.remove(&name) {
-            self.cleanup_selected.insert(name);
         }
     }
 }
@@ -741,6 +718,17 @@ impl KagiApp {
             .as_ref()
             .map(|operation| operation.observation.clone());
         self.app_sessions.observe_conflict(session, observed);
+        // #722: every path that replaces an owner's read model — activation
+        // load, manual reload (Cmd+R), the watcher's full reload, a remote
+        // refresh — reaches one of the three publish seams, and all three land
+        // here. So the revalidation transition is owned here rather than at
+        // each accept site, where a path that forgot it left the panes refused
+        // for good. The panes are non-authoritative from this moment until
+        // `revalidate_retained_panes` has checked them against this read.
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.panes_revalidating = true;
+            ui.conflict_revalidated = false;
+        }
         if self.active_session() != Some(session) {
             return;
         }

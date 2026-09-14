@@ -12,6 +12,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - GitHub and Branch Cleanup evidence now stays with its tab session, including results arriving in the background. Analyze caches and scan revisions cannot cross tab incarnations, and a newer HEAD supersedes an older mine. Conflict detection's run-once guard is session-local. (#643, Wave 4 S2b)
 - Cleanup and squash scan results are now bound to their owner's read revision as well as their scan generation. A read accepted in the background cannot be overwritten by obsolete deletion candidates, PR evidence, or squash connectors. (#717)
 - Cleanup and squash scans also track the exact published read model, closing the race where a scan and an accepted full load shared one read-request revision. (#717)
+- Commit-list pagination, commit and cleanup scroll positions, graph offset, branch-group folds, and cleanup selections now stay with the tab session that owns them; inspector and cleanup column layout remain window-wide. Smart Commit generation status likewise lands only on its initiating session, drops after that session closes, shares the single modal slot, and probes repository-independent capabilities once per window. (#643, ADR-0197 S3b/S3c)
 
 ## [0.37.0] — 2026-09-08
 

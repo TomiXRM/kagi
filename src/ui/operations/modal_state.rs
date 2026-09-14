@@ -11,6 +11,7 @@
 // them somewhere `active_modal` gets touched directly.
 mod conflict;
 mod editor;
+mod smart;
 mod window;
 
 use super::super::modals::ActiveModal;
@@ -24,7 +25,6 @@ use super::super::modals::{
     StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
     TrackingCheckoutPlanModal, TrustRepoModal, UnlockWorktreeModal,
 };
-use super::super::smart_commit::SmartCommitModal;
 use super::super::KagiApp;
 use gpui::{AppContext as _, Context, Window};
 use gpui_component::input::InputState;
@@ -38,12 +38,7 @@ impl KagiApp {
     pub(crate) fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
     }
-    /// Replace the shared modal slot without losing an unread notice. A modal
-    /// that displaces AppNotice must queue it regardless of actions because the
-    /// user did not dismiss it. Escape follows the separate actionable-only
-    /// dismissal rule in `cancel_open_modal` (#718 / ADR-0196). Every replacement
-    /// gets a fresh list viewport so scroll position from a different modal
-    /// cannot leak (#643).
+    /// Requeue any unread notice and reset modal-local scroll on replacement.
     fn replace_active_modal(&mut self, modal: ActiveModal) {
         if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
             self.app_notices.push_back(notice);
@@ -83,23 +78,6 @@ impl KagiApp {
     }
     pub fn clear_app_notice(&mut self) {
         if self.app_notice().is_some() {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn smart_commit_modal(&self) -> Option<&SmartCommitModal> {
-        match &self.active_modal {
-            Some(ActiveModal::SmartCommit(modal)) => Some(modal),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_smart_commit_modal(&mut self, modal: SmartCommitModal) {
-        self.replace_active_modal(ActiveModal::SmartCommit(modal));
-    }
-    #[inline]
-    pub fn clear_smart_commit_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::SmartCommit(_))) {
             self.active_modal = None;
         }
     }

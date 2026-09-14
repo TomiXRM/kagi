@@ -279,7 +279,6 @@ impl Render for KagiApp {
                 self.ui_mut().graph_scroll_x = max;
             }
         }
-
         // When the walk filled the current limit there may be more history to
         // pull in, so we append one extra "load more" row at the bottom of the
         // virtual list (rendered specially in the uniform_list processor).

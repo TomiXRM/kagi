@@ -1045,6 +1045,173 @@ pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS app_notice_modal_replacement");
 }
+/// #643 S3c: generation state and completion belong to the initiating session.
+/// Switching cannot paint them onto another tab, and closing the owner drops the
+/// result rather than delivering it to a same-path reopen.
+pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().expect("canonical A");
+    let repo_b = fixture_b.path().canonicalize().expect("canonical B");
+    let (app, window) = mount(cx, &repo_a);
+    let session_a = cx.read(|cx| app.read(cx).active_session().expect("A session"));
+
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(app, repo_a.clone(), cx);
+        app.smart_commit.llm_enabled = true;
+        app.smart_commit.provider =
+            kagi::ui::smart_commit::SmartProvider::Cli(kagi_git::message_gen::CliProvider::Codex);
+    });
+    kagi::ui::e2e::queue_smart_generation(
+        cx.background_executor
+            .spawn(async { Some(("generated for A".to_string(), true)) }),
+    );
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.smart_generate(window, cx));
+    })
+    .expect("start A generation");
+    assert!(
+        cx.read(|cx| app.read(cx).ui().smart_commit_generating),
+        "smart-owner-starts-on-a: the initiating session must own the spinner"
+    );
+
+    let session_b = app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        app.active_session().expect("B session")
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.ui().smart_commit_generating && app.ui().smart_commit_status.is_none(),
+            "smart-owner-b-never-shows-a: B must not inherit A's spinner or status"
+        );
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(app.active_session(), Some(session_b));
+        assert!(
+            !app.ui().smart_commit_generating && app.ui().smart_commit_status.is_none(),
+            "smart-owner-completion-stays-off-b: A's completion must not update active B"
+        );
+    });
+
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(app.active_session(), Some(session_a));
+        assert!(
+            !app.ui().smart_commit_generating
+                && app.ui().smart_commit_status.as_deref() == Some("Generated with local LLM"),
+            "smart-owner-a-restores-result: A must retain its own completed status"
+        );
+    });
+
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(app, repo_a.clone(), cx);
+    });
+    kagi::ui::e2e::queue_smart_generation(
+        cx.background_executor
+            .spawn(async { Some(("detached result".to_string(), true)) }),
+    );
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.smart_generate(window, cx));
+    })
+    .expect("start detached generation");
+    app.update(cx, |app, cx| {
+        let index = app
+            .tabs
+            .iter()
+            .position(|tab| tab.session == session_a)
+            .expect("A tab");
+        app.close_tab(index, cx);
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(app.active_session(), Some(session_b));
+        assert!(
+            !app.ui().smart_commit_generating && app.ui().smart_commit_status.is_none(),
+            "smart-detached-completion-stays-off-b: a detached owner's result must not fall through to the active tab"
+        );
+    });
+    let reopened = app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_a.clone(), cx), "reopen A");
+        app.active_session().expect("reopened A session")
+    });
+    assert_ne!(
+        reopened, session_a,
+        "smart-detached-reopen-has-new-owner: reopening must mint a fresh session"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.ui().smart_commit_generating && app.ui().smart_commit_status.is_none(),
+            "smart-detached-completion-is-dropped: a same-path reopen must not inherit the closed owner's result"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS smart_commit_generation_owner");
+}
+
+/// #643 S3c: capability detection is process/window-global, while Smart Commit
+/// presentation uses the same ActiveModal slot and key routing as every modal.
+pub fn scenario_smart_commit_modal_and_probe(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().expect("canonical A");
+    let repo_b = fixture_b.path().canonicalize().expect("canonical B");
+    let (app, window) = mount(cx, &repo_a);
+
+    app.update(cx, |app, cx| {
+        app.smart_commit_probe_revision = 7;
+        kagi::ui::e2e::open_local_panel_no_inputs(app, repo_a.clone(), cx);
+        app.select_headless(1);
+        kagi::ui::e2e::seed_modal_list_scroll(app, 3);
+        assert_eq!(
+            kagi::ui::e2e::modal_list_scroll_top(app),
+            3,
+            "modal-list-scroll-seed"
+        );
+        app.set_smart_commit_modal(kagi::ui::smart_commit::SmartCommitModal::ModelPicker {
+            models: vec!["fixture".to_string()],
+        });
+        assert_eq!(
+            kagi::ui::e2e::modal_list_scroll_top(app),
+            0,
+            "modal-list-scroll-resets-on-replacement: each modal must start at the top"
+        );
+    });
+    press_enter(cx, &app, window);
+    assert!(
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.smart_commit_modal().is_some() && app.plan_modal().is_none()
+        }),
+        "smart-modal-enter-does-not-checkout: Enter must stay in the Smart Commit modal slot"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).smart_commit_modal().is_none()),
+        "smart-modal-escape-closes-slot: Esc must close Smart Commit"
+    );
+
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        kagi::ui::e2e::open_local_panel_no_inputs(app, repo_b, cx);
+        kagi::ui::e2e::ensure_smart_commit_detection(app, cx);
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).smart_commit_probe_revision),
+        7,
+        "smart-probe-is-global: opening a different repository must not rerun capability detection"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS smart_commit_modal_and_probe");
+}
 
 /// #718: the update installer is window-owned operation state. Closing or
 /// replacing its presentation cannot erase progress, allow a duplicate start,

@@ -527,6 +527,22 @@ pub(crate) fn take_smart_generation() -> Option<SmartGenerationTask> {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    app.ensure_smart_commit_detection(cx);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn seed_modal_list_scroll(app: &KagiApp, item: usize) {
+    app.modal_list_scroll
+        .scroll_to_item(item, gpui::ScrollStrategy::Center);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn modal_list_scroll_top(app: &KagiApp) -> usize {
+    app.modal_list_scroll.logical_scroll_top_index()
+}
+
+#[cfg(feature = "gui-e2e")]
 pub type RemoteOpenResult = Result<(String, kagi_git::RepoSnapshot), String>;
 #[cfg(feature = "gui-e2e")]
 type RemoteOpenTask = gpui::Task<RemoteOpenResult>;

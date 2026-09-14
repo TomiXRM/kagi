@@ -32,6 +32,18 @@ fn build_linear_fixture(root: &Path, name: &str) -> PathBuf {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", &format!("{name} {i}")]);
     }
+    if name == "alpha" {
+        // Keep enough concurrent lanes to make horizontal graph scroll valid;
+        // otherwise render correctly clamps any synthetic offset back to zero.
+        for i in 0..40 {
+            let branch = format!("side-{i}");
+            git(&repo, &["checkout", "-q", "-b", &branch, "HEAD~2"]);
+            std::fs::write(repo.join(format!("side-{i}.txt")), format!("{i}\n")).unwrap();
+            git(&repo, &["add", "."]);
+            git(&repo, &["commit", "-q", "-m", &branch]);
+            git(&repo, &["checkout", "-q", "main"]);
+        }
+    }
     repo.canonicalize().unwrap()
 }
 
@@ -165,24 +177,20 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
 
     let session_a = kagi.read_with(cx, |app, _| app.active_session().expect("A session"));
     let a_limit = kagi.update(cx, |app, cx| {
-        app.ui()
-            .commit_scroll_handle
-            .scroll_to_item(2, ScrollStrategy::Center);
-        app.ui()
-            .cleanup_scroll
-            .scroll_to_item(1, ScrollStrategy::Center);
+        app.load_more_commits(cx);
         let ui = app.ui_mut();
         ui.graph_scroll_x = 42.0;
         ui.branch_groups_collapsed.insert("local:feature".into());
-        ui.cleanup_selected.insert("feature/old".into());
-        app.load_more_commits(cx);
-        app.ui().commit_limit
+        ui.commit_limit
     });
 
     let session_b = kagi.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b.clone(), cx), "open B");
         app.tabs[1].session
     });
+    // Seed the retained owner's list positions while it is off-screen. This
+    // isolates session ownership from each list's viewport clamping behavior.
+    let a_cleanup_name = "feature/old".to_owned();
     let b_initial_limit = kagi.read_with(cx, |app, _| {
         assert_eq!(app.active_session(), Some(session_b));
         assert_eq!(
@@ -221,6 +229,13 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     );
     assert_ne!(session_a, session_b, "each tab is its own owner");
     cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        let ui = app.ui.get_mut(&session_a).expect("A ui");
+        ui.commit_scroll_handle
+            .scroll_to_item(2, ScrollStrategy::Center);
+        ui.cleanup_scroll.scroll_to_item(1, ScrollStrategy::Center);
+        ui.cleanup_selected.insert(a_cleanup_name.clone());
+    });
 
     // ── the selection belongs to the tab that made it ─────────────────────
     kagi.update(cx, |app, _| {
@@ -235,6 +250,10 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     kagi.update(cx, |app, cx| {
         app.switch_repo(0, cx); // → A
         assert_eq!(app.active_session(), Some(session_a));
+        assert!(
+            app.ui().cleanup_selected.contains(&a_cleanup_name),
+            "A cleanup selection was lost on the first restore",
+        );
         assert_eq!(
             app.ui().selected,
             None,
@@ -242,6 +261,10 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
         );
         app.select(2);
         assert_eq!(app.ui().selected, Some(2));
+        assert!(
+            app.ui().cleanup_selected.contains(&a_cleanup_name),
+            "selecting a commit cleared A cleanup selection",
+        );
 
         app.switch_repo(1, cx); // → B
         assert_eq!(
@@ -281,7 +304,7 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             "A's branch fold was not restored",
         );
         assert!(
-            app.ui().cleanup_selected.contains("feature/old"),
+            app.ui().cleanup_selected.contains(&a_cleanup_name),
             "A's cleanup selection was not restored",
         );
     });

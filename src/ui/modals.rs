@@ -755,7 +755,6 @@ impl From<String> for AppNotice {
         }
     }
 }
-
 pub enum ActiveModal {
     RemoteBrowse(super::remote_browse::RemoteBrowseModal),
     Update(UpdateModal),
@@ -802,7 +801,6 @@ pub enum ActiveModal {
     EditorDeleteConfirm(EditorDeleteConfirmModal),
     TrustRepo(TrustRepoModal),
 }
-
 impl ActiveModal {
     /// True for confirmation state that must be dropped with its repository.
     /// Window-global variants are false; the exhaustive match forces every new

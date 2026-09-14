@@ -92,6 +92,10 @@ mod read_owner;
 mod tab_ui_state;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/cache_history_owner.rs"]
+mod cache_history_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_refresh_owner.rs"]
 mod remote_refresh_owner;
 
@@ -885,6 +889,28 @@ mod macos {
             (
                 "tab_ui_state_background_reload",
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
+            ),
+            (
+                "read_cache_revalidates_on_activation",
+                Box::new(
+                    crate::cache_history_owner::scenario_read_cache_revalidates_on_activation,
+                ),
+            ),
+            (
+                "operation_history_session_and_stale_ref",
+                Box::new(
+                    crate::cache_history_owner::scenario_operation_history_session_and_stale_ref,
+                ),
+            ),
+            (
+                "background_operation_history_owner",
+                Box::new(
+                    crate::cache_history_owner::scenario_background_operation_history_owner,
+                ),
+            ),
+            (
+                "welcome_drops_root_main_diff",
+                Box::new(crate::cache_history_owner::scenario_welcome_drops_root_main_diff),
             ),
             (
                 "remote_refresh_departed_owner",

@@ -273,7 +273,8 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 /// S1 owns selection; S2b adds disposable evidence and cache data. S3b adds
 /// disposable positioning handles after classifying `UniformListScrollHandle`
 /// as plain `Rc<RefCell<...>>` state with no task, subscription, entity, or
-/// callback lifecycle (ADR-0197).
+/// callback lifecycle. S4 adds recomputable read caches and the pure undo/redo
+/// cursor. Pane entities remain root-owned until S5 (ADR-0197).
 #[derive(Clone)]
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
@@ -294,6 +295,18 @@ pub struct TabUiState {
     pub smart_commit_status: Option<String>,
     /// Identifies the published model, independently of read-request revisions.
     pub view_publish_gen: u64,
+    /// Invalidates async cache writers on activation and row renumbering.
+    pub cache_epoch: u64,
+    /// Recomputable diff data. Contains only owned collections and `Arc<FileDiff>`.
+    pub diff_caches: super::diff_cache::DiffCaches,
+    /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
+    pub wip_diffstat: Option<super::WipDiffStat>,
+    /// Watcher baseline; absent until this activation observes the worktree.
+    pub last_working_status: Option<kagi_git::WorkingTreeStatus>,
+    /// Session-local undo/redo cursor. Backend plan and preflight reject moved refs.
+    pub operation_history: kagi_git::OperationHistory,
+    /// Reflog seeding is attempted once per attached session.
+    pub history_seed_attempted: bool,
     /// Open-PR evidence belongs to this session, including failures and absence.
     pub github_prs: Vec<kagi_domain::github::PullRequest>,
     pub github_prs_loaded: bool,
@@ -327,6 +340,12 @@ impl Default for TabUiState {
             smart_commit_status: None,
             cleanup_selected: HashSet::new(),
             view_publish_gen: 0,
+            cache_epoch: 0,
+            diff_caches: super::diff_cache::DiffCaches::default(),
+            wip_diffstat: None,
+            last_working_status: None,
+            operation_history: kagi_git::OperationHistory::new(),
+            history_seed_attempted: false,
             github_prs: Vec::new(),
             github_prs_loaded: false,
             github_error: None,
@@ -354,21 +373,25 @@ fn now_unix_secs() -> i64 {
 }
 
 impl KagiApp {
-    /// W6-TABSPEED: assign a [`TabViewState`] into `self` (main thread, no I/O).
-    ///
-    /// This is pure field assignment — the snapshot read + `build_tab_view`
-    /// happens elsewhere (inline in `reload`, or on a background thread for
-    /// async tab switches).  It deliberately does *not* touch transient UI
-    /// state (selection / modals / panels); callers reset those as needed.
-    /// Issue #286: drop every UI state keyed by commit-row index that a graph
-    /// renumber (tab switch, external reload, solo toggle) would otherwise leave
-    /// pointing at the wrong commit. `diff_caches` keys `changed_files` /
-    /// `diffstat` / `file_content` / `*_inflight` by row index; `main_diff` /
-    /// `compare_view` render the previously-selected row's diff; `commit_menu` /
-    /// `inspector_file_menu` are row/file-index context menus. `selected` is NOT
-    /// touched — callers re-resolve it by CommitId. (No `cx`; pure field reset.)
-    pub fn invalidate_caches_for_row_renumber(&mut self) {
-        self.diff_caches.clear();
+    /// Make retained read caches non-authoritative before an activation read.
+    pub(crate) fn begin_session_revalidation(&mut self, session: crate::app::SessionId) {
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
+            ui.diff_caches.clear();
+            ui.wip_diffstat = None;
+            ui.last_working_status = None;
+        }
+    }
+
+    /// Drop row-indexed caches for `session`; S5 pane entities are active-only.
+    pub fn invalidate_caches_for_row_renumber(&mut self, session: crate::app::SessionId) {
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
+            ui.diff_caches.clear();
+        }
+        if self.active_session() != Some(session) {
+            return;
+        }
         self.main_diff = None;
         self.compare_view = None;
         self.commit_menu = None;
@@ -655,7 +678,7 @@ impl KagiApp {
         // Centralize the invalidation here — the same reason `view_epoch` /
         // `scans_stale` live here — so no apply site can forget it. Callers still
         // re-resolve `selected` by CommitId (there is no `cx` here).
-        self.invalidate_caches_for_row_renumber();
+        self.invalidate_caches_for_row_renumber(session);
 
         // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
         // lane_color(rank-in-worktrees-list), so record the same rank on the tab.

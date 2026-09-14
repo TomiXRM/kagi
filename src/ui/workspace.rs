@@ -502,10 +502,10 @@ impl WorkspaceItem for InspectorItem {
         // unavailable)"), as the old `Option<Option<..>>` plumbing did.
         let selected = app.ui().selected;
         let files: Option<Vec<super::FileStatus>> = selected
-            .and_then(|i| app.diff_caches.changed_files.get(&i).cloned())
+            .and_then(|i| app.ui().diff_caches.changed_files.get(&i).cloned())
             .flatten();
-        let diffstat = selected.and_then(|i| app.diff_caches.diffstat.get(&i).cloned());
-        let generated = selected.and_then(|i| app.diff_caches.generated.get(&i).cloned());
+        let diffstat = selected.and_then(|i| app.ui().diff_caches.diffstat.get(&i).cloned());
+        let generated = selected.and_then(|i| app.ui().diff_caches.generated.get(&i).cloned());
         render_inspector_body(app, files, diffstat, generated, None, cx)
     }
     // The inspector has no per-repo entity: `inspector_visible` is a global

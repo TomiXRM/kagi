@@ -194,6 +194,7 @@ impl KagiApp {
             self.repo_session = None;
             self.remote_view = Some(rv);
             self.reset_per_repo_ui();
+            self.begin_session_revalidation(tab.session);
             // #482 stage 2: the remote snapshot belongs to this tab's session
             // and never left it, so there is nothing to copy back. A restored
             // session has no read for it (the SSH snapshot was never persisted)
@@ -220,6 +221,7 @@ impl KagiApp {
         // Reset every per-repo UI surface up-front so a cached instant-apply
         // never shows the previous tab's selection / modals (ADR-0027).
         self.reset_per_repo_ui();
+        self.begin_session_revalidation(tab.session);
         // GitHub Phase 1: refetch PRs for the new repo right away (the
         // ticker alone left the tab at 0 PRs until its next tick).
         self.refresh_github_prs(cx);
@@ -242,7 +244,6 @@ impl KagiApp {
                 FooterStatus::Busy(SharedString::from(i18n::loading_fmt(&tab.name)));
         }
         self.on_view_switched();
-        self.refresh_wip_diffstat();
 
         // Re-arm the watcher for the new repo and repaint immediately so the
         // instant-apply / loading placeholder is visible this frame.
@@ -441,12 +442,6 @@ impl KagiApp {
     fn reset_per_repo_ui(&mut self) {
         self.app_sessions.invalidate_plan();
         self.pr_menu = None;
-        self.diff_caches.clear();
-        self.wip_diffstat = None;
-        // The watcher's "status unchanged → nothing to do" short-circuit
-        // compares against this; leaving the previous repo's status here made
-        // it compare against a foreign tree.
-        self.last_working_status = None;
         // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose
         // loop below (MainDiffItem), like the other registered panes.
         // #492: a confirmation is bound to the repo it was planned against —
@@ -475,11 +470,6 @@ impl KagiApp {
         self.conflict = None;
         self.conflict_merge_pending = false;
         self.ui_mut().conflict_detected = false;
-        // ADR-0084: drop the previous repo's undo/redo history and re-arm the
-        // reflog seed so the next repo seeds its own (else Cmd+Z would target
-        // the old repo's branch).
-        self.operation_history = kagi_git::OperationHistory::new();
-        self.history_seed_attempted = false;
     }
     /// Snapshot + build the [`TabViewState`] on a background thread
     /// (`RepoSnapshot` is `Send`), then hand it to its **owner** on the main
@@ -507,29 +497,35 @@ impl KagiApp {
             let snap = backend
                 .snapshot_repairing_stat_cache(commit_limit)
                 .map_err(|e| i18n::op_failed(i18n::Op::Snapshot, e))?;
+            let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
+            let status = snap.status.clone();
             let repo_name = bg_path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| bg_name.clone());
-            Ok::<super::TabViewState, String>(super::build_tab_view(&snap, &repo_name))
+            let view = super::build_tab_view(&snap, &repo_name);
+            Ok::<_, String>((view, wip_diffstat, status))
         });
 
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 match result {
-                    Ok(view) => {
+                    Ok((view, wip_diffstat, status)) => {
                         let rows = view.rows.len();
                         // Superseded (a newer read, or a mutation admitted
                         // against this owner) → write nothing, say nothing.
                         if !app.accept_tab_view(key, view) {
                             return;
                         }
+                        if let Some(ui) = app.ui.get_mut(&session) {
+                            ui.wip_diffstat = Some(wip_diffstat);
+                            ui.last_working_status = Some(status);
+                        }
                         app.app_sessions.read_applied(session);
                         if app.active_session() != Some(session) {
                             return; // background owner: data only, no display.
                         }
-                        app.refresh_wip_diffstat();
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =
                                 FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
@@ -658,15 +654,12 @@ impl KagiApp {
     /// overlay.
     fn show_welcome(&mut self) {
         self.error = None;
-        // #482 stage 2: with no tab there is no session, so `view()` is already
-        // the empty read model — the twenty blank field assignments this used to
-        // carry (and the whole second `KagiApp` it built them from) are gone.
+        // With no tab, `view()` is already the empty read model (#482).
         // T-PERF-RENDER-002: bump the epoch so the sidebar-rows cache misses.
         self.view_epoch = self.view_epoch.wrapping_add(1);
         self.ui_mut().selected = None;
-        self.diff_caches.clear();
+        // MainDiff remains root-owned until ADR-0197 S5.
         self.main_diff = None;
-        self.wip_diffstat = None;
         // #492: a confirmation is bound to the repo it was planned against —
         // its plan, paths, stash indices and OIDs all came from that repo, while
         // the confirm methods read `self.repo_path` at Enter time. Dropping the

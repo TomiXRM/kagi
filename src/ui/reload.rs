@@ -75,13 +75,14 @@ impl KagiApp {
         };
         let view = build_tab_view(&snap, &repo_name);
         self.ui_mut().selected = None;
-        self.diff_caches.clear();
-        self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
         self.publish_tab_view(session, view);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.wip_diffstat = Some(wip_diffstat);
+            ui.last_working_status = Some(snap.status.clone());
+        }
         self.seed_history_from_reflog(&repo);
-        self.last_working_status = Some(snap.status.clone());
         // Conflict detection intentionally deferred to the launch-time
         // cx-bearing path (see the doc comment).
     }
@@ -106,7 +107,7 @@ impl KagiApp {
         // repo-open/snapshot error.)
         let key = self.reads.begin(session);
         let want_panel = self.conflict_merge_pending;
-        let want_reflog = self.operation_history.is_empty();
+        let want_reflog = self.ui().operation_history.is_empty();
         let data =
             match read_reload_data(&repo_path, self.ui().commit_limit, want_panel, want_reflog) {
                 Ok(d) => d,
@@ -176,8 +177,22 @@ impl KagiApp {
         // switch set is stateful and has to be settled here, or a Cmd+R during
         // the first load leaves the status bar Busy forever.
         let first_read = !self.reads.has_read(session);
+        let status = snap.status.clone();
         if !self.accept_tab_view(key, view) {
             return;
+        }
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.wip_diffstat = Some(wip_diffstat);
+            ui.last_working_status = Some(status);
+        }
+        if let Some(reflog) = reflog {
+            if self
+                .ui
+                .get(&session)
+                .is_some_and(|ui| ui.operation_history.is_empty())
+            {
+                self.apply_reflog_seed_for(session, reflog);
+            }
         }
         self.app_sessions.read_applied(session);
         // The owner is not the tab on screen: its data is refreshed, but none of
@@ -187,8 +202,6 @@ impl KagiApp {
             return;
         }
 
-        self.diff_caches.clear();
-        self.wip_diffstat = Some(wip_diffstat);
         self.main_diff = None;
         self.compare_view = None;
         // Compare first: the diff restore looks its file up in the refreshed
@@ -265,20 +278,6 @@ impl KagiApp {
 
         // ADR-0119 follow-up: refresh (never close) the HEAD-versioned overlays.
         self.refresh_overlays_after_reload(self.view().head_oid.clone(), cx);
-
-        // ADR-0084: seed the undo/redo history from the branch reflog when it is
-        // empty (freshly-opened repo / post-branch-switch) so Cmd+Z works
-        // immediately. Only seed when empty — never clobber the in-session stack.
-        // (`want_reflog` was captured at read time; re-check emptiness here in
-        // case an in-session op recorded history while the read was in flight.)
-        if let Some(reflog) = reflog {
-            if self.operation_history.is_empty() {
-                self.apply_reflog_seed(reflog);
-            }
-        }
-
-        // Baseline for the FS watcher's working-tree path (skip-if-unchanged).
-        self.last_working_status = Some(snap.status.clone());
 
         // W30-CONFLICT-UI / ADR-0056: re-detect Conflict Mode every reload so a
         // conflict produced by the GUI's own operation OR by external CLI (the
@@ -523,7 +522,7 @@ impl KagiApp {
             .get(&session)
             .map_or(DEFAULT_COMMIT_LIMIT, |ui| ui.commit_limit);
         let want_panel = self.conflict_merge_pending;
-        let want_reflog = self.operation_history.is_empty();
+        let want_reflog = self.ui().operation_history.is_empty();
         let apply_path = bg_path.clone();
         // ADR-0104 / #288: move the whole heavy git read (open + full snapshot +
         // per-branch ahead/behind + every linked worktree's status + wip diffstat
@@ -560,11 +559,11 @@ impl KagiApp {
     ///
     /// Files changed on disk outside `.git` — so the WIP / working-tree status may
     /// have changed, but the commit graph did not. Computes the new status on a
-    /// **background thread** and only does a (full) refresh if it actually differs
-    /// from [`Self::last_working_status`]. This makes churn that doesn't affect the
-    /// parent repo's status (e.g. writes inside a nested worktree, which
-    /// `working_tree_status` treats as opaque) a cheap no-op — no UI-thread work,
-    /// no reload storm — while real edits/adds/deletes update the WIP promptly.
+    /// **background thread** and only does a full refresh if it differs from the
+    /// active session's retained watcher baseline. Clearing that baseline on
+    /// activation makes the first post-return event conservative. Churn that
+    /// does not affect the parent repo's status (for example, writes inside a
+    /// nested worktree) remains a cheap no-op.
     pub fn refresh_working_tree_external(&mut self, cx: &mut Context<Self>) {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
@@ -617,10 +616,17 @@ impl KagiApp {
                 if let Some(ev) = app.editor_workspace.clone() {
                     ev.update(cx, |v, cx| v.on_worktree_changed(cx));
                 }
-                if app.last_working_status.as_ref() == Some(&new_status) {
-                    if app.wip_diffstat != Some(wip_diffstat) {
-                        app.wip_diffstat = Some(wip_diffstat);
-                        cx.notify();
+                let status_unchanged = app
+                    .ui
+                    .get(&session)
+                    .and_then(|ui| ui.last_working_status.as_ref())
+                    == Some(&new_status);
+                if status_unchanged {
+                    if let Some(ui) = app.ui.get_mut(&session) {
+                        if ui.wip_diffstat != Some(wip_diffstat) {
+                            ui.wip_diffstat = Some(wip_diffstat);
+                            cx.notify();
+                        }
                     }
                     return; // working-tree status unchanged → nothing to do.
                 }
@@ -632,15 +638,17 @@ impl KagiApp {
                 // #482 stage 2: a status-only change updates the owner's read
                 // model **in place** — the commit rows, details and ref lists it
                 // does not touch are not copied.
-                let view = app.view_mut();
+                let view = app.reads.get_mut(Some(session));
                 view.status_summary.is_dirty = new_status.is_dirty();
                 view.status_summary.staged = new_status.staged.len();
                 view.status_summary.unstaged = new_status.unstaged.len();
                 view.status_summary.untracked = new_status.untracked.len();
                 view.status_summary.conflict_count = new_status.conflicted.len();
                 view.is_dirty = new_status.is_dirty();
-                app.last_working_status = Some(new_status);
-                app.wip_diffstat = Some(wip_diffstat);
+                if let Some(ui) = app.ui.get_mut(&session) {
+                    ui.last_working_status = Some(new_status);
+                    ui.wip_diffstat = Some(wip_diffstat);
+                }
                 // Refresh the open commit panel's lists in place (keeps it open).
                 // ADR-0118 (correction #6c): update the entity, never rebuild via
                 // a parent render read.

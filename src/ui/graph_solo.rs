@@ -64,7 +64,9 @@ impl KagiApp {
         // Issue #286: every path below renumbers `rows`, so drop the row-index-
         // keyed caches/menus (same reason `on_view_published` does). `selected` is
         // re-resolved by CommitId in each branch, so it is left alone here.
-        self.invalidate_caches_for_row_renumber();
+        if let Some(session) = self.active_session() {
+            self.invalidate_caches_for_row_renumber(session);
+        }
 
         if already_soloed {
             // Restore the full row set saved at solo-on.

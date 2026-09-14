@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// Cohesive per-row diff / changed-files cache cluster (ADR-0118 Phase 5.2).
 /// Read inside `KagiApp::render`; deliberately NOT an `Entity` (no notify-scope
 /// to isolate — see ADR-0118 Mechanism A). Invalidated as a unit via `clear()`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct DiffCaches {
     /// Changed-files list per commit row (`None` = load attempted but failed). (was `diff_cache`)
     pub changed_files: HashMap<usize, Option<Vec<FileStatus>>>,

@@ -141,6 +141,15 @@ pub fn seed_diff_selection() {
 pub fn diff_selection_present() -> bool {
     super::diff_selection::selected_text().is_some()
 }
+#[cfg(feature = "gui-e2e")]
+pub fn begin_update_install_for_test(app: &mut KagiApp) -> bool {
+    app.begin_update_install()
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn fail_update_install_for_test(app: &mut KagiApp, error: &str) {
+    app.finish_update_install_failure(error);
+}
 
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.
 /// (`gpui_platform` is a normal dep, so the runner cannot call it directly.)

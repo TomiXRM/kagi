@@ -888,12 +888,13 @@ pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
     press_enter(cx, &app, window);
     cx.run_until_parked();
     cx.read(|cx| {
-        let modal = app
-            .read(cx)
-            .update_modal()
-            .expect("update-enter-consumed: Enter must leave the view-only modal open");
-        assert!(!modal.installing);
-        assert!(modal.status.is_none());
+        let app = app.read(cx);
+        assert!(
+            app.update_modal().is_some(),
+            "update-enter-consumed: Enter must leave the view-only modal open"
+        );
+        assert!(!app.update_installing);
+        assert!(app.update_status.is_none());
     });
     assert_eq!(
         output(repo, &["rev-parse", "HEAD"]),
@@ -910,6 +911,68 @@ pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS window_modal_exclusivity");
+}
+
+/// #718: the update installer is window-owned operation state. Closing or
+/// replacing its presentation cannot erase progress, allow a duplicate start,
+/// or hide a later failure; the same modal remains cancellable on Welcome.
+pub fn scenario_update_install_lifecycle(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+
+    app.update(cx, |app, _| {
+        app.update_available = Some(fake_update_offer());
+        app.open_update_modal();
+        assert!(
+            kagi::ui::e2e::begin_update_install_for_test(app),
+            "update-install-first-start: the idle window operation must start"
+        );
+        app.cancel_update_modal();
+        app.open_update_modal();
+        assert!(
+            !kagi::ui::e2e::begin_update_install_for_test(app),
+            "update-install-no-double-start: reopening the modal must not start a second installer"
+        );
+        app.cancel_update_modal();
+        kagi::ui::e2e::fail_update_install_for_test(app, "simulated failure");
+        app.open_update_modal();
+    });
+    kagi::ui::e2e::clear_control_bounds(window.window_id(), "update/status");
+    paint(cx, window);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.update_installing
+                && app
+                    .update_status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("simulated failure")),
+            "update-install-completion-outlives-modal: completion must update window state after the modal closes"
+        );
+    });
+    assert!(
+        kagi::ui::e2e::control_bounds(window.window_id(), "update/status").is_some(),
+        "update-install-result-visible-after-reopen: reopening must render the retained completion status"
+    );
+
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.tabs.is_empty() && app.update_modal().is_some()
+        }),
+        "update-welcome-keeps-window-modal: closing the last tab must retain Update on Welcome"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).update_modal().is_none()),
+        "update-welcome-escape-closes-modal: Esc on Welcome must close the single modal slot"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS update_install_lifecycle");
 }
 
 /// #564: a branch context-menu overlay is not a confirmation modal. Enter

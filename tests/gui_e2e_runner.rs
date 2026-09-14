@@ -601,6 +601,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_window_modal_exclusivity),
             ),
             (
+                "update_install_lifecycle",
+                Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
+            ),
+            (
                 "branch_menu_no_checkout_fallthrough",
                 Box::new(crate::recovery_operations::scenario_branch_menu_no_checkout_fallthrough),
             ),

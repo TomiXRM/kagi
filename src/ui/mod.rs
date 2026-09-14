@@ -1282,6 +1282,13 @@ pub struct KagiApp {
     )>,
     /// Run-once guard for the startup update check.
     pub update_checked: bool,
+    /// Window-owned update installer state. An install is an operation, not
+    /// modal presentation: closing/replacing the modal must not erase it or
+    /// permit a second installer to start (#718 / ADR-0197).
+    pub update_installing: bool,
+    /// Latest installer progress/failure, retained while the modal is closed so
+    /// reopening Update presents the completion result.
+    pub update_status: Option<SharedString>,
     /// Last loaded working-tree status, used by the FS watcher's working-tree
     /// path to skip a refresh when nothing the parent repo cares about changed
     /// (e.g. churn inside a nested worktree, which `working_tree_status` treats as
@@ -1500,6 +1507,8 @@ impl KagiApp {
             conflict_merge_pending: false,
             update_available: None,
             update_checked: false,
+            update_installing: false,
+            update_status: None,
             last_working_status: None,
             file_history: None,
             file_history_head: None,
@@ -1941,20 +1950,32 @@ impl KagiApp {
         .detach();
     }
 
-    /// Download + verify + install the offered update, then relaunch. On failure
-    /// the running install is untouched and the error is shown in the modal.
+    /// Claim the window-owned installer operation. This guard deliberately
+    /// does not depend on modal presentation: closing and reopening Update
+    /// while the task runs must not start a second installer (#718).
+    fn begin_update_install(&mut self) -> bool {
+        if self.update_installing {
+            return false;
+        }
+        self.update_installing = true;
+        self.update_status = Some(SharedString::from("Downloading & verifying…"));
+        true
+    }
+
+    fn finish_update_install_failure(&mut self, error: impl std::fmt::Display) {
+        self.update_installing = false;
+        self.update_status = Some(SharedString::from(format!("Update failed: {error}")));
+    }
+
+    /// Download + verify + install the offered update, then relaunch. A failure
+    /// is retained on the window-owned operation state even if the modal closed.
     fn start_update_install(&mut self, cx: &mut Context<Self>) {
         let Some((plan, release)) = self.update_available.clone() else {
             return;
         };
-        let Some(update) = self.update_modal_mut() else {
-            return;
-        };
-        if update.installing {
+        if self.update_modal().is_none() || !self.begin_update_install() {
             return;
         }
-        update.installing = true;
-        update.status = Some(SharedString::from("Downloading & verifying…"));
         cx.notify();
         let task = cx.background_spawn(async move {
             crate::update::install(&plan, &release, &|m| klog!("update: {m}"))
@@ -1968,11 +1989,8 @@ impl KagiApp {
                 }
                 Err(e) => {
                     klog!("update: failed: {e}");
-                    if let Some(update) = app.update_modal_mut() {
-                        update.installing = false;
-                        update.status = Some(SharedString::from(format!("Update failed: {e}")));
-                        cx.notify();
-                    }
+                    app.finish_update_install_failure(e);
+                    cx.notify();
                 }
             });
         })

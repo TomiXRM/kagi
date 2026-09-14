@@ -161,13 +161,19 @@ impl KagiApp {
                 render_remote_browse(modal, modal_focus, cx),
             ))
         })
-        .when_some(self.update_modal().cloned(), |el, modal| {
+        .when_some(self.update_modal(), |el, _modal| {
             let Some((plan, _)) = self.update_available.as_ref() else {
                 return el;
             };
             el.child(super::e2e::measure_control(
                 "active-modal/update",
-                render_update_modal(plan.clone(), modal.installing, modal.status, window, cx),
+                render_update_modal(
+                    plan.clone(),
+                    self.update_installing,
+                    self.update_status.clone(),
+                    window,
+                    cx,
+                ),
             ))
         })
     }
@@ -458,13 +464,19 @@ impl KagiApp {
             el.child(render_smart_commit_modal(modal, cx))
         })
         // ── Auto-update modal overlay (ADR-0082) ──────────
-        .when_some(update_modal, |el, modal| {
+        .when_some(update_modal, |el, _modal| {
             let Some((plan, _)) = self.update_available.as_ref() else {
                 return el;
             };
             el.child(super::e2e::measure_control(
                 "active-modal/update",
-                render_update_modal(plan.clone(), modal.installing, modal.status, window, cx),
+                render_update_modal(
+                    plan.clone(),
+                    self.update_installing,
+                    self.update_status.clone(),
+                    window,
+                    cx,
+                ),
             ))
         })
     }

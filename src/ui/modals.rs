@@ -12,11 +12,12 @@ pub use super::modal_plan::ModalPlan;
 pub(crate) use super::modal_plan::{
     plan_or_exec_error, plan_outcome, session_unavailable, SESSION_UNAVAILABLE,
 };
+/// Presentation marker for the window-global update modal.
+///
+/// The running installer state outlives this value: closing or replacing the
+/// modal must not make an in-flight install restartable (#718 / ADR-0197).
 #[derive(Clone, Default)]
-pub struct UpdateModal {
-    pub installing: bool,
-    pub status: Option<SharedString>,
-}
+pub struct UpdateModal;
 // ──────────────────────────────────────────────────────────────
 // CheckoutPlanModal — state for the plan confirmation overlay (T013)
 // ──────────────────────────────────────────────────────────────

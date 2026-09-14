@@ -42,14 +42,6 @@ impl KagiApp {
     }
 
     #[inline]
-    pub fn update_modal_mut(&mut self) -> Option<&mut UpdateModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::Update(modal)) => Some(modal),
-            _ => None,
-        }
-    }
-
-    #[inline]
     pub fn set_update_modal(&mut self, modal: UpdateModal) {
         self.active_modal = Some(ActiveModal::Update(modal));
     }

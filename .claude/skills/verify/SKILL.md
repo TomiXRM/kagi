@@ -157,14 +157,17 @@ App keybindings, command-registry keybindings, and native menus share their
 installation path with `run_app`; component initialization must precede that
 installation so app bindings keep the same precedence. For menu/Enter routing,
 PM can scope
-`KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough,remote_browse_modal_routing,window_modal_exclusivity`.
+`KAGI_GUI_E2E_ONLY=branch_menu_no_checkout_fallthrough,modal_no_fallthrough,remote_browse_modal_routing,window_modal_exclusivity,update_install_lifecycle`.
 The menu and modal scenarios in `tests/recovery/operations.rs` select a non-HEAD
 commit and prove Enter cannot fall through to checkout. Remote Browse also proves
 that Enter runs its frontmost validation and Esc does not clear the diff selection
 behind it. The window-modal scenario records the rendered Remote Browse, Update,
 and AppNotice overlays: an arriving notice waits behind the occupied slot, Update
-consumes Enter without acting, and Esc closes it. Native foreground/input-focus
-behavior remains a separate Tier B check.
+consumes Enter without acting, and Esc closes it. The update-lifecycle scenario
+proves an installer remains window-owned while its modal is closed, rejects a
+second start after reopening, renders a retained completion, and closes via Escape
+after the last repository tab transitions the window to Welcome. Native
+foreground/input-focus behavior remains a separate Tier B check.
 
 The runner's screenshot capture is best-effort only; its assertions, clipboard
 checks, refs, and persisted oplog records are the oracle. It cannot run from the

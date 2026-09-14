@@ -2344,6 +2344,7 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                     state.repo_path.as_ref().expect("editor owner").clone()
                 } else {
                     state
+                        .ui()
                         .commit_panel
                         .as_ref()
                         .expect("panel")

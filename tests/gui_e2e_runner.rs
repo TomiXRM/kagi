@@ -92,6 +92,10 @@ mod read_owner;
 mod tab_ui_state;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pane_resources.rs"]
+mod pane_resources;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cache_history_owner.rs"]
 mod cache_history_owner;
 
@@ -813,6 +817,16 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_detect_no_revision_laundering),
             ),
             (
+                "conflict_background_owner",
+                Box::new(crate::app_conflict::scenario_conflict_background_owner),
+            ),
+            (
+                "conflict_revalidates_after_external_abort",
+                Box::new(
+                    crate::app_conflict::scenario_conflict_revalidates_after_external_abort,
+                ),
+            ),
+            (
                 "conflict_detect_wrong_owner_is_dropped",
                 Box::new(crate::app_conflict::scenario_conflict_detect_wrong_owner_is_dropped),
             ),
@@ -893,6 +907,10 @@ mod macos {
             (
                 "tab_ui_state_rejects_detached_writer",
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_rejects_detached_writer),
+            ),
+            (
+                "retained_pane_resources",
+                Box::new(crate::pane_resources::scenario_retained_pane_resources),
             ),
             (
                 "read_cache_revalidates_on_activation",
@@ -1214,7 +1232,7 @@ mod macos {
         kagi.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
         cx.run_until_parked();
         assert!(
-            cx.read(|app| kagi.read(app).main_diff.is_some()),
+            cx.read(|app| kagi.read(app).ui().main_diff.is_some()),
             "the HEAD commit's first file should open in the main diff pane"
         );
 
@@ -1233,6 +1251,7 @@ mod macos {
                 "the diffed commit should have shifted to row 1"
             );
             let pane = app_ref
+                .ui()
                 .main_diff
                 .as_ref()
                 .expect("external reload must not close a commit's diff");
@@ -1274,9 +1293,10 @@ mod macos {
         kagi.update(cx, |app, cx| app.open_main_diff_compare(0, cx));
         cx.run_until_parked();
         assert!(
-            cx.read(
-                |app| kagi.read(app).compare_view.is_some() && kagi.read(app).main_diff.is_some()
-            ),
+            cx.read(|app| {
+                let state = kagi.read(app);
+                state.ui().compare_view.is_some() && state.ui().main_diff.is_some()
+            }),
             "compare + its file diff should be open"
         );
 
@@ -1289,6 +1309,7 @@ mod macos {
         cx.read(|app| {
             let app_ref = kagi.read(app);
             let compare = app_ref
+                .ui()
                 .compare_view
                 .as_ref()
                 .expect("external reload must not close the compare pane");
@@ -1298,6 +1319,7 @@ mod macos {
                 "the compare should still be against the same base commit"
             );
             let pane = app_ref
+                .ui()
                 .main_diff
                 .as_ref()
                 .expect("external reload must not close a compare file diff");
@@ -1331,7 +1353,7 @@ mod macos {
         });
         cx.run_until_parked();
         assert!(
-            cx.read(|app| kagi.read(app).main_diff.is_some()),
+            cx.read(|app| kagi.read(app).ui().main_diff.is_some()),
             "the unstaged file's diff should be open"
         );
 
@@ -1345,6 +1367,7 @@ mod macos {
         cx.read(|app| {
             let pane = kagi
                 .read(app)
+                .ui()
                 .main_diff
                 .as_ref()
                 .expect("external reload must not close an unstaged file's diff");
@@ -1360,7 +1383,7 @@ mod macos {
         kagi.update(cx, |app, cx| app.reload_external(cx));
         cx.run_until_parked();
         assert!(
-            cx.read(|app| kagi.read(app).main_diff.is_none()),
+            cx.read(|app| kagi.read(app).ui().main_diff.is_none()),
             "a file with nothing left to diff should close the pane"
         );
 
@@ -1387,12 +1410,12 @@ mod macos {
         cx.run_until_parked();
         // No `InputState`s in the runner (see `open_local_panel_no_inputs`), so
         // the message is the `state.commit_msg` fallback.
-        let panel_entity = cx.read(|app| kagi.read(app).commit_panel.clone().expect("panel"));
+        let panel_entity = cx.read(|app| kagi.read(app).ui().commit_panel.clone().expect("panel"));
         cx.update(|app| {
             panel_entity.update(app, |v, _| v.state.commit_msg = "half typed".to_string())
         });
         assert!(
-            cx.read(|app| kagi.read(app).commit_panel_open),
+            cx.read(|app| kagi.read(app).ui().commit_panel_open),
             "the commit panel should be open"
         );
 
@@ -1406,10 +1429,10 @@ mod macos {
         cx.read(|app| {
             let app_ref = kagi.read(app);
             assert!(
-                app_ref.commit_panel_open,
+                app_ref.ui().commit_panel_open,
                 "an external commit must not close the panel while the tree is dirty"
             );
-            let panel = app_ref.commit_panel.as_ref().expect("panel");
+            let panel = app_ref.ui().commit_panel.as_ref().expect("panel");
             assert_eq!(
                 panel.read(app).state.commit_msg,
                 "half typed",
@@ -1422,9 +1445,10 @@ mod macos {
         kagi.update(cx, |app, cx| app.reload_external(cx));
         cx.run_until_parked();
         assert!(
-            cx.read(
-                |app| !kagi.read(app).commit_panel_open && kagi.read(app).commit_panel.is_none()
-            ),
+            cx.read(|app| {
+                let state = kagi.read(app);
+                !state.ui().commit_panel_open && state.ui().commit_panel.is_none()
+            }),
             "a clean working tree leaves the panel nothing to list"
         );
 
@@ -1804,10 +1828,13 @@ mod macos {
                 tabs_before,
                 "clicking a linked worktree's WIP row must NOT open a tab"
             );
-            assert!(app.commit_panel_open, "the commit panel should be open");
+            assert!(
+                app.ui().commit_panel_open,
+                "the commit panel should be open"
+            );
         });
         let (panel_repo, files, foreign) = cx.read(|app| {
-            let p = kagi.read(app).commit_panel.clone().expect("panel");
+            let p = kagi.read(app).ui().commit_panel.clone().expect("panel");
             let p = p.read(app);
             (
                 p.repo_path.clone(),
@@ -1941,7 +1968,12 @@ mod macos {
         kagi.update(cx, |app, cx| app.refresh_working_tree_external(cx));
         cx.run_until_parked();
         let after_reload = cx.read(|app| {
-            let p = kagi.read(app).commit_panel.clone().expect("panel survived");
+            let p = kagi
+                .read(app)
+                .ui()
+                .commit_panel
+                .clone()
+                .expect("panel survived");
             p.read(app).repo_path.clone()
         });
         assert_eq!(
@@ -1965,7 +1997,7 @@ mod macos {
         // leak detector then reports (nothing in this suite drops them). What
         // is under test here is the guard + the staging path, and both run
         // identically either way.
-        let panel = cx.read(|app| kagi.read(app).commit_panel.clone().expect("panel"));
+        let panel = cx.read(|app| kagi.read(app).ui().commit_panel.clone().expect("panel"));
         let own = repo_path.clone();
         panel.update(cx, |v, _| {
             v.repo_path = own.clone();

@@ -53,6 +53,7 @@ impl KagiApp {
         cx.subscribe(&entity, move |app, _view, event, cx| {
             let is_current = app.active_session() == Some(owner)
                 && app
+                    .ui()
                     .ecosystem
                     .as_ref()
                     .is_some_and(|current| current.entity_id() == pane_id);
@@ -70,7 +71,7 @@ impl KagiApp {
             }
         })
         .detach();
-        self.ecosystem = Some(entity);
+        self.ui_mut().ecosystem = Some(entity);
         klog!("ecosystem: opened");
         // No (fresh) cache → start (or join) the app-owned mine, which survives
         // the view being closed and notifies on completion.
@@ -81,7 +82,7 @@ impl KagiApp {
     }
 
     /// Mine outside the pane lifetime. Evidence settles into its frozen owner;
-    /// window-global completion notices survive tab switches (ADR-0119).
+    /// window-global presentation is emitted only while that owner is active.
     pub fn start_ecosystem_mine(
         &mut self,
         repo_path: PathBuf,
@@ -143,17 +144,14 @@ impl KagiApp {
                         klog!("ecosystem: loaded {} commits", raw.commits.len());
                         let commits = raw.commits.len();
                         let files = raw.loc.len();
-                        let pane = if active {
-                            app.ecosystem
-                                .clone()
-                                .filter(|view| view.read(cx).repo_matches(&repo_path))
-                        } else {
-                            None
-                        };
+                        let pane = ui
+                            .ecosystem
+                            .clone()
+                            .filter(|view| view.read(cx).repo_matches(&repo_path));
                         // Move into cache; clone only when a live pane also needs the data.
                         let pane_raw = pane.as_ref().map(|_| raw.clone());
                         ui.ecosystem_cache = Some(CachedMine { raw, head });
-                        app.record_ecosystem_done(&repo_path, commits, files, cx);
+                        app.record_ecosystem_done(&repo_path, commits, files, active, cx);
                         if let Some((view, raw)) = pane.zip(pane_raw) {
                             view.update(cx, |view, cx| {
                                 view.seed(raw);
@@ -163,16 +161,20 @@ impl KagiApp {
                     }
                     Err(error) => {
                         klog!("ecosystem: load failed: {}", error);
-                        app.push_toast(ToastKind::Error, format!("Analyze failed: {error}"), cx);
+                        if let Some(view) = ui.ecosystem.clone() {
+                            view.update(cx, |view, cx| {
+                                if view.repo_matches(&repo_path) {
+                                    view.set_error(error.clone());
+                                    cx.notify();
+                                }
+                            });
+                        }
                         if active {
-                            if let Some(view) = app.ecosystem.clone() {
-                                view.update(cx, |view, cx| {
-                                    if view.repo_matches(&repo_path) {
-                                        view.set_error(error);
-                                        cx.notify();
-                                    }
-                                });
-                            }
+                            app.push_toast(
+                                ToastKind::Error,
+                                format!("Analyze failed: {error}"),
+                                cx,
+                            );
                         }
                     }
                 }
@@ -209,6 +211,7 @@ impl KagiApp {
             cache_stale || flight_stale
         };
         let pane_open = self
+            .ui()
             .ecosystem
             .as_ref()
             .is_some_and(|view| view.read(cx).repo_matches(&repo_path));
@@ -224,14 +227,17 @@ impl KagiApp {
         repo: &std::path::Path,
         commits: usize,
         files: usize,
+        active: bool,
         cx: &mut Context<Self>,
     ) {
         let summary = format!("{files} files · {commits} commits");
-        self.push_toast(
-            ToastKind::Success,
-            format!("Analyze complete — {summary}"),
-            cx,
-        );
+        if active {
+            self.push_toast(
+                ToastKind::Success,
+                format!("Analyze complete — {summary}"),
+                cx,
+            );
+        }
         let repo_name = repo
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -262,6 +268,6 @@ impl KagiApp {
 
     /// Close the Ecosystem view (the app-owned mine keeps running if in flight).
     pub fn close_ecosystem_view(&mut self) {
-        self.ecosystem = None;
+        self.ui_mut().ecosystem = None;
     }
 }

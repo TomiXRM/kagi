@@ -35,7 +35,7 @@ impl KagiApp {
             Some(m) => (m.at.clone(), m.input.clone()),
             None => return,
         };
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_tag: repo session unavailable");
@@ -160,6 +160,7 @@ impl KagiApp {
     /// reason* rather than hidden when there is no remote).
     pub fn open_tag_menu(&mut self, name: String, position: gpui::Point<gpui::Pixels>) {
         let remote = self
+            .ui()
             .repo_session
             .as_ref()
             .and_then(|s| s.backend().push_tag_remote());
@@ -191,7 +192,7 @@ impl KagiApp {
     /// publishing a tag adds a ref on the remote and never moves or removes
     /// one (`plan_push_tag` never forces), so it is Guarded, not Destructive.
     pub fn open_push_tag_modal(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             self.status_footer =
                 FooterStatus::Failed(SharedString::from("push-tag: repo session unavailable"));
             return;

@@ -113,17 +113,16 @@ pub struct EditorChrome {
 /// A `ConflictView` listener leases this entity. The four Backend actions
 /// (`conflict_continue`/`abort`/`skip`/`editor_save`) and the snapshot-reading
 /// context actions (open-external-tool / copy-path / copy-git-command /
-/// open-terminal) call `KagiApp` methods that read/write `app.conflict` (directly
-/// or via `reload()`→`detect_conflict_mode`→`apply_conflict_detect`). Calling any
-/// of those synchronously from a leased listener re-leases this entity and
-/// panics ("already borrowed"). So every such listener DEFERS to the parent via
-/// `cx.spawn_in(window, …)` + `weak_app.update_in(acx, …)`, by which time the
-/// listener has returned and the lease is released.
+/// open-terminal) call `KagiApp` methods that read/write the owner's conflict
+/// slot (directly or via `reload()`→`detect_conflict_mode`→
+/// `apply_conflict_detect`). Calling any of those synchronously from a leased
+/// listener re-leases this entity and panics ("already borrowed"). Every such
+/// listener therefore defers to the parent via `cx.spawn_in(window, …)` +
+/// `weak_app.update_in(acx, …)`, after the listener releases the lease.
 ///
-/// Parent-owned (NOT moved here): `conflict_merge_pending` (Stage 0d; read by the
-/// render gate / watcher / commit flow) and `detected_for` (per-repo run-once
-/// guard). The status-bar `conflict_count` badge and `merge_commit_ready` also
-/// stay on `KagiApp` (separate concerns).
+/// Session-owned but outside this entity: `conflict_merge_pending` and the
+/// per-owner conflict-detection guard. The status-bar conflict count remains
+/// repository read-model data.
 pub struct ConflictView {
     /// `Some(_)` while a conflict/merge is in progress (set by
     /// `detect_conflict_mode` via `apply_conflict_detect`). The repository is
@@ -921,9 +920,14 @@ impl ConflictView {
     /// parent synchronously).
     fn marshal_error_toast(&self, msg: String, cx: &mut Context<Self>) {
         let weak_app = self.app.clone();
+        let owner = self.owner.clone();
         cx.spawn(async move |_view, acx| {
             let _ = weak_app.update(acx, |app, cx| {
-                app.push_toast(super::ToastKind::Error, SharedString::from(msg), cx);
+                if app.active_session() == Some(owner.session)
+                    && app.app_sessions.attachment(owner.session).as_ref() == Some(&owner)
+                {
+                    app.push_toast(super::ToastKind::Error, SharedString::from(msg), cx);
+                }
             });
         })
         .detach();
@@ -932,9 +936,14 @@ impl ConflictView {
     /// Marshal an info toast to the parent (deferred — see `marshal_error_toast`).
     fn marshal_info_toast(&self, msg: String, cx: &mut Context<Self>) {
         let weak_app = self.app.clone();
+        let owner = self.owner.clone();
         cx.spawn(async move |_view, acx| {
             let _ = weak_app.update(acx, |app, cx| {
-                app.push_toast(super::ToastKind::Info, SharedString::from(msg), cx);
+                if app.active_session() == Some(owner.session)
+                    && app.app_sessions.attachment(owner.session).as_ref() == Some(&owner)
+                {
+                    app.push_toast(super::ToastKind::Info, SharedString::from(msg), cx);
+                }
             });
         })
         .detach();
@@ -1268,9 +1277,15 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
     let continue_handler = cx.listener(
         |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
             let weak_app = view.app.clone();
+            let owner = view.owner.clone();
             cx.spawn_in(window, async move |_view, acx| {
-                let _ =
-                    weak_app.update_in(acx, |app, window, cx| app.conflict_continue(window, cx));
+                let _ = weak_app.update_in(acx, |app, window, cx| {
+                    if app.active_session() == Some(owner.session)
+                        && app.app_sessions.attachment(owner.session).as_ref() == Some(&owner)
+                    {
+                        app.conflict_continue(window, cx);
+                    }
+                });
             })
             .detach();
         },

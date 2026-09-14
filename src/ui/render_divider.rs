@@ -45,7 +45,7 @@ impl KagiApp {
                     // ADR-0117: the File History detail divider drags `panel_width`
                     // too — keep the (entity-owned) detail-pane width in sync so it
                     // resizes live.
-                    if let Some(fh) = self.file_history.clone() {
+                    if let Some(fh) = self.ui().file_history.clone() {
                         fh.update(cx, |v, cx| {
                             v.panel_width = new_width;
                             cx.notify();
@@ -152,7 +152,7 @@ impl KagiApp {
                 // the `ConflictView` entity now; read the shared cell and push the
                 // new ratio in via `entity.update` (mirrors FileHistory).
                 let cursor_x = f32::from(event.event.position.x);
-                let Some(entity) = self.conflict.clone() else {
+                let Some(entity) = self.ui().conflict.clone() else {
                     return;
                 };
                 let (left, right) = entity.read(cx).ab_geom.get();
@@ -191,7 +191,7 @@ impl KagiApp {
                     // ADR-0117: split lives in the entity; mutate it via `update`
                     // (its `set_split` applies the 0.002 threshold + child notify).
                     let ratio = ((cursor_y - top) / span).clamp(0.15, 0.85);
-                    if let Some(fh) = self.file_history.clone() {
+                    if let Some(fh) = self.ui().file_history.clone() {
                         fh.update(cx, |v, cx| v.set_split(ratio, cx));
                     }
                 }
@@ -204,7 +204,7 @@ impl KagiApp {
                 // region now matches the rendered split exactly.
                 // ADR-0118: `geom` cell + `result_split` live on the entity now.
                 let cursor_y = f32::from(event.event.position.y);
-                let Some(entity) = self.conflict.clone() else {
+                let Some(entity) = self.ui().conflict.clone() else {
                     return;
                 };
                 let (top, bottom) = entity.read(cx).geom.get();
@@ -225,7 +225,7 @@ impl KagiApp {
                 // real sidebar in Editor mode), so its divider sits at
                 // x = tree_w * zoom from the window's left edge — the same
                 // absolute-cursor math as the Sidebar arm above.
-                let Some(entity) = self.editor_workspace.clone() else {
+                let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
                 let new_w = ((cursor_x - 2.0 * z) / z).clamp(EDITOR_TREE_MIN, EDITOR_TREE_MAX);
@@ -241,7 +241,7 @@ impl KagiApp {
                 // this divider sits at its LEFT edge, so dragging right
                 // SHRINKS it — same geometry as the Panel arm (measure from
                 // the viewport's right edge).
-                let Some(entity) = self.editor_workspace.clone() else {
+                let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
                 let viewport_w = f32::from(window.viewport_size().width);

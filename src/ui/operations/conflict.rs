@@ -27,7 +27,10 @@ impl KagiApp {
         &self,
         cx: &Context<Self>,
     ) -> Option<conflict_view::ConflictMode> {
-        self.conflict.as_ref().and_then(|e| e.read(cx).mode.clone())
+        self.ui()
+            .conflict
+            .as_ref()
+            .and_then(|e| e.read(cx).mode.clone())
     }
 
     pub(crate) fn accept_conflict_intent(
@@ -46,7 +49,7 @@ impl KagiApp {
                 ..
             } => (*token, owner, revision),
         };
-        let current_view = self.conflict.as_ref().map(|view| view.read(cx));
+        let current_view = self.ui().conflict.as_ref().map(|view| view.read(cx));
         let current_token = current_view.as_ref().map(|view| view.intent_token);
         let current_revision = current_view
             .as_ref()
@@ -162,8 +165,9 @@ impl KagiApp {
             return;
         };
 
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let repo_session = self.ui().repo_session.clone();
+        let repo = match repo_session.as_ref() {
+            Some(session) => session.backend(),
             None => {
                 self.push_toast(
                     ToastKind::Error,
@@ -228,6 +232,7 @@ impl KagiApp {
                     return;
                 };
                 let result = self
+                    .ui()
                     .repo_session
                     .as_ref()
                     .expect("repo session existed while planning merge continue")
@@ -271,7 +276,7 @@ impl KagiApp {
                 // `open_commit_panel` runs on the parent (this method is the parent,
                 // deferred from the ConflictView Continue listener — correction #6),
                 // so updating the freshly-created CommitPanelView here is safe.
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     let (title_input, body_input) = {
                         let v = entity.read(cx);
                         (v.title_input.clone(), v.body_input.clone())
@@ -285,7 +290,7 @@ impl KagiApp {
                     }
                     entity.update(cx, |v, _| v.state.commit_msg = message.clone());
                 }
-                self.conflict_merge_pending = true;
+                self.ui_mut().conflict_merge_pending = true;
             }
             kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
@@ -306,6 +311,7 @@ impl KagiApp {
                     return;
                 };
                 let result = self
+                    .ui()
                     .repo_session
                     .as_ref()
                     .expect("repo session existed while planning conflict continue")
@@ -387,7 +393,7 @@ impl KagiApp {
         };
         let plan = modal.plan;
 
-        if self.repo_session.is_none() {
+        if self.ui().repo_session.is_none() {
             self.push_toast(
                 ToastKind::Error,
                 SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
@@ -401,6 +407,7 @@ impl KagiApp {
             return;
         };
         let result = self
+            .ui()
             .repo_session
             .as_ref()
             .expect("repo session existed while planning conflict continue")

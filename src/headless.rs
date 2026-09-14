@@ -61,10 +61,8 @@ pub(crate) fn init_tab(app: &mut KagiApp, path: &PathBuf) {
     });
     app.active_tab = app.tabs.len() - 1;
     app.repo_path = Some(path.clone());
-    // ADR-0107: write paths (conflict continue/abort, checkout, commit, …)
-    // require the per-tab RepoSession and otherwise fail with "session
-    // unavailable" — the same gap main.rs fixed for the CLI-argument tab.
-    app.repo_session = kagi_git::session::RepoSession::open(&path).ok();
+    // ADR-0107 / ADR-0197: the attached owner retains its repository session.
+    app.ui_mut().repo_session = kagi_git::session::RepoSession::open(&path).ok();
     // Rebuild the heavyweight per-repo display state from a fresh snapshot.
     app.reload_prelaunch();
     app.log_tabs();
@@ -176,17 +174,12 @@ pub fn run_repo_flow(mut app_state: KagiApp, env_open_repo: Option<PathBuf>) {
         app_state.bottom_panel_open = true;
 
         // T-BP-007: KAGI_TERMINAL=1 switches to the Terminal tab and pre-wires
-        // the session container so the PTY can be started inside run_app (where
-        // a Window context is available).
+        // the active owner's container so the PTY can start inside run_app.
         if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1") {
             app_state.bottom_tab = ui::BottomTab::Terminal;
-            // Pre-create the session container so it exists when run_app starts.
-            // W4-TABS: sessions are keyed by repo path.
-            if let Some(ref rp) = app_state.repo_path.clone() {
-                app_state.terminal_sessions.insert(
-                    rp.clone(),
-                    ui::terminal::KagiTerminalSession::new(rp.clone()),
-                );
+            if let Some(rp) = app_state.repo_path.clone() {
+                app_state.ui_mut().terminal_session =
+                    Some(ui::terminal::KagiTerminalSession::new(rp));
             }
         }
 

@@ -154,7 +154,7 @@ impl Render for KagiApp {
         // KAGI_MD_PREVIEW: open the Editor on a Markdown file with preview on.
         if let Some(path) = self.pending_headless_md_preview.take() {
             self.open_editor_workspace(cx);
-            if let Some(ev) = self.editor_workspace.clone() {
+            if let Some(ev) = self.ui().editor_workspace.clone() {
                 ev.update(cx, |v, cx| {
                     v.open_tab(path, cx);
                     v.set_markdown_preview(true, cx);
@@ -162,8 +162,7 @@ impl Render for KagiApp {
             }
         }
         if let Some(view) = self.pending_headless_diff.take() {
-            let weak = cx.weak_entity();
-            self.main_diff = Some(cx.new(|_| MainDiffPane::new(view, weak)));
+            self.show_main_diff(view, cx);
         }
         // Same promotion for a headless-staged compare (KAGI_COMPARE_HEAD /
         // KAGI_COMPARE_WT run before any gpui context exists).
@@ -446,12 +445,12 @@ impl Render for KagiApp {
         // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);
         // the banner is a free function fed a cloned `ConflictMode` read out of
         // the entity here so the entity is never rendered twice in one frame.
-        let conflict_entity = self.conflict.clone();
+        let conflict_entity = self.ui().conflict.clone();
         // T-CONFLICT-FLOW-030: while a continued merge waits for its commit
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
-        let conflict_merge_pending = self.conflict_merge_pending;
+        let conflict_merge_pending = self.ui().conflict_merge_pending;
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -496,7 +495,7 @@ impl Render for KagiApp {
         // `conflict_file_menu_overlay` above (reads `tree_menu` from the
         // entity, so its `on_select` dispatches `KagiApp` methods directly
         // without leasing the entity).
-        let editor_tree_menu_overlay = match self.editor_workspace.as_ref() {
+        let editor_tree_menu_overlay = match self.ui().editor_workspace.as_ref() {
             Some(entity) => {
                 let tree_menu = entity.read(cx).tree_menu;
                 match tree_menu {
@@ -540,8 +539,8 @@ impl Render for KagiApp {
         );
 
         // T025/T026: extract commit panel state for render.
-        let commit_panel_open = self.commit_panel_open;
-        let commit_panel = self.commit_panel.clone();
+        let commit_panel_open = self.ui().commit_panel_open;
+        let commit_panel = self.ui().commit_panel.clone();
         // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: commit_input + template mode/inputs
         // are read directly from `self` inside `render_commit_panel` (now a `&self`
         // method), so they no longer need to be hoisted/threaded through render_body.
@@ -618,18 +617,15 @@ impl Render for KagiApp {
                 }
                 // File-history view is its own full overlay with its own entry
                 // list + diff pane — navigate that, not the main commit list.
-                if this.file_history.is_some() {
+                if this.ui().file_history.is_some() {
                     this.step_file_history_selection(-1, cx);
                 } else if this.pr_mode.is_some() {
                     this.pr_mode_step(-1, cx);
-                } else if this.ecosystem.is_none() && this.editor_workspace.is_some() {
+                } else if this.ui().ecosystem.is_none() && this.ui().editor_workspace.is_some() {
                     // T-WS-EDITOR-001 feedback: Editor mode steps its file
-                    // tree — but only when it's actually the visible center
-                    // (T-WS-EDITOR-005 finding #5: Analyze beats Editor mode
-                    // in the resolver, so a hidden editor must not steal
-                    // these arrow keys or emit its `editor-ws: file` klog).
+                    // tree — but only when it's actually the visible center.
                     this.step_editor_ws_selection(-1, window, cx);
-                } else if this.main_diff.is_some() {
+                } else if this.ui().main_diff.is_some() {
                     this.main_diff_step(-1, cx);
                 } else {
                     this.step_commit_selection(-1);
@@ -640,13 +636,13 @@ impl Render for KagiApp {
                 if !this.root_has_focus(window) {
                     return;
                 }
-                if this.file_history.is_some() {
+                if this.ui().file_history.is_some() {
                     this.step_file_history_selection(1, cx);
                 } else if this.pr_mode.is_some() {
                     this.pr_mode_step(1, cx);
-                } else if this.ecosystem.is_none() && this.editor_workspace.is_some() {
+                } else if this.ui().ecosystem.is_none() && this.ui().editor_workspace.is_some() {
                     this.step_editor_ws_selection(1, window, cx);
-                } else if this.main_diff.is_some() {
+                } else if this.ui().main_diff.is_some() {
                     this.main_diff_step(1, cx);
                 } else {
                     this.step_commit_selection(1);

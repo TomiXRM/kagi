@@ -32,7 +32,7 @@ pub enum ConflictDetectOutcome {
 }
 
 /// Payload of [`ConflictDetectOutcome::Detected`] — the assembled conflict state
-/// the UI-thread apply moves into `self.conflict`.
+/// the UI-thread apply moves into the frozen owner's conflict slot.
 pub struct ConflictDetected {
     stash_identity: Vec<String>,
     session: kagi_git::conflicts::ConflictSession,
@@ -173,14 +173,25 @@ impl KagiApp {
         outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
-        // The pane remains root-owned until S5, so only the active launch owner
-        // may apply a result. A departed or superseded owner keeps no pane, but
-        // its existing disposable guard must be re-armed for its next visit.
-        let owner_is_current = self.app_sessions.attachment(owner.session).as_ref() == Some(&owner);
-        if self.active_session() != Some(owner.session) || !owner_is_current {
-            if let Some(state) = self.ui.get_mut(&owner.session) {
-                state.conflict_detected = false;
+        // The result belongs to its frozen attachment. A completion from the
+        // visit that just departed may refresh its inactive owner's retained
+        // pane, but it cannot become authoritative after that owner is active
+        // again; activation revalidation must win over the old visit.
+        let active_owner = self.active_session() == Some(owner.session);
+        let Some(attached) = self.app_sessions.attachment(owner.session) else {
+            return;
+        };
+        let exact_visit = owner.visit == attached.visit;
+        let owner_is_current = attached.path == owner.path
+            && attached.worktree == owner.worktree
+            && (exact_visit || (!active_owner && owner.visit < attached.visit));
+        if !owner_is_current {
+            if let Some(ui) = self.ui.get_mut(&owner.session) {
+                ui.conflict_detected = false;
             }
+            return;
+        }
+        if !self.ui.contains_key(&owner.session) {
             return;
         }
         // #707 review: and it must describe the repository the tab is
@@ -197,7 +208,8 @@ impl KagiApp {
         // stash identity of a tab whose accepted read says an operation is
         // very much in progress, and leaves no projection until the next
         // reload. Fail closed and re-detect instead.
-        let accepted = self.view().operation.as_ref();
+        let accepted_operation = self.reads.get(Some(owner.session)).operation.clone();
+        let accepted = accepted_operation.as_ref();
         let stale = match (&outcome, accepted) {
             (ConflictDetectOutcome::Detected(d), Some(op)) => op.observation != d.observation,
             (ConflictDetectOutcome::MergeResolvedReady(o), Some(op)) => &op.observation != o,
@@ -222,8 +234,10 @@ impl KagiApp {
         // completion only projects that observation into the conflict pane.
         // `on_view_published` owns the Sessions observation from accepted Reads.
         //
-        // The stash identity is the launch owner's, not whoever is active now.
-        {
+        // The stash identity is proposal evidence and therefore stricter than
+        // retained display: an old visit may refresh an inactive pane, but it
+        // cannot create or clear a proposal for the next visit.
+        if exact_visit {
             let identity = match &outcome {
                 ConflictDetectOutcome::Detected(d) => d.stash_identity.as_slice(),
                 _ => &[],
@@ -237,25 +251,28 @@ impl KagiApp {
         }
         match outcome {
             ConflictDetectOutcome::OpenFailed => {
-                self.conflict = None;
+                if let Some(ui) = self.ui.get_mut(&owner.session) {
+                    ui.conflict = None;
+                }
             }
             ConflictDetectOutcome::Cleared => {
                 if self
-                    .conflict
-                    .as_ref()
-                    .is_some_and(|e| e.read(cx).mode.is_some())
+                    .ui
+                    .get(&owner.session)
+                    .and_then(|ui| ui.conflict.as_ref())
+                    .is_some_and(|entity| entity.read(cx).mode.is_some())
                 {
                     klog!("conflict-mode: cleared");
                 }
-                // Drop the entity (clears mode + editing + splits + before-text;
-                // the accepted Stage-1 reset delta on re-entry).
-                self.conflict = None;
+                if let Some(ui) = self.ui.get_mut(&owner.session) {
+                    ui.conflict = None;
+                }
             }
             ConflictDetectOutcome::MergeResolvedReady(_) => {
                 klog!("conflict-mode: merge resolved — ready to commit");
-                // Only the *editor* has nothing left to show. The merge itself
-                // lives on in the read model (#704).
-                self.conflict = None;
+                if let Some(ui) = self.ui.get_mut(&owner.session) {
+                    ui.conflict = None;
+                }
             }
             ConflictDetectOutcome::Detected(detected) => {
                 let ConflictDetected {
@@ -291,9 +308,13 @@ impl KagiApp {
                 };
                 let files = mode.session.files.clone();
 
-                match self.conflict.clone() {
-                    // Re-detect: update the existing entity in place so its splits
-                    // / editor inputs / before-text / scroll survive the reload.
+                match self
+                    .ui
+                    .get(&owner.session)
+                    .and_then(|ui| ui.conflict.clone())
+                {
+                    // Re-detect: update the existing entity in place so its
+                    // edited state and geometry survive.
                     Some(entity) => {
                         entity.update(cx, |v, _| {
                             let prev_editing = v.editing.clone();
@@ -320,18 +341,20 @@ impl KagiApp {
                     // a weak back-ref for its deferred parent callbacks.
                     None => {
                         let weak_app = cx.weak_entity();
-                        let repo_path = self.repo_path.clone().unwrap_or_default();
-                        // The launch owner, re-proved current by the guard at
-                        // the top — not re-resolved here, where a tab that had
-                        // meanwhile been reopened would supply a different one.
+                        let repo_path = owner.path.clone();
                         let entity = cx.new(|_| {
-                            let mut v =
-                                conflict_view::ConflictView::new(weak_app, repo_path, owner);
-                            v.mode = Some(mode);
-                            v.editing = editing_path;
-                            v
+                            let mut view = conflict_view::ConflictView::new(
+                                weak_app,
+                                repo_path,
+                                owner.clone(),
+                            );
+                            view.mode = Some(mode);
+                            view.editing = editing_path;
+                            view
                         });
-                        self.conflict = Some(entity);
+                        if let Some(ui) = self.ui.get_mut(&owner.session) {
+                            ui.conflict = Some(entity);
+                        }
                     }
                 }
             }
@@ -345,14 +368,14 @@ impl KagiApp {
     /// `ResolutionBuffer` from the index (preferring a previously autosaved
     /// buffer so a partial resolution survives a restart), recomputes each
     /// file's status from the buffer, and stores the `ConflictMode` (via
-    /// `apply_conflict_detect`, which builds / updates the `ConflictView` entity).
-    /// On a miss it drops the entity (`self.conflict = None`). The repository is
-    /// never mutated here.
+    /// `apply_conflict_detect`, which builds / updates the owner's
+    /// `ConflictView` entity). On a miss it drops that owner's entity. The
+    /// repository is never mutated here.
     pub fn detect_conflict_mode(&mut self, cx: &mut Context<Self>) {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.conflict = None;
+                self.ui_mut().conflict = None;
                 return;
             }
         };
@@ -370,6 +393,7 @@ impl KagiApp {
         // index — a per-file Save re-sorts `session.files`, so a stored index
         // would silently follow to a different file after re-detection.
         let (prev_selected_path, prev_editing_path) = self
+            .ui()
             .conflict
             .as_ref()
             .map(|e| {
@@ -404,7 +428,7 @@ impl KagiApp {
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => {
-                self.conflict = None;
+                self.ui_mut().conflict = None;
                 return;
             }
         };
@@ -420,6 +444,7 @@ impl KagiApp {
         // index — a per-file Save re-sorts `session.files`, so a stored index
         // would silently follow to a different file after re-detection.
         let (prev_selected_path, prev_editing_path) = self
+            .ui()
             .conflict
             .as_ref()
             .map(|e| {

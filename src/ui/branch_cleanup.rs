@@ -227,7 +227,7 @@ impl KagiApp {
             self.push_toast(ToastKind::Info, Msg::OpInProgress.t(), cx);
             return;
         }
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(

@@ -106,7 +106,7 @@ impl KagiApp {
                             new_rel.display()
                         );
                         self.clear_editor_fs_prompt_modal();
-                        if let Some(ev) = self.editor_workspace.clone() {
+                        if let Some(ev) = self.ui().editor_workspace.clone() {
                             ev.update(cx, |v, cx| v.remap_renamed_path(&old_rel, &new_rel, cx));
                         }
                     }
@@ -130,7 +130,7 @@ impl KagiApp {
                     Ok(_) => {
                         klog!("editor-ws: fs-created {}", rel.display());
                         self.clear_editor_fs_prompt_modal();
-                        if let Some(ev) = self.editor_workspace.clone() {
+                        if let Some(ev) = self.ui().editor_workspace.clone() {
                             ev.update(cx, |v, cx| v.open_tab(rel.clone(), cx));
                         }
                     }
@@ -252,7 +252,7 @@ impl KagiApp {
             Ok(_trashed) => {
                 klog!("editor-ws: fs-trashed {}", modal.path.display());
                 self.clear_editor_delete_confirm_modal();
-                if let Some(ev) = self.editor_workspace.clone() {
+                if let Some(ev) = self.ui().editor_workspace.clone() {
                     let path = modal.path.clone();
                     ev.update(cx, |v, cx| v.close_paths_under(&path, cx));
                 }
@@ -371,7 +371,7 @@ impl KagiApp {
     ) {
         match action {
             EditorTreeAction::PreviewMarkdown(path) => {
-                if let Some(ews) = self.editor_workspace.clone() {
+                if let Some(ews) = self.ui().editor_workspace.clone() {
                     ews.update(cx, |v, cx| {
                         v.open_tab(path, cx);
                         v.set_markdown_preview(true, cx);

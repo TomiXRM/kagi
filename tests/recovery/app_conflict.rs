@@ -1,6 +1,6 @@
 //! Focused C1 GUI adapters. Run each with its exact KAGI_GUI_E2E_ONLY filter.
-use crate::macos::{git, mount, unmount};
-use gpui::{Focusable, VisualTestAppContext};
+use crate::macos::{build_fixture, git, mount, unmount};
+use gpui::{Focusable, SharedString, VisualTestAppContext};
 use kagi::ui::e2e;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::{Path, PathBuf};
@@ -10,6 +10,8 @@ fn content_fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
     git(repo, &["init", "-q", "-b", "main"]);
+    git(repo, &["config", "user.name", "Kagi Test"]);
+    git(repo, &["config", "user.email", "kagi@example.test"]);
     std::fs::write(repo.join("file.txt"), "base\n").unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "base"]);
@@ -93,7 +95,7 @@ pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| app.detect_conflict_mode(cx));
         cx.run_until_parked();
-        let conflict = cx.read(|cx| app.read(cx).conflict.clone()).unwrap();
+        let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
         conflict.update(cx, |view, cx| {
             view.conflict_open_editor(Path::new("file.txt"));
             view.conflict_editor_reset_all(Path::new("file.txt"));
@@ -132,7 +134,7 @@ pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let conflict = cx
-        .read(|cx| app.read(cx).conflict.clone())
+        .read(|cx| app.read(cx).ui().conflict.clone())
         .expect("conflict view");
     let path = PathBuf::from("file.txt");
     conflict.update(cx, |view, cx| {
@@ -186,7 +188,7 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let conflict = cx
-        .read(|cx| app.read(cx).conflict.clone())
+        .read(|cx| app.read(cx).ui().conflict.clone())
         .expect("D/F conflict view");
 
     let guard = app.update(cx, |app, _| {
@@ -248,7 +250,7 @@ pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_none()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
         "there is no conflict editor to hang the abort off"
     );
     assert!(
@@ -279,7 +281,7 @@ pub fn scenario_operation_strip_hidden_in_editor(cx: &mut VisualTestAppContext) 
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_some()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
         "precondition: the conflict editor is mounted"
     );
     assert!(
@@ -418,6 +420,7 @@ pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppCon
 
     let mode_revision = cx.read(|cx| {
         app.read(cx)
+            .ui()
             .conflict
             .as_ref()
             .and_then(|view| view.read(cx).mode.as_ref().map(|m| m.revision.clone()))
@@ -443,6 +446,119 @@ pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppCon
     eprintln!("[gui-e2e] PASS a stale detector payload keeps its own revision (#707)");
 }
 
+/// S5: a conflict detector completion may retain its frozen background owner,
+/// but it must never construct a pane in the tab currently on screen.
+pub fn scenario_conflict_background_owner(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = build_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    let (owner_a, payload) = cx.read(|cx| {
+        let state = app.read(cx);
+        let owner = state
+            .active_session()
+            .and_then(|session| state.app_sessions.attachment(session))
+            .expect("A attachment");
+        (owner, e2e::detect_payload_for_test(&repo_a, "main"))
+    });
+
+    let owner_b = app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open clean B");
+        state.active_session().expect("B owner")
+    });
+    cx.run_until_parked();
+    app.update(cx, |state, _| {
+        state.status_footer =
+            kagi::ui::FooterStatus::Idle(SharedString::from("B conflict sentinel"));
+    });
+    app.update(cx, |state, cx| {
+        state.apply_conflict_detect(owner_a.clone(), payload, cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.active_session(), Some(owner_b));
+        assert!(
+            state.ui().conflict.is_none(),
+            "conflict-background-owner-isolation: A completion built B's pane",
+        );
+        assert!(
+            state.ui[&owner_a.session].conflict.is_some(),
+            "conflict-background-owner-retained: A completion did not land in A",
+        );
+        assert!(
+            matches!(
+                &state.status_footer,
+                kagi::ui::FooterStatus::Idle(text) if text.as_ref() == "B conflict sentinel"
+            ),
+            "conflict-background-footer-isolation: A completion changed B footer"
+        );
+        assert!(
+            !e2e::active_modal_present(state),
+            "conflict-background-modal-isolation: A completion opened a modal on B",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_background_owner");
+}
+
+/// Returning to a retained conflict owner first invalidates its pane, then
+/// re-detects against the repository. An external abort cannot leave the old
+/// editor actionable.
+pub fn scenario_conflict_revalidates_after_external_abort(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = build_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |state, cx| state.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_some()));
+    let (old_visit, old_payload) = cx.read(|cx| {
+        let state = app.read(cx);
+        let owner = state
+            .active_session()
+            .and_then(|session| state.app_sessions.attachment(session))
+            .expect("A attachment");
+        (owner, e2e::detect_payload_for_test(&repo_a, "main"))
+    });
+
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open clean B");
+    });
+    cx.run_until_parked();
+    git(&repo_a, &["merge", "--abort"]);
+    app.update(cx, |state, cx| state.switch_repo(0, cx));
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
+        "conflict-activation-revalidation: stale editor remained actionable before read",
+    );
+    app.update(cx, |state, cx| {
+        state.apply_conflict_detect(old_visit, old_payload, cx);
+    });
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
+        "conflict-old-visit-rejected: departed completion restored stale editor",
+    );
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state.ui().conflict.is_none(),
+            "conflict-external-abort: stale editor returned"
+        );
+        assert!(
+            state.view().operation.is_none(),
+            "conflict-external-abort: stale operation remained"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_revalidates_after_external_abort");
+}
+
 /// #707 re-review P1: a detector launched for one tab must not land on another,
 /// even when the path is identical — a close and reopen of the same repository
 /// is a new `SessionId` and a new visit.
@@ -465,14 +581,14 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
         })
         .expect("attached");
 
-    assert!(cx.read(|cx| app.read(cx).conflict.is_none()));
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
     app.update(cx, |app, cx| {
         app.ui_mut().conflict_detected = true;
         app.apply_conflict_detect(stale_owner, payload, cx);
     });
     cx.run_until_parked();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_none()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
         "a payload from another visit must not build this tab's conflict editor"
     );
     assert!(
@@ -499,7 +615,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let view = cx
-        .read(|cx| app.read(cx).conflict.clone())
+        .read(|cx| app.read(cx).ui().conflict.clone())
         .expect("the live conflict has an editor");
     let revision = cx
         .read(|cx| {
@@ -542,15 +658,18 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
         });
         cx.run_until_parked();
         assert!(
-            cx.read(|cx| app.read(cx).conflict.is_some()),
+            cx.read(|cx| app.read(cx).ui().conflict.is_some()),
             "a stale no-conflict answer must not drop the editor"
         );
         assert_eq!(
-            cx.read(|cx| app.read(cx).conflict.as_ref().and_then(|v| v
-                .read(cx)
-                .mode
-                .as_ref()
-                .map(|m| m.revision.clone()))),
+            cx.read(|cx| {
+                app.read(cx).ui().conflict.as_ref().and_then(|view| {
+                    view.read(cx)
+                        .mode
+                        .as_ref()
+                        .map(|mode| mode.revision.clone())
+                })
+            }),
             Some(revision.clone()),
             "and must not replace what it shows"
         );
@@ -568,7 +687,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
     wait_idle(cx, &app);
     cx.run_until_parked();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_none()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
         "an agreeing outcome still applies"
     );
     drop(view);

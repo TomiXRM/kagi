@@ -1,17 +1,15 @@
-//! T-BP-007: Terminal session manager.
+//! T-BP-007: terminal session lifecycle.
 //!
-//! Wraps gpui-terminal + portable-pty into a single lazy-initialised session
-//! stored on `KagiApp`.  The PTY is only spawned when the Terminal tab is
-//! first shown, and it is preserved across tab switches until the app exits
-//! (or the shell process exits, in which case it is restarted on next show).
+//! Each [`KagiTerminalSession`] is retained by its owning `TabUiState`. The PTY
+//! survives tab activation changes and is dropped with that session on close.
 //!
 //! # Session lifecycle
 //!
 //! ```text
-//! KagiApp.terminal_session = None          (initial)
+//! TabUiState.terminal_session = None          (initial)
 //!   └─ Terminal tab shown → ensure_terminal() → starts PTY + TerminalView
-//! KagiApp.terminal_session = Some(KagiTerminalSession {
-//!     view: Some(Entity<TerminalView>),     (running)
+//! TabUiState.terminal_session = Some(KagiTerminalSession {
+//!     view: Some(Entity<TerminalView>),        (running)
 //!     …
 //! })
 //!   └─ Shell exits → exit_callback clears view to None
@@ -208,6 +206,7 @@ type TerminalBuild = (
 pub fn build_terminal_view(
     shell: &str,
     repo_path: &std::path::Path,
+    owner: crate::app::SessionId,
     cx: &mut Context<crate::ui::KagiApp>,
 ) -> Result<TerminalBuild, String> {
     // Open the PTY pair.
@@ -270,12 +269,9 @@ pub fn build_terminal_view(
 
     let resize_master = master_arc.clone();
 
-    // Weak handle back to KagiApp so the exit callback can clear the dead
-    // session (next tab activation restarts the shell).
+    // The callback is stamped with the creating session. It may finish while
+    // another tab is active, and a detached owner receives no write.
     let weak_app = cx.weak_entity();
-    // W4-TABS: capture this session's repo path so the exit callback clears
-    // the correct entry in the per-repo sessions map.
-    let exit_repo_path = repo_path.to_path_buf();
 
     // Create the TerminalView entity.  `cx.new` is called on `Context<KagiApp>`
     // and produces `Entity<TerminalView>`.
@@ -294,7 +290,11 @@ pub fn build_terminal_view(
             .with_exit_callback(move |_window, cx| {
                 klog!("terminal: shell exited");
                 let _ = weak_app.update(cx, |app, cx| {
-                    if let Some(session) = app.terminal_sessions.get_mut(&exit_repo_path) {
+                    if let Some(session) = app
+                        .ui
+                        .get_mut(&owner)
+                        .and_then(|ui| ui.terminal_session.as_mut())
+                    {
                         session.view = None;
                     }
                     cx.notify();
@@ -391,6 +391,7 @@ pub fn resolve_shell() -> String {
 /// shell fails to start; the caller should call `record_op` on `KagiApp`.
 pub fn ensure_terminal(
     session: &mut KagiTerminalSession,
+    owner: crate::app::SessionId,
     window: &mut Window,
     cx: &mut Context<crate::ui::KagiApp>,
     record_failure: impl FnOnce(String),
@@ -407,7 +408,7 @@ pub fn ensure_terminal(
     let shell = resolve_shell();
     klog!("terminal: starting shell={}", shell);
 
-    match build_terminal_view(&shell, &session.repo_path, cx) {
+    match build_terminal_view(&shell, &session.repo_path, owner, cx) {
         Ok((view_entity, _master_arc, paste_writer)) => {
             // Focus the new terminal.
             let fh = view_entity.read(cx).focus_handle().clone();

@@ -486,6 +486,7 @@ impl KagiApp {
         if let Some(failure) = presentation.commit_panel_failure {
             let expected = failure.expected.entity_id();
             if self
+                .ui()
                 .commit_panel
                 .as_ref()
                 .is_some_and(|panel| panel.entity_id() == expected)

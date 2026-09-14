@@ -436,11 +436,7 @@ impl KagiApp {
     ///    show a "starting…" placeholder.  The Terminal tab click listener has
     ///    already called `ensure_terminal`; the view will appear on next repaint.
     fn render_terminal_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        // W4-TABS: look up the active repo's session in the HashMap.
-        let active_session = self
-            .repo_path
-            .as_ref()
-            .and_then(|rp| self.terminal_sessions.get(rp));
+        let active_session = self.ui().terminal_session.as_ref();
         // Case 1: running terminal view.
         if let Some(session) = active_session {
             if let Some(ref view_entity) = session.view {

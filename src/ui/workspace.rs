@@ -33,12 +33,9 @@
 //!   vocabulary (Inspector, CommitPanel, Navigator) is UI, not Git domain.
 //!
 //! ADR-0121 Phase B (B1): this module also defines [`WorkspaceItem`], the
-//! kagi-minimal equivalent of zed's `Item` trait, plus the adapters that
-//! bridge the existing entity-backed panes (FileHistory / Ecosystem /
-//! EditorWorkspace) onto it. `render_body` routes entity panes through
-//! [`center_item`] instead of hand-written per-field arms, and
-//! `reset_per_repo_ui` disposes them through the same registry. B1 keeps the
-//! `KagiApp` fields — the adapters read them; B2 migrates panes one by one.
+//! kagi-minimal equivalent of zed's `Item` trait, plus adapters that bridge the
+//! entity-backed panes onto slot resolution. ADR-0197 S5 moves their lifetime
+//! into `TabUiState`; this registry renders but never disposes them on a switch.
 
 use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, Styled};
 
@@ -55,9 +52,8 @@ pub enum Slot {
     Right,
 }
 
-/// ADR-0121 B1: zed-`Item`-equivalent minimal pane trait. Deliberately the
-/// smallest face kagi's slot resolution needs — render + liveness + disposal.
-/// No focus/event/serialization surface until a pane actually needs it.
+/// ADR-0121 B1: zed-`Item`-equivalent minimal pane trait: slot, liveness, and
+/// rendering. Resource disposal belongs to `TabUiState` removal.
 pub trait WorkspaceItem {
     /// Which slot this item occupies when active.
     fn slot(&self) -> Slot;
@@ -84,11 +80,9 @@ pub trait WorkspaceItem {
         layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement>;
-    /// Drop the pane's per-repo state (called from `reset_per_repo_ui`).
-    fn dispose(&self, app: &mut KagiApp);
 }
 
-/// File History takeover (ADR-0089/0117) — bridges `KagiApp.file_history`.
+/// File History takeover (ADR-0089/0117) — resolves the active owner's pane.
 pub struct FileHistoryItem;
 
 impl WorkspaceItem for FileHistoryItem {
@@ -99,7 +93,7 @@ impl WorkspaceItem for FileHistoryItem {
         Some(CenterPane::FileHistory)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.file_history.is_some()
+        app.ui().file_history.is_some()
     }
     // ADR-0089 / ADR-0117: the entity renders its own center+right body;
     // embedding `Entity<FileHistoryView>` gives it an isolated `cx.notify()`
@@ -110,7 +104,7 @@ impl WorkspaceItem for FileHistoryItem {
         _layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let ev = app.file_history.clone()?;
+        let ev = app.ui().file_history.clone()?;
         // Same avatar push as `EditorWorkspaceItem::render` — the detail
         // pane's shared commit header draws from the app-owned resolved-image
         // cache, which this crate can't reach.
@@ -120,15 +114,9 @@ impl WorkspaceItem for FileHistoryItem {
         });
         Some(ev.into_any_element())
     }
-    // ADR-0117: File History is per-repo; drop the entity on repo/tab switch
-    // so its captured `repo_path` can't keep reading the previous repo (and
-    // the stale view doesn't linger over the newly-activated tab).
-    fn dispose(&self, app: &mut KagiApp) {
-        app.file_history = None;
-    }
 }
 
-/// Code Ecosystem / Analyze takeover (ADR-0119) — bridges `KagiApp.ecosystem`.
+/// Code Ecosystem / Analyze takeover (ADR-0119) — resolves the active owner's pane.
 pub struct EcosystemItem;
 
 impl WorkspaceItem for EcosystemItem {
@@ -139,7 +127,7 @@ impl WorkspaceItem for EcosystemItem {
         Some(CenterPane::Ecosystem)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.ecosystem.is_some()
+        app.ui().ecosystem.is_some()
     }
     // ADR-0119: full-screen, read-only. Wrapped in a `flex_1` + `min_w(0)`
     // cell so the entity gets a *definite* width to fill (the body minus the
@@ -154,12 +142,8 @@ impl WorkspaceItem for EcosystemItem {
         _layout: &WorkspaceLayout,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let eco = app.ecosystem.clone()?;
+        let eco = app.ui().ecosystem.clone()?;
         Some(div().flex_1().min_w(px(0.)).child(eco).into_any_element())
-    }
-    // The pane still drops on switch until S5; its session-owned mine data survives.
-    fn dispose(&self, app: &mut KagiApp) {
-        app.ecosystem = None;
     }
 }
 
@@ -185,9 +169,6 @@ impl WorkspaceItem for PrModeItem {
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         Some(super::pr_mode::render_pr_mode(app, cx))
-    }
-    fn dispose(&self, app: &mut KagiApp) {
-        app.pr_mode = None;
     }
 }
 
@@ -221,12 +202,9 @@ impl WorkspaceItem for BranchCleanupItem {
                 .into_any_element(),
         )
     }
-    fn dispose(&self, app: &mut KagiApp) {
-        app.branch_cleanup_open = false;
-    }
 }
 
-/// Editor workspace (T-WS-EDITOR-001) — bridges `KagiApp.editor_workspace`.
+/// Editor workspace (T-WS-EDITOR-001) — resolves the active owner's pane.
 pub struct EditorWorkspaceItem;
 
 impl WorkspaceItem for EditorWorkspaceItem {
@@ -237,7 +215,7 @@ impl WorkspaceItem for EditorWorkspaceItem {
         Some(CenterPane::Editor)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.editor_workspace.is_some()
+        app.ui().editor_workspace.is_some()
     }
     // T-WS-EDITOR-001: the Editor workspace entity self-renders the WHOLE
     // left(file tree) + center(code viewer) + right(hunks) triple in one call
@@ -258,7 +236,7 @@ impl WorkspaceItem for EditorWorkspaceItem {
         layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let ev = app.editor_workspace.clone()?;
+        let ev = app.ui().editor_workspace.clone()?;
         let show_tree = layout.left == LeftPane::FileTree;
         // T-WS-EDITOR-008: the History header draws commit-author avatars from
         // the app-owned resolved-image cache, which the crate can't reach —
@@ -283,17 +261,12 @@ impl WorkspaceItem for EditorWorkspaceItem {
                 .into_any_element(),
         )
     }
-    // T-WS-EDITOR-001: the EditorWorkspaceView entity captures the previous
-    // repo's `repo_path`; drop it on repo/tab switch like File History /
-    // Ecosystem — a new tab always opens on Graph since the mode is derived
-    // from `editor_workspace.is_some()` (T-WS-EDITOR-005 #11).
-    fn dispose(&self, app: &mut KagiApp) {
-        app.editor_workspace = None;
-    }
+    // ADR-0197: the owner retains this entity and its edited buffers while
+    // another tab is active. Closing the owner drops the entity.
 }
 
-/// Full-width main diff (T-UI-003 / ADR-0121 B2) — bridges `KagiApp.main_diff`
-/// (now `Option<Entity<MainDiffPane>>`, see `main_diff_pane.rs`).
+/// Full-width main diff (T-UI-003 / ADR-0121 B2), retained by its owner as an
+/// `Option<Entity<MainDiffPane>>` (see `main_diff_pane.rs`).
 pub struct MainDiffItem;
 
 impl WorkspaceItem for MainDiffItem {
@@ -304,7 +277,7 @@ impl WorkspaceItem for MainDiffItem {
         Some(CenterPane::Diff)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.main_diff.is_some()
+        app.ui().main_diff.is_some()
     }
     // ADR-0121 B2: embedded bare like File History — the pane's root element
     // (see `render_helpers::render_diff_list`) already carries the
@@ -316,14 +289,10 @@ impl WorkspaceItem for MainDiffItem {
         _layout: &WorkspaceLayout,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(app.main_diff.clone()?.into_any_element())
+        Some(app.ui().main_diff.clone()?.into_any_element())
     }
-    // Per-repo: the shown diff belongs to the previous repo; drop the pane
-    // (and its scroll state) on repo/tab switch, as the old
-    // `main_diff = None` reset did.
-    fn dispose(&self, app: &mut KagiApp) {
-        app.main_diff = None;
-    }
+    // ADR-0197: the pane and scroll state remain attached to their owner across
+    // activation changes and die when that owner closes.
 }
 
 /// The registered entity-backed panes (ADR-0121 B1/B2). Loading / CommitList /
@@ -347,8 +316,8 @@ pub fn center_item(center: CenterPane) -> Option<&'static dyn WorkspaceItem> {
         .find(|it| it.center() == Some(center))
 }
 
-/// Staging + commit message panel (T025 / ADR-0118) — bridges
-/// `KagiApp.commit_panel` (+ its `commit_panel_open` visibility gate).
+/// Staging + commit message panel (T025 / ADR-0118), resolved through the
+/// active owner's `commit_panel` and `commit_panel_open` fields.
 pub struct CommitPanelItem;
 
 impl WorkspaceItem for CommitPanelItem {
@@ -359,7 +328,7 @@ impl WorkspaceItem for CommitPanelItem {
         Some(RightPane::CommitPanel)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.commit_panel_open && app.commit_panel.is_some()
+        app.ui().commit_panel_open && app.ui().commit_panel.is_some()
     }
     // Push owner-scoped inputs into the child; derive `active_wip` here to
     // avoid a re-entrant parent read from the entity's render path.
@@ -369,8 +338,9 @@ impl WorkspaceItem for CommitPanelItem {
         _layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let entity = app.commit_panel.clone()?;
+        let entity = app.ui().commit_panel.clone()?;
         let active_wip = match app
+            .ui()
             .main_diff
             .as_ref()
             .map(|d| d.read(cx).view.source.clone())
@@ -390,11 +360,6 @@ impl WorkspaceItem for CommitPanelItem {
             v.smart_status = smart_ui.smart_commit_status.clone();
         });
         Some(entity.into_any_element())
-    }
-    fn dispose(&self, app: &mut KagiApp) {
-        app.commit_panel_open = false;
-        // Dropping the panel entity also drops all entity-owned inputs and drafts.
-        app.commit_panel = None;
     }
 }
 
@@ -441,6 +406,7 @@ fn render_inspector_body(
         .collect();
     // Active file (for list highlight) derived from the open main diff.
     let active_commit_file: Option<usize> = match app
+        .ui()
         .main_diff
         .as_ref()
         .map(|d| d.read(cx).view.source.clone())
@@ -508,14 +474,10 @@ impl WorkspaceItem for InspectorItem {
         let generated = selected.and_then(|i| app.ui().diff_caches.generated.get(&i).cloned());
         render_inspector_body(app, files, diffstat, generated, None, cx)
     }
-    // The inspector has no per-repo entity: `inspector_visible` is a global
-    // View-menu toggle and the detail derives from `selected` (cleared in
-    // `reset_per_repo_ui` itself).
-    fn dispose(&self, _app: &mut KagiApp) {}
 }
 
-/// Compare mode (ADR-0026 / ADR-0121 B2) — bridges `KagiApp.compare_view`
-/// (now `Option<Entity<ComparePane>>`, see `compare_pane.rs`). Draws the same
+/// Compare mode (ADR-0026 / ADR-0121 B2), retained by its owner as an
+/// `Option<Entity<ComparePane>>` (see `compare_pane.rs`). Draws the same
 /// Inspector body with the compare inputs (banner + compare file list, no
 /// per-file diffstat — W16-DIFFSTAT keeps compare out of scope), so it stays
 /// function-rendered like `InspectorItem`; the entity owns the state.
@@ -529,7 +491,7 @@ impl WorkspaceItem for CompareItem {
         Some(RightPane::Compare)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.compare_view.is_some()
+        app.ui().compare_view.is_some()
     }
     fn render(
         &self,
@@ -537,15 +499,11 @@ impl WorkspaceItem for CompareItem {
         _layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let view = app.compare_view.as_ref()?.read(cx).view.clone();
+        let view = app.ui().compare_view.as_ref()?.read(cx).view.clone();
         render_inspector_body(app, Some(view.files.clone()), None, None, Some(view), cx)
     }
     // Per-repo: the compared base/files belong to the previous repo; drop the
     // entity on repo/tab switch like the other registered panes.
-    fn dispose(&self, app: &mut KagiApp) {
-        app.compare_view = None;
-        app.pending_headless_compare = None;
-    }
 }
 
 /// The registered right-slot panes (ADR-0121 B2). Order documents the

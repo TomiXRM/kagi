@@ -11,9 +11,9 @@
 //! `inspector::render_inspector`, whose listeners are `Context<KagiApp>`
 //! listeners shared with the plain Inspector. Entity-rendering compare would
 //! mean duplicating that renderer with weak-handle listeners for zero behavior
-//! change, so the entity owns the state + lifecycle (create / update-in-place /
-//! dispose via the workspace registry) and `workspace::CompareItem` stays a
-//! thin function-rendered adapter like `InspectorItem`.
+//! change, so the entity owns the state and its `TabUiState` owns the lifetime.
+//! `workspace::CompareItem` stays a thin function-rendered adapter like
+//! `InspectorItem`.
 
 use gpui::{AppContext as _, Context};
 
@@ -30,25 +30,23 @@ impl KagiApp {
     /// Show `view` in compare mode: update the live entity in place or create
     /// it on first open (mirrors `show_main_diff`).
     pub(crate) fn show_compare(&mut self, view: CompareView, cx: &mut Context<Self>) {
-        match self.compare_view.clone() {
+        match self.ui().compare_view.clone() {
             Some(pane) => pane.update(cx, |p, cx| {
                 p.view = view;
                 cx.notify();
             }),
-            None => self.compare_view = Some(cx.new(|_| ComparePane { view })),
+            None => self.ui_mut().compare_view = Some(cx.new(|_| ComparePane { view })),
         }
     }
 
-    /// Put back the compare a reload's sweep
-    /// (`invalidate_caches_for_row_renumber`) just dropped, re-read against the
-    /// snapshot that reload installed. Closing it instead returned the right
-    /// pane to the Inspector every time an auto-fetch fired, which is what the
-    /// user was complaining about; the file list is genuinely stale, so it is
-    /// re-read rather than reused. A compare that can no longer be read
-    /// (no session, no HEAD, a git error) stays closed.
+    /// Re-read a retained compare against the snapshot a reload just installed.
+    /// The entity and its mode survive; only repository-derived file data is
+    /// replaced. A compare that can no longer be read (no session, no HEAD, a
+    /// git error) keeps its last non-authoritative display until a later reload
+    /// can refresh it.
     pub(crate) fn restore_compare(&mut self, view: CompareView, cx: &mut Context<Self>) {
         let files = {
-            let Some(session) = self.repo_session.as_ref() else {
+            let Some(session) = self.ui().repo_session.as_ref() else {
                 return;
             };
             let repo = session.backend();

@@ -767,7 +767,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     // A commit row is currently selected.
     let has_selection = app.ui().selected.is_some();
     // The main diff is open (ADR-0121 B2: a staged headless diff counts too).
-    let diff_open = app.main_diff.is_some() || app.pending_headless_diff.is_some();
+    let diff_open = app.ui().main_diff.is_some() || app.pending_headless_diff.is_some();
 
     match id {
         // ── Always available ────────────────────────────────────────────
@@ -1615,7 +1615,7 @@ impl KagiApp {
                 klog!("menu: inspector_visible={}", self.inspector_visible);
             }
             "view.toggleDiffView" => {
-                if self.main_diff.is_some() {
+                if self.ui().main_diff.is_some() {
                     self.close_main_diff();
                 }
             }
@@ -1689,14 +1689,14 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Rebuild the terminal config from the current theme + zoom and push it
-    /// into every live session.
-    ///
-    /// Called on both theme switches (palette) and zoom changes (font size) —
-    /// a running PTY view keeps its own config until told otherwise.
+    /// Rebuild terminal config and push it into every retained session.
     fn apply_terminal_config(&mut self, cx: &mut Context<Self>) {
         let new_config = super::terminal::build_terminal_config();
-        for session in self.terminal_sessions.values() {
+        for session in self
+            .ui
+            .values()
+            .filter_map(|ui| ui.terminal_session.as_ref())
+        {
             if let Some(view) = session.view.clone() {
                 let cfg = new_config.clone();
                 view.update(cx, |v, vcx| v.update_config(cfg, vcx));

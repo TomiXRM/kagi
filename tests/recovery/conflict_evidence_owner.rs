@@ -47,6 +47,7 @@ fn assert_visible_conflict(
             "{stage}: the accepted read lost the in-progress operation"
         );
         let pane = app
+            .ui()
             .conflict
             .as_ref()
             .unwrap_or_else(|| panic!("{stage}: conflict detector did not build a pane"));
@@ -89,7 +90,7 @@ pub fn scenario_conflict_detector_owner_guard(cx: &mut VisualTestAppContext) {
     let owner_b = app.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b.clone(), cx), "open B");
         assert!(
-            app.conflict.is_none(),
+            app.ui().conflict.is_none(),
             "switch to B retained A's root conflict pane"
         );
         app.active_session().expect("B owner")
@@ -101,7 +102,7 @@ pub fn scenario_conflict_detector_owner_guard(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
         assert!(
-            app.conflict.is_none(),
+            app.ui().conflict.is_none(),
             "return to A retained B's root conflict pane"
         );
     });

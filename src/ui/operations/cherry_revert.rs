@@ -28,7 +28,7 @@ impl KagiApp {
             }
         };
 
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 klog!(
@@ -141,7 +141,7 @@ impl KagiApp {
             }
         };
 
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 klog!("revert plan: repo open error: {}", "session unavailable");

@@ -35,17 +35,19 @@ pub struct MainDiffPane {
     /// "main-diff-list" — see `render_helpers::render_diff_list` for the
     /// item-count sync/reset lifecycle.
     scroll: ListState,
-    /// ADR-0117: parent handle for the header buttons (Back / History). Only
-    /// upgraded from event listeners — never from the render path (re-entrancy).
+    /// Parent handle for deferred header actions.
     app: WeakEntity<KagiApp>,
+    /// Session that owns this retained pane.
+    owner: crate::app::SessionId,
 }
 
 impl MainDiffPane {
-    pub fn new(view: MainDiffView, app: WeakEntity<KagiApp>) -> Self {
+    pub fn new(view: MainDiffView, app: WeakEntity<KagiApp>, owner: crate::app::SessionId) -> Self {
         Self {
             view,
             scroll: new_diff_list_state(),
             app,
+            owner,
         }
     }
 
@@ -79,23 +81,29 @@ impl Render for MainDiffPane {
         // `standalone: true` arm). "← Back" closes the diff; "History" opens
         // File History for the shown file (导线 #3).
         let back_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            let owner = this.owner;
             this.app
-                .update(cx, |app, cx| {
-                    app.close_main_diff();
-                    cx.notify();
+                .update(cx, move |app, cx| {
+                    if app.active_session() == Some(owner) {
+                        app.close_main_diff();
+                        cx.notify();
+                    }
                 })
                 .ok();
         });
         let history_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
             // Read the source HERE, off `this` — this listener runs while the
             // pane entity is leased, so the app must not read it back out of
-            // `self.main_diff` (that panicked: "cannot read MainDiffPane while
-            // it is already being updated").
+            // the owner's `main_diff` slot (that panicked: "cannot read
+            // MainDiffPane while it is already being updated").
             let source = this.view.source.clone();
+            let owner = this.owner;
             this.app
-                .update(cx, |app, cx| {
-                    app.open_file_history_from_main_diff(source, cx);
-                    cx.notify();
+                .update(cx, move |app, cx| {
+                    if app.active_session() == Some(owner) {
+                        app.open_file_history_from_main_diff(source, cx);
+                        cx.notify();
+                    }
                 })
                 .ok();
         });
@@ -112,12 +120,15 @@ impl Render for MainDiffPane {
         let ext_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
             // Same lease rule as history_click: read the source off `this`.
             let source = this.view.source.clone();
+            let owner = this.owner;
             this.app
-                .update(cx, |app, cx| {
-                    if let Some((path, _)) = app.main_diff_source_ref(&source, cx) {
-                        app.open_in_external_editor(&path, None, cx);
+                .update(cx, move |app, cx| {
+                    if app.active_session() == Some(owner) {
+                        if let Some((path, _)) = app.main_diff_source_ref(&source, cx) {
+                            app.open_in_external_editor(&path, None, cx);
+                        }
+                        cx.notify();
                     }
-                    cx.notify();
                 })
                 .ok();
         });
@@ -164,7 +175,7 @@ impl KagiApp {
         view: MainDiffView,
         cx: &mut Context<Self>,
     ) -> Entity<MainDiffPane> {
-        match self.main_diff.clone() {
+        match self.ui().main_diff.clone() {
             Some(pane) => {
                 pane.update(cx, |p, cx| {
                     p.view = view;
@@ -174,8 +185,11 @@ impl KagiApp {
             }
             None => {
                 let weak = cx.weak_entity();
-                let pane = cx.new(|_| MainDiffPane::new(view, weak));
-                self.main_diff = Some(pane.clone());
+                let owner = self
+                    .active_session()
+                    .expect("main diff requires an attached session");
+                let pane = cx.new(|_| MainDiffPane::new(view, weak, owner));
+                self.ui_mut().main_diff = Some(pane.clone());
                 pane
             }
         }
@@ -203,7 +217,7 @@ impl KagiApp {
     /// Take hold of the open diff before a reload sweeps it away. `None` when
     /// nothing is open.
     pub(crate) fn capture_main_diff(&self, cx: &Context<Self>) -> Option<MainDiffRestore> {
-        let pane = self.main_diff.clone()?;
+        let pane = self.ui().main_diff.clone()?;
         let source = pane.read(cx).view.source.clone();
         let path = self.main_diff_source_ref(&source, cx).map(|(p, _)| p);
         let commit = match source {
@@ -258,7 +272,7 @@ impl KagiApp {
                         file_index,
                     }
                 });
-                self.main_diff = Some(pane);
+                self.ui_mut().main_diff = Some(pane);
             }
             // The compare list was re-read first (`restore_compare`); find the
             // same file in it again — its index moves as files enter and leave
@@ -266,13 +280,14 @@ impl KagiApp {
             MainDiffSource::Compare { .. } => {
                 let Some(path) = path else { return };
                 let Some(file_index) = self
+                    .ui()
                     .compare_view
                     .as_ref()
                     .and_then(|p| p.read(cx).view.files.iter().position(|f| f.path == path))
                 else {
                     return;
                 };
-                self.main_diff = Some(pane);
+                self.ui_mut().main_diff = Some(pane);
                 self.open_main_diff_compare(file_index, cx);
             }
             MainDiffSource::Staged { path } => {
@@ -305,7 +320,7 @@ impl KagiApp {
             .filter(|p| Some(p) != self.repo_path.as_ref())
             .and_then(|p| kagi_git::Backend::open(&p).ok());
         let result = {
-            let repo = match (&foreign, self.repo_session.as_ref()) {
+            let repo = match (&foreign, self.ui().repo_session.as_ref()) {
                 (Some(backend), _) => backend,
                 (None, Some(session)) => session.backend(),
                 (None, None) => return,
@@ -333,7 +348,7 @@ impl KagiApp {
         };
         let mut view = build_main_diff_view(&file_diff, &path, 0, source.clone());
         view.images = self.diff_images_for(&file_diff, &source, &path);
-        self.main_diff = Some(pane);
+        self.ui_mut().main_diff = Some(pane);
         self.show_main_diff(view, cx);
     }
 }

@@ -66,7 +66,8 @@ impl KagiApp {
         let Some(operation) = self.view().operation.clone() else {
             return;
         };
-        let Some(repo) = self.repo_session.as_ref().map(|session| session.backend()) else {
+        let repo_session = self.ui().repo_session.clone();
+        let Some(repo) = repo_session.as_ref().map(|session| session.backend()) else {
             self.push_toast(
                 ToastKind::Error,
                 SharedString::from(super::i18n::op_failed(

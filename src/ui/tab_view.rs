@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gpui::{SharedString, UniformListScrollHandle};
+use gpui::{Entity, SharedString, UniformListScrollHandle};
 
 use kagi_git::{CommitId, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree};
 
@@ -274,8 +274,8 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 /// disposable positioning handles after classifying `UniformListScrollHandle`
 /// as plain `Rc<RefCell<...>>` state with no task, subscription, entity, or
 /// callback lifecycle. S4 adds recomputable read caches and the pure undo/redo
-/// cursor. Pane entities remain root-owned until S5 (ADR-0197).
-#[derive(Clone)]
+/// cursor. S5 makes this the owner of every repository-bound pane and session
+/// resource (ADR-0197).
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
     pub selected: Option<usize>,
@@ -318,13 +318,27 @@ pub struct TabUiState {
     pub cleanup_scanning: bool,
     pub cleanup_prs: Vec<kagi_domain::github::PullRequest>,
     pub cleanup_prs_stale: bool,
-    /// Re-armed when the root conflict pane is discarded or its read changes.
+    /// Re-armed when retained conflict authority is invalidated or its read changes.
     pub conflict_detected: bool,
-    /// Recomputable data only; pane entities and task handles remain outside this store.
+    /// Recomputable Analyze evidence; the pane entity is owned below.
     pub ecosystem_cache: Option<super::ecosystem::CachedMine>,
     pub ecosystem_inflight: bool,
     pub ecosystem_gen: u64,
     pub ecosystem_mine_head: Option<String>,
+    /// Repository-bound resources. They survive activation changes and are
+    /// destroyed together when `release_session` removes this owner.
+    pub repo_session: Option<kagi_git::session::RepoSession>,
+    pub terminal_session: Option<super::terminal::KagiTerminalSession>,
+    pub conflict: Option<Entity<super::conflict_view::ConflictView>>,
+    pub conflict_merge_pending: bool,
+    pub file_history: Option<Entity<super::file_history::FileHistoryView>>,
+    pub file_history_head: Option<String>,
+    pub ecosystem: Option<Entity<super::ecosystem::EcosystemView>>,
+    pub editor_workspace: Option<Entity<super::editor_workspace::EditorWorkspaceView>>,
+    pub commit_panel: Option<Entity<super::commit_panel::CommitPanelView>>,
+    pub commit_panel_open: bool,
+    pub main_diff: Option<Entity<super::MainDiffPane>>,
+    pub compare_view: Option<Entity<super::ComparePane>>,
 }
 
 impl Default for TabUiState {
@@ -360,6 +374,18 @@ impl Default for TabUiState {
             ecosystem_inflight: false,
             ecosystem_gen: 0,
             ecosystem_mine_head: None,
+            repo_session: None,
+            terminal_session: None,
+            conflict: None,
+            conflict_merge_pending: false,
+            file_history: None,
+            file_history_head: None,
+            ecosystem: None,
+            editor_workspace: None,
+            commit_panel: None,
+            commit_panel_open: false,
+            main_diff: None,
+            compare_view: None,
         }
     }
 }
@@ -373,17 +399,23 @@ fn now_unix_secs() -> i64 {
 }
 
 impl KagiApp {
-    /// Make retained read caches non-authoritative before an activation read.
+    /// Make retained repository-derived state non-authoritative before an
+    /// activation read. Editable panes remain intact, but conflict state is
+    /// discarded until the repository is observed again: external resolution
+    /// must never leave a stale conflict editor actionable.
     pub(crate) fn begin_session_revalidation(&mut self, session: crate::app::SessionId) {
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
             ui.diff_caches.clear();
             ui.wip_diffstat = None;
             ui.last_working_status = None;
+            ui.conflict = None;
+            ui.conflict_merge_pending = false;
+            ui.conflict_detected = false;
         }
     }
 
-    /// Drop row-indexed caches for `session`; S5 pane entities are active-only.
+    /// Drop row-indexed caches for `session`.
     pub fn invalidate_caches_for_row_renumber(&mut self, session: crate::app::SessionId) {
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
@@ -392,8 +424,8 @@ impl KagiApp {
         if self.active_session() != Some(session) {
             return;
         }
-        self.main_diff = None;
-        self.compare_view = None;
+        self.ui_mut().main_diff = None;
+        self.ui_mut().compare_view = None;
         self.commit_menu = None;
         self.inspector_file_menu = None;
     }
@@ -487,16 +519,14 @@ impl KagiApp {
         next
     }
 
-    /// End a session and everything that belonged to its display.
+    /// End a session and everything that owner retained.
     ///
     /// #482 stage 1 drops the conflict/follow-up payloads and the plan slot if
     /// this session owned one, while in-flight executions keep running
-    /// (ADR-0175); stage 2 adds the read model, which has the same lifetime —
-    /// releasing one without the other is exactly how the remote re-snapshot
-    /// leaked a full rows/details set per refresh. #643 Wave 4 S1 adds the UI
-    /// state on the same terms: this is the **only** place a `ui` entry is
-    /// removed, so `dom(ui) = attached sessions` cannot be broken by forgetting
-    /// a call site.
+    /// (ADR-0175); stage 2 adds the read model, which has the same lifetime.
+    /// #643 Wave 4 makes this the sole destruction boundary for the UI entry
+    /// and all repository-bound resources it owns. Removing the read or UI
+    /// anywhere else would violate `dom(ui) = attached sessions`.
     pub(crate) fn release_session(&mut self, session: crate::app::SessionId) {
         self.app_sessions.detach(session);
         self.reads.forget(session);

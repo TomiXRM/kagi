@@ -159,9 +159,20 @@ The current suite covers:
   publishes the new WIP/status snapshot. History scenarios prove A and B expose
   separate undo stacks, external ref movement is refused, background operation
   completion records only into its frozen attached owner, and detached completion
-  falls through nowhere. The Welcome scenario drops the root MainDiff entity
-  when its final owning tab closes.
-
+  falls through nowhere. The Welcome scenario proves the final session release
+  removes its retained Main Diff before ownerless rendering.
+- session-owned pane resources (`tests/recovery/pane_resources.rs`,
+  `tests/recovery/app_conflict.rs`):
+  `KAGI_GUI_E2E_ONLY=retained_pane_resources,conflict_background_owner,conflict_revalidates_after_external_abort,tab_ui_state_rejects_detached_writer`.
+  Real File History, Analyze, Editor, Conflict, and Terminal entities freeze
+  their owner. Background completions update only that owner's retained state
+  and cannot touch another tab's pane, modal, or footer. Returning restores
+  entity identity and edited buffers; returning after an external conflict
+  abort clears the editor before the fresh read and rejects old-visit
+  completions. Closing the owner makes every retained `WeakEntity` dead.
+  Pair with `smart_commit_generation_owner`, `diff_survives_reload`,
+  `compare_survives_reload`, and `fetch_detach_retains_flight` for Commit Panel,
+  diff/compare refresh, and operation-lifecycle coverage.
 
 For worktree-decorated branch checkout, scope
 `KAGI_GUI_E2E_ONLY=graph_worktree_open`. The scenario double-clicks the actual

@@ -29,7 +29,7 @@ impl KagiApp {
             }
         };
 
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 klog!("plan: repo open error: {}", "session unavailable");
@@ -99,7 +99,7 @@ impl KagiApp {
             }
         };
 
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 klog!(
@@ -302,7 +302,7 @@ impl KagiApp {
         if self.has_active_modal()
             || self.commit_menu.is_some()
             || self.branch_menu.is_some()
-            || self.commit_panel_open
+            || self.ui().commit_panel_open
         {
             return;
         }

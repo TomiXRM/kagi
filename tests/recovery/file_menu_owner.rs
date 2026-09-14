@@ -47,7 +47,12 @@ pub fn scenario_file_menu_freezes_path(cx: &mut VisualTestAppContext) {
 
     let (owner, frozen, other) = cx.read(|cx| {
         let app = app.read(cx);
-        let panel = app.commit_panel.as_ref().expect("commit panel").read(cx);
+        let panel = app
+            .ui()
+            .commit_panel
+            .as_ref()
+            .expect("commit panel")
+            .read(cx);
         assert_eq!(panel.state.unstaged.len(), 2, "fixture has two menu rows");
         (
             panel.owner,
@@ -60,7 +65,12 @@ pub fn scenario_file_menu_freezes_path(cx: &mut VisualTestAppContext) {
     // before it lands. Resolving `fi` in the callback would now select `other`.
     defer_first_menu(cx, &app, window);
     app.update(cx, |app, cx| {
-        let panel = app.commit_panel.as_ref().expect("commit panel").clone();
+        let panel = app
+            .ui()
+            .commit_panel
+            .as_ref()
+            .expect("commit panel")
+            .clone();
         panel.update(cx, |panel, _| panel.state.unstaged.swap(0, 1));
     });
     cx.run_until_parked();

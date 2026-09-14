@@ -39,6 +39,7 @@ impl KagiApp {
     /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
     fn discard_partition(&self, cx: &Context<Self>) -> (Vec<String>, Vec<String>) {
         let rows: Vec<(String, bool)> = self
+            .ui()
             .commit_panel
             .as_ref()
             .into_iter()
@@ -86,7 +87,7 @@ impl KagiApp {
         cx: &Context<Self>,
     ) -> std::collections::HashMap<String, kagi_git::ChangeKind> {
         let mut out = std::collections::HashMap::new();
-        if let Some(entity) = self.commit_panel.as_ref() {
+        if let Some(entity) = self.ui().commit_panel.as_ref() {
             let panel = &entity.read(cx).state;
             for f in &panel.unstaged {
                 out.insert(

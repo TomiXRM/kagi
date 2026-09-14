@@ -33,6 +33,7 @@ impl KagiApp {
             return;
         }
         let panel_has_owner = self
+            .ui()
             .commit_panel
             .as_ref()
             .is_some_and(|panel| panel.read(cx).owner == expected.owner);
@@ -65,7 +66,7 @@ impl KagiApp {
         panel_repo: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let panel_is_source = self.commit_panel.as_ref().is_some_and(|entity| {
+        let panel_is_source = self.ui().commit_panel.as_ref().is_some_and(|entity| {
             let panel = entity.read(cx);
             panel.owner == menu.owner && panel.repo_path == panel_repo
         });
@@ -199,10 +200,10 @@ pub(crate) fn render_inspector_file_menu_overlay(
         if let Some((path, _)) = this.inspector_file_ref(fi, cx) {
             // Reuse a running workspace — `open_editor_workspace` rebuilds the
             // entity and would drop open tabs / dirty buffers.
-            if this.editor_workspace.is_none() {
+            if this.ui().editor_workspace.is_none() {
                 this.open_editor_workspace(cx);
             }
-            if let Some(ws) = this.editor_workspace.clone() {
+            if let Some(ws) = this.ui().editor_workspace.clone() {
                 ws.update(cx, |v, cx| v.open_tab(path, cx));
             }
         }

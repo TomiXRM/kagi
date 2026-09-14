@@ -265,7 +265,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         });
         confirm(cx, &app, window, duplicate);
         wait(cx, &app, |app| {
-            app.write_busy_op.is_none() && app.conflict.is_some()
+            app.write_busy_op.is_none() && app.ui().conflict.is_some()
         });
         let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
             .into_iter()
@@ -300,7 +300,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             );
         });
         app.update(cx, |app, cx| app.switch_repo(0, cx));
-        wait(cx, &app, |app| app.conflict.is_some());
+        wait(cx, &app, |app| app.ui().conflict.is_some());
         // Returning re-detects the conflict from the repository, and *that* live
         // re-observation is what makes it proposable again — the OID belongs to
         // the conflict that is actually still there, not to a preserved payload.
@@ -320,7 +320,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         let kept = ids(&repo);
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| {
-                app.conflict.as_ref().unwrap().update(cx, |view, _| {
+                app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
                     view.mode
                         .as_mut()
                         .unwrap()
@@ -332,7 +332,7 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             });
         })
         .unwrap();
-        wait(cx, &app, |app| app.conflict.is_none());
+        wait(cx, &app, |app| app.ui().conflict.is_none());
         wait(cx, &app, |app| {
             if duplicate {
                 app.app_sessions.stash_conflict(owner).is_none()
@@ -370,7 +370,7 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
     });
     confirm(cx, &app, window, false);
     wait(cx, &app, |app| {
-        app.write_busy_op.is_none() && app.conflict.is_some()
+        app.write_busy_op.is_none() && app.ui().conflict.is_some()
     });
 
     let closed = cx.read(|cx| app.read(cx).active_session().unwrap());
@@ -378,7 +378,7 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
     // present the one-shot drop follow-up.
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.conflict.as_ref().unwrap().update(cx, |view, _| {
+            app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
                 view.mode
                     .as_mut()
                     .unwrap()
@@ -396,7 +396,7 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         assert!(app.open_repository(repo.clone(), cx));
     });
     wait(cx, &app, |app| {
-        app.repo_path.as_ref() == Some(&repo) && app.conflict.is_none()
+        app.repo_path.as_ref() == Some(&repo) && app.ui().conflict.is_none()
     });
     app.update(cx, |app, _| {
         // #482 stage 1: same path, new session. The closed owner's payloads went
@@ -475,7 +475,7 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
     assert!(!result.status.success(), "fixture must conflict");
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.reload(cx));
-    wait(cx, &app, |app| app.conflict.is_some());
+    wait(cx, &app, |app| app.ui().conflict.is_some());
     assert!(cx.read(|cx| {
         let app = app.read(cx);
         app.app_sessions
@@ -484,7 +484,7 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
     }));
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.conflict.as_ref().unwrap().update(cx, |view, _| {
+            app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
                 view.mode
                     .as_mut()
                     .unwrap()
@@ -496,7 +496,7 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
         });
     })
     .unwrap();
-    wait(cx, &app, |app| app.conflict.is_none());
+    wait(cx, &app, |app| app.ui().conflict.is_none());
     assert!(cx.read(|cx| app.read(cx).stash_drop_modal().is_none()));
     assert_eq!(ids(&repo), before);
     unmount(cx, app, window);

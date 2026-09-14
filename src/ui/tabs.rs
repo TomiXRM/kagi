@@ -4,9 +4,9 @@
 //! is editing `src/ui/mod.rs`, so the surface touched there is kept minimal —
 //! see the W4-TABS completion report for the exact list of mod.rs changes).
 //!
-//! Model (ADR-0027): a lightweight tab descriptor [`RepoTab`] plus the single
-//! heavyweight per-repo state on [`KagiApp`].  `switch_repo` rebuilds that
-//! heavyweight state from a fresh snapshot and resets per-repo UI state.
+//! Model (ADR-0027 / ADR-0197): lightweight [`RepoTab`] descriptors plus
+//! session-owned read models and pane resources. `switch_repo` changes the active
+//! owner, revalidates repository-derived state, and retains that owner's panes.
 //!
 //! Picker (ADR-0028): `cx.prompt_for_paths` (NSOpenPanel on macOS).  The
 //! oneshot `Receiver` is awaited on a `cx.spawn` task.
@@ -26,7 +26,6 @@ use gpui_component::Sizable as _;
 
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
-use super::workspace;
 use super::{EditorPendingIntent, FooterStatus, KagiApp, ToastKind};
 
 /// Lightweight descriptor for one open repository tab (ADR-0027).
@@ -165,10 +164,9 @@ impl KagiApp {
     }
 
     /// Switch the active tab to `index` (W6-TABSPEED / ADR-0030).
-    /// Switches the session-owned read and selection immediately, then revalidates
-    /// in the background. First reads show a Loading placeholder. Legacy panes
-    /// and caches still reset here until their Wave 4 cutover; the watcher is
-    /// re-armed for the new tab (ADR-0027).
+    /// Session-owned reads, presentation state, panes, and resources become
+    /// active immediately; repository-derived state is then revalidated in the
+    /// background and the watcher is re-armed (ADR-0197).
     pub fn switch_repo(&mut self, index: usize, cx: &mut Context<Self>) {
         let tab = match self.tabs.get(index) {
             Some(t) => t.clone(),
@@ -191,7 +189,7 @@ impl KagiApp {
         //    the cached snapshot. No local path, no Backend, no watcher. ──
         if let Some(rv) = tab.remote.clone() {
             self.repo_path = None;
-            self.repo_session = None;
+            self.ui_mut().repo_session = None;
             self.remote_view = Some(rv);
             self.reset_per_repo_ui();
             self.begin_session_revalidation(tab.session);
@@ -213,13 +211,14 @@ impl KagiApp {
 
         // Point repo_path at the new repo before any apply.
         self.repo_path = Some(tab.path.clone());
-        // ADR-0107: open (or re-use) a RepoSession for this tab so read paths
-        // don't re-open the repo per interaction. Failure is non-fatal — read
-        // paths fall back to Backend::open until the session succeeds.
-        self.repo_session = kagi_git::session::RepoSession::open(&tab.path).ok();
+        // ADR-0107 / ADR-0197: open the owner's repository session once. A
+        // returning tab reuses the session it retained while inactive.
+        if self.ui().repo_session.is_none() {
+            self.ui_mut().repo_session = kagi_git::session::RepoSession::open(&tab.path).ok();
+        }
 
-        // Reset every per-repo UI surface up-front so a cached instant-apply
-        // never shows the previous tab's selection / modals (ADR-0027).
+        // Clear only repository-scoped root presentation. Session-owned panes
+        // remain attached to the tab being left (ADR-0197).
         self.reset_per_repo_ui();
         self.begin_session_revalidation(tab.session);
         // GitHub Phase 1: refetch PRs for the new repo right away (the
@@ -258,8 +257,8 @@ impl KagiApp {
         // T-PERF-RENDER-001 (ADR-0116 Wave 2): tab-switch commit point for the
         // per-repo background I/O (conflict detect + reflog seed + auto-fetch
         // ticker) that used to run synchronously in `render()`. Each sub-task is
-        // run-once guarded; the conflict/history guards were just reset by
-        // `reset_per_repo_ui`, so this re-detects for the newly-active repo.
+        // run-once guarded; activation revalidation re-arms the new owner's
+        // conflict/history guards before this call.
         self.ensure_startup_repo_io(cx);
 
         // Background (re)load to refresh / fill the cache.
@@ -269,7 +268,7 @@ impl KagiApp {
         // pre-confirmation fetch, and been left while it ran. The answer
         // belongs to *this* tab, so it was parked rather than shown over
         // another repository — deliver it now that the tab is back on screen.
-        // After `reset_per_repo_ui` above, so nothing clears it again.
+        // Root presentation was reset above, so nothing clears it again.
         self.deliver_parked_pull_confirm(cx);
     }
 
@@ -328,7 +327,7 @@ impl KagiApp {
         // `arm_watcher` returns early.
         self.depart_active_tab();
         self.repo_path = None;
-        self.repo_session = None;
+        self.ui_mut().repo_session = None;
         self.reset_per_repo_ui();
 
         // #482 stage 2: build the read model first, but publish it only once the
@@ -434,42 +433,17 @@ impl KagiApp {
         .detach();
     }
 
-    /// Reset all per-repo transient UI state (diffs / modals / commit panel).
-    /// Shared by `switch_repo` (W6-TABSPEED instant-apply path) so a cached swap
-    /// never leaks the previous tab's UI. #643 Wave 4 S1: the selection is gone
-    /// from here — it is session-owned, so a switch has nothing to clear and
-    /// coming back restores it (ADR-0197).
+    /// Reset repository-scoped root presentation while switching owners.
+    /// Session-owned panes and resources stay attached to their owner and are
+    /// destroyed only by `release_session`.
     fn reset_per_repo_ui(&mut self) {
         self.app_sessions.invalidate_plan();
         self.pr_menu = None;
-        // ADR-0121 B2: `main_diff` is dropped via the CENTER_ITEMS dispose
-        // loop below (MainDiffItem), like the other registered panes.
-        // #492: a confirmation is bound to the repo it was planned against —
-        // its plan, paths, stash indices and OIDs all came from that repo, while
-        // the confirm methods read `self.repo_path` at Enter time. Dropping the
-        // whole repo-scoped slot (rather than the nine variants this list used
-        // to name) means no destructive confirmation opened in A can be applied
-        // to B. `ActiveModal::is_repo_scoped` is exhaustive, so a new variant
-        // must declare its scope.
+        self.pr_mode = None;
+        self.branch_cleanup_open = false;
+        self.pending_headless_diff = None;
+        self.pending_headless_compare = None;
         self.drop_repo_scoped_modal();
-        // ADR-0121 B1/B2: registered workspace items (FileHistory / Ecosystem /
-        // EditorWorkspace / CommitPanel / Inspector) drop their own per-repo
-        // state via the dispose hook — the per-pane rationale lives on each
-        // adapter's `dispose` in `workspace.rs`. A pane registered later can't
-        // be forgotten here.
-        for item in workspace::CENTER_ITEMS
-            .into_iter()
-            .chain(workspace::RIGHT_ITEMS)
-        {
-            item.dispose(self);
-        }
-        // ADR-0118 / T-ENTITY-CONFLICT-001: the ConflictView entity captures the
-        // previous repo's `repo_path`; a tab switch MUST drop it (and the merge
-        // gate + run-once guard) so a stale conflict screen never survives. The
-        // new repo re-detects via the launch / `ensure_startup_repo_io` path.
-        self.conflict = None;
-        self.conflict_merge_pending = false;
-        self.ui_mut().conflict_detected = false;
     }
     /// Snapshot + build the [`TabViewState`] on a background thread
     /// (`RepoSnapshot` is `Send`), then hand it to its **owner** on the main
@@ -596,8 +570,6 @@ impl KagiApp {
         }
         let closed = self.tabs.remove(index);
         self.release_session(closed.session);
-        // Drop the closed repo's terminal session (PTY closes on drop).
-        self.terminal_sessions.remove(&closed.path);
 
         match decision {
             crate::app::TabClose::Nothing => unreachable!("filtered above"),
@@ -605,7 +577,6 @@ impl KagiApp {
                 // Last tab closed → Welcome screen.
                 self.active_tab = 0;
                 self.repo_path = None;
-                self.repo_session = None;
                 // Clear any remote view so the Welcome gate (tabs empty &&
                 // remote_view none) actually shows the Welcome screen (ADR-0089).
                 self.remote_view = None;
@@ -649,33 +620,12 @@ impl KagiApp {
         }
     }
 
-    /// Reset the app to the Welcome screen (no repo open).  Clears per-repo
-    /// state so a stale commit list / sidebar is not shown behind the Welcome
-    /// overlay.
+    /// Reset root-owned presentation after the last session is released.
     fn show_welcome(&mut self) {
         self.error = None;
-        // With no tab, `view()` is already the empty read model (#482).
-        // T-PERF-RENDER-002: bump the epoch so the sidebar-rows cache misses.
+        // With no tab, `view()` and `ui()` expose immutable empty defaults.
         self.view_epoch = self.view_epoch.wrapping_add(1);
-        // MainDiff remains root-owned until ADR-0197 S5.
-        self.main_diff = None;
-        // #492: a confirmation is bound to the repo it was planned against —
-        // its plan, paths, stash indices and OIDs all came from that repo, while
-        // the confirm methods read `self.repo_path` at Enter time. Dropping the
-        // whole repo-scoped slot (rather than the nine variants this list used
-        // to name) means no destructive confirmation opened in A can be applied
-        // to B. `ActiveModal::is_repo_scoped` is exhaustive, so a new variant
-        // must declare its scope.
         self.drop_repo_scoped_modal();
-        self.commit_panel_open = false;
-        // ADR-0118: dropping the single `commit_panel` entity also drops its
-        // `commit_input` / template inputs / draft state (all entity-owned).
-        self.commit_panel = None;
-        // ADR-0118: drop the conflict entity (captured prev-repo `repo_path`) +
-        // merge gate + run-once guard so a stale conflict screen never lingers
-        // behind the Welcome overlay.
-        self.conflict = None;
-        self.conflict_merge_pending = false;
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
     }
 
@@ -776,7 +726,7 @@ impl KagiApp {
                         if saw_git {
                             app.reload_external(cx);
                         } else if saw_index {
-                            if app.conflict.is_some() || app.conflict_merge_pending {
+                            if app.ui().conflict.is_some() || app.ui().conflict_merge_pending {
                                 app.reload_external(cx);
                             } else {
                                 app.refresh_working_tree_external(cx);
@@ -1234,7 +1184,7 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         .min(app.tabs.len() - 1);
     app.active_tab = active;
     app.repo_path = Some(app.tabs[active].path.clone());
-    app.repo_session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
+    app.ui_mut().repo_session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
     app.error = None;
     app.reload_prelaunch();
     app.prompt_trust_if_untrusted(); // ADR-0160: prompt on restore too.

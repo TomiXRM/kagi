@@ -14,7 +14,7 @@ impl KagiApp {
         if self.modal_focus.is_none() {
             self.modal_focus = Some(cx.focus_handle());
         }
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(

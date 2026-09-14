@@ -248,7 +248,7 @@ pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {
     // ADR-0107: the per-tab session every real launch has (`tabs.rs`). Without
     // it the staging / diff paths that go through `repo_session` silently
     // no-op, which would let a scenario pass for the wrong reason (#473).
-    app.repo_session = kagi_git::session::RepoSession::open(repo_path).ok();
+    app.ui_mut().repo_session = kagi_git::session::RepoSession::open(repo_path).ok();
     Ok(app)
 }
 
@@ -372,7 +372,7 @@ pub fn open_local_panel_no_inputs(
 /// Set the commit panel's message without touching an `InputState` (see
 /// [`open_worktree_panel_no_inputs`]) — the `state.commit_msg` fallback.
 pub fn set_commit_message(app: &KagiApp, msg: &str, cx: &mut App) {
-    if let Some(panel) = app.commit_panel.clone() {
+    if let Some(panel) = app.ui().commit_panel.clone() {
         panel.update(cx, |v, _| v.state.commit_msg = msg.to_string());
     }
 }
@@ -441,6 +441,12 @@ pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
 #[cfg(feature = "gui-e2e")]
 pub fn op_latched(app: &KagiApp) -> bool {
     app.op_latched()
+}
+
+/// Whether any foreground modal currently occupies the window-global slot.
+#[cfg(feature = "gui-e2e")]
+pub fn active_modal_present(app: &KagiApp) -> bool {
+    app.active_modal.is_some()
 }
 
 /// What `render` runs every frame, callable on its own.
@@ -604,7 +610,11 @@ pub fn defer_file_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let panel = app.commit_panel.as_ref().expect("mounted commit panel");
+    let panel = app
+        .ui()
+        .commit_panel
+        .as_ref()
+        .expect("mounted commit panel");
     panel.update(cx, |panel, cx| {
         panel.defer_open_file_menu(fi, pos, window, cx)
     });

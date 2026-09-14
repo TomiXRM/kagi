@@ -136,7 +136,8 @@ impl KagiApp {
     pub fn commit_panel_is_foreign(&self, cx: &gpui::App) -> bool {
         is_foreign_panel(
             self.repo_path.as_deref(),
-            self.commit_panel
+            self.ui()
+                .commit_panel
                 .as_ref()
                 .map(|e| e.read(cx).repo_path.clone())
                 .as_deref(),
@@ -149,6 +150,7 @@ impl KagiApp {
     /// from, and an editor-tree write to the tab's.
     pub(crate) fn write_repo_path(&self, origin: WriteOrigin, cx: &gpui::App) -> Option<PathBuf> {
         let panel = self
+            .ui()
             .commit_panel
             .as_ref()
             .map(|e| e.read(cx).repo_path.clone());
@@ -163,7 +165,7 @@ impl KagiApp {
 
     /// The draft key's branch for the open commit panel — see [`draft_branch`].
     pub(crate) fn panel_draft_branch(&self, cx: &gpui::App) -> String {
-        let panel = self.commit_panel.as_ref().map(|e| e.read(cx));
+        let panel = self.ui().commit_panel.as_ref().map(|e| e.read(cx));
         let label = panel.and_then(|v| v.foreign.as_ref().map(|(l, _)| l.to_string()));
         draft_branch(label.as_deref(), &self.view().status_summary.branch)
     }
@@ -182,7 +184,7 @@ impl KagiApp {
     ) -> Option<R> {
         let path = self.write_repo_path(origin, cx)?;
         if self.repo_path.as_deref() == Some(path.as_path()) {
-            return Some(f(self.repo_session.as_ref()?.backend()));
+            return Some(f(self.ui().repo_session.as_ref()?.backend()));
         }
         match kagi_git::Backend::open(&path) {
             Ok(b) => Some(f(&b)),
@@ -236,7 +238,8 @@ impl KagiApp {
     /// Feeds [`worktree_modal_title`] so a destructive confirm names the
     /// repository it is about to rewrite.
     pub(crate) fn panel_worktree_label(&self, cx: &gpui::App) -> Option<SharedString> {
-        self.commit_panel
+        self.ui()
+            .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).foreign.as_ref().map(|(l, _)| l.clone()))
     }

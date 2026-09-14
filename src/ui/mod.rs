@@ -953,19 +953,6 @@ pub struct KagiApp {
     pub error: Option<SharedString>,
     /// Absolute path to the repository root; used for on-demand diff fetches.
     pub repo_path: Option<PathBuf>,
-    /// Per-tab repository session (ADR-0107): owns a `Backend` for the tab
-    /// lifetime so read paths don't re-open the repo on every interaction.
-    /// `None` when no repo is open (same lifecycle as `repo_path`). Cloning
-    /// is cheap (`Rc` bump); the underlying repository handle is opened once.
-    /// Mutating ops still open a fresh `Backend` (the `*_blocking` pattern)
-    /// because `run()` needs `&mut self` and the session is `Rc`, not
-    /// `Arc+Mutex` — that collapses when the worker thread (ADR-0073) lands.
-    pub repo_session: Option<kagi_git::session::RepoSession>,
-    /// T-UI-003: When `Some`, the main pane shows this diff (full-width) instead
-    /// of the commit graph list.  Cleared when `selected` changes or on reload.
-    /// ADR-0121 B2: now a fat entity (`main_diff_pane.rs`) that owns the
-    /// `MainDiffView`, the diff-list `ListState`, and the highlight swap-in.
-    pub main_diff: Option<Entity<MainDiffPane>>,
     /// Headless-only staging for `KAGI_OPEN_FIRST_FILE` (ADR-0121 B2): the
     /// hook runs before any gpui context exists, so it can't create the
     /// `MainDiffPane` entity. `render` promotes this into `main_diff` on the
@@ -977,11 +964,6 @@ pub struct KagiApp {
     /// with no other headless entry point, and it is where a malformed
     /// document aborts the process — see `kagi_ui_core::markdown`.
     pub pending_headless_md_preview: Option<PathBuf>,
-    /// ADR-0026: read-only compare mode shown in the inspector changed-files area.
-    /// Cleared on selection change or reload to avoid stale path/diff state.
-    /// ADR-0121 B2: now an entity (`compare_pane.rs`) that owns the
-    /// `CompareView`, registered as `workspace::CompareItem`.
-    pub compare_view: Option<Entity<ComparePane>>,
     /// Headless-only staging for `KAGI_COMPARE_HEAD` / `KAGI_COMPARE_WT`
     /// (ADR-0121 B2): the hook runs before any gpui context exists, so it
     /// can't create the `ComparePane` entity. `render` promotes this into
@@ -1034,16 +1016,6 @@ pub struct KagiApp {
     /// Index of the chart bucket the pointer is over (instant hover readout),
     /// or `None`. Reset on leave / granularity change.
     pub activity_hover: Option<usize>,
-    // ── T025: Commit Panel ───────────────────────────────────────
-    /// Whether the commit panel is currently open (WIP row selected).
-    pub commit_panel_open: bool,
-    /// ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001: the Commit Panel promoted
-    /// to its own `Entity<CommitPanelView>` (self-rendering child with its own
-    /// notify scope). The entity OWNS the staging lists + the message/template
-    /// `InputState`s + the per-branch draft autosave + the queued smart message.
-    /// `commit_panel_open` is the visibility gate (set by graph `select`);
-    /// `Some(entity)` = cached panel state. Read its data via `e.read(cx).state`.
-    pub commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
     // ── T-COMMIT-016: Smart Commit Message (W14-SMART) ───────────
     /// Process/window-global Smart Commit capabilities and persisted settings.
     /// The detection revision is zero until the first global capability probe;
@@ -1074,11 +1046,6 @@ pub struct KagiApp {
     /// Set while an Undo/Redo plan modal is open; carries the entry being
     /// previewed and whether it is an undo (`true`) or redo (`false`).
     /// (Stored in `active_modal` — see the `history_modal()` accessor.)
-    // ── T-BP-007 / W4-TABS: Terminal sessions ────────────────────
-    /// Terminal sessions keyed by repository path so each tab keeps its own
-    /// live PTY across tab switches (W4-TABS / ADR-0027).  A session is created
-    /// lazily when the Terminal tab is first displayed for a given repo.
-    pub terminal_sessions: HashMap<PathBuf, terminal::KagiTerminalSession>,
     // ── W4-TABS: Repository tabs (ADR-0027) ──────────────────────
     /// Open repository tabs.  Empty → Welcome screen is shown.
     pub tabs: Vec<tabs::RepoTab>,
@@ -1217,22 +1184,6 @@ pub struct KagiApp {
     /// Resolved-avatar cache (memory images + per-repo fetch guard), grouped
     /// into one cohesive sub-struct (ADR-0118 Phase 5.2).
     pub avatars: avatar::AvatarStore,
-    // ── W30-CONFLICT-UI: Conflict Mode (ADR-0056) ────────────────
-    /// Conflict-resolution panel, promoted to its own `Entity<ConflictView>`
-    /// (ADR-0118 Phase 5.2 / T-ENTITY-CONFLICT-001, mirroring the ADR-0117
-    /// FileHistory fat-entity template). `Some` while a conflict/merge is in
-    /// progress; the entity owns the detected mode, the open editor file, the
-    /// A/B/Result inputs, splits/geometry, and its own `cx.notify()` scope.
-    /// Built / dropped by `apply_conflict_detect`; cleared on reload / abort /
-    /// tab switch. Only the run-once evidence lives in `TabUiState`; the pane
-    /// and `conflict_merge_pending` remain root-owned until S5.
-    pub conflict: Option<Entity<conflict_view::ConflictView>>,
-    /// T-CONFLICT-FLOW-030/031 (ADR-0068): showing the merge commit panel
-    /// (every file saved + staged, MERGE_HEAD still present). Cleared on commit /
-    /// abort / reload. Parent-owned (read by the body-gate render and the FS
-    /// watcher) — kept off `ConflictState` so the upcoming `ConflictView` entity
-    /// flip never has to be leased just to test the gate (ADR-0118 Mechanism B).
-    pub conflict_merge_pending: bool,
     /// Auto-update (ADR-0082): the offered update + its source release, set by the
     /// startup background check when a newer stable release exists for this
     /// platform. `None` = up to date / not yet checked / skipped.
@@ -1252,20 +1203,6 @@ pub struct KagiApp {
     /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
     /// modal, shown when Continue routes a rebase / cherry-pick / revert.
     /// (Stored in `active_modal` — see the `conflict_continue_modal()` accessor.)
-    /// ADR-0089 / ADR-0117: File History view, promoted to its own
-    /// `Entity<FileHistoryView>` (Phase 5.1). `Some` while the dedicated
-    /// single-file history view occupies the center+right area; `None` shows the
-    /// normal commit graph / diff body. The entity owns its loads + row menu.
-    pub file_history: Option<Entity<file_history::FileHistoryView>>,
-    /// HEAD OID the open File History view was last loaded at. On a reload the
-    /// view is reloaded in place only when this differs from the new HEAD —
-    /// an auto-fetch (remote refs only) leaves it unchanged, so the view is
-    /// neither closed nor reloaded.
-    pub file_history_head: Option<String>,
-    /// ADR-0119: Code Ecosystem / hot-spot view. `Some` while the full-screen
-    /// read-only analysis view occupies the center+right area; `None` shows the
-    /// normal body. Its own `Entity<EcosystemView>` owns the mining + ranking.
-    pub ecosystem: Option<Entity<ecosystem::EcosystemView>>,
     /// ADR-0128: Branch Cleanup takeover open flag. The table data itself
     /// is per-tab (`view().cleanup_rows`), so a bool is the whole gate.
     pub branch_cleanup_open: bool,
@@ -1291,14 +1228,6 @@ pub struct KagiApp {
     /// was replaced, so the background scans that decorate it (Branch Cleanup
     /// rows, squash ghost connectors) need re-arming. See `on_view_published`.
     pub scans_stale: bool,
-    /// T-WS-EDITOR-001 / ADR-0120: the Editor workspace view — `Some` while
-    /// Graph ⇄ Editor mode is `Editor` (T-WS-EDITOR-005 finding #11: mode is
-    /// derived as `editor_workspace.is_some()` rather than tracked in a
-    /// separate `workspace_mode` field, so the two can't diverge). Its own
-    /// `Entity<EditorWorkspaceView>` owns the working-tree file tree, the
-    /// selected file's read-only code viewer, and its WIP hunks (ADR-0117
-    /// fat-entity template).
-    pub editor_workspace: Option<Entity<editor_workspace::EditorWorkspaceView>>,
 }
 
 /// T-CONFLICT-UI-001: the Result `InputState` entity backing the Conflict
@@ -1365,11 +1294,8 @@ impl KagiApp {
             view_epoch: 0,
             error: None,
             repo_path: None,
-            repo_session: None,
-            main_diff: None,
             pending_headless_diff: None,
             pending_headless_md_preview: None,
-            compare_view: None,
             pending_headless_compare: None,
             active_modal: None,
             remote_view: None,
@@ -1389,11 +1315,8 @@ impl KagiApp {
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             activity_granularity: kagi_domain::activity::Granularity::Week,
             activity_hover: None,
-            commit_panel_open: false,
-            commit_panel: None,
             smart_commit: smart_commit::SmartCommitState::load(),
             smart_commit_probe_revision: 0,
-            terminal_sessions: HashMap::new(),
             tabs: Vec::new(),
             active_tab: 0,
             watcher_generation: 0,
@@ -1439,23 +1362,16 @@ impl KagiApp {
             platform_menu_open: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
-            // W30-CONFLICT-UI
-            conflict: None,
-            conflict_merge_pending: false,
             update_available: None,
             update_checked: false,
             update_installing: false,
             update_status: None,
-            file_history: None,
-            file_history_head: None,
-            ecosystem: None,
             branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             modal_section_overrides: std::collections::HashSet::new(),
             modal_list_scroll: UniformListScrollHandle::new(),
             squash_gen: 0,
             scans_stale: true,
-            editor_workspace: None,
         }
     }
 
@@ -1769,38 +1685,35 @@ impl KagiApp {
 
     // ── T-BP-007: Terminal session ────────────────────────────
 
-    /// Ensure the terminal session is initialised and the shell is running.
-    ///
-    /// * Creates a `KagiTerminalSession` on first call if `repo_path` is set.
-    /// * Delegates to `terminal::ensure_terminal` which handles PTY startup,
-    ///   focus, and failure recording.
-    /// * On startup failure, calls `record_op` with `op="terminal-start"` and
-    ///   `OpOutcome::Failed`.
+    /// Ensure the active session's terminal exists and its shell is running.
+    /// The session owner is frozen into the exit callback so completion cannot
+    /// clear another tab's terminal.
     pub fn ensure_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(owner) = self.active_session() else {
+            klog!("terminal: no repo_path — cannot start terminal");
+            return;
+        };
         let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
+            Some(path) => path,
             None => {
                 klog!("terminal: no repo_path — cannot start terminal");
                 return;
             }
         };
-
-        // W4-TABS: sessions are keyed by repo path so each tab keeps its PTY.
-        // Initialise the session container for this repo if we haven't yet.
-        self.terminal_sessions
-            .entry(repo_path.clone())
-            .or_insert_with(|| terminal::KagiTerminalSession::new(repo_path.clone()));
-
-        // Mutably borrow the session; split the borrow so record_op can run after.
-        let session = self
-            .terminal_sessions
-            .get_mut(&repo_path)
-            .expect("just inserted above");
-
+        let mut session = self
+            .ui
+            .get_mut(&owner)
+            .expect("active session must own TabUiState")
+            .terminal_session
+            .take()
+            .unwrap_or_else(|| terminal::KagiTerminalSession::new(repo_path.clone()));
         let mut failure_msg: Option<String> = None;
-        terminal::ensure_terminal(session, window, cx, |msg| {
+        terminal::ensure_terminal(&mut session, owner, window, cx, |msg| {
             failure_msg = Some(msg);
         });
+        if let Some(ui) = self.ui.get_mut(&owner) {
+            ui.terminal_session = Some(session);
+        }
 
         if let Some(err) = failure_msg {
             use kagi_git::oplog::OpOutcome;
@@ -1964,19 +1877,19 @@ impl KagiApp {
     /// Also closes the commit panel since commit selection and commit panel are exclusive.
     pub fn select(&mut self, index: usize) {
         // Close commit panel when selecting a normal commit row.
-        self.commit_panel_open = false;
+        self.ui_mut().commit_panel_open = false;
 
         // Toggle: clicking the same row again deselects it.
         if self.ui().selected == Some(index) {
             self.ui_mut().selected = None;
-            self.main_diff = None;
-            self.compare_view = None;
+            self.ui_mut().main_diff = None;
+            self.ui_mut().compare_view = None;
             return;
         }
         self.ui_mut().selected = Some(index);
         // Clear any open main diff when the commit selection changes.
-        self.main_diff = None;
-        self.compare_view = None;
+        self.ui_mut().main_diff = None;
+        self.ui_mut().compare_view = None;
 
         if let Some(detail) = self.view().details.get(index) {
             let parent_count = detail.parent_ids.len();
@@ -2081,7 +1994,7 @@ impl KagiApp {
     /// is not leased here (this runs in `KagiApp`'s root key handler), so the
     /// `update` is safe.
     pub fn step_file_history_selection(&mut self, delta: i64, cx: &mut Context<Self>) {
-        if let Some(fh) = self.file_history.clone() {
+        if let Some(fh) = self.ui().file_history.clone() {
             fh.update(cx, |v, cx| v.step(delta, cx));
         }
     }
@@ -2104,7 +2017,7 @@ impl KagiApp {
         file_index: usize,
         cx: &Context<Self>,
     ) -> Option<(PathBuf, Option<kagi_git::CommitId>)> {
-        if let Some(pane) = self.compare_view.as_ref() {
+        if let Some(pane) = self.ui().compare_view.as_ref() {
             // ADR-0121 B2: the view lives inside the ComparePane entity now.
             return pane
                 .read(cx)
@@ -2177,6 +2090,7 @@ impl KagiApp {
             MainDiffSource::Compare { file_index, .. } => {
                 // ADR-0121 B2: the view lives inside the ComparePane entity now.
                 let path = self
+                    .ui()
                     .compare_view
                     .as_ref()
                     .and_then(|p| p.read(cx).view.files.get(*file_index).cloned())
@@ -2192,7 +2106,7 @@ impl KagiApp {
     /// follow-toggle / select now live on the entity (`reload` / `step` /
     /// `select`).
     pub fn close_file_history(&mut self) {
-        self.file_history = None;
+        self.ui_mut().file_history = None;
     }
 
     /// Load the selected remote commit's changed files over SSH (ADR-0089 Phase
@@ -2332,12 +2246,12 @@ impl KagiApp {
         use kagi_git::CommitId;
 
         // Early-exit if no repo is open (the session is None in that case too).
-        self.repo_session.as_ref()?;
+        self.ui().repo_session.as_ref()?;
         let detail = self.view().details.get(index)?;
         let id = CommitId(detail.full_sha.as_ref().to_string());
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = self.repo_session.as_ref()?.backend();
+        let repo = self.ui().repo_session.as_ref()?.backend();
         repo.commit_changed_files(&id).ok()
     }
 
@@ -2370,6 +2284,7 @@ impl KagiApp {
     pub fn refresh_wip_diffstat(&mut self) {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let stat = self
+            .ui()
             .repo_session
             .as_ref()
             .map(|session| Self::wip_diffstat_from_backend(session.backend()));
@@ -2416,10 +2331,10 @@ impl KagiApp {
     }
 
     pub fn close_compare_view(&mut self) {
-        self.compare_view = None;
+        self.ui_mut().compare_view = None;
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
         self.pending_headless_compare = None;
-        self.main_diff = None;
+        self.ui_mut().main_diff = None;
     }
 
     pub fn show_changed_files_for_commit(&mut self, target: CommitId) {
@@ -2458,7 +2373,7 @@ impl KagiApp {
         }
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };
         let repo = session.backend();
@@ -2478,7 +2393,7 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                self.main_diff = None;
+                self.ui_mut().main_diff = None;
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::Head,
@@ -2531,7 +2446,7 @@ impl KagiApp {
                         self.select(row);
                     }
                 }
-                self.main_diff = None;
+                self.ui_mut().main_diff = None;
                 let title = SharedString::from(format!("stash@{{{}}}", index));
                 let view = CompareView {
                     base: parent_id,
@@ -2564,7 +2479,7 @@ impl KagiApp {
         }
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };
         let repo = session.backend();
@@ -2596,7 +2511,7 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                self.main_diff = None;
+                self.ui_mut().main_diff = None;
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::WorkingTree,
@@ -2976,6 +2891,7 @@ impl KagiApp {
             return true;
         }
         if self
+            .ui()
             .commit_panel
             .as_ref()
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
@@ -3063,6 +2979,7 @@ impl KagiApp {
             return true;
         }
         if self
+            .ui()
             .commit_panel
             .as_ref()
             .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
@@ -3421,7 +3338,7 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
             // synchronously right here, before the first frame.
             if let Ok(name) = std::env::var("KAGI_EDITOR_WS_NEWFILE") {
                 kagi.update(cx, |app, cx| {
-                    if app.editor_workspace.is_none() {
+                    if app.ui().editor_workspace.is_none() {
                         app.open_editor_workspace(cx);
                     }
                     app.open_editor_fs_prompt(

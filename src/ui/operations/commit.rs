@@ -16,7 +16,8 @@ impl KagiApp {
 
     /// The panel's commit-subject `InputState` (entity-owned), if any.
     fn cp_commit_input(&self, cx: &Context<Self>) -> Option<Entity<InputState>> {
-        self.commit_panel
+        self.ui()
+            .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).title_input.clone())
     }
@@ -24,7 +25,7 @@ impl KagiApp {
     /// The message as it will be committed (comments stripped) — see
     /// [`CommitPanelView::committable_message`]. `""` when no panel is open.
     pub(crate) fn committable_message(&self, cx: &Context<Self>) -> String {
-        match self.commit_panel.as_ref() {
+        match self.ui().commit_panel.as_ref() {
             Some(e) => e.read(cx).committable_message(cx),
             None => String::new(),
         }
@@ -34,7 +35,7 @@ impl KagiApp {
     /// it was. Lives here rather than inline in the Esc handler because the
     /// picker is entity-owned, not a field on `KagiApp`.
     pub(crate) fn close_coauthor_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(panel) = self.commit_panel.clone() else {
+        let Some(panel) = self.ui().commit_panel.clone() else {
             return false;
         };
         if panel.read(cx).coauthor_menu.is_none() {
@@ -49,7 +50,8 @@ impl KagiApp {
 
     /// Whether the panel has its message inputs (entity-owned).
     fn cp_has_commit_input(&self, cx: &Context<Self>) -> bool {
-        self.commit_panel
+        self.ui()
+            .commit_panel
             .as_ref()
             .map(|e| e.read(cx).title_input.is_some())
             .unwrap_or(false)
@@ -141,7 +143,7 @@ impl KagiApp {
         // the message inputs / draft / template belong to a specific repo, so a
         // panel that switches between the open repo and a linked worktree is
         // rebuilt rather than carried across.
-        let reusable = self.commit_panel.clone().filter(|e| {
+        let reusable = self.ui().commit_panel.clone().filter(|e| {
             let panel = e.read(cx);
             panel.owner == owner && panel.repo_path == repo_path
         });
@@ -171,10 +173,10 @@ impl KagiApp {
                 true,
             )
         };
-        self.commit_panel = Some(entity.clone());
-        self.commit_panel_open = true;
+        self.ui_mut().commit_panel = Some(entity.clone());
+        self.ui_mut().commit_panel_open = true;
         self.ui_mut().selected = None;
-        self.main_diff = None;
+        self.ui_mut().main_diff = None;
         (entity, is_new)
     }
 
@@ -341,7 +343,7 @@ impl KagiApp {
     /// Only overwrites a non-empty existing message after the caller has
     /// decided to (rule-based/LLM both call this to *insert* the draft).
     fn smart_commit_set_msg(&mut self, msg: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             let (title, body) = kagi_git::split_title_body(msg);
             let v = entity.read(cx);
             let (title_input, body_input) = (v.title_input.clone(), v.body_input.clone());
@@ -509,7 +511,7 @@ impl KagiApp {
         let provider = self.smart_commit.provider;
         // The initiating panel freezes the session that owns both the spinner
         // and the completion status. A tab switch cannot redirect either.
-        let Some(cp_entity) = self.commit_panel.clone() else {
+        let Some(cp_entity) = self.ui().commit_panel.clone() else {
             return;
         };
         let owner = cp_entity.read(cx).owner;
@@ -621,7 +623,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
+        let paths: Vec<std::path::PathBuf> = match self.ui().commit_panel.as_ref() {
             Some(e) => {
                 let p = &e.read(cx).state;
                 p.unstaged
@@ -652,7 +654,7 @@ impl KagiApp {
         match result {
             Ok(n) => {
                 klog!("staged-all: {} file(s)", n);
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.reload_status(&repo_path));
                 }
                 self.refresh_wip_diffstat();
@@ -671,7 +673,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
+        let paths: Vec<std::path::PathBuf> = match self.ui().commit_panel.as_ref() {
             Some(e) => e
                 .read(cx)
                 .state
@@ -701,7 +703,7 @@ impl KagiApp {
         match result {
             Ok(n) => {
                 klog!("unstaged-all: {} file(s)", n);
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.reload_status(&repo_path));
                 }
                 self.refresh_wip_diffstat();
@@ -720,6 +722,7 @@ impl KagiApp {
             None => return,
         };
         let path = match self
+            .ui()
             .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).state.unstaged.get(index).map(|f| f.path.clone()))
@@ -764,7 +767,7 @@ impl KagiApp {
         } else {
             klog!("staged: {}", path.display());
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
                 v.state.reload_status(&repo_path);
                 eprintln!(
@@ -788,6 +791,7 @@ impl KagiApp {
             None => return,
         };
         let path = match self
+            .ui()
             .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).state.staged.get(index).map(|f| f.path.clone()))
@@ -832,7 +836,7 @@ impl KagiApp {
         } else {
             klog!("unstaged: {}", path.display());
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
                 v.state.reload_status(&repo_path);
                 eprintln!(
@@ -900,10 +904,10 @@ impl KagiApp {
                 return;
             }
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| v.state.reload_status(&repo_path));
         }
-        if let Some(ev) = self.editor_workspace.clone() {
+        if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
         }
         self.refresh_wip_diffstat();
@@ -957,10 +961,10 @@ impl KagiApp {
                 return;
             }
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| v.state.reload_status(&repo_path));
         }
-        if let Some(ev) = self.editor_workspace.clone() {
+        if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
         }
         self.refresh_wip_diffstat();
@@ -991,7 +995,7 @@ impl KagiApp {
         let msg: String = if self.cp_has_commit_input(cx) {
             self.committable_message(cx)
         } else {
-            match self.commit_panel.as_ref() {
+            match self.ui().commit_panel.as_ref() {
                 Some(e) => e.read(cx).state.commit_msg.clone(),
                 None => return,
             }
@@ -1014,7 +1018,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         v.state.plan_modal = Some(CommitPlanModal {
                             plan: std::sync::Arc::new(plan),
@@ -1030,7 +1034,7 @@ impl KagiApp {
                 // the popup; success/failure shows in the status footer.
                 if !has_blockers {
                     self.start_commit(cx);
-                    if let Some(entity) = self.commit_panel.clone() {
+                    if let Some(entity) = self.ui().commit_panel.clone() {
                         entity.update(cx, |v, _| v.state.plan_modal = None);
                     }
                 }
@@ -1043,7 +1047,7 @@ impl KagiApp {
 
     /// Cancel the commit plan modal.
     pub fn cancel_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| v.state.plan_modal = None);
         }
     }
@@ -1071,12 +1075,14 @@ impl KagiApp {
         let commit_message: String = if self.cp_has_commit_input(cx) {
             self.committable_message(cx)
         } else {
-            self.commit_panel
+            self.ui()
+                .commit_panel
                 .as_ref()
                 .map(|e| e.read(cx).state.commit_msg.clone())
                 .unwrap_or_default()
         };
         let plan = match self
+            .ui()
             .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).state.plan_modal.as_ref().map(|m| m.plan.clone()))
@@ -1094,7 +1100,7 @@ impl KagiApp {
         // merge commit (HEAD + MERGE_HEAD) + cleanup_state instead of a plain
         // single-parent commit.  This is synchronous (cheap; no tree rebuild on a
         // worker) so the conflict-mode transition stays simple.
-        if self.conflict_merge_pending {
+        if self.ui().conflict_merge_pending {
             self.finish_merge_commit(&commit_message, cx);
             return;
         }
@@ -1118,7 +1124,7 @@ impl KagiApp {
             .chars()
             .take(72)
             .collect();
-        let expected_panel = self.commit_panel.clone();
+        let expected_panel = self.ui().commit_panel.clone();
         self.finish_run(
             cx,
             "commit",
@@ -1204,15 +1210,15 @@ impl KagiApp {
                 let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
                 let branch = self.view().status_summary.branch.clone();
                 let _ = kagi_git::clear_draft(&repo_path, &branch);
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.last_draft_value = String::new());
                 }
                 self.present_report("merge-commit", &report, &repo_path, cx);
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
-                self.conflict_merge_pending = false;
-                self.commit_panel_open = false;
-                if let Some(entity) = self.commit_panel.clone() {
+                self.ui_mut().conflict_merge_pending = false;
+                self.ui_mut().commit_panel_open = false;
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.plan_modal = None);
                 }
                 self.reload(cx);
@@ -1234,7 +1240,7 @@ impl KagiApp {
                 let err_msg = format!("{}", e);
                 klog!("merge commit failed: {}", err_msg);
                 self.present_report("merge-commit", &report, &repo_path, cx);
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         if let Some(modal) = v.state.plan_modal.as_mut() {
                             modal.error = Some(SharedString::from(err_msg));
@@ -1254,6 +1260,7 @@ impl KagiApp {
     /// picks its mode from that worktree's index and plans against it.
     pub fn commit_panel_amend(&mut self, cx: &mut Context<Self>) {
         let staged = self
+            .ui()
             .commit_panel
             .as_ref()
             .map(|e| !e.read(cx).state.staged.is_empty())

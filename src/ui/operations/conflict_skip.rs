@@ -17,7 +17,7 @@ impl KagiApp {
         let Some(mode) = self.conflict_mode_snapshot(cx) else {
             return;
         };
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.push_toast(
@@ -46,6 +46,7 @@ impl KagiApp {
 
         // #540: repository state, not exit status alone, decides progress.
         let result = self
+            .ui()
             .repo_session
             .as_ref()
             .expect("repo session existed while planning conflict skip")

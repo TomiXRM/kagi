@@ -66,7 +66,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_branch: repo session unavailable");
@@ -225,7 +225,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(
@@ -355,7 +355,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 let outcome = session_unavailable(i18n::Op::SetUpstream);
@@ -464,7 +464,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 let outcome = session_unavailable(i18n::Op::Rename);
@@ -541,7 +541,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(
@@ -641,7 +641,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(

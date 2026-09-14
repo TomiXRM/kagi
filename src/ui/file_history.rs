@@ -130,6 +130,9 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         klog!("file-history: open {}", rel_path.display());
 
         let branch = SharedString::from(self.view().status_summary.branch.clone());
@@ -145,42 +148,56 @@ impl KagiApp {
             req: 0,
         });
         let view = cx.new(|_| FileHistoryView::new(state, geom, panel_width, diff_pane.into()));
+        let pane_id = view.entity_id();
 
-        // The pane's outward surface: it emits, the app decides (ADR-0121 C3).
-        // `repo_path` is captured at open time — the FH session's repo is
-        // constant for the entity's life (FH closes on repo/tab switch).
-        cx.subscribe(&view, move |app, view, event, cx| match event {
-            FileHistoryEvent::CloseRequested => {
-                app.close_file_history();
-                cx.notify();
+        // Outward interaction is admitted only while this pane's frozen owner
+        // is active. The pane's own background reads land through weak entity
+        // handles and may safely complete while inactive.
+        cx.subscribe(&view, move |app, view, event, cx| {
+            let is_current = app.active_session() == Some(owner)
+                && app
+                    .ui()
+                    .file_history
+                    .as_ref()
+                    .is_some_and(|current| current.entity_id() == pane_id);
+            if !is_current {
+                return;
             }
-            FileHistoryEvent::JumpToCommit(id) => {
-                app.close_file_history();
-                app.jump_to_commit(id);
-                cx.notify();
+            match event {
+                FileHistoryEvent::CloseRequested => {
+                    app.close_file_history();
+                    cx.notify();
+                }
+                FileHistoryEvent::JumpToCommit(id) => {
+                    app.close_file_history();
+                    app.jump_to_commit(id);
+                    cx.notify();
+                }
+                FileHistoryEvent::HistoryLoadRequested {
+                    generation,
+                    origin,
+                    emit_loaded,
+                } => app.fh_load_history(
+                    &view,
+                    repo_path.clone(),
+                    *generation,
+                    origin.clone(),
+                    *emit_loaded,
+                    cx,
+                ),
+                FileHistoryEvent::DiffLoadRequested => {
+                    app.fh_load_diff(&view, repo_path.clone(), cx)
+                }
             }
-            FileHistoryEvent::HistoryLoadRequested {
-                generation,
-                origin,
-                emit_loaded,
-            } => app.fh_load_history(
-                &view,
-                repo_path.clone(),
-                *generation,
-                origin.clone(),
-                *emit_loaded,
-                cx,
-            ),
-            FileHistoryEvent::DiffLoadRequested => app.fh_load_diff(&view, repo_path.clone(), cx),
         })
         .detach();
 
         // Kick off the initial load on the (now fully-constructed) entity.
         view.update(cx, |v, cx| v.request_load(origin, true, cx));
-        self.file_history = Some(view);
+        self.ui_mut().file_history = Some(view);
         // Record the HEAD this history reflects so a later reload only reloads it
         // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
-        self.file_history_head = self.view().head_oid.clone();
+        self.ui_mut().file_history_head = self.view().head_oid.clone();
     }
 
     /// Run the async history load the pane requested and marshal the result

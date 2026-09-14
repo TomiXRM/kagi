@@ -186,7 +186,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(format!(
@@ -261,7 +261,7 @@ impl KagiApp {
         }
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 let err_msg = "repo session unavailable".to_string();
@@ -355,7 +355,7 @@ impl KagiApp {
     /// backend + modal/confirm plumbing, not `commit_panel.rs`).
     pub fn open_amend_modal(&mut self, mode: AmendMode, cx: &mut Context<Self>) {
         // ADR-0118: the commit input + message live on the `CommitPanelView` entity.
-        let message: String = match self.commit_panel.as_ref() {
+        let message: String = match self.ui().commit_panel.as_ref() {
             Some(e) => {
                 let v = e.read(cx);
                 if v.title_input.is_some() {

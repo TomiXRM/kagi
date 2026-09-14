@@ -272,7 +272,7 @@ impl KagiApp {
         };
         self.mark_write_busy(name);
         if name.starts_with("conflict-") {
-            if let Some(conflict) = self.conflict.clone() {
+            if let Some(conflict) = self.ui().conflict.clone() {
                 conflict.update(cx, |view, cx| {
                     view.writer_busy = true;
                     cx.notify();
@@ -323,7 +323,7 @@ impl KagiApp {
                 let deliveries = app::apply(&mut app.app_sessions, completion);
                 app.refresh_write_busy();
                 if name.starts_with("conflict-") {
-                    if let Some(conflict) = app.conflict.clone() {
+                    if let Some(conflict) = app.ui().conflict.clone() {
                         conflict.update(cx, |view, cx| {
                             view.writer_busy = false;
                             cx.notify();

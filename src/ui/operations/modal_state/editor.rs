@@ -22,7 +22,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_editor_dirty_guard_modal(&mut self, m: EditorDirtyGuardModal) {
-        self.active_modal = Some(ActiveModal::EditorDirtyGuard(m));
+        self.replace_active_modal(ActiveModal::EditorDirtyGuard(m));
     }
     #[inline]
     pub fn clear_editor_dirty_guard_modal(&mut self) {
@@ -46,7 +46,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_editor_fs_prompt_modal(&mut self, m: EditorFsPromptModal) {
-        self.active_modal = Some(ActiveModal::EditorFsPrompt(m));
+        self.replace_active_modal(ActiveModal::EditorFsPrompt(m));
     }
     #[inline]
     pub fn clear_editor_fs_prompt_modal(&mut self) {
@@ -63,7 +63,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_editor_delete_confirm_modal(&mut self, m: EditorDeleteConfirmModal) {
-        self.active_modal = Some(ActiveModal::EditorDeleteConfirm(m));
+        self.replace_active_modal(ActiveModal::EditorDeleteConfirm(m));
     }
     #[inline]
     pub fn clear_editor_delete_confirm_modal(&mut self) {

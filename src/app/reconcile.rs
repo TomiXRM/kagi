@@ -411,6 +411,38 @@ pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<Reconci
 pub fn read_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileRead, String> {
     prepare_reconcile(sessions, id)?.run()
 }
+/// GUI-E2E seam: park one already-resolved local reconcile read so modal
+/// replacement can prove an Acknowledge action survives and executes.
+#[cfg(feature = "gui-e2e")]
+#[doc(hidden)]
+pub fn seed_acknowledge_for_test(
+    sessions: &mut Sessions,
+    session: SessionId,
+) -> Option<ReconcileRead> {
+    let worktree = sessions.worktree_of(session)?.clone();
+    let path = sessions.path_of(&worktree)?;
+    let id = OperationId(next_id());
+    sessions.reconcile.insert(
+        id,
+        ReconcileEntry {
+            target: ReconcileTarget::Guarded {
+                kind: GuardKind::GroupOnly,
+                path,
+            },
+            scope: WriteScope::Local(worktree.repo),
+            stopped: true,
+            remote: None,
+            pull: None,
+            child: None,
+        },
+    );
+    Some(ReconcileRead {
+        id,
+        observation: "resolved GUI-E2E reconcile".to_string(),
+        stop_proven: true,
+        resolved: true,
+    })
+}
 /// Close one reconcile requirement and release the scope it holds.
 ///
 /// The exit from an unproven termination, for **every** local family — the run
@@ -430,6 +462,7 @@ pub fn read_reconcile(sessions: &Sessions, id: OperationId) -> Result<ReconcileR
 ///
 /// A family adds nothing to this path: it only has to let its
 /// `TerminationUnknown` reach the completion with its type intact.
+
 pub fn acknowledge(sessions: &mut Sessions, read: ReconcileRead) -> Result<(), AdmissionError> {
     let Some(entry) = sessions.reconcile.get(&read.id) else {
         return Err(AdmissionError::NeedsReconcile);

@@ -23,7 +23,7 @@ impl KagiApp {
 
     #[inline]
     pub fn set_remote_browse(&mut self, modal: RemoteBrowseModal) {
-        self.active_modal = Some(ActiveModal::RemoteBrowse(modal));
+        self.replace_active_modal(ActiveModal::RemoteBrowse(modal));
     }
 
     #[inline]
@@ -43,7 +43,7 @@ impl KagiApp {
 
     #[inline]
     pub fn set_update_modal(&mut self, modal: UpdateModal) {
-        self.active_modal = Some(ActiveModal::Update(modal));
+        self.replace_active_modal(ActiveModal::Update(modal));
     }
 
     #[inline]

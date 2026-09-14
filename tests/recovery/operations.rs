@@ -913,6 +913,75 @@ pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS window_modal_exclusivity");
 }
 
+/// #718: every ActiveModal setter preserves an actionable AppNotice before
+/// replacing the shared slot. Remote Browse and Update exercise two unrelated
+/// setters; a plain informational notice remains intentionally disposable.
+pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+
+    app.update(cx, |app, cx| {
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "ack after remote"),
+            "notice-replacement-seeds-remote-ack: fixture must create an acknowledge action"
+        );
+        app.open_remote_browse(cx);
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| kagi::ui::e2e::app_notice_is_acknowledgeable(app.read(cx))),
+        "notice-replacement-remote-represents-action: closing Remote Browse must re-present the displaced Acknowledge"
+    );
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.app_sessions.reconcile_ids().is_empty(),
+            "notice-replacement-remote-ack-executes: the re-presented Acknowledge must clear its reconcile requirement"
+        );
+    });
+
+    app.update(cx, |app, _| {
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "ack after update"),
+            "notice-replacement-seeds-update-ack: fixture must create an acknowledge action"
+        );
+        app.update_available = Some(fake_update_offer());
+        app.open_update_modal();
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| kagi::ui::e2e::app_notice_is_acknowledgeable(app.read(cx))),
+        "notice-replacement-update-represents-action: closing Update must re-present the displaced Acknowledge"
+    );
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).app_sessions.reconcile_ids().is_empty()),
+        "notice-replacement-update-ack-executes: the second setter must preserve the same executable action"
+    );
+
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::deliver_app_notice(app, "plain information");
+        app.open_remote_browse(cx);
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "notice-replacement-plain-is-disposable: a non-actionable notice must not be requeued"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS app_notice_modal_replacement");
+}
+
 /// #718: the update installer is window-owned operation state. Closing or
 /// replacing its presentation cannot erase progress, allow a duplicate start,
 /// or hide a later failure; the same modal remains cancellable on Welcome.

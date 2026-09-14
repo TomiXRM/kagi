@@ -27,7 +27,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_conflict_continue_modal(&mut self, m: ConflictContinuePlanModal) {
-        self.active_modal = Some(ActiveModal::ConflictContinue(m));
+        self.replace_active_modal(ActiveModal::ConflictContinue(m));
     }
     #[inline]
     pub fn clear_conflict_continue_modal(&mut self) {
@@ -51,7 +51,7 @@ impl KagiApp {
     }
     #[inline]
     pub fn set_conflict_abort_modal(&mut self, m: ConflictAbortModal) {
-        self.active_modal = Some(ActiveModal::ConflictAbort(m));
+        self.replace_active_modal(ActiveModal::ConflictAbort(m));
     }
     #[inline]
     pub fn clear_conflict_abort_modal(&mut self) {

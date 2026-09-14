@@ -130,6 +130,28 @@ pub fn deliver_app_notice(app: &mut KagiApp, message: &str) {
     app.app_notices.push_back(message.to_string().into());
     app.present_app_notice();
 }
+#[cfg(feature = "gui-e2e")]
+pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
+    let Some(session) = app.active_session() else {
+        return false;
+    };
+    let Some(read) = crate::app::seed_acknowledge_for_test(&mut app.app_sessions, session) else {
+        return false;
+    };
+    app.app_notices.push_back(super::modals::AppNotice {
+        message: message.to_string(),
+        inspect: None,
+        acknowledge: Some(read),
+    });
+    app.present_app_notice();
+    true
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn app_notice_is_acknowledgeable(app: &KagiApp) -> bool {
+    app.app_notice()
+        .is_some_and(|notice| notice.acknowledge.is_some())
+}
 
 #[cfg(feature = "gui-e2e")]
 pub fn seed_diff_selection() {

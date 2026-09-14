@@ -601,6 +601,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_window_modal_exclusivity),
             ),
             (
+                "app_notice_modal_replacement",
+                Box::new(crate::recovery_operations::scenario_app_notice_modal_replacement),
+            ),
+            (
                 "update_install_lifecycle",
                 Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
             ),

@@ -345,3 +345,161 @@ pub fn scenario_commit_stage_deferred_owner(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS commit_stage_deferred_owner");
 }
+
+/// #722 P1 (round 2): `close_tab(index)` can target a background tab, so its
+/// dirty-editor check and disposal must look at `tabs[index].session`, not the
+/// tab on screen (ADR-0197 決定 5). Reading the active editor would drop a dirty
+/// background tab without prompting, or discard the active tab when a *clean*
+/// background tab is closed.
+pub fn scenario_close_tab_editor_dirty_owner(cx: &mut VisualTestAppContext) {
+    // Part A — a DIRTY background tab must prompt before it is dropped.
+    {
+        let root_dir = tempfile::tempdir().expect("tempdir");
+        let root = root_dir.path().canonicalize().unwrap();
+        let repo_a = build_fixture(&root, "closeA-a");
+        let repo_b = build_fixture(&root, "closeA-b");
+        let (app, window) = mount(cx, &repo_a);
+        cx.run_until_parked();
+        app.update(cx, |state, cx| state.open_editor_workspace(cx));
+        let owner_b = app.update(cx, |state, cx| {
+            assert!(state.open_repository(repo_b.clone(), cx), "open B");
+            state.open_editor_workspace(cx);
+            state.active_session().expect("B owner")
+        });
+        cx.run_until_parked();
+        app.update(cx, |state, cx| {
+            state
+                .ui()
+                .editor_workspace
+                .clone()
+                .expect("B editor")
+                .update(cx, |v, _| v.dirty = true);
+        });
+        app.update(cx, |state, cx| state.switch_repo(0, cx));
+        cx.run_until_parked();
+        let b_index = cx.read(|cx| {
+            app.read(cx)
+                .tabs
+                .iter()
+                .position(|t| t.session == owner_b)
+                .expect("B tab")
+        });
+        app.update(cx, |state, cx| state.close_tab(b_index, cx));
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                state.editor_dirty_guard_modal().is_some(),
+                "close-bg-dirty-prompts: a dirty background tab closed without a prompt"
+            );
+            assert!(
+                state.tabs.iter().any(|t| t.session == owner_b),
+                "close-bg-dirty-prompts: B was dropped before confirmation"
+            );
+        });
+        unmount(cx, app, window);
+    }
+
+    // Part B — with only the ACTIVE tab dirty, closing a CLEAN background tab
+    // must not prompt and must not discard the active tab's workspace.
+    {
+        let root_dir = tempfile::tempdir().expect("tempdir");
+        let root = root_dir.path().canonicalize().unwrap();
+        let repo_a = build_fixture(&root, "closeB-a");
+        let repo_b = build_fixture(&root, "closeB-b");
+        let (app, window) = mount(cx, &repo_a);
+        cx.run_until_parked();
+        let owner_a = cx.read(|cx| app.read(cx).active_session().expect("A owner"));
+        app.update(cx, |state, cx| state.open_editor_workspace(cx));
+        app.update(cx, |state, cx| {
+            state
+                .ui()
+                .editor_workspace
+                .clone()
+                .expect("A editor")
+                .update(cx, |v, _| v.dirty = true);
+        });
+        let owner_b = app.update(cx, |state, cx| {
+            assert!(state.open_repository(repo_b.clone(), cx), "open B");
+            state.open_editor_workspace(cx);
+            state.active_session().expect("B owner")
+        });
+        cx.run_until_parked();
+        app.update(cx, |state, cx| state.switch_repo(0, cx));
+        cx.run_until_parked();
+        let b_index = cx.read(|cx| {
+            app.read(cx)
+                .tabs
+                .iter()
+                .position(|t| t.session == owner_b)
+                .expect("B tab")
+        });
+        app.update(cx, |state, cx| state.close_tab(b_index, cx));
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                state.editor_dirty_guard_modal().is_none(),
+                "close-clean-bg-no-prompt: closing a clean background tab read the active dirty editor"
+            );
+            assert!(
+                !state.tabs.iter().any(|t| t.session == owner_b),
+                "close-clean-bg-no-prompt: B did not close"
+            );
+            assert!(
+                state.ui[&owner_a].editor_workspace.is_some(),
+                "close-clean-bg-no-prompt: the active tab's editor was discarded"
+            );
+        });
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS close_tab_editor_dirty_owner");
+}
+
+/// #722 P2 (round 2): returning to a tab whose Commit Panel was retained must
+/// revalidate the panel against the snapshot the activation read installs — the
+/// reload path already does, so both must (ADR-0197 決定 3). Otherwise the
+/// staged/unstaged lists stay frozen at the pre-departure state.
+pub fn scenario_commit_panel_revalidates_on_activation(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_fixture(&root, "reval-a");
+    let repo_b = build_fixture(&root, "reval-b");
+    std::fs::write(repo_a.join("f.txt"), "reval-a second\nreval-a unstaged\n").unwrap();
+
+    let (app, window) = mount(cx, &repo_a);
+    cx.run_until_parked();
+    let owner_a = app.update(cx, |state, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(state, repo_a.clone(), cx);
+        state.active_session().expect("A owner")
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui[&owner_a]
+            .commit_panel
+            .as_ref()
+            .is_some_and(|e| {
+                let st = &e.read(cx).state;
+                !st.unstaged.is_empty() && st.staged.is_empty()
+            })),
+        "precondition: A's panel shows the unstaged file"
+    );
+
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open B");
+    });
+    cx.run_until_parked();
+    // External stage while A is in the background: f.txt moves unstaged → staged.
+    git(&repo_a, &["add", "f.txt"]);
+    app.update(cx, |state, cx| state.switch_repo(0, cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui[&owner_a].commit_panel.as_ref().is_some_and(|e| {
+            let st = &e.read(cx).state;
+            !st.staged.is_empty() && st.unstaged.is_empty()
+        })),
+        "panel-revalidates-on-activation: returning to A did not refresh the Commit Panel against the external `git add`"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS commit_panel_revalidates_on_activation");
+}

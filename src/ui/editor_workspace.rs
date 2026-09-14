@@ -445,12 +445,22 @@ impl KagiApp {
         self.ui_mut().editor_workspace = None;
     }
 
-    /// True when closing/switching repo context would drop unsaved editor tabs.
+    /// True when `session`'s retained Editor Workspace has unsaved buffers.
+    /// Parameterized by session because `close_tab(index)` can target a
+    /// background tab, not the one on screen (#722 P1 round 2 / ADR-0197 決定 5):
+    /// reading the active editor there would miss the closing tab's edits and
+    /// discard the active tab's instead.
+    pub fn editor_dirty_for(&self, session: crate::app::SessionId, cx: &mut Context<Self>) -> bool {
+        self.ui
+            .get(&session)
+            .and_then(|ui| ui.editor_workspace.as_ref())
+            .is_some_and(|ev| ev.read(cx).any_dirty())
+    }
+
+    /// True when the tab on screen has unsaved editor buffers.
     pub fn editor_workspace_any_dirty(&self, cx: &mut Context<Self>) -> bool {
-        match self.ui().editor_workspace.as_ref() {
-            Some(ev) => ev.read(cx).any_dirty(),
-            None => false,
-        }
+        self.active_session()
+            .is_some_and(|session| self.editor_dirty_for(session, cx))
     }
 
     /// True when deleting `path` would close at least one dirty editor tab.
@@ -557,7 +567,11 @@ impl KagiApp {
                 }
             }
             EditorPendingIntent::CloseRepoTab(session) => {
-                self.close_editor_workspace();
+                // Discard confirmed: drop the target owner's editor (not the
+                // active tab's) so the close does not re-prompt, then close it.
+                if let Some(ui) = self.ui.get_mut(&session) {
+                    ui.editor_workspace = None;
+                }
                 self.close_tab_by_session(session, cx);
             }
             EditorPendingIntent::EnterRemoteView { host, root, snap } => {

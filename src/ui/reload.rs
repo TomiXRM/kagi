@@ -424,7 +424,7 @@ impl KagiApp {
     /// does per watcher event, and it only happens while the panel is open; if
     /// it ever shows on a large repository, fold the background `ReloadData`
     /// panel read (already plumbed for the merge case) in instead.
-    fn refresh_commit_panel_after_reload(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_commit_panel_after_reload(&mut self, cx: &mut Context<Self>) {
         let Some(entity) = self.ui().commit_panel.clone() else {
             self.ui_mut().commit_panel_open = false;
             return;
@@ -452,7 +452,11 @@ impl KagiApp {
     ///   → invalidate this repo's Analyze cache and re-mine *in place* if the
     ///   view is open (the app-owned mine seeds the open view on completion), and
     ///   reload the File History view *in place*. Neither view closes.
-    fn refresh_overlays_after_reload(&mut self, new_head: Option<String>, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_overlays_after_reload(
+        &mut self,
+        new_head: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         if self.repo_path.is_none() {
             return;
         }

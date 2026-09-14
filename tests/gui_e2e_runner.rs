@@ -921,6 +921,14 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_commit_stage_deferred_owner),
             ),
             (
+                "close_tab_editor_dirty_owner",
+                Box::new(crate::pane_resources::scenario_close_tab_editor_dirty_owner),
+            ),
+            (
+                "commit_panel_revalidates_on_activation",
+                Box::new(crate::pane_resources::scenario_commit_panel_revalidates_on_activation),
+            ),
+            (
                 "read_cache_revalidates_on_activation",
                 Box::new(
                     crate::cache_history_owner::scenario_read_cache_revalidates_on_activation,

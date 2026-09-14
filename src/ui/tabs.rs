@@ -497,7 +497,7 @@ impl KagiApp {
                         if app.active_session() != Some(session) {
                             return; // background owner: data only, no display.
                         }
-                        app.restore_open_panes(open_panes, cx);
+                        app.revalidate_retained_panes(open_panes, cx);
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =
                                 FooterStatus::Idle(SharedString::from(Msg::Ready.t()));
@@ -561,9 +561,9 @@ impl KagiApp {
         if decision == crate::app::TabClose::Nothing {
             return;
         }
-        if self.editor_workspace_any_dirty(cx) {
-            let session = self.tabs[index].session;
-            self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(session), cx);
+        let closing_session = self.tabs[index].session;
+        if self.editor_dirty_for(closing_session, cx) {
+            self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closing_session), cx);
             return;
         }
         let closed = self.tabs.remove(index);

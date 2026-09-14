@@ -391,4 +391,17 @@ impl KagiApp {
             self.restore_main_diff(prev, cx);
         }
     }
+
+    /// Revalidate every retained pane against the snapshot a read just installed:
+    /// re-anchor the Main Diff / Compare panes, then refresh the Commit Panel's
+    /// file lists and the HEAD-versioned overlays. The reload path and the
+    /// activation read both call this so they revalidate the same set (ADR-0197
+    /// 決定 3 / #722 P2), not just the diff panes.
+    pub(crate) fn revalidate_retained_panes(&mut self, panes: OpenPanes, cx: &mut Context<Self>) {
+        self.restore_open_panes(panes, cx);
+        if !self.ui().conflict_merge_pending {
+            self.refresh_commit_panel_after_reload(cx);
+        }
+        self.refresh_overlays_after_reload(self.view().head_oid.clone(), cx);
+    }
 }

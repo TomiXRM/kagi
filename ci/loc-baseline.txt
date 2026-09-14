@@ -27,7 +27,7 @@ src/ui/mod.rs 3966
 src/ui/modals.rs 855
 src/ui/operations/branch.rs 1201
 src/ui/operations/commit.rs 1405
-src/ui/operations/modal_state.rs 1056
+src/ui/operations/modal_state.rs 1067
 src/ui/pr_mode.rs 2389
 src/ui/render.rs 912
 src/ui/render_header.rs 812

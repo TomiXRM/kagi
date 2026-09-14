@@ -663,6 +663,12 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_confirm_yields_to_another_modal),
             ),
             (
+                "pull_failure_notice_waits_for_remote_browse",
+                Box::new(
+                    crate::recovery_pull::scenario_pull_failure_notice_waits_for_remote_browse,
+                ),
+            ),
+            (
                 "pull_refuses_when_the_dirty_set_moved",
                 Box::new(crate::recovery_pull::scenario_pull_refuses_when_the_dirty_set_moved),
             ),

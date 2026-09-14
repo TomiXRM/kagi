@@ -131,6 +131,10 @@ pub fn deliver_app_notice(app: &mut KagiApp, message: &str) {
     app.present_app_notice();
 }
 #[cfg(feature = "gui-e2e")]
+pub fn present_app_notice(app: &mut KagiApp) {
+    app.present_app_notice();
+}
+#[cfg(feature = "gui-e2e")]
 pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
     let Some(session) = app.active_session() else {
         return false;

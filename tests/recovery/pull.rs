@@ -1291,6 +1291,71 @@ pub fn scenario_pull_confirm_yields_to_another_modal(cx: &mut VisualTestAppConte
     );
 }
 
+/// #718 P2: a production dirty-Pull fetch failure is an asynchronous notice,
+/// not permission to destroy the Remote Browse modal the user opened meanwhile.
+pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let remote_root = tempfile::tempdir().expect("remote root");
+    overlap_fixture(repo, remote_root.path());
+
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_pull_modal(cx);
+        assert!(
+            app.fetch_in_flight.is_some(),
+            "the dirty Pull must be waiting on its production fetch"
+        );
+        app.open_remote_browse(cx);
+        assert!(
+            kagi::ui::e2e::deliver_acknowledge_notice(app, "acknowledge before fetch failure"),
+            "the queued notice must carry a real reconciliation acknowledgement",
+        );
+    });
+
+    // The fetch task has been dispatched but the executor has not run it yet.
+    // Removing the remote makes pull_push::deliver_pull_confirm take its real
+    // FetchFailed -> set_app_notice path while Remote Browse owns the slot.
+    drop(remote_root);
+    cx.advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).remote_browse().is_some(),
+            "async-notice-keeps-remote-browse: a Pull fetch failure must wait behind Remote Browse",
+        );
+    });
+
+    app.update(cx, |app, cx| {
+        app.cancel_remote_browse();
+        kagi::ui::e2e::present_app_notice(app);
+        assert!(
+            kagi::ui::e2e::app_notice_is_acknowledgeable(app),
+            "async-notice-preserves-queue-order: the notice already waiting must stay first",
+        );
+        app.confirm_app_notice(cx);
+        assert!(
+            app.app_sessions.reconcile_ids().is_empty(),
+            "async-notice-action-still-executes: the delayed Acknowledge must execute",
+        );
+        kagi::ui::e2e::present_app_notice(app);
+    });
+    cx.read(|cx| {
+        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
+            .expect("the Pull fetch failure notice must follow the acknowledgement");
+        assert!(
+            message.contains("Fetch"),
+            "async-notice-presents-pull-failure: unexpected notice: {message}",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS pull_failure_notice_waits_for_remote_browse: production failure waits behind the occupied slot"
+    );
+}
+
 /// #625 P1: the confirmation's promise is checked before anything is stashed.
 ///
 /// After the modal is on screen an editor saves *another* path the update also

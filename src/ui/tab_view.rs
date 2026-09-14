@@ -270,12 +270,32 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 /// background read's landing drag the selection back to where it was when that
 /// read started (ADR-0197 決定 2).
 ///
-/// S1 moves one field. S2–S5 move the rest (path stamps, scroll and
-/// `commit_limit`, the read caches, the pane entities).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// S1 owns selection; S2b adds disposable evidence and cache data. Resources
+/// remain outside this store until ownerless mutation is rejected (ADR-0197).
+#[derive(Clone, Default)]
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
     pub selected: Option<usize>,
+    /// Identifies the published model, independently of read-request revisions.
+    pub view_publish_gen: u64,
+    /// Open-PR evidence belongs to this session, including failures and absence.
+    pub github_prs: Vec<kagi_domain::github::PullRequest>,
+    pub github_prs_loaded: bool,
+    pub github_error: Option<String>,
+    pub github_unavailable: bool,
+    pub github_prs_epoch: u64,
+    /// Scan revisions reject superseded completions without consulting the active tab.
+    pub cleanup_gen: u64,
+    pub cleanup_scanning: bool,
+    pub cleanup_prs: Vec<kagi_domain::github::PullRequest>,
+    pub cleanup_prs_stale: bool,
+    /// Re-armed when the root conflict pane is discarded or its read changes.
+    pub conflict_detected: bool,
+    /// Recomputable data only; pane entities and task handles remain outside this store.
+    pub ecosystem_cache: Option<super::ecosystem::CachedMine>,
+    pub ecosystem_inflight: bool,
+    pub ecosystem_gen: u64,
+    pub ecosystem_mine_head: Option<String>,
 }
 
 /// Wall-clock now in Unix epoch seconds (right edge of the Activity windows).
@@ -512,6 +532,9 @@ impl KagiApp {
     pub fn amend_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
         let anchor = self.selected_commit(session);
         self.reads.amend(session, view);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+        }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
     }
@@ -521,6 +544,9 @@ impl KagiApp {
     pub fn publish_tab_view(&mut self, session: crate::app::SessionId, view: TabViewState) {
         let anchor = self.selected_commit(session);
         self.reads.publish(session, view);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+        }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
     }
@@ -532,6 +558,9 @@ impl KagiApp {
         let anchor = self.selected_commit(key.session());
         if !self.reads.accept(key, view) {
             return false;
+        }
+        if let Some(ui) = self.ui.get_mut(&key.session()) {
+            ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
         }
         self.reanchor_selection(key.session(), anchor);
         self.on_view_published(key.session());

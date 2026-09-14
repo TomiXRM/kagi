@@ -40,7 +40,7 @@ impl KagiApp {
     /// hand a `ConflictView` — the conflict panel cannot be built here. Does the
     /// snapshot/view rebuild (so the commit list / header are populated and the
     /// `build_tab_view` `[kagi]` lines fire) but SKIPS conflict detection: the
-    /// `conflict_detected_for` guard is left UNSET so the first cx-bearing detect
+    /// run-once guard is left UNSET so the first cx-bearing detect
     /// at launch (`ensure_startup_repo_io` → `detect_conflict_mode_async`) builds
     /// the entity and emits the `conflict-mode:` line. ADR-0118 /
     /// T-ENTITY-CONFLICT-001.
@@ -281,7 +281,7 @@ impl KagiApp {
         // conflict produced by the GUI's own operation OR by external CLI (the
         // watcher path runs through here now too) puts the app into / out of
         // Conflict Mode. Force re-detection by invalidating the run-once guard.
-        self.conflict_detected_for = None;
+        self.ui_mut().conflict_detected = false;
         self.detect_conflict_mode(cx);
 
         // Re-resolve the continued-merge flow after detection.
@@ -462,30 +462,11 @@ impl KagiApp {
     ///   view is open (the app-owned mine seeds the open view on completion), and
     ///   reload the File History view *in place*. Neither view closes.
     fn refresh_overlays_after_reload(&mut self, new_head: Option<String>, cx: &mut Context<Self>) {
-        let Some(repo) = self.repo_path.clone() else {
+        if self.repo_path.is_none() {
             return;
-        };
-
-        // ── Analyze (Code Ecosystem) ──
-        // Staleness is keyed on the HEAD the cached mine reflects. A mine still
-        // in flight (no cache entry yet) is left to finish; the next reload
-        // re-checks it against the then-current HEAD.
-        let eco_stale = self
-            .ecosystem_cache
-            .get(&repo)
-            .is_some_and(|c| c.head != new_head);
-        if eco_stale {
-            self.ecosystem_cache.remove(&repo);
-            // Clear the in-flight guard so a fresh mine can start below.
-            if self.ecosystem_inflight.as_deref() == Some(repo.as_path()) {
-                self.ecosystem_inflight = None;
-            }
-            // Re-mine only when the view is actually open; otherwise just drop
-            // the stale entry (the next open will mine on demand).
-            if self.ecosystem.is_some() {
-                self.start_ecosystem_mine(repo.clone(), new_head.clone(), cx);
-            }
         }
+
+        self.revalidate_ecosystem(new_head.clone(), cx);
 
         // ── File History ──
         // Per-file history also reflects HEAD; reload it in place only when HEAD

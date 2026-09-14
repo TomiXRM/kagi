@@ -687,7 +687,7 @@ impl KagiApp {
                 let Some(t) = m.active.and_then(|i| m.tabs.get(i)) else {
                     return;
                 };
-                let prs: Vec<PullRequest> = stack_for(&t.pr, &self.github_prs)
+                let prs: Vec<PullRequest> = stack_for(&t.pr, &self.ui().github_prs)
                     .into_iter()
                     .filter_map(|r| match r {
                         StackRow::Pr(p) => Some(p),
@@ -925,7 +925,7 @@ pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, 
     .into_iter()
     .map(|a| (a, Vec::new()))
     .collect();
-    for pr in &app.github_prs {
+    for pr in &app.ui().github_prs {
         let group = pr.group_for(login.as_deref(), &local);
         let (att, why) = pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
         if let Some(slot) = buckets.iter_mut().find(|(a, _)| *a == att) {
@@ -1007,7 +1007,7 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
     let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::List, cx);
     });
-    let all = app.github_prs.clone();
+    let all = app.ui().github_prs.clone();
     let active_pr = app
         .pr_mode
         .as_ref()
@@ -1673,7 +1673,7 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         focus == Some(PrFocus::Stack),
     );
     let stack: Vec<StackRow> = active
-        .map(|t| stack_for(&t.pr, &app.github_prs))
+        .map(|t| stack_for(&t.pr, &app.ui().github_prs))
         .unwrap_or_default();
     stack_col = stack_col.child(section_label(Msg::PrModeStack.t().to_string()));
     if stack.is_empty() {

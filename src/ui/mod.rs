@@ -1196,23 +1196,7 @@ pub struct KagiApp {
     /// True while the periodic background auto-fetch ticker task is alive
     /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
     pub auto_fetch_ticker_alive: bool,
-    /// GitHub Phase 1: open PRs for the active repo, from `gh pr list`,
-    /// refreshed by [`Self::ensure_github_ticker`]. Stamped with the repo they
-    /// belong to so a tab switch never shows another repo's PRs while the
-    /// first refresh for the new one is in flight.
-    pub github_prs: Vec<kagi_domain::github::PullRequest>,
-    pub github_prs_for: Option<PathBuf>,
     transport_holds: operations::transport_hold::TransportHolds,
-    /// Last `gh pr list` failure, cleared by the next success. Rendered by the
-    /// PR home screen so a failed fetch is not shown as an empty inbox.
-    pub github_error: Option<SharedString>,
-    /// #506: this repository has no GitHub remote (`PrFetchError::Unavailable`).
-    /// A defined "nothing to show" state — distinct from `github_error`, which
-    /// means "we could not find out" and keeps the previous list.
-    pub github_unavailable: bool,
-    /// Bumped whenever `github_prs` changes — folded into the sidebar rows
-    /// fingerprint so the list rebuilds exactly when the data does.
-    pub github_prs_epoch: u64,
     pub github_ticker_alive: bool,
     /// The authenticated `gh` login (fetched once by the ticker); drives the
     /// sidebar's Mine / Review requested / Others grouping.
@@ -1280,15 +1264,9 @@ pub struct KagiApp {
     /// progress; the entity owns the detected mode, the open editor file, the
     /// A/B/Result inputs, splits/geometry, and its own `cx.notify()` scope.
     /// Built / dropped by `apply_conflict_detect`; cleared on reload / abort /
-    /// tab switch. The per-repo run-once guard (`detected_for`),
-    /// `conflict_merge_pending` and the `conflict_count` badge stay on
-    /// `KagiApp` (separate concerns).
+    /// tab switch. Only the run-once evidence lives in `TabUiState`; the pane
+    /// and `conflict_merge_pending` remain root-owned until S5.
     pub conflict: Option<Entity<conflict_view::ConflictView>>,
-    /// Per-repo run-once guard for conflict detection (was `ConflictState.
-    /// detected_for`). Holds the repo path whose conflict state has been detected
-    /// this cycle; invalidated on reload / repo change. Parent-owned because it
-    /// must survive an entity rebuild and be readable without leasing the entity.
-    pub conflict_detected_for: Option<PathBuf>,
     /// T-CONFLICT-FLOW-030/031 (ADR-0068): showing the merge commit panel
     /// (every file saved + staged, MERGE_HEAD still present). Cleared on commit /
     /// abort / reload. Parent-owned (read by the body-gate render and the FS
@@ -1345,26 +1323,6 @@ pub struct KagiApp {
     /// `uniform_list` so a plan touching thousands of files stays scrollable
     /// (and cheap) instead of being silently cut to the first 10 rows.
     pub modal_list_scroll: UniformListScrollHandle,
-    /// ADR-0128 follow-up: monotonic token identifying the *current* branch
-    /// cleanup scan. A completing background scan only applies its result
-    /// (`view().cleanup_rows`) if this still equals the value it
-    /// captured at start — same guard shape as `ecosystem_gen`, needed
-    /// because the scan moved off the synchronous snapshot path (see
-    /// `KagiApp::start_branch_cleanup_scan`) and can now be superseded by a
-    /// newer reload before it finishes.
-    pub cleanup_gen: u64,
-    /// True while the background Branch Cleanup scan is running. Without it the
-    /// pane rendered `CleanupEmpty` — a confident "nothing to clean up" — for
-    /// the second or more the scan takes on a real repo.
-    pub cleanup_scanning: bool,
-    /// Merged PRs fetched alongside the cleanup scan, matched to rows by head
-    /// branch for the PR / author columns. App-level like the pane's own open
-    /// flag; empty when `gh` is unavailable.
-    pub cleanup_prs: Vec<kagi_domain::github::PullRequest>,
-    /// #506: the last merged-PR fetch failed, so `cleanup_prs` is the previous
-    /// scan's data. Without this an empty PR column read as "this branch has no
-    /// pull request" when the truth was "we could not ask".
-    pub cleanup_prs_stale: bool,
     /// Branch names ticked in the cleanup table. Deleting "the selected ones"
     /// is the middle ground between the bulk button and the per-row trash
     /// (user request).
@@ -1377,17 +1335,6 @@ pub struct KagiApp {
     /// was replaced, so the background scans that decorate it (Branch Cleanup
     /// rows, squash ghost connectors) need re-arming. See `on_view_published`.
     pub scans_stale: bool,
-    /// ADR-0119: cached completed mine so reopening the Ecosystem view reuses
-    /// the slow `git log` scan. Invalidated on reload / repo switch.
-    pub ecosystem_cache: ecosystem::EcosystemCache,
-    /// ADR-0119: repo whose Analyze mine is currently running (app-owned, so it
-    /// survives the view being closed). `None` when idle.
-    pub ecosystem_inflight: Option<std::path::PathBuf>,
-    /// Monotonic token identifying the *current* Analyze mine. A completing
-    /// background task only wins if this still equals the value it captured at
-    /// start — so a stale same-repo mine (e.g. one started before a reload
-    /// superseded it) can't cache/seed its result over a newer one.
-    pub ecosystem_gen: u64,
     /// T-WS-EDITOR-001 / ADR-0120: the Editor workspace view — `Some` while
     /// Graph ⇄ Editor mode is `Editor` (T-WS-EDITOR-005 finding #11: mode is
     /// derived as `editor_workspace.is_some()` rather than tracked in a
@@ -1522,12 +1469,7 @@ impl KagiApp {
             fetch_in_flight: None,
             pending_pull_confirm: Default::default(),
             auto_fetch_ticker_alive: false,
-            github_prs: Vec::new(),
-            github_prs_for: None,
             transport_holds: Default::default(),
-            github_error: None,
-            github_unavailable: false,
-            github_prs_epoch: 0,
             github_ticker_alive: false,
             github_login: None,
             pr_mode: None,
@@ -1555,7 +1497,6 @@ impl KagiApp {
             avatars: avatar::AvatarStore::default(),
             // W30-CONFLICT-UI
             conflict: None,
-            conflict_detected_for: None,
             conflict_merge_pending: false,
             update_available: None,
             update_checked: false,
@@ -1568,16 +1509,9 @@ impl KagiApp {
             cleanup_scroll: UniformListScrollHandle::new(),
             modal_section_overrides: std::collections::HashSet::new(),
             modal_list_scroll: UniformListScrollHandle::new(),
-            cleanup_gen: 0,
-            cleanup_scanning: false,
-            cleanup_prs: Vec::new(),
-            cleanup_prs_stale: false,
             cleanup_selected: std::collections::HashSet::new(),
             squash_gen: 0,
             scans_stale: true,
-            ecosystem_cache: ecosystem::EcosystemCache::new(),
-            ecosystem_inflight: None,
-            ecosystem_gen: 0,
             editor_workspace: None,
         }
     }
@@ -1620,11 +1554,11 @@ impl KagiApp {
     /// reflog seeding, and the auto-fetch ticker.  Called from the reload /
     /// tab-switch / app-init commit points (`switch_repo`, `open_main_window`)
     /// rather than every frame.  Each sub-task carries its own run-once guard
-    /// (`conflict.detected_for`, `history_seed_attempted`, `auto_fetch_ticker_alive`)
+    /// (`ui().conflict_detected`, `history_seed_attempted`, `auto_fetch_ticker_alive`)
     /// — reset on tab switch / reload exactly as before — so repeated calls are
     /// cheap no-ops and the emitted `[kagi]` contract lines fire once per repo.
     pub fn ensure_startup_repo_io(&mut self, cx: &mut Context<Self>) {
-        // W30-CONFLICT-UI: detect Conflict Mode once per repo path (no-op when
+        // W30-CONFLICT-UI: detect Conflict Mode once per session cycle (no-op when
         // already detected this cycle). The watcher / post-operation paths force
         // re-detection via the synchronous `reload()`.
         self.detect_conflict_mode_async(cx);
@@ -1649,128 +1583,6 @@ impl KagiApp {
         // for it. Every other case (post-operation reload, tab switch) is
         // already covered by `reload_checked`'s call — this one is cheap and
         // generation-guarded, so the redundant call there is harmless.
-    }
-
-    /// Detect (or clear) Conflict Mode for the currently-open repository.
-    ///
-    /// Runs at most once per `repo_path` per cycle (the `conflict_detected_for`
-    /// guard, reset by `reload()` / tab switch / the watcher).  Opens the repo
-    /// read-only, calls `detect_conflict_session`, and on a hit builds a fresh
-    /// `ResolutionBuffer` from the index (preferring a previously autosaved
-    /// buffer so a partial resolution survives a restart), recomputes each
-    /// file's status from the buffer, and stores the `ConflictMode` (via
-    /// `apply_conflict_detect`, which builds / updates the `ConflictView` entity).
-    /// On a miss it drops the entity (`self.conflict = None`). The repository is
-    /// never mutated here.
-    pub fn detect_conflict_mode(&mut self, cx: &mut Context<Self>) {
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => {
-                self.conflict = None;
-                return;
-            }
-        };
-        // Run-once guard per repo path.
-        if self.conflict_detected_for.as_deref() == Some(repo_path.as_path()) {
-            return;
-        }
-        self.conflict_detected_for = Some(repo_path.clone());
-        let Some(owner) = self.detect_owner() else {
-            return;
-        };
-
-        // Snapshot the preservation inputs the I/O step needs (prev selection /
-        // editing index), then run the read-only Git/index/file I/O synchronously.
-        // Issue #285: capture the previously-selected/editing files by PATH, not
-        // index — a per-file Save re-sorts `session.files`, so a stored index
-        // would silently follow to a different file after re-detection.
-        let (prev_selected_path, prev_editing_path) = self
-            .conflict
-            .as_ref()
-            .map(|e| {
-                let v = e.read(cx);
-                let sel = v.mode.as_ref().and_then(|c| {
-                    c.selected_file
-                        .and_then(|i| c.session.files.get(i))
-                        .map(|f| f.path.clone())
-                });
-                (sel, v.editing.clone())
-            })
-            .unwrap_or((None, None));
-        let current_branch = self.view().status_summary.branch.clone();
-        let outcome = Self::detect_conflict_payload(
-            &repo_path,
-            prev_selected_path,
-            prev_editing_path,
-            current_branch,
-        );
-        self.apply_conflict_detect(owner, outcome, cx);
-    }
-
-    /// T-PERF-RENDER-001: async sibling of [`detect_conflict_mode`].
-    ///
-    /// Runs the same read-only Backend / index / `ResolutionBuffer` I/O on a
-    /// background thread (`cx.background_spawn`), then marshals the result back to
-    /// [`apply_conflict_detect`] on the UI thread.  The run-once `detected_for`
-    /// guard is armed up-front (mirroring the sync path's "set guard, then do
-    /// I/O" ordering) so repeated calls — including the per-frame render path that
-    /// used to live here — never re-launch the work.  Used by the startup /
-    /// tab-switch commit points where `reload()` (which calls the sync variant)
-    /// did not run.
-    pub fn detect_conflict_mode_async(&mut self, cx: &mut Context<Self>) {
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => {
-                self.conflict = None;
-                return;
-            }
-        };
-        // Run-once guard per repo path (armed before the I/O launches).
-        if self.conflict_detected_for.as_deref() == Some(repo_path.as_path()) {
-            return;
-        }
-        self.conflict_detected_for = Some(repo_path.clone());
-        let Some(owner) = self.detect_owner() else {
-            return;
-        };
-
-        // Issue #285: capture the previously-selected/editing files by PATH, not
-        // index — a per-file Save re-sorts `session.files`, so a stored index
-        // would silently follow to a different file after re-detection.
-        let (prev_selected_path, prev_editing_path) = self
-            .conflict
-            .as_ref()
-            .map(|e| {
-                let v = e.read(cx);
-                let sel = v.mode.as_ref().and_then(|c| {
-                    c.selected_file
-                        .and_then(|i| c.session.files.get(i))
-                        .map(|f| f.path.clone())
-                });
-                (sel, v.editing.clone())
-            })
-            .unwrap_or((None, None));
-        let current_branch = self.view().status_summary.branch.clone();
-
-        let task = cx.background_spawn(async move {
-            Self::detect_conflict_payload(
-                &repo_path,
-                prev_selected_path,
-                prev_editing_path,
-                current_branch,
-            )
-        });
-        cx.spawn(async move |this, acx| {
-            let outcome = task.await;
-            let _ = this.update(acx, |app, cx| {
-                // The frozen `Attachment` subsumes the old repo-path guard (codex
-                // Q5): it carries path, SessionId and visit, so a repo switch,
-                // a tab switch and a same-path reopen are all told apart.
-                app.apply_conflict_detect(owner, outcome, cx);
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     // ────────────────────────────────────────────────────────────

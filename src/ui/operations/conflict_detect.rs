@@ -173,14 +173,14 @@ impl KagiApp {
         outcome: ConflictDetectOutcome,
         cx: &mut Context<Self>,
     ) {
-        // #707 review P1: a result belongs to the tab that asked for it. The
-        // job froze this exact `Attachment` — SessionId, visit and path — at
-        // launch; a path check alone lets a task started before a close and
-        // reopen of the same repository land on the new owner's conflict
-        // editor and stash state. The visit is what tells those apart.
-        if self.active_session() != Some(owner.session)
-            || self.app_sessions.attachment(owner.session).as_ref() != Some(&owner)
-        {
+        // The pane remains root-owned until S5, so only the active launch owner
+        // may apply a result. A departed or superseded owner keeps no pane, but
+        // its existing disposable guard must be re-armed for its next visit.
+        let owner_is_current = self.app_sessions.attachment(owner.session).as_ref() == Some(&owner);
+        if self.active_session() != Some(owner.session) || !owner_is_current {
+            if let Some(state) = self.ui.get_mut(&owner.session) {
+                state.conflict_detected = false;
+            }
             return;
         }
         // #707 review: and it must describe the repository the tab is
@@ -212,15 +212,15 @@ impl KagiApp {
         if stale {
             // The read that superseded it re-detects on its own; this re-arm
             // covers the commit points that do not.
-            self.conflict_detected_for = None;
+            if let Some(state) = self.ui.get_mut(&owner.session) {
+                state.conflict_detected = false;
+            }
             return;
         }
         // #704 review P1: this detector must NOT write `Sessions`' conflict
-        // observation. Its job is keyed on the repository path alone — no
-        // `SessionId`, no read revision — so a `Cleared` it observed before a
-        // newer accepted read can marshal back afterwards and erase the
-        // revision the strip is still showing, turning the next Abort into a
-        // `StaleApproval`. `on_view_published` owns it, from accepted `Reads`.
+        // observation. The accepted read remains authoritative; a detection
+        // completion only projects that observation into the conflict pane.
+        // `on_view_published` owns the Sessions observation from accepted Reads.
         //
         // The stash identity is the launch owner's, not whoever is active now.
         {
@@ -336,6 +336,120 @@ impl KagiApp {
                 }
             }
         }
+    }
+    /// Detect (or clear) Conflict Mode for the active session.
+    ///
+    /// Runs at most once per owner per cycle. `reload()` and tab activation
+    /// re-arm that owner's guard. Opens the repo read-only, calls
+    /// `detect_conflict_session`, and on a hit builds a fresh
+    /// `ResolutionBuffer` from the index (preferring a previously autosaved
+    /// buffer so a partial resolution survives a restart), recomputes each
+    /// file's status from the buffer, and stores the `ConflictMode` (via
+    /// `apply_conflict_detect`, which builds / updates the `ConflictView` entity).
+    /// On a miss it drops the entity (`self.conflict = None`). The repository is
+    /// never mutated here.
+    pub fn detect_conflict_mode(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                self.conflict = None;
+                return;
+            }
+        };
+        let Some(owner) = self.detect_owner() else {
+            return;
+        };
+        if self.ui().conflict_detected {
+            return;
+        }
+        self.ui_mut().conflict_detected = true;
+
+        // Snapshot the preservation inputs the I/O step needs (prev selection /
+        // editing index), then run the read-only Git/index/file I/O synchronously.
+        // Issue #285: capture the previously-selected/editing files by PATH, not
+        // index — a per-file Save re-sorts `session.files`, so a stored index
+        // would silently follow to a different file after re-detection.
+        let (prev_selected_path, prev_editing_path) = self
+            .conflict
+            .as_ref()
+            .map(|e| {
+                let v = e.read(cx);
+                let sel = v.mode.as_ref().and_then(|c| {
+                    c.selected_file
+                        .and_then(|i| c.session.files.get(i))
+                        .map(|f| f.path.clone())
+                });
+                (sel, v.editing.clone())
+            })
+            .unwrap_or((None, None));
+        let current_branch = self.view().status_summary.branch.clone();
+        let outcome = Self::detect_conflict_payload(
+            &repo_path,
+            prev_selected_path,
+            prev_editing_path,
+            current_branch,
+        );
+        self.apply_conflict_detect(owner, outcome, cx);
+    }
+
+    /// T-PERF-RENDER-001: async sibling of [`detect_conflict_mode`].
+    ///
+    /// Runs the same read-only Backend / index / `ResolutionBuffer` I/O on a
+    /// background thread (`cx.background_spawn`), then marshals the result back to
+    /// [`apply_conflict_detect`] on the UI thread. The owner-local run-once guard
+    /// is armed up-front so repeated calls never re-launch the work. Used by the
+    /// startup / tab-switch commit points where `reload()` (which calls the sync
+    /// variant) did not run.
+    pub fn detect_conflict_mode_async(&mut self, cx: &mut Context<Self>) {
+        let repo_path = match self.repo_path.clone() {
+            Some(p) => p,
+            None => {
+                self.conflict = None;
+                return;
+            }
+        };
+        let Some(owner) = self.detect_owner() else {
+            return;
+        };
+        if self.ui().conflict_detected {
+            return;
+        }
+        self.ui_mut().conflict_detected = true;
+
+        // Issue #285: capture the previously-selected/editing files by PATH, not
+        // index — a per-file Save re-sorts `session.files`, so a stored index
+        // would silently follow to a different file after re-detection.
+        let (prev_selected_path, prev_editing_path) = self
+            .conflict
+            .as_ref()
+            .map(|e| {
+                let v = e.read(cx);
+                let sel = v.mode.as_ref().and_then(|c| {
+                    c.selected_file
+                        .and_then(|i| c.session.files.get(i))
+                        .map(|f| f.path.clone())
+                });
+                (sel, v.editing.clone())
+            })
+            .unwrap_or((None, None));
+        let current_branch = self.view().status_summary.branch.clone();
+
+        let task = cx.background_spawn(async move {
+            Self::detect_conflict_payload(
+                &repo_path,
+                prev_selected_path,
+                prev_editing_path,
+                current_branch,
+            )
+        });
+        cx.spawn(async move |this, acx| {
+            let outcome = task.await;
+            let _ = this.update(acx, |app, cx| {
+                app.apply_conflict_detect(owner, outcome, cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 

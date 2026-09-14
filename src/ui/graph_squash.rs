@@ -164,19 +164,31 @@ impl KagiApp {
         let Some(session) = self.active_session() else {
             return;
         };
+        let read_key = self.reads.current_key(session);
+        let Some(publish_gen) = self.ui.get(&session).map(|ui| ui.view_publish_gen) else {
+            return;
+        };
 
-        let bg_path = repo_path.clone();
-        let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&bg_path).and_then(|b| b.collect_squash_links())
-        });
+        let scan = async move {
+            kagi_git::Backend::open(&repo_path).and_then(|b| b.collect_squash_links())
+        };
+        #[cfg(feature = "gui-e2e")]
+        let task = super::e2e::take_squash_scan().unwrap_or_else(|| cx.background_spawn(scan));
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(scan);
 
         cx.spawn(async move |app, acx| {
             let result = task.await;
             let _ = app.update(acx, |app, cx| {
-                // Superseded: another tab is on screen, or a newer reload
-                // started its own scan. The row indices these links carry belong
-                // to the graph this session had when the scan started.
-                let still_ours = app.squash_gen == my_gen && app.active_session() == Some(session);
+                // Superseded: another tab is on screen, a newer reload replaced
+                // this session's graph, or a newer scan was launched.
+                let still_ours = app.squash_gen == my_gen
+                    && app.active_session() == Some(session)
+                    && app.reads.is_fresh(read_key)
+                    && app
+                        .ui
+                        .get(&session)
+                        .is_some_and(|ui| ui.view_publish_gen == publish_gen);
                 if !still_ours {
                     return;
                 }

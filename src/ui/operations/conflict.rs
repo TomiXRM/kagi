@@ -425,7 +425,7 @@ impl KagiApp {
                 );
                 self.clear_conflict_continue_modal();
                 self.reload(cx);
-                self.conflict_detected_for = None;
+                self.ui_mut().conflict_detected = false;
                 self.detect_conflict_mode(cx);
             }
             Err(e) => {

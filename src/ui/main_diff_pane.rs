@@ -413,5 +413,9 @@ impl KagiApp {
             self.refresh_commit_panel_after_reload(cx);
         }
         self.refresh_overlays_after_reload(self.view().head_oid.clone(), cx);
+        // Every retained pane has now been compared against the accepted read
+        // and either re-anchored or rebuilt, so the affordances come back
+        // (#722 P2). A failed read never reaches here: the panes stay refused.
+        self.with_ui(|ui| ui.panes_revalidating = false);
     }
 }

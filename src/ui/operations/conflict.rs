@@ -15,9 +15,13 @@ impl KagiApp {
     /// screen: it would otherwise plan or execute against whatever conflict the
     /// now-active tab has (ADR-0197 決定 5 / #722 P1-b). Callbacks capture the
     /// owner at the click and pass it here rather than re-resolving from active.
+    ///
+    /// It is also refused while the owner's panes await their activation read
+    /// (#722 P2): the pane on screen still describes the pre-switch repository.
     pub(crate) fn conflict_action_owner_on_screen(&self, owner: &crate::app::Attachment) -> bool {
         self.active_session() == Some(owner.session)
             && self.app_sessions.attachment(owner.session).as_ref() == Some(owner)
+            && !self.ui().panes_revalidating
     }
 
     /// Marshal a toast from a retained conflict pane, but only while its frozen
@@ -80,14 +84,16 @@ impl KagiApp {
         let current_owner = self
             .active_session()
             .and_then(|session| self.app_sessions.attachment(session));
-        if !conflict_intent_matches(
-            current_token,
-            current_revision,
-            current_owner.as_ref(),
-            token,
-            owner,
-            revision,
-        ) {
+        if self.ui().panes_revalidating
+            || !conflict_intent_matches(
+                current_token,
+                current_revision,
+                current_owner.as_ref(),
+                token,
+                owner,
+                revision,
+            )
+        {
             self.push_toast(ToastKind::Error, "stale conflict action was ignored", cx);
             return;
         }

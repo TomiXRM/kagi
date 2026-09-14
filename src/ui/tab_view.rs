@@ -320,6 +320,11 @@ pub struct TabUiState {
     pub cleanup_prs_stale: bool,
     /// Re-armed when retained conflict authority is invalidated or its read changes.
     pub conflict_detected: bool,
+    /// Retained panes are on screen but **not authoritative** until an
+    /// activation read is accepted (ADR-0197 決定 3 / #722 P2). While set, the
+    /// panes keep their entities — and so their undo stacks, selection and
+    /// scroll — but every mutation affordance they offer is refused.
+    pub panes_revalidating: bool,
     /// Recomputable Analyze evidence; the pane entity is owned below.
     pub ecosystem_cache: Option<super::ecosystem::CachedMine>,
     pub ecosystem_inflight: bool,
@@ -370,6 +375,7 @@ impl Default for TabUiState {
             cleanup_prs: Vec::new(),
             cleanup_prs_stale: false,
             conflict_detected: false,
+            panes_revalidating: false,
             ecosystem_cache: None,
             ecosystem_inflight: false,
             ecosystem_gen: 0,
@@ -431,17 +437,24 @@ fn now_unix_secs() -> i64 {
 
 impl KagiApp {
     /// Make retained repository-derived state non-authoritative before an
-    /// activation read. Editable panes remain intact, but conflict state is
-    /// discarded until the repository is observed again: external resolution
-    /// must never leave a stale conflict editor actionable.
+    /// activation read (ADR-0197 決定 3 / #722 P2). "Not authoritative" means
+    /// **stop**, not **destroy**: recomputable caches are dropped, but every
+    /// pane entity stays alive, so undo/redo, the selected file/hunk and
+    /// scroll all survive a tab round trip. What the panes lose is the right
+    /// to *act*: `panes_revalidating` refuses their mutations until the read
+    /// lands. `revalidate_retained_panes` then compares the new observation —
+    /// unchanged panes are simply re-enabled, changed ones are rebuilt there
+    /// and (for conflict) by the re-armed detection below.
     pub(crate) fn begin_session_revalidation(&mut self, session: crate::app::SessionId) {
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
             ui.diff_caches.clear();
             ui.wip_diffstat = None;
             ui.last_working_status = None;
-            ui.conflict = None;
+            ui.panes_revalidating = true;
             ui.conflict_merge_pending = false;
+            // Re-arm detection: its outcome decides whether the retained
+            // conflict pane is updated in place or replaced.
             ui.conflict_detected = false;
         }
     }

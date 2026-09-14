@@ -161,7 +161,7 @@ impl KagiApp {
     /// `RepoSession` for the tab's own panel, a short-lived `Backend` for a
     /// linked worktree's) — see `with_commit_panel_repo`.
     pub fn open_discard_all_modal(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
-        if self.active_session() != Some(owner) {
+        if self.active_session() != Some(owner) || self.ui().panes_revalidating {
             return;
         }
         let (eligible, skipped) = self.discard_partition(cx);

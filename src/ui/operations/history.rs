@@ -114,9 +114,29 @@ impl KagiApp {
         after: kagi_git::CommitId,
         summary: impl Into<String>,
     ) {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        self.record_history_for(owner, kind, branch, before, after, summary);
+    }
+
+    /// Record into the frozen owner even when another tab is active. A detached
+    /// owner has no UI entry, so its completion is deliberately forgotten.
+    pub(crate) fn record_history_for(
+        &mut self,
+        owner: crate::app::SessionId,
+        kind: kagi_git::OperationKind,
+        branch: &str,
+        before: kagi_git::CommitId,
+        after: kagi_git::CommitId,
+        summary: impl Into<String>,
+    ) {
         if branch.is_empty() || before == after {
             return;
         }
+        let Some(ui) = self.ui.get_mut(&owner) else {
+            return;
+        };
         let summary = summary.into();
         eprintln!(
             "[kagi] history: record {} on '{}' {} → {}",
@@ -125,15 +145,13 @@ impl KagiApp {
             before.short(),
             after.short()
         );
-        self.ui_mut()
-            .operation_history
-            .record(kagi_git::HistoryEntry {
-                kind,
-                branch: branch.to_string(),
-                before,
-                after,
-                summary,
-            });
+        ui.operation_history.record(kagi_git::HistoryEntry {
+            kind,
+            branch: branch.to_string(),
+            before,
+            after,
+            summary,
+        });
     }
 
     /// Open the Undo plan modal for the entry at the history cursor (the most

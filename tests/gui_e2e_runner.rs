@@ -907,6 +907,16 @@ mod macos {
                 ),
             ),
             (
+                "background_operation_history_owner",
+                Box::new(
+                    crate::cache_history_owner::scenario_background_operation_history_owner,
+                ),
+            ),
+            (
+                "welcome_drops_root_main_diff",
+                Box::new(crate::cache_history_owner::scenario_welcome_drops_root_main_diff),
+            ),
+            (
                 "remote_refresh_departed_owner",
                 Box::new(crate::remote_refresh_owner::scenario_remote_refresh_departed_owner),
             ),

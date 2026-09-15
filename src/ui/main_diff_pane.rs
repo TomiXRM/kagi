@@ -431,7 +431,10 @@ impl KagiApp {
         // Conflict is the one pane whose check is asynchronous: the read model
         // says whether an operation is in progress, but only a detector run
         // against *this* read can say whether it is still the same conflict.
-        if self.view().operation.is_none() {
+        if self.ui().conflict.is_none() {
+            // No retained conflict pane: nothing to re-check.
+            self.with_ui(|ui| ui.pane_revalidation = PaneRevalidation::Settled);
+        } else if self.view().operation.is_none() {
             // Resolved or aborted while the tab was away — the pane goes.
             self.with_ui(|ui| {
                 ui.conflict = None;

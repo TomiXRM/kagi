@@ -35,10 +35,10 @@ impl KagiApp {
     pub(crate) fn leave_takeovers(&mut self, keep: WorkspaceMode) {
         self.close_file_history();
         self.close_ecosystem_view();
-        self.branch_cleanup_open = false;
+        self.with_ui(|ui| ui.branch_cleanup_open = false);
         if keep != WorkspaceMode::Prs {
             // PR mode outranks Editor, so Editor has to displace it too.
-            self.pr_mode = None;
+            self.with_ui(|ui| ui.pr_mode = None);
         }
     }
 
@@ -48,10 +48,10 @@ impl KagiApp {
     pub fn workspace_mode(&self) -> WorkspaceMode {
         if super::workspace::FileHistoryItem.is_open(self)
             || self.ui().ecosystem.is_some()
-            || self.branch_cleanup_open
+            || self.ui().branch_cleanup_open
         {
             WorkspaceMode::Takeover
-        } else if self.pr_mode.is_some() {
+        } else if self.pr_mode().is_some() {
             WorkspaceMode::Prs
         } else if self.ui().editor_workspace.is_some() {
             WorkspaceMode::Editor
@@ -83,7 +83,7 @@ impl KagiApp {
     /// work is preserved) and the Editor button brings it straight back.
     pub fn show_pr_mode(&mut self, cx: &mut Context<Self>) {
         self.leave_takeovers(WorkspaceMode::Prs);
-        if self.pr_mode.is_none() {
+        if self.pr_mode().is_none() {
             self.toggle_pr_mode(cx);
         }
         klog!("mode: prs");

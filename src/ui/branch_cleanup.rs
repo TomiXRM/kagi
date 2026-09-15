@@ -26,7 +26,7 @@ use super::*;
 impl KagiApp {
     /// Toggle the Branch Cleanup takeover from the sidebar entry.
     pub fn toggle_branch_cleanup_view(&mut self, cx: &mut Context<Self>) {
-        if self.branch_cleanup_open {
+        if self.ui().branch_cleanup_open {
             self.close_branch_cleanup_view(cx);
         } else {
             self.open_branch_cleanup_view(cx);
@@ -44,8 +44,8 @@ impl KagiApp {
         // happened.
         self.close_file_history();
         self.close_ecosystem_view();
-        self.pr_mode = None;
-        self.branch_cleanup_open = true;
+        self.with_ui(|ui| ui.pr_mode = None);
+        self.with_ui(|ui| ui.branch_cleanup_open = true);
         klog!("branch-cleanup: opened");
         cx.notify();
     }
@@ -88,7 +88,7 @@ impl KagiApp {
 
     /// Close the Branch Cleanup table.
     pub fn close_branch_cleanup_view(&mut self, cx: &mut Context<Self>) {
-        self.branch_cleanup_open = false;
+        self.with_ui(|ui| ui.branch_cleanup_open = false);
         self.with_ui(|ui| ui.cleanup_selected.clear());
         cx.notify();
     }

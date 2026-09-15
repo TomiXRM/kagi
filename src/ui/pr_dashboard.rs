@@ -484,7 +484,7 @@ fn render_card(
     let pr_menu = pr.clone();
     let menu = cx.listener(
         move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
-            this.pr_menu = Some((pr_menu.clone(), e.position));
+            this.with_ui(|ui| ui.pr_menu = Some((pr_menu.clone(), e.position)));
             cx.stop_propagation();
             cx.notify();
         },

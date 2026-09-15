@@ -46,7 +46,7 @@ fn row(name: &str, tip: CommitId) -> BranchCleanupRow {
     }
 }
 
-fn pr(number: u64, head: &str) -> PullRequest {
+pub fn pr(number: u64, head: &str) -> PullRequest {
     PullRequest {
         number,
         title: format!("PR {number}"),

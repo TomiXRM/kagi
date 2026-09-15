@@ -240,8 +240,8 @@ impl KagiApp {
         // would delete a branch name typed while it ran. What a reload
         // invalidates is a *plan*: every plan-carrying modal above is still
         // swept, and confirming an input modal re-plans and re-preflights
-        // through `Backend::run` anyway. `reset_per_repo_ui` still clears these
-        // on a tab or repository switch, where the input no longer applies.
+        // through `Backend::run` anyway. Tab departure still drops these (repo-scoped
+        // modals), where the input no longer applies.
         self.modal_focus = None;
         self.clear_stash_push_modal();
         self.clear_stash_apply_modal();

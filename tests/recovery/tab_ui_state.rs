@@ -4,8 +4,9 @@
 //! **ownership of presentation intent**, not pixels:
 //!
 //! - a selection made in A is invisible in B, and vice versa;
-//! - A→B→A restores A's selection instead of clearing it (`reset_per_repo_ui`
-//!   no longer has a selection to forget);
+//! - A→B→A restores A's selection instead of clearing it — and, since S6 deleted
+//!   the switch-time reset, A's workspace mode (PR mode, its row menu, the
+//!   Branch Cleanup takeover) too, while B first appears `is_pristine`;
 //! - opening A again through a second locator for the same worktree (`<root>`
 //!   vs `<root>/.git`) resolves to the live session and leaves its state alone;
 //! - closing A removes its key from **both** stores, and reopening the same
@@ -181,6 +182,13 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
         let ui = app.ui_mut().expect("active session");
         ui.graph_scroll_x = 42.0;
         ui.branch_groups_collapsed.insert("local:feature".into());
+        // S6: the workspace mode used to be reset on every switch.
+        ui.branch_cleanup_open = true;
+        ui.pr_mode = Some(Default::default());
+        ui.pr_menu = Some((
+            crate::cleanup_publish_owner::pr(7, "a-head"),
+            Default::default(),
+        ));
         ui.commit_limit
     });
 
@@ -193,6 +201,11 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     let a_cleanup_name = "feature/old".to_owned();
     let b_initial_limit = kagi.read_with(cx, |app, _| {
         assert_eq!(app.active_session(), Some(session_b));
+        assert_eq!(
+            app.ui().is_pristine(),
+            Ok(()),
+            "tab-ui-pristine: A's UI surface leaked into the freshly opened B",
+        );
         assert_eq!(
             app.ui().graph_scroll_x,
             0.0,
@@ -307,6 +320,16 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             app.ui().cleanup_selected.contains(&a_cleanup_name),
             "A's cleanup selection was not restored",
         );
+        assert!(
+            app.ui().branch_cleanup_open,
+            "A's cleanup takeover was not restored"
+        );
+        assert!(app.pr_mode().is_some(), "A's PR mode was not restored");
+        assert_eq!(
+            app.ui().pr_menu.as_ref().map(|(pr, _)| pr.number),
+            Some(7),
+            "A's PR row menu was not restored",
+        );
     });
 
     // The switches armed background revalidates. A landing read publishes a
@@ -381,6 +404,11 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             app.ui().selected,
             None,
             "the reopened tab inherited the previous incarnation's selection",
+        );
+        assert_eq!(
+            app.ui().is_pristine(),
+            Ok(()),
+            "the reopened tab inherited the previous incarnation's UI surface",
         );
         assert_ui_domain(app, "after reopening A");
         session

@@ -958,3 +958,50 @@ pub fn scenario_conflict_pane_survives_activation(cx: &mut VisualTestAppContext)
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict_pane_survives_activation");
 }
+
+/// #722 (codex P1): the pane pass waits on a detection against the accepted
+/// read. If that detection comes back stale (here `OpenFailed` while the read
+/// still shows an operation), the gate must not stay shut until some unrelated
+/// publish — the unconfirmed pane is dropped and the gate settles.
+pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e::ConflictDetectOutcome;
+
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "precondition: pane"
+    );
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("attached");
+
+    app.update(cx, |app, cx| {
+        e2e::await_conflict_revalidation(app);
+        assert!(
+            app.ui().panes_revalidating(),
+            "precondition: awaiting detection"
+        );
+        app.apply_conflict_detect(owner, ConflictDetectOutcome::OpenFailed, cx);
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.ui().panes_revalidating(),
+            "awaited-detection-stale-settles: the gate stayed shut after a stale detection"
+        );
+        assert!(
+            app.ui().conflict.is_none(),
+            "awaited-detection-stale-settles: an unconfirmed conflict pane stayed actionable"
+        );
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_awaited_detection_stale_settles");
+}

@@ -849,6 +849,10 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_detect_stale_clear_is_dropped),
             ),
             (
+                "conflict_awaited_detection_stale_settles",
+                Box::new(crate::app_conflict::scenario_conflict_awaited_detection_stale_settles),
+            ),
+            (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
             ),

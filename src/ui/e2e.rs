@@ -26,6 +26,14 @@ pub use super::operations::conflict_detect::detect_payload_for_test;
 /// stand in for a job that started before the read the tab has now accepted.
 /// `ui::operations` is private, so the seam is here with the rest.
 pub use super::operations::conflict_detect::ConflictDetectOutcome;
+
+/// Put the active tab's pane pass in the state where it waits on a conflict
+/// detection against the accepted read (#722).
+pub fn await_conflict_revalidation(app: &mut KagiApp) {
+    if let Some(ui) = app.ui_mut() {
+        ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::AwaitingConflict;
+    }
+}
 use std::rc::Rc;
 use std::sync::Arc;
 

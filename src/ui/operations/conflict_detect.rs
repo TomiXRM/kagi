@@ -227,6 +227,14 @@ impl KagiApp {
             // covers the commit points that do not.
             if let Some(state) = self.ui.get_mut(&owner.session) {
                 state.conflict_detected = false;
+                // #722: the pane pass is waiting on *this* detection, so the
+                // retained pane could not be confirmed. Fail closed — drop it
+                // and settle — rather than re-detect every frame or refuse
+                // every pane mutation until some unrelated publish.
+                if state.pane_revalidation == PaneRevalidation::AwaitingConflict {
+                    state.conflict = None;
+                    state.pane_revalidation = PaneRevalidation::Settled;
+                }
             }
             return;
         }

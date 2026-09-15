@@ -923,6 +923,10 @@ mod macos {
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
             ),
             (
+                "pr_mode_revalidates_on_activation",
+                Box::new(crate::tab_ui_state::scenario_pr_mode_revalidates_on_activation),
+            ),
+            (
                 "tab_ui_state_rejects_detached_writer",
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_rejects_detached_writer),
             ),

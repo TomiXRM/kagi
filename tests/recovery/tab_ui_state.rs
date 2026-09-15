@@ -428,6 +428,99 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS tab_ui_state_ownership");
 }
 
+/// #724 review P2-3 (ADR-0197 決定 3): a retained PR tab is a snapshot of the
+/// refs and of GitHub taken when it was opened. S6 keeps PR mode across a tab
+/// switch, so coming back must rebuild it against the activation's read — the
+/// full read and the PR list ticker refresh neither its commits nor its
+/// conflict evidence.
+pub fn scenario_pr_mode_revalidates_on_activation(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_linear_fixture(&root, "gamma");
+    let repo_b = build_linear_fixture(&root, "beta");
+    // A PR needs both of its branches as remote-tracking refs: that is what
+    // `pr_tab_snapshot` resolves the base and head tips from.
+    // Each call adds one commit **on top of** `feat`, so the PR grows rather
+    // than being rewritten: the commit count is what the assertions read.
+    let advance_feat = |message: &str, create: bool| {
+        if create {
+            git(&repo_a, &["checkout", "-q", "-b", "feat", "main"]);
+        } else {
+            git(&repo_a, &["checkout", "-q", "feat"]);
+        }
+        std::fs::write(repo_a.join("feat.txt"), format!("{message}\n")).unwrap();
+        git(&repo_a, &["add", "."]);
+        git(&repo_a, &["commit", "-q", "-m", message]);
+        git(&repo_a, &["checkout", "-q", "main"]);
+        git(
+            &repo_a,
+            &["update-ref", "refs/remotes/origin/feat", "refs/heads/feat"],
+        );
+        git(
+            &repo_a,
+            &["update-ref", "refs/remotes/origin/main", "refs/heads/main"],
+        );
+    };
+    advance_feat("feat one", true);
+
+    let (kagi, window) = mount(cx, &repo_a);
+    cx.run_until_parked();
+    let opened_head = kagi.update(cx, |app, cx| {
+        app.pr_mode_open(&crate::cleanup_publish_owner::pr(7, "feat"), cx);
+        let mode = app.pr_mode().expect("PR mode is open");
+        assert_eq!(mode.tabs.len(), 1, "the PR did not open a tab");
+        // Stale evidence to watch: a computed "no conflicts" answer for the
+        // pre-departure tips, which nothing recomputes on its own.
+        let tab = &mode.tabs[0];
+        assert_eq!(tab.commits.len(), 1, "the PR tab listed the wrong commits");
+        tab.head.clone()
+    });
+    kagi.update(cx, |app, _| {
+        let tab = &mut app
+            .ui_mut()
+            .expect("A owner")
+            .pr_mode
+            .as_mut()
+            .unwrap()
+            .tabs[0];
+        tab.conflicts = Some(Ok(Vec::new()));
+    });
+
+    kagi.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+    });
+    cx.run_until_parked();
+
+    // The head branch moves on while A is in the background.
+    advance_feat("feat two", false);
+
+    kagi.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+
+    kagi.update(cx, |app, _| {
+        let mode = app.pr_mode().expect("A kept its PR mode");
+        assert_eq!(mode.tabs.len(), 1, "the retained PR tab was dropped");
+        assert_eq!(mode.active, Some(0), "the active PR tab was not preserved");
+        let tab = &mode.tabs[0];
+        assert_ne!(
+            tab.head, opened_head,
+            "pr-mode-revalidates-on-activation: the retained tab still points at the head it was opened with",
+        );
+        assert_eq!(
+            tab.commits.len(),
+            2,
+            "pr-mode-revalidates-on-activation: the retained tab kept its pre-departure commits",
+        );
+        assert!(
+            tab.conflicts.is_none(),
+            "pr-mode-revalidates-on-activation: conflict evidence for the old tips survived the activation",
+        );
+    });
+
+    unmount(cx, kagi, window);
+    eprintln!("[gui-e2e] PASS pr_mode_revalidates_on_activation");
+}
+
 pub fn scenario_tab_ui_state_rejects_detached_writer(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());

@@ -141,8 +141,6 @@ pub const LEFT_MAX: f32 = 480.0;
 pub const RIGHT_MIN: f32 = 220.0;
 pub const RIGHT_MAX: f32 = 640.0;
 
-const COMMIT_LIMIT: usize = 500;
-
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
         if self.pr_mode().is_some() {
@@ -182,72 +180,27 @@ impl KagiApp {
             cx.notify();
             return;
         }
-        let tip = |name: &str| {
-            self.view()
-                .remote_branches
-                .iter()
-                .find(|rb| rb.name == name)
-                .map(|rb| rb.target.clone())
-        };
-        let (Some(base_tip), Some(head)) = (tip(&pr.base), tip(&pr.head)) else {
-            self.push_toast(
-                ToastKind::Info,
-                SharedString::from(format!(
-                    "{}: {} / {}",
-                    Msg::PrBranchNotFetched.t(),
-                    pr.base,
-                    pr.head
-                )),
-                cx,
-            );
+        let Some(tab) = self.pr_tab_snapshot(pr) else {
+            if self.ui().repo_session.is_some() {
+                self.push_toast(
+                    ToastKind::Info,
+                    SharedString::from(format!(
+                        "{}: {} / {}",
+                        Msg::PrBranchNotFetched.t(),
+                        pr.base,
+                        pr.head
+                    )),
+                    cx,
+                );
+            }
             return;
         };
-        let Some(session) = self.ui().repo_session.as_ref() else {
-            return;
-        };
-        let repo = session.backend();
-        let base = repo
-            .merge_base(&base_tip, &head)
-            .unwrap_or_else(|_| base_tip.clone());
-        let commits = repo
-            .commits_between(&base, &head, COMMIT_LIMIT)
-            .unwrap_or_default();
-        let files = repo.compare_commits(&base, &head).unwrap_or_default();
         klog!(
             "pr-mode: open #{} commits={} files={}",
             pr.number,
-            commits.len(),
-            files.len()
+            tab.commits.len(),
+            tab.files.len()
         );
-        let mut tab = PrTab {
-            pr: pr.clone(),
-            base,
-            base_tip,
-            head,
-            commits,
-            files,
-            selected_commit: None,
-            selected_file: None,
-            diff: None,
-            diff_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
-            // A fresh tab opens on the description — "what is this PR" first,
-            // the diff once a file/commit is picked (user request).
-            reviews: Vec::new(),
-            comments: Vec::new(),
-            line_comments: Vec::new(),
-            conversation_loaded: false,
-            conflicts: None,
-            conflict_selected: None,
-            conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
-            conflict_preview: None,
-            conflict_at: 0,
-            merge_status: None,
-            merge_status_loaded: false,
-        };
-        if !tab.files.is_empty() {
-            tab.selected_file = Some(0);
-        }
-        self.pr_tab_reload_diff(&mut tab);
         let Some(m) = self.pr_mode_mut() else { return };
         m.tabs.push(tab);
         m.active = Some(m.tabs.len() - 1);
@@ -260,7 +213,7 @@ impl KagiApp {
     /// in the background and drop them on the matching tab. Once per tab open
     /// (never per list refresh — the list ticker must stay one call). The two
     /// run side by side so each tab's loader ends on its own data.
-    fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub(crate) fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
@@ -455,6 +408,10 @@ impl KagiApp {
                 // this tab exists to remove.
                 let first = t.apply_conflict_text(&path, text.as_deref());
                 cx.notify();
+                // Jumping to the first conflict moves the pane on screen, so it
+                // is only for the owner that is on screen. A landing for a
+                // background owner is not lost: activation rebuilds that tab and
+                // re-derives the preview (`revalidate_pr_mode`).
                 if let Some((row, rows)) = first.filter(|_| app.active_session() == owner) {
                     app.pr_mode_jump_conflict(0, Some(row), Some(rows), cx);
                 }
@@ -470,7 +427,7 @@ impl KagiApp {
     /// to drop frames. Cached on the tab because the answer only changes when
     /// the PR or the base does, and re-running it on every render of a tab the
     /// user is *looking at* would be the worst possible cadence.
-    fn pr_mode_load_conflicts(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn pr_mode_load_conflicts(&mut self, cx: &mut Context<Self>) {
         let Some(m) = self.pr_mode() else {
             return;
         };
@@ -514,7 +471,9 @@ impl KagiApp {
                 t.conflicts = Some(result);
                 cx.notify();
                 // The list has just arrived; pull the first file's text so the
-                // tab is not left showing an empty pane beside a full list.
+                // tab is not left showing an empty pane beside a full list. The
+                // text load reads the repository of the tab on screen, so for a
+                // background owner the activation rebuild starts it instead.
                 if app.active_session() == owner {
                     app.pr_mode_load_conflict_text(cx);
                 }
@@ -733,7 +692,7 @@ impl KagiApp {
         }
     }
 
-    fn pr_tab_reload_diff(&self, tab: &mut PrTab) {
+    pub(crate) fn pr_tab_reload_diff(&self, tab: &mut PrTab) {
         let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };

@@ -66,6 +66,12 @@ impl KagiApp {
         // re-resolved by CommitId in each branch, so it is left alone here.
         if let Some(session) = self.active_session() {
             self.invalidate_caches_for_row_renumber(session);
+            // Solo renumbers rows without publishing a read, so nothing re-anchors
+            // the open panes: close them.
+            self.with_ui(|ui| {
+                ui.main_diff = None;
+                ui.compare_view = None;
+            });
         }
 
         if already_soloed {

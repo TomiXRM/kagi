@@ -437,10 +437,8 @@ impl KagiApp {
         if self.active_session() != Some(session) {
             return;
         }
-        if let Some(ui) = self.ui_mut() {
-            ui.main_diff = None;
-            ui.compare_view = None;
-        }
+        // Main Diff / Compare are not dropped here: a published read queues
+        // `revalidate_retained_panes`, which re-anchors them (#722).
         self.commit_menu = None;
         self.inspector_file_menu = None;
     }

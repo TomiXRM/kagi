@@ -9,6 +9,7 @@ pub mod branch;
 pub mod checkout;
 pub mod cherry_revert;
 pub mod commit;
+mod commit_stage;
 pub mod conflict;
 pub mod conflict_detect;
 mod conflict_skip;
@@ -22,6 +23,7 @@ pub mod pull_push;
 pub mod rebase;
 pub mod remote_branch;
 pub mod reset;
+mod smart_generate;
 mod staging_failure;
 pub mod stash;
 pub mod tag;
@@ -61,7 +63,12 @@ pub(crate) enum RunHistorySummary {
 }
 
 pub(crate) struct CommitPanelFailure {
-    pub(crate) expected: gpui::Entity<crate::ui::commit_panel::CommitPanelView>,
+    /// Weak by type (#722 P1). This travels inside a `RunPresentation` that
+    /// the `finish_run` helper's detached task holds for the whole background
+    /// write, so a strong handle kept a closed tab's `CommitPanelView` — and
+    /// its title/body `InputState` — alive until a large Commit finished.
+    /// Making the field weak makes the strong path fail to compile.
+    pub(crate) expected: gpui::WeakEntity<crate::ui::commit_panel::CommitPanelView>,
     pub(crate) message: SharedString,
 }
 
@@ -180,6 +187,25 @@ impl KagiApp {
         self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
         cx.notify();
         true
+    }
+
+    /// The one gate every **owner-targeted pane mutation** passes through
+    /// (ADR-0197 決定 3 / 決定 5).
+    ///
+    /// Round 1 gave each of these actions an explicit `owner` argument so a
+    /// deferred click could not act on whatever tab is now on screen. That
+    /// same argument answers the second question too — whether that owner's
+    /// retained panes are authoritative yet — so both live here rather than
+    /// at each entry point. Adding a guard per entry is what let staging get
+    /// the revalidation check while the single-file Discard did not, exactly
+    /// as Continue once had an owner guard that Abort and Skip lacked.
+    ///
+    /// Refused when the frozen owner is not the tab on screen, or when that
+    /// owner's panes are still awaiting the activation read that re-anchors
+    /// them. Pure display — scroll, divider drags, closing a pane — does not
+    /// come through here.
+    pub(crate) fn pane_mutation_admitted(&self, owner: crate::app::SessionId) -> bool {
+        self.active_session() == Some(owner) && !self.ui().panes_revalidating()
     }
 
     /// Complete a **planning** task: the last shape of background work that is
@@ -484,13 +510,17 @@ impl KagiApp {
             self.consume_commit_panel_message(&repo, cx);
         }
         if let Some(failure) = presentation.commit_panel_failure {
+            // Re-resolve through the *current* pane: same identity means the
+            // owner is still on screen with the panel this failure belongs to.
+            // A closed tab dropped it, so there is nothing to write to.
             let expected = failure.expected.entity_id();
-            if self
+            if let Some(panel) = self
+                .ui()
                 .commit_panel
-                .as_ref()
-                .is_some_and(|panel| panel.entity_id() == expected)
+                .clone()
+                .filter(|panel| panel.entity_id() == expected)
             {
-                failure.expected.update(cx, |panel, _| {
+                panel.update(cx, |panel, _| {
                     if let Some(modal) = &mut panel.state.plan_modal {
                         modal.error = Some(failure.message);
                     }

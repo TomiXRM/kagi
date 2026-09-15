@@ -92,6 +92,10 @@ mod read_owner;
 mod tab_ui_state;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pane_resources.rs"]
+mod pane_resources;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cache_history_owner.rs"]
 mod cache_history_owner;
 
@@ -470,7 +474,17 @@ mod macos {
         cx: &mut VisualTestAppContext,
         repo_path: &Path,
     ) -> (Entity<KagiApp>, AnyWindowHandle) {
-        let app_state = e2e::app_state(repo_path).expect("build app_state");
+        mount_state(cx, e2e::app_state(repo_path).expect("build app_state"))
+    }
+
+    /// Mount an already-built `KagiApp`. The Welcome / no-session startup
+    /// (`KagiApp::with_error`, `main.rs:170`) has no repository to mount from,
+    /// and every scenario before #722 started from an open repo — which is why
+    /// CI never rendered a frame with no owning session.
+    pub(super) fn mount_state(
+        cx: &mut VisualTestAppContext,
+        app_state: KagiApp,
+    ) -> (Entity<KagiApp>, AnyWindowHandle) {
         let cell: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::new(RefCell::new(None));
         let build_cell = cell.clone();
         let window = open_offscreen(cx, size(px(1440.0), px(900.0)), move |window, cx| {
@@ -813,12 +827,30 @@ mod macos {
                 Box::new(crate::app_conflict::scenario_conflict_detect_no_revision_laundering),
             ),
             (
+                "conflict_background_owner",
+                Box::new(crate::app_conflict::scenario_conflict_background_owner),
+            ),
+            (
+                "conflict_revalidates_after_external_abort",
+                Box::new(
+                    crate::app_conflict::scenario_conflict_revalidates_after_external_abort,
+                ),
+            ),
+            (
+                "conflict_deferred_action_owner",
+                Box::new(crate::app_conflict::scenario_conflict_deferred_action_owner),
+            ),
+            (
                 "conflict_detect_wrong_owner_is_dropped",
                 Box::new(crate::app_conflict::scenario_conflict_detect_wrong_owner_is_dropped),
             ),
             (
                 "conflict_detect_stale_clear_is_dropped",
                 Box::new(crate::app_conflict::scenario_conflict_detect_stale_clear_is_dropped),
+            ),
+            (
+                "conflict_awaited_detection_stale_settles",
+                Box::new(crate::app_conflict::scenario_conflict_awaited_detection_stale_settles),
             ),
             (
                 "stash_public_boundary",
@@ -891,6 +923,58 @@ mod macos {
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
             ),
             (
+                "tab_ui_state_rejects_detached_writer",
+                Box::new(crate::tab_ui_state::scenario_tab_ui_state_rejects_detached_writer),
+            ),
+            (
+                "retained_pane_resources",
+                Box::new(crate::pane_resources::scenario_retained_pane_resources),
+            ),
+            (
+                "commit_stage_deferred_owner",
+                Box::new(crate::pane_resources::scenario_commit_stage_deferred_owner),
+            ),
+            (
+                "close_tab_editor_dirty_owner",
+                Box::new(crate::pane_resources::scenario_close_tab_editor_dirty_owner),
+            ),
+            (
+                "welcome_startup_renders",
+                Box::new(crate::pane_resources::scenario_welcome_startup_renders),
+            ),
+            (
+                "close_last_tab_welcome_renders",
+                Box::new(crate::pane_resources::scenario_close_last_tab_welcome_renders),
+            ),
+            (
+                "remote_connect_keeps_dirty_editor",
+                Box::new(crate::pane_resources::scenario_remote_connect_keeps_dirty_editor),
+            ),
+            (
+                "smart_generation_close_drops_panel",
+                Box::new(crate::pane_resources::scenario_smart_generation_close_drops_panel),
+            ),
+            (
+                "commit_close_drops_panel",
+                Box::new(crate::pane_resources::scenario_commit_close_drops_panel),
+            ),
+            (
+                "commit_panel_refuses_during_activation",
+                Box::new(crate::pane_resources::scenario_commit_panel_refuses_during_activation),
+            ),
+            (
+                "manual_reload_releases_revalidation",
+                Box::new(crate::pane_resources::scenario_manual_reload_releases_revalidation),
+            ),
+            (
+                "conflict_pane_survives_activation",
+                Box::new(crate::app_conflict::scenario_conflict_pane_survives_activation),
+            ),
+            (
+                "commit_panel_revalidates_on_activation",
+                Box::new(crate::pane_resources::scenario_commit_panel_revalidates_on_activation),
+            ),
+            (
                 "read_cache_revalidates_on_activation",
                 Box::new(
                     crate::cache_history_owner::scenario_read_cache_revalidates_on_activation,
@@ -915,6 +999,10 @@ mod macos {
             (
                 "remote_refresh_departed_owner",
                 Box::new(crate::remote_refresh_owner::scenario_remote_refresh_departed_owner),
+            ),
+            (
+                "remote_connect_owner",
+                Box::new(crate::remote_refresh_owner::scenario_remote_connect_owner),
             ),
             (
                 "remote_refresh_newest_request",
@@ -1149,7 +1237,7 @@ mod macos {
         // production copy path would yield (via the real `graph_copy_value`, so
         // the badge-label decoration — `"main ✓"` etc. — is handled identically).
         let (full_sha, branch) = kagi.update(cx, |app, cx| {
-            app.ui_mut().selected = Some(0);
+            app.ui_mut().expect("active session").selected = Some(0);
             cx.notify();
             let row = &app.view().rows[0];
             let full_sha = row.id.0.clone();
@@ -1210,7 +1298,7 @@ mod macos {
         kagi.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
         cx.run_until_parked();
         assert!(
-            cx.read(|app| kagi.read(app).main_diff.is_some()),
+            cx.read(|app| kagi.read(app).ui().main_diff.is_some()),
             "the HEAD commit's first file should open in the main diff pane"
         );
 
@@ -1229,6 +1317,7 @@ mod macos {
                 "the diffed commit should have shifted to row 1"
             );
             let pane = app_ref
+                .ui()
                 .main_diff
                 .as_ref()
                 .expect("external reload must not close a commit's diff");
@@ -1236,6 +1325,7 @@ mod macos {
                 MainDiffSource::Commit {
                     row_index,
                     file_index,
+                    ..
                 } => assert_eq!(
                     (row_index, file_index),
                     (1, 0),
@@ -1270,9 +1360,10 @@ mod macos {
         kagi.update(cx, |app, cx| app.open_main_diff_compare(0, cx));
         cx.run_until_parked();
         assert!(
-            cx.read(
-                |app| kagi.read(app).compare_view.is_some() && kagi.read(app).main_diff.is_some()
-            ),
+            cx.read(|app| {
+                let state = kagi.read(app);
+                state.ui().compare_view.is_some() && state.ui().main_diff.is_some()
+            }),
             "compare + its file diff should be open"
         );
 
@@ -1285,6 +1376,7 @@ mod macos {
         cx.read(|app| {
             let app_ref = kagi.read(app);
             let compare = app_ref
+                .ui()
                 .compare_view
                 .as_ref()
                 .expect("external reload must not close the compare pane");
@@ -1294,6 +1386,7 @@ mod macos {
                 "the compare should still be against the same base commit"
             );
             let pane = app_ref
+                .ui()
                 .main_diff
                 .as_ref()
                 .expect("external reload must not close a compare file diff");
@@ -1327,7 +1420,7 @@ mod macos {
         });
         cx.run_until_parked();
         assert!(
-            cx.read(|app| kagi.read(app).main_diff.is_some()),
+            cx.read(|app| kagi.read(app).ui().main_diff.is_some()),
             "the unstaged file's diff should be open"
         );
 
@@ -1341,6 +1434,7 @@ mod macos {
         cx.read(|app| {
             let pane = kagi
                 .read(app)
+                .ui()
                 .main_diff
                 .as_ref()
                 .expect("external reload must not close an unstaged file's diff");
@@ -1356,7 +1450,7 @@ mod macos {
         kagi.update(cx, |app, cx| app.reload_external(cx));
         cx.run_until_parked();
         assert!(
-            cx.read(|app| kagi.read(app).main_diff.is_none()),
+            cx.read(|app| kagi.read(app).ui().main_diff.is_none()),
             "a file with nothing left to diff should close the pane"
         );
 
@@ -1383,12 +1477,12 @@ mod macos {
         cx.run_until_parked();
         // No `InputState`s in the runner (see `open_local_panel_no_inputs`), so
         // the message is the `state.commit_msg` fallback.
-        let panel_entity = cx.read(|app| kagi.read(app).commit_panel.clone().expect("panel"));
+        let panel_entity = cx.read(|app| kagi.read(app).ui().commit_panel.clone().expect("panel"));
         cx.update(|app| {
             panel_entity.update(app, |v, _| v.state.commit_msg = "half typed".to_string())
         });
         assert!(
-            cx.read(|app| kagi.read(app).commit_panel_open),
+            cx.read(|app| kagi.read(app).ui().commit_panel_open),
             "the commit panel should be open"
         );
 
@@ -1402,10 +1496,10 @@ mod macos {
         cx.read(|app| {
             let app_ref = kagi.read(app);
             assert!(
-                app_ref.commit_panel_open,
+                app_ref.ui().commit_panel_open,
                 "an external commit must not close the panel while the tree is dirty"
             );
-            let panel = app_ref.commit_panel.as_ref().expect("panel");
+            let panel = app_ref.ui().commit_panel.as_ref().expect("panel");
             assert_eq!(
                 panel.read(app).state.commit_msg,
                 "half typed",
@@ -1418,9 +1512,10 @@ mod macos {
         kagi.update(cx, |app, cx| app.reload_external(cx));
         cx.run_until_parked();
         assert!(
-            cx.read(
-                |app| !kagi.read(app).commit_panel_open && kagi.read(app).commit_panel.is_none()
-            ),
+            cx.read(|app| {
+                let state = kagi.read(app);
+                !state.ui().commit_panel_open && state.ui().commit_panel.is_none()
+            }),
             "a clean working tree leaves the panel nothing to list"
         );
 
@@ -1800,10 +1895,13 @@ mod macos {
                 tabs_before,
                 "clicking a linked worktree's WIP row must NOT open a tab"
             );
-            assert!(app.commit_panel_open, "the commit panel should be open");
+            assert!(
+                app.ui().commit_panel_open,
+                "the commit panel should be open"
+            );
         });
         let (panel_repo, files, foreign) = cx.read(|app| {
-            let p = kagi.read(app).commit_panel.clone().expect("panel");
+            let p = kagi.read(app).ui().commit_panel.clone().expect("panel");
             let p = p.read(app);
             (
                 p.repo_path.clone(),
@@ -1854,7 +1952,9 @@ mod macos {
             "fixture: the worktree starts with one untracked file"
         );
 
-        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fp,
@@ -1873,7 +1973,9 @@ mod macos {
             "the worktree's WIP row counts must follow the stage"
         );
 
-        kagi.update(cx, |app, cx| app.do_unstage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_unstage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fingerprint(&wt_path),
@@ -1892,14 +1994,18 @@ mod macos {
         );
 
         // Per-file, by the same panel index the row's button carries.
-        kagi.update(cx, |app, cx| app.do_stage_file(0, cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_file(app.active_session().unwrap(), 0, cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fingerprint(&wt_path).1,
             "A  dirty.txt\n",
             "stage(0) from a worktree panel must stage in the WORKTREE"
         );
-        kagi.update(cx, |app, cx| app.do_unstage_file(0, cx));
+        kagi.update(cx, |app, cx| {
+            app.do_unstage_file(app.active_session().unwrap(), 0, cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             repo_fingerprint(&wt_path),
@@ -1918,8 +2024,9 @@ mod macos {
         // still a pure read — `plan → confirm → …` means nothing has happened
         // until the second click, in either repository.
         kagi.update(cx, |app, cx| {
-            app.commit_panel_amend(cx);
-            app.open_discard_all_modal(cx);
+            let owner = app.active_session().unwrap();
+            app.commit_panel_amend(owner, cx);
+            app.open_discard_all_modal(owner, cx);
         });
         cx.run_until_parked();
         assert_eq!(
@@ -1937,7 +2044,12 @@ mod macos {
         kagi.update(cx, |app, cx| app.refresh_working_tree_external(cx));
         cx.run_until_parked();
         let after_reload = cx.read(|app| {
-            let p = kagi.read(app).commit_panel.clone().expect("panel survived");
+            let p = kagi
+                .read(app)
+                .ui()
+                .commit_panel
+                .clone()
+                .expect("panel survived");
             p.read(app).repo_path.clone()
         });
         assert_eq!(
@@ -1961,7 +2073,7 @@ mod macos {
         // leak detector then reports (nothing in this suite drops them). What
         // is under test here is the guard + the staging path, and both run
         // identically either way.
-        let panel = cx.read(|app| kagi.read(app).commit_panel.clone().expect("panel"));
+        let panel = cx.read(|app| kagi.read(app).ui().commit_panel.clone().expect("panel"));
         let own = repo_path.clone();
         panel.update(cx, |v, _| {
             v.repo_path = own.clone();
@@ -1973,7 +2085,9 @@ mod macos {
             !cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
             "the open repo's own panel must NOT be treated as foreign"
         );
-        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         let staged_fp = repo_fingerprint(&repo_path);
         assert_ne!(
@@ -2069,7 +2183,7 @@ mod macos {
             "the panel must be marked foreign for the write ops to resolve it"
         );
         kagi.update(cx, |app, cx| {
-            app.do_stage_all(cx);
+            app.do_stage_all(app.active_session().unwrap(), cx);
             e2e::set_commit_message(app, "wt-a: from the worktree panel", cx);
         });
         cx.run_until_parked();
@@ -2080,7 +2194,9 @@ mod macos {
         );
 
         // The Commit button's path: plan, then (no blockers) commit.
-        kagi.update(cx, |app, cx| app.open_commit_plan_modal(cx));
+        kagi.update(cx, |app, cx| {
+            app.open_commit_plan_modal(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
 
         // ── The worktree moved; nothing else did ────────────────────────────
@@ -2245,10 +2361,14 @@ mod macos {
             cx.read(|app| kagi.read(app).commit_panel_is_foreign(app)),
             "the panel must be marked foreign for the write ops to resolve it"
         );
-        kagi.update(cx, |app, cx| app.do_stage_all(cx));
+        kagi.update(cx, |app, cx| {
+            app.do_stage_all(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
 
-        kagi.update(cx, |app, cx| app.commit_panel_amend(cx));
+        kagi.update(cx, |app, cx| {
+            app.commit_panel_amend(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         assert_eq!(
             head_before,
@@ -2329,7 +2449,9 @@ mod macos {
             "fixture: worktree A must have exactly one unstaged modification to discard"
         );
 
-        kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+        kagi.update(cx, |app, cx| {
+            app.open_discard_all_modal(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         kagi.update(cx, |app, cx| app.start_discard(cx));
         assert_eq!(
@@ -2503,7 +2625,9 @@ mod macos {
             e2e::open_worktree_panel_no_inputs(app, path_a, "wt-a", idx_a, cx)
         });
         cx.run_until_parked();
-        kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+        kagi.update(cx, |app, cx| {
+            app.open_discard_all_modal(app.active_session().unwrap(), cx)
+        });
         cx.run_until_parked();
         kagi.update(cx, |app, cx| app.start_discard(cx)); // arms
         kagi.update(cx, |app, cx| app.start_discard(cx)); // fires
@@ -2547,7 +2671,9 @@ mod macos {
                 e2e::open_worktree_panel_no_inputs(app, wt_a.clone(), "wt-a", index, cx)
             });
             cx.run_until_parked();
-            kagi.update(cx, |app, cx| app.open_discard_all_modal(cx));
+            kagi.update(cx, |app, cx| {
+                app.open_discard_all_modal(app.active_session().unwrap(), cx)
+            });
             cx.run_until_parked();
             let log_dir = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
             let log_path = log_dir.join("operations.jsonl");

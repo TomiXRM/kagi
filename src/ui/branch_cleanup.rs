@@ -52,10 +52,7 @@ impl KagiApp {
 
     /// Tick / untick one row.
     pub fn toggle_cleanup_selection(&mut self, name: String, cx: &mut Context<Self>) {
-        let selected = &mut self.ui_mut().cleanup_selected;
-        if !selected.remove(&name) {
-            selected.insert(name);
-        }
+        self.with_ui(|ui| ui.toggle_cleanup_selection(name));
         cx.notify();
     }
 
@@ -70,9 +67,9 @@ impl KagiApp {
             .map(|r| r.name.clone())
             .collect();
         if all.iter().all(|n| self.ui().cleanup_selected.contains(n)) {
-            self.ui_mut().cleanup_selected.clear();
+            self.with_ui(|ui| ui.cleanup_selected.clear());
         } else {
-            self.ui_mut().cleanup_selected = all.into_iter().collect();
+            self.with_ui(|ui| ui.cleanup_selected = all.into_iter().collect());
         }
         cx.notify();
     }
@@ -92,7 +89,7 @@ impl KagiApp {
     /// Close the Branch Cleanup table.
     pub fn close_branch_cleanup_view(&mut self, cx: &mut Context<Self>) {
         self.branch_cleanup_open = false;
-        self.ui_mut().cleanup_selected.clear();
+        self.with_ui(|ui| ui.cleanup_selected.clear());
         cx.notify();
     }
 
@@ -227,7 +224,7 @@ impl KagiApp {
             self.push_toast(ToastKind::Info, Msg::OpInProgress.t(), cx);
             return;
         }
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(

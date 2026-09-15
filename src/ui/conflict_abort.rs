@@ -59,14 +59,22 @@ impl KagiApp {
     /// last conflict is resolved, and #704 is what happened when it was the
     /// gate. The preview plan is a live read; the request that follows freezes
     /// the revision the strip showed.
-    pub fn open_conflict_abort_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_conflict_abort_modal(
+        &mut self,
+        owner: crate::app::Attachment,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }
         let Some(operation) = self.view().operation.clone() else {
             return;
         };
-        let Some(repo) = self.repo_session.as_ref().map(|session| session.backend()) else {
+        let repo_session = self.ui().repo_session.clone();
+        let Some(repo) = repo_session.as_ref().map(|session| session.backend()) else {
             self.push_toast(
                 ToastKind::Error,
                 SharedString::from(super::i18n::op_failed(

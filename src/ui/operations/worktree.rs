@@ -95,7 +95,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 klog!("replan_create_worktree: repo session unavailable");

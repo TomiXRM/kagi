@@ -23,7 +23,8 @@ fn raw(path: &str) -> RawEcosystem {
 
 fn copy_diagnostic(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) -> String {
     app.update(cx, |app, cx| {
-        app.ecosystem
+        app.ui()
+            .ecosystem
             .clone()
             .expect("Analyze pane")
             .update(cx, |pane, cx| pane.copy_diagnostic(cx));
@@ -141,7 +142,8 @@ pub fn scenario_ecosystem_evidence_superseded(cx: &mut VisualTestAppContext) {
         cx.write_to_clipboard(ClipboardItem::new_string("pane-still-loading".into()));
     });
     app.update(cx, |app, cx| {
-        app.ecosystem
+        app.ui()
+            .ecosystem
             .clone()
             .expect("Analyze pane")
             .update(cx, |pane, cx| pane.copy_diagnostic(cx));

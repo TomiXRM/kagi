@@ -417,7 +417,9 @@ fn guard_dirty_editor_merge(
     use gpui::Focusable;
     use std::time::{Duration, Instant};
     app.update(cx, |app, cx| app.open_editor_workspace(cx));
-    let editor = cx.read(|cx| app.read(cx).editor_workspace.clone()).unwrap();
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
     editor.update(cx, |view, cx| view.open_tab("f.txt".into(), cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -457,7 +459,7 @@ fn guard_dirty_editor_merge(
     cx.read(|cx| {
         let app = app.read(cx);
         assert_eq!(app.tabs[app.active_tab].path, fixture.linked);
-        assert!(app.editor_workspace.is_none());
+        assert!(app.ui().editor_workspace.is_none());
         assert!(
             app.merge_modal().is_some(),
             "discard must continue to a plan, not execute"

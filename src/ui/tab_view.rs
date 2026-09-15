@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gpui::{SharedString, UniformListScrollHandle};
+use gpui::{Entity, SharedString, UniformListScrollHandle};
 
 use kagi_git::{CommitId, Head, RemoteBranch, RepoSnapshot, Stash, Tag, UpstreamInfo, Worktree};
 
@@ -274,8 +274,8 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 /// disposable positioning handles after classifying `UniformListScrollHandle`
 /// as plain `Rc<RefCell<...>>` state with no task, subscription, entity, or
 /// callback lifecycle. S4 adds recomputable read caches and the pure undo/redo
-/// cursor. Pane entities remain root-owned until S5 (ADR-0197).
-#[derive(Clone)]
+/// cursor. S5 makes this the owner of every repository-bound pane and session
+/// resource (ADR-0197).
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
     pub selected: Option<usize>,
@@ -318,13 +318,32 @@ pub struct TabUiState {
     pub cleanup_scanning: bool,
     pub cleanup_prs: Vec<kagi_domain::github::PullRequest>,
     pub cleanup_prs_stale: bool,
-    /// Re-armed when the root conflict pane is discarded or its read changes.
+    /// Re-armed when retained conflict authority is invalidated or its read changes.
     pub conflict_detected: bool,
-    /// Recomputable data only; pane entities and task handles remain outside this store.
+    /// Where the retained panes are in being re-checked against the read. Not
+    /// [`PaneRevalidation::Settled`] = on screen but **not authoritative**: the
+    /// entities (undo stacks, selection, scroll) stay, every mutation they
+    /// offer is refused (ADR-0197 決定 3 / #722).
+    pub pane_revalidation: super::tab_ui_state_ops::PaneRevalidation,
+    /// Recomputable Analyze evidence; the pane entity is owned below.
     pub ecosystem_cache: Option<super::ecosystem::CachedMine>,
     pub ecosystem_inflight: bool,
     pub ecosystem_gen: u64,
     pub ecosystem_mine_head: Option<String>,
+    /// Repository-bound resources. They survive activation changes and are
+    /// destroyed together when `release_session` removes this owner.
+    pub repo_session: Option<kagi_git::session::RepoSession>,
+    pub terminal_session: Option<super::terminal::KagiTerminalSession>,
+    pub conflict: Option<Entity<super::conflict_view::ConflictView>>,
+    pub conflict_merge_pending: bool,
+    pub file_history: Option<Entity<super::file_history::FileHistoryView>>,
+    pub file_history_head: Option<String>,
+    pub ecosystem: Option<Entity<super::ecosystem::EcosystemView>>,
+    pub editor_workspace: Option<Entity<super::editor_workspace::EditorWorkspaceView>>,
+    pub commit_panel: Option<Entity<super::commit_panel::CommitPanelView>>,
+    pub commit_panel_open: bool,
+    pub main_diff: Option<Entity<super::MainDiffPane>>,
+    pub compare_view: Option<Entity<super::ComparePane>>,
 }
 
 impl Default for TabUiState {
@@ -356,10 +375,23 @@ impl Default for TabUiState {
             cleanup_prs: Vec::new(),
             cleanup_prs_stale: false,
             conflict_detected: false,
+            pane_revalidation: Default::default(),
             ecosystem_cache: None,
             ecosystem_inflight: false,
             ecosystem_gen: 0,
             ecosystem_mine_head: None,
+            repo_session: None,
+            terminal_session: None,
+            conflict: None,
+            conflict_merge_pending: false,
+            file_history: None,
+            file_history_head: None,
+            ecosystem: None,
+            editor_workspace: None,
+            commit_panel: None,
+            commit_panel_open: false,
+            main_diff: None,
+            compare_view: None,
         }
     }
 }
@@ -373,17 +405,30 @@ fn now_unix_secs() -> i64 {
 }
 
 impl KagiApp {
-    /// Make retained read caches non-authoritative before an activation read.
+    /// Make retained repository-derived state non-authoritative before an
+    /// activation read (ADR-0197 決定 3 / #722 P2). "Not authoritative" means
+    /// **stop**, not **destroy**: recomputable caches are dropped, but every
+    /// pane entity stays alive, so undo/redo, the selected file/hunk and
+    /// scroll all survive a tab round trip. What the panes lose is the right
+    /// to *act*: `pane_revalidation` refuses their mutations until the read
+    /// lands. `revalidate_retained_panes` then compares the new observation —
+    /// unchanged panes are simply re-enabled, changed ones are rebuilt there
+    /// and (for conflict) by the re-armed detection below.
     pub(crate) fn begin_session_revalidation(&mut self, session: crate::app::SessionId) {
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
             ui.diff_caches.clear();
             ui.wip_diffstat = None;
             ui.last_working_status = None;
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::AwaitingRead;
+            ui.conflict_merge_pending = false;
+            // Re-arm detection: its outcome decides whether the retained
+            // conflict pane is updated in place or replaced.
+            ui.conflict_detected = false;
         }
     }
 
-    /// Drop row-indexed caches for `session`; S5 pane entities are active-only.
+    /// Drop row-indexed caches for `session`.
     pub fn invalidate_caches_for_row_renumber(&mut self, session: crate::app::SessionId) {
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
@@ -392,8 +437,8 @@ impl KagiApp {
         if self.active_session() != Some(session) {
             return;
         }
-        self.main_diff = None;
-        self.compare_view = None;
+        // Main Diff / Compare are not dropped here: a published read queues
+        // `revalidate_retained_panes`, which re-anchors them (#722).
         self.commit_menu = None;
         self.inspector_file_menu = None;
     }
@@ -423,27 +468,36 @@ impl KagiApp {
         })
     }
 
-    /// This tab's presentation intent — the selection and (from S2 on) the
-    /// scroll, caches and pane resources that belong to the session rather than
-    /// to the screen. The detached default on the Welcome screen.
+    /// Read the active session's presentation state. Welcome rendering receives
+    /// an immutable default; no writer can put a resource into that value.
     pub fn ui(&self) -> &TabUiState {
         self.active_session()
             .and_then(|session| self.ui.get(&session))
-            .unwrap_or(&self.ui_detached)
+            .unwrap_or(&self.ui_default)
     }
 
-    /// Write this tab's presentation intent. The entry is created by
-    /// [`KagiApp::attach_session`], so this only inserts on the paths that
-    /// predate a session (Welcome), where it lands in the detached cell.
-    ///
-    /// A background completion must **not** come through here: it writes to the
-    /// owner it froze when it started, or it is dropped. Reaching for the active
-    /// session in a callback is the leak this store exists to prevent
-    /// (ADR-0197 決定 2).
-    pub fn ui_mut(&mut self) -> &mut TabUiState {
-        match self.active_session() {
-            Some(session) => self.ui.entry(session).or_default(),
-            None => &mut self.ui_detached,
+    /// The active session's writer, or `None` when no session owns the screen —
+    /// the Welcome screen, a failed repository open, or the gap between the last
+    /// tab closing and the next opening. Resource-bearing state must never use a
+    /// detached sink, so mutation is *rejected* by returning `None` rather than
+    /// crashing (ADR-0197 決定 2): every caller writes only inside `if let Some`.
+    /// Background completion must instead use its frozen owner with
+    /// `ui.get_mut`, never this foreground accessor.
+    pub fn ui_mut(&mut self) -> Option<&mut TabUiState> {
+        let session = self.active_session()?;
+        self.ui.get_mut(&session)
+    }
+
+    /// Apply `f` to the active session's state, or do nothing when no session
+    /// owns the screen. The one-line form of [`KagiApp::ui_mut`]'s `Option` for
+    /// a plain field write whose only no-owner behaviour is "don't write"
+    /// (#722 P1). Anything that must also *act* on the no-owner case keeps the
+    /// explicit `match` / `let else` on `ui_mut` instead.
+    /// `R` is discarded, so a one-expression writer whose call returns a value
+    /// (`HashMap::insert`) still needs no block.
+    pub(crate) fn with_ui<R>(&mut self, f: impl FnOnce(&mut TabUiState) -> R) {
+        if let Some(ui) = self.ui_mut() {
+            f(ui);
         }
     }
 
@@ -487,16 +541,14 @@ impl KagiApp {
         next
     }
 
-    /// End a session and everything that belonged to its display.
+    /// End a session and everything that owner retained.
     ///
     /// #482 stage 1 drops the conflict/follow-up payloads and the plan slot if
     /// this session owned one, while in-flight executions keep running
-    /// (ADR-0175); stage 2 adds the read model, which has the same lifetime —
-    /// releasing one without the other is exactly how the remote re-snapshot
-    /// leaked a full rows/details set per refresh. #643 Wave 4 S1 adds the UI
-    /// state on the same terms: this is the **only** place a `ui` entry is
-    /// removed, so `dom(ui) = attached sessions` cannot be broken by forgetting
-    /// a call site.
+    /// (ADR-0175); stage 2 adds the read model, which has the same lifetime.
+    /// #643 Wave 4 makes this the sole destruction boundary for the UI entry
+    /// and all repository-bound resources it owns. Removing the read or UI
+    /// anywhere else would violate `dom(ui) = attached sessions`.
     pub(crate) fn release_session(&mut self, session: crate::app::SessionId) {
         self.app_sessions.detach(session);
         self.reads.forget(session);
@@ -604,6 +656,7 @@ impl KagiApp {
         self.reads.amend(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::Queued;
         }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
@@ -616,6 +669,7 @@ impl KagiApp {
         self.reads.publish(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::Queued;
         }
         self.reanchor_selection(session, anchor);
         self.on_view_published(session);
@@ -631,6 +685,7 @@ impl KagiApp {
         }
         if let Some(ui) = self.ui.get_mut(&key.session()) {
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
+            ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::Queued;
         }
         self.reanchor_selection(key.session(), anchor);
         self.on_view_published(key.session());
@@ -687,6 +742,27 @@ impl KagiApp {
             if tab.is_worktree {
                 tab.wt_color_idx = wt_idx;
             }
+        }
+    }
+
+    /// The read model on screen changed owner (a tab switch). Same UI reaction
+    /// as publishing a new read for the active owner (row-index caches, sidebar
+    /// fingerprint, background scans) — see [`KagiApp::on_view_published`] — but
+    /// a switch re-activates an *existing* read whose commit rows are not
+    /// renumbered, so the retained main diff / compare pane stay valid and must
+    /// survive that method's row-renumber sweep (ADR-0197 決定 3). Their derived
+    /// caches are revalidated separately by `begin_session_revalidation` plus
+    /// the activation full read.
+    pub(crate) fn on_view_switched(&mut self) {
+        let Some(session) = self.active_session() else {
+            return;
+        };
+        let main_diff = self.ui().main_diff.clone();
+        let compare_view = self.ui().compare_view.clone();
+        self.on_view_published(session);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.main_diff = main_diff;
+            ui.compare_view = compare_view;
         }
     }
 }

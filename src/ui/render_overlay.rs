@@ -445,6 +445,7 @@ impl KagiApp {
             file_menu.filter(|menu| {
                 self.active_session() == Some(menu.owner)
                     && self
+                        .ui()
                         .commit_panel
                         .as_ref()
                         .is_some_and(|panel| panel.read(cx).owner == menu.owner)

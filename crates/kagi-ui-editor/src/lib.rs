@@ -278,8 +278,8 @@ enum SaveOutcome {
 pub struct EditorWorkspaceView {
     /// Host hooks (ADR-0121 C4) — see [`EditorHooks`].
     hooks: EditorHooks,
-    /// Repo root. Constant for the entity's life (dropped on repo/tab switch
-    /// by `reset_per_repo_ui`, same as `FileHistoryView` / `EcosystemView`).
+    /// Repo root. Constant for the entity's life; the owning `TabUiState`
+    /// retains it across activation changes and drops it on tab close.
     pub repo_path: PathBuf,
     /// `KagiApp.root_focus`, cloned in at construction (ADR-0121 C4 — this
     /// crate has no other way to reach it). GPUI never auto-restores focus

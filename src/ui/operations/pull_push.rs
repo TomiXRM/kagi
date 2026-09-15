@@ -311,7 +311,7 @@ impl KagiApp {
     /// nothing to pull, `Err` when the plan could not be built.
     fn build_pull_modal(&mut self) -> Result<Option<PullPlanModal>, String> {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => return Err("pull: repo session unavailable".to_string()),
         };
@@ -520,7 +520,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer =

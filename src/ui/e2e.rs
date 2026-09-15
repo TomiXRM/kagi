@@ -26,6 +26,14 @@ pub use super::operations::conflict_detect::detect_payload_for_test;
 /// stand in for a job that started before the read the tab has now accepted.
 /// `ui::operations` is private, so the seam is here with the rest.
 pub use super::operations::conflict_detect::ConflictDetectOutcome;
+
+/// Put the active tab's pane pass in the state where it waits on a conflict
+/// detection against the accepted read (#722).
+pub fn await_conflict_revalidation(app: &mut KagiApp) {
+    if let Some(ui) = app.ui_mut() {
+        ui.pane_revalidation = super::tab_ui_state_ops::PaneRevalidation::AwaitingConflict;
+    }
+}
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -248,7 +256,10 @@ pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {
     // ADR-0107: the per-tab session every real launch has (`tabs.rs`). Without
     // it the staging / diff paths that go through `repo_session` silently
     // no-op, which would let a scenario pass for the wrong reason (#473).
-    app.repo_session = kagi_git::session::RepoSession::open(repo_path).ok();
+    let session = kagi_git::session::RepoSession::open(repo_path).ok();
+    if let Some(ui) = app.ui_mut() {
+        ui.repo_session = session;
+    }
     Ok(app)
 }
 
@@ -372,7 +383,7 @@ pub fn open_local_panel_no_inputs(
 /// Set the commit panel's message without touching an `InputState` (see
 /// [`open_worktree_panel_no_inputs`]) — the `state.commit_msg` fallback.
 pub fn set_commit_message(app: &KagiApp, msg: &str, cx: &mut App) {
-    if let Some(panel) = app.commit_panel.clone() {
+    if let Some(panel) = app.ui().commit_panel.clone() {
         panel.update(cx, |v, _| v.state.commit_msg = msg.to_string());
     }
 }
@@ -441,6 +452,12 @@ pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
 #[cfg(feature = "gui-e2e")]
 pub fn op_latched(app: &KagiApp) -> bool {
     app.op_latched()
+}
+
+/// Whether any foreground modal currently occupies the window-global slot.
+#[cfg(feature = "gui-e2e")]
+pub fn active_modal_present(app: &KagiApp) -> bool {
+    app.active_modal.is_some()
 }
 
 /// What `render` runs every frame, callable on its own.
@@ -604,7 +621,11 @@ pub fn defer_file_menu(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let panel = app.commit_panel.as_ref().expect("mounted commit panel");
+    let panel = app
+        .ui()
+        .commit_panel
+        .as_ref()
+        .expect("mounted commit panel");
     panel.update(cx, |panel, cx| {
         panel.defer_open_file_menu(fi, pos, window, cx)
     });
@@ -680,4 +701,10 @@ pub fn queue_squash_scan(task: gpui::Task<SquashScanResult>) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_squash_scan() -> Option<gpui::Task<SquashScanResult>> {
     SQUASH_SCAN.with(|slot| slot.borrow_mut().take())
+}
+
+/// ADR-0197 S5 prerequisite: ownerless state has no writable fallback cell.
+#[cfg(feature = "gui-e2e")]
+pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
+    app.ui_mut().is_some()
 }

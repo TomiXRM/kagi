@@ -163,7 +163,7 @@ pub fn scenario_history_persists(cx: &mut VisualTestAppContext) {
     let text = std::fs::read(repo.join("README.md")).unwrap();
     let (app, window) = mount(cx, repo);
     app.update(cx, |app, cx| {
-        app.ui_mut().operation_history = Default::default();
+        app.ui_mut().expect("active session").operation_history = Default::default();
         app.record_history(
             OperationKind::Commit,
             "main",
@@ -307,7 +307,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
         let after = output(repo, &["rev-parse", "HEAD"]);
         let (app, window) = mount(cx, repo);
         let plan = app.update(cx, |app, _| {
-            app.ui_mut().operation_history = Default::default();
+            app.ui_mut().expect("active session").operation_history = Default::default();
             app.record_history(
                 OperationKind::Commit,
                 "main",
@@ -1135,7 +1135,7 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
             .spawn(async { Some(("generated for A".to_string(), true)) }),
     );
     cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| app.smart_generate(window, cx));
+        app.update(cx, |app, cx| app.smart_generate(session_a, window, cx));
     })
     .expect("start A generation");
     assert!(
@@ -1183,7 +1183,7 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
             .spawn(async { Some(("detached result".to_string(), true)) }),
     );
     cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| app.smart_generate(window, cx));
+        app.update(cx, |app, cx| app.smart_generate(session_a, window, cx));
     })
     .expect("start detached generation");
     app.update(cx, |app, cx| {
@@ -2325,12 +2325,16 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
             };
             let count = records(repo, op).len();
             app.update(cx, |app, cx| match (stage, entry) {
-                (true, "editor") => app.do_stage_file_by_path("f.txt".into(), cx),
-                (false, "editor") => app.do_unstage_file_by_path("f.txt".into(), cx),
-                (true, "batch") => app.do_stage_all(cx),
-                (false, "batch") => app.do_unstage_all(cx),
-                (true, _) => app.do_stage_file(0, cx),
-                (false, _) => app.do_unstage_file(0, cx),
+                (true, "editor") => {
+                    app.do_stage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
+                }
+                (false, "editor") => {
+                    app.do_unstage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
+                }
+                (true, "batch") => app.do_stage_all(app.active_session().unwrap(), cx),
+                (false, "batch") => app.do_unstage_all(app.active_session().unwrap(), cx),
+                (true, _) => app.do_stage_file(app.active_session().unwrap(), 0, cx),
+                (false, _) => app.do_unstage_file(app.active_session().unwrap(), 0, cx),
             });
             wait_idle(cx, &app);
             cx.read(|cx| {
@@ -2344,6 +2348,7 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                     state.repo_path.as_ref().expect("editor owner").clone()
                 } else {
                     state
+                        .ui()
                         .commit_panel
                         .as_ref()
                         .expect("panel")
@@ -2375,7 +2380,9 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     press_enter(cx, &app, window);
     let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&main).unwrap());
     let count = records(&main, "stage").len();
-    app.update(cx, |app, cx| app.do_stage_file_by_path("f.txt".into(), cx));
+    app.update(cx, |app, cx| {
+        app.do_stage_file_by_path(app.active_session().unwrap(), "f.txt".into(), cx)
+    });
     cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));
     assert_eq!(records(&main, "stage").len(), count + 1);
     assert!(records(&main, "stage")

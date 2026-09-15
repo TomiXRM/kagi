@@ -16,7 +16,8 @@ impl KagiApp {
 
     /// The panel's commit-subject `InputState` (entity-owned), if any.
     fn cp_commit_input(&self, cx: &Context<Self>) -> Option<Entity<InputState>> {
-        self.commit_panel
+        self.ui()
+            .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).title_input.clone())
     }
@@ -24,7 +25,7 @@ impl KagiApp {
     /// The message as it will be committed (comments stripped) — see
     /// [`CommitPanelView::committable_message`]. `""` when no panel is open.
     pub(crate) fn committable_message(&self, cx: &Context<Self>) -> String {
-        match self.commit_panel.as_ref() {
+        match self.ui().commit_panel.as_ref() {
             Some(e) => e.read(cx).committable_message(cx),
             None => String::new(),
         }
@@ -34,7 +35,7 @@ impl KagiApp {
     /// it was. Lives here rather than inline in the Esc handler because the
     /// picker is entity-owned, not a field on `KagiApp`.
     pub(crate) fn close_coauthor_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(panel) = self.commit_panel.clone() else {
+        let Some(panel) = self.ui().commit_panel.clone() else {
             return false;
         };
         if panel.read(cx).coauthor_menu.is_none() {
@@ -49,7 +50,8 @@ impl KagiApp {
 
     /// Whether the panel has its message inputs (entity-owned).
     fn cp_has_commit_input(&self, cx: &Context<Self>) -> bool {
-        self.commit_panel
+        self.ui()
+            .commit_panel
             .as_ref()
             .map(|e| e.read(cx).title_input.is_some())
             .unwrap_or(false)
@@ -141,7 +143,7 @@ impl KagiApp {
         // the message inputs / draft / template belong to a specific repo, so a
         // panel that switches between the open repo and a linked worktree is
         // rebuilt rather than carried across.
-        let reusable = self.commit_panel.clone().filter(|e| {
+        let reusable = self.ui().commit_panel.clone().filter(|e| {
             let panel = e.read(cx);
             panel.owner == owner && panel.repo_path == repo_path
         });
@@ -171,10 +173,7 @@ impl KagiApp {
                 true,
             )
         };
-        self.commit_panel = Some(entity.clone());
-        self.commit_panel_open = true;
-        self.ui_mut().selected = None;
-        self.main_diff = None;
+        self.with_ui(|ui| ui.open_commit_panel(entity.clone()));
         (entity, is_new)
     }
 
@@ -341,7 +340,7 @@ impl KagiApp {
     /// Only overwrites a non-empty existing message after the caller has
     /// decided to (rule-based/LLM both call this to *insert* the draft).
     fn smart_commit_set_msg(&mut self, msg: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             let (title, body) = kagi_git::split_title_body(msg);
             let v = entity.read(cx);
             let (title_input, body_input) = (v.title_input.clone(), v.body_input.clone());
@@ -375,7 +374,18 @@ impl KagiApp {
     /// ADR-0134: this used to refuse when the message was non-empty. Clicking ✨
     /// is an explicit request — silently keeping the old text and reporting
     /// "message not empty" read as the button being broken (user report).
-    pub fn smart_suggest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn smart_suggest(
+        &mut self,
+        owner: crate::app::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Owner only, not the full mutation seam: composing a draft message
+        // writes no repository state, so it is on the seam's allow list even
+        // while the panes are revalidating (#722 P2).
+        if self.active_session() != Some(owner) {
+            return;
+        }
         // #476: the draft describes what is staged in the PANEL's repository.
         // (ADR-0107: the tab's own panel still borrows the per-tab RepoSession
         // rather than re-opening — that is what `with_commit_panel_repo` does.)
@@ -397,7 +407,7 @@ impl KagiApp {
             klog!("smart-suggest: {}", msg);
         }
         self.smart_commit_set_msg(&msg, window, cx);
-        self.ui_mut().smart_commit_status = Some("Rule-based suggestion inserted".to_string());
+        self.with_ui(|ui| ui.set_smart_commit_status("Rule-based suggestion inserted"));
         cx.notify();
     }
 
@@ -408,10 +418,19 @@ impl KagiApp {
     /// first.  Only when all gates are cleared is the staged diff collected and
     /// sent to loopback Ollama (in the background, with a timeout).  Any failure
     /// falls back **quietly** to the rule-based draft.
-    pub fn smart_generate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn smart_generate(
+        &mut self,
+        owner: crate::app::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Owner only — see `smart_suggest`: drafting is not a repo mutation.
+        if self.active_session() != Some(owner) {
+            return;
+        }
         if message_gen::offline() {
             // Offline → straight to rule-based, no modal.
-            self.smart_suggest(window, cx);
+            self.smart_suggest(owner, window, cx);
             return;
         }
         // Gate 1: first-time consent.
@@ -438,8 +457,9 @@ impl KagiApp {
         let models = self.smart_commit.detected_models.clone();
         if models.is_empty() {
             // No models installed → nothing to pick; fall back quietly.
-            self.ui_mut().smart_commit_status =
-                Some("No local models found — using rule-based".to_string());
+            self.with_ui(|ui| {
+                ui.set_smart_commit_status("No local models found — using rule-based")
+            });
             cx.notify();
             return;
         }
@@ -479,247 +499,25 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Collect the staged diff and dispatch generation on a background thread.
-    ///
-    /// Sends only the staged diff to loopback Ollama (ureq + global timeout in
-    /// the backend).  On any `Err` the result falls back to the rule-based draft
-    /// so the UI never blocks or shows a blocking error.
-    fn run_smart_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        // #476: generate from the PANEL's staged diff, not the tab's.
-        let Some(repo_path) = self.commit_panel_repo_path(cx) else {
-            return;
-        };
-        let lang = self.smart_commit.lang;
-        // Only the Ollama backend needs a model; CLI providers ignore it. For
-        // Ollama, bail if no model has been chosen yet (the picker handles that
-        // upstream in `smart_generate`).
-        let model = match self.smart_commit.provider {
-            smart_commit::SmartProvider::Ollama => match self.smart_commit.model.clone() {
-                Some(m) => m,
-                None => return,
-            },
-            smart_commit::SmartProvider::Cli(_) => String::new(),
-        };
-        // ADR-0134: the template mode that used to select Conventional Commits
-        // is gone, so generated subjects are plain prose. The panel now always
-        // has a body input, so a body is always wanted.
-        let style = message_gen::Style::Plain;
-        let want_body = true;
-        let host = smart_commit::SmartCommitState::ollama_host();
-        let provider = self.smart_commit.provider;
-        // The initiating panel freezes the session that owns both the spinner
-        // and the completion status. A tab switch cannot redirect either.
-        let Some(cp_entity) = self.commit_panel.clone() else {
-            return;
-        };
-        let owner = cp_entity.read(cx).owner;
-        let gen = cp_entity.update(cx, |v, _| {
-            v.gen = v.gen.wrapping_add(1);
-            v.gen
-        });
-        let Some(ui) = self.ui.get_mut(&owner) else {
-            return;
-        };
-        ui.smart_commit_generating = true;
-        ui.smart_commit_status = Some(match provider {
-            smart_commit::SmartProvider::Ollama => "Generating with local LLM…".to_string(),
-            smart_commit::SmartProvider::Cli(p) => {
-                format!("Generating with {}…", p.display_name())
-            }
-        });
-        cx.notify();
-
-        let generation = async move {
-            let repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
-                Ok(r) => r,
-                Err(_) => return None,
-            };
-            let files = repo.collect_staged_files();
-            let diff = repo.collect_staged_diff();
-            let gi = message_gen::GenInput {
-                diff,
-                lang,
-                style,
-                want_body,
-            };
-            // LLM first; on Err fall back to the rule-based draft (quietly).
-            // The selected provider decides the backend (ADR-0099): loopback
-            // Ollama, or shelling out to a local agentic CLI.
-            let backend = match provider {
-                smart_commit::SmartProvider::Ollama => {
-                    message_gen::MessageBackend::Ollama { host, model }
-                }
-                smart_commit::SmartProvider::Cli(provider) => {
-                    message_gen::MessageBackend::Cli { provider }
-                }
-            };
-            let (msg, used_llm) = match message_gen::generate_message(&backend, &gi, &files) {
-                Ok(m) => (m, true),
-                Err(e) => {
-                    klog!("smart-commit: llm failed ({}) → rule-based", e);
-                    (message_gen::rule_based(&gi, &files), false)
-                }
-            };
-            Some((msg, used_llm))
-        };
-        #[cfg(feature = "gui-e2e")]
-        let task = crate::ui::e2e::take_smart_generation()
-            .unwrap_or_else(|| cx.background_spawn(generation));
-        #[cfg(not(feature = "gui-e2e"))]
-        let task = cx.background_spawn(generation);
-
-        cx.spawn(async move |this, acx| {
-            let out = task.await;
-            let _ = this.update(acx, |app, cx| {
-                // A closed owner is gone, not a detached fallback destination.
-                // Reopening the same path gets a new SessionId and cannot
-                // inherit this completion.
-                let stale = cp_entity.read(cx).gen != gen;
-                let Some(ui) = app.ui.get_mut(&owner) else {
-                    return;
-                };
-                ui.smart_commit_generating = false;
-                match out {
-                    Some((msg, used_llm)) if !msg.trim().is_empty() => {
-                        // Drop only a result superseded by a newer generation.
-                        if !stale {
-                            // The Input's set_value needs `&mut Window`, which is
-                            // unavailable here. Mirror into the initiating panel
-                            // entity; its next render pushes it into the Input.
-                            cp_entity.update(cx, |v, _| {
-                                v.state.commit_msg = msg.clone();
-                                v.pending_smart_msg = Some(msg.clone());
-                            });
-                            ui.smart_commit_status = Some(if used_llm {
-                                "Generated with local LLM".to_string()
-                            } else {
-                                "LLM unavailable — used rule-based".to_string()
-                            });
-                        }
-                    }
-                    _ => {
-                        ui.smart_commit_status =
-                            Some("Generation failed — edit manually".to_string());
-                    }
-                }
-                if app.active_session() == Some(owner) {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
     /// Stage a single file in the commit panel.
     ///
     /// Calls `stage_file` from T024 and then refreshes the staging status.
-    /// Stage every non-conflicted unstaged file (T-UI-002: Stage all).
-    pub fn do_stage_all(&mut self, cx: &mut Context<Self>) {
-        // #476: stage into the PANEL's repository — a linked worktree's, when
-        // the panel shows one — never the tab's.
-        let repo_path = match self.commit_panel_repo_path(cx) {
-            Some(p) => p,
-            None => return,
-        };
-        let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
-            Some(e) => {
-                let p = &e.read(cx).state;
-                p.unstaged
-                    .iter()
-                    .filter(|f| !p.is_conflicted(&f.path))
-                    .map(|f| f.path.clone())
-                    .collect()
-            }
-            None => return,
-        };
-        if paths.is_empty() {
+    pub fn do_stage_file(
+        &mut self,
+        owner: crate::app::SessionId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pane_mutation_admitted(owner) {
             return;
         }
-        let Some(lease) = self.reserve_stage_write(StageAction::StageAll, &repo_path, &paths, cx)
-        else {
-            return;
-        };
-        let result =
-            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.stage_files(&paths)));
-        self.refresh_write_busy();
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => {
-                self.stage_failure(StageAction::StageAll, &repo_path, &paths, &e, cx);
-                return;
-            }
-        };
-        match result {
-            Ok(n) => {
-                klog!("staged-all: {} file(s)", n);
-                if let Some(entity) = self.commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
-                }
-                self.refresh_wip_diffstat();
-                self.refresh_worktree_wip_row(&repo_path);
-            }
-            Err(e) => {
-                self.stage_failure(StageAction::StageAll, &repo_path, &paths, &e, cx);
-            }
-        }
-    }
-
-    /// Unstage every staged file (T-UI-002: Unstage all).
-    pub fn do_unstage_all(&mut self, cx: &mut Context<Self>) {
-        // #476: unstage in the PANEL's repository, never the tab's.
-        let repo_path = match self.commit_panel_repo_path(cx) {
-            Some(p) => p,
-            None => return,
-        };
-        let paths: Vec<std::path::PathBuf> = match self.commit_panel.as_ref() {
-            Some(e) => e
-                .read(cx)
-                .state
-                .staged
-                .iter()
-                .map(|f| f.path.clone())
-                .collect(),
-            None => return,
-        };
-        if paths.is_empty() {
-            return;
-        }
-        let Some(lease) = self.reserve_stage_write(StageAction::UnstageAll, &repo_path, &paths, cx)
-        else {
-            return;
-        };
-        let result =
-            lease.run(|| self.with_staging_repo(&repo_path, |repo| repo.unstage_files(&paths)));
-        self.refresh_write_busy();
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => {
-                self.stage_failure(StageAction::UnstageAll, &repo_path, &paths, &e, cx);
-                return;
-            }
-        };
-        match result {
-            Ok(n) => {
-                klog!("unstaged-all: {} file(s)", n);
-                if let Some(entity) = self.commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
-                }
-                self.refresh_wip_diffstat();
-                self.refresh_worktree_wip_row(&repo_path);
-            }
-            Err(e) => {
-                self.stage_failure(StageAction::UnstageAll, &repo_path, &paths, &e, cx);
-            }
-        }
-    }
-
-    pub fn do_stage_file(&mut self, index: usize, cx: &mut Context<Self>) {
         // #476: stage into the PANEL's repository, never the tab's.
         let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
         let path = match self
+            .ui()
             .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).state.unstaged.get(index).map(|f| f.path.clone()))
@@ -764,7 +562,7 @@ impl KagiApp {
         } else {
             klog!("staged: {}", path.display());
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
                 v.state.reload_status(&repo_path);
                 eprintln!(
@@ -781,13 +579,22 @@ impl KagiApp {
     /// Unstage a single file in the commit panel.
     ///
     /// Calls `unstage_file` from T024 and then refreshes the staging status.
-    pub fn do_unstage_file(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn do_unstage_file(
+        &mut self,
+        owner: crate::app::SessionId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         // #476: unstage in the PANEL's repository, never the tab's.
         let repo_path = match self.commit_panel_repo_path(cx) {
             Some(p) => p,
             None => return,
         };
         let path = match self
+            .ui()
             .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).state.staged.get(index).map(|f| f.path.clone()))
@@ -832,7 +639,7 @@ impl KagiApp {
         } else {
             klog!("unstaged: {}", path.display());
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
                 v.state.reload_status(&repo_path);
                 eprintln!(
@@ -853,7 +660,15 @@ impl KagiApp {
     /// index). Refreshes the commit panel (if open) AND the editor workspace
     /// tree explicitly: `git add` is index-only and never touches the
     /// filesystem, so the FS watcher would never observe it.
-    pub fn do_stage_file_by_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+    pub fn do_stage_file_by_path(
+        &mut self,
+        owner: crate::app::SessionId,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -900,17 +715,25 @@ impl KagiApp {
                 return;
             }
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| v.state.reload_status(&repo_path));
         }
-        if let Some(ev) = self.editor_workspace.clone() {
+        if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
         }
         self.refresh_wip_diffstat();
     }
 
     /// Unstage `path` directly — the `do_stage_file_by_path` counterpart.
-    pub fn do_unstage_file_by_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+    pub fn do_unstage_file_by_path(
+        &mut self,
+        owner: crate::app::SessionId,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -957,10 +780,10 @@ impl KagiApp {
                 return;
             }
         }
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| v.state.reload_status(&repo_path));
         }
-        if let Some(ev) = self.editor_workspace.clone() {
+        if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
         }
         self.refresh_wip_diffstat();
@@ -969,9 +792,13 @@ impl KagiApp {
     /// T-UI-003: Select a file in the commit panel and open it in the main diff pane.
     pub fn select_commit_panel_file(
         &mut self,
+        owner: crate::app::SessionId,
         file_ref: CommitPanelFileRef,
         cx: &mut Context<Self>,
     ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         self.open_main_diff_wip(file_ref, cx);
     }
 
@@ -980,7 +807,10 @@ impl KagiApp {
     /// Uses `plan_commit` from T024.
     /// T026: reads message from InputState if available, else falls back to commit_panel.commit_msg
     /// (used by the headless KAGI_COMMIT_MSG path).
-    pub fn open_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_commit_plan_modal(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         // #476: plan against the PANEL's repository — a linked worktree's, when
         // the panel shows one — never the tab's.
         if self.commit_panel_repo_path(cx).is_none() {
@@ -991,7 +821,7 @@ impl KagiApp {
         let msg: String = if self.cp_has_commit_input(cx) {
             self.committable_message(cx)
         } else {
-            match self.commit_panel.as_ref() {
+            match self.ui().commit_panel.as_ref() {
                 Some(e) => e.read(cx).state.commit_msg.clone(),
                 None => return,
             }
@@ -1014,7 +844,7 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         v.state.plan_modal = Some(CommitPlanModal {
                             plan: std::sync::Arc::new(plan),
@@ -1030,7 +860,7 @@ impl KagiApp {
                 // the popup; success/failure shows in the status footer.
                 if !has_blockers {
                     self.start_commit(cx);
-                    if let Some(entity) = self.commit_panel.clone() {
+                    if let Some(entity) = self.ui().commit_panel.clone() {
                         entity.update(cx, |v, _| v.state.plan_modal = None);
                     }
                 }
@@ -1043,7 +873,7 @@ impl KagiApp {
 
     /// Cancel the commit plan modal.
     pub fn cancel_commit_plan_modal(&mut self, cx: &mut Context<Self>) {
-        if let Some(entity) = self.commit_panel.clone() {
+        if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| v.state.plan_modal = None);
         }
     }
@@ -1071,12 +901,14 @@ impl KagiApp {
         let commit_message: String = if self.cp_has_commit_input(cx) {
             self.committable_message(cx)
         } else {
-            self.commit_panel
+            self.ui()
+                .commit_panel
                 .as_ref()
                 .map(|e| e.read(cx).state.commit_msg.clone())
                 .unwrap_or_default()
         };
         let plan = match self
+            .ui()
             .commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).state.plan_modal.as_ref().map(|m| m.plan.clone()))
@@ -1094,7 +926,7 @@ impl KagiApp {
         // merge commit (HEAD + MERGE_HEAD) + cleanup_state instead of a plain
         // single-parent commit.  This is synchronous (cheap; no tree rebuild on a
         // worker) so the conflict-mode transition stays simple.
-        if self.conflict_merge_pending {
+        if self.ui().conflict_merge_pending {
             self.finish_merge_commit(&commit_message, cx);
             return;
         }
@@ -1118,7 +950,7 @@ impl KagiApp {
             .chars()
             .take(72)
             .collect();
-        let expected_panel = self.commit_panel.clone();
+        let expected_panel = self.ui().commit_panel.as_ref().map(|p| p.downgrade());
         self.finish_run(
             cx,
             "commit",
@@ -1204,15 +1036,17 @@ impl KagiApp {
                 let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
                 let branch = self.view().status_summary.branch.clone();
                 let _ = kagi_git::clear_draft(&repo_path, &branch);
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.last_draft_value = String::new());
                 }
                 self.present_report("merge-commit", &report, &repo_path, cx);
                 // Leave the merge-commit / commit-panel state and re-detect so
                 // Conflict Mode clears (MERGE_HEAD is gone after cleanup_state).
-                self.conflict_merge_pending = false;
-                self.commit_panel_open = false;
-                if let Some(entity) = self.commit_panel.clone() {
+                self.with_ui(|ui| {
+                    ui.conflict_merge_pending = false;
+                    ui.commit_panel_open = false;
+                });
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.plan_modal = None);
                 }
                 self.reload(cx);
@@ -1234,7 +1068,7 @@ impl KagiApp {
                 let err_msg = format!("{}", e);
                 klog!("merge commit failed: {}", err_msg);
                 self.present_report("merge-commit", &report, &repo_path, cx);
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         if let Some(modal) = v.state.plan_modal.as_mut() {
                             modal.error = Some(SharedString::from(err_msg));
@@ -1252,8 +1086,12 @@ impl KagiApp {
     /// (which reads `commit_panel` again — safe here on the parent).
     /// #476 slice 3: reads the PANEL's staged set, so a linked worktree's panel
     /// picks its mode from that worktree's index and plans against it.
-    pub fn commit_panel_amend(&mut self, cx: &mut Context<Self>) {
+    pub fn commit_panel_amend(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let staged = self
+            .ui()
             .commit_panel
             .as_ref()
             .map(|e| !e.read(cx).state.staged.is_empty())

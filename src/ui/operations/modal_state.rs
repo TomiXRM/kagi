@@ -1048,7 +1048,7 @@ impl KagiApp {
         // + `editing` + `mode`). Drive it via `update_in` (it needs a `Window` to
         // create `InputState`). Safe here: this runs on the parent render-sync
         // path, NOT a leased `ConflictView` listener.
-        if let Some(entity) = self.conflict.clone() {
+        if let Some(entity) = self.ui().conflict.clone() {
             entity.update(cx, |v, cx| v.sync_editor_inputs(window, cx));
         }
     }

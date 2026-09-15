@@ -110,20 +110,17 @@ pub struct EditorChrome {
 /// result-editing toggle, file selection) re-render only this subtree.
 ///
 /// # Re-entrancy invariant (CRITICAL)
-/// A `ConflictView` listener leases this entity. The four Backend actions
-/// (`conflict_continue`/`abort`/`skip`/`editor_save`) and the snapshot-reading
+/// A `ConflictView` listener leases this entity. Its Backend actions
+/// (`conflict_continue`/`abort`/`skip`/`editor_save`) and snapshot-reading
 /// context actions (open-external-tool / copy-path / copy-git-command /
-/// open-terminal) call `KagiApp` methods that read/write `app.conflict` (directly
-/// or via `reload()`→`detect_conflict_mode`→`apply_conflict_detect`). Calling any
-/// of those synchronously from a leased listener re-leases this entity and
-/// panics ("already borrowed"). So every such listener DEFERS to the parent via
-/// `cx.spawn_in(window, …)` + `weak_app.update_in(acx, …)`, by which time the
-/// listener has returned and the lease is released.
+/// open-terminal) call `KagiApp` methods that read/write the owner's conflict
+/// slot, so calling any synchronously from a leased listener re-leases this
+/// entity and panics. Each therefore defers to the parent via `cx.spawn_in` +
+/// `weak_app.update_in`, carrying the frozen owner (ADR-0197 決定 5) so a
+/// deferred action lands on its own session, never the active one.
 ///
-/// Parent-owned (NOT moved here): `conflict_merge_pending` (Stage 0d; read by the
-/// render gate / watcher / commit flow) and `detected_for` (per-repo run-once
-/// guard). The status-bar `conflict_count` badge and `merge_commit_ready` also
-/// stay on `KagiApp` (separate concerns).
+/// Session-owned but outside this entity: `conflict_merge_pending` and the
+/// per-owner conflict-detection guard.
 pub struct ConflictView {
     /// `Some(_)` while a conflict/merge is in progress (set by
     /// `detect_conflict_mode` via `apply_conflict_detect`). The repository is
@@ -921,9 +918,10 @@ impl ConflictView {
     /// parent synchronously).
     fn marshal_error_toast(&self, msg: String, cx: &mut Context<Self>) {
         let weak_app = self.app.clone();
+        let owner = self.owner.clone();
         cx.spawn(async move |_view, acx| {
             let _ = weak_app.update(acx, |app, cx| {
-                app.push_toast(super::ToastKind::Error, SharedString::from(msg), cx);
+                app.push_conflict_owner_toast(&owner, super::ToastKind::Error, msg, cx);
             });
         })
         .detach();
@@ -932,9 +930,10 @@ impl ConflictView {
     /// Marshal an info toast to the parent (deferred — see `marshal_error_toast`).
     fn marshal_info_toast(&self, msg: String, cx: &mut Context<Self>) {
         let weak_app = self.app.clone();
+        let owner = self.owner.clone();
         cx.spawn(async move |_view, acx| {
             let _ = weak_app.update(acx, |app, cx| {
-                app.push_toast(super::ToastKind::Info, SharedString::from(msg), cx);
+                app.push_conflict_owner_toast(&owner, super::ToastKind::Info, msg, cx);
             });
         })
         .detach();
@@ -967,11 +966,11 @@ impl ConflictView {
         let result_text = model.assembled_text();
         let edit_mode = self.result_editing;
 
-        // Edit mode: pull the user's edits out of the Result editor into the
-        // buffer (set_manual_text), then return (do not overwrite their text).
+        // Edit mode: pull the user's edits into the buffer and return — unless a
+        // side selection zeroed `content_sig`: then the input is stale (#722).
         if edit_mode {
             if let Some(inputs) = self.editor_inputs.as_ref() {
-                if inputs.path == path {
+                if inputs.path == path && inputs.content_sig != 0 {
                     let edited = inputs.result.read(cx).value().to_string();
                     if edited != result_text {
                         if let Some(c) = self.mode.as_mut() {
@@ -1262,39 +1261,38 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
     let can_continue = mode.can_continue();
     let is_sequencer = mode.session.op.is_sequencer();
 
-    // Continue reloads (merge → commit panel / sequencer → confirm modal), so it
-    // MUST defer to the parent — calling `conflict_continue` synchronously here
-    // would re-lease this leased entity and panic.
+    // Continue reloads (merge → commit panel / sequencer → confirm modal), so
+    // it defers to the parent to avoid re-leasing this leased entity.
     let continue_handler = cx.listener(
         |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
             let weak_app = view.app.clone();
+            let owner = view.owner.clone();
             cx.spawn_in(window, async move |_view, acx| {
-                let _ =
-                    weak_app.update_in(acx, |app, window, cx| app.conflict_continue(window, cx));
+                let _ = weak_app.update_in(acx, |app, window, cx| {
+                    app.conflict_continue(owner, window, cx)
+                });
             })
             .detach();
         },
     );
-    // Abort dispatches `open_conflict_abort_modal` — exactly the action the
-    // header operation strip dispatches, and the strip is hidden while this
-    // editor is mounted (owner ruling on top of #707), so there is one button
-    // on screen and one execution path behind it. Nothing is armed here: the
-    // two stages are the plan confirmation's, so the escape does not depend on
-    // this entity surviving it, which is the #704 bug.
+    // Abort defers `open_conflict_abort_modal` — the same action the header
+    // strip dispatches (#704); the two-stage confirm lives on the plan modal,
+    // not on this entity surviving.
     let abort_handler = cx.listener(
         |view: &mut ConflictView, _e: &gpui::ClickEvent, window, cx| {
             let weak_app = view.app.clone();
+            let owner = view.owner.clone();
             cx.spawn_in(window, async move |_view, acx| {
-                let _ =
-                    weak_app.update_in(acx, |app, _window, cx| app.open_conflict_abort_modal(cx));
+                let _ = weak_app.update_in(acx, |app, _window, cx| {
+                    app.open_conflict_abort_modal(owner, cx)
+                });
             })
             .detach();
         },
     );
 
-    // Continue (filled, gated) + Abort (danger) on one row. The buttons size to
-    // content (gpui-component Buttons are flex_shrink_0), so wrap rather than
-    // overflow the fixed-width dashboard (T-CONFLICT-DASH-023).
+    // Continue (filled, gated) + Abort (danger) on one row; buttons wrap rather
+    // than overflow the fixed-width dashboard (T-CONFLICT-DASH-023).
     let primary_row = div()
         .flex()
         .flex_row()
@@ -1370,8 +1368,10 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
                     return;
                 }
                 let weak_app = view.app.clone();
+                let owner = view.owner.clone();
                 cx.spawn_in(window, async move |_view, acx| {
-                    let _ = weak_app.update_in(acx, |app, _window, cx| app.conflict_skip(cx));
+                    let _ =
+                        weak_app.update_in(acx, |app, _window, cx| app.conflict_skip(owner, cx));
                 })
                 .detach();
             },

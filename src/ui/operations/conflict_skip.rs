@@ -6,7 +6,10 @@ impl KagiApp {
     /// Skip the current sequencer step (rebase / cherry-pick / revert) through
     /// the plan pipeline (T-042, ADR-0067): `plan_conflict_skip` → execute →
     /// oplog → re-detect. Merge has no skip.
-    pub fn conflict_skip(&mut self, cx: &mut Context<Self>) {
+    pub fn conflict_skip(&mut self, owner: crate::app::Attachment, cx: &mut Context<Self>) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }
@@ -17,7 +20,7 @@ impl KagiApp {
         let Some(mode) = self.conflict_mode_snapshot(cx) else {
             return;
         };
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.push_toast(
@@ -46,6 +49,7 @@ impl KagiApp {
 
         // #540: repository state, not exit status alone, decides progress.
         let result = self
+            .ui()
             .repo_session
             .as_ref()
             .expect("repo session existed while planning conflict skip")
@@ -109,7 +113,9 @@ impl KagiApp {
         if ran {
             // The repository may have moved even without a clean success.
             self.reload(cx);
-            self.ui_mut().conflict_detected = false;
+            if let Some(ui) = self.ui_mut() {
+                ui.conflict_detected = false;
+            }
             self.detect_conflict_mode(cx);
         }
         if let Some(err_msg) = failure.filter(|_| !termination_unknown) {

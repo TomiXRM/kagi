@@ -10,7 +10,9 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
     let before = std::fs::read(repo.join("README.md")).unwrap();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.open_editor_workspace(cx));
-    let editor = cx.read(|cx| app.read(cx).editor_workspace.clone()).unwrap();
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
     editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -115,7 +117,9 @@ pub fn scenario_editor_save_buffer_identity(cx: &mut VisualTestAppContext) {
     std::fs::write(repo.join("other.txt"), other_before).unwrap();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.open_editor_workspace(cx));
-    let editor = cx.read(|cx| app.read(cx).editor_workspace.clone()).unwrap();
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
 
     // Open a tab, wait for its buffer, focus it, and type one character so it
     // is dirty. Returns the buffer's edited text.

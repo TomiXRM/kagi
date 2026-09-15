@@ -106,7 +106,7 @@ impl KagiApp {
                             new_rel.display()
                         );
                         self.clear_editor_fs_prompt_modal();
-                        if let Some(ev) = self.editor_workspace.clone() {
+                        if let Some(ev) = self.ui().editor_workspace.clone() {
                             ev.update(cx, |v, cx| v.remap_renamed_path(&old_rel, &new_rel, cx));
                         }
                     }
@@ -130,7 +130,7 @@ impl KagiApp {
                     Ok(_) => {
                         klog!("editor-ws: fs-created {}", rel.display());
                         self.clear_editor_fs_prompt_modal();
-                        if let Some(ev) = self.editor_workspace.clone() {
+                        if let Some(ev) = self.ui().editor_workspace.clone() {
                             ev.update(cx, |v, cx| v.open_tab(rel.clone(), cx));
                         }
                     }
@@ -252,7 +252,7 @@ impl KagiApp {
             Ok(_trashed) => {
                 klog!("editor-ws: fs-trashed {}", modal.path.display());
                 self.clear_editor_delete_confirm_modal();
-                if let Some(ev) = self.editor_workspace.clone() {
+                if let Some(ev) = self.ui().editor_workspace.clone() {
                     let path = modal.path.clone();
                     ev.update(cx, |v, cx| v.close_paths_under(&path, cx));
                 }
@@ -369,9 +369,28 @@ impl KagiApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The tree belongs to the tab on screen, so that session is the owner
+        // the write seam checks (#722 P2) — its retained listing is the one
+        // these actions would act on.
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        // Filesystem writes act on the retained listing too: refuse them while
+        // it is being revalidated, like Stage / Discard downstream (#722).
+        let writes_fs = matches!(
+            action,
+            EditorTreeAction::Rename(_)
+                | EditorTreeAction::Delete { .. }
+                | EditorTreeAction::AddGitignore(_)
+                | EditorTreeAction::NewFile(_)
+                | EditorTreeAction::NewFolder(_)
+        );
+        if writes_fs && !self.pane_mutation_admitted(owner) {
+            return;
+        }
         match action {
             EditorTreeAction::PreviewMarkdown(path) => {
-                if let Some(ews) = self.editor_workspace.clone() {
+                if let Some(ews) = self.ui().editor_workspace.clone() {
                     ews.update(cx, |v, cx| {
                         v.open_tab(path, cx);
                         v.set_markdown_preview(true, cx);
@@ -393,14 +412,17 @@ impl KagiApp {
             EditorTreeAction::CopyRelativePath(path) => self.copy_editor_relative_path(&path, cx),
             EditorTreeAction::Reveal(path) => self.reveal_editor_path_in_finder(&path),
             EditorTreeAction::History(path) => self.open_file_history(path, None, cx),
-            EditorTreeAction::Stage(path) => self.do_stage_file_by_path(path, cx),
-            EditorTreeAction::Unstage(path) => self.do_unstage_file_by_path(path, cx),
+            EditorTreeAction::Stage(path) => self.do_stage_file_by_path(owner, path, cx),
+            EditorTreeAction::Unstage(path) => self.do_unstage_file_by_path(owner, path, cx),
             // #476 slice 3: the tree lists the TAB's files (like `Stage` /
             // `Unstage` above, which resolve `self.repo_path`), so its discard
             // must too — never a commit panel that happens to show a worktree.
-            EditorTreeAction::Discard(path) => {
-                self.open_discard_modal_for_path(path, worktree_wip::WriteOrigin::EditorTree, cx)
-            }
+            EditorTreeAction::Discard(path) => self.open_discard_modal_for_path(
+                owner,
+                path,
+                worktree_wip::WriteOrigin::EditorTree,
+                cx,
+            ),
             EditorTreeAction::AddGitignore(path) => self.add_editor_gitignore(&path, cx),
             EditorTreeAction::NewFile(base) => {
                 self.open_editor_fs_prompt(EditorFsPromptKind::NewFile, base, String::new(), cx)

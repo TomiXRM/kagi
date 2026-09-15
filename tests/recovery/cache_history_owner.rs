@@ -47,7 +47,7 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
             "cache-owner-a-populated: A must have a real commit-diff cache"
         );
         assert!(
-            app.main_diff.is_some(),
+            app.ui().main_diff.is_some(),
             "cache-owner-a-diff-open: A diff did not open"
         );
     });
@@ -86,8 +86,8 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
             "activation-clears-stale-cache-payloads: retained cache was authoritative before revalidation"
         );
         assert!(
-            app.main_diff.is_none(),
-            "activation-hides-stale-open-diff: A's old diff remained visible"
+            app.ui().main_diff.is_some(),
+            "activation-retains-owned-open-diff: A's diff was discarded on departure"
         );
     });
     cx.run_until_parked();
@@ -128,7 +128,7 @@ pub fn scenario_operation_history_session_and_stale_ref(cx: &mut VisualTestAppCo
 
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
-        app.ui_mut().operation_history = Default::default();
+        app.ui_mut().expect("active session").operation_history = Default::default();
         app.record_history(
             OperationKind::Commit,
             "main",
@@ -136,7 +136,7 @@ pub fn scenario_operation_history_session_and_stale_ref(cx: &mut VisualTestAppCo
             CommitId(after.clone()),
             "A retained operation",
         );
-        app.ui_mut().history_seed_attempted = true;
+        app.ui_mut().expect("active session").history_seed_attempted = true;
         app.switch_repo(1, cx);
         assert!(
             kagi::ui::e2e::undo_head(app)
@@ -288,6 +288,7 @@ pub fn scenario_welcome_drops_root_main_diff(cx: &mut VisualTestAppContext) {
         app.select_headless(0);
         app.open_main_diff_commit(0, cx);
         let weak = app
+            .ui()
             .main_diff
             .as_ref()
             .expect("main diff opened")
@@ -295,8 +296,8 @@ pub fn scenario_welcome_drops_root_main_diff(cx: &mut VisualTestAppContext) {
         app.close_tab(0, cx);
         assert!(app.tabs.is_empty(), "Welcome still has a tab");
         assert!(
-            app.main_diff.is_none(),
-            "welcome-clears-root-main-diff: root MainDiffPane survived the last tab"
+            app.ui().main_diff.is_none(),
+            "welcome-exposes-no-main-diff: closed owner remained active"
         );
         weak
     });

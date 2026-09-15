@@ -44,7 +44,9 @@ impl KagiApp {
             ),
         };
         let abort = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-            this.open_conflict_abort_modal(cx);
+            if let Some(owner) = this.detect_owner() {
+                this.open_conflict_abort_modal(owner, cx);
+            }
             cx.notify();
         });
         Some(

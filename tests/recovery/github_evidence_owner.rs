@@ -71,7 +71,10 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
 
     queue_ready(cx, Ok(Vec::new()));
     let (owner_a, owner_b) = app.update(cx, |app, cx| {
-        app.ui_mut().branch_groups_collapsed.clear();
+        app.ui_mut()
+            .expect("active session")
+            .branch_groups_collapsed
+            .clear();
         assert!(app.open_repository(repo_b, cx), "open B");
         (app.tabs[0].session, app.tabs[1].session)
     });

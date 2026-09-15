@@ -39,6 +39,7 @@ impl KagiApp {
     /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
     fn discard_partition(&self, cx: &Context<Self>) -> (Vec<String>, Vec<String>) {
         let rows: Vec<(String, bool)> = self
+            .ui()
             .commit_panel
             .as_ref()
             .into_iter()
@@ -86,7 +87,7 @@ impl KagiApp {
         cx: &Context<Self>,
     ) -> std::collections::HashMap<String, kagi_git::ChangeKind> {
         let mut out = std::collections::HashMap::new();
-        if let Some(entity) = self.commit_panel.as_ref() {
+        if let Some(entity) = self.ui().commit_panel.as_ref() {
             let panel = &entity.read(cx).state;
             for f in &panel.unstaged {
                 out.insert(
@@ -115,10 +116,14 @@ impl KagiApp {
     /// modal so `start_discard` executes against the repository this planned.
     pub fn open_discard_modal_for_path(
         &mut self,
+        owner: crate::app::SessionId,
         path: std::path::PathBuf,
         origin: worktree_wip::WriteOrigin,
         cx: &mut Context<Self>,
     ) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let paths = vec![path.to_string_lossy().replace('\\', "/")];
         let planned = match self.with_write_repo(origin, cx, |repo| repo.plan_discard(&paths)) {
             Some(p) => p,
@@ -159,7 +164,10 @@ impl KagiApp {
     /// #476 slice 3: plans against the PANEL's repository (`ADR-0107`'s per-tab
     /// `RepoSession` for the tab's own panel, a short-lived `Backend` for a
     /// linked worktree's) — see `with_commit_panel_repo`.
-    pub fn open_discard_all_modal(&mut self, cx: &mut Context<Self>) {
+    pub fn open_discard_all_modal(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
+        if !self.pane_mutation_admitted(owner) {
+            return;
+        }
         let (eligible, skipped) = self.discard_partition(cx);
         let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&eligible)) {
             Some(p) => p,

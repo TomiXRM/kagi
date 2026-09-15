@@ -97,6 +97,9 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         // T-BP-003: the crate has no other way to reach `root_focus` (it
         // can't see `KagiApp`) — cloned in once at construction so
         // `set_right_tab`/`select_history_commit` can reclaim it after the
@@ -112,9 +115,38 @@ impl KagiApp {
         // as the two closes above). PR mode holds no unsaved state.
         self.pr_mode = None;
         let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(), root_focus));
-        cx.subscribe(&view, Self::on_editor_workspace_event)
-            .detach();
-        self.editor_workspace = Some(view.clone());
+        let pane_id = view.entity_id();
+        // The pane's own background reads (file list, diff, history, blame,
+        // snapshot) are frozen to this owner's repository at open time and land
+        // in the entity through a weak handle, so they must run even after the
+        // owner goes to the background (ADR-0197 決定 3). The outward
+        // interactions (save, close, dirty guard, toasts) touch root / the
+        // active display and are admitted only while this pane's frozen owner is
+        // active and still on screen.
+        cx.subscribe(&view, move |app, view, event, cx| {
+            let is_read = matches!(
+                event,
+                EditorWorkspaceEvent::FilesRequested { .. }
+                    | EditorWorkspaceEvent::DiffRequested { .. }
+                    | EditorWorkspaceEvent::HistoryRequested { .. }
+                    | EditorWorkspaceEvent::HistoryDiffRequested { .. }
+                    | EditorWorkspaceEvent::SnapshotRequested { .. }
+                    | EditorWorkspaceEvent::BlameRequested { .. }
+            );
+            let is_current = app.active_session() == Some(owner)
+                && app
+                    .ui()
+                    .editor_workspace
+                    .as_ref()
+                    .is_some_and(|current| current.entity_id() == pane_id);
+            if is_read || is_current {
+                app.on_editor_workspace_event(view, event, cx);
+            }
+        })
+        .detach();
+        if let Some(ui) = self.ui_mut() {
+            ui.editor_workspace = Some(view.clone());
+        }
         klog!("editor-ws: open");
         view.update(cx, |v, cx| v.start_load(cx));
         cx.notify();
@@ -412,15 +444,40 @@ impl KagiApp {
     /// Close the Editor workspace (drops the entity; Graph mode is derived
     /// from `editor_workspace.is_none()`).
     pub fn close_editor_workspace(&mut self) {
-        self.editor_workspace = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.editor_workspace = None;
+        }
     }
 
-    /// True when closing/switching repo context would drop unsaved editor tabs.
+    /// Re-read the Editor Workspace against the accepted read (#722 P2). The
+    /// FS watcher only follows the tab on screen, so a worktree change made
+    /// while this owner was in the background never reached the pane: its
+    /// tree, clean buffers and external-change banner are still the pre-switch
+    /// ones until this runs. Dirty buffers are not clobbered —
+    /// `on_worktree_changed` raises the banner for those instead.
+    pub(crate) fn revalidate_editor_workspace(&mut self, cx: &mut Context<Self>) {
+        let Some(view) = self.ui().editor_workspace.clone() else {
+            return;
+        };
+        view.update(cx, |v, cx| v.on_worktree_changed(cx));
+    }
+
+    /// True when `session`'s retained Editor Workspace has unsaved buffers.
+    /// Parameterized by session because `close_tab(index)` can target a
+    /// background tab, not the one on screen (#722 P1 round 2 / ADR-0197 決定 5):
+    /// reading the active editor there would miss the closing tab's edits and
+    /// discard the active tab's instead.
+    pub fn editor_dirty_for(&self, session: crate::app::SessionId, cx: &mut Context<Self>) -> bool {
+        self.ui
+            .get(&session)
+            .and_then(|ui| ui.editor_workspace.as_ref())
+            .is_some_and(|ev| ev.read(cx).any_dirty())
+    }
+
+    /// True when the tab on screen has unsaved editor buffers.
     pub fn editor_workspace_any_dirty(&self, cx: &mut Context<Self>) -> bool {
-        match self.editor_workspace.as_ref() {
-            Some(ev) => ev.read(cx).any_dirty(),
-            None => false,
-        }
+        self.active_session()
+            .is_some_and(|session| self.editor_dirty_for(session, cx))
     }
 
     /// True when deleting `path` would close at least one dirty editor tab.
@@ -429,7 +486,7 @@ impl KagiApp {
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> bool {
-        match self.editor_workspace.as_ref() {
+        match self.ui().editor_workspace.as_ref() {
             Some(ev) => ev.read(cx).any_dirty_under(path),
             None => false,
         }
@@ -448,7 +505,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(ev) = self.editor_workspace.clone() {
+        if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| {
                 if v.right_tab == RightPaneTab::History {
                     v.step_history_selection(delta, window, cx);
@@ -463,7 +520,7 @@ impl KagiApp {
     /// buffer if it's open and dirty; no-op otherwise (closed workspace,
     /// clean buffer, or the "Save" keystroke firing on the wrong tab).
     pub fn save_editor_file(&mut self, cx: &mut Context<Self>) {
-        let Some(ev) = self.editor_workspace.clone() else {
+        let Some(ev) = self.ui().editor_workspace.clone() else {
             return;
         };
         if !ev.read(cx).dirty {
@@ -498,45 +555,25 @@ impl KagiApp {
         self.clear_editor_dirty_guard_modal();
         match modal.intent {
             EditorPendingIntent::Reload => {
-                if let Some(ev) = self.editor_workspace.clone() {
+                if let Some(ev) = self.ui().editor_workspace.clone() {
                     ev.update(cx, |v, cx| v.reload_from_disk(cx));
                 }
             }
             EditorPendingIntent::CloseTab(path) => {
-                if let Some(ev) = self.editor_workspace.clone() {
+                if let Some(ev) = self.ui().editor_workspace.clone() {
                     ev.update(cx, |v, cx| v.close_tab_now(&path, cx));
                 }
             }
             EditorPendingIntent::Close => {
                 self.close_editor_workspace();
             }
-            EditorPendingIntent::SwitchRepo(path) => {
-                self.close_editor_workspace();
-                self.switch_repo_by_path(&path, cx);
-            }
-            EditorPendingIntent::MergeInWorktree {
-                source,
-                target,
-                path,
-                owner,
-            } => {
-                if self
-                    .active_session()
-                    .and_then(|session| self.app_sessions.attachment(session))
-                    .as_ref()
-                    == Some(&owner)
-                {
-                    self.close_editor_workspace();
-                    self.open_merge_in_worktree(source, target, path, cx);
-                }
-            }
             EditorPendingIntent::CloseRepoTab(session) => {
-                self.close_editor_workspace();
+                // Discard confirmed: drop the target owner's editor (not the
+                // active tab's) so the close does not re-prompt, then close it.
+                if let Some(ui) = self.ui.get_mut(&session) {
+                    ui.editor_workspace = None;
+                }
                 self.close_tab_by_session(session, cx);
-            }
-            EditorPendingIntent::EnterRemoteView { host, root, snap } => {
-                self.close_editor_workspace();
-                self.enter_remote_view(host, root, (*snap).clone(), cx);
             }
         }
         cx.notify();

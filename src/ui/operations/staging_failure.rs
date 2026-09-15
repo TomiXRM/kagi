@@ -152,7 +152,7 @@ impl KagiApp {
         f: impl FnOnce(&kagi_git::Backend) -> R,
     ) -> Result<R, GitError> {
         if self.repo_path.as_deref() == Some(path) {
-            if let Some(session) = self.repo_session.as_ref() {
+            if let Some(session) = self.ui().repo_session.as_ref() {
                 return Ok(f(session.backend()));
             }
         }

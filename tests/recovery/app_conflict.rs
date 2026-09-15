@@ -1,6 +1,6 @@
 //! Focused C1 GUI adapters. Run each with its exact KAGI_GUI_E2E_ONLY filter.
-use crate::macos::{git, mount, unmount};
-use gpui::{Focusable, VisualTestAppContext};
+use crate::macos::{build_fixture, git, mount, unmount};
+use gpui::{Focusable, SharedString, VisualTestAppContext};
 use kagi::ui::e2e;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::{Path, PathBuf};
@@ -10,6 +10,8 @@ fn content_fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
     git(repo, &["init", "-q", "-b", "main"]);
+    git(repo, &["config", "user.name", "Kagi Test"]);
+    git(repo, &["config", "user.email", "kagi@example.test"]);
     std::fs::write(repo.join("file.txt"), "base\n").unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "base"]);
@@ -93,7 +95,7 @@ pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| app.detect_conflict_mode(cx));
         cx.run_until_parked();
-        let conflict = cx.read(|cx| app.read(cx).conflict.clone()).unwrap();
+        let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
         conflict.update(cx, |view, cx| {
             view.conflict_open_editor(Path::new("file.txt"));
             view.conflict_editor_reset_all(Path::new("file.txt"));
@@ -132,7 +134,7 @@ pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let conflict = cx
-        .read(|cx| app.read(cx).conflict.clone())
+        .read(|cx| app.read(cx).ui().conflict.clone())
         .expect("conflict view");
     let path = PathBuf::from("file.txt");
     conflict.update(cx, |view, cx| {
@@ -186,7 +188,7 @@ pub fn scenario_conflict_dir_file_boundary(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let conflict = cx
-        .read(|cx| app.read(cx).conflict.clone())
+        .read(|cx| app.read(cx).ui().conflict.clone())
         .expect("D/F conflict view");
 
     let guard = app.update(cx, |app, _| {
@@ -248,7 +250,7 @@ pub fn scenario_operation_strip_startup(cx: &mut VisualTestAppContext) {
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_none()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
         "there is no conflict editor to hang the abort off"
     );
     assert!(
@@ -279,7 +281,7 @@ pub fn scenario_operation_strip_hidden_in_editor(cx: &mut VisualTestAppContext) 
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_some()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
         "precondition: the conflict editor is mounted"
     );
     assert!(
@@ -418,6 +420,7 @@ pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppCon
 
     let mode_revision = cx.read(|cx| {
         app.read(cx)
+            .ui()
             .conflict
             .as_ref()
             .and_then(|view| view.read(cx).mode.as_ref().map(|m| m.revision.clone()))
@@ -443,6 +446,127 @@ pub fn scenario_conflict_detect_no_revision_laundering(cx: &mut VisualTestAppCon
     eprintln!("[gui-e2e] PASS a stale detector payload keeps its own revision (#707)");
 }
 
+/// S5: a conflict detector completion may retain its frozen background owner,
+/// but it must never construct a pane in the tab currently on screen.
+pub fn scenario_conflict_background_owner(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = build_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    let (owner_a, payload) = cx.read(|cx| {
+        let state = app.read(cx);
+        let owner = state
+            .active_session()
+            .and_then(|session| state.app_sessions.attachment(session))
+            .expect("A attachment");
+        (owner, e2e::detect_payload_for_test(&repo_a, "main"))
+    });
+
+    let owner_b = app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open clean B");
+        state.active_session().expect("B owner")
+    });
+    cx.run_until_parked();
+    app.update(cx, |state, _| {
+        state.status_footer =
+            kagi::ui::FooterStatus::Idle(SharedString::from("B conflict sentinel"));
+    });
+    app.update(cx, |state, cx| {
+        state.apply_conflict_detect(owner_a.clone(), payload, cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.active_session(), Some(owner_b));
+        assert!(
+            state.ui().conflict.is_none(),
+            "conflict-background-owner-isolation: A completion built B's pane",
+        );
+        assert!(
+            state.ui[&owner_a.session].conflict.is_some(),
+            "conflict-background-owner-retained: A completion did not land in A",
+        );
+        assert!(
+            matches!(
+                &state.status_footer,
+                kagi::ui::FooterStatus::Idle(text) if text.as_ref() == "B conflict sentinel"
+            ),
+            "conflict-background-footer-isolation: A completion changed B footer"
+        );
+        assert!(
+            !e2e::active_modal_present(state),
+            "conflict-background-modal-isolation: A completion opened a modal on B",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_background_owner");
+}
+
+/// Returning to a retained conflict owner first invalidates its pane, then
+/// re-detects against the repository. An external abort cannot leave the old
+/// editor actionable.
+pub fn scenario_conflict_revalidates_after_external_abort(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = build_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |state, cx| state.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_some()));
+    let (old_visit, old_payload) = cx.read(|cx| {
+        let state = app.read(cx);
+        let owner = state
+            .active_session()
+            .and_then(|session| state.app_sessions.attachment(session))
+            .expect("A attachment");
+        (owner, e2e::detect_payload_for_test(&repo_a, "main"))
+    });
+
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open clean B");
+    });
+    cx.run_until_parked();
+    git(&repo_a, &["merge", "--abort"]);
+    app.update(cx, |state, cx| state.switch_repo(0, cx));
+    // #722 P2: the retained pane survives the switch — undo/redo, the selected
+    // file/hunk and scroll all live in this entity — but it is *paused*: not
+    // authoritative, and every mutation it offers is refused until the
+    // activation read lands.
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "conflict-activation-retained: the pane was destroyed instead of paused",
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).ui().panes_revalidating()),
+        "conflict-activation-paused: a stale pane stayed actionable before the read",
+    );
+    app.update(cx, |state, cx| {
+        state.apply_conflict_detect(old_visit, old_payload, cx);
+    });
+    assert!(
+        cx.read(|cx| app.read(cx).ui().panes_revalidating()),
+        "conflict-old-visit-rejected: a departed completion re-enabled the stale pane",
+    );
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state.ui().conflict.is_none(),
+            "conflict-external-abort: stale editor returned"
+        );
+        assert!(
+            state.view().operation.is_none(),
+            "conflict-external-abort: stale operation remained"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_revalidates_after_external_abort");
+}
+
 /// #707 re-review P1: a detector launched for one tab must not land on another,
 /// even when the path is identical — a close and reopen of the same repository
 /// is a new `SessionId` and a new visit.
@@ -465,14 +589,14 @@ pub fn scenario_conflict_detect_wrong_owner_is_dropped(cx: &mut VisualTestAppCon
         })
         .expect("attached");
 
-    assert!(cx.read(|cx| app.read(cx).conflict.is_none()));
+    assert!(cx.read(|cx| app.read(cx).ui().conflict.is_none()));
     app.update(cx, |app, cx| {
-        app.ui_mut().conflict_detected = true;
+        app.ui_mut().expect("active session").conflict_detected = true;
         app.apply_conflict_detect(stale_owner, payload, cx);
     });
     cx.run_until_parked();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_none()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
         "a payload from another visit must not build this tab's conflict editor"
     );
     assert!(
@@ -499,7 +623,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let view = cx
-        .read(|cx| app.read(cx).conflict.clone())
+        .read(|cx| app.read(cx).ui().conflict.clone())
         .expect("the live conflict has an editor");
     let revision = cx
         .read(|cx| {
@@ -537,20 +661,23 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
         ConflictDetectOutcome::MergeResolvedReady(older),
     ] {
         app.update(cx, |app, cx| {
-            app.ui_mut().conflict_detected = true;
+            app.ui_mut().expect("active session").conflict_detected = true;
             app.apply_conflict_detect(owner.clone(), stale, cx);
         });
         cx.run_until_parked();
         assert!(
-            cx.read(|cx| app.read(cx).conflict.is_some()),
+            cx.read(|cx| app.read(cx).ui().conflict.is_some()),
             "a stale no-conflict answer must not drop the editor"
         );
         assert_eq!(
-            cx.read(|cx| app.read(cx).conflict.as_ref().and_then(|v| v
-                .read(cx)
-                .mode
-                .as_ref()
-                .map(|m| m.revision.clone()))),
+            cx.read(|cx| {
+                app.read(cx).ui().conflict.as_ref().and_then(|view| {
+                    view.read(cx)
+                        .mode
+                        .as_ref()
+                        .map(|mode| mode.revision.clone())
+                })
+            }),
             Some(revision.clone()),
             "and must not replace what it shows"
         );
@@ -568,7 +695,7 @@ pub fn scenario_conflict_detect_stale_clear_is_dropped(cx: &mut VisualTestAppCon
     wait_idle(cx, &app);
     cx.run_until_parked();
     assert!(
-        cx.read(|cx| app.read(cx).conflict.is_none()),
+        cx.read(|cx| app.read(cx).ui().conflict.is_none()),
         "an agreeing outcome still applies"
     );
     drop(view);
@@ -585,7 +712,11 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     // and nothing may reach the family while it does.
     app.update(cx, |app, cx| {
         app.planning = Some("merge-plan");
-        app.open_conflict_abort_modal(cx);
+        let owner = app
+            .active_session()
+            .and_then(|session| app.app_sessions.attachment(session))
+            .expect("abort owner");
+        app.open_conflict_abort_modal(owner, cx);
         assert!(
             app.conflict_abort_modal().is_none(),
             "a plan in flight must refuse the abort confirmation (#283)"
@@ -647,4 +778,230 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     assert_ne!(toast, kagi::ui::i18n::Msg::EditorSavedResolved.t());
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS header Abort → confirm → MERGE_HEAD gone (#704)");
+}
+
+/// #722 P1-b: a Conflict pane's Abort and two-stage Skip are deferred to the
+/// next tick (`spawn_in`). If the user switches tabs before the task runs, the
+/// owner frozen at the click must keep it from opening a modal or planning
+/// against the tab now on screen (ADR-0197 決定 5). Continue already carried the
+/// owner; this proves Abort and Skip do too — the methods now take
+/// `owner: Attachment`, so a callback that omits it cannot compile.
+pub fn scenario_conflict_deferred_action_owner(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = content_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let owner_a = cx.read(|cx| {
+        let state = app.read(cx);
+        state
+            .active_session()
+            .and_then(|session| state.app_sessions.attachment(session))
+            .expect("A owner")
+    });
+
+    let owner_b = app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        app.active_session().expect("B owner")
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "precondition: B is in conflict"
+    );
+    app.update(cx, |app, _| {
+        app.status_footer = kagi::ui::FooterStatus::Idle(SharedString::from("B deferred sentinel"));
+    });
+
+    // A's deferred Abort lands after the switch to B.
+    app.update(cx, |app, cx| {
+        app.open_conflict_abort_modal(owner_a.clone(), cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.active_session(), Some(owner_b));
+        assert!(
+            state.conflict_abort_modal().is_none(),
+            "abort-deferred-owner: A's Abort opened a modal on B",
+        );
+    });
+
+    // A's deferred Skip lands after the switch to B.
+    app.update(cx, |app, cx| app.conflict_skip(owner_a.clone(), cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            matches!(
+                &state.status_footer,
+                kagi::ui::FooterStatus::Idle(text) if text.as_ref() == "B deferred sentinel"
+            ),
+            "skip-deferred-owner: A's Skip acted on B (footer changed)",
+        );
+        assert!(
+            !kagi::ui::e2e::active_modal_present(state),
+            "skip-deferred-owner: A's Skip opened a modal on B",
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_deferred_action_owner");
+}
+
+/// #722 P2: an activation whose observation is **unchanged** must change
+/// nothing. The old code discarded the whole `ConflictView` on every
+/// activation, and even the in-place re-detect swapped in a freshly read
+/// `mode` — either way the `ResolutionBuffer`'s undo/redo stack, the selected
+/// file/hunk and the scroll position were lost on a plain tab round trip,
+/// though the repository had not moved. ADR-0197 決定 3 says retained state is
+/// non-authoritative until revalidated, not that it must be destroyed.
+pub fn scenario_conflict_pane_survives_activation(cx: &mut VisualTestAppContext) {
+    let fixture_a = content_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let fixture_b = build_fixture();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |state, cx| state.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let pane = cx
+        .read(|cx| app.read(cx).ui().conflict.clone())
+        .expect("A conflict pane");
+    let path = cx.read(|cx| {
+        pane.read(cx).mode.as_ref().expect("A mode").session.files[0]
+            .path
+            .clone()
+    });
+
+    // Do real work in the editor: pick a side (which pushes an undo entry) and
+    // move the hunk cursor off its default.
+    pane.update(cx, |view, _| {
+        view.conflict_open_editor(&path);
+        view.editing = Some(path.clone());
+        view.selected_hunk = 3;
+        view.mode
+            .as_mut()
+            .expect("mode")
+            .buffer
+            .apply_choice(&path, kagi_git::ResolutionChoice::Incoming)
+            .expect("apply a side choice");
+    });
+    assert!(
+        cx.read(|cx| pane
+            .read(cx)
+            .mode
+            .as_ref()
+            .expect("mode")
+            .buffer
+            .has_resolution(&path)),
+        "precondition: the buffer carries the applied resolution",
+    );
+
+    // A plain tab round trip. The repository is untouched throughout.
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open clean B");
+    });
+    cx.run_until_parked();
+    app.update(cx, |state, cx| state.switch_repo(0, cx));
+    cx.run_until_parked();
+
+    let same_entity = cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .conflict
+            .as_ref()
+            .map(|e| e.entity_id())
+            .expect("A conflict pane after the round trip")
+            == pane.entity_id()
+    });
+    assert!(
+        same_entity,
+        "conflict-unchanged-keeps-entity: an unchanged observation rebuilt the pane",
+    );
+    assert!(
+        !cx.read(|cx| app.read(cx).ui().panes_revalidating()),
+        "conflict-unchanged-reenables: the accepted read left the pane refused",
+    );
+    cx.read(|cx| {
+        let view = pane.read(cx);
+        assert_eq!(
+            view.editing.as_deref(),
+            Some(path.as_path()),
+            "conflict-unchanged-keeps-selection: the edited file was reset",
+        );
+        assert_eq!(
+            view.selected_hunk, 3,
+            "conflict-unchanged-keeps-selection: the hunk cursor was reset",
+        );
+        assert!(
+            view.mode
+                .as_ref()
+                .expect("mode")
+                .buffer
+                .has_resolution(&path),
+            "conflict-unchanged-keeps-buffer: the applied resolution was discarded",
+        );
+    });
+    // The undo stack is the part a fresh buffer could never carry.
+    let undone = pane.update(cx, |view, _| {
+        view.mode.as_mut().expect("mode").buffer.undo(&path)
+    });
+    assert!(
+        undone,
+        "conflict-unchanged-keeps-undo: the undo stack did not survive activation",
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_pane_survives_activation");
+}
+
+/// #722 (codex P1): the pane pass waits on a detection against the accepted
+/// read. If that detection comes back stale (here `OpenFailed` while the read
+/// still shows an operation), the gate must not stay shut until some unrelated
+/// publish — the unconfirmed pane is dropped and the gate settles.
+pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e::ConflictDetectOutcome;
+
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().conflict.is_some()),
+        "precondition: pane"
+    );
+    let owner = cx
+        .read(|cx| {
+            let app = app.read(cx);
+            app.active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+        })
+        .expect("attached");
+
+    app.update(cx, |app, cx| {
+        e2e::await_conflict_revalidation(app);
+        assert!(
+            app.ui().panes_revalidating(),
+            "precondition: awaiting detection"
+        );
+        app.apply_conflict_detect(owner, ConflictDetectOutcome::OpenFailed, cx);
+    });
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            !app.ui().panes_revalidating(),
+            "awaited-detection-stale-settles: the gate stayed shut after a stale detection"
+        );
+        assert!(
+            app.ui().conflict.is_none(),
+            "awaited-detection-stale-settles: an unconfirmed conflict pane stayed actionable"
+        );
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_awaited_detection_stale_settles");
 }

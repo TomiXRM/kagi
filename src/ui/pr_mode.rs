@@ -203,7 +203,7 @@ impl KagiApp {
             );
             return;
         };
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };
         let repo = session.backend();
@@ -573,7 +573,7 @@ impl KagiApp {
             return;
         };
         tab.selected_commit = sel;
-        tab.files = match self.repo_session.as_ref().map(|s| s.backend()) {
+        tab.files = match self.ui().repo_session.as_ref().map(|s| s.backend()) {
             Some(repo) => match sel.and_then(|i| tab.commits.get(i)) {
                 Some(c) => repo.commit_changed_files(&c.id).unwrap_or_default(),
                 None => repo
@@ -733,7 +733,7 @@ impl KagiApp {
     }
 
     fn pr_tab_reload_diff(&self, tab: &mut PrTab) {
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };
         let repo = session.backend();

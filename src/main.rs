@@ -263,14 +263,12 @@ fn main() {
     let mut app_state = KagiApp::from_snapshot(&repo_path, &info.name, info.is_worktree, &snap);
     // T011: store repo path so the UI can fetch changed files on-demand.
     app_state.repo_path = Some(repo_path.clone());
-    // ADR-0107: open the per-tab RepoSession for the initial CLI-argument tab.
-    // Unlike the Welcome / file-dialog path (`open_repository` → `switch_repo`)
-    // and session restore, the CLI-launch bootstrap builds the tab by hand and
-    // never went through `switch_repo`, so `repo_session` stayed `None`. Read
-    // paths fall back to `Backend::open`, but write paths (conflict
-    // continue/abort, checkout, commit, …) require the session and otherwise
-    // fail with "session unavailable". Failure stays non-fatal (`.ok()`).
-    app_state.repo_session = kagi_git::session::RepoSession::open(&repo_path).ok();
+    // ADR-0107 / ADR-0197: retain the initial CLI tab's repository session in
+    // its attached owner. Failure stays non-fatal.
+    let session = kagi_git::session::RepoSession::open(&repo_path).ok();
+    if let Some(ui) = app_state.ui_mut() {
+        ui.repo_session = session;
+    }
     // The WIP diffstat is filled by the first render's background scan — two
     // tree diffs for a badge is not worth delaying the window for.
 

@@ -25,7 +25,7 @@ impl KagiApp {
             .find(|(_, current)| *current)
             .map(|(name, _)| name.clone())
             .unwrap_or_default();
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer =

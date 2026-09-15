@@ -8,7 +8,7 @@ impl KagiApp {
         // Do not consume the one-shot payload while the old ConflictView is still
         // mounted: that would start a plan whose modal is immediately cleared by
         // `apply_reload_data`, leaving nothing for the post-reload retry to show.
-        if self.conflict.is_some() || self.has_active_modal() {
+        if self.ui().conflict.is_some() || self.has_active_modal() {
             return;
         }
         let Some(owner) = self.active_session() else {

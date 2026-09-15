@@ -15,11 +15,14 @@
 //! they keep their own `MainDiffView` + `ListState` fields and render via
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
+use super::tab_ui_state_ops::PaneRevalidation;
 use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
 use gpui_component::button::Button;
 use gpui_component::Sizable as _;
 
-use super::diff_view::{build_main_diff_view, MainDiffSource, MainDiffView, RowHighlights};
+use super::diff_view::{
+    build_main_diff_view, CompareView, MainDiffSource, MainDiffView, RowHighlights,
+};
 use super::render_helpers::{new_diff_list_state, render_diff_list};
 use super::KagiApp;
 
@@ -35,17 +38,19 @@ pub struct MainDiffPane {
     /// "main-diff-list" — see `render_helpers::render_diff_list` for the
     /// item-count sync/reset lifecycle.
     scroll: ListState,
-    /// ADR-0117: parent handle for the header buttons (Back / History). Only
-    /// upgraded from event listeners — never from the render path (re-entrancy).
+    /// Parent handle for deferred header actions.
     app: WeakEntity<KagiApp>,
+    /// Session that owns this retained pane.
+    owner: crate::app::SessionId,
 }
 
 impl MainDiffPane {
-    pub fn new(view: MainDiffView, app: WeakEntity<KagiApp>) -> Self {
+    pub fn new(view: MainDiffView, app: WeakEntity<KagiApp>, owner: crate::app::SessionId) -> Self {
         Self {
             view,
             scroll: new_diff_list_state(),
             app,
+            owner,
         }
     }
 
@@ -57,6 +62,7 @@ impl MainDiffPane {
             MainDiffSource::Commit {
                 row_index,
                 file_index,
+                ..
             } if row_index == row && file_index == file => {}
             _ => return,
         }
@@ -79,23 +85,29 @@ impl Render for MainDiffPane {
         // `standalone: true` arm). "← Back" closes the diff; "History" opens
         // File History for the shown file (导线 #3).
         let back_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
+            let owner = this.owner;
             this.app
-                .update(cx, |app, cx| {
-                    app.close_main_diff();
-                    cx.notify();
+                .update(cx, move |app, cx| {
+                    if app.active_session() == Some(owner) {
+                        app.close_main_diff();
+                        cx.notify();
+                    }
                 })
                 .ok();
         });
         let history_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
             // Read the source HERE, off `this` — this listener runs while the
             // pane entity is leased, so the app must not read it back out of
-            // `self.main_diff` (that panicked: "cannot read MainDiffPane while
-            // it is already being updated").
+            // the owner's `main_diff` slot (that panicked: "cannot read
+            // MainDiffPane while it is already being updated").
             let source = this.view.source.clone();
+            let owner = this.owner;
             this.app
-                .update(cx, |app, cx| {
-                    app.open_file_history_from_main_diff(source, cx);
-                    cx.notify();
+                .update(cx, move |app, cx| {
+                    if app.pane_mutation_admitted(owner) {
+                        app.open_file_history_from_main_diff(source, cx);
+                        cx.notify();
+                    }
                 })
                 .ok();
         });
@@ -112,12 +124,15 @@ impl Render for MainDiffPane {
         let ext_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
             // Same lease rule as history_click: read the source off `this`.
             let source = this.view.source.clone();
+            let owner = this.owner;
             this.app
-                .update(cx, |app, cx| {
-                    if let Some((path, _)) = app.main_diff_source_ref(&source, cx) {
-                        app.open_in_external_editor(&path, None, cx);
+                .update(cx, move |app, cx| {
+                    if app.pane_mutation_admitted(owner) {
+                        if let Some((path, _)) = app.main_diff_source_ref(&source, cx) {
+                            app.open_in_external_editor(&path, None, cx);
+                        }
+                        cx.notify();
                     }
-                    cx.notify();
                 })
                 .ok();
         });
@@ -164,7 +179,7 @@ impl KagiApp {
         view: MainDiffView,
         cx: &mut Context<Self>,
     ) -> Entity<MainDiffPane> {
-        match self.main_diff.clone() {
+        match self.ui().main_diff.clone() {
             Some(pane) => {
                 pane.update(cx, |p, cx| {
                     p.view = view;
@@ -174,8 +189,13 @@ impl KagiApp {
             }
             None => {
                 let weak = cx.weak_entity();
-                let pane = cx.new(|_| MainDiffPane::new(view, weak));
-                self.main_diff = Some(pane.clone());
+                let owner = self
+                    .active_session()
+                    .expect("main diff requires an attached session");
+                let pane = cx.new(|_| MainDiffPane::new(view, weak, owner));
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = Some(pane.clone());
+                }
                 pane
             }
         }
@@ -203,11 +223,11 @@ impl KagiApp {
     /// Take hold of the open diff before a reload sweeps it away. `None` when
     /// nothing is open.
     pub(crate) fn capture_main_diff(&self, cx: &Context<Self>) -> Option<MainDiffRestore> {
-        let pane = self.main_diff.clone()?;
+        let pane = self.ui().main_diff.clone()?;
         let source = pane.read(cx).view.source.clone();
         let path = self.main_diff_source_ref(&source, cx).map(|(p, _)| p);
         let commit = match source {
-            MainDiffSource::Commit { row_index, .. } => self.commit_id_for_row(row_index),
+            MainDiffSource::Commit { ref commit, .. } => commit.clone(),
             _ => None,
         };
         let wip_repo = match source {
@@ -256,9 +276,12 @@ impl KagiApp {
                     p.view.source = MainDiffSource::Commit {
                         row_index,
                         file_index,
+                        commit: Some(commit.clone()),
                     }
                 });
-                self.main_diff = Some(pane);
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = Some(pane);
+                }
             }
             // The compare list was re-read first (`restore_compare`); find the
             // same file in it again — its index moves as files enter and leave
@@ -266,13 +289,16 @@ impl KagiApp {
             MainDiffSource::Compare { .. } => {
                 let Some(path) = path else { return };
                 let Some(file_index) = self
+                    .ui()
                     .compare_view
                     .as_ref()
                     .and_then(|p| p.read(cx).view.files.iter().position(|f| f.path == path))
                 else {
                     return;
                 };
-                self.main_diff = Some(pane);
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = Some(pane);
+                }
                 self.open_main_diff_compare(file_index, cx);
             }
             MainDiffSource::Staged { path } => {
@@ -305,7 +331,7 @@ impl KagiApp {
             .filter(|p| Some(p) != self.repo_path.as_ref())
             .and_then(|p| kagi_git::Backend::open(&p).ok());
         let result = {
-            let repo = match (&foreign, self.repo_session.as_ref()) {
+            let repo = match (&foreign, self.ui().repo_session.as_ref()) {
                 (Some(backend), _) => backend,
                 (None, Some(session)) => session.backend(),
                 (None, None) => return,
@@ -333,7 +359,108 @@ impl KagiApp {
         };
         let mut view = build_main_diff_view(&file_diff, &path, 0, source.clone());
         view.images = self.diff_images_for(&file_diff, &source, &path);
-        self.main_diff = Some(pane);
+        if let Some(ui) = self.ui_mut() {
+            ui.main_diff = Some(pane);
+        }
         self.show_main_diff(view, cx);
+    }
+}
+
+/// The active owner's open Compare + Main Diff panes, captured before a read
+/// renumbers the commit rows so both can be re-anchored against the new rows
+/// afterwards (ADR-0197 決定 3). Shared by the reload apply path
+/// (`apply_reload_data`) and the tab-switch / activation read
+/// (`load_repo_async`), which otherwise duplicated this capture/restore.
+pub(crate) struct OpenPanes {
+    compare: Option<CompareView>,
+    main_diff: Option<MainDiffRestore>,
+}
+
+impl KagiApp {
+    /// Capture the active owner's open panes before a renumbering read. Only
+    /// meaningful when that read's owner is the tab on screen.
+    pub(crate) fn capture_open_panes(&self, cx: &Context<Self>) -> OpenPanes {
+        OpenPanes {
+            compare: self
+                .ui()
+                .compare_view
+                .as_ref()
+                .map(|pane| pane.read(cx).view.clone()),
+            main_diff: self.capture_main_diff(cx),
+        }
+    }
+
+    /// Put the captured panes back, re-anchored against the rows the read
+    /// installed. Compare first: the diff restore looks its file up in the
+    /// refreshed compare list. A source that no longer resolves stays closed.
+    pub(crate) fn restore_open_panes(&mut self, panes: OpenPanes, cx: &mut Context<Self>) {
+        if let Some(ui) = self.ui_mut() {
+            ui.main_diff = None;
+        }
+        if let Some(view) = panes.compare {
+            self.restore_compare(view, cx);
+        }
+        if let Some(prev) = panes.main_diff {
+            self.restore_main_diff(prev, cx);
+        }
+    }
+
+    /// T-UI-003: Close the main diff view and return to the commit graph.
+    /// No-op when main_diff is None.
+    pub fn close_main_diff(&mut self) {
+        self.with_ui(|ui| ui.main_diff = None);
+        // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
+        self.pending_headless_diff = None;
+    }
+
+    /// Revalidate **every** retained pane of the tab on screen against the
+    /// read that was just published, then re-admit their mutations. `render`
+    /// calls this every frame and it runs only for [`PaneRevalidation::Queued`],
+    /// which the three publish seams set — so activation load, manual reload
+    /// (Cmd+R), the watcher and a remote refresh all revalidate the same set,
+    /// while re-showing a cached read on tab switch queues nothing. Adding a
+    /// retained pane means adding it here (ADR-0197 決定 3 / #722).
+    pub(crate) fn revalidate_retained_panes(&mut self, cx: &mut Context<Self>) {
+        if self.ui().pane_revalidation != PaneRevalidation::Queued {
+            return;
+        }
+        // Main Diff / Compare: re-anchor against the new rows. Capturing now
+        // is equivalent to capturing before the read — accepting a read does
+        // not touch the panes, so they still carry the pre-read source.
+        let panes = self.capture_open_panes(cx);
+        self.restore_open_panes(panes, cx);
+        if !self.ui().conflict_merge_pending {
+            self.refresh_commit_panel_after_reload(cx);
+        }
+        // Analyze + File History (HEAD-versioned, refreshed in place).
+        self.refresh_overlays_after_reload(self.view().head_oid.clone(), cx);
+        // Editor Workspace: the watcher does not follow a background tab, so
+        // its tree / buffers / external-change banner are as stale as anything
+        // else here and only this read says what the worktree now holds.
+        self.revalidate_editor_workspace(cx);
+        // Conflict is the one pane whose check is asynchronous: the read model
+        // says whether an operation is in progress, but only a detector run
+        // against *this* read can say whether it is still the same conflict.
+        if self.ui().conflict.is_none() {
+            // No retained conflict pane: nothing to re-check.
+            self.with_ui(|ui| ui.pane_revalidation = PaneRevalidation::Settled);
+        } else if self.view().operation.is_none() {
+            // Resolved or aborted while the tab was away — the pane goes.
+            self.with_ui(|ui| {
+                ui.conflict = None;
+                ui.pane_revalidation = PaneRevalidation::Settled;
+            });
+        } else {
+            // Re-detect against the accepted read and stay refused until
+            // `apply_conflict_detect` confirms the observation matches. It is
+            // not enough that *an* operation is in progress: a conflict that
+            // moved to another revision would otherwise re-admit Continue /
+            // Skip against the old `ResolutionBuffer` (#722 P1).
+            self.with_ui(|ui| {
+                ui.conflict_detected = false;
+                ui.pane_revalidation = PaneRevalidation::AwaitingConflict;
+            });
+            self.detect_conflict_mode_async(cx);
+        }
     }
 }

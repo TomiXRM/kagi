@@ -74,9 +74,11 @@ impl KagiApp {
             return;
         };
         let view = build_tab_view(&snap, &repo_name);
-        self.ui_mut().selected = None;
-        self.main_diff = None;
-        self.compare_view = None;
+        if let Some(ui) = self.ui_mut() {
+            ui.selected = None;
+            ui.main_diff = None;
+            ui.compare_view = None;
+        }
         self.publish_tab_view(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.wip_diffstat = Some(wip_diffstat);
@@ -106,7 +108,7 @@ impl KagiApp {
         // settings toggle path; stays sync so the caller can surface a
         // repo-open/snapshot error.)
         let key = self.reads.begin(session);
-        let want_panel = self.conflict_merge_pending;
+        let want_panel = self.ui().conflict_merge_pending;
         let want_reflog = self.ui().operation_history.is_empty();
         let data =
             match read_reload_data(&repo_path, self.ui().commit_limit, want_panel, want_reflog) {
@@ -155,16 +157,12 @@ impl KagiApp {
         // every background tab's revalidate and left its `selected` on a row
         // index the rebuild had reassigned to another commit.
         //
-        // Same idea for the two panes a reload used to close outright: an
-        // auto-fetch or a watcher reload threw the reader back to the graph
-        // mid-hunk, which on a busy repository made a diff unreadable. Both are
-        // captured here and put back below — refreshed against the new
-        // snapshot, not restored blindly. The sweep between the two points
-        // (`accept_tab_view` → `invalidate_caches_for_row_renumber`) drops the
-        // entities and renumbers the rows they point at, so the capture has to
-        // hold the entities themselves.
-        let prev_compare = self.compare_view.as_ref().map(|p| p.read(cx).view.clone());
-        let prev_diff = self.capture_main_diff(cx);
+        // Preserve the repository-bound panes while replacing their derived
+        // data. Main Diff is temporarily removed from the slot so a source
+        // that no longer resolves closes cleanly, but `prev_diff` keeps the
+        // same entity alive and restoration reuses it. Compare stays in its
+        // owner slot and is updated in place.
+        let open_panes = self.capture_open_panes(cx);
 
         // #482 stage 2: hand the rebuilt read model to its owner first. A
         // superseded reload (a newer read, or a mutation admitted while this one
@@ -202,16 +200,7 @@ impl KagiApp {
             return;
         }
 
-        self.main_diff = None;
-        self.compare_view = None;
-        // Compare first: the diff restore looks its file up in the refreshed
-        // compare list.
-        if let Some(view) = prev_compare {
-            self.restore_compare(view, cx);
-        }
-        if let Some(prev) = prev_diff {
-            self.restore_main_diff(prev, cx);
-        }
+        self.restore_open_panes(open_panes, cx);
         // ADR-0119 follow-up: the full-screen Analyze + File History overlays are
         // HEAD-versioned and refreshed *in place* after the snapshot is applied
         // (see `refresh_overlays_after_reload`), only when HEAD actually moved.
@@ -265,14 +254,16 @@ impl KagiApp {
         // the commit panel + merge message across that self-induced reload so the
         // user is not bounced out of the commit screen; the post-detect block
         // below confirms the merge is still pending (else it resets everything).
-        let was_merge_commit_pending = self.conflict_merge_pending;
+        let was_merge_commit_pending = self.ui().conflict_merge_pending;
         self.commit_menu = None;
         self.file_menu = None;
         self.stash_menu = None;
         self.worktree_menu = None;
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
-            self.conflict_merge_pending = false;
+            if let Some(ui) = self.ui_mut() {
+                ui.conflict_merge_pending = false;
+            }
             self.refresh_commit_panel_after_reload(cx);
         }
 
@@ -283,7 +274,9 @@ impl KagiApp {
         // conflict produced by the GUI's own operation OR by external CLI (the
         // watcher path runs through here now too) puts the app into / out of
         // Conflict Mode. Force re-detection by invalidating the run-once guard.
-        self.ui_mut().conflict_detected = false;
+        if let Some(ui) = self.ui_mut() {
+            ui.conflict_detected = false;
+        }
         self.detect_conflict_mode(cx);
 
         // Re-resolve the continued-merge flow after detection.
@@ -298,6 +291,7 @@ impl KagiApp {
                 // #473: never overwrite a panel that belongs to another
                 // worktree with THIS repo's staging lists — leave it alone.
                 if let Some(entity) = self
+                    .ui()
                     .commit_panel
                     .clone()
                     .filter(|e| e.read(cx).repo_path == repo_path)
@@ -306,21 +300,27 @@ impl KagiApp {
                         panel.tree_view = v.state.tree_view;
                         v.state = panel;
                     });
-                } else if self.commit_panel.is_none() {
+                } else if self.ui().commit_panel.is_none() {
                     let weak_app = cx.weak_entity();
                     let entity = cx
                         .new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone(), session));
-                    self.commit_panel = Some(entity);
+                    if let Some(ui) = self.ui_mut() {
+                        ui.commit_panel = Some(entity);
+                    }
                 }
-                self.commit_panel_open = true;
-                self.conflict = None;
-                self.conflict_merge_pending = true;
+                if let Some(ui) = self.ui_mut() {
+                    ui.commit_panel_open = true;
+                    ui.conflict = None;
+                    ui.conflict_merge_pending = true;
+                }
             } else {
                 // The merge commit was created (MERGE_HEAD gone) or aborted — end
                 // the flow and drop the commit-panel entity.
-                self.conflict_merge_pending = false;
-                self.commit_panel_open = false;
-                self.commit_panel = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict_merge_pending = false;
+                    ui.commit_panel_open = false;
+                    ui.commit_panel = None;
+                }
             }
         }
 
@@ -384,7 +384,9 @@ impl KagiApp {
             return;
         };
         let commit_limit = self.ui().commit_limit.saturating_add(COMMIT_PAGE_STEP);
-        self.ui_mut().commit_limit = commit_limit;
+        if let Some(ui) = self.ui_mut() {
+            ui.commit_limit = commit_limit;
+        }
 
         let mut repo = match kagi_git::Backend::open(&repo_path) {
             Ok(r) => r,
@@ -436,9 +438,11 @@ impl KagiApp {
     /// does per watcher event, and it only happens while the panel is open; if
     /// it ever shows on a large repository, fold the background `ReloadData`
     /// panel read (already plumbed for the merge case) in instead.
-    fn refresh_commit_panel_after_reload(&mut self, cx: &mut Context<Self>) {
-        let Some(entity) = self.commit_panel.clone() else {
-            self.commit_panel_open = false;
+    pub(crate) fn refresh_commit_panel_after_reload(&mut self, cx: &mut Context<Self>) {
+        let Some(entity) = self.ui().commit_panel.clone() else {
+            if let Some(ui) = self.ui_mut() {
+                ui.commit_panel_open = false;
+            }
             return;
         };
         let nothing_left = entity.update(cx, |v, _| {
@@ -447,8 +451,10 @@ impl KagiApp {
             v.state.staged.is_empty() && v.state.unstaged.is_empty()
         });
         if nothing_left {
-            self.commit_panel_open = false;
-            self.commit_panel = None;
+            if let Some(ui) = self.ui_mut() {
+                ui.commit_panel_open = false;
+                ui.commit_panel = None;
+            }
         }
     }
 
@@ -464,7 +470,11 @@ impl KagiApp {
     ///   → invalidate this repo's Analyze cache and re-mine *in place* if the
     ///   view is open (the app-owned mine seeds the open view on completion), and
     ///   reload the File History view *in place*. Neither view closes.
-    fn refresh_overlays_after_reload(&mut self, new_head: Option<String>, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_overlays_after_reload(
+        &mut self,
+        new_head: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         if self.repo_path.is_none() {
             return;
         }
@@ -474,10 +484,12 @@ impl KagiApp {
         // ── File History ──
         // Per-file history also reflects HEAD; reload it in place only when HEAD
         // moved, and never drop the view on an unrelated reload.
-        if let Some(fh) = self.file_history.clone() {
-            if self.file_history_head != new_head {
+        if let Some(fh) = self.ui().file_history.clone() {
+            if self.ui().file_history_head != new_head {
                 fh.update(cx, |v, cx| v.reload(false, cx));
-                self.file_history_head = new_head;
+                if let Some(ui) = self.ui_mut() {
+                    ui.file_history_head = new_head;
+                }
             }
         }
     }
@@ -521,7 +533,7 @@ impl KagiApp {
             .ui
             .get(&session)
             .map_or(DEFAULT_COMMIT_LIMIT, |ui| ui.commit_limit);
-        let want_panel = self.conflict_merge_pending;
+        let want_panel = self.ui().conflict_merge_pending;
         let want_reflog = self.ui().operation_history.is_empty();
         let apply_path = bg_path.clone();
         // ADR-0104 / #288: move the whole heavy git read (open + full snapshot +
@@ -613,7 +625,7 @@ impl KagiApp {
                 // `WorkingTreeStatus` (no `ChangeKind` transition), so this
                 // must not be gated behind the "status unchanged" early
                 // return below.
-                if let Some(ev) = app.editor_workspace.clone() {
+                if let Some(ev) = app.ui().editor_workspace.clone() {
                     ev.update(cx, |v, cx| v.on_worktree_changed(cx));
                 }
                 let status_unchanged = app
@@ -658,7 +670,7 @@ impl KagiApp {
                 // (The watcher only watches the open working tree, so a worktree
                 // panel simply does not auto-refresh; re-clicking its WIP row
                 // reloads it.)
-                if let Some(entity) = app.commit_panel.clone() {
+                if let Some(entity) = app.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         let rp = v.repo_path.clone();
                         v.state.reload_status(&rp);

@@ -10,6 +10,32 @@
 use crate::{app, ui::*};
 
 impl KagiApp {
+    /// A deferred conflict action (button → next tick via `spawn_in`) must be
+    /// dropped when its frozen owner is no longer the exact attachment on
+    /// screen: it would otherwise plan or execute against whatever conflict the
+    /// now-active tab has (ADR-0197 決定 5 / #722 P1-b). Callbacks capture the
+    /// owner at the click and pass it here rather than re-resolving from active.
+    ///
+    /// It is also refused while the owner's panes await their activation read
+    /// (#722 P2): the pane on screen still describes the pre-switch repository.
+    pub(crate) fn conflict_action_owner_on_screen(&self, owner: &crate::app::Attachment) -> bool {
+        self.pane_mutation_admitted(owner.session)
+            && self.app_sessions.attachment(owner.session).as_ref() == Some(owner)
+    }
+
+    /// Marshal a toast from a retained conflict pane, but only while its frozen
+    /// owner is the tab on screen (a background pane's toast must not surface).
+    pub(crate) fn push_conflict_owner_toast(
+        &mut self,
+        owner: &crate::app::Attachment,
+        kind: ToastKind,
+        msg: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conflict_action_owner_on_screen(owner) {
+            self.push_toast(kind, SharedString::from(msg), cx);
+        }
+    }
     /// ADR-0118 / T-ENTITY-CONFLICT-001: read a clone of the active
     /// [`ConflictMode`] out of the `Entity<ConflictView>`, or `None` when there
     /// is no conflict. Safe to call from `KagiApp` listeners / deferred parent
@@ -27,7 +53,10 @@ impl KagiApp {
         &self,
         cx: &Context<Self>,
     ) -> Option<conflict_view::ConflictMode> {
-        self.conflict.as_ref().and_then(|e| e.read(cx).mode.clone())
+        self.ui()
+            .conflict
+            .as_ref()
+            .and_then(|e| e.read(cx).mode.clone())
     }
 
     pub(crate) fn accept_conflict_intent(
@@ -46,7 +75,7 @@ impl KagiApp {
                 ..
             } => (*token, owner, revision),
         };
-        let current_view = self.conflict.as_ref().map(|view| view.read(cx));
+        let current_view = self.ui().conflict.as_ref().map(|view| view.read(cx));
         let current_token = current_view.as_ref().map(|view| view.intent_token);
         let current_revision = current_view
             .as_ref()
@@ -54,14 +83,16 @@ impl KagiApp {
         let current_owner = self
             .active_session()
             .and_then(|session| self.app_sessions.attachment(session));
-        if !conflict_intent_matches(
-            current_token,
-            current_revision,
-            current_owner.as_ref(),
-            token,
-            owner,
-            revision,
-        ) {
+        if !self.pane_mutation_admitted(owner.session)
+            || !conflict_intent_matches(
+                current_token,
+                current_revision,
+                current_owner.as_ref(),
+                token,
+                owner,
+                revision,
+            )
+        {
             self.push_toast(ToastKind::Error, "stale conflict action was ignored", cx);
             return;
         }
@@ -150,7 +181,15 @@ impl KagiApp {
     /// - **rebase / cherry-pick / revert** → open the `<op> --continue`
     ///   confirmation modal (`conflict_continue_modal`); the sequencer runs only
     ///   when the user confirms (`confirm_conflict_continue`).
-    pub fn conflict_continue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn conflict_continue(
+        &mut self,
+        owner: crate::app::Attachment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.conflict_action_owner_on_screen(&owner) {
+            return;
+        }
         if self.reject_if_busy(cx) {
             return;
         }
@@ -162,8 +201,9 @@ impl KagiApp {
             return;
         };
 
-        let repo = match self.repo_session.as_ref() {
-            Some(s) => s.backend(),
+        let repo_session = self.ui().repo_session.clone();
+        let repo = match repo_session.as_ref() {
+            Some(session) => session.backend(),
             None => {
                 self.push_toast(
                     ToastKind::Error,
@@ -228,6 +268,7 @@ impl KagiApp {
                     return;
                 };
                 let result = self
+                    .ui()
                     .repo_session
                     .as_ref()
                     .expect("repo session existed while planning merge continue")
@@ -271,7 +312,7 @@ impl KagiApp {
                 // `open_commit_panel` runs on the parent (this method is the parent,
                 // deferred from the ConflictView Continue listener — correction #6),
                 // so updating the freshly-created CommitPanelView here is safe.
-                if let Some(entity) = self.commit_panel.clone() {
+                if let Some(entity) = self.ui().commit_panel.clone() {
                     let (title_input, body_input) = {
                         let v = entity.read(cx);
                         (v.title_input.clone(), v.body_input.clone())
@@ -285,7 +326,9 @@ impl KagiApp {
                     }
                     entity.update(cx, |v, _| v.state.commit_msg = message.clone());
                 }
-                self.conflict_merge_pending = true;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict_merge_pending = true;
+                }
             }
             kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
@@ -306,6 +349,7 @@ impl KagiApp {
                     return;
                 };
                 let result = self
+                    .ui()
                     .repo_session
                     .as_ref()
                     .expect("repo session existed while planning conflict continue")
@@ -387,7 +431,7 @@ impl KagiApp {
         };
         let plan = modal.plan;
 
-        if self.repo_session.is_none() {
+        if self.ui().repo_session.is_none() {
             self.push_toast(
                 ToastKind::Error,
                 SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
@@ -401,6 +445,7 @@ impl KagiApp {
             return;
         };
         let result = self
+            .ui()
             .repo_session
             .as_ref()
             .expect("repo session existed while planning conflict continue")
@@ -425,7 +470,9 @@ impl KagiApp {
                 );
                 self.clear_conflict_continue_modal();
                 self.reload(cx);
-                self.ui_mut().conflict_detected = false;
+                if let Some(ui) = self.ui_mut() {
+                    ui.conflict_detected = false;
+                }
                 self.detect_conflict_mode(cx);
             }
             Err(e) => {

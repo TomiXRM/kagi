@@ -230,7 +230,7 @@ impl KagiApp {
             );
             return;
         };
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };
         let repo = session.backend();
@@ -243,7 +243,9 @@ impl KagiApp {
                         self.select(row);
                     }
                 }
-                self.main_diff = None;
+                if let Some(ui) = self.ui_mut() {
+                    ui.main_diff = None;
+                }
                 let view = CompareView {
                     base,
                     target: CompareTarget::Commit(head_tip),

@@ -19,7 +19,7 @@ impl KagiApp {
     /// `"origin/feature/x"`).
     pub fn open_delete_remote_branch_modal(&mut self, remote_branch: impl Into<String>) {
         let remote_branch = remote_branch.into();
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(
@@ -207,7 +207,7 @@ impl KagiApp {
         kind: BranchKind,
         cx: &mut Context<Self>,
     ) {
-        let repo = match self.repo_session.as_ref() {
+        let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
                 self.status_footer =

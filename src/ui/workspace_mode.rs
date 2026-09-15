@@ -47,13 +47,13 @@ impl KagiApp {
     /// active mode — the toolbar must agree with what is on screen.
     pub fn workspace_mode(&self) -> WorkspaceMode {
         if super::workspace::FileHistoryItem.is_open(self)
-            || self.ecosystem.is_some()
+            || self.ui().ecosystem.is_some()
             || self.branch_cleanup_open
         {
             WorkspaceMode::Takeover
         } else if self.pr_mode.is_some() {
             WorkspaceMode::Prs
-        } else if self.editor_workspace.is_some() {
+        } else if self.ui().editor_workspace.is_some() {
             WorkspaceMode::Editor
         } else {
             WorkspaceMode::Graph
@@ -64,14 +64,17 @@ impl KagiApp {
     /// guard, so unsaved buffers still prompt.
     pub fn show_graph_mode(&mut self, cx: &mut Context<Self>) {
         self.leave_takeovers(WorkspaceMode::Graph);
-        if let Some(ev) = self.editor_workspace.clone() {
+        if let Some(ev) = self.ui().editor_workspace.clone() {
             if ev.read(cx).any_dirty() {
                 self.open_editor_dirty_guard(EditorPendingIntent::Close, cx);
             } else {
                 self.close_editor_workspace();
             }
         }
-        klog!("menu: editor_workspace={}", self.editor_workspace.is_some());
+        klog!(
+            "menu: editor_workspace={}",
+            self.ui().editor_workspace.is_some()
+        );
         klog!("mode: graph");
         cx.notify();
     }
@@ -92,10 +95,13 @@ impl KagiApp {
     /// pressing Editor from PR mode used to do nothing — user report).
     pub fn show_editor_mode(&mut self, cx: &mut Context<Self>) {
         self.leave_takeovers(WorkspaceMode::Editor);
-        if self.editor_workspace.is_none() {
+        if self.ui().editor_workspace.is_none() {
             self.open_editor_workspace(cx);
         }
-        klog!("menu: editor_workspace={}", self.editor_workspace.is_some());
+        klog!(
+            "menu: editor_workspace={}",
+            self.ui().editor_workspace.is_some()
+        );
         klog!("mode: editor");
         cx.notify();
     }

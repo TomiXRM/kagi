@@ -659,36 +659,45 @@ fn render_coauthor_menu(
 // listener has returned and the lease is released. Mirrors `ConflictView`.
 
 impl CommitPanelView {
-    fn defer_stage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Marshal a panel action to the parent on the next tick — a listener leases
+    /// this entity, so a synchronous `KagiApp` call would re-enter and panic —
+    /// carrying the frozen `owner` so a tab switch before the task runs drops it
+    /// instead of acting on the panel now on screen (ADR-0197 決定 5 / #722 P1-c).
+    fn defer_owned(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(&mut KagiApp, crate::app::SessionId, &mut Window, &mut Context<KagiApp>)
+            + 'static,
+    ) {
         let weak_app = self.app.clone();
+        let owner = self.owner;
         cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_stage_file(fi, cx));
+            let _ = weak_app.update_in(acx, |app, window, cx| action(app, owner, window, cx));
         })
         .detach();
+    }
+
+    fn defer_stage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.defer_owned(window, cx, move |app, owner, _w, cx| {
+            app.do_stage_file(owner, fi, cx)
+        });
     }
 
     fn defer_unstage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_unstage_file(fi, cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, move |app, owner, _w, cx| {
+            app.do_unstage_file(owner, fi, cx)
+        });
     }
 
     fn defer_stage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_stage_all(cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, |app, owner, _w, cx| app.do_stage_all(owner, cx));
     }
 
     fn defer_unstage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| app.do_unstage_all(cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, |app, owner, _w, cx| {
+            app.do_unstage_all(owner, cx)
+        });
     }
 
     fn defer_select_file(
@@ -697,29 +706,21 @@ impl CommitPanelView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| {
-                app.select_commit_panel_file(file_ref, cx)
-            });
-        })
-        .detach();
+        self.defer_owned(window, cx, move |app, owner, _w, cx| {
+            app.select_commit_panel_file(owner, file_ref, cx)
+        });
     }
 
     fn defer_open_commit_plan_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| app.open_commit_plan_modal(cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, |app, owner, _w, cx| {
+            app.open_commit_plan_modal(owner, cx)
+        });
     }
 
     fn defer_open_discard_all(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| app.open_discard_all_modal(cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, |app, owner, _w, cx| {
+            app.open_discard_all_modal(owner, cx)
+        });
     }
 
     pub(crate) fn defer_open_file_menu(
@@ -750,27 +751,21 @@ impl CommitPanelView {
     }
 
     fn defer_amend(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, _window, cx| app.commit_panel_amend(cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, |app, owner, _w, cx| {
+            app.commit_panel_amend(owner, cx)
+        });
     }
 
     fn defer_smart_suggest(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, window, cx| app.smart_suggest(window, cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, |app, owner, window, cx| {
+            app.smart_suggest(owner, window, cx)
+        });
     }
 
     fn defer_smart_generate(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let weak_app = self.app.clone();
-        cx.spawn_in(window, async move |_v, acx| {
-            let _ = weak_app.update_in(acx, |app, window, cx| app.smart_generate(window, cx));
-        })
-        .detach();
+        self.defer_owned(window, cx, |app, owner, window, cx| {
+            app.smart_generate(owner, window, cx)
+        });
     }
 }
 

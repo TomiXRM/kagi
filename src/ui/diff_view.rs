@@ -146,7 +146,12 @@ impl FileDiffView {
 #[derive(Clone)]
 pub enum MainDiffSource {
     /// Opened from the commit detail panel (changed-files list).
-    Commit { row_index: usize, file_index: usize },
+    /// `commit` is what the diff shows; `row_index` is only where it sits now.
+    Commit {
+        row_index: usize,
+        file_index: usize,
+        commit: Option<CommitId>,
+    },
     /// Opened from the compare changed-files list.
     Compare {
         base: CommitId,
@@ -777,7 +782,7 @@ impl KagiApp {
         if !file_diff.is_binary {
             return None;
         }
-        let repo = self.repo_session.as_ref()?.backend();
+        let repo = self.ui().repo_session.as_ref()?.backend();
         let workdir_bytes = || {
             self.repo_path
                 .as_ref()
@@ -846,7 +851,7 @@ impl KagiApp {
     /// Step the open main diff to the previous/next file (arrow keys).
     /// No-op when no diff is open or already at the list edge.
     pub fn main_diff_step(&mut self, delta: i64, cx: &mut Context<Self>) {
-        let source = match self.main_diff.as_ref() {
+        let source = match self.ui().main_diff.as_ref() {
             Some(pane) => pane.read(cx).view.source.clone(),
             None => return,
         };
@@ -857,6 +862,7 @@ impl KagiApp {
             MainDiffSource::Commit {
                 row_index,
                 file_index,
+                ..
             } => {
                 let len = self
                     .ui()
@@ -880,7 +886,7 @@ impl KagiApp {
                 file_index,
             } => {
                 // ADR-0121 B2: the view lives inside the ComparePane entity now.
-                let len = match self.compare_view.as_ref().map(|p| &p.read(cx).view) {
+                let len = match self.ui().compare_view.as_ref().map(|p| &p.read(cx).view) {
                     Some(view) if view.base == base && view.target == target => view.files.len(),
                     _ => 0,
                 };
@@ -893,7 +899,7 @@ impl KagiApp {
                 }
             }
             MainDiffSource::Unstaged { path } => {
-                let (cur, len) = match self.commit_panel.as_ref() {
+                let (cur, len) = match self.ui().commit_panel.as_ref() {
                     Some(e) => {
                         let p = &e.read(cx).state;
                         (
@@ -919,7 +925,7 @@ impl KagiApp {
                 }
             }
             MainDiffSource::Staged { path } => {
-                let (cur, len) = match self.commit_panel.as_ref() {
+                let (cur, len) = match self.ui().commit_panel.as_ref() {
                     Some(e) => {
                         let p = &e.read(cx).state;
                         (p.staged.iter().position(|f| f.path == path), p.staged.len())
@@ -975,6 +981,7 @@ impl KagiApp {
             removed,
         );
 
+        let commit_for_source = self.commit_id_for_row(selected);
         let fdv = FileDiffView::from_file_diff(file_diff, file_index);
         let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
         let title = fdv.file_name.clone();
@@ -992,6 +999,7 @@ impl KagiApp {
                 let source = MainDiffSource::Commit {
                     row_index: selected,
                     file_index,
+                    commit: commit_for_source.clone(),
                 };
                 let images = self.diff_images_for(file_diff, &source, path);
                 let pane = self.show_main_diff(
@@ -1050,6 +1058,7 @@ impl KagiApp {
                     MainDiffSource::Commit {
                         row_index: selected,
                         file_index,
+                        commit: commit_for_source.clone(),
                     },
                 );
                 // `highlight_diff_rows`'s language is a pure function of the
@@ -1078,7 +1087,7 @@ impl KagiApp {
             None => return,
         };
         // ADR-0121 B2: the view lives inside the ComparePane entity now.
-        let view = match self.compare_view.as_ref() {
+        let view = match self.ui().compare_view.as_ref() {
             Some(p) => p.read(cx).view.clone(),
             None => return,
         };
@@ -1089,7 +1098,7 @@ impl KagiApp {
         let path = file_status.path.clone();
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };
         let repo = session.backend();
@@ -1179,7 +1188,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let entity = match self.commit_panel.as_ref() {
+        let entity = match self.ui().commit_panel.as_ref() {
             Some(e) => e.clone(),
             None => return,
         };
@@ -1223,7 +1232,7 @@ impl KagiApp {
             },
             None => None,
         };
-        let repo = match (&foreign_backend, self.repo_session.as_ref()) {
+        let repo = match (&foreign_backend, self.ui().repo_session.as_ref()) {
             (Some(b), _) => b,
             (None, Some(session)) => session.backend(),
             (None, None) => return,
@@ -1303,7 +1312,7 @@ impl KagiApp {
             // Remote read-only view (ADR-0089 Phase 2c): the file diff is an SSH
             // round-trip, loaded off-thread.
             self.open_remote_main_diff(file_index, cx);
-        } else if self.compare_view.is_some() {
+        } else if self.ui().compare_view.is_some() {
             self.open_main_diff_compare(file_index, cx);
         } else {
             self.open_main_diff_commit(file_index, cx);
@@ -1376,7 +1385,7 @@ impl KagiApp {
         }
 
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let Some(session) = self.repo_session.as_ref() else {
+        let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };
         let repo = session.backend();
@@ -1384,10 +1393,8 @@ impl KagiApp {
         match repo.commit_file_diff(&id, &path) {
             Ok(file_diff) => {
                 let arc = std::sync::Arc::new(file_diff);
-                self.ui_mut()
-                    .diff_caches
-                    .file_content
-                    .insert((selected, file_index), arc.clone());
+                let key = (selected, file_index);
+                self.with_ui(|ui| ui.diff_caches.file_content.insert(key, arc.clone()));
                 self.set_commit_main_diff(&arc, &path, selected, file_index, cx);
             }
             Err(e) => {
@@ -1441,14 +1448,6 @@ impl KagiApp {
             });
         })
         .detach();
-    }
-
-    /// T-UI-003: Close the main diff view and return to the commit graph.
-    /// No-op when main_diff is None.
-    pub fn close_main_diff(&mut self) {
-        self.main_diff = None;
-        // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
-        self.pending_headless_diff = None;
     }
 }
 

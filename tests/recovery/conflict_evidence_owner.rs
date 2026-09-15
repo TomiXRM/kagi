@@ -47,6 +47,7 @@ fn assert_visible_conflict(
             "{stage}: the accepted read lost the in-progress operation"
         );
         let pane = app
+            .ui()
             .conflict
             .as_ref()
             .unwrap_or_else(|| panic!("{stage}: conflict detector did not build a pane"));
@@ -89,7 +90,7 @@ pub fn scenario_conflict_detector_owner_guard(cx: &mut VisualTestAppContext) {
     let owner_b = app.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b.clone(), cx), "open B");
         assert!(
-            app.conflict.is_none(),
+            app.ui().conflict.is_none(),
             "switch to B retained A's root conflict pane"
         );
         app.active_session().expect("B owner")
@@ -100,9 +101,18 @@ pub fn scenario_conflict_detector_owner_guard(cx: &mut VisualTestAppContext) {
 
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
+        // S5 retains A's own pane across the switch (#722 P2); what must never
+        // appear is B's conflict evidence.
+        let shown: Vec<std::path::PathBuf> = app
+            .ui()
+            .conflict
+            .as_ref()
+            .and_then(|view| view.read(cx).mode.as_ref())
+            .map(|mode| mode.session.files.iter().map(|f| f.path.clone()).collect())
+            .unwrap_or_default();
         assert!(
-            app.conflict.is_none(),
-            "return to A retained B's root conflict pane"
+            !shown.iter().any(|path| path == Path::new("beta.txt")),
+            "return to A showed B's conflict pane"
         );
     });
     cx.run_until_parked();

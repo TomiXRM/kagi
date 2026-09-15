@@ -265,18 +265,6 @@ impl KagiApp {
         else {
             return;
         };
-        if self.editor_workspace_any_dirty(cx) {
-            self.open_editor_dirty_guard(
-                EditorPendingIntent::MergeInWorktree {
-                    source,
-                    target,
-                    path,
-                    owner: origin,
-                },
-                cx,
-            );
-            return;
-        }
         if !self.open_repository(path, cx) {
             return;
         }

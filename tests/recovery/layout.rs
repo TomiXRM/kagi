@@ -388,7 +388,7 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
         app.update(cx, |app, cx| app.open_editor_workspace(cx));
         cx.run_until_parked();
         let editor = cx
-            .read(|cx| app.read(cx).editor_workspace.clone())
+            .read(|cx| app.read(cx).ui().editor_workspace.clone())
             .expect("actual Editor workspace");
         for (name, text) in inputs() {
             let history = FileHistory {

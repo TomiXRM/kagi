@@ -150,6 +150,7 @@ impl KagiApp {
         if let Some(session) = self.active_session() {
             self.app_sessions.depart(session);
         }
+        self.close_window_slots_of_departing_tab();
     }
 
     /// Identity of the repository currently on screen, in tab-path terms:
@@ -192,7 +193,6 @@ impl KagiApp {
                 ui.repo_session = None;
             }
             self.remote_view = Some(rv);
-            self.reset_per_repo_ui();
             self.begin_session_revalidation(tab.session);
             self.queue_pane_revalidation(tab.session); // no read follows: the snapshot is it
                                                        // #482 stage 2: the remote snapshot belongs to this tab's session
@@ -222,9 +222,6 @@ impl KagiApp {
             }
         }
 
-        // Clear only repository-scoped root presentation. Session-owned panes
-        // remain attached to the tab being left (ADR-0197).
-        self.reset_per_repo_ui();
         self.begin_session_revalidation(tab.session);
         // GitHub Phase 1: refetch PRs for the new repo right away (the
         // ticker alone left the tab at 0 PRs until its next tick).
@@ -280,7 +277,7 @@ impl KagiApp {
     /// Show a **remote** repository (already snapshotted over SSH) in the main
     /// graph/sidebar/detail views, read-only (ADR-0089 Phase 2b).
     ///
-    /// Mirrors the local apply path — `reset_per_repo_ui` + `publish_tab_view` from
+    /// Mirrors the local apply path — tab departure + `publish_tab_view` from
     /// `build_tab_view(&snap, name)` — but with no `repo_path` (so the fs watcher
     /// stays disarmed and every local-path operation guards itself off). Unlike a
     /// local repo there is no working tree, so the tab carries a `remote` marker
@@ -315,7 +312,6 @@ impl KagiApp {
         // No repo_session write here (P1-a): the departing local owner keeps its
         // retained session, the remote owner attached below has none by default,
         // and ui_mut() would panic when Connect Remote runs from Welcome.
-        self.reset_per_repo_ui();
 
         // #482 stage 2: build the read model first, but publish it only once the
         // tab (and therefore its session) exists — the read belongs to an owner,
@@ -420,18 +416,6 @@ impl KagiApp {
         .detach();
     }
 
-    /// Reset repository-scoped root presentation while switching owners.
-    /// Session-owned panes and resources stay attached to their owner and are
-    /// destroyed only by `release_session`.
-    fn reset_per_repo_ui(&mut self) {
-        self.app_sessions.invalidate_plan();
-        self.pr_menu = None;
-        self.pr_mode = None;
-        self.branch_cleanup_open = false;
-        self.pending_headless_diff = None;
-        self.pending_headless_compare = None;
-        self.drop_repo_scoped_modal();
-    }
     /// Snapshot + build the [`TabViewState`] on a background thread
     /// (`RepoSnapshot` is `Send`), then hand it to its **owner** on the main
     /// thread (#482 stage 2): the read is bound to `session` and to the read

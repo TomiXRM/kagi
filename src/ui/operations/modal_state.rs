@@ -42,7 +42,7 @@ impl KagiApp {
     }
 
     /// Drop the active modal when it belongs to the repository being switched
-    /// away from (#492). Called by `reset_per_repo_ui` / `show_welcome`; see
+    /// away from (#492). Called on tab departure and by `show_welcome`; see
     /// [`ActiveModal::is_repo_scoped`] for the classification.
     pub(crate) fn drop_repo_scoped_modal(&mut self) {
         if self

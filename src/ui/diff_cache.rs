@@ -42,8 +42,8 @@ pub struct DiffCaches {
 
 impl DiffCaches {
     /// Drop every cached diff/changed-files entry as one unit. Single
-    /// invalidation point for `reload` / `reload_external` /
-    /// `reset_per_repo_ui` / `show_welcome` so no field can be forgotten.
+    /// invalidation point for reloads and session activation so no field can
+    /// be forgotten.
     pub fn clear(&mut self) {
         self.changed_files.clear();
         self.file_content.clear();

@@ -20,8 +20,8 @@ impl KagiApp {
             cx.notify();
             return;
         }
-        if self.pr_menu.is_some() {
-            self.pr_menu = None;
+        if self.ui().pr_menu.is_some() {
+            self.with_ui(|ui| ui.pr_menu = None);
             cx.notify();
             return;
         }
@@ -30,8 +30,8 @@ impl KagiApp {
             cx.notify();
             return;
         }
-        if self.pr_mode.is_some() {
-            if self.pr_mode.as_ref().is_some_and(|m| m.active.is_some()) {
+        if self.pr_mode().is_some() {
+            if self.pr_mode().is_some_and(|m| m.active.is_some()) {
                 self.pr_mode_home(cx);
             } else {
                 self.toggle_pr_mode(cx);

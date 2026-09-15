@@ -1956,7 +1956,7 @@ fn build_pr_row(
     let pr_menu = pr.clone();
     let menu_handler = cx.listener(
         move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _window, cx| {
-            this.pr_menu = Some((pr_menu.clone(), e.position));
+            this.with_ui(|ui| ui.pr_menu = Some((pr_menu.clone(), e.position)));
             cx.stop_propagation();
             cx.notify();
         },

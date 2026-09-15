@@ -53,6 +53,7 @@ pub mod pr_conversation;
 pub mod pr_dashboard;
 pub mod pr_merge_status;
 pub mod pr_mode;
+mod pr_mode_revalidate;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_squash;
@@ -1129,10 +1130,6 @@ pub struct KagiApp {
     /// The authenticated `gh` login (fetched once by the ticker); drives the
     /// sidebar's Mine / Review requested / Others grouping.
     pub github_login: Option<String>,
-    /// GitHub Phase 1c: PR mode (Some while active).
-    pub pr_mode: Option<pr_mode::PrModeState>,
-    /// Right-click menu on a sidebar PR row: `Some((pr, cursor))` while open.
-    pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
@@ -1204,9 +1201,6 @@ pub struct KagiApp {
     /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
     /// modal, shown when Continue routes a rebase / cherry-pick / revert.
     /// (Stored in `active_modal` — see the `conflict_continue_modal()` accessor.)
-    /// ADR-0128: Branch Cleanup takeover open flag. The table data itself
-    /// is per-tab (`view().cleanup_rows`), so a bool is the whole gate.
-    pub branch_cleanup_open: bool,
     /// ADR-0128: Branch Cleanup table column widths (persisted).
     pub cleanup_cols: branch_cleanup::CleanupCols,
     /// #454 Phase 1: modal sections whose open/closed state the user has
@@ -1340,8 +1334,6 @@ impl KagiApp {
             transport_holds: Default::default(),
             github_ticker_alive: false,
             github_login: None,
-            pr_mode: None,
-            pr_menu: None,
             write_busy_op: None,
             remote_write: None,
             planning: None,
@@ -1367,7 +1359,6 @@ impl KagiApp {
             update_checked: false,
             update_installing: false,
             update_status: None,
-            branch_cleanup_open: false,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             modal_section_overrides: std::collections::HashSet::new(),
             modal_list_scroll: UniformListScrollHandle::new(),

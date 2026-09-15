@@ -160,7 +160,7 @@ impl WorkspaceItem for PrModeItem {
         Some(CenterPane::PrMode)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.pr_mode.is_some()
+        app.pr_mode().is_some()
     }
     fn render(
         &self,
@@ -186,7 +186,7 @@ impl WorkspaceItem for BranchCleanupItem {
         Some(CenterPane::BranchCleanup)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.branch_cleanup_open
+        app.ui().branch_cleanup_open
     }
     fn render(
         &self,

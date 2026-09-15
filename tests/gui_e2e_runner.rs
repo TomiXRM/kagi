@@ -959,6 +959,10 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_commit_panel_refuses_during_activation),
             ),
             (
+                "manual_reload_releases_revalidation",
+                Box::new(crate::pane_resources::scenario_manual_reload_releases_revalidation),
+            ),
+            (
                 "conflict_pane_survives_activation",
                 Box::new(crate::app_conflict::scenario_conflict_pane_survives_activation),
             ),

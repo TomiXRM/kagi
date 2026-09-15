@@ -954,3 +954,50 @@ pub fn scenario_commit_close_drops_panel(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS commit_close_drops_panel");
 }
+
+/// #722 P2: a manual reload (Cmd+R) that supersedes the activation read must
+/// still release the revalidation gate. It used to leave `panes_revalidating`
+/// set for good, so every later Stage / Discard was refused without a word.
+pub fn scenario_manual_reload_releases_revalidation(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_fixture(&root, "rr-a");
+    let repo_b = build_fixture(&root, "rr-b");
+    std::fs::write(repo_a.join("f.txt"), "rr-a second\nrr-a unstaged\n").unwrap();
+
+    let (app, window) = mount(cx, &repo_a);
+    let owner_a = app.update(cx, |state, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(state, repo_a.clone(), cx);
+        state.active_session().expect("A owner")
+    });
+    cx.run_until_parked();
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(repo_b.clone(), cx), "open B");
+    });
+    cx.run_until_parked();
+
+    app.update(cx, |state, cx| {
+        state.switch_repo(0, cx);
+        assert!(
+            state.ui().panes_revalidating(),
+            "precondition: A awaits its activation read"
+        );
+        // Cmd+R before the activation read lands supersedes it.
+        state.reload_checked(cx).expect("manual reload");
+    });
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| app.read(cx).ui().panes_revalidating()),
+        "manual-reload-releases-gate: the gate outlived a successful reload",
+    );
+    app.update(cx, |state, cx| state.do_stage_file(owner_a, 0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        staged_count(&repo_a),
+        1,
+        "manual-reload-releases-gate: Stage stayed refused after the reload",
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS manual_reload_releases_revalidation");
+}

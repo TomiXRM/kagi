@@ -101,9 +101,18 @@ pub fn scenario_conflict_detector_owner_guard(cx: &mut VisualTestAppContext) {
 
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
+        // S5 retains A's own pane across the switch (#722 P2); what must never
+        // appear is B's conflict evidence.
+        let shown: Vec<std::path::PathBuf> = app
+            .ui()
+            .conflict
+            .as_ref()
+            .and_then(|view| view.read(cx).mode.as_ref())
+            .map(|mode| mode.session.files.iter().map(|f| f.path.clone()).collect())
+            .unwrap_or_default();
         assert!(
-            app.ui().conflict.is_none(),
-            "return to A retained B's root conflict pane"
+            !shown.iter().any(|path| path == Path::new("beta.txt")),
+            "return to A showed B's conflict pane"
         );
     });
     cx.run_until_parked();

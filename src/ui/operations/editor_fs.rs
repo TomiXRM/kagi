@@ -375,6 +375,19 @@ impl KagiApp {
         let Some(owner) = self.active_session() else {
             return;
         };
+        // Filesystem writes act on the retained listing too: refuse them while
+        // it is being revalidated, like Stage / Discard downstream (#722).
+        let writes_fs = matches!(
+            action,
+            EditorTreeAction::Rename(_)
+                | EditorTreeAction::Delete { .. }
+                | EditorTreeAction::AddGitignore(_)
+                | EditorTreeAction::NewFile(_)
+                | EditorTreeAction::NewFolder(_)
+        );
+        if writes_fs && !self.pane_mutation_admitted(owner) {
+            return;
+        }
         match action {
             EditorTreeAction::PreviewMarkdown(path) => {
                 if let Some(ews) = self.ui().editor_workspace.clone() {

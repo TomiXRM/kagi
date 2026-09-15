@@ -1321,6 +1321,7 @@ mod macos {
                 MainDiffSource::Commit {
                     row_index,
                     file_index,
+                    ..
                 } => assert_eq!(
                     (row_index, file_index),
                     (1, 0),

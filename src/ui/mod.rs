@@ -2074,6 +2074,7 @@ impl KagiApp {
             MainDiffSource::Commit {
                 row_index,
                 file_index,
+                ..
             } => {
                 let path = self
                     .ui()

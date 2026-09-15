@@ -62,6 +62,7 @@ impl MainDiffPane {
             MainDiffSource::Commit {
                 row_index,
                 file_index,
+                ..
             } if row_index == row && file_index == file => {}
             _ => return,
         }
@@ -226,7 +227,7 @@ impl KagiApp {
         let source = pane.read(cx).view.source.clone();
         let path = self.main_diff_source_ref(&source, cx).map(|(p, _)| p);
         let commit = match source {
-            MainDiffSource::Commit { row_index, .. } => self.commit_id_for_row(row_index),
+            MainDiffSource::Commit { ref commit, .. } => commit.clone(),
             _ => None,
         };
         let wip_repo = match source {
@@ -275,6 +276,7 @@ impl KagiApp {
                     p.view.source = MainDiffSource::Commit {
                         row_index,
                         file_index,
+                        commit: Some(commit.clone()),
                     }
                 });
                 if let Some(ui) = self.ui_mut() {
@@ -401,6 +403,14 @@ impl KagiApp {
         if let Some(prev) = panes.main_diff {
             self.restore_main_diff(prev, cx);
         }
+    }
+
+    /// T-UI-003: Close the main diff view and return to the commit graph.
+    /// No-op when main_diff is None.
+    pub fn close_main_diff(&mut self) {
+        self.with_ui(|ui| ui.main_diff = None);
+        // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
+        self.pending_headless_diff = None;
     }
 
     /// Revalidate **every** retained pane of the tab on screen against the

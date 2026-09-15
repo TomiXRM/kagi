@@ -146,7 +146,12 @@ impl FileDiffView {
 #[derive(Clone)]
 pub enum MainDiffSource {
     /// Opened from the commit detail panel (changed-files list).
-    Commit { row_index: usize, file_index: usize },
+    /// `commit` is what the diff shows; `row_index` is only where it sits now.
+    Commit {
+        row_index: usize,
+        file_index: usize,
+        commit: Option<CommitId>,
+    },
     /// Opened from the compare changed-files list.
     Compare {
         base: CommitId,
@@ -857,6 +862,7 @@ impl KagiApp {
             MainDiffSource::Commit {
                 row_index,
                 file_index,
+                ..
             } => {
                 let len = self
                     .ui()
@@ -975,6 +981,7 @@ impl KagiApp {
             removed,
         );
 
+        let commit_for_source = self.commit_id_for_row(selected);
         let fdv = FileDiffView::from_file_diff(file_diff, file_index);
         let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
         let title = fdv.file_name.clone();
@@ -992,6 +999,7 @@ impl KagiApp {
                 let source = MainDiffSource::Commit {
                     row_index: selected,
                     file_index,
+                    commit: commit_for_source.clone(),
                 };
                 let images = self.diff_images_for(file_diff, &source, path);
                 let pane = self.show_main_diff(
@@ -1050,6 +1058,7 @@ impl KagiApp {
                     MainDiffSource::Commit {
                         row_index: selected,
                         file_index,
+                        commit: commit_for_source.clone(),
                     },
                 );
                 // `highlight_diff_rows`'s language is a pure function of the
@@ -1439,14 +1448,6 @@ impl KagiApp {
             });
         })
         .detach();
-    }
-
-    /// T-UI-003: Close the main diff view and return to the commit graph.
-    /// No-op when main_diff is None.
-    pub fn close_main_diff(&mut self) {
-        self.with_ui(|ui| ui.main_diff = None);
-        // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
-        self.pending_headless_diff = None;
     }
 }
 

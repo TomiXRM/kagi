@@ -5,6 +5,20 @@ use super::super::super::remote_browse::RemoteBrowseModal;
 use super::super::super::KagiApp;
 
 impl KagiApp {
+    /// ADR-0197 決定 1: the two **window-global single slots** that can only
+    /// describe the tab on screen, closed when that tab is left. Everything else
+    /// a tab shows is owned by its session and survives the switch.
+    ///
+    /// - The plan slot (`Sessions::{revision, state, plan_owner}`) is one per
+    ///   window, not per session: a plan (or a planning request) started in A
+    ///   must not stay confirmable once B is on screen.
+    /// - A repo-scoped confirmation in `active_modal` carries no owner; parking
+    ///   it would let a confirmation planned in A be applied to B (#492).
+    pub(crate) fn close_window_slots_of_departing_tab(&mut self) {
+        self.app_sessions.invalidate_plan();
+        self.drop_repo_scoped_modal();
+    }
+
     #[inline]
     pub fn remote_browse(&self) -> Option<&RemoteBrowseModal> {
         match &self.active_modal {

@@ -302,30 +302,30 @@ pub(crate) fn render_pr_menu_overlay(
     let pos =
         kagi_ui_core::theme::clamp_menu_pos(pos, 190.0, 4.0 + 2.0 * FILE_MENU_ROW_H, viewport);
     let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
-        this.pr_menu = None;
+        this.with_ui(|ui| ui.pr_menu = None);
         cx.notify();
     });
     let pr_open = pr.clone();
     let open_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.pr_menu = None;
+        this.with_ui(|ui| ui.pr_menu = None);
         this.open_pr_in_browser(&pr_open);
         cx.notify();
     });
     let pr_copy = pr.clone();
     let copy_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.pr_menu = None;
+        this.with_ui(|ui| ui.pr_menu = None);
         this.copy_pr_url(&pr_copy, cx);
         cx.notify();
     });
     let pr_peek = pr.clone();
     let peek_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.pr_menu = None;
+        this.with_ui(|ui| ui.pr_menu = None);
         this.open_pr_peek(&pr_peek, cx);
         cx.notify();
     });
     let pr_jump = pr.clone();
     let jump_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.pr_menu = None;
+        this.with_ui(|ui| ui.pr_menu = None);
         this.jump_to_pr_head(&pr_jump, cx);
         cx.notify();
     });

@@ -428,7 +428,7 @@ impl KagiApp {
             el.child(render_editor_delete_confirm_modal(modal, cx))
         })
         // ── Sidebar PR context menu (GitHub Phase 1) ──
-        .when_some(self.pr_menu.clone(), |el, (pr, pos)| {
+        .when_some(self.ui().pr_menu.clone(), |el, (pr, pos)| {
             el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx))
         })
         // ── Inspector/Compare file context menu (History/Edit/Copy) ──

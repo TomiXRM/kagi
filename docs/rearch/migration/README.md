@@ -70,8 +70,9 @@ zero-copy tab ownership target.
     the PR's PM ruling requires implementation in C0 → C1 → C2 → C3 order below.
   - [ ] **#482 stage 2 — #489.** Make snapshot/read ownership single-owner and
     replace the read generation guard with `RequestSlot`.
-  - [ ] **#482 stage 3.** Move selection, scroll, pane, and menu state into `TabView`,
-    then remove `reset_per_repo_ui`.
+  - [x] **#482 stage 3 — #643 Wave 4 ([ADR-0197](../../adr/0197-session-owned-ui-state.md)).** Selection, scroll,
+    pane, menu and cache state are session-owned in `TabUiState`; `reset_per_repo_ui` is gone
+    (#714 #716 #717 #718 #720 #721 #722 #724).
   - [x] **Conflict C0 — #582 / part of #569.** Preserve `TerminationUnknown` as `Unknown`,
     reserve the owner lease before Continue/Skip/Abort, and retain it when stop is unconfirmed.
   - [x] **Conflict C1.** Move Save and directory/file resolution through the app
@@ -79,7 +80,8 @@ zero-copy tab ownership target.
     exact conflict/buffer revisions and the Backend-owned receipt accompany the
     finite completion evidence.
   - [~] **Operation lifecycle Big Bang — #643 ([ADR-0196](../../adr/0196-operation-lifecycle-contract.md)).**
-    Waves 0–2 complete; Wave 3 complete except the abandoned-executor supervisor (#703).
+    Waves 0–2 complete; Wave 3 complete except the abandoned-executor supervisor (#703);
+    Wave 4 (session-owned UI state, ADR-0197) complete.
     Every write is admitted through `begin_write`/`write_lease` and settled through
     `apply`; `busy_op`, `LegacyBusy` and the `repo_path + switch_generation` stale
     guard are gone — the lease is the evidence, the `OwnerStamp` the routing key.

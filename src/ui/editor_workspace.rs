@@ -113,7 +113,7 @@ impl KagiApp {
         // PR mode also outranks Editor in `resolve_workspace`, so leaving it
         // open would hide the editor we are about to create (same reasoning
         // as the two closes above). PR mode holds no unsaved state.
-        self.pr_mode = None;
+        self.with_ui(|ui| ui.pr_mode = None);
         let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(), root_focus));
         let pane_id = view.entity_id();
         // The pane's own background reads (file list, diff, history, blame,

@@ -145,8 +145,8 @@ const COMMIT_LIMIT: usize = 500;
 
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
-        if self.pr_mode.is_some() {
-            self.pr_mode = None;
+        if self.pr_mode().is_some() {
+            self.with_ui(|ui| ui.pr_mode = None);
             klog!("pr-mode: closed");
         } else {
             if self.repo_path.is_none() {
@@ -160,7 +160,7 @@ impl KagiApp {
             // bottom terminal panel would eat a third of it. Collapse it on
             // entry — Cmd-J still brings it back (user request).
             self.bottom_panel_open = false;
-            self.pr_mode = Some(PrModeState::default());
+            self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
             klog!("pr-mode: opened");
         }
         cx.notify();
@@ -168,15 +168,14 @@ impl KagiApp {
 
     /// Open (or activate) a tab for `pr` and load its content.
     pub fn pr_mode_open(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
-        if self.pr_mode.is_none() {
+        if self.pr_mode().is_none() {
             self.toggle_pr_mode(cx);
         }
         if let Some(ix) = self
-            .pr_mode
-            .as_ref()
+            .pr_mode()
             .and_then(|m| m.tabs.iter().position(|t| t.pr.number == pr.number))
         {
-            if let Some(m) = self.pr_mode.as_mut() {
+            if let Some(m) = self.pr_mode_mut() {
                 m.active = Some(ix);
                 reset_view_if_not_conflicting(m, pr);
             }
@@ -249,7 +248,7 @@ impl KagiApp {
             tab.selected_file = Some(0);
         }
         self.pr_tab_reload_diff(&mut tab);
-        let m = self.pr_mode.get_or_insert_with(PrModeState::default);
+        let Some(m) = self.pr_mode_mut() else { return };
         m.tabs.push(tab);
         m.active = Some(m.tabs.len() - 1);
         reset_view_if_not_conflicting(m, pr);
@@ -266,6 +265,7 @@ impl KagiApp {
             return;
         };
         let repo2 = repo.clone();
+        let owner = self.active_session();
         cx.spawn(async move |this, acx| {
             // #347: mergeStateStatus + merge-queue position. A failure
             // (non-GitHub host, old gh, no MQ) is not fatal — the card just
@@ -276,8 +276,7 @@ impl KagiApp {
                 .await;
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
-                    .pr_mode
-                    .as_mut()
+                    .pr_mode_of(owner)
                     .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
                 else {
                     return;
@@ -310,8 +309,7 @@ impl KagiApp {
                 .await;
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
-                    .pr_mode
-                    .as_mut()
+                    .pr_mode_of(owner)
                     .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
                 else {
                     return;
@@ -342,7 +340,7 @@ impl KagiApp {
     /// Switch the body between Overview (description), Review, Diff and
     /// Conflicts.
     pub fn pr_mode_show(&mut self, view: PrView, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             m.view = view;
         }
         if view == PrView::Conflicts {
@@ -353,7 +351,7 @@ impl KagiApp {
 
     /// Select which conflicted file the Conflicts tab shows.
     pub fn pr_mode_select_conflict(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
                 if t.conflict_selected.unwrap_or(0) != ix {
                     t.conflict_preview = None;
@@ -374,7 +372,7 @@ impl KagiApp {
         rows: Option<std::sync::Arc<Vec<super::diff_view::DiffRow>>>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             if let Some(t) = m.active.and_then(|a| m.tabs.get_mut(a)) {
                 t.conflict_at = at;
                 if let (Some(row), Some(rows)) = (row, rows) {
@@ -415,7 +413,7 @@ impl KagiApp {
     /// Fetch the marker text for the selected conflicted file, if it is not
     /// already the one held. One file at a time: see `PrTab::conflict_preview`.
     fn pr_mode_load_conflict_text(&mut self, cx: &mut Context<Self>) {
-        let Some(m) = self.pr_mode.as_ref() else {
+        let Some(m) = self.pr_mode() else {
             return;
         };
         let Some(tab) = m.active.and_then(|a| m.tabs.get(a)) else {
@@ -437,6 +435,7 @@ impl KagiApp {
         };
         let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
         let bg_path = path.clone();
+        let owner = self.active_session();
         let task = cx.background_spawn(async move {
             let repo = kagi_git::Backend::open(&repo_path).ok()?;
             repo.pr_conflict_text(&base, &head, &bg_path).ok().flatten()
@@ -444,7 +443,7 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let text = task.await;
             let _ = this.update(acx, |app, cx| {
-                let Some(m) = app.pr_mode.as_mut() else {
+                let Some(m) = app.pr_mode_of(owner) else {
                     return;
                 };
                 let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
@@ -456,7 +455,7 @@ impl KagiApp {
                 // this tab exists to remove.
                 let first = t.apply_conflict_text(&path, text.as_deref());
                 cx.notify();
-                if let Some((row, rows)) = first {
+                if let Some((row, rows)) = first.filter(|_| app.active_session() == owner) {
                     app.pr_mode_jump_conflict(0, Some(row), Some(rows), cx);
                 }
             });
@@ -472,7 +471,7 @@ impl KagiApp {
     /// the PR or the base does, and re-running it on every render of a tab the
     /// user is *looking at* would be the worst possible cadence.
     fn pr_mode_load_conflicts(&mut self, cx: &mut Context<Self>) {
-        let Some(m) = self.pr_mode.as_ref() else {
+        let Some(m) = self.pr_mode() else {
             return;
         };
         let Some(ix) = m.active else { return };
@@ -492,12 +491,13 @@ impl KagiApp {
             repo.pr_conflict_files(&base, &head)
                 .map_err(|e| format!("{e}"))
         });
+        let owner = self.active_session();
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 // The user may have closed or switched tabs while this ran;
                 // find the tab by PR number rather than by the index we had.
-                let Some(m) = app.pr_mode.as_mut() else {
+                let Some(m) = app.pr_mode_of(owner) else {
                     return;
                 };
                 let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
@@ -515,7 +515,9 @@ impl KagiApp {
                 cx.notify();
                 // The list has just arrived; pull the first file's text so the
                 // tab is not left showing an empty pane beside a full list.
-                app.pr_mode_load_conflict_text(cx);
+                if app.active_session() == owner {
+                    app.pr_mode_load_conflict_text(cx);
+                }
             });
         })
         .detach();
@@ -524,7 +526,7 @@ impl KagiApp {
     /// Back to the dashboard. Deactivates the tab without closing it, so its
     /// loaded commits / files / conversation survive the round trip.
     pub fn pr_mode_home(&mut self, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             m.active = None;
             m.focus = PrFocus::List;
         }
@@ -540,7 +542,7 @@ impl KagiApp {
     }
 
     pub fn pr_mode_close_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             if ix < m.tabs.len() {
                 m.tabs.remove(ix);
                 m.active = if m.tabs.is_empty() {
@@ -556,8 +558,7 @@ impl KagiApp {
     /// Close the tab for `number`, if open (after a merge).
     pub fn pr_mode_close_tab_for(&mut self, number: u64, cx: &mut Context<Self>) {
         let ix = self
-            .pr_mode
-            .as_ref()
+            .pr_mode()
             .and_then(|m| m.tabs.iter().position(|t| t.pr.number == number));
         if let Some(ix) = ix {
             self.pr_mode_close_tab(ix, cx);
@@ -566,7 +567,7 @@ impl KagiApp {
 
     /// Select a commit (`None` = whole PR): the files list and diff follow.
     pub fn pr_mode_select_commit(&mut self, sel: Option<usize>, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             m.view = PrView::Diff;
         }
         let Some(mut tab) = self.pr_mode_take_active() else {
@@ -590,7 +591,7 @@ impl KagiApp {
 
     /// Title click: jump to the Overview (description), or back to the Diff.
     pub fn pr_mode_toggle_description(&mut self, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             m.view = if m.view == PrView::Overview {
                 PrView::Diff
             } else {
@@ -601,7 +602,7 @@ impl KagiApp {
     }
 
     pub fn pr_mode_select_file(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             m.view = PrView::Diff;
         }
         let Some(mut tab) = self.pr_mode_take_active() else {
@@ -623,7 +624,7 @@ impl KagiApp {
             PrFocus::Files,
             PrFocus::Stack,
         ];
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             let i = ORDER.iter().position(|f| *f == m.focus).unwrap_or(0) as i32;
             let n = ORDER.len() as i32;
             m.focus = ORDER[((i + delta) % n + n) as usize % ORDER.len()];
@@ -633,7 +634,7 @@ impl KagiApp {
 
     /// ↑/↓ inside the focused pane.
     pub fn pr_mode_step(&mut self, delta: i32, cx: &mut Context<Self>) {
-        let Some(m) = self.pr_mode.as_ref() else {
+        let Some(m) = self.pr_mode() else {
             return;
         };
         match m.focus {
@@ -702,7 +703,7 @@ impl KagiApp {
                     let pr = prs[next].clone();
                     self.pr_mode_open(&pr, cx);
                     // Keep the focus on the stack after the tab switch.
-                    if let Some(m) = self.pr_mode.as_mut() {
+                    if let Some(m) = self.pr_mode_mut() {
                         m.focus = PrFocus::Stack;
                     }
                 }
@@ -711,7 +712,7 @@ impl KagiApp {
     }
 
     fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             m.focus = f;
         }
         cx.notify();
@@ -720,12 +721,12 @@ impl KagiApp {
     // Take/put the active tab so `pr_tab_reload_diff` can borrow `self`
     // (the repo session) without fighting the `pr_mode` borrow.
     fn pr_mode_take_active(&mut self) -> Option<PrTab> {
-        let m = self.pr_mode.as_mut()?;
+        let m = self.pr_mode_mut()?;
         let ix = m.active?;
         (ix < m.tabs.len()).then(|| m.tabs.remove(ix))
     }
     fn pr_mode_put_active(&mut self, tab: PrTab) {
-        if let Some(m) = self.pr_mode.as_mut() {
+        if let Some(m) = self.pr_mode_mut() {
             let ix = m.active.unwrap_or(0).min(m.tabs.len());
             m.tabs.insert(ix, tab);
             m.active = Some(ix);
@@ -827,7 +828,7 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
     // The right rail is STACK + FILES *of the open PR*. On the dashboard
     // there is no open PR, so it stood there empty — drop it and give the
     // width to the home screen (user request).
-    let has_tab = app.pr_mode.as_ref().is_some_and(|m| m.active.is_some());
+    let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
     let left = render_pr_list(app, cx);
     let center = render_center(app, cx);
     let right = has_tab.then(|| render_right(app, cx));
@@ -1002,15 +1003,14 @@ fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
 
 // ── Left: PR list, grouped, stack-ordered ────────────────────
 fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let focused = app.pr_mode.as_ref().map(|m| m.focus) == Some(PrFocus::List);
-    let left_w = app.pr_mode.as_ref().map(|m| m.left_w).unwrap_or(LEFT_W);
+    let focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::List);
+    let left_w = app.pr_mode().map(|m| m.left_w).unwrap_or(LEFT_W);
     let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::List, cx);
     });
     let all = app.ui().github_prs.clone();
     let active_pr = app
-        .pr_mode
-        .as_ref()
+        .pr_mode()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)))
         .map(|t| t.pr.number);
     let mut col = focus_border(
@@ -1110,7 +1110,7 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
 
 // ── Center: header + view tabs + commits + body ──────────────
 fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let active: Option<usize> = app.pr_mode.as_ref().and_then(|m| m.active);
+    let active: Option<usize> = app.pr_mode().and_then(|m| m.active);
     // No tab strip: the left PR list already highlights the active PR and
     // switching is one click there, so a second row of #N chips was pure
     // duplication (user request). Tabs still exist as state — opening a PR
@@ -1133,7 +1133,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     };
     // Snapshot what the renderers need from the active tab.
     let (pr, commits, selected_commit, diff, scroll) = {
-        let m = app.pr_mode.as_ref().unwrap();
+        let m = app.pr_mode().unwrap();
         let t = &m.tabs[ix];
         (
             t.pr.clone(),
@@ -1156,7 +1156,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         conversation_loaded,
         merge_status_loaded,
     ) = {
-        let m = app.pr_mode.as_ref().unwrap();
+        let m = app.pr_mode().unwrap();
         let t = &m.tabs[ix];
         (
             m.view,
@@ -1331,7 +1331,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         this.pr_mode_select_commit(None, cx);
     });
     let now = kagi_ui_core::time::now_unix_secs();
-    let commits_focused = app.pr_mode.as_ref().map(|m| m.focus) == Some(PrFocus::Commits);
+    let commits_focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::Commits);
     let commits_focus_click =
         cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
             this.pr_mode_focus(PrFocus::Commits, cx);
@@ -1599,8 +1599,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                 // Loaded rows belong to the tab. A loading shell is just one
                 // explanatory row; it must not borrow another file's content.
                 let (dv, jumps) = app
-                    .pr_mode
-                    .as_mut()
+                    .pr_mode_mut()
                     .and_then(|mode| mode.tabs.get_mut(ix))
                     .and_then(|tab| tab.conflict_preview.as_mut())
                     .filter(|preview| preview.path() == files[file_index].path)
@@ -1644,11 +1643,10 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
 // ── Right: stack (top) + files (bottom) ──────────────────────
 fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let active = app
-        .pr_mode
-        .as_ref()
+        .pr_mode()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)));
-    let right_w = app.pr_mode.as_ref().map(|m| m.right_w).unwrap_or(RIGHT_W);
-    let focus = app.pr_mode.as_ref().map(|m| m.focus);
+    let right_w = app.pr_mode().map(|m| m.right_w).unwrap_or(RIGHT_W);
+    let focus = app.pr_mode().map(|m| m.focus);
     let mut col = div()
         .w(theme::scaled_px(right_w))
         .flex_shrink_0()
@@ -1917,8 +1915,7 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     // whole changed-file list beside a conflict diff invites clicking a row
     // that has nothing to do with what is on screen.
     let conflicts_view = app
-        .pr_mode
-        .as_ref()
+        .pr_mode()
         .map(|m| m.view == PrView::Conflicts)
         .unwrap_or(false);
     let (files, selected_file) = if conflicts_view {
@@ -2106,7 +2103,7 @@ fn render_pr_card(
     let pr_menu = pr.clone();
     let menu = cx.listener(
         move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
-            this.pr_menu = Some((pr_menu.clone(), e.position));
+            this.with_ui(|ui| ui.pr_menu = Some((pr_menu.clone(), e.position)));
             cx.stop_propagation();
             cx.notify();
         },

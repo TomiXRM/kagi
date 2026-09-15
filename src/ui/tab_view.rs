@@ -259,7 +259,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 /// Owned by [`KagiApp::ui`], keyed by `SessionId`, and reachable only through
 /// [`KagiApp::ui`] / [`KagiApp::ui_mut`]. Two open tabs therefore hold two
 /// independent values and a switch cannot leak one into the other — which is
-/// why `reset_per_repo_ui` no longer has to remember to clear the selection.
+/// why a tab switch has nothing to clear.
 ///
 /// It deliberately owns **no** operation lifecycle: no lease, no reconcile
 /// entry, no planning slot, no in-flight write. Closing a tab drops this value,
@@ -289,6 +289,12 @@ pub struct TabUiState {
     /// Branch Cleanup list position and checked branch names.
     pub cleanup_scroll: UniformListScrollHandle,
     pub cleanup_selected: HashSet<String>,
+    /// ADR-0128 Branch Cleanup takeover and GitHub Phase 1c PR mode are this
+    /// tab's workspace mode; the PR tabs they hold name this repository's PRs.
+    pub branch_cleanup_open: bool,
+    pub pr_mode: Option<super::pr_mode::PrModeState>,
+    /// Right-click menu on one of this tab's PR rows: `Some((pr, cursor))`.
+    pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
     /// Smart Commit generation status belongs to the session whose panel
     /// initiated it; background completion never writes through the active tab.
     pub smart_commit_generating: bool,
@@ -358,6 +364,9 @@ impl Default for TabUiState {
             smart_commit_generating: false,
             smart_commit_status: None,
             cleanup_selected: HashSet::new(),
+            branch_cleanup_open: false,
+            pr_mode: None,
+            pr_menu: None,
             view_publish_gen: 0,
             cache_epoch: 0,
             diff_caches: super::diff_cache::DiffCaches::default(),
@@ -425,6 +434,16 @@ impl KagiApp {
             // Re-arm detection: its outcome decides whether the retained
             // conflict pane is updated in place or replaced.
             ui.conflict_detected = false;
+            // PR mode is dropped rather than re-checked. A `PrTab` is a snapshot
+            // of the refs *and* of GitHub (reviews, merge status, conflict
+            // preview) taken when it was opened, and nothing refreshes it while
+            // the tab is away; rebuilding it on activation needs the PR list
+            // that the activation is still fetching, races the loads started
+            // before departure, and loses the user's position anyway. Carrying
+            // PR mode across a switch is out of scope for #643 Wave 4 S6 — the
+            // tab reopens the PR. The *ownership* stays session-scoped, so B
+            // never sees A's PRs.
+            ui.pr_mode = None;
         }
     }
 

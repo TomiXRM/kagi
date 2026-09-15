@@ -4,8 +4,10 @@
 //! **ownership of presentation intent**, not pixels:
 //!
 //! - a selection made in A is invisible in B, and vice versa;
-//! - A→B→A restores A's selection instead of clearing it (`reset_per_repo_ui`
-//!   no longer has a selection to forget);
+//! - A→B→A restores A's selection instead of clearing it — and, since S6 deleted
+//!   the switch-time reset, A's row menu and Branch Cleanup takeover too,
+//!   while B first appears `is_pristine` (PR mode is dropped by the activation
+//!   revalidation — see `pr_mode_cleared_on_activation`);
 //! - opening A again through a second locator for the same worktree (`<root>`
 //!   vs `<root>/.git`) resolves to the live session and leaves its state alone;
 //! - closing A removes its key from **both** stores, and reopening the same
@@ -181,6 +183,13 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
         let ui = app.ui_mut().expect("active session");
         ui.graph_scroll_x = 42.0;
         ui.branch_groups_collapsed.insert("local:feature".into());
+        // S6: the workspace mode used to be reset on every switch.
+        ui.branch_cleanup_open = true;
+        ui.pr_mode = Some(Default::default());
+        ui.pr_menu = Some((
+            crate::cleanup_publish_owner::pr(7, "a-head"),
+            Default::default(),
+        ));
         ui.commit_limit
     });
 
@@ -193,6 +202,11 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     let a_cleanup_name = "feature/old".to_owned();
     let b_initial_limit = kagi.read_with(cx, |app, _| {
         assert_eq!(app.active_session(), Some(session_b));
+        assert_eq!(
+            app.ui().is_pristine(),
+            Ok(()),
+            "tab-ui-pristine: A's UI surface leaked into the freshly opened B",
+        );
         assert_eq!(
             app.ui().graph_scroll_x,
             0.0,
@@ -307,6 +321,19 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             app.ui().cleanup_selected.contains(&a_cleanup_name),
             "A's cleanup selection was not restored",
         );
+        assert!(
+            app.ui().branch_cleanup_open,
+            "A's cleanup takeover was not restored"
+        );
+        assert!(
+            app.pr_mode().is_none(),
+            "the activation revalidation must drop A's PR mode, not restore it",
+        );
+        assert_eq!(
+            app.ui().pr_menu.as_ref().map(|(pr, _)| pr.number),
+            Some(7),
+            "A's PR row menu was not restored",
+        );
     });
 
     // The switches armed background revalidates. A landing read publishes a
@@ -382,6 +409,11 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             None,
             "the reopened tab inherited the previous incarnation's selection",
         );
+        assert_eq!(
+            app.ui().is_pristine(),
+            Ok(()),
+            "the reopened tab inherited the previous incarnation's UI surface",
+        );
         assert_ui_domain(app, "after reopening A");
         session
     });
@@ -398,6 +430,66 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
 
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] PASS tab_ui_state_ownership");
+}
+
+/// #724 review (ADR-0197 決定 3): a PR tab is a snapshot of the refs **and** of
+/// GitHub taken when it was opened, and nothing refreshes it while the tab is
+/// away. Carrying it across a switch is out of scope for S6, so the activation
+/// drops PR mode and the tab reopens the PR — what S6 keeps is the *ownership*:
+/// a PR opened in A is never visible in B.
+pub fn scenario_pr_mode_cleared_on_activation(cx: &mut VisualTestAppContext) {
+    let root_dir = tempfile::tempdir().expect("tempdir");
+    let root = root_dir.path().canonicalize().unwrap();
+    let repo_a = build_linear_fixture(&root, "gamma");
+    let repo_b = build_linear_fixture(&root, "beta");
+    // A PR tab resolves its base and head tips from the read's remote branches,
+    // so the fixture needs both as remote-tracking refs.
+    git(&repo_a, &["checkout", "-q", "-b", "feat", "main"]);
+    std::fs::write(repo_a.join("feat.txt"), "feat one\n").unwrap();
+    git(&repo_a, &["add", "."]);
+    git(&repo_a, &["commit", "-q", "-m", "feat one"]);
+    git(&repo_a, &["checkout", "-q", "main"]);
+    for branch in ["feat", "main"] {
+        git(
+            &repo_a,
+            &[
+                "update-ref",
+                &format!("refs/remotes/origin/{branch}"),
+                &format!("refs/heads/{branch}"),
+            ],
+        );
+    }
+
+    let (kagi, window) = mount(cx, &repo_a);
+    cx.run_until_parked();
+    kagi.update(cx, |app, cx| {
+        app.pr_mode_open(&crate::cleanup_publish_owner::pr(7, "feat"), cx);
+        let mode = app.pr_mode().expect("PR mode is open");
+        assert_eq!(mode.tabs.len(), 1, "the PR did not open a tab");
+    });
+
+    kagi.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+    });
+    cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        assert!(
+            app.pr_mode().is_none(),
+            "pr-mode-is-session-owned: A's PR mode was visible in B",
+        );
+    });
+
+    kagi.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    kagi.update(cx, |app, _| {
+        assert!(
+            app.pr_mode().is_none(),
+            "pr-mode-cleared-on-activation: returning to A showed the PR snapshot it left behind",
+        );
+    });
+
+    unmount(cx, kagi, window);
+    eprintln!("[gui-e2e] PASS pr_mode_cleared_on_activation");
 }
 
 pub fn scenario_tab_ui_state_rejects_detached_writer(cx: &mut VisualTestAppContext) {

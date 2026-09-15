@@ -1,6 +1,6 @@
 # ADR-0197: tab UI state を session が所有する — #643 Wave 4 の契約
 
-- Status: Accepted (Wave 4 契約; 実装は S1–S6 で分割)
+- Status: Accepted (Wave 4 契約; S1–S6 実装済み — 決定 5 の表を参照)
 - Date: 2026-09-14
 - Related: [#643](https://github.com/TomiXRM/kagi/issues/643) A4、ADR-0196（operation lifecycle contract）、ADR-0183（session-owned read）、ADR-0182（close は実行取消ではない）、ADR-0121（WorkspaceItem）、ADR-0093（one modal at a time）
 - 適用範囲: `src/ui/`（`mod.rs` / `tabs.rs` / `tab_view.rs` / `workspace.rs` / 各 pane）
@@ -101,6 +101,8 @@ terminal）を持つ前に、**owner 不在時に mutation を拒否する API**
 専用の既定値を返し、writer は owner を要求する）へ切り替え、その境界を test で固定すること。
 **S2–S5 で resource を移す前の前提条件**とする。
 
+**実績（S5 #722）**: `ui_mut()` を `Option` に変え、owner 不在では `None` を返して書き込みを拒否する（`ui()` の fallback は読み取り専用の既定値）。pane entity / terminal / subscription はこの `Some` 側（`with_ui`）か凍結 owner の `ui.get_mut` からのみ書かれ、owner 不在の resource sink は存在しない。境界は `tab_ui_state_rejects_detached_writer` が固定する。
+
 `Reads` と同じ「immutable empty + write sink」の分離は**この用途では解にならない**。
 `Reads::get_mut(None)`（`src/app/read.rs:260-278`）は永続的な `sink` を返すので、そこへ
 書かれた resource は store ごと drop されるまで生き続け、subscription や terminal は
@@ -157,14 +159,14 @@ transition test に分離する。観測できないことを理由に受け入�
 
 ## 決定 5 — slice 順（P1 blocker つき）
 
-| slice | 内容 |
-| --- | --- |
-| S1 骨格 | store と lifecycle API（attach / reattach / detach を `release_session` 1 本へ）、`selected` だけ移管、leak matrix harness の最初の行 |
-| S2 identity / callback cutover | `github_*`、cleanup、conflict detector、ecosystem、fetch flight、smart-commit probe を `SessionId` / request token / global revision に分類し直し、path stamp と active-root callback を消す（`file_menu` の対象 path は消さず owner を足す）。**`switch_generation` もここで削除** |
-| S3 選択と位置 + modal slot の統一 | scroll handle 群、`commit_limit`、`branch_groups_collapsed`。あわせて `remote_browse_modal` / `update_modal_open` を `ActiveModal` variant へ統合し、confirm / cancel の routing を 1 本にする（決定 1 の `active_modal` 行）。これは session 所有とは独立なので S1 / S2 と並行してよいが、**S5 より前に済ませる** |
-| S4 read cache と history | `diff_caches`、`wip_diffstat`、`last_working_status`、`operation_history`、history seed |
-| S5 pane / resource retention | 決定 3 を `WorkspaceItem` に適用。`dispose(&mut KagiApp)` を session state の close-time disposal へ狭める |
-| S6 掃除 | `reset_per_repo_ui` と残った path / generation field を削除、ADR-0196 決定 5 と migration README を更新 |
+| slice | 内容 | 実績 |
+| --- | --- | --- |
+| S1 骨格 | store と lifecycle API（attach / reattach / detach を `release_session` 1 本へ）、`selected` だけ移管、leak matrix harness の最初の行 | #714 |
+| S2 identity / callback cutover | `github_*`、cleanup、conflict detector、ecosystem、fetch flight、smart-commit probe を `SessionId` / request token / global revision に分類し直し、path stamp と active-root callback を消す（`file_menu` の対象 path は消さず owner を足す）。**`switch_generation` もここで削除** | S2a #716、S2b #717 |
+| S3 選択と位置 + modal slot の統一 | scroll handle 群、`commit_limit`、`branch_groups_collapsed`。あわせて `remote_browse_modal` / `update_modal_open` を `ActiveModal` variant へ統合し、confirm / cancel の routing を 1 本にする（決定 1 の `active_modal` 行）。これは session 所有とは独立なので S1 / S2 と並行してよいが、**S5 より前に済ませる** | modal slot #718、位置と Smart Commit #720 |
+| S4 read cache と history | `diff_caches`、`wip_diffstat`、`last_working_status`、`operation_history`、history seed | #721 |
+| S5 pane / resource retention | 決定 3 を `WorkspaceItem` に適用。`dispose(&mut KagiApp)` を session state の close-time disposal へ狭める | #722 |
+| S6 掃除 | `reset_per_repo_ui` と残った path / generation field を削除、ADR-0196 決定 5 と migration README を更新 | #724 |
 
 **S5 を S2 より先に行うこと、および retained entity の callback を captured `SessionId` なしで
 root に着地させることは P1 merge blocker。** 背景 tab の entity と subscription が生きたまま
@@ -208,6 +210,22 @@ delete-branch plan（`Attachment` の session + visit と planning tag が既に
 - `main_diff` / `compare_view` を含む pane entity とその subscription / focus lifecycle
   は root のまま残した。retained entity callback の owner cutover と close-time disposal
   は S5 の範囲であり、S4 で data cache と混在させない。
+
+### S6 実装
+
+- `reset_per_repo_ui` を削除した。残っていた行の行き先:
+  - `pr_mode` / `pr_menu` / `branch_cleanup_open` は per-session として `TabUiState` へ移した。
+    PR mode の背景 load は spawn 時に owner を凍結して書き戻す（決定 3）。
+  - `pending_headless_diff` / `pending_headless_compare` は reset から外した。headless は
+    `Context` 前に staging し最初の frame で promote するが、tab 切替は `Context` を要するので
+    その間に switch は起きない。
+  - plan slot の invalidate と repo-scoped modal の破棄は、window-global 1 slot なので
+    `close_window_slots_of_departing_tab` として tab departure（`depart_active_tab`）に残した。
+    どちらも owner を持たない単一 slot で、park すると A の計画・確認が B に向く（#492）。
+- `TabUiState::is_pristine` を `..` なしの網羅 destructuring で入れ、leak matrix が
+  「開いた直後の B」「close → reopen」に対して assert する。scroll handle の位置は gpui
+  `test-support` 下でしか読めないので probe では `_` にし、leak matrix で観測する。
+- 残る `*_gen` / `*_epoch` はすべて現役の supersede guard で、削除対象はなかった。
 
 ## 決定 6 — #703 との境界
 

@@ -1,6 +1,6 @@
 # ADR-0196: operation lifecycle を唯一化する — Wave 0 契約の固定
 
-- Status: Accepted (Wave 0 契約; Wave 1–3 実装済み、Wave 3 の残件は #703 のみ — 決定 5 の表を参照)
+- Status: Accepted (Wave 0 契約; Wave 1–4 実装済み、Wave 3 の残件は #703 のみ — 決定 5 の表を参照)
 - Date: 2026-09-12
 - Related: [#643](https://github.com/TomiXRM/kagi/issues/643)（A0 / A1 / A2）、ADR-0104（run pipeline）、ADR-0149（oplog）、ADR-0177（TerminationUnknown）、ADR-0183（session-owned read）、ADR-0195（FailureCode）
 - 適用範囲: `src/app`、`src/ui/operations/*`、`crates/kagi-git/src/backend/*`、`src/remote/*`
@@ -196,7 +196,7 @@ merge が resolve されると `ConflictView` が破棄され、abort が構造�
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
 | 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了（#703 を除く）**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702 + 本 slice)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。残るのは下記「終端未確定の出口」の #703（abandoned executor の supervisor）のみで、これが閉じるまで受入条件（全 family の host-close / unknown / settle matrix 統一）は満たさない |
-| 4 | UI state: `TabUiState` per session | 契約は **ADR-0197**（所有の 5 分類 / `TabStores` / entity retention / leak matrix oracle / slice 順）。実装は S1–S6 |
+| 4 | UI state: `TabUiState` per session | **完了** (#714 #716 #717 #718 #720 #721 #722 #724)。契約は **ADR-0197**（所有の 5 分類 / `TabStores` / entity retention / leak matrix oracle / slice 順）。`reset_per_repo_ui` は削除され、tab 切替に残るのは window-global 1 slot（plan slot と repo-scoped modal）の close だけ |
 | C2 Abort | read-model-derived availability / entity-independent admission / typed report / reconcile | **完了** (#704。Wave 4 の前倒しではなく、ADR-0183 の read ownership と Wave 3 / C2 mutation lifecycle の correctness slice) |
 | 5 | crate 抽出（境界安定後のみ） | |
 | 6 | cleanup | |

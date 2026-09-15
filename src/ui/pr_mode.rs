@@ -248,12 +248,7 @@ impl KagiApp {
             tab.selected_file = Some(0);
         }
         self.pr_tab_reload_diff(&mut tab);
-        let Some(m) = self
-            .ui_mut()
-            .map(|ui| ui.pr_mode.get_or_insert_with(PrModeState::default))
-        else {
-            return;
-        };
+        let Some(m) = self.pr_mode_mut() else { return };
         m.tabs.push(tab);
         m.active = Some(m.tabs.len() - 1);
         reset_view_if_not_conflicting(m, pr);
@@ -460,11 +455,7 @@ impl KagiApp {
                 // this tab exists to remove.
                 let first = t.apply_conflict_text(&path, text.as_deref());
                 cx.notify();
-                // Positioning acts on the tab on screen, so only for its owner.
-                if app.active_session() != owner {
-                    return;
-                }
-                if let Some((row, rows)) = first {
+                if let Some((row, rows)) = first.filter(|_| app.active_session() == owner) {
                     app.pr_mode_jump_conflict(0, Some(row), Some(rows), cx);
                 }
             });
@@ -522,12 +513,11 @@ impl KagiApp {
                 );
                 t.conflicts = Some(result);
                 cx.notify();
-                if app.active_session() != owner {
-                    return; // the text load reads the active tab's repository
-                }
                 // The list has just arrived; pull the first file's text so the
                 // tab is not left showing an empty pane beside a full list.
-                app.pr_mode_load_conflict_text(cx);
+                if app.active_session() == owner {
+                    app.pr_mode_load_conflict_text(cx);
+                }
             });
         })
         .detach();

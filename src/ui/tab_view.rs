@@ -434,6 +434,16 @@ impl KagiApp {
             // Re-arm detection: its outcome decides whether the retained
             // conflict pane is updated in place or replaced.
             ui.conflict_detected = false;
+            // PR mode is dropped rather than re-checked. A `PrTab` is a snapshot
+            // of the refs *and* of GitHub (reviews, merge status, conflict
+            // preview) taken when it was opened, and nothing refreshes it while
+            // the tab is away; rebuilding it on activation needs the PR list
+            // that the activation is still fetching, races the loads started
+            // before departure, and loses the user's position anyway. Carrying
+            // PR mode across a switch is out of scope for #643 Wave 4 S6 — the
+            // tab reopens the PR. The *ownership* stays session-scoped, so B
+            // never sees A's PRs.
+            ui.pr_mode = None;
         }
     }
 

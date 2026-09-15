@@ -438,8 +438,6 @@ impl KagiApp {
         // its tree / buffers / external-change banner are as stale as anything
         // else here and only this read says what the worktree now holds.
         self.revalidate_editor_workspace(cx);
-        // PR mode holds a snapshot of the refs and of GitHub (ADR-0197 決定 3).
-        self.revalidate_pr_mode(cx);
         // Conflict is the one pane whose check is asynchronous: the read model
         // says whether an operation is in progress, but only a detector run
         // against *this* read can say whether it is still the same conflict.

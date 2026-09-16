@@ -46,6 +46,11 @@ Tier B も起動コマンドをそのまま貼る。unique な `USER` と `KAGI_
 session・settings・trust・oplog を実際に書き換える。操作内容だけの報告では、
 その 4 つが付いていたか証跡から確認できない (verify skill Tier B)。
 
+`KAGI_NO_ACTIVATE=1` の唯一の例外は**タブ帯を操作するシナリオ**。非 key ウィンドウ
+ではタイトルバーのクリックが macOS のウィンドウドラッグに取られ、アプリに届かない
+どころか以後の入力も壊れる。外す場合は、外したことと「タブ帯の操作が必要だった」
+理由を本文に書く。残り 3 つの隔離フラグは外さない (verify skill Tier B)。
+
 Tier B の起動行には `KAGI_LOG_DIR=$(mktemp -d)` を直接書かない。その値は Kagi の
 子プロセスにしか渡らず親 shell に残らないので、後から `operations.jsonl` も
 `kagi.stderr` も screenshot の置き場所も辿れない。先に `VERIFY_LOG_DIR` へ代入し、

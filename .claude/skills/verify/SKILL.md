@@ -22,14 +22,17 @@ skimming, so they are stated here as well as where they apply:
   whatever happens to be in front. Tier B's `scripts/pidclick.swift` posts events
   straight to the process with `CGEventPostToPid`: the pointer does not move, the
   foreground application does not change, and the target is the window you named. The
-  user can keep working while a scenario runs.
+  user can keep working while a scenario runs. The one exception is a scenario that
+  clicks the **tab strip**, which needs a key window and therefore the foreground —
+  see Tier B's launch pitfalls. Ask the user before running one, or run it on a
+  machine nobody is working on.
 - **Never run the full `gui_e2e_runner`.** Always scope it with `KAGI_GUI_E2E_ONLY`.
   An unfiltered run once opened roughly 1,400 windows and crashed macOS.
 
 | Need | Lane |
 | --- | --- |
 | Deterministic assertions on real UI state, no windows on the user's screen | Tier A runner (`KAGI_GUI_E2E_ONLY` always) |
-| A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` |
+| A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` (tab-strip scenarios take the foreground — see its pitfalls) |
 | Git states for safety-sensitive flows | Tier C fixtures |
 
 ## Tier A — native GUI E2E runner
@@ -259,6 +262,15 @@ on the tab strip moved the window from `180,125` to `215,151` and killed input.
 Without the flag, the same clicks switch tabs (`[kagi] tab-switch: <name>
 cached=yes`) and the window stays put. Keep the flag for scenarios that stay in
 the content area — it is what leaves the user's foreground app alone.
+
+Dropping it has a real cost, so treat it as the documented exception to the
+no-foreground rule at the top of this skill: `open_main_window` calls
+`cx.activate(true)`, so the launch pulls Kagi in front of whatever the user is
+doing. Ask the user first, or run on a machine nobody is working on, and say in
+the PR that the scenario needed the tab strip. Every other isolation flag
+(`USER`, `KAGI_NO_RESTORE=1`, `KAGI_LOG_DIR`) still applies unchanged — they
+protect the user's session, settings, trust and oplog, which foreground does not
+touch.
 
 `scripts/pidclick.swift` sends events with `CGEventPostToPid`; it does not move
 the user's pointer or activate another app. Select a window with `windows --pid`,

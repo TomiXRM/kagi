@@ -917,6 +917,7 @@ fn build_sidebar_row(
             *is_current,
             *is_main,
             *locked,
+            this.remote_view.is_some(),
             cx,
         ),
         SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),

@@ -22,6 +22,7 @@ pub(super) fn build_worktree_row(
     is_current: bool,
     is_main: bool,
     locked: bool,
+    is_remote: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // issue #356: worktree name/path are remote/filesystem-origin text —
@@ -62,6 +63,14 @@ pub(super) fn build_worktree_row(
         // 🔐 reads at a glance where the muted "locked" text was easy to miss
         // next to the path label (user feedback).
         row = row.child(div().flex_shrink_0().text_xs().child("🔐"));
+    }
+    // An SSH tab's worktree is fabricated by `remote::` with the path as it
+    // exists **on the remote host** (ADR-0089), while every menu action —
+    // open, reveal, copy, prune, repair — runs locally. A local directory that
+    // happens to share that absolute path would be opened instead of erroring,
+    // so a remote view gets no worktree menu at all.
+    if is_remote {
+        return row.into_any();
     }
     // The lifecycle items (remove / lock / unlock) are linked worktrees only —
     // the main worktree is never lockable or removable from kagi — but the path

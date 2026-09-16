@@ -161,6 +161,21 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
             app.enter_remote_view(host.clone(), "/srv/repo".into(), snap, cx);
+            // #733: this tab's worktree is fabricated with the *remote host's*
+            // path while every worktree-menu action runs locally, so the menu
+            // must refuse to open here at all. The refusal lives at that seam
+            // rather than at each call site, which is what this exercises.
+            app.open_worktree_menu(
+                "main".into(),
+                false,
+                true,
+                Some("/srv/repo".into()),
+                gpui::Point::default(),
+            );
+            assert!(
+                app.worktree_menu.is_none(),
+                "a remote view must open no worktree menu"
+            );
             app.open_stash_drop_modal(1, cx);
         });
         wait(cx, &app, |app| {

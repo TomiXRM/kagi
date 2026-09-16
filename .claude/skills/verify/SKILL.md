@@ -1,6 +1,6 @@
 ---
 name: kagi-verify
-description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer or the foreground: Tier B uses scripts/pidclick.swift (CGEventPostToPid). cliclick is banned for new validation.
+description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer, and does not take the foreground either — except a scenario that clicks the tab strip, which needs a key window, so ask the user first or use a machine nobody is working on. Tier B uses scripts/pidclick.swift (CGEventPostToPid). cliclick is banned for new validation.
 ---
 
 # Kagi verification recipe
@@ -22,14 +22,17 @@ skimming, so they are stated here as well as where they apply:
   whatever happens to be in front. Tier B's `scripts/pidclick.swift` posts events
   straight to the process with `CGEventPostToPid`: the pointer does not move, the
   foreground application does not change, and the target is the window you named. The
-  user can keep working while a scenario runs.
+  user can keep working while a scenario runs. The one exception is a scenario that
+  clicks the **tab strip**, which needs a key window and therefore the foreground —
+  see Tier B's launch pitfalls. Ask the user before running one, or run it on a
+  machine nobody is working on.
 - **Never run the full `gui_e2e_runner`.** Always scope it with `KAGI_GUI_E2E_ONLY`.
   An unfiltered run once opened roughly 1,400 windows and crashed macOS.
 
 | Need | Lane |
 | --- | --- |
 | Deterministic assertions on real UI state, no windows on the user's screen | Tier A runner (`KAGI_GUI_E2E_ONLY` always) |
-| A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` |
+| A real running app, real clicks, without taking the pointer or foreground | Tier B `pidclick` (tab-strip scenarios take the foreground — see its pitfalls) |
 | Git states for safety-sensitive flows | Tier C fixtures |
 
 ## Tier A — native GUI E2E runner
@@ -241,13 +244,36 @@ PID=$!
 WID=12345 # Replace with the selected window ID from the listing.
 ```
 
-Two launch pitfalls, both seen in practice. Launch Kagi from an unsandboxed shell:
+Three launch pitfalls, all seen in practice. Launch Kagi from an unsandboxed shell:
 started from a sandboxed agent shell the process runs and logs normally, but
 WindowServer never shows its window, so there is nothing to click. And with
 `KAGI_NO_ACTIVATE=1` the window may not be on screen, so `windows --pid` (which
 lists on-screen windows only) prints nothing even though the window exists;
 clicks, keys and `screencapture -l` address the window by ID and still work, so
 take the ID from `CGWindowListCopyWindowInfo([.optionAll], …)` for that PID.
+
+**Drop `KAGI_NO_ACTIVATE=1` when the scenario clicks the tab strip.** The tabs
+live in the window's title bar, and macOS hands a title-bar click on a *non-key*
+window to its own window-drag handling instead of the application. The click
+never reaches the tab, the window moves under you, and the drag session it
+starts swallows every later event — clicks stop working in the content area too,
+and only relaunching recovers. Measured while verifying #643 Wave 4: two clicks
+on the tab strip moved the window from `180,125` to `215,151` and killed input.
+Without the flag, the same clicks switch tabs (`[kagi] tab-switch: <name>
+cached=yes`) and the window stays put. Keep the flag for scenarios that stay in
+the content area — it is what leaves the user's foreground app alone.
+
+Dropping it has a real cost, so treat it as the documented exception to the
+no-foreground rule at the top of this skill: `run_app` calls `cx.activate(true)`
+right after `open_main_window` (`src/ui/mod.rs:3187`), guarded by exactly this
+variable, so the launch pulls Kagi in front of whatever the user is doing.
+`open_main_window` itself does not activate, and the Dock-reopen handler's own
+`cx.activate(true)` is deliberately unguarded — the user asked for the window
+there. Ask the user first, or run on a machine nobody is working on, and say in
+the PR that the scenario needed the tab strip. Every other isolation flag
+(`USER`, `KAGI_NO_RESTORE=1`, `KAGI_LOG_DIR`) still applies unchanged — they
+protect the user's session, settings, trust and oplog, which foreground does not
+touch.
 
 `scripts/pidclick.swift` sends events with `CGEventPostToPid`; it does not move
 the user's pointer or activate another app. Select a window with `windows --pid`,

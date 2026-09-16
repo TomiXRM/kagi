@@ -23,7 +23,7 @@ impl KagiApp {
         let mut stack = div()
             .absolute()
             .bottom(theme::scaled_px(34.))
-            .left(theme::scaled_px(12.))
+            .left(theme::scaled_px(super::TOAST_INSET_PX))
             .w(theme::scaled_px(460.))
             .flex()
             .flex_col()

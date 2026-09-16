@@ -482,3 +482,21 @@ impl KagiApp {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{TOAST_INSET_PX, TOAST_SLIDE_PX};
+
+    /// #709: the cards slide by a negative margin from their inset position, so
+    /// a travel longer than the inset puts them past the left window edge and
+    /// the user sees a card cut in half for the length of the animation. That
+    /// is what this pair of constants is for; a future "make it slide further"
+    /// must move the inset too, not just the travel.
+    #[test]
+    fn the_toast_slide_never_crosses_the_window_edge() {
+        assert!(
+            TOAST_SLIDE_PX <= TOAST_INSET_PX,
+            "a {TOAST_SLIDE_PX}px slide from a {TOAST_INSET_PX}px inset leaves the window"
+        );
+    }
+}

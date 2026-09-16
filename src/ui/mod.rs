@@ -918,9 +918,16 @@ mod hms_tests {
 /// Snackbar slide animation timings / distance.
 const TOAST_ENTER_MS: u64 = 240;
 const TOAST_EXIT_MS: u64 = 220;
-/// Horizontal slide distance (px): far enough to clear the left window edge,
-/// so the toast slides fully in from / out to off-screen.
-const TOAST_SLIDE_PX: f32 = 500.0;
+/// Left inset of the toast/snackbar stack, and therefore the furthest the
+/// cards may slide (#709). The slide used to be 500px — wider than the 460px
+/// card — on the theory that a toast should come in "from off-screen". But the
+/// left window edge is not the screen edge: what it actually produced was a
+/// card cut in half by the window boundary for the length of the animation,
+/// which reads as a broken layout rather than as motion. Keeping the travel
+/// within the inset means the card never crosses that edge; the opacity fade
+/// carries the rest of the animation.
+const TOAST_INSET_PX: f32 = 12.0;
+const TOAST_SLIDE_PX: f32 = TOAST_INSET_PX;
 
 // ──────────────────────────────────────────────────────────────
 // KagiApp — root view

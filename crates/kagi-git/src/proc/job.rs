@@ -40,11 +40,13 @@
 //! proof between the probe and the retry would turn "proven stopped" back into
 //! "no evidence", and the scope would be held until kagi restarts.
 //!
-//! The other end of the lifetime: a run that exits cleanly, with every pipe
-//! closed, can still leave something of its own inside the job — a hook that
-//! started a daemon. No receipt names that key, so nothing will ever probe it;
-//! [`watch_until_empty`] hands it to the sweeper, which drops the handle when
-//! that tree finally goes.
+//! The other end of the lifetime: a run can end while its job is **not** empty
+//! — a hook that started a daemon, a helper still holding the pipes. The kernel
+//! handle must not be held for the life of the process because of it, and it
+//! must not be dropped early either, so every such key goes to the sweeper
+//! ([`watch_until_empty`]): when the tree finally goes, the handle is closed and
+//! the tombstone is what remains. A receipt that names that key still gets its
+//! proof; what is reclaimed is the handle, not the evidence.
 use std::process::Child;
 
 /// Flags `run_child` adds to a `Command` before spawning, so the child can be
@@ -220,13 +222,19 @@ mod platform {
             .unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Hand `key` to the sweeper: nothing will probe it, so it is the sweeper
-    /// that notices the tree going and drops the handle (#726 review P2).
+    /// Hand `key` to the sweeper, which closes the handle once the tree is
+    /// gone (#726 review P2).
     ///
-    /// One thread for all of them, and it only wakes once a second: a daemon a
-    /// hook started may outlive the whole session, and that is not a reason to
-    /// spin. A key whose tree never goes keeps its handle — which is honest,
-    /// because something kagi started is still running.
+    /// It closes the handle by *asking* — [`alive`] is what turns an emptied
+    /// job into a tombstone — so a receipt that names this key keeps its proof.
+    /// Nothing here releases an entry: dropping the evidence is the other
+    /// hazard, and the sweeper is not the one who knows whether anybody still
+    /// holds a receipt.
+    ///
+    /// One thread for all of them, waking once a second: a daemon a hook
+    /// started may outlive the session, and that is no reason to spin. A key
+    /// whose tree never goes keeps its handle, which is honest — something kagi
+    /// started is still running.
     pub(super) fn watch_until_empty(key: u32) {
         static SWEEPER: std::sync::Once = std::sync::Once::new();
         watched().push(key);
@@ -236,19 +244,19 @@ mod platform {
                 let keys: Vec<u32> = watched().clone();
                 for key in keys {
                     if alive(key) {
-                        continue;
+                        continue; // still running: the handle stays
                     }
-                    release(key);
+                    // `alive` has recorded the empty job and closed the handle.
                     watched().retain(|watched| *watched != key);
                 }
             });
         });
     }
 
-    /// Test seam: does the registry still hold anything for `key`?
+    /// Test seam: is the kernel handle for `key` still held?
     #[cfg(test)]
-    pub(super) fn is_tracked(key: u32) -> bool {
-        jobs().contains_key(&key)
+    pub(super) fn holds_handle(key: u32) -> bool {
+        matches!(jobs().get(&key), Some(Entry::Live(_)))
     }
 }
 
@@ -437,40 +445,39 @@ mod tests {
         super::release(key);
     }
 
-    /// #726 review P2: a run can exit cleanly, with every pipe closed, and
-    /// still leave something inside its job — a hook that started a daemon. No
-    /// termination is built from a run like that, so nothing will ever probe
-    /// its key: the sweeper is what eventually drops the handle.
+    /// #726 review P2: the kernel handle is reclaimed when the tree goes, and
+    /// the proof is not reclaimed with it.
+    ///
+    /// A run can end while its job still has something in it — a hook's daemon,
+    /// a helper on the pipes. Holding that handle for the life of the process is
+    /// the leak; dropping the evidence early is the worse bug. The sweeper does
+    /// the first and not the second.
     #[test]
-    fn a_clean_run_that_leaves_a_descendant_is_swept_when_the_tree_goes() {
-        // `start /B` with the streams redirected: the descendant holds no pipe,
-        // so the capture completes and the run is an ordinary success.
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", "start /B ping -n 30 127.0.0.1 > nul 2>&1"]);
-        let run = run_child(&mut cmd, Duration::from_secs(10), None).expect("spawn");
-        assert!(run.status.is_ok(), "the child exited: {:?}", run.status);
-        assert!(run.io.is_ok(), "and its capture is complete");
+    fn a_swept_key_gives_up_its_handle_but_not_its_proof() {
+        let mut child = long_running().spawn().expect("spawn");
+        let key = super::attach(child.id(), &child);
+        super::watch_until_empty(key);
+        // Still held a sweep later: nothing is dropped while the tree runs.
+        std::thread::sleep(Duration::from_millis(1200));
         assert!(
-            !run.group_stopped,
-            "but the descendant is still in the job, so this is no stop proof"
-        );
-        assert!(
-            super::platform::is_tracked(run.stop_key),
-            "the handle is still held while that descendant runs"
+            super::platform::holds_handle(key),
+            "the sweeper must not close a handle whose tree is still running"
         );
 
-        super::terminate(run.stop_key);
+        child.kill().expect("stop it");
+        child.wait().expect("reap it");
         let mut swept = false;
         for _ in 0..400 {
-            if !super::platform::is_tracked(run.stop_key) {
+            if !super::platform::holds_handle(key) {
                 swept = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(25));
         }
+        assert!(swept, "once the tree is gone the handle must be closed");
         assert!(
-            swept,
-            "once the tree is gone the sweeper must drop the handle nobody else owns"
+            crate::proc::supervisor::group_stopped(key),
+            "and the stop it proved on the way out must still be provable"
         );
     }
 

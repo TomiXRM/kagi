@@ -236,6 +236,7 @@ pub fn scenario_editor_save_buffer_identity(cx: &mut VisualTestAppContext) {
 pub fn scenario_editor_external_change_banner(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    let original = std::fs::read(repo.join("README.md")).unwrap();
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.open_editor_workspace(cx));
     let editor = cx
@@ -297,6 +298,28 @@ pub fn scenario_editor_external_change_banner(cx: &mut VisualTestAppContext) {
         );
         std::thread::sleep(Duration::from_millis(2));
     }
+
+    // Put the file back. The banner has to come down with it: the disk matches
+    // the buffer's snapshot again, and while it is up `save_impl` refuses an
+    // ordinary save over a conflict that no longer exists.
+    std::fs::write(repo.join("README.md"), &original).unwrap();
+    editor.update(cx, |view, cx| view.on_worktree_changed(cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| !editor.read(cx).external_changed) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "restoring the file must lower the banner"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        cx.read(|cx| editor.read(cx).dirty),
+        "lowering the banner must not touch the edit"
+    );
 
     drop(editor);
     unmount(cx, app, window);

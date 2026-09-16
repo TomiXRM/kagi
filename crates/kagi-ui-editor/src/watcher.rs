@@ -91,15 +91,18 @@ impl EditorWorkspaceView {
         let task = cx.background_spawn(async move {
             probes
                 .into_iter()
-                .filter(|probe| match &probe.loaded {
-                    // Nothing comparable was loaded: stay conservative.
-                    None => true,
-                    Some(loaded) => changed_on_disk(&repo_path.join(&probe.path), loaded),
+                .map(|probe| {
+                    let changed = match &probe.loaded {
+                        // Nothing comparable was loaded: stay conservative.
+                        None => true,
+                        Some(loaded) => changed_on_disk(&repo_path.join(&probe.path), loaded),
+                    };
+                    (probe, changed)
                 })
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |view, acx| {
-            let changed = task.await;
+            let results = task.await;
             let _ = view.update(acx, |v, cx| {
                 // A newer watcher event's probe describes the file as it is
                 // now; this one may have read an intermediate state that has
@@ -108,23 +111,28 @@ impl EditorWorkspaceView {
                 if v.probe_req != req {
                     return;
                 }
-                for probe in changed {
+                for (probe, changed) in results {
                     // The buffer the probe started from must still be the one
                     // here: a save (new `content_sig`), or a close and reopen
                     // (new `generation`), makes the result obsolete.
+                    //
+                    // An unchanged answer lands too, and lowers the banner: a
+                    // file edited and put back matches the snapshot again, and
+                    // leaving the banner up would keep refusing Cmd-S over a
+                    // conflict that no longer exists.
                     if v.dirty
                         && v.open_path.as_deref() == Some(probe.path.as_path())
                         && v.buf_gen == probe.generation
                         && v.content_sig == probe.sig
                     {
-                        v.external_changed = true;
+                        v.external_changed = changed;
                     }
                     if let Some(buf) = v.tab_cache.get_mut(&probe.path) {
                         if buf.dirty
                             && buf.generation == probe.generation
                             && buf.content_sig == probe.sig
                         {
-                            buf.external_changed = true;
+                            buf.external_changed = changed;
                         }
                     }
                 }

@@ -45,6 +45,15 @@ pub(crate) fn big_sync_icon(accent: u32, key: impl Into<gpui::ElementId>) -> gpu
     .into_any_element()
 }
 
+/// How far a toast card is displaced at `delta` of its slide animation.
+///
+/// Goes through `scaled_px` because the stack's own left inset does: at the
+/// minimum 0.7x zoom a raw 12px slide against an 8.4px inset would put the card
+/// back over the window edge, which is exactly what #709 was.
+fn toast_slide_offset(delta: f32) -> gpui::Pixels {
+    theme::scaled_px(TOAST_SLIDE_PX * delta)
+}
+
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut stack = div().flex().flex_col().gap_2();
@@ -123,7 +132,7 @@ impl gpui::Render for toast_stack::ToastStack {
                     ("kagi-toast-exit", id),
                     gpui::Animation::new(Duration::from_millis(TOAST_EXIT_MS))
                         .with_easing(gpui::quadratic),
-                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * delta)).opacity(1.0 - delta),
+                    |el, delta| el.ml(-toast_slide_offset(delta)).opacity(1.0 - delta),
                 )
                 .into_any_element()
             } else {
@@ -131,7 +140,7 @@ impl gpui::Render for toast_stack::ToastStack {
                     ("kagi-toast-enter", id),
                     gpui::Animation::new(Duration::from_millis(TOAST_ENTER_MS))
                         .with_easing(gpui::ease_out_quint()),
-                    |el, delta| el.ml(px(-TOAST_SLIDE_PX * (1.0 - delta))).opacity(delta),
+                    |el, delta| el.ml(-toast_slide_offset(1.0 - delta)).opacity(delta),
                 )
                 .into_any_element()
             };
@@ -485,18 +494,28 @@ impl KagiApp {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{TOAST_INSET_PX, TOAST_SLIDE_PX};
+    use super::super::{theme, TOAST_INSET_PX};
 
     /// #709: the cards slide by a negative margin from their inset position, so
     /// a travel longer than the inset puts them past the left window edge and
-    /// the user sees a card cut in half for the length of the animation. That
-    /// is what this pair of constants is for; a future "make it slide further"
-    /// must move the inset too, not just the travel.
+    /// the user sees a card cut in half for the length of the animation.
+    ///
+    /// Compares the value the renderer actually uses against the inset the
+    /// stack is actually laid out at, at every zoom: the first attempt at this
+    /// fix compared the two raw constants while the slide alone skipped
+    /// `scaled_px`, and below 1.0x the card crossed the edge again.
     #[test]
     fn the_toast_slide_never_crosses_the_window_edge() {
-        assert!(
-            TOAST_SLIDE_PX <= TOAST_INSET_PX,
-            "a {TOAST_SLIDE_PX}px slide from a {TOAST_INSET_PX}px inset leaves the window"
-        );
+        let before = theme::zoom();
+        for zoom in [theme::ZOOM_MIN, 1.0, theme::ZOOM_MAX] {
+            theme::set_zoom(zoom);
+            let travel = super::toast_slide_offset(1.0);
+            let inset = theme::scaled_px(TOAST_INSET_PX);
+            assert!(
+                travel <= inset,
+                "at {zoom}x zoom a {travel:?} slide from a {inset:?} inset leaves the window"
+            );
+        }
+        theme::set_zoom(before);
     }
 }

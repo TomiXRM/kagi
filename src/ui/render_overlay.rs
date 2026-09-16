@@ -513,6 +513,19 @@ mod tests {
         let _g = crate::ui::ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Restores on the way out, panic included: the settings store is
+        // process-global, so leaving `KAGI_LOG_DIR` pointing at a deleted
+        // tempdir would follow later tests in this binary around (#740 review).
+        struct LogDir(Option<std::ffi::OsString>);
+        impl Drop for LogDir {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("KAGI_LOG_DIR", previous),
+                    None => std::env::remove_var("KAGI_LOG_DIR"),
+                }
+            }
+        }
+        let _log_dir = LogDir(std::env::var_os("KAGI_LOG_DIR"));
         let tmp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("KAGI_LOG_DIR", tmp.path());
 

@@ -47,4 +47,8 @@ windows-sys = { version = "0.61", features = [
     # declaration lives behind this feature even though kagi passes null.
     "Win32_Security",
     "Win32_System_JobObjects",
+    # Resuming the child that was spawned `CREATE_SUSPENDED`: its initial thread
+    # is found through the ToolHelp snapshot (`std` exposes no thread handle).
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
 ] }

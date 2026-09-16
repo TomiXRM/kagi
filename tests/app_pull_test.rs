@@ -171,6 +171,9 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
     let request = f.request(&mut s);
     let second = request.clone();
     let stash_oid = "1".repeat(40);
+    // A group that is still running, which is what makes the read mean
+    // something: the test owns it and stops it at the end.
+    let mut live = live_group();
     let report = PullReport::settled(
         vec![
             f.success("stash-push"),
@@ -179,12 +182,14 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
                 OpOutcome::Failed {
                     error: "git fetch deadline expired".to_string(),
                 },
-                // Kagi lost its own executor mid-write: no proof, and no
-                // handle to get one. The hardest case, and the only state that
-                // admits it (#702 re-review).
-                Err(GitError::TerminationUnknown(Termination::abandoned(
-                    "git fetch deadline expired",
-                ))),
+                // A fetch whose group could not be accounted for: unproven,
+                // and only a later probe of that group can say otherwise
+                // (#702 re-review). Our own group stands in for one that is
+                // still alive.
+                Err(GitError::TerminationUnknown(Termination::Unaccounted {
+                    reason: "git fetch deadline expired".to_string(),
+                    group: live.1,
+                })),
             ),
         ],
         PullPresentation::Partial {
@@ -225,10 +230,11 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
         "and a refusal made while it is parked can name it, so the user is not \
          told 'no' with no way to say yes"
     );
-    assert_eq!(
-        prepare_reconcile(&s, id).err().as_deref(),
-        Some("execution termination is unconfirmed and nothing is left to probe"),
-        "the reconcile requirement is registered and says why it cannot be read"
+    assert!(
+        !read_reconcile(&s, id)
+            .expect("an unaccounted group is something a read can probe")
+            .stop_proven(),
+        "the group is still alive, so the read proves nothing and the entry stays"
     );
     // Registered once, and it is what refuses the next pull on this scope.
     let approved = approve_pull(&mut s, second).unwrap();
@@ -236,6 +242,20 @@ fn an_unconfirmed_pull_keeps_its_lease_and_its_stash() {
         prepare_pull(&mut s, approved, Box::new(|| Err("never run".to_string()))).err(),
         Some(AdmissionError::NeedsReconcile)
     );
+    let _ = live.0.kill();
+    let _ = live.0.wait();
+}
+
+/// A process group with something alive in it: a child spawned as its own
+/// group leader. The caller owns the handle and stops it.
+#[cfg(unix)]
+fn live_group() -> (std::process::Child, u32) {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new("sleep");
+    cmd.arg("300").process_group(0);
+    let child = cmd.spawn().expect("spawn sleep");
+    let pid = child.id();
+    (child, pid)
 }
 
 /// The same unconfirmed pull, but the executor **did** account for the child:
@@ -543,7 +563,7 @@ fn an_unidentified_auto_stash_is_hunted_down_before_the_scope_reopens() {
 /// it holds has a reconcile entry to be acknowledged against, instead of an
 /// operation that can never be settled (#289 / #702 review P1).
 #[test]
-fn an_abandoned_pull_task_settles_as_unknown_and_keeps_its_lease() {
+fn an_abandoned_pull_task_settles_as_unknown_and_is_reconcilable() {
     let f = Fixture::new();
     let mut s = Sessions::new();
     let request = f.request(&mut s);
@@ -570,16 +590,19 @@ fn an_abandoned_pull_task_settles_as_unknown_and_keeps_its_lease() {
         "a panic is not evidence of termination: {:?}",
         presented.recording.entry().outcome
     );
-    assert!(
-        s.has_leases(),
-        "the lease stays held — nothing proved the write stopped"
-    );
+    // #703: the job never ran, so it spawned nothing and the supervisor says
+    // so. Nothing is running, which is a stop proof — the scope is released at
+    // settlement, and what still refuses the next write on it is the reconcile
+    // requirement, until the user acknowledges the unknown repository state.
     assert_eq!(
-        prepare_reconcile(&s, id).err().as_deref(),
-        Some("execution termination is unconfirmed and nothing is left to probe"),
-        "and it is a registered reconcile requirement that says why it cannot be \
-         read: kagi lost its own executor, so there is no handle to probe"
+        s.blocking_reconcile(),
+        Some(id),
+        "the unknown outcome is still a parked requirement"
     );
+    let read = read_reconcile(&s, id).expect("a job with no live group is readable");
+    assert!(read.stop_proven(), "nothing of that job is running");
+    acknowledge(&mut s, read).expect("so the requirement can be acknowledged");
+    assert!(!s.has_leases(), "and the scope is free again");
 }
 
 /// #702 re-review — a local snapshot cannot say whether a push landed.
@@ -1003,4 +1026,116 @@ fn a_pull_completion_is_routed_by_the_stamp_frozen_at_admission() {
         Some(delivered.visit),
         "the visit moved on, so the presentation is dropped rather than misplaced"
     );
+}
+
+/// #703, pull family: a panicked pull settles through the supervisor exactly as
+/// a run does. The fetch's group is registered while it runs and released when
+/// that run proves it empty, so a task that unwinds after it holds nothing —
+/// and "nothing running" is a stop proof, which is what lets the reconcile
+/// entry be acknowledged instead of holding the scope until kagi restarts.
+#[cfg(unix)]
+#[test]
+fn a_panicked_pull_is_acknowledgeable_once_the_supervisor_accounts_for_its_groups() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let approved = approve_pull(&mut s, request).expect("owner attached");
+    let job = prepare_pull(
+        &mut s,
+        approved,
+        Box::new(move || {
+            // A child that ends: the run proves its group empty, so the job
+            // stops answering for it before the unwind.
+            let mut cmd = Command::new("true");
+            let run = kagi_git::proc::run_child(&mut cmd, std::time::Duration::from_secs(5), None)
+                .expect("spawn");
+            assert!(
+                run.group_stopped,
+                "precondition: that group is proven empty"
+            );
+            panic!("the pull task unwound mid-write");
+        }),
+    )
+    .expect("admitted");
+    let id = job.id();
+    let abandonment = job.abandonment();
+
+    let hushed = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).is_err();
+    std::panic::set_hook(hushed);
+    assert!(panicked, "the job must actually unwind");
+
+    apply(&mut s, abandonment.into_completion());
+    let read = read_reconcile(&s, id).expect("a job holding no live group is readable");
+    assert!(
+        read.stop_proven(),
+        "the fetch's group was proven empty and the task that unwound was the rest of the writer"
+    );
+    acknowledge(&mut s, read).expect("so the scope can be let go");
+    assert!(!s.has_leases(), "the pull's lease is released");
+}
+
+/// #725 review P2: a pull that **did** auto-stash and then unwound.
+///
+/// The abandonment's report carries no stash evidence — the task that would
+/// have written it is gone — and the job holds no live group, so the
+/// termination is a stop proof. Reading "no evidence" as "no stash" would let
+/// the reconcile entry be acknowledged with the user's changes sitting in a
+/// stash nothing ever accounted for, and the next write on the scope would go
+/// through over them. An absent receipt is not an absent stash: the read asks
+/// the live stash list instead.
+#[test]
+fn a_panicked_pull_that_auto_stashed_cannot_be_acknowledged_while_the_entry_is_there() {
+    let f = Fixture::new();
+    // The auto-stash kagi itself would have taken, by the message the read
+    // matches on: dirty work parked before the pull.
+    std::fs::write(f.repo.join("a.txt"), "the user's unfinished work\n").unwrap();
+    git(&f.repo, &["stash", "push", "-q", "-m", AUTO_STASH_MESSAGE]);
+    assert!(
+        !git(&f.repo, &["stash", "list"]).is_empty(),
+        "precondition: the auto-stash is in the list"
+    );
+
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    assert!(request.auto_stash, "precondition: this pull auto-stashes");
+    let approved = approve_pull(&mut s, request).expect("owner attached");
+    let job = prepare_pull(
+        &mut s,
+        approved,
+        Box::new(|| panic!("the pull task unwound after the stash")),
+    )
+    .expect("admitted");
+    let id = job.id();
+    let abandonment = job.abandonment();
+
+    let hushed = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).is_err();
+    std::panic::set_hook(hushed);
+    assert!(panicked, "the job must actually unwind");
+
+    apply(&mut s, abandonment.into_completion());
+    let read = read_reconcile(&s, id).expect("the job spawned nothing, so the writer is stopped");
+    assert!(
+        read.stop_proven(),
+        "nothing of that job is running — that half is the supervisor's answer"
+    );
+    assert!(
+        acknowledge(&mut s, read).is_err(),
+        "stash-evidence-absent-is-not-stash-absent: an unaccounted auto-stash was \
+         acknowledged as settled"
+    );
+    assert_eq!(
+        s.blocking_reconcile(),
+        Some(id),
+        "the requirement stays, and it is what refuses the next write on this scope"
+    );
+
+    // The user's way out is the entry itself: deal with it and read again.
+    git(&f.repo, &["stash", "drop", "-q"]);
+    let read = read_reconcile(&s, id).expect("still readable");
+    acknowledge(&mut s, read).expect("nothing answers to the auto-stash any more");
+    assert!(!s.has_leases(), "and the scope is free again");
 }

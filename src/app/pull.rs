@@ -265,6 +265,8 @@ pub type PullExecute = Box<dyn FnOnce() -> Result<PullReport, String> + Send + '
 pub struct PullJob {
     id: OperationId,
     stamp: OwnerStamp,
+    /// Registered before the executor starts (#703); see [`RunJob`].
+    supervision: kagi_git::proc::supervisor::JobId,
     request: PullRequest,
     execute: PullExecute,
 }
@@ -280,12 +282,16 @@ impl PullJob {
     pub fn abandonment(&self) -> PullAbandonment {
         PullAbandonment {
             id: self.id,
+            supervision: self.supervision,
             name: self.request.name,
             path: self.request.path.clone(),
             before: self.request.plan.current.clone(),
         }
     }
     pub fn run(self) -> PullCompletion {
+        // The fetch, the merge and any transport helper they start belong to
+        // this job for as long as they are not proven stopped (#703).
+        let _supervised = kagi_git::proc::supervisor::enter(self.supervision);
         let report = (self.execute)().unwrap_or_else(|error| {
             let entry = OpLogEntry::new(
                 self.request.name,
@@ -329,6 +335,7 @@ pub struct PullCompletion {
 #[derive(Clone, Debug)]
 pub struct PullAbandonment {
     id: OperationId,
+    supervision: kagi_git::proc::supervisor::JobId,
     name: &'static str,
     path: PathBuf,
     before: StateSummary,
@@ -351,7 +358,10 @@ impl PullAbandonment {
             report: PullReport::settled(
                 vec![RunReport {
                     result: Err(kagi_git::GitError::TerminationUnknown(
-                        kagi_git::Termination::abandoned(evidence.clone()),
+                        kagi_git::Termination::from_abandoned_job(
+                            evidence.clone(),
+                            &kagi_git::proc::supervisor::take_live_groups(self.supervision),
+                        ),
                     )),
                     recording: recording::finalize(entry),
                     stash: None,
@@ -376,6 +386,7 @@ pub fn prepare_pull(
     Ok(PullJob {
         id: running.operation_id,
         stamp: running.owner_stamp,
+        supervision: kagi_git::proc::supervisor::begin(),
         request,
         execute,
     })

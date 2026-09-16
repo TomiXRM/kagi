@@ -195,7 +195,7 @@ merge が resolve されると `ConflictView` が破棄され、abort が構造�
 | 0 | 契約固定（本書） | **完了** |
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了（#703 を除く）**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702 + 本 slice)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。残るのは下記「終端未確定の出口」の #703（abandoned executor の supervisor）のみで、これが閉じるまで受入条件（全 family の host-close / unknown / settle matrix 統一）は満たさない |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了（#703 を除く）**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702 + 本 slice)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。残るのは下記「終端未確定の出口」の #703 のみ。うち task unwind は #703a の process supervisor が閉じ（`Abandoned` は supervisor 経由の `Unaccounted` / `Stopped` に置き換わり、型から削除）、残るのは Windows の group probe (#703b) だけ。これが閉じるまで受入条件（全 family の host-close / unknown / settle matrix 統一）は満たさない |
 | 4 | UI state: `TabUiState` per session | **完了** (#714 #716 #717 #718 #720 #721 #722 #724)。契約は **ADR-0197**（所有の 5 分類 / `TabStores` / entity retention / leak matrix oracle / slice 順）。`reset_per_repo_ui` は削除され、tab 切替に残るのは window-global 1 slot（plan slot と repo-scoped modal）の close だけ |
 | C2 Abort | read-model-derived availability / entity-independent admission / typed report / reconcile | **完了** (#704。Wave 4 の前倒しではなく、ADR-0183 の read ownership と Wave 3 / C2 mutation lifecycle の correctness slice) |
 | 5 | crate 抽出（境界安定後のみ） | |
@@ -230,13 +230,23 @@ merge(+into) / commit / amend / create-worktree / rebase / reset-current /
 force-with-lease-push / push-tag / branch-plan / delete-branch / discard。
 **終端未確定の出口（全 local family 共通、2026-09-13 改訂）**: `run_git` /
 `run_child` は `GitError::TerminationUnknown(kagi_git::Termination)` を型のまま返す
-（`Other` へ潰さない）。`Termination` は 3 状態で、保持する状態は必ず出口を持つ:
+（`Other` へ潰さない）。`Termination` は **2 状態**で、保持する状態は必ず出口を持つ
+（#703a で `Abandoned` を型から削除。旧 3 状態目の経緯は下記）:
 
 | 状態 | lease | 出口 |
 | --- | --- | --- |
 | `Stopped { reason }` | 解放 | reconcile entry を read → acknowledge |
 | `Unaccounted { reason, group }` | 保持 | `ReconcileJob` が process group の生存を probe し、空になっていれば `stop_proven` |
-| `Abandoned { reason }` | 保持 | **無し（#703）**。kagi が自分の executor を見失った状態で probe する handle が無い |
+
+**task unwind（旧 `Abandoned`）**: spawn した child と group は
+`kagi_git::proc::supervisor` が **task の外**で所有する（job 登録 → executor thread が
+`enter` → `run_child` が group を登録し、空だと証明できた時点で解放）。panic しても
+registry は道連れにならないので、abandonment は
+`Termination::from_abandoned_job(reason, live_groups)` で終端を作る: live group が
+残っていれば probe 可能な `Unaccounted`、1 つも無ければ「この job のプロセスは何も
+走っていない」＝ `Stopped`（唯一の writer だった executor thread は unwind 済み）。
+reconcile の stop proof は `supervisor::group_stopped` を通り、requirement が名指す
+group だけでなく **同じ job の全 group** が空であることを要求する。
 
 stop proof は **observation より先**に立てる。group が生きている間は何も読まずに
 unresolved を返す（実行中の snapshot を「停止後の観測」として acknowledge させない）。
@@ -246,11 +256,12 @@ operation は承認時に凍結した `RemoteExpectation` を live `ls-remote` �
 `resolved` を決める（local snapshot は remote の状態を語らない）。`acknowledge` は
 `stop_proven` かつ `resolved` の read だけを受け付ける。
 
-**残件 (#703)**: `Abandoned`（task unwind）と probe を持たない platform（Windows）は
-安全側の保持のまま — main の `write_lease` retention と同じ class。executor が
-spawn した process tree を supervisor に所有させ、panic 後も stop proof を作れる
-ようにするまで Wave 3 の受入条件（全 family の host-close / unknown / settle matrix
-統一）は満たさない。
+**残件 (#703b)**: process group の probe を持たない platform（Windows / 非 unix）は
+安全側の保持のまま。`group_alive` は証拠が無い場合に「生きている」と答えるので、
+そこでは supervisor があっても `stop_proven` にならず、scope はアプリ再起動まで
+保持される（release ではなく retention 側に倒す — main の `write_lease` retention と
+同じ class）。Job Object による Windows の probe が入るまで Wave 3 の受入条件
+（全 family の host-close / unknown / settle matrix 統一）は満たさない。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を

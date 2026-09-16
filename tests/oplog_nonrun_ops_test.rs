@@ -943,22 +943,18 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
 
     sessions.apply(abandonment.into_completion());
 
-    assert!(
-        sessions.has_leases(),
-        "a panic proves nothing: the writer may still be running (ADR-0175)"
-    );
     assert_eq!(
         sessions.reconcile_ids(),
         vec![id],
-        "and the operation keeps its id rather than being dropped on the floor"
+        "the operation keeps its id rather than being dropped on the floor"
     );
-    // `Abandoned` is deliberately the one termination with no automatic exit:
-    // kagi lost its own executor, so there is no group to probe and the read
-    // says so instead of offering an acknowledgement that proves nothing.
-    assert_eq!(
-        kagi::app::prepare_reconcile(&sessions, id).err().as_deref(),
-        Some("execution termination is unconfirmed and nothing is left to probe"),
-    );
+    // #703: this job spawned nothing before it unwound, and the supervisor is
+    // what can say so. Nothing is running, so the entry has an exit — the
+    // unknown *repository* state is what the user still has to acknowledge,
+    // and until they do it refuses every later write on this scope.
+    let read =
+        kagi::app::read_reconcile(&sessions, id).expect("a job holding no live group is readable");
+    assert!(read.stop_proven(), "nothing of that job is running");
     let records = fixture.records(1, Actor::Human);
     assert_eq!(records[0].op, "branch-cleanup");
     assert!(

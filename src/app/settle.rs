@@ -29,8 +29,9 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
     // that entry, and only the report carries what the backend saw of it.
     let mut pull_recovery: Option<kagi_git::backend::stash::StashEvidence> = None;
     // The process group of an unproven termination, if there is one to account
-    // for. `None` with `stopped == false` is the abandoned case: held, and
-    // honest that nothing can prove otherwise.
+    // for. `None` with `stopped == false` is held with nothing to probe; since
+    // #703 the run families cannot produce it, because the supervisor answers
+    // for what a panicked job spawned.
     let mut unaccounted_child: Option<u32> = None;
     let (id, report, stopped, remote_recovery) = match completion.into() {
         Completion::Remove(c) => {

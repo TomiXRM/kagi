@@ -326,15 +326,26 @@ mod tests {
         );
     }
 
-    /// #726 review P1: two spawns never share a key, so a pid the OS recycles
-    /// cannot make a later probe read a stranger's job. (Reuse itself cannot be
-    /// forced in a test; what is checked is that the key is not the pid.)
+    /// #726 review P1: a job is **not** addressed by the child's pid, which the
+    /// OS recycles as soon as the child is reaped — the state an `Unaccounted`
+    /// termination is in. A recycled pid would otherwise point a parked
+    /// receipt's probe at a later spawn's job.
+    ///
+    /// Reuse itself cannot be forced in a test, so what is asserted is the
+    /// property that makes it harmless: the key is minted here, and is not the
+    /// pid.
     #[test]
-    fn two_spawns_never_share_a_key() {
+    fn a_job_is_not_addressed_by_the_recyclable_pid() {
         let mut first = long_running().spawn().expect("spawn");
         let mut second = long_running().spawn().expect("spawn");
-        let one = super::attach(first.id(), &first);
-        let two = super::attach(second.id(), &second);
+        let (first_pid, second_pid) = (first.id(), second.id());
+        let one = super::attach(first_pid, &first);
+        let two = super::attach(second_pid, &second);
+        assert_ne!(
+            one, first_pid,
+            "the key must not be the pid: a reaped pid comes back, a key does not"
+        );
+        assert_ne!(two, second_pid, "likewise for the second spawn");
         assert_ne!(one, two, "each spawn is named once and never again");
         super::release(one);
         assert!(

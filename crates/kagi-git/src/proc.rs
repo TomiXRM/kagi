@@ -16,6 +16,7 @@
 //! says whether the capture is complete, and neither can pass for success.
 
 mod group;
+pub mod supervisor;
 pub use group::group_alive;
 
 use group::{group_settled, kill_group};
@@ -219,6 +220,9 @@ pub fn run_child(
     let mut child = cmd.spawn()?;
     // The child is its own group leader, so the group id is its pid.
     let pid = child.id();
+    // Owned outside this task from here on: if the caller unwinds before the
+    // run ends, the supervisor is what still knows this group exists (#703).
+    supervisor::register_group(pid);
 
     // Each collector reports through the channel when it is done, so the wait
     // for them can be bounded (a `JoinHandle` cannot). The handles are kept only
@@ -253,6 +257,10 @@ pub fn run_child(
     // Asked *after* the collectors settle, so a descendant still holding the
     // pipes is still counted. This is the whole stop proof.
     let group_stopped = !group_settled(pid, status.is_err());
+    if group_stopped {
+        // Proven empty: the job has nothing left to answer for here.
+        supervisor::release_group(pid);
+    }
 
     // Hand off whenever something is still ours to own: an unreaped child, or a
     // read that has not ended. On the ordinary path the collectors are done, so

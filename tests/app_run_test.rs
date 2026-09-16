@@ -280,3 +280,130 @@ fn dead_group() -> u32 {
     child.wait().expect("reap it");
     pid
 }
+
+/// #703: a run job whose **task unwinds** while a process group it spawned is
+/// still running.
+///
+/// Before the supervisor, the child handle lived on the panicking task's stack,
+/// so the unwind took it: the termination had nothing to probe, the lease
+/// stayed reserved and `may_close_host()` refused Quit until the application
+/// restarted. The group is now owned outside the task, so the abandonment can
+/// name it — and the acknowledge is still refused until that group is *proven*
+/// empty, which is the half that keeps this from being "release on a panic".
+#[cfg(unix)]
+#[test]
+fn a_panicked_run_is_reconciled_through_the_supervisor_once_its_group_is_gone() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let approved = approve_run(&mut s, request).unwrap();
+    // What the job spawned, read back after the unwind so the test can stop it.
+    let spawned: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
+    let recorder = Arc::clone(&spawned);
+    let job = prepare_run(
+        &mut s,
+        approved,
+        Box::new(move || {
+            // A descendant that outlives the direct child and keeps its pipes
+            // open: the run cannot prove that group empty, so the supervisor
+            // goes on owning it. Then the task unwinds with it still running.
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "sleep 300 & exit 0"]);
+            let run = kagi_git::proc::run_child(&mut cmd, std::time::Duration::from_secs(5), None)
+                .expect("spawn");
+            *recorder.lock().unwrap() = Some(run.pid);
+            assert!(
+                !run.group_stopped,
+                "precondition: the descendant must still hold the group"
+            );
+            panic!("the checkout task unwound mid-write");
+        }),
+    )
+    .unwrap();
+    let id = job.id();
+    let abandonment = job.abandonment();
+
+    let hushed = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).is_err();
+    std::panic::set_hook(hushed);
+    assert!(panicked, "the job must actually unwind");
+    let group = spawned.lock().unwrap().expect("the job spawned a group");
+    assert!(
+        kagi_git::proc::group_alive(group),
+        "precondition: the abandoned job's group is still running"
+    );
+
+    apply(&mut s, abandonment.into_completion());
+    assert!(
+        s.has_leases(),
+        "a panic proves nothing: the write may still be running (ADR-0175)"
+    );
+
+    // Still running → there is something to probe, and the probe says no.
+    let read = read_reconcile(&s, id).expect("the supervisor left a group to probe");
+    assert!(
+        !read.stop_proven(),
+        "the abandoned job's group is still alive: nothing is proven"
+    );
+    assert!(
+        acknowledge(&mut s, read).is_err(),
+        "acknowledging an unproven stop would release the scope on no evidence"
+    );
+    assert!(s.has_leases(), "and so the lease is still held");
+
+    // The descendant goes; the same probe now proves the stop.
+    let _ = Command::new("kill")
+        .args(["-9", &format!("-{group}")])
+        .status();
+    for _ in 0..100 {
+        if !kagi_git::proc::group_alive(group) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        !kagi_git::proc::group_alive(group),
+        "the test could not stop the group it started"
+    );
+
+    let read = read_reconcile(&s, id).expect("still readable");
+    assert!(
+        read.stop_proven(),
+        "the group is empty: the writer is proven stopped"
+    );
+    acknowledge(&mut s, read).expect("a proven stop releases the scope");
+    assert!(!s.has_leases(), "the lease goes with it");
+}
+
+/// The other half of the same rule: a panicked job that spawned **nothing** has
+/// no writer left either — the executor thread was it, and it unwound. That is
+/// a stop proof, not an absence of one, so the entry is acknowledgeable at once
+/// instead of holding the scope for the life of the process (#703).
+#[test]
+fn a_panicked_run_that_spawned_nothing_is_acknowledgeable() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let approved = approve_run(&mut s, request).unwrap();
+    let job = prepare_run(
+        &mut s,
+        approved,
+        Box::new(|| panic!("unwound before spawning")),
+    )
+    .unwrap();
+    let id = job.id();
+    let abandonment = job.abandonment();
+
+    let hushed = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).is_err();
+    std::panic::set_hook(hushed);
+    assert!(panicked, "the job must actually unwind");
+
+    apply(&mut s, abandonment.into_completion());
+    let read = read_reconcile(&s, id).expect("a stopped writer is readable");
+    assert!(read.stop_proven(), "nothing of that job is running");
+    acknowledge(&mut s, read).expect("so the scope can be let go");
+    assert!(!s.has_leases());
+}

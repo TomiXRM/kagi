@@ -52,7 +52,9 @@ impl ReconcileJob {
         // gets acknowledged as settled. While anything in the group is alive
         // there is nothing worth reading — come back later.
         if let Some(group) = self.child {
-            if kagi_git::proc::group_alive(group) {
+            // Through the supervisor, so a job that still owns a second group
+            // cannot be released past the one this requirement names (#703).
+            if !kagi_git::proc::supervisor::group_stopped(group) {
                 return Ok(ReconcileRead {
                     id: self.id,
                     observation: format!(
@@ -395,8 +397,9 @@ pub fn prepare_reconcile(sessions: &Sessions, id: OperationId) -> Result<Reconci
     let entry = sessions.reconcile.get(&id).ok_or("no reconcile request")?;
     // An unproven termination is readable exactly when something can prove it:
     // the remote evidence, or the process group the executor could not account
-    // for. `Termination::Abandoned` has neither — kagi lost its own executor —
-    // and says so rather than offering a read that cannot mean anything.
+    // for. Since #703 a panicked job has one of those — the supervisor owns
+    // what it spawned — so this refusal is left for a termination that names
+    // neither, which is not something the run families can produce.
     if !entry.stopped && entry.remote.is_none() && entry.child.is_none() {
         return Err("execution termination is unconfirmed and nothing is left to probe".into());
     }

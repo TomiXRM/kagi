@@ -73,6 +73,9 @@ pub type RunExecute = Box<dyn FnOnce() -> Result<RunReport, String> + Send + 'st
 pub struct RunJob {
     id: OperationId,
     stamp: OwnerStamp,
+    /// Registered before the executor starts, so what this job spawns is owned
+    /// outside the task that runs it (#703).
+    supervision: kagi_git::proc::supervisor::JobId,
     request: RunRequest,
     execute: RunExecute,
 }
@@ -88,12 +91,16 @@ impl RunJob {
     pub fn abandonment(&self) -> RunAbandonment {
         RunAbandonment {
             id: self.id,
+            supervision: self.supervision,
             name: self.request.name,
             path: self.request.path.clone(),
             before: self.request.plan.current.clone(),
         }
     }
     pub fn run(self) -> RunCompletion {
+        // This thread is the job: every group `run_child` spawns from here is
+        // registered against it until the run proves that group empty.
+        let _supervised = kagi_git::proc::supervisor::enter(self.supervision);
         let report = match (self.execute)() {
             Ok(report) => report,
             Err(error) => {
@@ -129,12 +136,14 @@ pub struct RunCompletion {
 ///
 /// The write may have happened, so this is `Unknown`, not a failure, and it
 /// settles through the same `apply`: the operation id survives and the lease
-/// is retained. The termination is [`kagi_git::Termination::Abandoned`] —
-/// kagi lost its own executor, so unlike a killed child there is no process
-/// group left to probe, and the scope stays held until the application
-/// restarts. Dropping the task instead would lose the operation as well.
+/// is retained. What the termination says is now the supervisor's answer
+/// (#703): the groups this job spawned are owned outside the task, so a live
+/// one becomes a probeable `Unaccounted` and none at all is a stop proof —
+/// the unwound executor thread was the only writer left. Dropping the task
+/// instead would lose the operation as well.
 pub struct RunAbandonment {
     id: OperationId,
+    supervision: kagi_git::proc::supervisor::JobId,
     name: &'static str,
     path: PathBuf,
     before: kagi_git::StateSummary,
@@ -162,7 +171,10 @@ impl RunAbandonment {
             id: self.id,
             report: RunReport {
                 result: Err(kagi_git::GitError::TerminationUnknown(
-                    kagi_git::Termination::abandoned(evidence),
+                    kagi_git::Termination::from_abandoned_job(
+                        evidence,
+                        &kagi_git::proc::supervisor::take_live_groups(self.supervision),
+                    ),
                 )),
                 recording: recording::finalize(entry),
                 stash: None,
@@ -184,6 +196,7 @@ pub fn prepare_run(
     Ok(RunJob {
         id: running.operation_id,
         stamp: running.owner_stamp,
+        supervision: kagi_git::proc::supervisor::begin(),
         request,
         execute,
     })

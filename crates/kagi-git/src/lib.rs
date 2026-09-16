@@ -253,13 +253,6 @@ pub enum Termination {
     /// transport helper or a hook still writing, and reaping the direct child
     /// proves nothing about those ([`proc::ProcStop::reaped`] says so itself).
     Unaccounted { reason: String, group: u32 },
-    /// Kagi lost its own executor — a task unwound while a write was in flight,
-    /// so the process handle went with it. Nothing is left to probe and nothing
-    /// is proven either way; the scope stays held until the application
-    /// restarts. Deliberately distinct from [`Self::Unaccounted`]: this one has
-    /// no automatic exit, and pretending otherwise would release a lease on no
-    /// evidence.
-    Abandoned { reason: String },
 }
 impl Termination {
     /// The executor saw the process go.
@@ -268,10 +261,28 @@ impl Termination {
             reason: reason.into(),
         }
     }
-    /// Kagi's own executor unwound; there is no handle left.
-    pub fn abandoned(reason: impl Into<String>) -> Self {
-        Self::Abandoned {
-            reason: reason.into(),
+    /// A job whose task unwound, said by [`proc::supervisor`] rather than by
+    /// the lost executor: `live_groups` is what that job still owns.
+    ///
+    /// Empty is a stop proof, not an absence of one. Every `Command` kagi runs
+    /// is spawned through [`proc::run_child`], which registers its group with
+    /// the supervisor until the run proves it empty — so a job holding none has
+    /// nothing running but the executor thread the panic already unwound.
+    ///
+    /// Otherwise the first live group is the requirement's probe target, and
+    /// [`proc::supervisor::group_stopped`] resolves it against the whole job,
+    /// so a second group of the same job cannot be released past.
+    ///
+    /// There is no third case. "The task unwound, so nothing can ever be
+    /// proven" was the old `Abandoned`, and it held the scope until the
+    /// application restarted (#703).
+    pub fn from_abandoned_job(reason: impl Into<String>, live_groups: &[u32]) -> Self {
+        match live_groups.first() {
+            None => Self::stopped(reason),
+            Some(group) => Self::Unaccounted {
+                reason: reason.into(),
+                group: *group,
+            },
         }
     }
     /// The same termination, said about a wider operation. Keeps the state —
@@ -284,9 +295,6 @@ impl Termination {
             Self::Unaccounted { reason, group } => Self::Unaccounted {
                 reason: format!("{what}: {reason}"),
                 group,
-            },
-            Self::Abandoned { reason } => Self::Abandoned {
-                reason: format!("{what}: {reason}"),
             },
         }
     }
@@ -307,7 +315,7 @@ impl Termination {
     }
     pub fn reason(&self) -> &str {
         match self {
-            Self::Stopped { reason } | Self::Abandoned { reason } => reason,
+            Self::Stopped { reason } => reason,
             Self::Unaccounted { reason, .. } => reason,
         }
     }
@@ -590,18 +598,27 @@ mod termination_tests {
     }
 
     /// The states a scope can be held in, and how each one is let go. There is
-    /// deliberately no fourth: "unproven, nothing to probe" as a *default* is
-    /// what closed a repository for the life of the process (#702 re-review).
+    /// deliberately no third: "unproven, nothing to probe" as a *default* is
+    /// what closed a repository for the life of the process (#702 re-review,
+    /// #703).
     #[test]
     fn every_held_state_says_how_it_can_be_let_go() {
         assert_eq!(Termination::stopped("done").group(), None);
         assert!(Termination::stopped("done").child_stopped());
-        // Abandoned is the honest one: kagi lost its own executor, so there is
-        // no handle and no proof. It says so instead of pretending to a pid.
-        let lost = Termination::abandoned("the task unwound");
-        assert!(!lost.child_stopped());
-        assert_eq!(lost.group(), None);
-        assert_eq!(lost.reason(), "the task unwound");
+        // A job whose task unwound is not a third state: the supervisor still
+        // owns what it spawned, so the answer is one of the two above (#703).
+        let nothing_running = Termination::from_abandoned_job("the task unwound", &[]);
+        assert!(
+            nothing_running.child_stopped(),
+            "no live group of that job: the executor thread was the writer, and it unwound"
+        );
+        let still_running = Termination::from_abandoned_job("the task unwound", &[4242, 77]);
+        assert!(!still_running.child_stopped());
+        assert_eq!(
+            still_running.group(),
+            Some(4242),
+            "the probe enters the supervisor through the job's first live group"
+        );
     }
 }
 

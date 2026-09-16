@@ -241,13 +241,24 @@ PID=$!
 WID=12345 # Replace with the selected window ID from the listing.
 ```
 
-Two launch pitfalls, both seen in practice. Launch Kagi from an unsandboxed shell:
+Three launch pitfalls, all seen in practice. Launch Kagi from an unsandboxed shell:
 started from a sandboxed agent shell the process runs and logs normally, but
 WindowServer never shows its window, so there is nothing to click. And with
 `KAGI_NO_ACTIVATE=1` the window may not be on screen, so `windows --pid` (which
 lists on-screen windows only) prints nothing even though the window exists;
 clicks, keys and `screencapture -l` address the window by ID and still work, so
 take the ID from `CGWindowListCopyWindowInfo([.optionAll], …)` for that PID.
+
+**Drop `KAGI_NO_ACTIVATE=1` when the scenario clicks the tab strip.** The tabs
+live in the window's title bar, and macOS hands a title-bar click on a *non-key*
+window to its own window-drag handling instead of the application. The click
+never reaches the tab, the window moves under you, and the drag session it
+starts swallows every later event — clicks stop working in the content area too,
+and only relaunching recovers. Measured while verifying #643 Wave 4: two clicks
+on the tab strip moved the window from `180,125` to `215,151` and killed input.
+Without the flag, the same clicks switch tabs (`[kagi] tab-switch: <name>
+cached=yes`) and the window stays put. Keep the flag for scenarios that stay in
+the content area — it is what leaves the user's foreground app alone.
 
 `scripts/pidclick.swift` sends events with `CGEventPostToPid`; it does not move
 the user's pointer or activate another app. Select a window with `windows --pid`,

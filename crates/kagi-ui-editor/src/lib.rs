@@ -483,6 +483,10 @@ pub struct EditorWorkspaceView {
     /// Allocator for `buf_gen`. Monotonic, so a generation identifies a
     /// buffer on its own once the path has been matched.
     next_buf_gen: u64,
+    /// Monotonic token for the watcher's external-change probe (#736). Two
+    /// watcher events can have probes in flight at once; only the newest one's
+    /// answer describes the file as it is now, so an older landing is dropped.
+    pub(crate) probe_req: u64,
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
@@ -579,6 +583,7 @@ impl EditorWorkspaceView {
             external_changed: false,
             buf_gen: 0,
             next_buf_gen: 1,
+            probe_req: 0,
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: new_diff_list_state(),
             show_tree: true,

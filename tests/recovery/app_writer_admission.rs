@@ -277,7 +277,13 @@ pub fn scenario_editor_external_change_banner(cx: &mut VisualTestAppContext) {
     );
 
     // Now change the file for real: the banner is exactly what should appear.
-    std::fs::write(repo.join("README.md"), "changed by someone else\n").unwrap();
+    // A different length is the cheap half of that check — the probe must not
+    // read a file that an external process swapped for a huge one.
+    std::fs::write(
+        repo.join("README.md"),
+        "changed by someone else, and at a different length\n",
+    )
+    .unwrap();
     editor.update(cx, |view, cx| view.on_worktree_changed(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {

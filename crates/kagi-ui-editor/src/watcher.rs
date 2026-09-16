@@ -81,6 +81,8 @@ impl EditorWorkspaceView {
             cx.notify();
             return;
         }
+        self.probe_req = self.probe_req.wrapping_add(1);
+        let req = self.probe_req;
         let repo_path = self.repo_path.clone();
         let task = cx.background_spawn(async move {
             probes
@@ -88,14 +90,20 @@ impl EditorWorkspaceView {
                 .filter(|probe| match &probe.loaded {
                     // Nothing comparable was loaded: stay conservative.
                     None => true,
-                    Some(loaded) => std::fs::read_to_string(repo_path.join(&probe.path))
-                        .map_or(true, |text| &text != loaded),
+                    Some(loaded) => changed_on_disk(&repo_path.join(&probe.path), loaded),
                 })
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |view, acx| {
             let changed = task.await;
             let _ = view.update(acx, |v, cx| {
+                // A newer watcher event's probe describes the file as it is
+                // now; this one may have read an intermediate state that has
+                // since been undone, and neither generation nor signature
+                // moves across such a round trip.
+                if v.probe_req != req {
+                    return;
+                }
                 for probe in changed {
                     // The buffer the probe started from must still be the one
                     // here: a save (new `content_sig`), or a close and reopen
@@ -134,5 +142,21 @@ impl EditorWorkspaceView {
         self.pushed_sig = 0;
         self.load_selected(cx);
         cx.notify();
+    }
+}
+
+/// Does `full_path` hold something other than `loaded`?
+///
+/// The size is checked first, and not only to skip a read: an external process
+/// can replace the small file being edited with a huge one, and `load_selected`
+/// refuses anything past `MAX_EDITOR_BYTES` — this path must not be the one
+/// place that slurps gigabytes into the UI process. A different length is
+/// already proof of a different file, so the read that remains is bounded by
+/// the text the buffer had loaded.
+fn changed_on_disk(full_path: &std::path::Path, loaded: &str) -> bool {
+    match std::fs::metadata(full_path) {
+        Err(_) => true,
+        Ok(meta) if meta.len() != loaded.len() as u64 => true,
+        Ok(_) => std::fs::read_to_string(full_path).map_or(true, |text| text != loaded),
     }
 }

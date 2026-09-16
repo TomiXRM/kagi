@@ -8,7 +8,17 @@ use std::path::PathBuf;
 
 use gpui::{AppContext as _, Context};
 
-use super::{buffer_sig, EditorWorkspaceView};
+use super::EditorWorkspaceView;
+
+/// One dirty buffer's file, and the identity of the buffer that asked for it.
+/// `loaded` is the text that buffer read from disk — `None` when it had none
+/// (binary, too large, unreadable), which counts as changed.
+struct Probe {
+    path: PathBuf,
+    generation: u64,
+    sig: u64,
+    loaded: Option<String>,
+}
 
 impl EditorWorkspaceView {
     /// FS-watcher nudge (T-WS-EDITOR-002 §4), called from
@@ -22,11 +32,19 @@ impl EditorWorkspaceView {
     /// The event says only "something under the working tree changed", and
     /// kagi's own fetch or save is enough to fire it — so a dirty buffer is
     /// not bannered on the event alone (#736). Each dirty buffer's own file is
-    /// re-read in the background and compared against the bytes that buffer
-    /// loaded; only a real difference raises the banner. A buffer whose
-    /// content could not be hashed at load (binary, too large, unreadable —
-    /// `content_sig == 0`) keeps the old conservative banner: it cannot be
-    /// proven unchanged, and an edit must never be clobbered.
+    /// re-read in the background and compared against the text that buffer
+    /// loaded; only a real difference raises the banner. A buffer with no
+    /// loaded text (binary, too large, unreadable) keeps the old conservative
+    /// banner: it cannot be proven unchanged, and an edit must never be
+    /// clobbered.
+    ///
+    /// The comparison is against the loaded text itself, not `content_sig`,
+    /// because that hash includes the path: a rename remaps a dirty buffer's
+    /// path without reloading it, and a path-keyed hash would then differ from
+    /// every future read of identical bytes. The probe still carries the
+    /// `(generation, content_sig)` it started from and drops its result if
+    /// either moved, so a save — or a close and reopen — landing mid-flight
+    /// cannot banner the buffer that replaced it.
     pub fn on_worktree_changed(&mut self, cx: &mut Context<Self>) {
         self.start_load(cx);
         if !self.dirty {
@@ -38,15 +56,25 @@ impl EditorWorkspaceView {
         // Backgrounded tabs are probed the same way; one that really did
         // change gets its banner when the user comes back to it. A clean one
         // re-reads on activation anyway (`open_tab`'s clean-refresh).
-        let mut probes: Vec<(PathBuf, u64)> = Vec::new();
+        let mut probes: Vec<Probe> = Vec::new();
         if self.dirty {
             if let Some(path) = self.open_path.clone() {
-                probes.push((path, self.content_sig));
+                probes.push(Probe {
+                    path,
+                    generation: self.buf_gen,
+                    sig: self.content_sig,
+                    loaded: self.content.clone(),
+                });
             }
         }
         for (path, buf) in &self.tab_cache {
             if buf.dirty {
-                probes.push((path.clone(), buf.content_sig));
+                probes.push(Probe {
+                    path: path.clone(),
+                    generation: buf.generation,
+                    sig: buf.content_sig,
+                    loaded: buf.content.clone(),
+                });
             }
         }
         if probes.is_empty() {
@@ -57,25 +85,33 @@ impl EditorWorkspaceView {
         let task = cx.background_spawn(async move {
             probes
                 .into_iter()
-                .filter(|(path, sig)| {
-                    *sig == 0
-                        || std::fs::read_to_string(repo_path.join(path))
-                            .map_or(true, |text| buffer_sig(path, &text) != *sig)
+                .filter(|probe| match &probe.loaded {
+                    // Nothing comparable was loaded: stay conservative.
+                    None => true,
+                    Some(loaded) => std::fs::read_to_string(repo_path.join(&probe.path))
+                        .map_or(true, |text| &text != loaded),
                 })
-                .map(|(path, _)| path)
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |view, acx| {
             let changed = task.await;
             let _ = view.update(acx, |v, cx| {
-                for path in changed {
-                    // Re-checked on landing: the user may have saved, switched
-                    // tabs or closed the file while the probe was in flight.
-                    if v.dirty && v.open_path.as_deref() == Some(path.as_path()) {
+                for probe in changed {
+                    // The buffer the probe started from must still be the one
+                    // here: a save (new `content_sig`), or a close and reopen
+                    // (new `generation`), makes the result obsolete.
+                    if v.dirty
+                        && v.open_path.as_deref() == Some(probe.path.as_path())
+                        && v.buf_gen == probe.generation
+                        && v.content_sig == probe.sig
+                    {
                         v.external_changed = true;
                     }
-                    if let Some(buf) = v.tab_cache.get_mut(&path) {
-                        if buf.dirty {
+                    if let Some(buf) = v.tab_cache.get_mut(&probe.path) {
+                        if buf.dirty
+                            && buf.generation == probe.generation
+                            && buf.content_sig == probe.sig
+                        {
                             buf.external_changed = true;
                         }
                     }

@@ -298,3 +298,85 @@ pub fn scenario_editor_external_change_banner(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS editor banner follows the file's bytes, not the watcher's coarseness"
     );
 }
+
+/// #736 review: the two ways the probe can lie about a buffer that nobody
+/// changed — a rename moves the path out from under it, and a save lands while
+/// it is in flight. Both used to end in the same false Reload offer.
+pub fn scenario_editor_banner_rename_and_save(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_editor_workspace(cx));
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
+    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        if cx.read(|cx| editor.read(cx).editor.is_some() && editor.read(cx).content.is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "editor did not load");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.update_window(window, |_, window, cx| {
+        let input = editor.read(cx).editor.clone().unwrap();
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "x");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+
+    // Rename the file under the dirty buffer, exactly as the tree's rename
+    // does, and move the bytes with it. The buffer's own path changes; its
+    // content does not. A probe keyed on a path-dependent hash would call that
+    // a change on every future event.
+    std::fs::rename(repo.join("README.md"), repo.join("RENAMED.md")).unwrap();
+    editor.update(cx, |view, cx| {
+        view.remap_renamed_path(
+            std::path::Path::new("README.md"),
+            std::path::Path::new("RENAMED.md"),
+            cx,
+        )
+    });
+    editor.update(cx, |view, cx| view.on_worktree_changed(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| !editor.read(cx).external_changed),
+        "a rename that moved the same bytes must not read as an external change"
+    );
+
+    // Saving and editing again must also leave the banner down. This does NOT
+    // exercise the in-flight case the identity re-check exists for: the
+    // dispatcher drains the probe before the save can land, so the ordering
+    // that makes a stale result observable cannot be produced here. Removing
+    // that re-check does not fail this scenario — it is carried by review, not
+    // by this test.
+    app.update(cx, |app, cx| app.save_editor_file(cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| !editor.read(cx).dirty && !app.read(cx).app_sessions.has_leases()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "editor save did not settle");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.simulate_keystrokes(window, "y");
+    cx.run_until_parked();
+    editor.update(cx, |view, cx| view.on_worktree_changed(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| !editor.read(cx).external_changed),
+        "an edit on top of a just-saved buffer must not read as an external change"
+    );
+
+    drop(editor);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS editor banner survives a rename and a save-then-edit");
+}

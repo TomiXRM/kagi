@@ -113,7 +113,7 @@ mod tests {
         assert!(ActiveModal::StashDrop(StashDropModal {
             plan: None,
             error: None,
-            stash_index: 0,
+            stash_index: Some(0),
         })
         .is_repo_scoped());
         assert!(ActiveModal::TrustRepo(TrustRepoModal {

@@ -169,6 +169,15 @@ impl EditorWorkspaceView {
 /// between that check and the read.
 fn changed_on_disk(full_path: &std::path::Path, loaded: &str) -> bool {
     use std::io::Read as _;
+    // The path can be swapped for something that is not a file at all, and
+    // opening a FIFO blocks until a writer connects — that would park this
+    // probe, every dirty buffer queued behind it, and a background worker with
+    // it, on nothing more than a watcher tick. `metadata` follows symlinks and
+    // never opens, so a symlinked regular file still compares normally while
+    // anything else is simply "changed".
+    if !std::fs::metadata(full_path).is_ok_and(|meta| meta.is_file()) {
+        return true;
+    }
     let Ok(file) = std::fs::File::open(full_path) else {
         return true;
     };

@@ -799,6 +799,10 @@ mod macos {
                 Box::new(crate::app_writer_admission::scenario_editor_save_buffer_identity),
             ),
             (
+                "editor_external_change_banner",
+                Box::new(crate::app_writer_admission::scenario_editor_external_change_banner),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),

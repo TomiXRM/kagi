@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The editor no longer claims your file changed on disk when it did not.** A working-tree watcher event says only that *something* under the tree changed, and Kagi's own fetch or save is enough to fire one — so an unsaved buffer used to be handed a "File changed on disk" banner, offering to Reload (discard) an edit nobody had touched. Each unsaved buffer's own file is now re-read and compared against the bytes that buffer loaded; the banner appears only where they actually differ. A buffer whose content could not be hashed when it loaded (binary, too large, unreadable) still gets the conservative banner, because it cannot be proven unchanged. (#736)
+
 ### Added
 
 - **A worktree can be opened as a tab from the sidebar.** Right-clicking a row under WORKTREES now offers Open in new tab, Reveal, and Copy path alongside the lifecycle actions it already had; previously the sidebar listed every worktree but could only remove or lock them, and opening one meant finding its badge in the graph — or its WIP row, which appears only while that worktree is dirty. The main worktree's row gets the same path actions (and still no lifecycle ones), so from a linked worktree's tab it is the way back to the repository. Opening a worktree that is already open switches to its tab instead of duplicating it. (#733)

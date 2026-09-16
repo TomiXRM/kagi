@@ -228,3 +228,73 @@ pub fn scenario_editor_save_buffer_identity(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS editor save binds to its own buffer → other tab keeps its edits");
 }
+
+/// #736: the watcher only says "something under the working tree changed", and
+/// kagi's own fetch or save fires it. A dirty buffer must not be told its file
+/// changed on disk unless the bytes really differ — the banner it raises offers
+/// Reload, which discards the edit.
+pub fn scenario_editor_external_change_banner(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_editor_workspace(cx));
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
+    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        if cx.read(|cx| editor.read(cx).editor.is_some() && editor.read(cx).content.is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "editor did not load");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.update_window(window, |_, window, cx| {
+        let input = editor.read(cx).editor.clone().unwrap();
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "x");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+
+    // An unrelated worktree event — exactly what an auto-fetch or kagi's own
+    // save produces. README.md itself is untouched, so no banner.
+    editor.update(cx, |view, cx| view.on_worktree_changed(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| !editor.read(cx).external_changed),
+        "an unrelated worktree event must not claim the open file changed on disk"
+    );
+    assert!(
+        cx.read(|cx| editor.read(cx).dirty),
+        "the edit itself must survive the probe"
+    );
+
+    // Now change the file for real: the banner is exactly what should appear.
+    std::fs::write(repo.join("README.md"), "changed by someone else\n").unwrap();
+    editor.update(cx, |view, cx| view.on_worktree_changed(cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| editor.read(cx).external_changed) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a real external change must raise the banner"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    drop(editor);
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS editor banner follows the file's bytes, not the watcher's coarseness"
+    );
+}

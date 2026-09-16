@@ -89,7 +89,8 @@ mod platform {
     /// about. The child is still suspended here; [`resume`] is what lets it run,
     /// so nothing it starts can be outside the job.
     pub(super) fn attach(_pid: u32, child: &Child) -> u32 {
-        let key = next_key();
+        // MUTATION 2: key the job by the recyclable pid again.
+        let key = _pid;
         // SAFETY: a fresh unnamed job object with default security.
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if handle.is_null() {

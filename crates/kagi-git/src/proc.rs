@@ -244,7 +244,7 @@ pub fn run_child(
     // Bind first, then let it run: on unix the group already exists, on Windows
     // this is the job assignment the suspension was for.
     let stop_key = job::attach(pid, &child);
-    job::resume(pid);
+    // MUTATION 1: the suspended child is never resumed.
     let child = supervisor::register_child(stop_key, child);
 
     // Each collector reports through the channel when it is done, so the wait

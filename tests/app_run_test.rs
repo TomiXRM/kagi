@@ -297,9 +297,15 @@ fn a_panicked_run_is_reconciled_through_the_supervisor_once_its_group_is_gone() 
     let mut s = Sessions::new();
     let request = f.request(&mut s);
     let approved = approve_run(&mut s, request).unwrap();
-    // What the job spawned, read back after the unwind so the test can stop it.
+    // What the job spawned, read back after the unwind so the test can watch it.
     let spawned: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
     let recorder = Arc::clone(&spawned);
+    // How the test stops the descendant again. A file it polls for, rather than
+    // a signal: `kill` with a negative pid is not portable between the BSD and
+    // GNU tools (the previous revision passed on macOS and failed on Linux),
+    // and the group must go away on its own for the probe to mean anything.
+    let stop = f.repo.join("stop-the-descendant");
+    let watch = stop.clone();
     let job = prepare_run(
         &mut s,
         approved,
@@ -308,7 +314,13 @@ fn a_panicked_run_is_reconciled_through_the_supervisor_once_its_group_is_gone() 
             // open: the run cannot prove that group empty, so the supervisor
             // goes on owning it. Then the task unwinds with it still running.
             let mut cmd = Command::new("sh");
-            cmd.args(["-c", "sleep 300 & exit 0"]);
+            cmd.args([
+                "-c",
+                &format!(
+                    "until [ -f '{}' ]; do sleep 0.05; done & exit 0",
+                    watch.display()
+                ),
+            ]);
             let run = kagi_git::proc::run_child(&mut cmd, std::time::Duration::from_secs(5), None)
                 .expect("spawn");
             *recorder.lock().unwrap() = Some(run.pid);
@@ -353,14 +365,12 @@ fn a_panicked_run_is_reconciled_through_the_supervisor_once_its_group_is_gone() 
     assert!(s.has_leases(), "and so the lease is still held");
 
     // The descendant goes; the same probe now proves the stop.
-    let _ = Command::new("kill")
-        .args(["-9", &format!("-{group}")])
-        .status();
-    for _ in 0..100 {
+    std::fs::write(&stop, "").expect("write the stop file");
+    for _ in 0..200 {
         if !kagi_git::proc::group_alive(group) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(25));
     }
     assert!(
         !kagi_git::proc::group_alive(group),

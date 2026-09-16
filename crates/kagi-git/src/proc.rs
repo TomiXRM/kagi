@@ -220,16 +220,21 @@ pub fn run_child(
     let mut child = cmd.spawn()?;
     // The child is its own group leader, so the group id is its pid.
     let pid = child.id();
-    // Owned outside this task from here on: if the caller unwinds before the
-    // run ends, the supervisor is what still knows this group exists (#703).
-    supervisor::register_group(pid);
+    // The pipes come off the handle first — they are what this function owns —
+    // and then the child itself moves to the supervisor, before anything that
+    // can unwind. From here the registry is its owner: a panic on the way to
+    // the wait can no longer drop the handle and leave a zombie, and the group
+    // is still named for a later probe (#703 / #725 review).
+    let (child_stdin, child_stdout, child_stderr) =
+        (child.stdin.take(), child.stdout.take(), child.stderr.take());
+    let child = supervisor::register_child(pid, child);
 
     // Each collector reports through the channel when it is done, so the wait
     // for them can be bounded (a `JoinHandle` cannot). The handles are kept only
     // for ownership: the janitor joins them if any read is still in flight.
     let (tx, rx) = std::sync::mpsc::channel();
     let mut threads = Vec::new();
-    if let (Some(data), Some(mut pipe)) = (stdin, child.stdin.take()) {
+    if let (Some(data), Some(mut pipe)) = (stdin, child_stdin) {
         let (data, tx) = (data.to_vec(), tx.clone());
         threads.push(std::thread::spawn(move || {
             let error = pipe.write_all(&data).err();
@@ -237,10 +242,10 @@ pub fn run_child(
             let _ = tx.send(Collected::Stdin(error));
         }));
     }
-    if let Some(pipe) = child.stdout.take() {
+    if let Some(pipe) = child_stdout {
         threads.push(drain(pipe, tx.clone(), Collected::Stdout));
     }
-    if let Some(pipe) = child.stderr.take() {
+    if let Some(pipe) = child_stderr {
         threads.push(drain(pipe, tx.clone(), Collected::Stderr));
     }
     // Our own sender must go, or `Disconnected` (every collector gone) never
@@ -252,7 +257,16 @@ pub fn run_child(
     // it running is what makes the termination unprovable. `wait_or_kill` does
     // it, because only it still holds the child unreaped at that moment — see
     // the ordering note there.
-    let status = wait_or_kill(&mut child, timeout);
+    let status = match child.with(|child| wait_or_kill(child, timeout)) {
+        Some(status) => status,
+        // Unreachable in practice: nothing else takes the child while this call
+        // owns the run. Treated as a stop that cannot be read rather than
+        // panicking on it.
+        None => Err(ProcStop::Wait {
+            error: "the child handle was taken from under the run".to_string(),
+            reaped: false,
+        }),
+    };
     let (stdout, stderr, io) = collect(&rx, threads.len());
     // Asked *after* the collectors settle, so a descendant still holding the
     // pipes is still counted. This is the whole stop proof.
@@ -266,11 +280,14 @@ pub fn run_child(
     // read that has not ended. On the ordinary path the collectors are done, so
     // this join is immediate.
     if io.is_err() || status.as_ref().err().is_some_and(|s| !s.reaped()) {
+        let child = child.reclaim();
         std::thread::spawn(move || {
             // Blocks for as long as the descendant lives — off the caller's
             // path, but with an owner: the child is reaped when it finally
             // exits, and the reader threads/fds are released with it.
-            let _ = child.wait();
+            if let Some(mut child) = child {
+                let _ = child.wait();
+            }
             for t in threads {
                 let _ = t.join();
             }

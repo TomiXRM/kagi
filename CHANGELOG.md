@@ -5,17 +5,17 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
-### Fixed
-
-- **A toast no longer appears cut in half at the window's left edge.** The cards slid in from 500px to the left of a 460px-wide card, on the theory that a notification should arrive from off-screen — but a window edge is not a screen edge, so what it produced was a card sliced by the window boundary for the length of the animation. The travel is now bounded by the stack's own inset, so the card stays whole and the fade carries the motion. Where a toast comes to rest is unchanged. (#709)
-
-- **The editor no longer claims your file changed on disk when it did not.** A working-tree watcher event says only that *something* under the tree changed, and Kagi's own fetch or save is enough to fire one — so an unsaved buffer used to be handed a "File changed on disk" banner, offering to Reload (discard) an edit nobody had touched. Each unsaved buffer's own file is now re-read and compared against the bytes that buffer loaded; the banner appears only where they actually differ. A buffer whose content could not be hashed when it loaded (binary, too large, unreadable) still gets the conservative banner, because it cannot be proven unchanged. (#736)
+## [0.38.0] — 2026-09-17
 
 ### Added
 
 - **A worktree can be opened as a tab from the sidebar.** Right-clicking a row under WORKTREES now offers Open in new tab, Reveal, and Copy path alongside the lifecycle actions it already had; previously the sidebar listed every worktree but could only remove or lock them, and opening one meant finding its badge in the graph — or its WIP row, which appears only while that worktree is dirty. The main worktree's row gets the same path actions (and still no lifecycle ones), so from a linked worktree's tab it is the way back to the repository. Opening a worktree that is already open switches to its tab instead of duplicating it. (#733)
 
 ### Fixed
+
+- **A toast no longer appears cut in half at the window's left edge.** The cards slid in from 500px to the left of a 460px-wide card, on the theory that a notification should arrive from off-screen — but a window edge is not a screen edge, so what it produced was a card sliced by the window boundary for the length of the animation. The travel is now bounded by the stack's own inset, so the card stays whole and the fade carries the motion. Where a toast comes to rest is unchanged. (#709)
+
+- **The editor no longer claims your file changed on disk when it did not.** A working-tree watcher event says only that *something* under the tree changed, and Kagi's own fetch or save is enough to fire one — so an unsaved buffer used to be handed a "File changed on disk" banner, offering to Reload (discard) an edit nobody had touched. Each unsaved buffer's own file is now re-read and compared against the bytes that buffer loaded; the banner appears only where they actually differ. A buffer whose content could not be hashed when it loaded (binary, too large, unreadable) still gets the conservative banner, because it cannot be proven unchanged. (#736)
 
 - **The stash-drop prompt offered after you resolve a stash-pop conflict can be confirmed again.** It reserves the modal slot while it still knows the stash only by OID, and the resolved index arriving with the plan was rejected as a mismatch — leaving the prompt on its loading state, refusing confirmation, so the stash you had just applied could not be dropped from the prompt. The unresolved target is now typed as such, and only the plan that resolves it may fill it in; confirming still requires a resolved target, and an ambiguous OID still offers nothing. (#723)
 - Delayed remote refreshes, fetch completions, and file-menu actions stay bound to their originating tab session. Reopening the same repository cannot inherit an older fetch's display updates; dirty Pull can join its own in-flight fetch without starting another write. (#643, ADR-0197 S2a)

@@ -310,7 +310,7 @@ impl Termination {
         }
         Self::Unaccounted {
             reason: reason.into(),
-            group: run.pid,
+            group: run.stop_key,
         }
     }
     pub fn reason(&self) -> &str {
@@ -569,6 +569,9 @@ mod termination_tests {
             status: Ok(0),
             io: Ok(()),
             pid: 4242,
+            // What a later probe asks about: the group id on unix, the job key
+            // on Windows. Equal to the pid here only because this is a fixture.
+            stop_key: 4242,
             group_stopped,
         }
     }

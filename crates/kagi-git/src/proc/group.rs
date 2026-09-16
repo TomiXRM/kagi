@@ -20,8 +20,13 @@ pub(super) fn kill_group(pgid: u32) {
     // because `run_child` spawned it as the group leader.
     unsafe { libc::kill(-(pgid as i32) as libc::pid_t, libc::SIGKILL) };
 }
+/// #703b: Windows has no process group to signal, so the deadline stops the
+/// **job object** the child was assigned to at spawn — the same "everything this
+/// command started" scope, by the only handle that can name it.
 #[cfg(not(unix))]
-pub(super) fn kill_group(_pgid: u32) {}
+pub(super) fn kill_group(pgid: u32) {
+    super::job::terminate(pgid);
+}
 
 /// Is anything in `pgid` still alive, after giving a just-killed group a
 /// bounded moment to go? `killed` says whether we signalled it, which is the
@@ -71,12 +76,11 @@ pub fn group_alive(pgid: u32) -> bool {
 /// is the safe half of a wrong answer: a held lease costs the user a restart,
 /// releasing one on no evidence costs them a concurrent write over a mutation
 /// that may still be running (ADR-0175).
-// ponytail: Windows has no process group in this sense, so the reconcile exit
-// there is the safe dead end — held until the application restarts. The upgrade
-// is a job object per child (`CreateJobObject` + `AssignProcessToJobObject` at
-// spawn, `QueryInformationJobObject` for live process ids), which is the
-// Windows equivalent of the group and the only thing that could answer this.
+/// #703b: on Windows that probe is the job object the child was assigned to at
+/// spawn (`ActiveProcesses == 0` is the empty group), and on any other platform
+/// it is still the safe dead end — see [`super::job`], which answers "alive"
+/// whenever it has no job to ask.
 #[cfg(not(unix))]
-pub fn group_alive(_pgid: u32) -> bool {
-    true
+pub fn group_alive(pgid: u32) -> bool {
+    super::job::alive(pgid)
 }

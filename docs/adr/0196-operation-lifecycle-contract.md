@@ -195,7 +195,7 @@ merge が resolve されると `ConflictView` が破棄され、abort が構造�
 | 0 | 契約固定（本書） | **完了** |
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了（#703 を除く）**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702 + 本 slice)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。残るのは下記「終端未確定の出口」の #703 のみ。うち task unwind は #703a の process supervisor が閉じ（`Abandoned` は supervisor 経由の `Unaccounted` / `Stopped` に置き換わり、型から削除）、残るのは Windows の group probe (#703b) だけ。これが閉じるまで受入条件（全 family の host-close / unknown / settle matrix 統一）は満たさない |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了（#703 を除く）**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702 + 本 slice)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。残るのは下記「終端未確定の出口」の #703 のみ。task unwind は #703a の process supervisor が閉じ（`Abandoned` は supervisor 経由の `Unaccounted` / `Stopped` に置き換わり、型から削除）、Windows の probe は #703b の job object が閉じた。**ただし Wave 3 完了は留保**: Windows の probe は advisory な CI job でしか実行されず、実機での検証が無い（下記「終端未確定の出口」を参照） |
 | 4 | UI state: `TabUiState` per session | **完了** (#714 #716 #717 #718 #720 #721 #722 #724)。契約は **ADR-0197**（所有の 5 分類 / `TabStores` / entity retention / leak matrix oracle / slice 順）。`reset_per_repo_ui` は削除され、tab 切替に残るのは window-global 1 slot（plan slot と repo-scoped modal）の close だけ |
 | C2 Abort | read-model-derived availability / entity-independent admission / typed report / reconcile | **完了** (#704。Wave 4 の前倒しではなく、ADR-0183 の read ownership と Wave 3 / C2 mutation lifecycle の correctness slice) |
 | 5 | crate 抽出（境界安定後のみ） | |
@@ -256,12 +256,21 @@ operation は承認時に凍結した `RemoteExpectation` を live `ls-remote` �
 `resolved` を決める（local snapshot は remote の状態を語らない）。`acknowledge` は
 `stop_proven` かつ `resolved` の read だけを受け付ける。
 
-**残件 (#703b)**: process group の probe を持たない platform（Windows / 非 unix）は
-安全側の保持のまま。`group_alive` は証拠が無い場合に「生きている」と答えるので、
-そこでは supervisor があっても `stop_proven` にならず、scope はアプリ再起動まで
-保持される（release ではなく retention 側に倒す — main の `write_lease` retention と
-同じ class）。Job Object による Windows の probe が入るまで Wave 3 の受入条件
-（全 family の host-close / unknown / settle matrix 統一）は満たさない。
+**Windows (#703b)**: process group の代わりに **job object** を使う。spawn 直後に
+`CreateJobObject` + `AssignProcessToJobObject` で child を専用 job に入れ、子孫は
+その membership を継承する。`QueryInformationJobObject` の `ActiveProcesses == 0`
+が「group が空」と同じ意味を持ち、deadline では `TerminateJobObject` が
+`kill_group` の役割を果たす。supervisor の所有と probe の形は unix と同一で、
+`Termination::Unaccounted { group }` が運ぶ `u32`（child の pid）を **何に問うか**
+だけが platform ごとに違う。job を持てなかった pid（assign 失敗、query 失敗、
+job を retire 済み）は従来どおり **alive** と答える — 証拠が無いことは「消えた」では
+ない。unix / Windows のどちらでもない platform も同じ安全側 fallback のまま。
+
+**Wave 3 完了は留保**: 実装は #703a / #703b で揃ったが、Windows の probe が走るのは
+CI の `build (Windows, advisory)` job に足した `cargo test -p kagi-git --lib proc::job::`
+だけで、**advisory（`continue-on-error`）であり、実ユーザーの Windows 環境では
+一度も実行されていない**。受入条件（全 family の host-close / unknown / settle
+matrix 統一）を満たしたと宣言するかは、この検証水準で足りるかの判断による。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を

@@ -80,12 +80,14 @@ zero-copy tab ownership target.
     exact conflict/buffer revisions and the Backend-owned receipt accompany the
     finite completion evidence.
   - [~] **Operation lifecycle Big Bang — #643 ([ADR-0196](../../adr/0196-operation-lifecycle-contract.md)).**
-    Waves 0–2 complete; Wave 3 complete except the process-group probe on non-unix
-    (#703b) — #703a moved spawned children and their groups into
-    `kagi_git::proc::supervisor`, so a panicked job's termination is a probeable
-    `Unaccounted` (or a `Stopped` when it spawned nothing) and `Termination::Abandoned`
-    is gone from the type; without a group probe, non-unix stays unresolved and holds
-    the scope until restart;
+    Waves 0–2 complete; Wave 3's implementation is complete but its completion is
+    **held back** for a verification call (#703b) — #703a moved spawned children and
+    their groups into `kagi_git::proc::supervisor`, so a panicked job's termination is
+    a probeable `Unaccounted` (or a `Stopped` when it spawned nothing) and
+    `Termination::Abandoned` is gone from the type; #703b gives Windows the same stop
+    proof through a job object (`ActiveProcesses == 0`), exercised only by the advisory
+    Windows CI job and never on a user's machine. A platform that can answer neither
+    still reads as alive and holds the scope until restart;
     Wave 4 (session-owned UI state, ADR-0197) complete.
     Every write is admitted through `begin_write`/`write_lease` and settled through
     `apply`; `busy_op`, `LegacyBusy` and the `repo_path + switch_generation` stale

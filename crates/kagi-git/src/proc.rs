@@ -16,6 +16,7 @@
 //! says whether the capture is complete, and neither can pass for success.
 
 mod group;
+mod job;
 pub mod supervisor;
 pub use group::group_alive;
 
@@ -130,6 +131,10 @@ pub struct ProcRun {
     /// could not (ADR-0175). Elsewhere it is just the pid, and
     /// [`group_alive`] has nothing to ask.
     pub pid: u32,
+    /// What a later read probes to prove this run stopped: the process group id
+    /// on unix (where the number *is* the handle), and the supervisor's job key
+    /// on Windows (#703b). Never a recycled pid — see [`job`].
+    pub stop_key: u32,
     /// Is the child's whole process **group** confirmed empty?
     ///
     /// The only thing that may become `Termination::Stopped`. Reaping the
@@ -217,6 +222,15 @@ pub fn run_child(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    // Windows has no group to be spawned into, so the child is created
+    // **suspended** and resumed below, once its job owns it: a helper started
+    // before that assignment would be outside the job and uncounted, and the
+    // tracked child exiting would then read as a stop proof (#726 review P1).
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(job::SPAWN_FLAGS);
+    }
     let mut child = cmd.spawn()?;
     // The child is its own group leader, so the group id is its pid.
     let pid = child.id();
@@ -227,7 +241,11 @@ pub fn run_child(
     // is still named for a later probe (#703 / #725 review).
     let (child_stdin, child_stdout, child_stderr) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take());
-    let child = supervisor::register_child(pid, child);
+    // Bind first, then let it run: on unix the group already exists, on Windows
+    // this is the job assignment the suspension was for.
+    let stop_key = job::attach(pid, &child);
+    job::resume(pid);
+    let child = supervisor::register_child(stop_key, child);
 
     // Each collector reports through the channel when it is done, so the wait
     // for them can be bounded (a `JoinHandle` cannot). The handles are kept only
@@ -257,7 +275,7 @@ pub fn run_child(
     // it running is what makes the termination unprovable. `wait_or_kill` does
     // it, because only it still holds the child unreaped at that moment — see
     // the ordering note there.
-    let status = match child.with(|child| wait_or_kill(child, timeout)) {
+    let status = match child.with(|child| wait_or_kill(child, timeout, stop_key)) {
         Some(status) => status,
         // Unreachable in practice: nothing else takes the child while this call
         // owns the run. Treated as a stop that cannot be read rather than
@@ -270,10 +288,20 @@ pub fn run_child(
     let (stdout, stderr, io) = collect(&rx, threads.len());
     // Asked *after* the collectors settle, so a descendant still holding the
     // pipes is still counted. This is the whole stop proof.
-    let group_stopped = !group_settled(pid, status.is_err());
+    let group_stopped = !group_settled(stop_key, status.is_err());
     if group_stopped {
-        // Proven empty: the job has nothing left to answer for here.
-        supervisor::release_group(pid);
+        // Proven empty: the job has nothing left to answer for here, and on
+        // Windows the job object that proved it can go with it.
+        supervisor::release_group(stop_key);
+        job::release(stop_key);
+    } else {
+        // The run ended with something of its own still inside the job: a hook's
+        // daemon, a helper on the pipes. Whether a receipt will name this key
+        // depends on what the caller makes of `status` and `io`, and this is the
+        // wrong place to guess — so every such key goes to the sweeper, which
+        // closes the handle when the tree goes and leaves the proof behind for
+        // whoever may still probe it (#726 review P2).
+        job::watch_until_empty(stop_key);
     }
 
     // Hand off whenever something is still ours to own: an unreaped child, or a
@@ -304,6 +332,7 @@ pub fn run_child(
         status: status.map(|s| s.code().unwrap_or(-1)),
         io,
         pid,
+        stop_key,
         group_stopped,
     })
 }
@@ -388,6 +417,7 @@ fn collect(
 pub(crate) fn wait_or_kill(
     child: &mut std::process::Child,
     timeout: Duration,
+    stop_key: u32,
 ) -> Result<std::process::ExitStatus, ProcStop> {
     let deadline = Instant::now() + timeout;
     let secs = timeout.as_secs();
@@ -403,7 +433,7 @@ pub(crate) fn wait_or_kill(
                 // Group first — the still-unreaped leader is what makes this
                 // pgid ours to signal. `run_child` spawns every child as its
                 // own group leader, so the child's pid *is* the group id.
-                kill_group(child.id());
+                kill_group(stop_key);
                 let _ = child.kill();
                 // Bounded reap: the child exits promptly once killed.
                 let mut reaped = false;
@@ -465,7 +495,8 @@ mod tests {
         let mut child = cmd.spawn().expect("spawn sh");
         let pgid = child.id();
 
-        let stop = wait_or_kill(&mut child, Duration::from_millis(200))
+        // On unix the stop key is the group id, which is the leader's pid.
+        let stop = wait_or_kill(&mut child, Duration::from_millis(200), pgid)
             .expect_err("the shell waits, so the deadline must expire");
         assert!(stop.reaped(), "the leader is reaped: {stop:?}");
 
@@ -518,7 +549,7 @@ mod tests {
         assert!(pid_alive(pid), "sleep should be running before the timeout");
 
         let start = Instant::now();
-        let result = wait_or_kill(&mut child, Duration::from_millis(200));
+        let result = wait_or_kill(&mut child, Duration::from_millis(200), pid);
 
         assert!(
             matches!(result, Err(ProcStop::Deadline { reaped: true, .. })),
@@ -538,7 +569,8 @@ mod tests {
     #[test]
     fn wait_or_kill_returns_status_for_fast_child() {
         let mut child = Command::new("true").spawn().expect("spawn true");
-        let status = wait_or_kill(&mut child, Duration::from_secs(5));
+        let pid = child.id();
+        let status = wait_or_kill(&mut child, Duration::from_secs(5), pid);
         assert_eq!(status.ok().and_then(|s| s.code()), Some(0));
     }
 

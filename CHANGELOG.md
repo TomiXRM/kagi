@@ -3,6 +3,8 @@
 All notable changes to Kagi are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [Unreleased]
+
 ## [0.38.0] — 2026-09-17
 
 ### Added

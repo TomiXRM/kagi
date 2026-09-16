@@ -264,9 +264,12 @@ cached=yes`) and the window stays put. Keep the flag for scenarios that stay in
 the content area — it is what leaves the user's foreground app alone.
 
 Dropping it has a real cost, so treat it as the documented exception to the
-no-foreground rule at the top of this skill: `open_main_window` calls
-`cx.activate(true)`, so the launch pulls Kagi in front of whatever the user is
-doing. Ask the user first, or run on a machine nobody is working on, and say in
+no-foreground rule at the top of this skill: `run_app` calls `cx.activate(true)`
+right after `open_main_window` (`src/ui/mod.rs:3187`), guarded by exactly this
+variable, so the launch pulls Kagi in front of whatever the user is doing.
+`open_main_window` itself does not activate, and the Dock-reopen handler's own
+`cx.activate(true)` is deliberately unguarded — the user asked for the window
+there. Ask the user first, or run on a machine nobody is working on, and say in
 the PR that the scenario needed the tab strip. Every other isolation flag
 (`USER`, `KAGI_NO_RESTORE=1`, `KAGI_LOG_DIR`) still applies unchanged — they
 protect the user's session, settings, trust and oplog, which foreground does not

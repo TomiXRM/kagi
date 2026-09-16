@@ -17,6 +17,14 @@ impl KagiApp {
 
     /// Open the shared worktree context menu from a graph badge, WIP row, or
     /// sidebar entry. Main worktrees expose no linked-worktree lifecycle ops.
+    ///
+    /// An SSH tab opens no worktree menu at all. `remote::` fabricates that
+    /// tab's single worktree with the path as it exists **on the remote host**
+    /// (ADR-0089), while every action the menu offers — open, reveal, copy,
+    /// prune, repair — runs locally: a local directory that happens to share
+    /// that absolute path would be acted on instead of the command failing.
+    /// The refusal lives here, not at each call site, so a new caller cannot
+    /// miss it (#733).
     pub fn open_worktree_menu(
         &mut self,
         name: String,
@@ -25,6 +33,10 @@ impl KagiApp {
         path: Option<PathBuf>,
         position: Point<Pixels>,
     ) {
+        if self.remote_view.is_some() {
+            klog!("worktree-menu: refused '{}' (remote view)", name);
+            return;
+        }
         self.commit_menu = None;
         self.branch_menu = None;
         self.stash_menu = None;

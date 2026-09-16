@@ -418,13 +418,17 @@ mod tests {
         }));
     }
 
+    /// A caller that knows only the registry name gets the lifecycle and
+    /// repo-wide groups alone. The sidebar was that caller until #733 handed it
+    /// the real path, so the name no longer says "sidebar" — but the contract
+    /// it relied on still has to hold.
     #[test]
-    fn sidebar_menu_is_unchanged_without_a_path() {
+    fn a_menu_without_a_known_path_omits_the_path_items() {
         let no_path = actions(false, None);
         assert!(!no_path.contains(&WorktreeAction::OpenInNewTab));
         assert!(!no_path.contains(&WorktreeAction::Reveal));
         assert!(!no_path.contains(&WorktreeAction::CopyPath));
-        assert_eq!(no_path.len(), 6, "sidebar menu grew: {no_path:?}");
+        assert_eq!(no_path.len(), 6, "menu grew: {no_path:?}");
     }
 
     #[test]

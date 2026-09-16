@@ -28,8 +28,9 @@ pub struct WorktreeMenuState {
     /// path actions from its graph badge (#591).
     pub is_main: bool,
     /// #473: the worktree's working-tree path, when the menu was opened from a
-    /// place that knows it (the graph's WIP row). `None` from the sidebar, which
-    /// only carries the registry name — the path-based items are then omitted.
+    /// place that knows it — the graph's WIP row, a badge, and (since #733) the
+    /// sidebar. A caller carrying only the registry name passes `None`, and the
+    /// path-based items are then omitted.
     pub path: Option<PathBuf>,
     pub position: Point<Pixels>,
 }
@@ -60,9 +61,9 @@ pub enum WorktreeAction {
 /// only while unlocked; the two remove variants and the repo-wide prune/repair
 /// route through their plan → confirm modals.
 ///
-/// #473: when `path` is known (the graph's WIP row), a leading group offers
-/// "Open in new tab" / "Reveal" / "Copy path". The sidebar passes `None` and
-/// gets exactly the menu it had before.
+/// #473: when `path` is known, a leading group offers "Open in new tab" /
+/// "Reveal" / "Copy path". A caller that knows only the registry name passes
+/// `None` and gets the lifecycle and repo-wide groups alone.
 pub fn build_worktree_menu(
     locked: bool,
     is_main: bool,

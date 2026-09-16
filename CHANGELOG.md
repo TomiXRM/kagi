@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **A worktree can be opened as a tab from the sidebar.** Right-clicking a row under WORKTREES now offers Open in new tab, Reveal, and Copy path alongside the lifecycle actions it already had; previously the sidebar listed every worktree but could only remove or lock them, and opening one meant finding its badge in the graph — or its WIP row, which appears only while that worktree is dirty. The main worktree's row gets the same path actions (and still no lifecycle ones), so from a linked worktree's tab it is the way back to the repository. Opening a worktree that is already open switches to its tab instead of duplicating it. (#733)
+
 ### Fixed
 
 - **The stash-drop prompt offered after you resolve a stash-pop conflict can be confirmed again.** It reserves the modal slot while it still knows the stash only by OID, and the resolved index arriving with the plan was rejected as a mismatch — leaving the prompt on its loading state, refusing confirmation, so the stash you had just applied could not be dropped from the prompt. The unresolved target is now typed as such, and only the plan that resolves it may fill it in; confirming still requires a resolved target, and an ambiguous OID still offers nothing. (#723)

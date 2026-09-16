@@ -96,6 +96,7 @@ mod render_wip;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 pub mod settings_view;
 pub mod sidebar;
+mod sidebar_worktree_row;
 pub mod smart_commit;
 pub mod stash_menu;
 mod tab_ui_state_ops;

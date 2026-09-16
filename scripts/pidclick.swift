@@ -20,11 +20,11 @@ func fail(_ message: String) -> Never {
 }
 
 func usage() -> Never {
-    fail("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> move|click|rclick <x> <y> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
+    fail("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
 }
 
 func printUsage() {
-    print("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> move|click|rclick <x> <y> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
+    print("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
 }
 
 func parsePID(_ value: String) -> pid_t? {
@@ -222,6 +222,24 @@ case "click", "rclick":
     post(mouse(.mouseMoved, at: location, button: .left)) // GPUI needs hover before a click.
     post(mouse(button == .right ? .rightMouseDown : .leftMouseDown, at: location, button: button))
     post(mouse(button == .right ? .rightMouseUp : .leftMouseUp, at: location, button: button))
+case "scroll":
+    // A list long enough to scroll is the only place some per-tab state shows
+    // up at all (#737). Negative lines scroll down, matching a trackpad's
+    // natural direction.
+    guard values.count == 3, let lines = Int32(values[values.index(values.startIndex, offsetBy: 2)])
+    else { fail("scroll takes <x> <y> <lines>") }
+    let location = point(from: values.prefix(2))
+    post(mouse(.mouseMoved, at: location, button: .left)) // the list under the pointer scrolls.
+    guard let wheel = CGEvent(
+        scrollWheelEvent2Source: source,
+        units: .line,
+        wheelCount: 1,
+        wheel1: lines,
+        wheel2: 0,
+        wheel3: 0
+    ) else { fail("could not create a scroll event") }
+    wheel.location = location
+    post(wheel)
 case "key":
     guard let first = values.first, let code = UInt16(first), code < 128 else { usage() }
     var modifiers: CGEventFlags = []

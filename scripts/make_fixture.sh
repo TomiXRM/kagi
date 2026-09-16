@@ -5,8 +5,8 @@
 #   scripts/make_fixture.sh [DEST] [BULK]
 # DEST 省略時は mktemp -d で /tmp 配下に生成する。最終行に repo のパスを出力する。
 # BULK(既定 0)は main の履歴の深さを足す空 commit の数。既定の 12 commit では
-# コミットリストがスクロールもページングもしないので、その検証には
-# COMMIT_PAGE_STEP(1000)を超える値を渡す(#737)。
+# コミットリストがスクロールもページングもしない。スクロールは数百で足りるが、
+# ページングは DEFAULT_COMMIT_LIMIT(10000)を超えてから始まる(#737)。
 #
 # 生成内容:
 #   $DEST/remote.git  bare repo(origin として使用)

@@ -328,7 +328,19 @@ REPO=/tmp/kagi-vfx-a/repo
 ```
 
 It supplies main/feature branches, a merge, a tag, origin, one stash, and a dirty
-working tree. For the three-stash menu and all four stash operations, consume the
+working tree — 12 commits, which is deliberately small.
+
+A second argument deepens `main` with that many empty commits, inserted just
+above the initial commit so the interesting shape stays at the top of the graph.
+Anything that only happens on a long list needs it: the commit list does not
+scroll at 12 commits, and `COMMIT_PAGE_STEP` is 1,000, so paging needs more than
+that (#737). Roughly 13ms per commit — 1,500 takes about 17 seconds.
+
+```bash
+bash scripts/make_fixture.sh /tmp/kagi-vfx-deep 1500
+```
+
+For the three-stash menu and all four stash operations, consume the
 initial dirty tree as stash two, then create stash three:
 
 ```bash

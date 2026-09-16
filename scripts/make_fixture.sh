@@ -2,8 +2,11 @@
 # テスト用 fixture repo 生成スクリプト(開発時の動作検証は必ずこの repo に対して行う)。
 #
 # 使い方:
-#   scripts/make_fixture.sh [DEST]
+#   scripts/make_fixture.sh [DEST] [BULK]
 # DEST 省略時は mktemp -d で /tmp 配下に生成する。最終行に repo のパスを出力する。
+# BULK(既定 0)は main の履歴の深さを足す空 commit の数。既定の 12 commit では
+# コミットリストがスクロールもページングもしないので、その検証には
+# COMMIT_PAGE_STEP(1000)を超える値を渡す(#737)。
 #
 # 生成内容:
 #   $DEST/remote.git  bare repo(origin として使用)
@@ -15,6 +18,10 @@
 set -euo pipefail
 
 DEST="${1:-$(mktemp -d /tmp/kagi-fixture.XXXXXX)}"
+BULK="${2:-0}"
+case "$BULK" in
+  ''|*[!0-9]*) echo "error: BULK must be a non-negative integer (got: $BULK)" >&2; exit 1 ;;
+esac
 case "$DEST" in
   /tmp/*|/private/tmp/*|/var/folders/*) ;; # 安全のため tempdir 配下のみ許可
   *) echo "error: DEST must be under /tmp (got: $DEST)" >&2; exit 1 ;;
@@ -38,6 +45,16 @@ commit() { # commit <file> <content> <message>
 }
 
 commit README.md "# fixture" "initial commit"
+
+# 履歴を深くするのは初期 commit の直後 — fixture 本来の形(merge・tag・branch)は
+# グラフ上部に残り、その下に BULK 件が積まれる。空 commit なので tree は増えない。
+# 1 件あたり ~13ms かかる(3000 件で 40 秒ほど)。もっと速くしたくなったら
+# git fast-import に置き換える。
+if [ "$BULK" -gt 0 ]; then
+  for _ in $(seq 1 "$BULK"); do
+    git commit -q --allow-empty -m "bulk history"
+  done
+fi
 commit a.txt "a" "add a.txt"
 
 git checkout -qb feature/one

@@ -46,6 +46,12 @@ impl EditorWorkspaceView {
     /// either moved, so a save — or a close and reopen — landing mid-flight
     /// cannot banner the buffer that replaced it.
     pub fn on_worktree_changed(&mut self, cx: &mut Context<Self>) {
+        // Every event supersedes the probes before it, including one that finds
+        // nothing to probe: a buffer can go clean and come back dirty while an
+        // older probe is still in flight, and its answer describes a file state
+        // two events ago.
+        self.probe_req = self.probe_req.wrapping_add(1);
+        let req = self.probe_req;
         self.start_load(cx);
         if !self.dirty {
             // Clean buffer: re-read content + diff. The content-sig guard in
@@ -81,8 +87,6 @@ impl EditorWorkspaceView {
             cx.notify();
             return;
         }
-        self.probe_req = self.probe_req.wrapping_add(1);
-        let req = self.probe_req;
         let repo_path = self.repo_path.clone();
         let task = cx.background_spawn(async move {
             probes
@@ -147,16 +151,26 @@ impl EditorWorkspaceView {
 
 /// Does `full_path` hold something other than `loaded`?
 ///
-/// The size is checked first, and not only to skip a read: an external process
-/// can replace the small file being edited with a huge one, and `load_selected`
-/// refuses anything past `MAX_EDITOR_BYTES` — this path must not be the one
-/// place that slurps gigabytes into the UI process. A different length is
-/// already proof of a different file, so the read that remains is bounded by
-/// the text the buffer had loaded.
+/// The read stops one byte past what the buffer loaded, which is both exact and
+/// bounded: a longer file already differs by that byte, a shorter or different
+/// one differs outright, and nothing larger than the text the editor is already
+/// holding is ever allocated. `load_selected` refuses files past
+/// `MAX_EDITOR_BYTES`, and this path must not become the one that slurps
+/// gigabytes because an external process swapped the file for a huge one.
+/// Checking `metadata().len()` first would not bound it — the file can grow
+/// between that check and the read.
 fn changed_on_disk(full_path: &std::path::Path, loaded: &str) -> bool {
-    match std::fs::metadata(full_path) {
-        Err(_) => true,
-        Ok(meta) if meta.len() != loaded.len() as u64 => true,
-        Ok(_) => std::fs::read_to_string(full_path).map_or(true, |text| text != loaded),
+    use std::io::Read as _;
+    let Ok(file) = std::fs::File::open(full_path) else {
+        return true;
+    };
+    let mut bytes = Vec::with_capacity(loaded.len() + 1);
+    if file
+        .take(loaded.len() as u64 + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return true;
     }
+    bytes != loaded.as_bytes()
 }

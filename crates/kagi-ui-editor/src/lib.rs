@@ -26,6 +26,7 @@ mod blame;
 pub mod markdown;
 mod panes;
 mod save_binding;
+mod watcher;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -482,6 +483,10 @@ pub struct EditorWorkspaceView {
     /// Allocator for `buf_gen`. Monotonic, so a generation identifies a
     /// buffer on its own once the path has been matched.
     next_buf_gen: u64,
+    /// Monotonic token for the watcher's external-change probe (#736). Two
+    /// watcher events can have probes in flight at once; only the newest one's
+    /// answer describes the file as it is now, so an older landing is dropped.
+    pub(crate) probe_req: u64,
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
@@ -578,6 +583,7 @@ impl EditorWorkspaceView {
             external_changed: false,
             buf_gen: 0,
             next_buf_gen: 1,
+            probe_req: 0,
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: new_diff_list_state(),
             show_tree: true,
@@ -1796,48 +1802,6 @@ impl EditorWorkspaceView {
             path.display()
         );
         cx.emit(EditorWorkspaceEvent::SaveBlocked);
-        cx.notify();
-    }
-
-    /// FS-watcher nudge (T-WS-EDITOR-002 §4), called from
-    /// `KagiApp::refresh_working_tree_external` on every debounced
-    /// `WatchEvent::WorkTree`. Always refreshes the tree/badges (also covers
-    /// the tree-side of a just-completed save); additionally re-reads the
-    /// open file's content when the buffer is clean (the tree reload itself
-    /// is highlight-only per the spec change), or raises the "changed on
-    /// disk" banner when it's dirty (never clobbers an edit).
-    pub fn on_worktree_changed(&mut self, cx: &mut Context<Self>) {
-        self.start_load(cx);
-        if self.dirty {
-            self.external_changed = true;
-        } else {
-            // Clean buffer: re-read content + diff. The content-sig guard in
-            // `sync_editor` makes an unchanged re-read a no-op push, so the
-            // cursor/scroll survive routine watcher ticks.
-            self.load_selected(cx);
-        }
-        // Backgrounded tabs: a dirty one gets the banner when reactivated
-        // (same watcher coarseness as the active buffer — we don't know
-        // WHICH file changed); a clean one re-reads on activation anyway
-        // (`open_tab`'s clean-refresh), so nothing to do for it here.
-        for buf in self.tab_cache.values_mut() {
-            if buf.dirty {
-                buf.external_changed = true;
-            }
-        }
-        cx.notify();
-    }
-
-    /// Discard the buffer and re-read the open file from disk (the confirmed
-    /// outcome of the external-change banner's Reload button — the button
-    /// itself opens the dirty guard first, T-WS-EDITOR-002 §5 spec change).
-    pub fn reload_from_disk(&mut self, cx: &mut Context<Self>) {
-        self.dirty = false;
-        self.external_changed = false;
-        // Force the editor push even when the disk text hashes back to the
-        // pre-edit snapshot (the user's edit is being discarded either way).
-        self.pushed_sig = 0;
-        self.load_selected(cx);
         cx.notify();
     }
 

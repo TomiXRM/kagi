@@ -504,8 +504,18 @@ mod tests {
     /// stack is actually laid out at, at every zoom: the first attempt at this
     /// fix compared the two raw constants while the slide alone skipped
     /// `scaled_px`, and below 1.0x the card crossed the edge again.
+    /// Holds `ENV_LOCK` and redirects `KAGI_LOG_DIR`, like every other zoom
+    /// test: `set_zoom` drives a process-global atomic *and* writes
+    /// settings.json, so without both this races the sibling zoom tests and
+    /// saves into the developer's real `~/.kagi` (#740 review).
     #[test]
     fn the_toast_slide_never_crosses_the_window_edge() {
+        let _g = crate::ui::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+
         let before = theme::zoom();
         for zoom in [theme::ZOOM_MIN, 1.0, theme::ZOOM_MAX] {
             theme::set_zoom(zoom);

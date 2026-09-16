@@ -3425,6 +3425,7 @@ dependencies = [
  "tempfile",
  "toml 0.8.23",
  "ureq",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

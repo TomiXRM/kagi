@@ -16,6 +16,7 @@
 //! says whether the capture is complete, and neither can pass for success.
 
 mod group;
+mod job;
 pub mod supervisor;
 pub use group::group_alive;
 
@@ -272,8 +273,10 @@ pub fn run_child(
     // pipes is still counted. This is the whole stop proof.
     let group_stopped = !group_settled(pid, status.is_err());
     if group_stopped {
-        // Proven empty: the job has nothing left to answer for here.
+        // Proven empty: the job has nothing left to answer for here, and on
+        // Windows the job object that proved it can go with it.
         supervisor::release_group(pid);
+        job::release(pid);
     }
 
     // Hand off whenever something is still ours to own: an unreaped child, or a

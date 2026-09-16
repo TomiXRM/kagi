@@ -118,6 +118,10 @@ impl Drop for JobGuard {
 /// A spawn outside a supervised job — a read, a probe, a test — still gets a
 /// handle; it just has no job to be registered against.
 pub(super) fn register_child(pgid: u32, child: Child) -> ChildHandle {
+    // #703b: on Windows this is where the tree becomes probeable at all — the
+    // child is assigned to a job of its own, which is what `group_alive` then
+    // asks. A no-op on unix, where the process group already is that handle.
+    super::job::attach(pgid, &child);
     let child = Arc::new(Mutex::new(Some(child)));
     let handle = ChildHandle {
         child: Arc::clone(&child),
@@ -236,6 +240,9 @@ pub fn group_stopped(pgid: u32) -> bool {
     };
     if groups.iter().any(|group| group_alive(*group)) {
         return false;
+    }
+    for group in &groups {
+        super::job::release(*group);
     }
     jobs.remove(&id);
     true

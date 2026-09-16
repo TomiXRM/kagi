@@ -166,6 +166,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo build --release -p kagi
         run: cargo build --release -p kagi
+      # #703b: the Windows stop proof is a job object, and this is the only
+      # place it actually runs. Release, so it reuses the dependencies the build
+      # above already compiled; `proc::job::` only, because the rest of the
+      # suite is unix-shaped (it spawns `sleep`, `sh`, `true`).
+      - name: cargo test --release -p kagi-git --lib proc::job::
+        run: cargo test --release -p kagi-git --lib proc::job::
       - name: Bundle Windows zip
         run: cargo run -p xtask -- bundle-windows --bin target/release/kagi.exe
       - name: List dist

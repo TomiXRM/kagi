@@ -33,3 +33,18 @@ filetime = "0.2"
 toml = "0.8"
 sha2 = "0.10"
 hex = "0.4"
+
+# Windows-only: job objects are the platform's process group (#703b / ADR-0196).
+# `CreateJobObject` + `AssignProcessToJobObject` bind a spawned child and its
+# descendants, and `QueryInformationJobObject` answers "is anything still
+# running", which is the stop proof a reconcile read needs. 0.61.2 is already in
+# Cargo.lock via gpui's tree, so this adds no new download, and the crate
+# compiles to nothing off Windows.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    # `CreateJobObjectW` takes a `SECURITY_ATTRIBUTES` pointer, so its
+    # declaration lives behind this feature even though kagi passes null.
+    "Win32_Security",
+    "Win32_System_JobObjects",
+] }

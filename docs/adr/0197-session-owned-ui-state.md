@@ -190,7 +190,8 @@ delete-branch plan（`Attachment` の session + visit と planning tag が既に
 - file menu は panel を開いた host session と対象 file path を defer 前に凍結する。
   表示時と action dispatch 時に owner を検証する。linked-worktree panel の
   `repo_path` は従来どおり操作先 locator であり、host owner と混同しない。
-- S2b の per-repo evidence / probe、S5 の pane retention、S6 の reset 削除は未着手。
+- この節を書いた時点で未着手だった S2b の per-repo evidence / probe、S5 の pane
+  retention、S6 の reset 削除は、以降の各節のとおりすべて実装済み。
 
 ### S4 実装
 

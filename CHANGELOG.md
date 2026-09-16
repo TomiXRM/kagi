@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- **A toast no longer appears cut in half at the window's left edge.** The cards slid in from 500px to the left of a 460px-wide card, on the theory that a notification should arrive from off-screen — but a window edge is not a screen edge, so what it produced was a card sliced by the window boundary for the length of the animation. The travel is now bounded by the stack's own inset, so the card stays whole and the fade carries the motion. Where a toast comes to rest is unchanged. (#709)
+
 - **The editor no longer claims your file changed on disk when it did not.** A working-tree watcher event says only that *something* under the tree changed, and Kagi's own fetch or save is enough to fire one — so an unsaved buffer used to be handed a "File changed on disk" banner, offering to Reload (discard) an edit nobody had touched. Each unsaved buffer's own file is now re-read and compared against the bytes that buffer loaded; the banner appears only where they actually differ. A buffer whose content could not be hashed when it loaded (binary, too large, unreadable) still gets the conservative banner, because it cannot be proven unchanged. (#736)
 
 ### Added

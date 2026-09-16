@@ -102,8 +102,12 @@ mod platform {
 
     /// One spawn's identity, minted here and never reused — unlike the pid it
     /// replaces, which the OS hands out again once the child is reaped.
+    ///
+    /// Numbered from above the pid space (Windows pids are small multiples of
+    /// four), so a key can never be mistaken for a pid — by a reader, or by a
+    /// test asserting the two are different.
     fn next_key() -> u32 {
-        static NEXT: AtomicU32 = AtomicU32::new(1);
+        static NEXT: AtomicU32 = AtomicU32::new(0x8000_0000);
         NEXT.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -243,6 +247,13 @@ mod platform {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 let keys: Vec<u32> = watched().clone();
                 for key in keys {
+                    // Released from under us (the run proved the stop, or a
+                    // test tidied up): there is nothing left to sweep, and
+                    // `alive` would answer "true" for it forever.
+                    if !jobs().contains_key(&key) {
+                        watched().retain(|watched| *watched != key);
+                        continue;
+                    }
                     if alive(key) {
                         continue; // still running: the handle stays
                     }
@@ -321,11 +332,18 @@ mod tests {
     use std::process::Command;
     use std::time::Duration;
 
-    /// Something that keeps running until it is stopped. `ping` is the
-    /// Windows-native "sleep" and is present on every runner.
+    /// Something that keeps running until it is stopped, as **one** process.
+    /// `ping` is the Windows-native "sleep" and is on every runner.
+    ///
+    /// Not `cmd /C ping`: the tests below attach a job to an already-running
+    /// child, so a `cmd` that has already started its own `ping` may leave that
+    /// descendant outside the job — and `Child::kill` would not stop it either,
+    /// so the job would stay non-empty for reasons that have nothing to do with
+    /// what is being asserted. (Production does not have this problem: the
+    /// child is created suspended and assigned before it runs.)
     fn long_running() -> Command {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", "ping -n 30 127.0.0.1"]);
+        let mut cmd = Command::new("ping");
+        cmd.args(["-n", "30", "127.0.0.1"]);
         cmd
     }
 

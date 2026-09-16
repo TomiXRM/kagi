@@ -1,6 +1,6 @@
 ---
 name: kagi-verify
-description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer or the foreground: Tier B uses scripts/pidclick.swift (CGEventPostToPid). cliclick is banned for new validation.
+description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer, and does not take the foreground either — except a scenario that clicks the tab strip, which needs a key window, so ask the user first or use a machine nobody is working on. Tier B uses scripts/pidclick.swift (CGEventPostToPid). cliclick is banned for new validation.
 ---
 
 # Kagi verification recipe

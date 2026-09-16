@@ -27,7 +27,7 @@ use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
 /// header, group header, branch/remote/tag/worktree/stash leaf, and the
 /// placeholder rows) is therefore pinned to this height so the virtualized
 /// list scrolls correctly regardless of which row happens to be first.
-const SIDEBAR_ROW_H: f32 = 24.0;
+pub(super) const SIDEBAR_ROW_H: f32 = 24.0;
 
 /// Default sidebar width in pixels (T023). Previously `mod.rs::SIDEBAR_DEFAULT`.
 const SIDEBAR_DEFAULT_WIDTH: f32 = 200.0;
@@ -369,7 +369,7 @@ fn group_remotes<T: Clone>(
 /// Build a `.tooltip(...)` closure showing the full (untruncated) name.
 /// Row labels are single-line + ellipsized, so the tooltip is how the user
 /// reads a name that doesn't fit the sidebar width.
-fn name_tooltip(
+pub(super) fn name_tooltip(
     full: SharedString,
 ) -> impl Fn(&mut gpui::Window, &mut gpui::App) -> gpui::AnyView + 'static {
     move |window, cx| Tooltip::new(full.clone()).build(window, cx)
@@ -456,6 +456,10 @@ pub enum SidebarRow {
     /// A worktree leaf.
     Worktree {
         name: String,
+        /// The working-tree path itself. `path_label` is display text — lossy
+        /// for non-UTF-8 paths and control-byte sanitized before rendering — so
+        /// the menu's path actions use this instead of parsing the label back.
+        path: std::path::PathBuf,
         path_label: String,
         is_current: bool,
         is_main: bool,
@@ -817,6 +821,7 @@ pub fn build_sidebar_rows(
             {
                 rows.push(SidebarRow::Worktree {
                     name: wt.name.clone(),
+                    path: wt.path.clone(),
                     path_label: wt.path.display().to_string(),
                     is_current: wt.is_current,
                     is_main: wt.is_main,
@@ -900,11 +905,20 @@ fn build_sidebar_row(
         SidebarRow::Tag { name, target } => build_tag_row(this, name, target.clone(), cx),
         SidebarRow::Worktree {
             name,
+            path,
             path_label,
             is_current,
             is_main,
             locked,
-        } => build_worktree_row(name, path_label, *is_current, *is_main, *locked, cx),
+        } => super::sidebar_worktree_row::build_worktree_row(
+            name,
+            path,
+            path_label,
+            *is_current,
+            *is_main,
+            *locked,
+            cx,
+        ),
         SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
         SidebarRow::PrGroupHeader {
             key,
@@ -1374,72 +1388,6 @@ fn build_tag_row(
     } else {
         base.into_any()
     }
-}
-
-/// A worktree leaf (read-only; ✓ marks the current worktree).
-fn build_worktree_row(
-    name: &str,
-    path_label: &str,
-    is_current: bool,
-    is_main: bool,
-    locked: bool,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    // issue #356: worktree name/path are remote/filesystem-origin text —
-    // neutralize control bytes in the visible label.
-    let name_s = kagi_domain::text_safety::sanitize_control_bytes(name);
-    let path_s = kagi_domain::text_safety::sanitize_control_bytes(path_label);
-    let label = if is_current {
-        SharedString::from(format!("\u{2713} {}  {}", name_s, path_s))
-    } else {
-        SharedString::from(format!("{}  {}", name_s, path_s))
-    };
-    let full_name = label.clone();
-    let text_color = if is_current {
-        theme().color_success
-    } else {
-        theme().text_sub
-    };
-    let mut row = div()
-        .id(SharedString::from(format!("sidebar-worktree-{}", name)))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
-        // w_full: without it the row sizes to its content and runs past the
-        // sidebar clip — the trailing lock chip was never visible and the
-        // label never ellipsized (other sidebar rows are width-bounded).
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .px_3()
-        .text_sm()
-        .text_color(rgb(text_color))
-        .overflow_hidden()
-        .tooltip(name_tooltip(full_name))
-        // min_w(0): without it the flex item sizes to the (long) path label's
-        // min-content width and pushes the lock chip past the clipped row edge
-        // — the indicator never showed at all (user report).
-        .child(div().flex_1().min_w(px(0.)).truncate().child(label));
-    if locked {
-        // 🔐 reads at a glance where the muted "locked" text was easy to miss
-        // next to the path label (user feedback).
-        row = row.child(div().flex_shrink_0().text_xs().child("🔐"));
-    }
-    // Right-click menu (Unlock worktree…) — linked worktrees only; the main
-    // worktree is never lockable/unlockable from kagi.
-    if !is_main {
-        let name_for_menu = name.to_string();
-        let menu_handler = cx.listener(
-            move |this: &mut KagiApp, event: &gpui::MouseDownEvent, _window, cx| {
-                this.open_worktree_menu(name_for_menu.clone(), locked, false, None, event.position);
-                cx.stop_propagation();
-                cx.notify();
-            },
-        );
-        row = row
-            .on_mouse_down(gpui::MouseButton::Right, menu_handler)
-            .hover(|style| style.bg(rgb(theme().surface)));
-    }
-    row.into_any()
 }
 
 /// A stash leaf — left-click **pops** (apply + remove); right-click opens a

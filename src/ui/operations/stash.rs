@@ -20,7 +20,8 @@ impl KagiApp {
         if self.offer_plan_from_async(AsyncPlanOffer::new(
             i18n::Op::Stash,
             ActiveModal::StashDrop(StashDropModal {
-                stash_index: 0,
+                // The OID resolves to an index only when the plan lands.
+                stash_index: None,
                 plan: None,
                 error: None,
             }),
@@ -79,7 +80,7 @@ impl KagiApp {
     }
     pub fn open_stash_drop_modal(&mut self, index: usize, cx: &mut Context<Self>) {
         self.set_stash_drop_modal(StashDropModal {
-            stash_index: index,
+            stash_index: Some(index),
             plan: None,
             error: None,
         });
@@ -120,7 +121,7 @@ impl KagiApp {
                 if current
                     && app
                         .stash_drop_modal()
-                        .is_some_and(|m| m.stash_index == index)
+                        .is_some_and(|m| m.stash_index == Some(index))
                 {
                     if app::apply_plan(&mut app.app_sessions, completion) {
                         app.show_remote_stash_plan(index, cx);
@@ -154,7 +155,7 @@ impl KagiApp {
             self.push_toast(ToastKind::Error, error.clone(), cx);
         }
         self.update_stash_drop_plan_from_async(StashDropModal {
-            stash_index: index,
+            stash_index: Some(index),
             plan,
             error,
         });
@@ -193,7 +194,8 @@ impl KagiApp {
         cx.spawn(async move |this, cx| {
             let completion = task.await;
             let _ = this.update(cx, |app, cx| {
-                if app.active_session() != Some(owner.session) || !app.stash_modal_matches(&action)
+                if app.active_session() != Some(owner.session)
+                    || !app.stash_modal_accepts_plan(&action)
                 {
                     if completion.is_current(&app.app_sessions) {
                         app.discard_contended_plan_from_async(
@@ -242,11 +244,21 @@ impl KagiApp {
             StashAction::Pop { index } => self.pop_modal().is_some_and(|m| m.stash_index == *index),
             StashAction::Drop { index } => self
                 .stash_drop_modal()
-                .is_some_and(|m| m.stash_index == *index),
+                .is_some_and(|m| m.stash_index == Some(*index)),
         }
     }
+    /// A post-conflict follow-up reserves the modal slot while its target is
+    /// still an OID, so a drop plan may also land on an unresolved modal — that
+    /// landing is what resolves it. Confirming still requires a resolved match.
+    fn stash_modal_accepts_plan(&self, action: &StashAction) -> bool {
+        self.stash_modal_matches(action)
+            || (matches!(action, StashAction::Drop { .. })
+                && self
+                    .stash_drop_modal()
+                    .is_some_and(|m| m.stash_index.is_none()))
+    }
     fn show_stash_plan(&mut self, action: &StashAction, cx: &mut Context<Self>) {
-        if !self.stash_modal_matches(action) {
+        if !self.stash_modal_accepts_plan(action) {
             self.discard_contended_plan_from_async(
                 stash_plan_operation(action),
                 AsyncPlanToken::Session,
@@ -343,7 +355,7 @@ impl KagiApp {
             }
             StashAction::Drop { index } => {
                 self.update_stash_drop_plan_from_async(StashDropModal {
-                    stash_index: *index,
+                    stash_index: Some(*index),
                     plan,
                     error,
                 });
@@ -365,7 +377,7 @@ impl KagiApp {
                     && self.active_session() == Some(request.owner.session)
                     && self
                         .stash_drop_modal()
-                        .is_some_and(|m| m.stash_index == request.index)
+                        .is_some_and(|m| m.stash_index == Some(request.index))
             }),
             _ => false,
         };

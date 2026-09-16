@@ -150,8 +150,11 @@ pub struct TrustRepoModal {
 pub struct StashDropModal {
     pub plan: Option<std::sync::Arc<OperationPlan>>,
     pub error: Option<SharedString>,
-    /// Stash index the plan was built for.
-    pub stash_index: usize,
+    /// Stash index the plan was built for, or `None` while the target is still
+    /// unresolved. A post-conflict follow-up knows only the stash OID when it
+    /// reserves the modal slot; the index arrives with the plan. Only a
+    /// resolved target may be confirmed.
+    pub stash_index: Option<usize>,
 }
 
 /// State for an unlock-worktree confirmation. The plan's warning carries the

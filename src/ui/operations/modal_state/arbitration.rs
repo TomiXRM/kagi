@@ -136,7 +136,11 @@ impl KagiApp {
 
     pub(crate) fn update_stash_drop_plan_from_async(&mut self, modal: StashDropModal) -> bool {
         self.update_expected_modal(|active| match active {
-            ActiveModal::StashDrop(current) if current.stash_index == modal.stash_index => {
+            // `None` is a follow-up that reserved the slot before its OID
+            // resolved to an index; the arriving plan is what resolves it.
+            ActiveModal::StashDrop(current)
+                if current.stash_index == modal.stash_index || current.stash_index.is_none() =>
+            {
                 *current = modal;
                 Some(())
             }

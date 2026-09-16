@@ -351,11 +351,25 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
             if duplicate {
                 assert!(app.stash_drop_modal().is_none());
             } else {
-                assert_eq!(app.stash_drop_modal().unwrap().stash_index, 1);
+                // The follow-up resolved its OID to the entry that is still
+                // there, not to the placeholder it reserved the slot with.
+                assert_eq!(app.stash_drop_modal().unwrap().stash_index, Some(1));
             }
         });
-        cx.simulate_keystrokes(window, "escape");
-        assert_eq!(ids(&repo), kept);
+        if duplicate {
+            cx.simulate_keystrokes(window, "escape");
+            assert_eq!(ids(&repo), kept);
+        } else {
+            // Cancelling is not the only thing this prompt must support: the
+            // point of the follow-up is that it can be *confirmed*, and that it
+            // drops the entry its OID resolved to — not the placeholder index
+            // it reserved the modal slot with.
+            confirm(cx, &app, window, false);
+            wait(cx, &app, |app| {
+                app.write_busy_op.is_none() && app.stash_drop_modal().is_none()
+            });
+            assert_eq!(ids(&repo), vec![kept[0].clone(), kept[2].clone()]);
+        }
         unmount(cx, app, window);
         eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID prompt/cancel (duplicate={duplicate})");
     }

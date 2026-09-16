@@ -332,7 +332,38 @@ fn observe_pull(
             .unwrap_or_else(|| "none".to_string()),
         kagi_git::Head::Detached { .. } => "detached".to_string(),
     };
+    // Entries in the live list that answer to kagi's own auto-stash message:
+    // the only handle on an entry whose identity was never captured.
+    let answering_entries = || -> Vec<_> {
+        snap.stashes
+            .iter()
+            .filter(|entry| entry.message.contains(AUTO_STASH_MESSAGE))
+            .collect()
+    };
     let (stash, resolved) = match stash {
+        // No stash evidence at all. For a pull that could not have stashed
+        // anything that is simply "none" — but a pull with auto-stash enabled
+        // whose report carries no evidence is the abandoned one (#725 review):
+        // the task unwound, and *nothing in the report* says whether the stash
+        // was taken. An absent receipt is not an absent stash, so the live list
+        // is what answers here. An entry answering to kagi's auto-stash leaves
+        // the read unresolved: acknowledging would call the operation settled
+        // while the user's changes sit in a stash nothing accounted for. The
+        // user's way out is the entry itself — pop or drop it and read again.
+        None if request.auto_stash => match answering_entries().as_slice() {
+            [] => (
+                "no entry answers to kagi's auto-stash".to_string(),
+                true, // observed absence, not an assumed one
+            ),
+            many => (
+                format!(
+                    "{} entry/entries answer to kagi's auto-stash and no receipt \
+                     accounts for them",
+                    many.len()
+                ),
+                false,
+            ),
+        },
         None => ("none".to_string(), true),
         Some(evidence) => match evidence.oid.as_deref() {
             Some(oid) => match kagi_git::Backend::unique_stash_index(&request.path, oid)
@@ -347,11 +378,7 @@ fn observe_pull(
             // than one answers to it the read stays unresolved: acknowledging
             // would report "settled" about work kagi cannot point at.
             None => {
-                let candidates: Vec<_> = snap
-                    .stashes
-                    .iter()
-                    .filter(|entry| entry.message.contains(AUTO_STASH_MESSAGE))
-                    .collect();
+                let candidates = answering_entries();
                 match candidates.as_slice() {
                     [only] => (
                         format!(

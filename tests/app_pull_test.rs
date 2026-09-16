@@ -1075,3 +1075,67 @@ fn a_panicked_pull_is_acknowledgeable_once_the_supervisor_accounts_for_its_group
     acknowledge(&mut s, read).expect("so the scope can be let go");
     assert!(!s.has_leases(), "the pull's lease is released");
 }
+
+/// #725 review P2: a pull that **did** auto-stash and then unwound.
+///
+/// The abandonment's report carries no stash evidence — the task that would
+/// have written it is gone — and the job holds no live group, so the
+/// termination is a stop proof. Reading "no evidence" as "no stash" would let
+/// the reconcile entry be acknowledged with the user's changes sitting in a
+/// stash nothing ever accounted for, and the next write on the scope would go
+/// through over them. An absent receipt is not an absent stash: the read asks
+/// the live stash list instead.
+#[test]
+fn a_panicked_pull_that_auto_stashed_cannot_be_acknowledged_while_the_entry_is_there() {
+    let f = Fixture::new();
+    // The auto-stash kagi itself would have taken, by the message the read
+    // matches on: dirty work parked before the pull.
+    std::fs::write(f.repo.join("a.txt"), "the user's unfinished work\n").unwrap();
+    git(&f.repo, &["stash", "push", "-q", "-m", AUTO_STASH_MESSAGE]);
+    assert!(
+        !git(&f.repo, &["stash", "list"]).is_empty(),
+        "precondition: the auto-stash is in the list"
+    );
+
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    assert!(request.auto_stash, "precondition: this pull auto-stashes");
+    let approved = approve_pull(&mut s, request).expect("owner attached");
+    let job = prepare_pull(
+        &mut s,
+        approved,
+        Box::new(|| panic!("the pull task unwound after the stash")),
+    )
+    .expect("admitted");
+    let id = job.id();
+    let abandonment = job.abandonment();
+
+    let hushed = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).is_err();
+    std::panic::set_hook(hushed);
+    assert!(panicked, "the job must actually unwind");
+
+    apply(&mut s, abandonment.into_completion());
+    let read = read_reconcile(&s, id).expect("the job spawned nothing, so the writer is stopped");
+    assert!(
+        read.stop_proven(),
+        "nothing of that job is running — that half is the supervisor's answer"
+    );
+    assert!(
+        acknowledge(&mut s, read).is_err(),
+        "stash-evidence-absent-is-not-stash-absent: an unaccounted auto-stash was \
+         acknowledged as settled"
+    );
+    assert_eq!(
+        s.blocking_reconcile(),
+        Some(id),
+        "the requirement stays, and it is what refuses the next write on this scope"
+    );
+
+    // The user's way out is the entry itself: deal with it and read again.
+    git(&f.repo, &["stash", "drop", "-q"]);
+    let read = read_reconcile(&s, id).expect("still readable");
+    acknowledge(&mut s, read).expect("nothing answers to the auto-stash any more");
+    assert!(!s.has_leases(), "and the scope is free again");
+}

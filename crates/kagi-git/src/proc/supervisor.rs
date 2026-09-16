@@ -233,20 +233,17 @@ pub fn group_stopped(pgid: u32) -> bool {
         });
     let Some((id, groups)) = job else {
         // Not a supervised abandonment: an ordinary `Unaccounted` whose job
-        // entry went with its `JobGuard`. The platform handle behind the key is
-        // still ours until this proves the tree empty (#726 review P2).
-        if group_alive(pgid) {
-            return false;
-        }
-        super::job::release(pgid);
-        return true;
+        // entry went with its `JobGuard`. The probe itself records an empty job
+        // (see `super::job`), so a reconcile read that proves the stop and then
+        // fails on the repository can prove it again on the retry.
+        return !group_alive(pgid);
     };
     if groups.iter().any(|group| group_alive(*group)) {
         return false;
     }
-    for group in &groups {
-        super::job::release(*group);
-    }
+    // The supervisor is done with this job, but the **proof** is not thrown
+    // away with it: `group_alive` remembers an empty job, so a retried
+    // reconcile read gets the same answer (#726 review P2).
     jobs.remove(&id);
     true
 }

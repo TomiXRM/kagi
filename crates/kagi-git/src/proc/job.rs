@@ -30,8 +30,21 @@
 //! number is asked *of* differs.
 //!
 //! A child with no job — `CreateJobObject` failed, an older Windows refused to
-//! nest an existing job, the query failed, the job was already retired — reads
-//! as **alive**. No evidence is not "gone" (ADR-0175).
+//! nest an existing job, the query failed — reads as **alive**. No evidence is
+//! not "gone" (ADR-0175).
+//!
+//! Which is why a proof, once made, is **kept**: an emptied job leaves a
+//! tombstone behind rather than disappearing (#726 review P2). A reconcile read
+//! probes before it reads the repository, and that read can fail — an
+//! `ls-remote` that times out, a repository that will not open. Forgetting the
+//! proof between the probe and the retry would turn "proven stopped" back into
+//! "no evidence", and the scope would be held until kagi restarts.
+//!
+//! The other end of the lifetime: a run that exits cleanly, with every pipe
+//! closed, can still leave something of its own inside the job — a hook that
+//! started a daemon. No receipt names that key, so nothing will ever probe it;
+//! [`watch_until_empty`] hands it to the sweeper, which drops the handle when
+//! that tree finally goes.
 use std::process::Child;
 
 /// Flags `run_child` adds to a `Command` before spawning, so the child can be
@@ -56,6 +69,13 @@ mod platform {
     };
     use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
 
+    /// What the registry knows about one spawn: the job itself, or the fact
+    /// that it was once observed empty — a proof that outlives the handle.
+    enum Entry {
+        Live(Job),
+        Stopped,
+    }
+
     /// An owned job-object handle.
     struct Job(HANDLE);
     // SAFETY: a job object is a kernel handle with no thread affinity, and the
@@ -71,8 +91,8 @@ mod platform {
         }
     }
 
-    fn jobs() -> MutexGuard<'static, HashMap<u32, Job>> {
-        static JOBS: OnceLock<Mutex<HashMap<u32, Job>>> = OnceLock::new();
+    fn jobs() -> MutexGuard<'static, HashMap<u32, Entry>> {
+        static JOBS: OnceLock<Mutex<HashMap<u32, Entry>>> = OnceLock::new();
         JOBS.get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -102,7 +122,7 @@ mod platform {
             unsafe { CloseHandle(handle) };
             return key;
         }
-        jobs().insert(key, Job(handle));
+        jobs().insert(key, Entry::Live(Job(handle)));
         key
     }
 
@@ -143,10 +163,17 @@ mod platform {
     }
 
     /// Is anything in `key`'s job still running?
+    ///
+    /// An empty job is recorded as such before the handle is dropped, so every
+    /// later ask — a retried reconcile read — gets the same answer (#726
+    /// review P2).
     pub(super) fn alive(key: u32) -> bool {
-        let jobs = jobs();
-        let Some(job) = jobs.get(&key) else {
-            return true; // never assigned, or already retired: no evidence
+        let mut jobs = jobs();
+        let job = match jobs.get(&key) {
+            Some(Entry::Live(job)) => job,
+            // Proven empty earlier: the proof is the entry now.
+            Some(Entry::Stopped) => return false,
+            None => return true, // never assigned, or retired: no evidence
         };
         // SAFETY: `info` is the size and shape this information class writes.
         let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
@@ -163,20 +190,65 @@ mod platform {
         if queried == 0 {
             return true; // the query failed: still no evidence of a stop
         }
-        info.ActiveProcesses > 0
+        if info.ActiveProcesses > 0 {
+            return true;
+        }
+        // Empty. Keep the fact, drop the handle.
+        jobs.insert(key, Entry::Stopped);
+        false
     }
 
     /// Stop the whole tree — the deadline path, matching `kill_group` on unix.
     pub(super) fn terminate(key: u32) {
-        if let Some(job) = jobs().get(&key) {
+        if let Some(Entry::Live(job)) = jobs().get(&key) {
             // SAFETY: terminating a job kagi created and still owns.
             unsafe { TerminateJobObject(job.0, 1) };
         }
     }
 
-    /// Proven empty (or never ours): drop the handle.
+    /// This key is finished with: drop the handle and the proof alike.
     pub(super) fn release(key: u32) {
         jobs().remove(&key);
+    }
+
+    /// Keys no receipt names, whose job was not empty when their run ended.
+    fn watched() -> MutexGuard<'static, Vec<u32>> {
+        static WATCHED: OnceLock<Mutex<Vec<u32>>> = OnceLock::new();
+        WATCHED
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Hand `key` to the sweeper: nothing will probe it, so it is the sweeper
+    /// that notices the tree going and drops the handle (#726 review P2).
+    ///
+    /// One thread for all of them, and it only wakes once a second: a daemon a
+    /// hook started may outlive the whole session, and that is not a reason to
+    /// spin. A key whose tree never goes keeps its handle — which is honest,
+    /// because something kagi started is still running.
+    pub(super) fn watch_until_empty(key: u32) {
+        static SWEEPER: std::sync::Once = std::sync::Once::new();
+        watched().push(key);
+        SWEEPER.call_once(|| {
+            std::thread::spawn(|| loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let keys: Vec<u32> = watched().clone();
+                for key in keys {
+                    if alive(key) {
+                        continue;
+                    }
+                    release(key);
+                    watched().retain(|watched| *watched != key);
+                }
+            });
+        });
+    }
+
+    /// Test seam: does the registry still hold anything for `key`?
+    #[cfg(test)]
+    pub(super) fn is_tracked(key: u32) -> bool {
+        jobs().contains_key(&key)
     }
 }
 
@@ -191,6 +263,8 @@ mod platform {
     }
     /// Nothing is spawned suspended off Windows.
     pub(super) fn resume(_pid: u32) {}
+    /// No handle to sweep where the process group is the handle.
+    pub(super) fn watch_until_empty(_key: u32) {}
     /// Only reached on a platform with neither process groups nor job objects,
     /// where "no evidence" must read as still running (ADR-0175). unix asks the
     /// process group instead, so nothing calls these two there.
@@ -222,9 +296,14 @@ pub(super) fn alive(key: u32) -> bool {
 pub(super) fn terminate(key: u32) {
     platform::terminate(key);
 }
-/// Retire a key whose tree is proven empty (or that was never ours).
+/// Retire a key nothing will ask about again.
 pub(super) fn release(key: u32) {
     platform::release(key);
+}
+/// Let the sweeper own a key whose run ended while its tree was still alive and
+/// whose termination names nobody — see [`platform::watch_until_empty`].
+pub(super) fn watch_until_empty(key: u32) {
+    platform::watch_until_empty(key);
 }
 
 #[cfg(all(test, windows))]
@@ -323,6 +402,75 @@ mod tests {
         assert!(
             Termination::from_run("the deadline expired", &run).child_stopped(),
             "a timed-out Windows run must settle as a proven stop"
+        );
+    }
+
+    /// #726 review P2: a reconcile read probes **before** it reads the
+    /// repository, and that read can fail. The proof has to survive the retry,
+    /// or a scope that was provably free goes back to "no evidence" and stays
+    /// held until kagi restarts.
+    #[test]
+    fn a_proven_stop_survives_a_retry() {
+        let mut child = long_running().spawn().expect("spawn");
+        let key = super::attach(child.id(), &child);
+        assert!(
+            !crate::proc::supervisor::group_stopped(key),
+            "precondition: the job is not empty while the child runs"
+        );
+        child.kill().expect("stop it");
+        child.wait().expect("reap it");
+
+        let mut proven = false;
+        for _ in 0..200 {
+            if crate::proc::supervisor::group_stopped(key) {
+                proven = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(proven, "an empty job must be provable at all");
+        assert!(
+            crate::proc::supervisor::group_stopped(key),
+            "asking again — the retry after a failed repository read — must \
+             give the same proof, not fall back to 'no evidence'"
+        );
+        super::release(key);
+    }
+
+    /// #726 review P2: a run can exit cleanly, with every pipe closed, and
+    /// still leave something inside its job — a hook that started a daemon. No
+    /// termination is built from a run like that, so nothing will ever probe
+    /// its key: the sweeper is what eventually drops the handle.
+    #[test]
+    fn a_clean_run_that_leaves_a_descendant_is_swept_when_the_tree_goes() {
+        // `start /B` with the streams redirected: the descendant holds no pipe,
+        // so the capture completes and the run is an ordinary success.
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "start /B ping -n 30 127.0.0.1 > nul 2>&1"]);
+        let run = run_child(&mut cmd, Duration::from_secs(10), None).expect("spawn");
+        assert!(run.status.is_ok(), "the child exited: {:?}", run.status);
+        assert!(run.io.is_ok(), "and its capture is complete");
+        assert!(
+            !run.group_stopped,
+            "but the descendant is still in the job, so this is no stop proof"
+        );
+        assert!(
+            super::platform::is_tracked(run.stop_key),
+            "the handle is still held while that descendant runs"
+        );
+
+        super::terminate(run.stop_key);
+        let mut swept = false;
+        for _ in 0..400 {
+            if !super::platform::is_tracked(run.stop_key) {
+                swept = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            swept,
+            "once the tree is gone the sweeper must drop the handle nobody else owns"
         );
     }
 

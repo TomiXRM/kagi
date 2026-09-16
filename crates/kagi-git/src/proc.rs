@@ -294,6 +294,13 @@ pub fn run_child(
         // Windows the job object that proved it can go with it.
         supervisor::release_group(stop_key);
         job::release(stop_key);
+    } else if status.is_ok() && io.is_ok() {
+        // A clean exit with a complete capture, and yet the tree is not empty:
+        // something the command started — a hook's daemon — outlived it without
+        // ever holding the pipes. No `Termination` is built from a run like
+        // this, so no receipt names this key and nothing will ever probe it.
+        // The sweeper owns the handle until that tree goes (#726 review P2).
+        job::watch_until_empty(stop_key);
     }
 
     // Hand off whenever something is still ours to own: an unreaped child, or a

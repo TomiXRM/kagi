@@ -3447,6 +3447,7 @@ dependencies = [
  "gpui_wgpu",
  "kagi-domain",
  "markdown",
+ "parking_lot",
  "serde",
  "serde_json",
  "tempfile",

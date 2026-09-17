@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn async_slot_notices_switch_language() {
-        let _guard = super::super::tests::LOCK.lock().unwrap();
+        let _guard = super::super::tests::LOCK.lock();
         super::super::set_lang_no_persist(Lang::En);
         assert!(plan_not_shown_retry(Op::Merge).starts_with("Merge plan was not shown"));
         assert!(recorded_outcome_notice("Push failed").contains("Review Operation Log"));

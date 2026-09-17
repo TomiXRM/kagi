@@ -7,6 +7,7 @@ use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString};
 use gpui_component::scroll::ScrollableElement;
 use kagi_domain::github::{Issue, IssueState};
 
+use super::i18n::Msg;
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -84,7 +85,7 @@ fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     body = match presentation {
         IssueListPresentation::Loading => body.child(status_text(
             "issue-mode-list-loading",
-            "Loading issues…",
+            Msg::IssuesLoadingList.t(),
             theme().text_muted,
         )),
         IssueListPresentation::Error => body.child(status_text(
@@ -94,7 +95,7 @@ fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
         )),
         IssueListPresentation::Empty => body.child(status_text(
             "issue-mode-list-empty",
-            "No open issues",
+            Msg::IssuesEmpty.t(),
             theme().text_muted,
         )),
         IssueListPresentation::Issues => {
@@ -106,7 +107,7 @@ fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
                         .py_1()
                         .text_xs()
                         .text_color(rgb(theme().text_muted))
-                        .child("Refreshing issues…"),
+                        .child(Msg::IssuesRefreshing.t()),
                 );
             }
             if let Some(message) = error {
@@ -175,9 +176,9 @@ fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
 
 fn issue_state_text(state: IssueState) -> &'static str {
     match state {
-        IssueState::Open => "Open",
-        IssueState::Closed => "Closed",
-        IssueState::Unknown => "Unknown",
+        IssueState::Open => Msg::IssueStateOpen.t(),
+        IssueState::Closed => Msg::IssueStateClosed.t(),
+        IssueState::Unknown => Msg::IssueStateUnknown.t(),
     }
 }
 
@@ -211,7 +212,7 @@ fn render_center(app: &KagiApp) -> AnyElement {
         return center
             .child(status_text(
                 "issue-mode-detail-empty",
-                "Select an issue",
+                Msg::IssueSelect.t(),
                 theme().text_muted,
             ))
             .into_any_element();
@@ -220,7 +221,7 @@ fn render_center(app: &KagiApp) -> AnyElement {
         return center
             .child(status_text(
                 "issue-mode-detail-loading",
-                "Loading issue…",
+                Msg::IssueLoading.t(),
                 theme().text_muted,
             ))
             .into_any_element();
@@ -238,7 +239,7 @@ fn render_center(app: &KagiApp) -> AnyElement {
         return center
             .child(status_text(
                 "issue-mode-detail-empty",
-                "Issue details unavailable",
+                Msg::IssueDetailsUnavailable.t(),
                 theme().text_muted,
             ))
             .into_any_element();
@@ -281,7 +282,7 @@ fn render_center(app: &KagiApp) -> AnyElement {
                 .text_color(rgb(theme().text_main))
                 .whitespace_normal()
                 .child(if issue.body.is_empty() {
-                    SharedString::from("No description provided.")
+                    SharedString::from(Msg::IssueNoDescription.t())
                 } else {
                     safe_text(&issue.body)
                 }),
@@ -294,9 +295,8 @@ fn render_center(app: &KagiApp) -> AnyElement {
                 .text_sm()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(theme().text_label))
-                .child(SharedString::from(format!(
-                    "Comments ({})",
-                    issue.comments.len()
+                .child(SharedString::from(super::i18n::issue_comments(
+                    issue.comments.len(),
                 ))),
         );
         for comment in &issue.comments {
@@ -341,7 +341,7 @@ fn metadata_group(title: &'static str, values: Vec<SharedString>) -> AnyElement 
             div()
                 .text_sm()
                 .text_color(rgb(theme().text_muted))
-                .child("None")
+                .child(Msg::IssuesNone.t())
                 .into_any_element()
         } else {
             div()
@@ -379,19 +379,22 @@ fn render_metadata(app: &KagiApp) -> AnyElement {
                 div()
                     .text_sm()
                     .text_color(rgb(theme().text_muted))
-                    .child("Issue metadata"),
+                    .child(Msg::IssueMetadata.t()),
             )
             .into_any_element();
     };
 
     rail = rail
         .child(metadata_group(
-            "State",
+            Msg::IssueFieldState.t(),
             vec![SharedString::from(issue_state_text(issue.state))],
         ))
-        .child(metadata_group("Author", vec![safe_text(&issue.author)]))
         .child(metadata_group(
-            "Labels",
+            Msg::IssueFieldAuthor.t(),
+            vec![safe_text(&issue.author)],
+        ))
+        .child(metadata_group(
+            Msg::IssueFieldLabels.t(),
             issue
                 .labels
                 .iter()
@@ -399,15 +402,15 @@ fn render_metadata(app: &KagiApp) -> AnyElement {
                 .collect(),
         ))
         .child(metadata_group(
-            "Assignees",
+            Msg::IssueFieldAssignees.t(),
             issue.assignees.iter().map(|name| safe_text(name)).collect(),
         ))
         .child(metadata_group(
-            "Created",
+            Msg::IssueFieldCreated.t(),
             vec![safe_text(&issue.created_at)],
         ))
         .child(metadata_group(
-            "Updated",
+            Msg::IssueFieldUpdated.t(),
             vec![safe_text(&issue.updated_at)],
         ));
     rail.into_any_element()

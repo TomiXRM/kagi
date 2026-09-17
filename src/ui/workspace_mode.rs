@@ -9,6 +9,7 @@
 use super::{theme, EditorPendingIntent, KagiApp};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 
+use super::i18n::Msg;
 use super::workspace::WorkspaceItem;
 
 /// Which top-level workspace mode is showing.
@@ -75,7 +76,7 @@ pub(super) fn render_sidebar_mode_nav(
             .gap_1()
             .child(sidebar_mode_nav_cell(
                 "sidebar-mode-graph",
-                "Graph",
+                Msg::WorkspaceGraph.t(),
                 mode == WorkspaceMode::Graph,
                 true,
                 cx,
@@ -84,7 +85,7 @@ pub(super) fn render_sidebar_mode_nav(
             .when(prs_available, |el| {
                 el.child(sidebar_mode_nav_cell(
                     "sidebar-mode-prs",
-                    "PRs",
+                    Msg::WorkspacePrs.t(),
                     mode == WorkspaceMode::Prs,
                     true,
                     cx,
@@ -92,7 +93,7 @@ pub(super) fn render_sidebar_mode_nav(
                 ))
                 .child(sidebar_mode_nav_cell(
                     "sidebar-mode-issues",
-                    "Issues",
+                    Msg::WorkspaceIssues.t(),
                     mode == WorkspaceMode::Issues,
                     true,
                     cx,

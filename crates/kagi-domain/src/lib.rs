@@ -54,6 +54,7 @@ pub mod remove;
 pub mod resolution;
 pub mod ruleset;
 pub mod sequencer_skip;
+pub mod sidebar_swipe;
 pub mod stash;
 pub mod status;
 pub mod suggestion;

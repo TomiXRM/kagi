@@ -6,8 +6,8 @@
 //! two takeovers open at once both read "Graph" and neither said which one
 //! you would land in (user report).
 
-use super::{EditorPendingIntent, KagiApp};
-use gpui::Context;
+use super::{theme, EditorPendingIntent, KagiApp};
+use gpui::{div, prelude::*, rgb, Context, SharedString};
 
 use super::workspace::WorkspaceItem;
 
@@ -24,7 +24,121 @@ pub enum WorkspaceMode {
     Takeover,
 }
 
+/// One mode cell in the sidebar's pinned navigation row. Mode selection remains
+/// here with the canonical dispatchers; the sidebar only hosts the element.
+fn sidebar_mode_nav_cell(
+    id: &'static str,
+    label: &'static str,
+    active: bool,
+    enabled: bool,
+    cx: &mut Context<KagiApp>,
+    on_click: impl Fn(&mut KagiApp, &gpui::ClickEvent, &mut gpui::Window, &mut Context<KagiApp>)
+        + 'static,
+) -> gpui::AnyElement {
+    div()
+        .id(id)
+        .flex_1()
+        .py_1()
+        .flex()
+        .justify_center()
+        .text_xs()
+        .rounded(theme::scaled_px(4.))
+        .when(enabled, |el| el.cursor_pointer())
+        .when(active, |el| {
+            el.bg(rgb(theme::theme().surface))
+                .text_color(rgb(theme::theme().color_branch))
+                .font_weight(gpui::FontWeight::MEDIUM)
+        })
+        .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
+        .when(enabled, |el| el.on_click(cx.listener(on_click)))
+        .child(SharedString::from(label))
+        .into_any_element()
+}
+
+/// Graph / PRs navigation, rendered in the sidebar but owned by workspace-mode
+/// dispatch so the visual highlight and resolved center takeover cannot drift.
+pub(super) fn render_sidebar_mode_nav(
+    mode: WorkspaceMode,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let prs_available = kagi_git::github::gh_available();
+    super::e2e::measure_control(
+        "sidebar-mode-nav",
+        div()
+            .id("sidebar-mode-nav")
+            .flex_shrink_0()
+            .mx_2()
+            .mt_1()
+            .mb_1()
+            .flex()
+            .gap_1()
+            .child(sidebar_mode_nav_cell(
+                "sidebar-mode-graph",
+                "Graph",
+                mode == WorkspaceMode::Graph,
+                true,
+                cx,
+                |this, _, _window, cx| this.show_graph_mode(cx),
+            ))
+            .when(prs_available, |el| {
+                el.child(sidebar_mode_nav_cell(
+                    "sidebar-mode-prs",
+                    "PRs",
+                    mode == WorkspaceMode::Prs,
+                    true,
+                    cx,
+                    |this, _, _window, cx| this.show_pr_mode(cx),
+                ))
+            }),
+    )
+}
+
 impl KagiApp {
+    pub(super) fn sidebar_scroll(
+        &mut self,
+        event: &gpui::ScrollWheelEvent,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui::{ScrollDelta, TouchPhase};
+        use kagi_domain::sidebar_swipe::SidebarSwipeResult;
+
+        if self.active_modal.is_some() {
+            self.sidebar.swipe.cancel();
+            return;
+        }
+        match event.touch_phase {
+            TouchPhase::Started => self.sidebar.swipe.start(),
+            TouchPhase::Cancelled => {
+                self.sidebar.swipe.cancel();
+                return;
+            }
+            TouchPhase::Moved | TouchPhase::Ended => {}
+        }
+        let (x, y) = match event.delta {
+            ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
+            ScrollDelta::Lines(p) => (p.x * 24.0, p.y * 24.0),
+        };
+        // Trackpad deltas are physical input distances; UI zoom must not change
+        // how far the user's fingers have to travel to commit the same swipe.
+        self.sidebar.swipe.move_by(x, y);
+        if event.touch_phase != TouchPhase::Ended {
+            return;
+        }
+
+        let mode = self.workspace_mode();
+        let result = self.sidebar.swipe.finish();
+        match (mode, result) {
+            (WorkspaceMode::Graph, SidebarSwipeResult::Next)
+                if kagi_git::github::gh_available() =>
+            {
+                self.show_pr_mode(cx);
+            }
+            (WorkspaceMode::Prs, SidebarSwipeResult::Previous) => self.show_graph_mode(cx),
+            _ => {}
+        }
+    }
+
     /// Close every center takeover that outranks `keep` in `resolve_workspace`.
     ///
     /// Each entry point used to close its own ad-hoc subset, and none of them
@@ -63,6 +177,7 @@ impl KagiApp {
     /// Graph: leave both takeovers. The editor closes through the dirty
     /// guard, so unsaved buffers still prompt.
     pub fn show_graph_mode(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Graph);
         if let Some(ev) = self.ui().editor_workspace.clone() {
             if ev.read(cx).any_dirty() {
@@ -82,6 +197,7 @@ impl KagiApp {
     /// PRs: show PR mode. An open editor stays alive underneath (its unsaved
     /// work is preserved) and the Editor button brings it straight back.
     pub fn show_pr_mode(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Prs);
         if self.pr_mode().is_none() {
             self.toggle_pr_mode(cx);
@@ -94,6 +210,7 @@ impl KagiApp {
     /// mode steps aside (it outranks Editor in the resolver, which is why
     /// pressing Editor from PR mode used to do nothing — user report).
     pub fn show_editor_mode(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Editor);
         if self.ui().editor_workspace.is_none() {
             self.open_editor_workspace(cx);

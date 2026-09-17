@@ -118,8 +118,7 @@ pub struct PrModeState {
     /// Which body the center shows. Mode-wide, NOT per tab: switching PRs
     /// while reading reviews should keep showing reviews (user request).
     pub view: PrView,
-    /// Left / right column widths (unscaled px), dragged via the dividers.
-    pub left_w: f32,
+    /// Right column width (unscaled px); the left shares `SidebarState::width`.
     pub right_w: f32,
 }
 
@@ -130,14 +129,11 @@ impl Default for PrModeState {
             active: None,
             focus: PrFocus::List,
             view: PrView::Overview,
-            left_w: LEFT_W,
             right_w: RIGHT_W,
         }
     }
 }
 
-pub const LEFT_MIN: f32 = 160.0;
-pub const LEFT_MAX: f32 = 480.0;
 pub const RIGHT_MIN: f32 = 220.0;
 pub const RIGHT_MAX: f32 = 640.0;
 
@@ -782,10 +778,6 @@ impl KagiApp {
 // Rendering — three columns inside one center-takeover element
 // ────────────────────────────────────────────────────────────
 
-/// Default PR-list width. ~1.5× the old 230 so a card's title line survives
-/// truncation and line 2 (#N · reason · checks · author) fits without
-/// crowding; still draggable between LEFT_MIN..LEFT_MAX.
-const LEFT_W: f32 = 345.0;
 const RIGHT_W: f32 = 320.0;
 /// Deepest indent level drawn in the left list; beyond it depth is shown by
 /// the └ marker only, so a tall stack can never push rows out of the pane.
@@ -1004,37 +996,26 @@ fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
 // ── Left: PR list, grouped, stack-ordered ────────────────────
 fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::List);
-    let left_w = app.pr_mode().map(|m| m.left_w).unwrap_or(LEFT_W);
+    let left_w = app.sidebar.width;
     let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::List, cx);
     });
+    let swipe = cx.listener(KagiApp::sidebar_scroll);
     let all = app.ui().github_prs.clone();
     let active_pr = app
         .pr_mode()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)))
         .map(|t| t.pr.number);
-    let mut col = focus_border(
-        div()
-            .id("pr-mode-list")
-            .w(theme::scaled_px(left_w))
-            .flex_shrink_0()
-            .h_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .bg(rgb(theme().sidebar))
-            .on_mouse_down(gpui::MouseButton::Left, focus_click),
-        focused,
-    );
-    // Header: the same Arc-like Graph/PRs nav row as the Graph sidebar, so
-    // switching modes is in the same place on both sides of the boundary.
-    // The old title + exit toggle is replaced — the Graph cell is the exit.
-    col = col.child(super::sidebar::render_mode_nav(
-        super::workspace_mode::WorkspaceMode::Prs,
-        cx,
-    ));
+
+    let mut body = div()
+        .id("pr-mode-list-body")
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .flex()
+        .flex_col();
     if all.is_empty() {
-        col = col.child(
+        body = body.child(
             div()
                 .px_3()
                 .py_2()
@@ -1044,7 +1025,7 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
         );
     }
     for (bucket, members) in focus_queue(app) {
-        col = col.child(
+        body = body.child(
             div()
                 .flex()
                 .flex_row()
@@ -1075,10 +1056,30 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
         );
         for (pr, why) in members {
             let stacked = pr.is_stacked_on(&all);
-            col = col.child(render_pr_card(&pr, bucket, &why, stacked, active_pr, cx));
+            body = body.child(render_pr_card(&pr, bucket, &why, stacked, active_pr, cx));
         }
     }
-    col.into_any_element()
+
+    focus_border(
+        div()
+            .id("pr-mode-list")
+            .w(theme::scaled_px(left_w))
+            .flex_shrink_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(theme().sidebar))
+            .on_mouse_down(gpui::MouseButton::Left, focus_click)
+            .on_scroll_wheel(swipe),
+        focused,
+    )
+    // Keep the mode navigation fixed while only the PR rows scroll.
+    .child(super::workspace_mode::render_sidebar_mode_nav(
+        super::workspace_mode::WorkspaceMode::Prs,
+        cx,
+    ))
+    .child(body)
+    .into_any_element()
 }
 
 // ── Center: header + view tabs + commits + body ──────────────

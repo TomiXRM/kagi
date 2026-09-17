@@ -28,7 +28,7 @@ impl KagiApp {
         // interpret the 4px divider's 2px half-offset in scaled space too.
         let z = theme::zoom();
         match drag.kind {
-            DividerKind::Sidebar => {
+            DividerKind::Sidebar | DividerKind::PrModeLeft => {
                 // Divider sits at x = sidebar_width * zoom; centre on cursor.
                 let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
                 if (new_width - self.sidebar.width).abs() > 0.5 {
@@ -253,18 +253,6 @@ impl KagiApp {
                         cx.notify();
                     }
                 });
-            }
-            DividerKind::PrModeLeft => {
-                // GitHub Phase 1c: PR mode's list is the leftmost slot (the
-                // sidebar is hidden in this mode) — same math as EditorTree.
-                let new_w = ((cursor_x - 2.0 * z) / z)
-                    .clamp(super::pr_mode::LEFT_MIN, super::pr_mode::LEFT_MAX);
-                if let Some(m) = self.pr_mode_mut() {
-                    if (new_w - m.left_w).abs() > 0.5 {
-                        m.left_w = new_w;
-                        cx.notify();
-                    }
-                }
             }
             DividerKind::PrModeRight => {
                 // Rightmost slot: measure from the viewport's right edge

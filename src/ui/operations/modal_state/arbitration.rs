@@ -45,6 +45,7 @@ impl KagiApp {
     /// Callers are synchronous user intents; async producers use the typed
     /// offer/update/notice seams below (#718 / ADR-0196).
     pub(super) fn replace_modal_from_user(&mut self, modal: ActiveModal) {
+        self.sidebar.swipe.cancel();
         if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
             self.app_notices.push_front(notice);
         }
@@ -54,6 +55,7 @@ impl KagiApp {
 
     pub(crate) fn offer_plan_from_async(&mut self, offer: AsyncPlanOffer) -> bool {
         if self.active_modal.is_none() {
+            self.sidebar.swipe.cancel();
             self.modal_list_scroll = gpui::UniformListScrollHandle::new();
             self.active_modal = Some(offer.modal);
             return true;

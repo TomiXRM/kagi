@@ -15,6 +15,7 @@ impl KagiApp {
     /// - A repo-scoped confirmation in `active_modal` carries no owner; parking
     ///   it would let a confirmation planned in A be applied to B (#492).
     pub(crate) fn close_window_slots_of_departing_tab(&mut self) {
+        self.sidebar.swipe.cancel();
         self.app_sessions.invalidate_plan();
         self.drop_repo_scoped_modal();
     }
@@ -89,7 +90,7 @@ impl KagiApp {
 
     pub fn open_update_modal(&mut self) {
         if self.update_available.is_some() {
-            self.set_update_modal(UpdateModal::default());
+            self.set_update_modal(UpdateModal);
         }
     }
 

@@ -27,7 +27,7 @@ pub(super) fn fetch_error_text(e: &kagi_git::github::PrFetchError) -> String {
         E::Auth(_) => Msg::PrFetchAuth,
         E::Network(_) => Msg::PrFetchNetwork,
         E::Invalid(_) => Msg::PrFetchInvalid,
-        E::Unknown(_) => Msg::PrFetchUnknown,
+        E::RateLimited(_) | E::NotFound(_) | E::Unknown(_) => Msg::PrFetchUnknown,
     };
     let detail = e.detail();
     if detail.is_empty() {
@@ -114,6 +114,71 @@ impl KagiApp {
                     ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
                 }
                 if owner_is_active {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Refresh the read-only Issue list for the session that starts the
+    /// request. A later request for that session supersedes this completion;
+    /// switching tabs never redirects it to the active owner.
+    pub fn refresh_github_issues(&mut self, cx: &mut Context<Self>) {
+        let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
+            return;
+        };
+        let generation = {
+            let Some(ui) = self.ui.get_mut(&owner) else {
+                return;
+            };
+            ui.begin_github_issues_request()
+        };
+        cx.notify();
+        cx.spawn(async move |this, acx| {
+            let result = acx
+                .background_executor()
+                .spawn(async move { kagi_git::github::list_issues(&repo) })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                let owner_is_active = app.active_session() == Some(owner);
+                let Some(ui) = app.ui.get_mut(&owner) else {
+                    return;
+                };
+                if ui.finish_github_issues_request(generation, result) && owner_is_active {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Load the selected Issue's body and comments through the same
+    /// session-owned background boundary as the list.
+    pub fn load_github_issue_detail(&mut self, number: u64, cx: &mut Context<Self>) {
+        let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
+            return;
+        };
+        let generation = {
+            let Some(ui) = self.ui.get_mut(&owner) else {
+                return;
+            };
+            ui.begin_github_issue_detail_request(number)
+        };
+        cx.notify();
+        cx.spawn(async move |this, acx| {
+            let result = acx
+                .background_executor()
+                .spawn(async move { kagi_git::github::issue_detail(&repo, number) })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                let owner_is_active = app.active_session() == Some(owner);
+                let Some(ui) = app.ui.get_mut(&owner) else {
+                    return;
+                };
+                if ui.finish_github_issue_detail_request(generation, number, result)
+                    && owner_is_active
+                {
                     cx.notify();
                 }
             });

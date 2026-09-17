@@ -6,21 +6,28 @@
 //! everything here, so the public path stays `kagi_git::github::*`.
 
 use std::path::Path;
+use std::time::Duration;
 
-use kagi_domain::github::PullRequest;
+use kagi_domain::github::{Issue, PullRequest};
 
-use crate::github::{parse_pr_list, FIELDS};
+use crate::github::{
+    parse_issue_detail, parse_issue_list, parse_pr_list, FIELDS, ISSUE_DETAIL_FIELDS,
+    ISSUE_LIST_FIELDS,
+};
 
-/// Why a `gh` PR fetch produced no list (#506).
+const GH_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Why a read-only `gh` fetch produced no data.
 ///
-/// `Ok(prs)` — including `Ok(vec![])` — is the **only** answer that is evidence
-/// about the repository. Every variant here means "we did not learn what the
-/// pull requests are", so callers keep the list they already had. Folding all
-/// of these into `Ok(vec![])` made an expired token and an offline machine look
-/// exactly like "no pull requests", and wiped the previously fetched list.
+/// `Ok(data)` — including an empty list — is the only answer that is evidence
+/// about the repository. Every variant here means the request did not produce
+/// the requested GitHub data, so callers keep successful data they already
+/// hold. PR callers retain the historical exception that `Unavailable` means
+/// their sidebar evidence may be cleared; Issue callers treat every error as a
+/// failure and preserve their last success.
 ///
 /// ADR-0177's rule applies: an unproven outcome stays unproven — [`Unknown`]
-/// is never downgraded to a definite "there are none".
+/// is never downgraded to a definite empty answer.
 ///
 /// [`Unknown`]: PrFetchError::Unknown
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,8 +42,12 @@ pub enum PrFetchError {
     Network(String),
     /// `gh` answered but the JSON did not parse.
     Invalid(String),
-    /// Non-zero exit we could not classify (rate limit, server error, a future
-    /// `gh` message). Treated exactly like a transport failure: keep the data.
+    /// GitHub refused the request because the API budget was exhausted.
+    RateLimited(String),
+    /// The selected issue or repository no longer exists or is not visible.
+    NotFound(String),
+    /// Non-zero exit we could not classify (server error or a future `gh`
+    /// message). Treated exactly like a transport failure: keep the data.
     Unknown(String),
 }
 
@@ -48,6 +59,8 @@ impl PrFetchError {
             | PrFetchError::Auth(m)
             | PrFetchError::Network(m)
             | PrFetchError::Invalid(m)
+            | PrFetchError::RateLimited(m)
+            | PrFetchError::NotFound(m)
             | PrFetchError::Unknown(m) => m,
         }
     }
@@ -64,6 +77,8 @@ impl PrFetchError {
             PrFetchError::Auth(_) => "auth",
             PrFetchError::Network(_) => "network",
             PrFetchError::Invalid(_) => "invalid",
+            PrFetchError::RateLimited(_) => "rate-limited",
+            PrFetchError::NotFound(_) => "not-found",
             PrFetchError::Unknown(_) => "unknown",
         }
     }
@@ -111,6 +126,15 @@ const UNAVAILABLE_MARKERS: &[&str] = &[
     "no default remote repository",
 ];
 
+const RATE_LIMIT_MARKERS: &[&str] = &[
+    "rate limit",
+    "http 429",
+    "api rate limit exceeded",
+    "secondary rate limit",
+];
+
+const NOT_FOUND_MARKERS: &[&str] = &["http 404", "not found", "could not resolve to an issue"];
+
 /// Classify a non-zero `gh` exit. Pure; unit-tested below.
 ///
 /// Exit code 4 is `gh`'s documented "authentication required". Everything else
@@ -122,10 +146,16 @@ pub fn classify_gh_failure(code: Option<i32>, stderr: &str) -> PrFetchError {
     let lower = stderr.to_ascii_lowercase();
     let has = |markers: &[&str]| markers.iter().any(|m| lower.contains(m));
     let detail = stderr.trim().to_string();
-    if code == Some(4) || has(AUTH_MARKERS) {
+    if code == Some(4) {
+        PrFetchError::Auth(detail)
+    } else if has(RATE_LIMIT_MARKERS) {
+        PrFetchError::RateLimited(detail)
+    } else if has(AUTH_MARKERS) {
         PrFetchError::Auth(detail)
     } else if has(NETWORK_MARKERS) {
         PrFetchError::Network(detail)
+    } else if has(NOT_FOUND_MARKERS) {
+        PrFetchError::NotFound(detail)
     } else if has(UNAVAILABLE_MARKERS) {
         PrFetchError::Unavailable(detail)
     } else {
@@ -174,22 +204,34 @@ pub fn apply_pr_fetch(
     }
 }
 
+/// Run one read-only `gh` JSON request through the shared hardened command and
+/// bounded subprocess runner.
+fn fetch_json<T>(
+    workdir: &Path,
+    args: &[&str],
+    parse: impl FnOnce(&str) -> Result<T, crate::GitError>,
+) -> Result<T, PrFetchError> {
+    let mut command = crate::cli::gh_command();
+    command.args(args).current_dir(workdir);
+    let out = crate::proc::run_child(&mut command, GH_TIMEOUT, None)
+        .map_err(|e| PrFetchError::Unknown(format!("gh: {e}")))?;
+    if let Err(error) = &out.status {
+        return Err(PrFetchError::Network(format!("gh: {error}")));
+    }
+    if let Err(error) = &out.io {
+        return Err(PrFetchError::Network(format!("gh: {error}")));
+    }
+    let code = out.status.as_ref().copied().unwrap_or_default();
+    if code != 0 {
+        return Err(classify_gh_failure(Some(code), &out.stderr_lossy()));
+    }
+    parse(&out.stdout_lossy()).map_err(|e| PrFetchError::Invalid(e.to_string()))
+}
+
 /// One `gh pr list` call, classified. The shared half of [`list_open_prs`] and
 /// [`list_merged_prs`] so both carry the same contract (#506).
 fn fetch_prs(workdir: &Path, args: &[&str]) -> Result<Vec<PullRequest>, PrFetchError> {
-    let out = crate::cli::gh_command()
-        .args(args)
-        .current_dir(workdir)
-        .output()
-        .map_err(|e| PrFetchError::Unknown(format!("gh: {}", e)))?;
-    if !out.status.success() {
-        return Err(classify_gh_failure(
-            out.status.code(),
-            &String::from_utf8_lossy(&out.stderr),
-        ));
-    }
-    parse_pr_list(&String::from_utf8_lossy(&out.stdout))
-        .map_err(|e| PrFetchError::Invalid(e.to_string()))
+    fetch_json(workdir, args, parse_pr_list)
 }
 
 /// Open PRs for the repository at `workdir`, newest-updated first.
@@ -234,6 +276,39 @@ pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>,
             "--json",
             "number,title,headRefName,author",
         ],
+    )
+}
+
+/// Open Issues for the repository at `workdir`, newest-updated first.
+///
+/// This is a bounded initial slice, not a count or an exhaustive repository
+/// history. `gh issue list` excludes pull requests by contract;
+/// `parse_issue_list` additionally rejects PR-shaped JSON so a fixture or
+/// future CLI change cannot mix them into the Issue workspace.
+pub fn list_issues(workdir: &Path) -> Result<Vec<Issue>, PrFetchError> {
+    fetch_json(
+        workdir,
+        &[
+            "issue",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            ISSUE_LIST_FIELDS,
+        ],
+        parse_issue_list,
+    )
+}
+
+/// Full read-only data for one selected issue, including body and comments.
+pub fn issue_detail(workdir: &Path, number: u64) -> Result<Issue, PrFetchError> {
+    let number = number.to_string();
+    fetch_json(
+        workdir,
+        &["issue", "view", &number, "--json", ISSUE_DETAIL_FIELDS],
+        parse_issue_detail,
     )
 }
 
@@ -310,7 +385,12 @@ mod tests {
             (
                 Some(1),
                 "HTTP 429: API rate limit exceeded",
-                PrFetchError::Unknown(String::new()),
+                PrFetchError::RateLimited(String::new()),
+            ),
+            (
+                Some(1),
+                "GraphQL: Could not resolve to an Issue with the number of 404.",
+                PrFetchError::NotFound(String::new()),
             ),
         ];
         for (code, stderr, expected) in cases {

@@ -16,7 +16,9 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use kagi_domain::github::PullRequest;
-use kagi_git::github::{apply_pr_fetch, list_merged_prs, list_open_prs, PrFetchError};
+use kagi_git::github::{
+    apply_pr_fetch, issue_detail, list_issues, list_merged_prs, list_open_prs, PrFetchError,
+};
 
 /// PATH is process-global; the tests in this binary share it.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -132,12 +134,14 @@ fn no_github_remote_is_unavailable_and_clears_the_list() {
     assert!(cache.is_empty(), "nothing to show here");
 }
 
-/// ADR-0177's rule: an unclassified failure stays unproven. It must not be
-/// downgraded into the definite "there are no pull requests".
+/// A rate-limit response is classified explicitly and still keeps evidence.
 #[test]
-fn an_unclassified_failure_is_unknown_and_keeps_the_previous_list() {
+fn a_rate_limit_failure_is_classified_and_keeps_the_previous_list() {
     let (cache, error) = fetch_into_cache(RATE_LIMITED);
-    assert!(matches!(error, Some(PrFetchError::Unknown(_))), "{error:?}");
+    assert!(
+        matches!(error, Some(PrFetchError::RateLimited(_))),
+        "{error:?}"
+    );
     assert_eq!(cache.len(), 1);
 }
 
@@ -163,4 +167,35 @@ fn merged_pr_evidence_is_kept_on_failure_and_replaced_only_by_an_answer() {
     assert!(outcome.error.is_none());
     assert!(outcome.changed);
     assert!(cache.is_empty(), "a real answer does replace it");
+}
+
+#[test]
+fn issue_list_is_a_bounded_open_slice_and_excludes_pr_shaped_json() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+test "$*" = "issue list --state open --limit 100 --json number,title,state,url,author,assignees,labels,createdAt,updatedAt" || { echo "wrong command: $*" >&2; exit 1; }
+cat <<'JSON'
+[
+  {"number":12,"title":"issue","state":"OPEN","url":"https://github.com/o/r/issues/12"},
+  {"number":13,"title":"pr","state":"OPEN","isPullRequest":true,"url":"https://github.com/o/r/pull/13"}
+]
+JSON
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let issues = list_issues(&workdir).expect("issue list");
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].number, 12);
+}
+
+#[test]
+fn issue_detail_classifies_not_found_without_fabricating_data() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+test "$1 $2 $3" = "issue view 404" || { echo "wrong command: $*" >&2; exit 1; }
+echo 'GraphQL: Could not resolve to an Issue with the number of 404.' >&2
+exit 1
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let error = issue_detail(&workdir, 404).expect_err("missing issue");
+    assert!(matches!(error, PrFetchError::NotFound(_)), "{error:?}");
 }

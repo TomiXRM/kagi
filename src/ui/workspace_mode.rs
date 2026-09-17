@@ -1,6 +1,6 @@
-//! The Graph | PRs | Editor workspace-mode switcher.
+//! The Graph | PRs | Issues | Editor workspace-mode switcher.
 //!
-//! Three mutually exclusive top-level modes. Each toolbar button names the
+//! Four mutually exclusive top-level modes. Each navigation control names the
 //! mode it selects and lights up while that mode is on screen. They used to
 //! be two independent toggles that each morphed into a "Graph" button; with
 //! two takeovers open at once both read "Graph" and neither said which one
@@ -11,14 +11,15 @@ use gpui::{div, prelude::*, rgb, Context, SharedString};
 
 use super::workspace::WorkspaceItem;
 
-/// Which of the three top-level workspace modes is showing.
+/// Which top-level workspace mode is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceMode {
     Graph,
     Prs,
+    Issues,
     Editor,
-    /// A center takeover that is none of the three — File History, Analyze,
-    /// Branch Cleanup. No toolbar button owns it, so none of them lights up.
+    /// A center takeover that is none of the named modes — File History,
+    /// Analyze, Branch Cleanup. No mode control owns it, so none lights up.
     /// Without this the Graph button claimed to be the active mode while
     /// something else entirely was on screen.
     Takeover,
@@ -55,8 +56,8 @@ fn sidebar_mode_nav_cell(
         .into_any_element()
 }
 
-/// Graph / PRs navigation, rendered in the sidebar but owned by workspace-mode
-/// dispatch so the visual highlight and resolved center takeover cannot drift.
+/// Graph / PRs / Issues navigation, rendered in the sidebar but owned by
+/// workspace-mode dispatch so the visual highlight and resolved center takeover cannot drift.
 pub(super) fn render_sidebar_mode_nav(
     mode: WorkspaceMode,
     cx: &mut Context<KagiApp>,
@@ -88,6 +89,14 @@ pub(super) fn render_sidebar_mode_nav(
                     true,
                     cx,
                     |this, _, _window, cx| this.show_pr_mode(cx),
+                ))
+                .child(sidebar_mode_nav_cell(
+                    "sidebar-mode-issues",
+                    "Issues",
+                    mode == WorkspaceMode::Issues,
+                    true,
+                    cx,
+                    |this, _, _window, cx| this.show_issues_mode(cx),
                 ))
             }),
     )
@@ -135,6 +144,10 @@ impl KagiApp {
                 self.show_pr_mode(cx);
             }
             (WorkspaceMode::Prs, SidebarSwipeResult::Previous) => self.show_graph_mode(cx),
+            (WorkspaceMode::Prs, SidebarSwipeResult::Next) if kagi_git::github::gh_available() => {
+                self.show_issues_mode(cx);
+            }
+            (WorkspaceMode::Issues, SidebarSwipeResult::Previous) => self.show_pr_mode(cx),
             _ => {}
         }
     }
@@ -154,11 +167,25 @@ impl KagiApp {
             // PR mode outranks Editor, so Editor has to displace it too.
             self.with_ui(|ui| ui.pr_mode = None);
         }
+        if keep != WorkspaceMode::Issues {
+            // Invalidate completions as well as hiding the mode: a request that
+            // lands after Graph was selected must not reopen the workspace.
+            self.with_ui(|ui| {
+                ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
+                ui.github_issue_detail_gen = ui.github_issue_detail_gen.wrapping_add(1);
+                ui.github_issues_loading = false;
+                ui.github_issues_loaded = false;
+                ui.github_issues_error = None;
+                ui.github_issue_detail_loading = None;
+                ui.github_issue_detail_error = None;
+                ui.selected_github_issue = None;
+            });
+        }
     }
 
-    /// The mode the resolver will show. PR mode outranks Editor
-    /// (`resolve_workspace`), so an editor open *behind* PR mode is not the
-    /// active mode — the toolbar must agree with what is on screen.
+    /// The mode the resolver will show. PR and Issues mode both outrank Editor
+    /// (`resolve_workspace`), so an editor open behind either takeover is not
+    /// the active mode — the toolbar must agree with what is on screen.
     pub fn workspace_mode(&self) -> WorkspaceMode {
         if super::workspace::FileHistoryItem.is_open(self)
             || self.ui().ecosystem.is_some()
@@ -167,6 +194,8 @@ impl KagiApp {
             WorkspaceMode::Takeover
         } else if self.pr_mode().is_some() {
             WorkspaceMode::Prs
+        } else if self.issues_mode_open() {
+            WorkspaceMode::Issues
         } else if self.ui().editor_workspace.is_some() {
             WorkspaceMode::Editor
         } else {
@@ -204,6 +233,22 @@ impl KagiApp {
         }
         klog!("mode: prs");
         cx.notify();
+    }
+
+    /// Issues: open the session-owned read-only list and refresh it once.
+    pub fn show_issues_mode(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.swipe.cancel();
+        self.leave_takeovers(WorkspaceMode::Issues);
+        if !self.issues_mode_open() {
+            self.refresh_github_issues(cx);
+        }
+        klog!("mode: issues");
+        cx.notify();
+    }
+
+    pub(super) fn issues_mode_open(&self) -> bool {
+        let ui = self.ui();
+        ui.github_issues_loading || ui.github_issues_loaded || ui.github_issues_error.is_some()
     }
 
     /// Editor: reveal the existing workspace, or create one. Either way PR

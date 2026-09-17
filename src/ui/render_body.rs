@@ -452,6 +452,7 @@ impl KagiApp {
             ecosystem_open: workspace::EcosystemItem.is_open(self),
             branch_cleanup_open: workspace::BranchCleanupItem.is_open(self),
             pr_mode: workspace::PrModeItem.is_open(self),
+            issues_mode: workspace::IssuesModeItem.is_open(self),
             loading: self.loading_tab().is_some(),
             diff_open: workspace::MainDiffItem.is_open(self),
             commit_panel_open,

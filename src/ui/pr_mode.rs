@@ -1026,40 +1026,13 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
             .on_mouse_down(gpui::MouseButton::Left, focus_click),
         focused,
     );
-    // Header: title + exit
-    let exit = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.toggle_pr_mode(cx);
-    });
-    col = col.child(
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_3()
-            .py_2()
-            .child(
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(Msg::PrPaneTitle.t())),
-            )
-            .child(
-                div()
-                    .id("pr-mode-exit")
-                    .px_2()
-                    .rounded_sm()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .cursor_pointer()
-                    .hover(|s| {
-                        s.bg(rgb(theme().surface))
-                            .text_color(rgb(theme().text_main))
-                    })
-                    .on_click(exit)
-                    .child(SharedString::from(Msg::PrModeExit.t())),
-            ),
-    );
+    // Header: the same Arc-like Graph/PRs nav row as the Graph sidebar, so
+    // switching modes is in the same place on both sides of the boundary.
+    // The old title + exit toggle is replaced — the Graph cell is the exit.
+    col = col.child(super::sidebar::render_mode_nav(
+        super::workspace_mode::WorkspaceMode::Prs,
+        cx,
+    ));
     if all.is_empty() {
         col = col.child(
             div()

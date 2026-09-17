@@ -479,6 +479,7 @@ impl KagiApp {
                     sidebar_scroll_handle,
                     cleanup_count,
                     pr_count,
+                    self.workspace_mode(),
                     cx,
                 ))
                 // ── Sidebar divider ───────────────────────

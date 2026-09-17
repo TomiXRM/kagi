@@ -18,6 +18,7 @@ use gpui_component::Sizable as _;
 use kagi_git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
 
 use super::theme::{self, theme};
+use super::workspace_mode::WorkspaceMode;
 use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
 
 /// Uniform row height (unscaled) used for **every** virtualized sidebar row.
@@ -1439,6 +1440,77 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
 }
 
 // ──────────────────────────────────────────────────────────────
+// Arc-like mode navigation (Graph / PRs) — ui-dev-test
+// ──────────────────────────────────────────────────────────────
+
+/// One mode cell in the sidebar's top navigation row. Highlights with the
+/// mode accent while that mode is what the resolver is actually showing
+/// (`workspace_mode()`), exactly like the toolbar buttons (ADR-0137).
+fn mode_nav_cell(
+    id: &'static str,
+    label: &'static str,
+    active: bool,
+    enabled: bool,
+    cx: &mut Context<KagiApp>,
+    on_click: impl Fn(&mut KagiApp, &gpui::ClickEvent, &mut gpui::Window, &mut Context<KagiApp>)
+        + 'static,
+) -> gpui::AnyElement {
+    div()
+        .id(id)
+        .flex_1()
+        .py_1()
+        .flex()
+        .justify_center()
+        .text_xs()
+        .rounded(theme::scaled_px(4.))
+        .when(enabled, |el| el.cursor_pointer())
+        .when(active, |el| {
+            el.bg(rgb(theme().surface))
+                .text_color(rgb(theme().color_branch))
+                .font_weight(gpui::FontWeight::MEDIUM)
+        })
+        .when(!active, |el| el.text_color(rgb(theme().text_muted)))
+        .when(enabled, |el| el.on_click(cx.listener(on_click)))
+        .child(SharedString::from(label))
+        .into_any_element()
+}
+
+/// The Graph / PRs / … row pinned at the top of the Repository Navigator.
+/// Routes through the canonical mode dispatchers (`show_graph_mode` /
+/// `show_pr_mode`), never a local toggle, so the toolbar highlight and the
+/// sidebar highlight cannot disagree.
+pub(super) fn render_mode_nav(mode: WorkspaceMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let prs_available = kagi_git::github::gh_available();
+    div()
+        .id("sidebar-mode-nav")
+        .flex_shrink_0()
+        .mx_2()
+        .mt_1()
+        .mb_1()
+        .flex()
+        .gap_1()
+        .child(mode_nav_cell(
+            "sidebar-mode-graph",
+            "Graph",
+            mode == WorkspaceMode::Graph,
+            true,
+            cx,
+            |this, _, _window, cx| this.show_graph_mode(cx),
+        ))
+        .when(prs_available, |el| {
+            el.child(mode_nav_cell(
+                "sidebar-mode-prs",
+                "PRs",
+                mode == WorkspaceMode::Prs,
+                true,
+                cx,
+                |this, _, _window, cx| this.show_pr_mode(cx),
+            ))
+        })
+        .into_any_element()
+}
+
+// ──────────────────────────────────────────────────────────────
 // render_sidebar — main entry point
 // ──────────────────────────────────────────────────────────────
 
@@ -1467,8 +1539,17 @@ pub fn render_sidebar(
     scroll_handle: gpui::UniformListScrollHandle,
     cleanup_count: usize,
     pr_count: usize,
+    mode: WorkspaceMode,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
+    // ── Workspace-mode navigation row (Arc-like Graph / PRs tabs) ──
+    // Reuses the existing WorkspaceMode dispatchers; no new mode state.
+    // A click always *shows* the named mode (not a toggle), matching the
+    // toolbar buttons (ADR-0137) so the highlight agrees with what is on
+    // screen. `mode` is passed in: reading `workspace_mode()` here would
+    // re-read KagiApp mid-render (it is being updated), which panics.
+    let mode_nav = render_mode_nav(mode, cx);
+
     // ── Filter input row (pinned above the virtualized list) ──────
     let filter_area: gpui::AnyElement = if let Some(ref input_entity) = filter_input {
         div()
@@ -1629,6 +1710,7 @@ pub fn render_sidebar(
         .flex()
         .flex_col()
         .bg(rgb(theme().sidebar))
+        .child(mode_nav)
         .child(filter_area)
         .child(cleanup_entry)
         .children(pr_entry)

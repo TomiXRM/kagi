@@ -815,16 +815,45 @@ fn pr_center_note(text: SharedString) -> gpui::AnyElement {
 /// mostly-empty fixed block (user request).
 const COMMIT_STRIP_MAX_H: f32 = 210.0;
 const ROW_H: f32 = 24.0;
-
 pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     // The right rail is STACK + FILES *of the open PR*. On the dashboard
     // there is no open PR, so it stood there empty — drop it and give the
     // width to the home screen (user request).
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
-    let left = render_pr_list(app, cx);
-    let center = render_center(app, cx);
-    let right = has_tab.then(|| render_right(app, cx));
+    let left_w = app.sidebar.width;
+    let right_w = app.pr_mode().map(|m| m.right_w).unwrap_or(RIGHT_W);
+    let left = div()
+        .id("pr-mode-left-pane")
+        .w(theme::scaled_px(left_w))
+        .flex_shrink_0()
+        .h_full()
+        .child(super::e2e::measure_control(
+            "pr-mode-left-pane",
+            render_pr_list(app, cx),
+        ));
+    let center = div()
+        .id("pr-mode-center-pane")
+        .flex_1()
+        .min_w(px(0.))
+        .min_h(px(0.))
+        .h_full()
+        .child(super::e2e::measure_control(
+            "pr-mode-center-pane",
+            render_center(app, cx),
+        ));
+    let right = has_tab.then(|| {
+        div()
+            .id("pr-mode-right-pane")
+            .w(theme::scaled_px(right_w))
+            .flex_shrink_0()
+            .h_full()
+            .child(super::e2e::measure_control(
+                "pr-mode-right-pane",
+                render_right(app, cx),
+            ))
+    });
     div()
+        .id("pr-mode-layout")
         .flex()
         .flex_row()
         .flex_1()

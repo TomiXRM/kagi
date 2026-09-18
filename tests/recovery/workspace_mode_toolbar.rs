@@ -270,10 +270,14 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
 
         // Cache one PR through the real fetch path, then gesture again.
         app.update(cx, |app, cx| app.show_graph_mode(cx));
-        e2e::queue_github_pr_fetch(
-            cx.background_executor
-                .spawn(async move { Ok(vec![pull_request(7, "cached", "cached-head")]) }),
-        );
+        e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move {
+            Ok(vec![
+                // `main` is the fixture's only branch, and a head the repository
+                // actually has is what lets the PR open a tab at all - which is
+                // what the feed assertions below need.
+                pull_request(7, "cached", "main"),
+            ])
+        }));
         app.update(cx, |app, cx| app.refresh_github_prs(cx));
         cx.run_until_parked();
         swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
@@ -297,10 +301,35 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         // ADR-0200: the lane pane belongs to the PR on screen. Home keeps its
         // tabs, so a pane gated on "any tab open" stood there with the lanes
         // of the PR just left (user report).
+        // A PR tab only opens against branches the repository has actually
+        // fetched, so give the fixture the remote-tracking ref its PR names.
+        crate::macos::git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        app.update(cx, |app, cx| app.reload(cx));
+        cx.run_until_parked();
         let cached = cx.read(|cx| app.read(cx).ui().github_prs.first().cloned());
         if let Some(pr) = cached {
             app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
             cx.run_until_parked();
+            // ADR-0200: 概要 and レビュー are two sections of ONE page, and the
+            // tabs are navigation into it. Both sections must be drawn from
+            // either tab; a tab that swapped the body would draw only its own.
+            for view in [
+                kagi::ui::pr_mode::PrView::Review,
+                kagi::ui::pr_mode::PrView::Overview,
+            ] {
+                app.update(cx, |app, cx| app.pr_mode_show(view, cx));
+                for control in ["pr-feed-overview", "pr-feed-review"] {
+                    e2e::clear_control_bounds(win.window_id(), control);
+                }
+                cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                    .unwrap();
+                assert!(
+                    measure(cx, win, "pr-feed-overview").is_some()
+                        && measure(cx, win, "pr-feed-review").is_some(),
+                    "{view:?} must draw the whole PR page, not just its own section"
+                );
+            }
+
             app.update(cx, |app, cx| app.pr_mode_home(cx));
             assert!(
                 measure(cx, win, "pr-mode-lane-pane").is_none(),

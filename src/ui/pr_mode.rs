@@ -56,6 +56,9 @@ pub struct PrTab {
     pub selected_file: Option<usize>,
     pub diff: Option<MainDiffView>,
     pub diff_scroll: ListState,
+    /// The 概要/レビュー feed's scroll. The tabs are navigation: they scroll
+    /// this handle to a section instead of swapping the body (ADR-0200).
+    pub feed_scroll: gpui::ScrollHandle,
     /// Reviews + issue comments + line comments ("review chat"), fetched once
     /// per tab open.
     pub reviews: Vec<Review>,
@@ -118,6 +121,10 @@ pub struct PrModeState {
     pub active: Option<usize>,
     /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
     pub focus: PrFocus,
+    /// Which section of the feed the next frame must scroll to: child 0 is the
+    /// description, child 1 the conversation. `None` once consumed - a tab
+    /// press is a jump, not a position the renderer keeps re-asserting.
+    pub feed_anchor: Option<usize>,
     /// Which body the center shows. Mode-wide, NOT per tab: switching PRs
     /// while reading reviews should keep showing reviews (user request).
     pub view: PrView,
@@ -147,6 +154,7 @@ impl Default for PrModeState {
             tabs: Vec::new(),
             active: None,
             focus: PrFocus::List,
+            feed_anchor: None,
             view: PrView::Overview,
             filter: PrListFilter::default(),
             sort: PrSort::default(),
@@ -254,6 +262,7 @@ impl KagiApp {
             comments: Vec::new(),
             line_comments: Vec::new(),
             conversation_loaded: false,
+            feed_scroll: gpui::ScrollHandle::new(),
             conflicts: None,
             conflict_selected: None,
             conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
@@ -360,6 +369,13 @@ impl KagiApp {
     pub fn pr_mode_show(&mut self, view: PrView, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.view = view;
+            // 概要 and レビュー are one page: the tab scrolls the feed to its
+            // section rather than replacing what is on screen (ADR-0200).
+            m.feed_anchor = match view {
+                PrView::Overview => Some(0),
+                PrView::Review => Some(1),
+                _ => None,
+            };
         }
         if view == PrView::Conflicts {
             self.pr_mode_load_conflicts(cx);
@@ -1141,6 +1157,15 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.merge_status_loaded,
         )
     };
+    let feed_scroll = app.pr_mode().unwrap().tabs[ix].feed_scroll.clone();
+    // A tab press is one jump. Consume it here so a later frame - a fetch
+    // landing, a resize - does not drag the reader back to the heading.
+    if let Some(anchor) = app.pr_mode_mut().and_then(|m| m.feed_anchor.take()) {
+        feed_scroll.scroll_to_top_of_item(anchor);
+    }
+    // 概要 and レビュー are two sections of one page, so both tabs draw it;
+    // which chip is lit is which section the reader last jumped to.
+    let show_feed = matches!(view, PrView::Overview | PrView::Review);
     let show_description = view == PrView::Overview;
     let show_review = view == PrView::Review;
 
@@ -1541,36 +1566,30 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     // pinned above every other view (ADR-0200).
     if view == PrView::Commits {
         content = content.child(strip.flex_1().max_h(relative(1.)));
-    } else if show_review {
-        content = if conversation_loaded {
-            content.child(super::pr_conversation::render_conversation(
-                &pr,
-                &reviews,
-                &comments,
-                &line_comments,
-                cx,
-            ))
-        } else {
-            content.child(
-                super::pr_conversation::render_loading()
-                    .flex_1()
-                    .items_start()
-                    .pt_8(),
-            )
-        };
-    } else if show_description {
-        // #347: the merge-status card above the description - the four
-        // `mergeStateStatus` actions, queue position, and what is still missing.
-        if !merge_status_loaded {
+    } else if show_feed {
+        // #347: the merge-status card rides at the top of the feed - the four
+        // `mergeStateStatus` actions, queue position, and what is still
+        // missing. The animated loading rows stay above the scroll pane:
+        // `with_animation` does not tick inside one.
+        if !merge_status_loaded || !conversation_loaded {
             content = content.child(super::pr_conversation::render_loading());
         }
-        if let Some(status) = &merge_status {
+        let merge_card = merge_status.as_ref().and_then(|status| {
             let status_view = super::pr_merge_status::view_from(status, pr.review);
-            if let Some(card) = super::pr_merge_status::render(&status_view, cx) {
-                content = content.child(card);
-            }
-        }
-        content = content.child(super::pr_conversation::render_description(&pr, cx));
+            super::pr_merge_status::render(&status_view, cx)
+        });
+        content = content.child(super::pr_conversation::render_feed(
+            super::pr_conversation::Feed {
+                pr: &pr,
+                reviews: &reviews,
+                comments: &comments,
+                line_comments: &line_comments,
+                loaded: conversation_loaded,
+                merge_card,
+                scroll: &feed_scroll,
+            },
+            cx,
+        ));
     } else if view == PrView::Conflicts {
         let body: gpui::AnyElement = match conflicts.as_ref() {
             None => pr_center_note(SharedString::from("\u{2026}")),

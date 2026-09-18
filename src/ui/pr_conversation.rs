@@ -15,8 +15,9 @@ use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::KagiApp;
 
-/// The PR description as rendered markdown, in the diff area.
-pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+/// The PR description as rendered markdown - the card alone, with no scroll
+/// container of its own: it is the first section of the feed (ADR-0200).
+fn description_card(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     use gpui_component::text::{TextView, TextViewStyle};
     use gpui_component::ActiveTheme as _;
     let body = if pr.body.trim().is_empty() {
@@ -95,12 +96,7 @@ pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) ->
         });
     div()
         .id("pr-mode-description")
-        .flex_1()
-        .min_h(px(0.))
         .w_full()
-        .overflow_y_scroll()
-        .bg(rgb(card_pane_bg()))
-        .p_4()
         .child(
             div()
                 // Fill the pane (edge-aligned with the commit strip above); a
@@ -151,16 +147,17 @@ pub(super) fn render_loading() -> gpui::Div {
         )
 }
 
-/// The review conversation: submitted reviews and issue comments, newest
-/// last, each as a card with the author's verdict. Bodies go through the same
-/// markdown pipeline (and the same sanitiser) as the description.
-pub(super) fn render_conversation(
+/// The review conversation as a list of cards: submitted reviews, issue
+/// comments and line comments, oldest first, each with the author's verdict.
+/// Bodies go through the same markdown pipeline (and the same sanitiser) as
+/// the description. Empty when the PR has none - the caller says so.
+fn conversation_items(
     pr: &PullRequest,
     reviews: &[Review],
     comments: &[Comment],
     line_comments: &[ReviewComment],
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> Vec<gpui::AnyElement> {
     use gpui_component::text::{TextView, TextViewStyle};
     use gpui_component::ActiveTheme as _;
 
@@ -246,33 +243,11 @@ pub(super) fn render_conversation(
     }
     entries.sort_by(|a, b| a.at.cmp(&b.at));
 
-    let mut col = div()
-        .id("pr-mode-conversation")
-        .flex_1()
-        .min_h(px(0.))
-        .w_full()
-        .overflow_y_scroll()
-        .bg(rgb(card_pane_bg()))
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3();
-
-    if entries.is_empty() {
-        return col
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::PrModeNoReview.t())),
-            )
-            .into_any_element();
-    }
-
+    let mut out: Vec<gpui::AnyElement> = Vec::with_capacity(entries.len());
     for (i, e) in entries.iter().enumerate() {
         let body = kagi_domain::message::sanitize_markdown_for_view(&e.body);
         let body = kagi_ui_editor::markdown::pad_inline_code(&body);
-        col = col.child(
+        out.push(
             div()
                 .w_full()
                 .rounded_lg()
@@ -370,10 +345,101 @@ pub(super) fn render_conversation(
                         .selectable(true)
                         .style(style.clone()),
                     )
-                }),
+                })
+                .into_any_element(),
         );
     }
-    col.into_any_element()
+    out
+}
+
+/// The PR's page: its description and its conversation, one scroll, in the
+/// order a reader goes through them (ADR-0200, `e1`'s Conversation tab).
+///
+/// Exactly **two children**, and that is a contract: the 概要 and レビュー tabs
+/// scroll this feed to child 0 and child 1 rather than swapping the body, so
+/// the sections must not appear or disappear with the data. An optional
+/// merge-status card rides *inside* the first child for the same reason.
+pub(super) struct Feed<'a> {
+    pub pr: &'a PullRequest,
+    pub reviews: &'a [Review],
+    pub comments: &'a [Comment],
+    pub line_comments: &'a [ReviewComment],
+    /// The conversation fetch has come back. Until then an empty list means
+    /// "not yet", which is not the same as "none".
+    pub loaded: bool,
+    pub merge_card: Option<gpui::AnyElement>,
+    pub scroll: &'a gpui::ScrollHandle,
+}
+
+pub(super) fn render_feed(feed: Feed<'_>, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let Feed {
+        pr,
+        reviews,
+        comments,
+        line_comments,
+        loaded,
+        merge_card,
+        scroll,
+    } = feed;
+    let items = conversation_items(pr, reviews, comments, line_comments, cx);
+    let count = items.len();
+    let overview = div()
+        .id("pr-feed-overview")
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .children(merge_card)
+        .child(description_card(pr, cx));
+    let review =
+        div()
+            .id("pr-feed-review")
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(format!(
+                        "{} ({})",
+                        Msg::PrModeReview.t(),
+                        count
+                    ))),
+            )
+            // "None" and "not fetched yet" are different things to say; the
+            // animated dots live above the feed, outside this scroll pane.
+            .when(count == 0, |el| {
+                el.child(div().text_sm().text_color(rgb(theme().text_muted)).child(
+                    SharedString::from(if loaded {
+                        Msg::PrModeNoReview.t()
+                    } else {
+                        Msg::EditorWorkspaceLoading.t()
+                    }),
+                ))
+            })
+            .children(items);
+    div()
+        .id("pr-mode-feed")
+        .track_scroll(scroll)
+        .flex_1()
+        .min_h(px(0.))
+        .w_full()
+        .overflow_y_scroll()
+        .bg(rgb(card_pane_bg()))
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(super::e2e::measure_control("pr-feed-overview", overview))
+        .child(super::e2e::measure_control("pr-feed-review", review))
+        .into_any_element()
 }
 
 /// The `diff_hunk` GitHub attaches to a line comment — the code the comment

@@ -156,6 +156,33 @@ A fixed 42px survived the first reshape and then broke it, drawing the text
 across the hairline below (user report); `github_evidence_restores` now
 measures the row instead of trusting a constant.
 
+### 7. 概要 and レビュー are one page; the tabs are navigation into it
+
+`e1` (`crates/e1-views/src/detail.rs`) draws its Conversation as a single
+`div + overflow_y_scroll` holding a hand-ordered column — facets, merge card,
+body markdown, then the comments — and reserves real tab switching for Files.
+Reading a PR on github.com is the same motion: the description and the
+conversation are one scroll, not two destinations.
+
+kagi's 概要 and レビュー tabs drew two separate scroll panes, so reading a
+review meant losing the description. They are now **one feed**
+(`pr_conversation::render_feed`) with exactly two children: the merge card plus
+description, and the conversation. Both tabs draw the same feed; pressing one
+scrolls the feed to its section through `ScrollHandle::scroll_to_top_of_item`.
+The lit chip is therefore "where you jumped", not "which body is mounted".
+
+Three consequences worth stating:
+
+- The two children are a **contract**: an optional merge card rides *inside*
+  the first child and an empty conversation still renders its heading, because
+  an anchor index that moved with the data would scroll to the wrong place.
+- The jump is **consumed once** (`PrModeState::feed_anchor` is `take`n by the
+  renderer). A later frame - a fetch landing, a resize - must not drag the
+  reader back to the heading.
+- The animated loading row stays **above** the feed: `with_animation` does not
+  tick inside a scroll pane. The description is readable while the
+  conversation is still in flight, which is the point of merging them.
+
 ## Consequences
 
 - Three files passed the 800-LOC ceiling and were split on feature boundaries

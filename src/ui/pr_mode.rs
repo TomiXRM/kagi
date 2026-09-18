@@ -597,6 +597,29 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// A swimlane row was clicked: show that commit in the PR that owns it.
+    ///
+    /// The lane pane draws every open tab, so a row may belong to a PR that is
+    /// not the active one — activating its tab first is what makes the click
+    /// land on the commit the user actually pointed at, rather than on an
+    /// index into someone else's range.
+    pub(super) fn pr_lane_select(&mut self, pr: u64, commit: &CommitId, cx: &mut Context<Self>) {
+        let Some(ix) = self
+            .pr_mode()
+            .and_then(|m| m.tabs.iter().position(|t| t.pr.number == pr))
+        else {
+            return;
+        };
+        if let Some(m) = self.pr_mode_mut() {
+            m.active = Some(ix);
+        }
+        let sel = self
+            .pr_mode()
+            .and_then(|m| m.tabs.get(ix))
+            .and_then(|t| t.commits.iter().position(|c| c.id == *commit));
+        self.pr_mode_select_commit(sel, cx);
+    }
+
     /// Title click: jump to the Overview (description), or back to the Diff.
     pub fn pr_mode_toggle_description(&mut self, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
@@ -877,6 +900,10 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
             "pr-mode-center-pane",
             render_center(app, cx),
         ));
+    // The swimlane sits between the navigator and the body: it is about the
+    // PRs, not about the file being read, and it is absent with no tab open.
+    let lane = super::pr_lane::render_pr_lane(app, cx)
+        .map(|pane| super::e2e::measure_control("pr-mode-lane-pane", pane));
     let right = has_tab.then(|| {
         div()
             .id("pr-mode-right-pane")
@@ -899,6 +926,8 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
         .bg(rgb(theme().bg_base))
         .child(left)
         .child(vdivider(DividerKind::PrModeLeft))
+        .children(lane)
+        .when(has_tab, |el| el.child(vdivider(DividerKind::PrModeLeft)))
         .child(center)
         .when(has_tab, |el| el.child(vdivider(DividerKind::PrModeRight)))
         .children(right)

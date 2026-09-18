@@ -45,6 +45,7 @@ pub mod operation;
 pub mod plan;
 pub mod plan_note;
 pub mod pr_list;
+pub mod pr_swimlane;
 pub mod pr_url;
 pub mod provenance;
 pub mod refs;

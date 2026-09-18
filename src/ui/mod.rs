@@ -52,6 +52,7 @@ pub mod issues_mode;
 pub mod pr_conflicts;
 pub mod pr_conversation;
 pub mod pr_dashboard;
+pub mod pr_lane;
 pub mod pr_merge_status;
 pub mod pr_mode;
 pub mod pr_nav;

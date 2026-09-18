@@ -526,6 +526,8 @@ pub enum Msg {
     PrSectionMine,
     PrSectionReview,
     PrSectionAssigned,
+    /// Swimlane pane (ADR-0200).
+    PrLaneTitle,
     /// Home list: header, chips, sort and column names (ADR-0200).
     PrHomeOpen,
     PrHomeDraft,
@@ -1595,6 +1597,8 @@ impl Msg {
             (Ja, PrSectionReview) => "レビュー依頼",
             (En, PrSectionAssigned) => "ASSIGNED",
             (Ja, PrSectionAssigned) => "担当",
+            (En, PrLaneTitle) => "SWIMLANE",
+            (Ja, PrLaneTitle) => "SWIMLANE",
             (En, PrHomeOpen) => "OPEN",
             (Ja, PrHomeOpen) => "OPEN",
             (En, PrHomeDraft) => "DRAFT",

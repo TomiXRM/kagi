@@ -98,23 +98,55 @@ A dedicated `pr_swimlane` layout existed for the per-tab version and was
 deleted with it: the windowed view needs no layout of its own, and the commit
 DAG's lanes are the right ones once the rows come from the DAG.
 
-The pane is `None` when no PR is on screen, when the PR has no commits, or
-when none of its commits are in the loaded history window — there is no
-neighbourhood to place it in then, and a lane alone would be a worse version
-of the COMMITS tab.
+The pane is `None` only when no PR is on screen. With no commits, or with none
+of them in the loaded history window, there is no neighbourhood to place a
+lane in and none is drawn - but the pane stays, because its lower third is
+where the files are picked (§5).
 
-### 5. Commits are a tab; the rail carries facts
+### 5. Commits are a tab; the detail lives under the swimlane, not in a pane
 
 The tab row is 概要 / FILES n / 議論 n / COMMITS n, plus Conflicts when GitHub
 says the merge conflicts (ADR-0145). The commit strip became the COMMITS tab:
 210px pinned above every view was 210px spent on a list the reader consults
 once per PR. Picking a commit there still switches to the diff.
 
-The rail gained REVIEWERS / ASSIGNEES / LABELS / WORKTREE. WORKTREE answers
-what no GitHub field can — whether a worktree here has this PR's head branch
-checked out, and whether it is clean — matched on the head branch name from the
-snapshot's worktrees. The merge action stays in the header, where it is visible
-from every tab.
+**There is no detail pane.** The outer right rail (stack + checks + files) is
+gone, and the checks, the facts and the file list moved into the lower third of
+the swimlane pane, which is already on screen for the PR being read. Two
+earlier shapes were tried and both were wrong for the same reason: a 320px
+right pane and then the mock's 268px in-body column each put a description of
+the PR between the reader and the diff, leaving the diff a sliver (user
+report). The body is now full width, and the window is navigator | swimlane |
+body.
+
+The **stack** went with that pane. It was inferred from open PRs' `base`/`head`
+links, not from `gh`, and it was the one thing in the rail that was neither a
+fact about the PR nor a way into its files. `PrFocus::Stack` went with it, so
+←/→ now cycles List → Commits → Files.
+
+What the lower third shows follows the view: the files of the diff (or of the
+conflict set) on the file views, and otherwise CHECKS / REVIEWERS / ASSIGNEES /
+LABELS / WORKTREE. WORKTREE answers what no GitHub field can — whether a
+worktree here has this PR's head branch checked out, and whether it is clean —
+matched on the head branch name from the snapshot's worktrees. The merge action
+stays in the header, where it is visible from every tab.
+
+A PR whose commits are not in the loaded history window has no lane to draw.
+The pane is still drawn: the detail takes all of it, because the file list is
+how a file is picked and it cannot depend on how much history happens to be
+loaded.
+
+### 6. The navigator's row is `#N title` over `● state  branch`
+
+The card lost the reason text and the `#N` line of its own (mock 1b): the
+number joins the title, because together they are how a PR is named out loud,
+and the second line is the state dot plus the head branch — the branch is what
+tells two similarly titled PRs apart and what a worktree is named after. The
+dot carries the attention colour, so the bucket is still per-row now that the
+left edge marks the open PR rather than the bucket. The failed/total check
+count and the agent badge (#337) stay at the right of that line: both change
+what the reader does next. `PrListRow::why` went with the reason text; the
+section header already names the bucket, and `pr_dashboard` computes its own.
 
 ## Consequences
 
@@ -129,7 +161,7 @@ from every tab.
     PR's `merge-base..head` range, not just the open tabs' — a new background
     read with owner guards. A toggle over one tab's worth of lanes would claim
     to show all of them.
-  - The **FILES tab's own tree** (mock 2a) and the file list's move out of the
-    rail: the list is wired to `PrFocus::Files` and is reused by the Conflicts
-    view for a different, shorter set of files. Moving it is a focus-model
-    change, and it belongs with the tree and the per-PR file-history strip.
+  - The **FILES tab's own tree** (mock 2a) and the per-PR file-history strip:
+    the flat list moved out of the removed rail into the swimlane pane's lower
+    third (§5), still wired to `PrFocus::Files` and still reused by the
+    Conflicts view for its shorter set. A tree is a separate change.

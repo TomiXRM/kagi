@@ -13,7 +13,7 @@
 
 use std::collections::HashSet;
 
-use gpui::{div, prelude::*, px, rgb, Context, SharedString};
+use gpui::{div, prelude::*, px, relative, rgb, Context, SharedString};
 
 use super::graph_view;
 use super::i18n::Msg;
@@ -32,14 +32,14 @@ const CONTEXT_OPACITY: f32 = 0.45;
 /// tens of lanes deep, and the pane is a companion pane, not the graph.
 const MAX_RAIL_LANES: usize = 6;
 
-/// The PR's lane in context, or `None` when there is nothing to place it in.
+/// The pane about the PR on screen: its lane in the repository's history, and
+/// beneath that the detail (files, or checks and facts).
 ///
-/// `None` in three cases, each for its own reason: no PR is on screen (Home
-/// keeps its tabs, so gating on "any tab open" once left the previous PR's
-/// lane standing beside the home list); the PR has no commits yet; or none of
-/// its commits are in the loaded history window, in which case there is no
-/// neighbourhood to show it in and a lane alone would be a worse version of
-/// the COMMITS tab.
+/// `None` only when no PR is on screen - Home keeps its tabs, so gating on
+/// "any tab open" once left the previous PR's lane standing beside the home
+/// list. When the PR's commits are not in the loaded history window there is
+/// no neighbourhood to draw, and a lane alone would be a worse version of the
+/// COMMITS tab: the detail then takes the whole pane.
 pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option<gpui::AnyElement> {
     let mode = app.pr_mode()?;
     let tab = mode.active.and_then(|ix| mode.tabs.get(ix))?;
@@ -53,25 +53,26 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         .filter_map(|c| view.commit_row_index.get(&c.id).copied())
         .collect();
     hits.sort_unstable();
-    let (lo, hi) = lane_window(*hits.first()?, *hits.last()?, view.rows.len())?;
+    let window = hits
+        .first()
+        .zip(hits.last())
+        .and_then(|(first, last)| lane_window(*first, *last, view.rows.len()));
     let mine: HashSet<&kagi_git::CommitId> = tab.commits.iter().map(|c| &c.id).collect();
 
-    let mut body = div()
-        .id("pr-lane-body")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col();
     // Lane numbers come from the repository-wide graph, where a PR's branch
-    // can be lane 12 while the window only uses five lanes — and lane 12 is
+    // can be lane 12 while the window only uses five lanes - and lane 12 is
     // off the rail whatever the rail's width (user report). The window's lanes
     // are therefore renumbered into consecutive columns, so "five lanes" means
     // five columns and nothing needed to be brought into view at all.
-    let columns = lane_columns((lo..=hi).filter_map(|ix| view.rows.get(ix)).map(|r| r.lane));
+    let columns = match window {
+        Some((lo, hi)) => {
+            lane_columns((lo..=hi).filter_map(|ix| view.rows.get(ix)).map(|r| r.lane))
+        }
+        None => lane_columns(std::iter::empty()),
+    };
     let lanes = columns.len().max(1);
     let rail = gutter_width(lanes);
-    // The column the PR itself sits on — what the rail must keep in view when
+    // The column the PR itself sits on - what the rail must keep in view when
     // there are more columns than fit.
     let pr_column = hits
         .iter()
@@ -86,32 +87,61 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
     // The commit list draws the node as the author's avatar in compact-lane
     // mode; the same setting means the same thing here.
     let avatars = theme::graph_lane_compact().then(|| app.avatars.images.clone());
-    for ix in lo..=hi {
-        let Some(row) = view.rows.get(ix) else {
-            continue;
-        };
-        body = body.child(render_lane_row(
-            ix,
-            row,
-            number,
-            mine.contains(&row.id),
-            &Rail {
-                width: rail,
-                scroll,
-                columns: &columns,
-                avatars: avatars.as_ref(),
+    let lane_body = window.map(|(lo, hi)| {
+        let mut body = div()
+            .id("pr-lane-body")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        for ix in lo..=hi {
+            let Some(row) = view.rows.get(ix) else {
+                continue;
+            };
+            body = body.child(render_lane_row(
+                ix,
+                row,
+                number,
+                mine.contains(&row.id),
+                &Rail {
+                    width: rail,
+                    scroll,
+                    columns: &columns,
+                    avatars: avatars.as_ref(),
+                },
+                cx,
+            ));
+        }
+        // Horizontal wheel/trackpad deltas scroll the rail; vertical ones are
+        // left to the body's own scroll, exactly as the commit list's graph
+        // column does.
+        let scroll_by = cx.listener(
+            move |this: &mut KagiApp, e: &gpui::ScrollWheelEvent, _w, cx| {
+                this.pr_lane_scroll_by(&e.delta, lanes, rail, scroll, cx);
             },
-            cx,
-        ));
-    }
-    // Horizontal wheel/trackpad deltas scroll the rail; vertical ones are left
-    // to the body's own scroll, exactly as the commit list's graph column does.
-    let scroll_by = cx.listener(
-        move |this: &mut KagiApp, e: &gpui::ScrollWheelEvent, _w, cx| {
-            this.pr_lane_scroll_by(&e.delta, lanes, rail, scroll, cx);
-        },
-    );
-    let body = body.on_scroll_wheel(scroll_by);
+        );
+        body.on_scroll_wheel(scroll_by)
+    });
+
+    // The pane's lower third describes the PR: the files of the view, or the
+    // checks and the facts about it. That used to be a pane of its own, which
+    // only narrowed the diff the reader came for (ADR-0200, user report) -
+    // this pane is already here, and a lane needs only the rows around the PR.
+    // With no lane to draw, the detail is the whole pane rather than a third
+    // of an empty one.
+    let has_lane = lane_body.is_some();
+    let detail = div()
+        .id("pr-lane-detail")
+        .when(has_lane, |el| {
+            el.h(relative(1. / 3.))
+                .flex_shrink_0()
+                .border_t_1()
+                .border_color(rgb(theme().surface))
+        })
+        .when(!has_lane, |el| el.flex_1().min_h(px(0.)))
+        .bg(rgb(theme().panel))
+        .child(super::pr_mode::render_pr_detail(app, tab, cx));
 
     Some(
         div()
@@ -123,7 +153,8 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             .flex_col()
             .bg(rgb(theme().bg_base))
             .child(render_header(number, hits.len()))
-            .child(body)
+            .children(lane_body)
+            .child(detail)
             .into_any_element(),
     )
 }

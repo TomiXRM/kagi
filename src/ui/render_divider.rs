@@ -254,19 +254,6 @@ impl KagiApp {
                     }
                 });
             }
-            DividerKind::PrModeRight => {
-                // Rightmost slot: measure from the viewport's right edge
-                // (EditorHunks geometry).
-                let viewport_w = f32::from(window.viewport_size().width);
-                let new_w = ((viewport_w - cursor_x - 2.0 * z) / z)
-                    .clamp(super::pr_mode::RIGHT_MIN, super::pr_mode::RIGHT_MAX);
-                if let Some(m) = self.pr_mode_mut() {
-                    if (new_w - m.right_w).abs() > 0.5 {
-                        m.right_w = new_w;
-                        cx.notify();
-                    }
-                }
-            }
             DividerKind::CleanupCol(idx) => {
                 // ADR-0128: Branch Cleanup table columns start after the
                 // sidebar (when visible) + its divider; convert the raw

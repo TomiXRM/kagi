@@ -111,7 +111,6 @@ pub enum PrFocus {
     List,
     Commits,
     Files,
-    Stack,
 }
 
 pub struct PrModeState {
@@ -123,7 +122,6 @@ pub struct PrModeState {
     /// while reading reviews should keep showing reviews (user request).
     pub view: PrView,
     /// Right column width (unscaled px); the left shares `SidebarState::width`.
-    pub right_w: f32,
     /// Which slice the home list shows, and in what order. Mode-wide for the
     /// same reason `view` is: it is a reading preference, not a property of a
     /// PR.
@@ -150,7 +148,6 @@ impl Default for PrModeState {
             active: None,
             focus: PrFocus::List,
             view: PrView::Overview,
-            right_w: RIGHT_W,
             filter: PrListFilter::default(),
             sort: PrSort::default(),
             sections_open: [true, false, false, false],
@@ -158,9 +155,6 @@ impl Default for PrModeState {
         }
     }
 }
-
-pub const RIGHT_MIN: f32 = 220.0;
-pub const RIGHT_MAX: f32 = 640.0;
 
 const COMMIT_LIMIT: usize = 500;
 
@@ -727,14 +721,9 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// ←/→: cycle the focused pane (List → Commits → Files → Stack).
+    /// ←/→: cycle the focused pane (List → Commits → Files).
     pub fn pr_mode_cycle_focus(&mut self, delta: i32, cx: &mut Context<Self>) {
-        const ORDER: [PrFocus; 4] = [
-            PrFocus::List,
-            PrFocus::Commits,
-            PrFocus::Files,
-            PrFocus::Stack,
-        ];
+        const ORDER: [PrFocus; 3] = [PrFocus::List, PrFocus::Commits, PrFocus::Files];
         if let Some(m) = self.pr_mode_mut() {
             let i = ORDER.iter().position(|f| *f == m.focus).unwrap_or(0) as i32;
             let n = ORDER.len() as i32;
@@ -794,30 +783,6 @@ impl KagiApp {
                 let cur = t.selected_file.unwrap_or(0) as i32;
                 let next = (cur + delta).clamp(0, t.files.len() as i32 - 1) as usize;
                 self.pr_mode_select_file(next, cx);
-            }
-            PrFocus::Stack => {
-                let Some(t) = m.active.and_then(|i| m.tabs.get(i)) else {
-                    return;
-                };
-                let prs: Vec<PullRequest> = stack_for(&t.pr, &self.ui().github_prs)
-                    .into_iter()
-                    .filter_map(|r| match r {
-                        StackRow::Pr(p) => Some(p),
-                        StackRow::Trunk(_) => None,
-                    })
-                    .collect();
-                let Some(cur) = prs.iter().position(|p| p.number == t.pr.number) else {
-                    return;
-                };
-                let next = (cur as i32 + delta).clamp(0, prs.len() as i32 - 1) as usize;
-                if next != cur {
-                    let pr = prs[next].clone();
-                    self.pr_mode_open(&pr, cx);
-                    // Keep the focus on the stack after the tab switch.
-                    if let Some(m) = self.pr_mode_mut() {
-                        m.focus = PrFocus::Stack;
-                    }
-                }
             }
         }
     }
@@ -893,7 +858,6 @@ impl KagiApp {
 // Rendering — three columns inside one center-takeover element
 // ────────────────────────────────────────────────────────────
 
-const RIGHT_W: f32 = 320.0;
 /// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
 /// than this clipped the descenders of the title against the meta row.
 pub(super) const CARD_H: f32 = 42.0;
@@ -928,11 +892,7 @@ fn pr_center_note(text: SharedString) -> gpui::AnyElement {
 const COMMIT_STRIP_MAX_H: f32 = 210.0;
 const ROW_H: f32 = 24.0;
 pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    // The right rail is STACK + FILES *of the open PR*. On the dashboard
-    // there is no open PR, so it stood there empty — drop it and give the
-    // width to the home screen (user request).
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
-    let right_w = app.pr_mode().map(|m| m.right_w).unwrap_or(RIGHT_W);
     let left = super::e2e::measure_control(
         "pr-mode-left-pane",
         super::workspace_mode::render_sidebar_pages(
@@ -955,17 +915,9 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
     // PRs, not about the file being read, and it is absent with no tab open.
     let lane = super::pr_lane::render_pr_lane(app, cx)
         .map(|pane| super::e2e::measure_control("pr-mode-lane-pane", pane));
-    let right = has_tab.then(|| {
-        div()
-            .id("pr-mode-right-pane")
-            .w(theme::scaled_px(right_w))
-            .flex_shrink_0()
-            .h_full()
-            .child(super::e2e::measure_control(
-                "pr-mode-right-pane",
-                render_right(app, cx),
-            ))
-    });
+    // No outer right pane: the checks, the facts and the file list moved
+    // inside the PR body, where the mock has them (ADR-0200). Three panes
+    // between the navigator and the diff left the diff a sliver.
     div()
         .id("pr-mode-layout")
         .flex()
@@ -980,8 +932,6 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
         .children(lane)
         .when(has_tab, |el| el.child(vdivider(DividerKind::PrModeLeft)))
         .child(center)
-        .when(has_tab, |el| el.child(vdivider(DividerKind::PrModeRight)))
-        .children(right)
         .into_any_element()
 }
 
@@ -1587,49 +1537,46 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         });
 
     col = col.child(header).child(views);
+
+    // The body below the tabs is the view's own content, full width.
+    let mut content = div().flex_1().min_w(px(0.)).min_h(px(0.)).flex().flex_col();
     // The commits are their own tab now, at full height, instead of a strip
     // pinned above every other view (ADR-0200).
     if view == PrView::Commits {
-        return col
-            .child(strip.flex_1().max_h(relative(1.)))
-            .into_any_element();
-    }
-    if show_review && !conversation_loaded {
-        let pane = super::pr_conversation::render_loading()
-            .flex_1()
-            .items_start();
-        return col.child(pane.pt_8()).into_any_element();
-    }
-    if show_review {
-        return col
-            .child(super::pr_conversation::render_conversation(
+        content = content.child(strip.flex_1().max_h(relative(1.)));
+    } else if show_review {
+        content = if conversation_loaded {
+            content.child(super::pr_conversation::render_conversation(
                 &pr,
                 &reviews,
                 &comments,
                 &line_comments,
                 cx,
             ))
-            .into_any_element();
-    }
-    if show_description {
-        // #347: the merge-status card above the description — the four
+        } else {
+            content.child(
+                super::pr_conversation::render_loading()
+                    .flex_1()
+                    .items_start()
+                    .pt_8(),
+            )
+        };
+    } else if show_description {
+        // #347: the merge-status card above the description - the four
         // `mergeStateStatus` actions, queue position, and what is still missing.
         if !merge_status_loaded {
-            col = col.child(super::pr_conversation::render_loading());
+            content = content.child(super::pr_conversation::render_loading());
         }
         if let Some(status) = &merge_status {
-            let view = super::pr_merge_status::view_from(status, pr.review);
-            if let Some(card) = super::pr_merge_status::render(&view, cx) {
-                col = col.child(card);
+            let status_view = super::pr_merge_status::view_from(status, pr.review);
+            if let Some(card) = super::pr_merge_status::render(&status_view, cx) {
+                content = content.child(card);
             }
         }
-        return col
-            .child(super::pr_conversation::render_description(&pr, cx))
-            .into_any_element();
-    }
-    if view == PrView::Conflicts {
+        content = content.child(super::pr_conversation::render_description(&pr, cx));
+    } else if view == PrView::Conflicts {
         let body: gpui::AnyElement = match conflicts.as_ref() {
-            None => pr_center_note(SharedString::from("…")),
+            None => pr_center_note(SharedString::from("\u{2026}")),
             Some(Err(e)) => pr_center_note(SharedString::from(e.clone())),
             Some(Ok(files)) if files.is_empty() => {
                 pr_center_note(SharedString::from(Msg::PrConflictsNone.t()))
@@ -1662,306 +1609,166 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                 render_diff_list::<KagiApp>(dv, nav, None, conflict_scroll, cx).into_any_element()
             }
         };
-        return col.child(body).into_any_element();
+        content = content.child(body);
+    } else {
+        // Diff
+        let diff_el: gpui::AnyElement = match diff {
+            Some(dv) => render_diff_list::<KagiApp>(dv, None, None, scroll, cx).into_any_element(),
+            None => div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::PrModeNoFile.t()))
+                .into_any_element(),
+        };
+        content = content.child(diff_el);
     }
-    // Diff
-    let diff_el: gpui::AnyElement = match diff {
-        Some(view) => render_diff_list::<KagiApp>(view, None, None, scroll, cx).into_any_element(),
-        None => div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_sm()
-            .text_color(rgb(theme().text_muted))
-            .child(SharedString::from(Msg::PrModeNoFile.t()))
-            .into_any_element(),
-    };
-    col.child(diff_el).into_any_element()
+
+    // Every pixel of the body is the view's own: the files, the checks and the
+    // facts live in the swimlane pane's lower third (ADR-0200), not in a
+    // column of their own. A pane that exists to describe the PR must not eat
+    // the width of the diff being read (user report).
+    col.child(content).into_any_element()
 }
 
-// ── Right: stack (top) + files (bottom) ──────────────────────
-fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+/// The per-check list, so "CI failed" names the job. Clicking a row opens
+/// that check's run page. `None` when the PR reported no checks - an empty
+/// section header says nothing the reader can use.
+///
+/// It lives in the PR body's facts rail (ADR-0200): the mock has no outer
+/// right pane, and checks are a fact about the PR rather than a third pane of
+/// the window.
+fn render_checks(tab: &PrTab, cx: &mut Context<KagiApp>) -> Option<gpui::AnyElement> {
+    let checks = tab.pr.checks.clone();
+    if checks.is_empty() {
+        return None;
+    }
+    let failed = tab.pr.failed_checks();
+    let mut list = div()
+        .id("pr-mode-checks")
+        .flex_shrink_0()
+        .max_h(theme::scaled_px(150.))
+        .overflow_y_scroll()
+        .flex()
+        .flex_col();
+    // Failures first: the actionable ones must not need scrolling.
+    let mut ordered = checks.clone();
+    ordered.sort_by_key(|c| match c.state {
+        CiState::Failure => 0,
+        CiState::Pending => 1,
+        _ => 2,
+    });
+    for (i, c) in ordered.iter().enumerate() {
+        let (g, color) = ci_glyph(c.state);
+        let url = c.url.clone();
+        let open = cx.listener(move |_this: &mut KagiApp, _: &gpui::ClickEvent, _w, _cx| {
+            if !url.is_empty() {
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+            }
+        });
+        let label = if c.workflow.is_empty() || c.workflow == c.name {
+            c.name.clone()
+        } else {
+            format!("{} / {}", c.workflow, c.name)
+        };
+        list = list.child(
+            div()
+                .id(("pr-mode-check", i))
+                .h(theme::scaled_px(ROW_H))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .text_sm()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme().surface)))
+                .on_click(open)
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(color))
+                        .child(SharedString::from(g)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_color(rgb(if c.state == CiState::Failure {
+                            theme().text_main
+                        } else {
+                            theme().text_sub
+                        }))
+                        .child(safe_text(&label)),
+                ),
+        );
+    }
+    Some(
+        div()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .child(section_label(format!(
+                "{} ({}{})",
+                Msg::PrModeChecks.t(),
+                checks.len(),
+                if failed > 0 {
+                    format!(", {} failed", failed)
+                } else {
+                    String::new()
+                }
+            )))
+            .child(list)
+            .into_any_element(),
+    )
+}
+
+/// What the swimlane pane's lower third shows about the PR on screen: the
+/// files of the view when a file view is open, and otherwise the checks and
+/// the facts (who is on it, how it is labelled, whether a worktree here has it
+/// checked out).
+///
+/// It lives in an existing pane on purpose. As a column of its own - left or
+/// right of the body - it only narrowed the diff the reader came for
+/// (ADR-0200, user report).
+pub(super) fn render_pr_detail(
+    app: &KagiApp,
+    tab: &PrTab,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let files_view = app
+        .pr_mode()
+        .map(|m| matches!(m.view, PrView::Diff | PrView::Conflicts))
+        .unwrap_or(false);
+    if files_view {
+        return render_file_list(app, cx);
+    }
+    div()
+        .id("pr-mode-facts")
+        .size_full()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .children(render_checks(tab, cx))
+        .child(render_rail_facts(app, &tab.pr))
+        .into_any_element()
+}
+
+/// The files of the view on screen, listed in the swimlane pane's lower third.
+///
+/// In the Conflicts view this lists the conflicting files instead: they are a
+/// different, usually much shorter set, and showing the PR's whole changed-file
+/// list beside a conflict diff invites clicking a row that has nothing to do
+/// with what is on screen.
+fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let active = app
         .pr_mode()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)));
-    let right_w = app.pr_mode().map(|m| m.right_w).unwrap_or(RIGHT_W);
     let focus = app.pr_mode().map(|m| m.focus);
-    let mut col = div()
-        .w(theme::scaled_px(right_w))
-        .flex_shrink_0()
-        .h_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(theme().panel));
-
-    // Stack: walk down through bases and up through children of the active PR.
-    let stack_focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
-        this.pr_mode_focus(PrFocus::Stack, cx);
-    });
-    let mut stack_col = focus_border(
-        div()
-            .id("pr-mode-stack-pane")
-            .flex_shrink_0()
-            .max_h(relative(0.5))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .on_mouse_down(gpui::MouseButton::Left, stack_focus_click),
-        focus == Some(PrFocus::Stack),
-    );
-    let stack: Vec<StackRow> = active
-        .map(|t| stack_for(&t.pr, &app.ui().github_prs))
-        .unwrap_or_default();
-    stack_col = stack_col.child(section_label(Msg::PrModeStack.t().to_string()));
-    if stack.is_empty() {
-        stack_col = stack_col.child(
-            div()
-                .px_3()
-                .py_1()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::PrModeSelectHint.t())),
-        );
-    }
-    let active_n = active.map(|t| t.pr.number);
-    for row in &stack {
-        match row {
-            StackRow::Pr(pr) => {
-                let (g, c) = ci_glyph(pr.ci);
-                let is_active = active_n == Some(pr.number);
-                let pr_click = pr.clone();
-                let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                    this.pr_mode_open(&pr_click, cx);
-                });
-                let rv = match pr.review {
-                    ReviewState::Approved => {
-                        Some((Msg::PrReviewApproved.t(), theme().color_success))
-                    }
-                    ReviewState::ChangesRequested => {
-                        Some((Msg::PrReviewChanges.t(), theme().color_warning))
-                    }
-                    _ => None,
-                };
-                // Two-line row: `#N title` on top, `head → base · author` below —
-                // the stack pane is where a PR's identity should be readable,
-                // so it carries more than the compact left list.
-                stack_col = stack_col.child(
-                    div()
-                        .id(("pr-mode-stack", pr.number as usize))
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap_2()
-                        .px_3()
-                        .py_1()
-                        .cursor_pointer()
-                        .when(is_active, |el| el.bg(rgb(theme().selected)))
-                        .hover(|s| s.bg(rgb(theme().surface)))
-                        .on_click(click)
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .pt_px()
-                                .text_sm()
-                                .text_color(rgb(if is_active {
-                                    theme().color_branch
-                                } else {
-                                    theme().text_sub
-                                }))
-                                .child(SharedString::from("\u{25CF}")),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .flex()
-                                .flex_col()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .text_sm()
-                                                .text_color(rgb(theme().color_branch))
-                                                .child(SharedString::from(format!(
-                                                    "#{}",
-                                                    pr.number
-                                                ))),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w(px(0.))
-                                                .truncate()
-                                                .text_sm()
-                                                .text_color(rgb(theme().text_main))
-                                                .child(safe_text(&pr.title)),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .text_color(rgb(c))
-                                                .child(SharedString::from(g)),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap_2()
-                                        .text_xs()
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w(px(0.))
-                                                .truncate()
-                                                .text_color(rgb(theme().text_muted))
-                                                .child(safe_text(&format!(
-                                                    "{} \u{2192} {} \u{00B7} @{}",
-                                                    pr.head, pr.base, pr.author
-                                                ))),
-                                        )
-                                        .children(rv.map(|(t, c)| {
-                                            div()
-                                                .flex_shrink_0()
-                                                .text_color(rgb(c))
-                                                .child(SharedString::from(t.to_string()))
-                                        })),
-                                ),
-                        ),
-                );
-            }
-            StackRow::Trunk(name) => {
-                stack_col = stack_col.child(
-                    div()
-                        .h(theme::scaled_px(ROW_H))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .px_3()
-                        .text_sm()
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_color(rgb(theme().text_muted))
-                                .child(SharedString::from("\u{25CB}")),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(name.clone())),
-                        ),
-                );
-            }
-        }
-    }
-
-    col = col.child(stack_col);
-
-    // Checks — the per-check list, so "CI failed" names the job. Clicking a
-    // row opens that check's run page.
-    if let Some(t) = active {
-        let checks = t.pr.checks.clone();
-        if !checks.is_empty() {
-            let failed = t.pr.failed_checks();
-            col = col.child(
-                section_label(format!(
-                    "{} ({}{})",
-                    Msg::PrModeChecks.t(),
-                    checks.len(),
-                    if failed > 0 {
-                        format!(", {} failed", failed)
-                    } else {
-                        String::new()
-                    }
-                ))
-                .border_t_1()
-                .border_color(rgb(theme().surface)),
-            );
-            let mut list = div()
-                .id("pr-mode-checks")
-                .flex_shrink_0()
-                .max_h(theme::scaled_px(150.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col();
-            // Failures first: the actionable ones must not need scrolling.
-            let mut ordered = checks.clone();
-            ordered.sort_by_key(|c| match c.state {
-                CiState::Failure => 0,
-                CiState::Pending => 1,
-                _ => 2,
-            });
-            for (i, c) in ordered.iter().enumerate() {
-                let (g, color) = ci_glyph(c.state);
-                let url = c.url.clone();
-                let open =
-                    cx.listener(move |_this: &mut KagiApp, _: &gpui::ClickEvent, _w, _cx| {
-                        if !url.is_empty() {
-                            let _ = std::process::Command::new("open").arg(&url).spawn();
-                        }
-                    });
-                let label = if c.workflow.is_empty() || c.workflow == c.name {
-                    c.name.clone()
-                } else {
-                    format!("{} / {}", c.workflow, c.name)
-                };
-                list = list.child(
-                    div()
-                        .id(("pr-mode-check", i))
-                        .h(theme::scaled_px(ROW_H))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .px_3()
-                        .text_sm()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(theme().surface)))
-                        .on_click(open)
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_color(rgb(color))
-                                .child(SharedString::from(g)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .truncate()
-                                .text_color(rgb(if c.state == CiState::Failure {
-                                    theme().text_main
-                                } else {
-                                    theme().text_sub
-                                }))
-                                .child(safe_text(&label)),
-                        ),
-                );
-            }
-            col = col.child(list);
-        }
-    }
-
-    // The mock's rail facts, between the checks and the files: who is on this
-    // PR, how it is labelled, and whether a worktree here has it checked out.
-    // Every line is a read of data the PR list already carries (ADR-0200) or
-    // of the snapshot's worktrees — no call of its own.
-    if let Some(t) = active {
-        col = col.child(render_rail_facts(app, &t.pr));
-    }
-
-    // Files. In the Conflicts view this lists the conflicting files instead:
-    // they are a different, usually much shorter set, and showing the PR's
-    // whole changed-file list beside a conflict diff invites clicking a row
-    // that has nothing to do with what is on screen.
     let conflicts_view = app
         .pr_mode()
         .map(|m| m.view == PrView::Conflicts)
@@ -1988,25 +1795,16 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
             .map(|t| (t.files.clone(), t.selected_file))
             .unwrap_or_default()
     };
-    col = col.child(
-        section_label(format!("{} ({})", Msg::PrModeFiles.t(), files.len()))
-            .border_t_1()
-            .border_color(rgb(theme().surface)),
-    );
     let files_focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::Files, cx);
     });
-    let mut list = focus_border(
-        div()
-            .id("pr-mode-files")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .on_mouse_down(gpui::MouseButton::Left, files_focus_click),
-        focus == Some(PrFocus::Files),
-    );
+    let mut list = div()
+        .id("pr-mode-files")
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .flex()
+        .flex_col();
     for (i, f) in files.iter().enumerate() {
         let (badge, color, _) = status_badge(Some(&f.change), false);
         let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
@@ -2065,7 +1863,22 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
                 ),
         );
     }
-    col.child(list).into_any_element()
+    focus_border(
+        div()
+            .id("pr-mode-files-pane")
+            .size_full()
+            .flex()
+            .flex_col()
+            .on_mouse_down(gpui::MouseButton::Left, files_focus_click),
+        focus == Some(PrFocus::Files),
+    )
+    .child(section_label(format!(
+        "{} ({})",
+        Msg::PrModeFiles.t(),
+        files.len()
+    )))
+    .child(list)
+    .into_any_element()
 }
 
 /// GitHub's own six-hex label colour, or the neutral border when it is absent
@@ -2180,53 +1993,6 @@ fn render_rail_facts(app: &KagiApp, pr: &PullRequest) -> gpui::AnyElement {
     col.into_any_element()
 }
 
-enum StackRow {
-    Pr(PullRequest),
-    Trunk(String),
-}
-
-/// The chain `pr` sits in, tip first, trunk last — inferred from open PRs'
-/// base links (gh stack, when the branch is in one, will replace this).
-fn stack_for(pr: &PullRequest, all: &[PullRequest]) -> Vec<StackRow> {
-    let mut up: Vec<PullRequest> = Vec::new();
-    // Ancestors: follow base → the PR whose head is that base.
-    let mut down: Vec<PullRequest> = Vec::new();
-    let mut cur = pr.clone();
-    let mut guard = 0;
-    while let Some(parent) = all
-        .iter()
-        .find(|p| p.head == cur.base && p.number != cur.number)
-    {
-        down.push(parent.clone());
-        cur = parent.clone();
-        guard += 1;
-        if guard > 50 {
-            break;
-        }
-    }
-    let trunk = cur.base.clone();
-    // Descendants: PRs whose base is our head (first child chain only —
-    // branching stacks are shown from the child's own tab).
-    let mut cur = pr.clone();
-    guard = 0;
-    while let Some(child) = all
-        .iter()
-        .find(|p| p.base == cur.head && p.number != cur.number)
-    {
-        up.push(child.clone());
-        cur = child.clone();
-        guard += 1;
-        if guard > 50 {
-            break;
-        }
-    }
-    let mut out: Vec<StackRow> = up.into_iter().rev().map(StackRow::Pr).collect();
-    out.push(StackRow::Pr(pr.clone()));
-    out.extend(down.into_iter().map(StackRow::Pr));
-    out.push(StackRow::Trunk(trunk));
-    out
-}
-
 #[cfg(test)]
 mod view_reset_tests {
     use super::*;
@@ -2234,7 +2000,7 @@ mod view_reset_tests {
     fn pr_with(mergeable: Mergeable) -> PullRequest {
         PullRequest {
             mergeable,
-            ..super::stack_tests::pr(1, "h", "b")
+            ..super::pr_fixture_tests::pr(1, "h", "b")
         }
     }
 
@@ -2276,9 +2042,9 @@ mod view_reset_tests {
 }
 
 #[cfg(test)]
-mod stack_tests {
-    use super::{reason_text, stack_for, StackRow};
-    use kagi_domain::github::{CiState, Mergeable, PrReason, PullRequest};
+mod pr_fixture_tests {
+    use super::reason_text;
+    use kagi_domain::github::{PrReason, PullRequest};
 
     pub(super) fn pr(number: u64, head: &str, base: &str) -> PullRequest {
         PullRequest {
@@ -2289,68 +2055,6 @@ mod stack_tests {
             base_repo: "o/r".into(),
             ..Default::default()
         }
-    }
-
-    fn chain(rows: &[StackRow]) -> Vec<String> {
-        rows.iter()
-            .map(|r| match r {
-                StackRow::Pr(p) => format!("#{}", p.number),
-                StackRow::Trunk(t) => format!("trunk:{t}"),
-            })
-            .collect()
-    }
-
-    /// Tip first, trunk last — descendants above `pr`, ancestors below.
-    #[test]
-    fn linear_chain_is_tip_first_trunk_last() {
-        let all = vec![
-            pr(1, "feat/a", "main"),
-            pr(2, "feat/b", "feat/a"),
-            pr(3, "feat/c", "feat/b"),
-        ];
-        assert_eq!(
-            chain(&stack_for(&all[1], &all)),
-            vec!["#3", "#2", "#1", "trunk:main"]
-        );
-        // Seen from the tip: no descendants, same chain.
-        assert_eq!(
-            chain(&stack_for(&all[2], &all)),
-            vec!["#3", "#2", "#1", "trunk:main"]
-        );
-        // Seen from the root: two descendants, and they must come out
-        // tip-first (the collected chain is reversed before the self row).
-        assert_eq!(
-            chain(&stack_for(&all[0], &all)),
-            vec!["#3", "#2", "#1", "trunk:main"]
-        );
-    }
-
-    /// A PR whose base is nobody's head: just itself over the trunk.
-    #[test]
-    fn pr_with_no_parent_is_itself_over_trunk() {
-        let all = vec![pr(7, "feat/solo", "main")];
-        assert_eq!(chain(&stack_for(&all[0], &all)), vec!["#7", "trunk:main"]);
-        // Unrelated PRs in the list must not join the chain.
-        let others = vec![pr(7, "feat/solo", "main"), pr(8, "feat/x", "develop")];
-        assert_eq!(
-            chain(&stack_for(&others[0], &others)),
-            vec!["#7", "trunk:main"]
-        );
-    }
-
-    /// GitHub data is untrusted: a base/head cycle must terminate on the
-    /// 50-step guard rather than loop forever.
-    #[test]
-    fn cycle_terminates_on_the_guard() {
-        let all = vec![pr(1, "a", "b"), pr(2, "b", "a")];
-        let rows = stack_for(&all[0], &all);
-        assert!(
-            rows.len() < 128,
-            "stack_for did not terminate: {} rows",
-            rows.len()
-        );
-        assert!(rows.len() > 2);
-        assert!(matches!(rows.last(), Some(StackRow::Trunk(_))));
     }
 
     /// The one arm of `reason_text` the compiler cannot check: the count is

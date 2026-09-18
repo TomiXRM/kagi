@@ -106,14 +106,13 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         }
     }
 
-    // The PR workspace keeps mode navigation in the fixed-width left column,
-    // gives the remaining width to its centre dashboard, and does not reserve
-    // a right rail until a PR is selected.
+    // The PR workspace keeps mode navigation in the fixed-width left column
+    // and gives every remaining pixel to its centre: there is no outer right
+    // rail at all any more (ADR-0200), with or without a PR selected.
     app.update(cx, |app, cx| app.show_pr_mode(cx));
     for control in [
         "pr-mode-left-pane",
         "pr-mode-center-pane",
-        "pr-mode-right-pane",
         "sidebar-mode-nav",
     ] {
         e2e::clear_control_bounds(win.window_id(), control);
@@ -140,9 +139,12 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         f32::from(center.size.width) > f32::from(left.size.width),
         "dashboard must receive the remaining workspace width"
     );
+    let viewport = cx
+        .update_window(win, |_, window, _| window.viewport_size())
+        .unwrap();
     assert!(
-        e2e::control_bounds(win.window_id(), "pr-mode-right-pane").is_none(),
-        "right stack/files rail must be absent without a selected PR"
+        f32::from(viewport.width) - f32::from(center.origin.x + center.size.width) < 2.0,
+        "the PR body must reach the window's right edge: no outer stack/files rail"
     );
 
     // Entering Issues starts its list request at the UI boundary, before any

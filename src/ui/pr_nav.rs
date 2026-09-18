@@ -6,11 +6,11 @@
 //! toward, so everything here must stay a pure read of `ui().github_prs`.
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString};
-use kagi_domain::github::{stack_order, PrAttention, PrGroup, PrReason, PullRequest, ReviewState};
+use kagi_domain::github::{stack_order, PrAttention, PrGroup, PullRequest, ReviewState};
 use kagi_domain::pr_list::PrSection;
 
 use super::i18n::Msg;
-use super::pr_mode::{attention_color, focus_border, reason_text, PrFocus, CARD_H};
+use super::pr_mode::{attention_color, focus_border, PrFocus, CARD_H};
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -86,12 +86,13 @@ pub(super) fn pr_section_label(section: PrSection) -> &'static str {
 /// again under `REVIEW`. The list is built once and used by both the renderer
 /// and ↑/↓ stepping, so what the arrows walk is exactly what is on screen.
 /// The attention verdict rides along because both consumers want it and it is
-/// derived from the PR, not fetched.
+/// derived from the PR, not fetched. The reason behind that verdict is not: the
+/// row shows the state and the branch (ADR-0200), and the section header above
+/// it already names the bucket.
 #[derive(Clone)]
 pub(super) struct PrListRow {
     pub pr: PullRequest,
     pub attention: PrAttention,
-    pub why: PrReason,
 }
 
 /// Every section header in order, each with its members and whether it is
@@ -114,12 +115,11 @@ pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>
                 .filter(|pr| section.accepts(pr, me.as_deref(), &local))
                 .map(|pr| {
                     let group = pr.group_for(me.as_deref(), &local);
-                    let (attention, why) =
+                    let (attention, _why) =
                         pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
                     PrListRow {
                         pr: pr.clone(),
                         attention,
-                        why,
                     }
                 })
                 .collect();
@@ -188,7 +188,6 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
             body = body.child(render_pr_card(
                 &row.pr,
                 row.attention,
-                &row.why,
                 stacked,
                 active_pr,
                 cx,
@@ -235,7 +234,6 @@ fn pr_provenance(pr: &PullRequest) -> Option<kagi_domain::provenance::Provenance
 fn render_pr_card(
     pr: &PullRequest,
     bucket: PrAttention,
-    why: &PrReason,
     stacked: bool,
     active_pr: Option<u64>,
     cx: &mut Context<KagiApp>,
@@ -255,14 +253,20 @@ fn render_pr_card(
         },
     );
 
-    // Two lines instead of three, and the title gets the whole first one —
-    // it is the only field that identifies the PR, so #N, the state and the
-    // metadata all move to line 2 or become glyphs (user request).
+    // The mock's row (ADR-0200): `#N title` on the first line, then a state
+    // dot and the branch on the second. The number joins the title because
+    // together they are how the PR is named out loud; the branch is what tells
+    // two similarly titled PRs apart, and it is what a worktree is called.
     //
-    // Line 2 packs, left to right: the reason (already colour-coded by the
-    // accent bar, so it needs no glyph of its own), then the compact facts —
-    // a stack marker, the failed/total check count, a review mark, @author.
-    let reason = reason_text(why);
+    // The dot carries the attention colour, so the bucket is still visible per
+    // row now that the left border is selection rather than attention. Two
+    // facts ride at the right of the second line because they change what you
+    // do next: the failed/total check count and the agent badge.
+    let state = if pr.is_draft {
+        Msg::PrHomeDraft.t()
+    } else {
+        Msg::PrHomeOpen.t()
+    };
     let checks = match (pr.checks.len(), pr.failed_checks()) {
         (0, _) => String::new(),
         (total, 0) => format!("\u{2713}{}", total),
@@ -273,32 +277,24 @@ fn render_pr_card(
         ReviewState::ChangesRequested => Some(("\u{21BA}", theme().color_warning)),
         _ => None,
     };
-    div()
-        .id(("pr-mode-card", pr.number as usize))
-        .mx_2()
-        .mb_px()
-        .pl_2()
-        .pr_2()
-        .rounded_md()
+    // The accent edge is its own 2px strip rather than a left border: the row
+    // needs a hairline under it *and* an edge beside it, and one element has
+    // one border colour.
+    let edge = div()
+        .w(px(2.))
+        .h_full()
+        .flex_shrink_0()
+        .when(is_active, |el| el.bg(rgb(accent)));
+    let card = div()
+        .flex_1()
+        .min_w(px(0.))
+        .px_3()
+        .py(px(6.))
         .flex()
         .flex_col()
-        // Fixed two-row height with tight line boxes: the default line-height
-        // on two stacked text divs left a lot of air, which is what made the
-        // cards feel tall (user report).
-        .h(theme::scaled_px(CARD_H))
         .justify_center()
         .gap_px()
-        .cursor_pointer()
-        // The accent bar is the state; the card body stays neutral so a wall
-        // of cards doesn't turn into a wall of colour.
-        .border_l_2()
-        .border_color(rgb(accent))
-        .when(is_active, |el| el.bg(rgb(theme().selected)))
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .on_mouse_down(gpui::MouseButton::Right, menu)
-        .when(pr.is_draft, |el| el.opacity(0.7))
-        // Line 1 — the title, full width.
+        // Line 1 - `#N title`, full width.
         .child(
             div()
                 .w_full()
@@ -306,9 +302,9 @@ fn render_pr_card(
                 .text_sm()
                 .line_height(theme::scaled_px(18.))
                 .text_color(rgb(theme().text_main))
-                .child(safe_text(&pr.title)),
+                .child(safe_text(&format!("#{} {}", pr.number, pr.title))),
         )
-        // Line 2 — everything else, one row.
+        // Line 2 - state, branch, and the two facts that change what you do.
         .child(
             div()
                 .flex()
@@ -322,21 +318,20 @@ fn render_pr_card(
                 .child(
                     div()
                         .flex_shrink_0()
-                        .child(SharedString::from(format!("#{}", pr.number))),
+                        .text_color(rgb(accent))
+                        .child(SharedString::from(format!("\u{25CF} {}", state))),
                 )
                 .when(stacked, |el| {
                     el.child(div().flex_shrink_0().child(SharedString::from("\u{21B3}")))
                 })
-                .when(!reason.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .min_w(px(0.))
-                            .truncate()
-                            .text_color(rgb(accent))
-                            .child(SharedString::from(reason.clone())),
-                    )
-                })
-                .child(div().flex_1().min_w(px(0.)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_color(rgb(theme().color_branch))
+                        .child(safe_text(&pr.head)),
+                )
                 .when(!checks.is_empty(), |el| {
                     el.child(
                         div()
@@ -355,9 +350,9 @@ fn render_pr_card(
                         .text_color(rgb(c))
                         .child(SharedString::from(g))
                 }))
-                // Issue #337: "agent-created" badge — 🤖 glyph only; the agent is
-                // conveyed by hue (Claude → orange, others → violet). Glyph is the
-                // colour-independent signal. Nothing when unclassifiable.
+                // Issue #337: "agent-created" badge - the glyph only; the agent
+                // is conveyed by hue (Claude -> orange, others -> violet).
+                // Nothing when unclassifiable.
                 .children(pr_provenance(pr).map(|prov| {
                     use kagi_domain::provenance::AgentKind;
                     let hue = match prov.agent {
@@ -373,14 +368,25 @@ fn render_pr_card(
                         .border_1()
                         .border_color(gpui::rgba(border))
                         .child(SharedString::from("🤖"))
-                }))
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .max_w(theme::scaled_px(70.))
-                        .truncate()
-                        .child(safe_text(&pr.author)),
-                ),
-        )
+                })),
+        );
+    div()
+        .id(("pr-mode-card", pr.number as usize))
+        .flex()
+        .flex_row()
+        // Fixed two-row height with tight line boxes: the default line-height
+        // on two stacked text divs left a lot of air, which is what made the
+        // cards feel tall (user report).
+        .h(theme::scaled_px(CARD_H))
+        .cursor_pointer()
+        .border_b_1()
+        .border_color(rgb(theme().surface))
+        .when(is_active, |el| el.bg(rgb(theme().selected)))
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(click)
+        .on_mouse_down(gpui::MouseButton::Right, menu)
+        .when(pr.is_draft, |el| el.opacity(0.7))
+        .child(edge)
+        .child(card)
         .into_any_element()
 }

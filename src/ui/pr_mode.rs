@@ -96,6 +96,10 @@ pub enum PrView {
     Overview,
     Review,
     Diff,
+    /// The PR's commits, full height — the mock's COMMITS tab. It used to be
+    /// a strip pinned above every view, which spent 210px on a list the
+    /// reader consults once per PR (ADR-0200).
+    Commits,
     /// ADR-0145: read-only preview of what merging this PR would conflict on.
     Conflicts,
 }
@@ -1102,7 +1106,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             .into_any_element();
     };
     // Snapshot what the renderers need from the active tab.
-    let (pr, commits, selected_commit, diff, scroll) = {
+    let (pr, commits, selected_commit, diff, scroll, files_n) = {
         let m = app.pr_mode().unwrap();
         let t = &m.tabs[ix];
         (
@@ -1111,6 +1115,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.selected_commit,
             t.diff.clone(),
             t.diff_scroll.clone(),
+            t.files.len(),
         )
     };
     let (
@@ -1499,9 +1504,25 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .child(tab_btn(
             "pr-view-diff",
             "icons/git-compare.svg",
-            "Diff".to_string(),
+            // The mock's `FILES n`: the count is what says whether this is a
+            // one-line fix or a rewrite, and it is already in the tab's data.
+            match files_n {
+                0 => Msg::PrModeFiles.t().to_string(),
+                n => format!("{} ({})", Msg::PrModeFiles.t(), n),
+            },
             view == PrView::Diff,
             PrView::Diff,
+            cx,
+        ))
+        .child(tab_btn(
+            "pr-view-commits",
+            "icons/git-commit.svg",
+            match commits.len() {
+                0 => Msg::PrModeCommits.t().to_string(),
+                n => format!("{} ({})", Msg::PrModeCommits.t(), n),
+            },
+            view == PrView::Commits,
+            PrView::Commits,
             cx,
         ))
         // ADR-0145: only when GitHub says the merge conflicts. A tab that is
@@ -1518,11 +1539,13 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             ))
         });
 
-    // The commit strip is about "what is in this PR"; the Conflicts view is
-    // about one file at a time, and the strip only pushes the hunks down.
     col = col.child(header).child(views);
-    if view != PrView::Conflicts {
-        col = col.child(strip);
+    // The commits are their own tab now, at full height, instead of a strip
+    // pinned above every other view (ADR-0200).
+    if view == PrView::Commits {
+        return col
+            .child(strip.flex_1().max_h(relative(1.)))
+            .into_any_element();
     }
     if show_review && !conversation_loaded {
         let pane = super::pr_conversation::render_loading()

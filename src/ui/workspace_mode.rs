@@ -252,6 +252,26 @@ pub(super) fn render_sidebar_pages(
             )),
         );
     }
+    if app.sidebar.swipe.owns_wheel() {
+        // One occluding layer takes the wheel for as long as the gesture owns
+        // it. `Hitbox::should_handle_scroll` is false for everything a
+        // `BlockMouse` hitbox covers (gpui `window.rs` hit test), so the list
+        // under the pointer cannot consume the gesture's `y` delta — a
+        // horizontal swipe has no vertical component. It sits inside the
+        // viewport, below the pinned navigator, and carries the same listener
+        // so the gesture keeps being fed while it is blocking.
+        viewport = viewport.child(super::e2e::measure_control(
+            "sidebar-gesture-shield",
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .occlude()
+                .on_scroll_wheel(cx.listener(KagiApp::sidebar_scroll)),
+        ));
+    }
 
     div()
         // `sidebar.width` is the unscaled, persisted width; scale at render so

@@ -72,6 +72,21 @@ is flattened every frame regardless of which page is on screen. A GitHub page
 with an empty list is treated as *not* cached, because drawing its empty state
 mid-gesture would claim the neighbour has nothing in it.
 
+**The gesture owns the wheel while it is live** (`SidebarSwipe::owns_wheel`), so
+a horizontal swipe has no vertical component. A scrollable list is the innermost
+hitbox under the pointer and consumes the `y` delta itself, which no bubble-phase
+listener can undo — gpui exposes only bubble-phase `on_scroll_wheel`. So while
+the gesture owns the wheel, one `occlude()`-ing layer covers the viewport and
+carries the same listener: `Hitbox::should_handle_scroll` is false for everything
+a `BlockMouse` hitbox covers, so the pages beneath stop scrolling entirely. The
+claim starts with the gesture and is dropped the moment the axis resolves
+*vertical*, so a vertical gesture keeps scrolling the list; it is held for the
+whole settle so momentum cannot scroll the page either.
+
+Known limit: the layer appears on the frame *after* the gesture's first event,
+so a swipe that begins over a scrollable list leaks that one event's `y` delta.
+Closing it would need a capture-phase wheel listener, which gpui does not offer.
+
 Reduced motion (ADR-0173) skips the animation and runs the same terminal
 immediately, so the navigation still happens through one code path.
 

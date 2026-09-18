@@ -202,6 +202,10 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         e2e::control_bounds(win.window_id(), "sidebar-adjacent-page-shell").is_none(),
         "an already-loaded page is previewed with its own content"
     );
+    assert!(
+        measure(cx, win, "sidebar-gesture-shield").is_some(),
+        "the gesture must own the wheel, so the page under it cannot scroll"
+    );
     let offset = cx.read(|cx| e2e::sidebar_page_offset(app.read(cx)));
     assert_eq!(
         (center_before.origin.x, center_before.size.width),
@@ -245,6 +249,10 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(
         measure(cx, win, "sidebar-adjacent-page").is_none(),
         "a settled sidebar shows one page at offset 0"
+    );
+    assert!(
+        measure(cx, win, "sidebar-gesture-shield").is_none(),
+        "a settled sidebar hands the wheel back to the page"
     );
 
     // A GitHub page has a shell only until its list has arrived.

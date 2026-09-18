@@ -215,6 +215,23 @@ impl SidebarSwipe {
         matches!(self.phase, Phase::Settling { .. })
     }
 
+    /// Whether the gesture owns the wheel, so the page under it must not
+    /// scroll.
+    ///
+    /// True from the first event of a gesture until its axis resolves
+    /// *vertical*, and again for the whole settle. That is what removes the
+    /// vertical component of a horizontal swipe: the page beneath cannot
+    /// consume the `y` delta while the sidebar is being dragged. A gesture that
+    /// turns out to be vertical hands the wheel back, having withheld only the
+    /// events before the axis was known.
+    pub fn owns_wheel(&self) -> bool {
+        match self.phase {
+            Phase::Idle => false,
+            Phase::Tracking { axis, .. } => axis != Axis::Vertical,
+            Phase::Settling { .. } => true,
+        }
+    }
+
     fn snap_target(&self) -> f32 {
         match self.pending {
             Some(page) if page < self.origin => self.width,
@@ -300,6 +317,34 @@ mod tests {
         swipe.move_by(-(W * 5.0), 0.0);
         assert_eq!(swipe.offset(), 0.0);
         assert!(swipe.is_idle());
+    }
+
+    #[test]
+    fn a_horizontal_gesture_owns_the_wheel_and_a_vertical_one_hands_it_back() {
+        let mut idle = SidebarSwipe::default();
+        assert!(!idle.owns_wheel(), "no gesture, no claim");
+
+        // Claimed before the axis is known, kept once it is horizontal, and
+        // held through the settle so momentum cannot scroll the page either.
+        idle.start(1, 3, W);
+        assert!(idle.owns_wheel());
+        idle.move_by(-4.0, 3.0);
+        assert!(
+            idle.owns_wheel(),
+            "an undecided axis still withholds scroll"
+        );
+        idle.move_by(-60.0, 0.0);
+        assert!(idle.owns_wheel());
+        idle.release();
+        assert!(idle.owns_wheel());
+        settle(&mut idle);
+        assert!(!idle.owns_wheel(), "a settled sidebar returns the wheel");
+
+        let vertical = tracking(1, 0.0, 40.0);
+        assert!(
+            !vertical.owns_wheel(),
+            "a vertical gesture belongs to the page under it"
+        );
     }
 
     #[test]

@@ -133,6 +133,14 @@ pub struct PrModeState {
     /// [`PrSection::index`]. The Inbox opens with the mode; the rest are the
     /// viewer's own lists and stay folded until asked for.
     pub sections_open: [bool; PrSection::ALL.len()],
+    /// The swimlane rail's horizontal scroll, in rendered px.
+    ///
+    /// `None` means "follow the PR": the rail places itself so the PR's own
+    /// lane is in view, which is the whole point of the pane when that lane is
+    /// the fifth of five. A wheel gesture replaces it with the reader's own
+    /// position, because a pane that scrolls back on its own cannot be
+    /// scrolled. Opening another PR returns it to following.
+    pub lane_scroll_x: Option<f32>,
 }
 
 impl Default for PrModeState {
@@ -146,6 +154,7 @@ impl Default for PrModeState {
             filter: PrListFilter::default(),
             sort: PrSort::default(),
             sections_open: [true, false, false, false],
+            lane_scroll_x: None,
         }
     }
 }
@@ -189,6 +198,9 @@ impl KagiApp {
         {
             if let Some(m) = self.pr_mode_mut() {
                 m.active = Some(ix);
+                // Another PR, another lane: the rail goes back to following it
+                // rather than staying at the position the last one needed.
+                m.lane_scroll_x = None;
                 reset_view_if_not_conflicting(m, pr);
             }
             cx.notify();
@@ -622,6 +634,41 @@ impl KagiApp {
             .and_then(|m| m.tabs.get(ix))
             .and_then(|t| t.commits.iter().position(|c| c.id == *commit));
         self.pr_mode_select_commit(sel, cx);
+    }
+
+    /// Scroll the swimlane rail sideways.
+    ///
+    /// Taking the wheel means taking it for good: the rail stops following the
+    /// PR's own lane and stays where the reader put it, because a pane that
+    /// scrolls back on its own cannot be scrolled. Opening another PR restores
+    /// following. Vertical deltas are ignored — the rows scroll on their own.
+    pub(super) fn pr_lane_scroll_by(
+        &mut self,
+        delta: &gpui::ScrollDelta,
+        lanes: usize,
+        rail: f32,
+        // Where the rail is *now*, following included, so the first wheel
+        // gesture continues from what is on screen instead of jumping to 0.
+        current: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let dx = match delta {
+            gpui::ScrollDelta::Pixels(p) => f32::from(p.x),
+            // One "line" step is one lane pitch, as in the commit list.
+            gpui::ScrollDelta::Lines(l) => l.x * super::graph_view::lane_w(),
+        };
+        if dx.abs() < 0.01 {
+            return;
+        }
+        let max = super::pr_lane::max_scroll(lanes, rail);
+        let next = (current - dx).clamp(0.0, max);
+        let Some(m) = self.pr_mode_mut() else {
+            return;
+        };
+        if (next - current).abs() > 0.1 || m.lane_scroll_x.is_none() {
+            m.lane_scroll_x = Some(next);
+            cx.notify();
+        }
     }
 
     /// Title click: jump to the Overview (description), or back to the Diff.

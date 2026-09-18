@@ -73,6 +73,19 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         .max()
         .unwrap_or(1);
     let rail = gutter_width(lanes);
+    // The lane the PR itself sits on — what the rail must keep in view. Taken
+    // from the PR's own rows, so a PR whose branch is the fifth lane of five
+    // is not left off the right edge (user report).
+    let pr_lane = hits
+        .iter()
+        .filter_map(|ix| view.rows.get(*ix))
+        .map(|row| row.lane)
+        .min()
+        .unwrap_or(0);
+    let scroll = match mode.lane_scroll_x {
+        Some(x) => x.clamp(0.0, max_scroll(lanes, rail)),
+        None => follow_scroll(pr_lane, rail),
+    };
     // The commit list draws the node as the author's avatar in compact-lane
     // mode; the same setting means the same thing here.
     let avatars = theme::graph_lane_compact().then(|| app.avatars.images.clone());
@@ -86,10 +99,19 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             number,
             mine.contains(&row.id),
             rail,
+            scroll,
             avatars.as_ref(),
             cx,
         ));
     }
+    // Horizontal wheel/trackpad deltas scroll the rail; vertical ones are left
+    // to the body's own scroll, exactly as the commit list's graph column does.
+    let scroll_by = cx.listener(
+        move |this: &mut KagiApp, e: &gpui::ScrollWheelEvent, _w, cx| {
+            this.pr_lane_scroll_by(&e.delta, lanes, rail, scroll, cx);
+        },
+    );
+    let body = body.on_scroll_wheel(scroll_by);
 
     Some(
         div()
@@ -126,6 +148,27 @@ const SUBJECT_W: f32 = 240.0;
 /// last line is not flush against the subject.
 fn gutter_width(lanes: usize) -> f32 {
     graph_view::LANE_W * (lanes.clamp(1, MAX_RAIL_LANES) as f32 + 0.5)
+}
+
+/// The furthest the rail can scroll: whatever of the lanes does not fit.
+pub(super) fn max_scroll(lanes: usize, rail: f32) -> f32 {
+    (lanes as f32 * graph_view::LANE_W - rail).max(0.0)
+}
+
+/// The scroll that brings `lane` into the rail, moving as little as possible.
+///
+/// A lane already in view scrolls nothing; one off the right edge scrolls just
+/// far enough to seat it against that edge. This is what the pane does until
+/// the reader scrolls it themselves.
+pub(super) fn follow_scroll(lane: usize, rail: f32) -> f32 {
+    let lane_w = graph_view::LANE_W;
+    let left = lane as f32 * lane_w;
+    let right = left + lane_w;
+    if right > rail {
+        right - rail
+    } else {
+        0.0
+    }
 }
 
 /// The pane always has an active PR (see [`render_pr_lane`]), so the header
@@ -168,6 +211,7 @@ fn render_lane_row(
     number: u64,
     is_mine: bool,
     rail: f32,
+    scroll: f32,
     avatars: Option<&std::collections::HashMap<String, std::sync::Arc<gpui::Image>>>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -190,9 +234,9 @@ fn render_lane_row(
         })
         .child({
             let lane_w = graph_view::lane_w();
-            // Same geometry the commit list uses, with no left pad and no
-            // horizontal scroll: the node's centre is its lane's centre.
-            let node_cx = (row.lane as f32) * lane_w + lane_w / 2.0;
+            // Same geometry the commit list uses: no left pad, and the rail's
+            // own horizontal scroll subtracted so the node tracks its lane.
+            let node_cx = (row.lane as f32) * lane_w + lane_w / 2.0 - scroll;
             let ring = theme::scaled(18.);
             let inner_d = theme::scaled(15.);
             let avatar = avatars.map(|images| {
@@ -315,5 +359,31 @@ mod tests {
         assert_eq!(lane_window(190, 199, 200), Some((180, 199)));
         assert_eq!(lane_window(0, 0, 1), Some((0, 0)));
         assert_eq!(lane_window(0, 0, 0), None, "no history, no lane");
+    }
+
+    /// The reported case: five lanes, the PR on the last one, a rail that
+    /// fits fewer. Following must bring that lane into view — and must move
+    /// nothing for a lane that is already there.
+    #[test]
+    fn following_brings_an_off_edge_lane_into_the_rail() {
+        let lane_w = graph_view::LANE_W;
+        let rail = lane_w * 2.5; // room for two lanes and a sliver
+        assert_eq!(follow_scroll(0, rail), 0.0, "lane 0 is already in view");
+        assert_eq!(follow_scroll(1, rail), 0.0, "so is lane 1");
+        // Lane 4 of five sits past the right edge: scroll just enough to seat
+        // it there, never further.
+        let scrolled = follow_scroll(4, rail);
+        assert_eq!(scrolled, 5.0 * lane_w - rail);
+        assert!(scrolled > 0.0 && scrolled <= max_scroll(5, rail));
+    }
+
+    /// The rail cannot scroll past its lanes, and cannot scroll at all when
+    /// they all fit.
+    #[test]
+    fn the_rail_stops_at_its_content() {
+        let lane_w = graph_view::LANE_W;
+        assert_eq!(max_scroll(1, lane_w * 2.5), 0.0, "nothing to reveal");
+        assert_eq!(max_scroll(5, lane_w * 2.5), 5.0 * lane_w - lane_w * 2.5);
+        assert_eq!(max_scroll(0, lane_w), 0.0, "no lanes, no scrolling");
     }
 }

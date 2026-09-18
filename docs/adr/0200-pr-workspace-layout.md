@@ -136,17 +136,25 @@ The pane is still drawn: the detail takes all of it, because the file list is
 how a file is picked and it cannot depend on how much history happens to be
 loaded.
 
-### 6. The navigator's row is `#N title` over `● state  branch`
+### 6. The navigator's row is the title over `● state … #N`
 
-The card lost the reason text and the `#N` line of its own (mock 1b): the
-number joins the title, because together they are how a PR is named out loud,
-and the second line is the state dot plus the head branch — the branch is what
-tells two similarly titled PRs apart and what a worktree is named after. The
-dot carries the attention colour, so the bucket is still per-row now that the
-left edge marks the open PR rather than the bucket. The failed/total check
-count and the agent badge (#337) stay at the right of that line: both change
-what the reader does next. `PrListRow::why` went with the reason text; the
-section header already names the bucket, and `pr_dashboard` computes its own.
+The row is the title on its own line, with air under it, then a second, smaller
+line: the state dot at the left and the PR number hard against the right, so a
+column of rows ends in a column of numbers. The **head branch is not on the
+row** — it repeated what the title already says, in the room the number now
+uses (user request).
+
+The dot carries the attention colour, so the bucket is still per-row now that
+the left edge marks the open PR rather than the bucket. The failed/total check
+count and the agent badge (#337) ride between the state and the number: both
+change what the reader does next. `PrListRow::why` went with the reason text;
+the section header already names the bucket, and `pr_dashboard` computes its
+own.
+
+The row has **no fixed height** — it fits its two line boxes and its padding.
+A fixed 42px survived the first reshape and then broke it, drawing the text
+across the hairline below (user report); `github_evidence_restores` now
+measures the row instead of trusting a constant.
 
 ## Consequences
 

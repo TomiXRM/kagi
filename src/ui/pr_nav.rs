@@ -293,18 +293,20 @@ fn render_pr_card(
         .flex()
         .flex_col()
         .justify_center()
-        .gap_px()
-        // Line 1 - `#N title`, full width.
+        // Line 1 - the title, full width, with air under it (user request).
         .child(
             div()
                 .w_full()
                 .truncate()
+                .mb(px(3.))
                 .text_sm()
                 .line_height(theme::scaled_px(18.))
                 .text_color(rgb(theme().text_main))
-                .child(safe_text(&format!("#{} {}", pr.number, pr.title))),
+                .child(safe_text(&pr.title)),
         )
-        // Line 2 - state, branch, and the two facts that change what you do.
+        // Line 2 - the state at the left, the number hard against the right.
+        // The head branch is not here: it repeated what the title says, in the
+        // room the number now uses (user request).
         .child(
             div()
                 .flex()
@@ -312,8 +314,8 @@ fn render_pr_card(
                 .items_center()
                 .gap_1()
                 .w_full()
-                .text_xs()
-                .line_height(theme::scaled_px(15.))
+                .text_size(theme::scaled_px(10.))
+                .line_height(theme::scaled_px(13.))
                 .text_color(rgb(theme().text_muted))
                 .child(
                     div()
@@ -324,14 +326,6 @@ fn render_pr_card(
                 .when(stacked, |el| {
                     el.child(div().flex_shrink_0().child(SharedString::from("\u{21B3}")))
                 })
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(theme().color_branch))
-                        .child(safe_text(&pr.head)),
-                )
                 .when(!checks.is_empty(), |el| {
                     el.child(
                         div()
@@ -368,7 +362,15 @@ fn render_pr_card(
                         .border_1()
                         .border_color(gpui::rgba(border))
                         .child(SharedString::from("🤖"))
-                })),
+                }))
+                // The number is the row's right edge: every row ends with one,
+                // so a column of them reads as a column.
+                .child(div().flex_1().min_w(px(0.)))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .child(SharedString::from(format!("#{}", pr.number))),
+                ),
         );
     let row = div()
         .id(("pr-mode-card", pr.number as usize))

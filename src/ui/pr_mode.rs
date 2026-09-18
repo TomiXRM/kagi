@@ -1903,6 +1903,14 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         }
     }
 
+    // The mock's rail facts, between the checks and the files: who is on this
+    // PR, how it is labelled, and whether a worktree here has it checked out.
+    // Every line is a read of data the PR list already carries (ADR-0200) or
+    // of the snapshot's worktrees — no call of its own.
+    if let Some(t) = active {
+        col = col.child(render_rail_facts(app, &t.pr));
+    }
+
     // Files. In the Conflicts view this lists the conflicting files instead:
     // they are a different, usually much shorter set, and showing the PR's
     // whole changed-file list beside a conflict diff invites clicking a row
@@ -2011,6 +2019,118 @@ fn render_right(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         );
     }
     col.child(list).into_any_element()
+}
+
+/// GitHub's own six-hex label colour, or the neutral border when it is absent
+/// or malformed. A label's colour is how it is recognised at a glance, so it
+/// is worth carrying through rather than painting every pill the same.
+fn label_color(hex: &str) -> u32 {
+    u32::from_str_radix(hex.trim_start_matches('#'), 16)
+        .ok()
+        .filter(|_| hex.trim_start_matches('#').len() == 6)
+        .unwrap_or(theme().text_muted)
+}
+
+/// REVIEWERS / ASSIGNEES / LABELS / WORKTREE — the facts about the PR itself.
+fn render_rail_facts(app: &KagiApp, pr: &PullRequest) -> gpui::AnyElement {
+    // A worktree here that has the PR's head branch checked out: the answer to
+    // "can I just go and look at this?", which no GitHub field can give.
+    let worktree = app
+        .view()
+        .worktrees
+        .iter()
+        .find(|w| w.branch.as_deref() == Some(pr.head.as_str()))
+        .map(|w| {
+            let dirt = w.wip.as_ref().map(|wip| wip.total()).unwrap_or(0);
+            (
+                w.name.clone(),
+                match dirt {
+                    0 => Msg::PrRailWorktreeClean.t().to_string(),
+                    n => super::i18n::unstaged_not_included(n),
+                },
+            )
+        });
+
+    let people = |logins: &[String]| {
+        let mut row = div().flex().flex_row().flex_wrap().gap_1().text_xs();
+        if logins.is_empty() {
+            return row
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::PrRailNone.t()));
+        }
+        for login in logins {
+            row = row.child(
+                div()
+                    .text_color(rgb(theme().text_sub))
+                    .child(safe_text(&format!("@{login}"))),
+            );
+        }
+        row
+    };
+
+    let mut col = div().flex().flex_col().flex_shrink_0();
+    for (label, body) in [
+        (Msg::PrRailReviewers.t(), people(&pr.reviewers)),
+        (Msg::PrRailAssignees.t(), people(&pr.assignees)),
+    ] {
+        col = col
+            .child(
+                section_label(label.to_string())
+                    .border_t_1()
+                    .border_color(rgb(theme().surface)),
+            )
+            .child(div().px_3().pb_1().child(body));
+    }
+    if !pr.labels.is_empty() {
+        let mut pills = div().flex().flex_row().flex_wrap().gap_1();
+        for label in &pr.labels {
+            pills = pills.child(
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(label_color(&label.color)))
+                    .text_xs()
+                    .text_color(rgb(theme().text_sub))
+                    .child(safe_text(&label.name)),
+            );
+        }
+        col = col
+            .child(
+                section_label(Msg::PrRailLabels.t().to_string())
+                    .border_t_1()
+                    .border_color(rgb(theme().surface)),
+            )
+            .child(div().px_3().pb_1().child(pills));
+    }
+    if let Some((name, state)) = worktree {
+        col = col
+            .child(
+                section_label(Msg::PrRailWorktree.t().to_string())
+                    .border_t_1()
+                    .border_color(rgb(theme().surface)),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .pb_1()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme().text_main))
+                            .child(safe_text(&name)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(state)),
+                    ),
+            );
+    }
+    col.into_any_element()
 }
 
 enum StackRow {

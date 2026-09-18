@@ -10,7 +10,7 @@ use kagi_domain::github::{stack_order, PrAttention, PrGroup, PullRequest, Review
 use kagi_domain::pr_list::PrSection;
 
 use super::i18n::Msg;
-use super::pr_mode::{attention_color, focus_border, PrFocus, CARD_H};
+use super::pr_mode::{attention_color, focus_border, PrFocus};
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -370,14 +370,17 @@ fn render_pr_card(
                         .child(SharedString::from("🤖"))
                 })),
         );
-    div()
+    let row = div()
         .id(("pr-mode-card", pr.number as usize))
         .flex()
         .flex_row()
-        // Fixed two-row height with tight line boxes: the default line-height
-        // on two stacked text divs left a lot of air, which is what made the
-        // cards feel tall (user report).
-        .h(theme::scaled_px(CARD_H))
+        // The row fits its two lines and its padding - it is not given a fixed
+        // height. A fixed 42px did fit two bare line boxes, but not once the
+        // rows gained the mock's vertical padding: the text then overflowed
+        // its own row and drew across the hairline below it (user report).
+        // Tight line boxes keep it compact without a magic number to keep in
+        // sync.
+        .overflow_hidden()
         .cursor_pointer()
         .border_b_1()
         .border_color(rgb(theme().surface))
@@ -387,6 +390,6 @@ fn render_pr_card(
         .on_mouse_down(gpui::MouseButton::Right, menu)
         .when(pr.is_draft, |el| el.opacity(0.7))
         .child(edge)
-        .child(card)
-        .into_any_element()
+        .child(card);
+    super::e2e::measure_control(format!("pr-mode-card-{}", pr.number), row)
 }

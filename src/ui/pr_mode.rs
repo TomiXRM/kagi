@@ -858,9 +858,6 @@ impl KagiApp {
 // Rendering — three columns inside one center-takeover element
 // ────────────────────────────────────────────────────────────
 
-/// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
-/// than this clipped the descenders of the title against the meta row.
-pub(super) const CARD_H: f32 = 42.0;
 /// The centre view is mode-wide so that switching PRs while reading reviews
 /// keeps showing reviews. Conflicts is the exception: it only exists for a PR
 /// that has them, so carrying it to one that does not leaves the pane on a tab

@@ -18,13 +18,15 @@
 use std::collections::HashMap;
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString};
-use kagi_domain::github::{stack_order, PrAttention, PrGroup, PrReason, PullRequest, ReviewState};
+use kagi_domain::github::{
+    sort_prs, PrAttention, PrListFilter, PrReason, PrSection, PrSort, PullRequest,
+};
 
 use super::i18n::Msg;
 use super::pr_mode::{
     attention_color, card_border, ci_glyph, focus_queue, queue_bucket_label, reason_text,
-    MAX_INDENT_DEPTH,
 };
+use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
 
@@ -44,18 +46,6 @@ fn page_bg() -> u32 {
 fn dash_card_bg() -> gpui::Hsla {
     if theme().dark {
         gpui::hsla(0., 0., 0., 0.35)
-    } else {
-        gpui::hsla(0., 0., 1., 1.)
-    }
-}
-
-/// The stack frame's interior. In dark themes it recesses below the page with
-/// plain black; in light themes it is solid white like the cards, and the
-/// 2px border alone marks the group — a black wash there was literally grey,
-/// and it tinted everything sitting on it (user report).
-fn well_bg() -> gpui::Hsla {
-    if theme().dark {
-        gpui::hsla(0., 0., 0., 0.16)
     } else {
         gpui::hsla(0., 0., 1., 1.)
     }
@@ -126,9 +116,10 @@ pub(super) fn refresh_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::
 
 pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let ui = app.ui();
-    let login = app.github_login.clone();
-    let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
     let all = ui.github_prs.clone();
+    let filter = app.pr_mode().map(|m| m.filter).unwrap_or_default();
+    let sort = app.pr_mode().map(|m| m.sort).unwrap_or_default();
+    let now = kagi_ui_core::time::now_unix_secs();
     let buckets = focus_queue(app);
     // Attention is what colours a card and writes its "why" line; the queue
     // already computes both, so the dashboard reads them off it by number
@@ -217,44 +208,29 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
             );
         }
         body = body.child(render_tiles(&buckets));
-    }
-
-    for (group, title) in [
-        (PrGroup::Mine, Msg::PrGroupMine.t()),
-        (PrGroup::ReviewRequested, Msg::PrGroupReview.t()),
-        (PrGroup::Others, Msg::PrGroupOthers.t()),
-    ] {
-        let members: Vec<PullRequest> = all
+        body = body.child(render_column_header());
+        let mut rows: Vec<PullRequest> = all
             .iter()
-            .filter(|p| p.group_for(login.as_deref(), &local) == group)
+            .filter(|pr| filter.accepts(pr))
             .cloned()
             .collect();
-        if members.is_empty() {
-            continue;
+        sort_prs(&mut rows, sort);
+        if rows.is_empty() {
+            body = body.child(
+                div()
+                    .px_4()
+                    .py_3()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::PrPaneEmpty.t())),
+            );
         }
-        body = body.child(group_header(title, members.len()));
-        // `stack_order` emits each root followed by its chain, so a run that
-        // starts at depth 0 and has children IS one stack. Runs of length 1
-        // are lone PRs and stay plain cards — a box around a single PR says
-        // "stack" about something that isn't one.
-        for run in stack_runs(&stack_order(&members)) {
-            let card = |(ix, depth): (usize, usize), nested, cx: &mut Context<KagiApp>| {
-                let pr = &members[ix];
-                let (bucket, why) = att
-                    .get(&pr.number)
-                    .cloned()
-                    .unwrap_or((PrAttention::Dormant, PrReason::None));
-                render_card(pr, depth, bucket, &why, nested, cx)
-            };
-            if run.len() == 1 {
-                body = body.child(card(run[0], false, cx));
-                continue;
-            }
-            let mut group = stack_frame(&members[run[0].0], run.len());
-            for row in run {
-                group = group.child(card(row, true, cx));
-            }
-            body = body.child(group);
+        for pr in rows {
+            let (bucket, why) = att
+                .get(&pr.number)
+                .cloned()
+                .unwrap_or((PrAttention::Dormant, PrReason::None));
+            body = body.child(render_table_row(&pr, bucket, &why, now, cx));
         }
     }
 
@@ -269,14 +245,199 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .into_any_element()
 }
 
-/// Title row: what this screen is, which repo it is for, and Refresh.
-fn render_hero(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::Div {
-    let repo = app
-        .repo_path
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().to_string())
+/// Column widths (unscaled px), shared by the header and every row so the two
+/// cannot drift. `TITLE / BRANCH` is the flexible one.
+const COL_NO: f32 = 56.0;
+const COL_STATE: f32 = 116.0;
+const COL_AUTHOR: f32 = 116.0;
+const COL_CHECKS: f32 = 72.0;
+const COL_FILES: f32 = 52.0;
+const COL_AGE: f32 = 52.0;
+const ROW_H: f32 = 44.0;
+
+fn col(width: f32, label: &'static str) -> gpui::Div {
+    div()
+        .w(theme::scaled_px(width))
+        .flex_shrink_0()
+        .child(SharedString::from(label))
+}
+
+/// The column names. Domain words, so they are the same in both languages
+/// (ADR-0048) — they go through `Msg` only so the table has one vocabulary.
+fn render_column_header() -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .h(theme::scaled_px(26.))
+        .px_4()
+        .border_b_1()
+        .border_color(rgb(theme().selected))
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(rgb(theme().text_label))
+        .child(col(COL_NO, Msg::PrColNo.t()))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .child(SharedString::from(Msg::PrColTitle.t())),
+        )
+        .child(col(COL_STATE, Msg::PrColState.t()))
+        .child(col(COL_AUTHOR, Msg::PrColAuthor.t()))
+        .child(col(COL_CHECKS, Msg::PrColChecks.t()))
+        .child(col(COL_FILES, Msg::PrColFiles.t()))
+        .child(col(COL_AGE, Msg::PrColAge.t()))
+}
+
+/// One PR as a table row: identity, then the four facts the reader triages on.
+///
+/// The counts and the age come straight off the fetched list (ADR-0200), so a
+/// row says how big a PR is and how stale it is without opening it.
+fn render_table_row(
+    pr: &PullRequest,
+    bucket: PrAttention,
+    why: &PrReason,
+    now: i64,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let open = pr.clone();
+    let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.pr_mode_open(&open, cx);
+    });
+    let menu_pr = pr.clone();
+    let menu = cx.listener(
+        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
+            this.with_ui(|ui| ui.pr_menu = Some((menu_pr.clone(), e.position)));
+            cx.stop_propagation();
+            cx.notify();
+        },
+    );
+    let (glyph, glyph_ink) = ci_glyph(pr.ci);
+    let checks = match (pr.checks.len(), pr.failed_checks()) {
+        (0, _) => String::new(),
+        (total, 0) => format!("{glyph}{total}"),
+        (total, failed) => format!("\u{2717}{failed}/{total}"),
+    };
+    // An age needs an instant; the list's stamp is text (see `PullRequest`).
+    let age = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
+        .map(|at| kagi_ui_core::time::relative_time(at, now))
         .unwrap_or_default();
+    let state = if pr.is_draft {
+        Msg::PrDraft.t().to_string()
+    } else {
+        reason_text(why)
+    };
+    div()
+        .id(("pr-home-row", pr.number as usize))
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .h(theme::scaled_px(ROW_H))
+        .px_4()
+        .border_b_1()
+        .border_color(rgb(theme().panel))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(click)
+        .on_mouse_down(gpui::MouseButton::Right, menu)
+        .when(pr.is_draft, |el| el.opacity(0.75))
+        .text_xs()
+        .text_color(rgb(theme().text_muted))
+        .child(
+            div()
+                .w(theme::scaled_px(COL_NO))
+                .flex_shrink_0()
+                .child(SharedString::from(format!("#{}", pr.number))),
+        )
+        // Title over its branch pair: the two lines that identify the PR.
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .pr_4()
+                .flex()
+                .flex_col()
+                .gap_px()
+                .child(
+                    div()
+                        .truncate()
+                        .text_sm()
+                        .text_color(rgb(theme().text_main))
+                        .child(safe_text(&pr.title)),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .child(safe_text(&format!("{} \u{2192} {}", pr.head, pr.base))),
+                ),
+        )
+        .child(
+            div()
+                .w(theme::scaled_px(COL_STATE))
+                .flex_shrink_0()
+                .truncate()
+                .text_color(rgb(attention_color(bucket)))
+                .child(SharedString::from(state)),
+        )
+        .child(
+            div()
+                .w(theme::scaled_px(COL_AUTHOR))
+                .flex_shrink_0()
+                .truncate()
+                .child(safe_text(&format!("@{}", pr.author))),
+        )
+        .child(
+            div()
+                .w(theme::scaled_px(COL_CHECKS))
+                .flex_shrink_0()
+                .text_color(rgb(if pr.failed_checks() > 0 {
+                    theme().color_blocker
+                } else {
+                    glyph_ink
+                }))
+                .child(SharedString::from(checks)),
+        )
+        .child(
+            div()
+                .w(theme::scaled_px(COL_FILES))
+                .flex_shrink_0()
+                .child(SharedString::from(if pr.changed_files > 0 {
+                    pr.changed_files.to_string()
+                } else {
+                    String::new()
+                })),
+        )
+        .child(
+            div()
+                .w(theme::scaled_px(COL_AGE))
+                .flex_shrink_0()
+                .child(SharedString::from(age)),
+        )
+        .into_any_element()
+}
+
+/// The list's header strip: what this is, how much of it there is, which slice
+/// is showing, and in what order.
+fn render_hero(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::Div {
+    let all = &app.ui().github_prs;
+    let counts = |filter: PrListFilter| all.iter().filter(|pr| filter.accepts(pr)).count();
+    let active = app.pr_mode().map(|m| m.filter).unwrap_or_default();
+    let sort = app.pr_mode().map(|m| m.sort).unwrap_or_default();
+    // "need your review" counts review requests, which is what the chip's own
+    // section in the navigator lists — one definition, two places.
+    let mine_to_review = all
+        .iter()
+        .filter(|pr| {
+            PrSection::Review.accepts(
+                pr,
+                app.github_login.as_deref(),
+                &[], // local branches do not make a review request
+            )
+        })
+        .count();
     div()
         .flex()
         .flex_row()
@@ -284,34 +445,93 @@ fn render_hero(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::Div {
         .gap_2()
         .flex_shrink_0()
         .px_4()
-        .py_3()
+        .py_2()
         .border_b_1()
         .border_color(rgb(theme().selected))
         .child(
-            gpui::svg()
-                .path("icons/git-pull-request.svg")
-                .flex_shrink_0()
-                .w(theme::scaled_px(16.))
-                .h(theme::scaled_px(16.))
-                .text_color(rgb(theme().color_branch)),
-        )
-        .child(
             div()
-                .text_lg()
+                .text_sm()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(theme().text_main))
                 .child(SharedString::from(Msg::PrPaneTitle.t())),
         )
-        .when(!repo.is_empty(), |el| {
-            el.child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(repo)),
-            )
+        .when(mine_to_review > 0, |el| {
+            el.child(div().text_xs().text_color(rgb(theme().color_branch)).child(
+                SharedString::from(format!("{} {}", mine_to_review, Msg::PrHomeNeedsReview.t())),
+            ))
         })
         .child(div().flex_1().min_w(px(0.)))
+        .child(filter_chip(PrListFilter::Open, active, counts, cx))
+        .child(filter_chip(PrListFilter::Draft, active, counts, cx))
+        .child(sort_chip(sort, cx))
         .child(refresh_button(cx))
+}
+
+/// One slice chip, carrying its own count. The active one is filled, the way
+/// the workspace navigator marks the page you are on.
+fn filter_chip(
+    filter: PrListFilter,
+    active: PrListFilter,
+    count: impl Fn(PrListFilter) -> usize,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    let label = match filter {
+        PrListFilter::Open => Msg::PrHomeOpen.t(),
+        PrListFilter::Draft => Msg::PrHomeDraft.t(),
+    };
+    let id = match filter {
+        PrListFilter::Open => "pr-home-filter-open",
+        PrListFilter::Draft => "pr-home-filter-draft",
+    };
+    let on = filter == active;
+    let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.pr_mode_set_filter(filter, cx);
+    });
+    div()
+        .id(id)
+        .flex_shrink_0()
+        .px_2()
+        .py_px()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(theme().selected))
+        .when(on, |el| el.bg(rgb(theme().selected)))
+        .text_xs()
+        .text_color(rgb(if on {
+            theme().text_main
+        } else {
+            theme().text_sub
+        }))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(click)
+        .child(SharedString::from(format!("{label} {}", count(filter))))
+}
+
+/// The order chip: one control that cycles, so the strip carries a single
+/// sort affordance rather than three competing ones.
+fn sort_chip(sort: PrSort, cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::Div> {
+    let click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.pr_mode_cycle_sort(cx);
+    });
+    div()
+        .id("pr-home-sort")
+        .flex_shrink_0()
+        .px_2()
+        .py_px()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(theme().selected))
+        .text_xs()
+        .text_color(rgb(theme().text_sub))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(click)
+        .child(SharedString::from(match sort {
+            PrSort::Updated => Msg::PrHomeSortUpdated.t(),
+            PrSort::Created => Msg::PrHomeSortCreated.t(),
+            PrSort::Number => Msg::PrHomeSortNumber.t(),
+        }))
 }
 
 /// One badge per non-empty attention bucket — dot, count, label, all on one
@@ -364,281 +584,4 @@ fn render_tiles(buckets: &[(PrAttention, Vec<(PullRequest, PrReason)>)]) -> gpui
         );
     }
     row
-}
-
-/// Split `stack_order`'s flat (index, depth) list back into its chains: a new
-/// run begins at every depth-0 row.
-fn stack_runs(rows: &[(usize, usize)]) -> Vec<Vec<(usize, usize)>> {
-    let mut runs: Vec<Vec<(usize, usize)>> = Vec::new();
-    for &row in rows {
-        if row.1 == 0 || runs.is_empty() {
-            runs.push(vec![row]);
-        } else {
-            runs.last_mut().unwrap().push(row);
-        }
-    }
-    runs
-}
-
-/// The box a stack's cards sit in: one border around the chain, headed by how
-/// many PRs it is and what the bottom of it merges into. Indentation alone
-/// left it ambiguous where one stack ended and the next PR began (user
-/// request).
-fn stack_frame(root: &PullRequest, count: usize) -> gpui::Div {
-    // Three levels, all neutral: the page, the recessed well, and the cards
-    // lifted back out of it.
-    div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0()
-        .mx_4()
-        .mb_2()
-        .p_2()
-        .rounded_lg()
-        .bg(well_bg())
-        .border_2()
-        .border_color(card_border())
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .px_2()
-                .pb_1()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(
-                    gpui::svg()
-                        .path("icons/waypoints.svg")
-                        .flex_shrink_0()
-                        .w(theme::scaled_px(11.))
-                        .h(theme::scaled_px(11.))
-                        .text_color(rgb(theme().text_muted)),
-                )
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(theme().text_label))
-                        .child(SharedString::from(Msg::PrStack.t())),
-                )
-                .child(SharedString::from(format!(
-                    "{} \u{00B7} \u{2192} {}",
-                    count, root.base
-                ))),
-        )
-}
-
-fn group_header(title: &str, count: usize) -> gpui::Div {
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .flex_shrink_0()
-        .px_4()
-        .pt_4()
-        .pb_1()
-        .child(
-            div()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(title.to_string())),
-        )
-        .child(
-            div()
-                .px_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(count.to_string())),
-        )
-}
-
-/// A dashboard card. Same information the old table row carried, laid out as
-/// a card: title on its own line at full width, everything else on a quiet
-/// second line, state as a coloured stripe rather than a column of glyphs.
-fn render_card(
-    pr: &PullRequest,
-    depth: usize,
-    bucket: PrAttention,
-    why: &PrReason,
-    // Inside a `stack_frame`, which already supplies the outer margin.
-    nested: bool,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let accent = attention_color(bucket);
-    let (g, c) = ci_glyph(pr.ci);
-    let (rv, rvc) = match pr.review {
-        ReviewState::Approved => (Msg::PrReviewApproved.t(), theme().color_success),
-        ReviewState::ChangesRequested => (Msg::PrReviewChanges.t(), theme().color_warning),
-        ReviewState::ReviewRequired => (Msg::PrReviewRequired.t(), theme().text_sub),
-        ReviewState::None => ("", theme().text_muted),
-    };
-    let pr_open = pr.clone();
-    let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_open(&pr_open, cx);
-    });
-    let pr_menu = pr.clone();
-    let menu = cx.listener(
-        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _w, cx| {
-            this.with_ui(|ui| ui.pr_menu = Some((pr_menu.clone(), e.position)));
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    let title = if pr.is_draft {
-        format!("{} ({})", pr.title, Msg::PrDraft.t())
-    } else {
-        pr.title.clone()
-    };
-    let reason = reason_text(why);
-    let dot = || {
-        div()
-            .flex_shrink_0()
-            .text_color(rgb(theme().text_muted))
-            .child(SharedString::from("\u{00B7}"))
-    };
-    div()
-        .id(("pr-dash-card", pr.number as usize))
-        // Indent marks position in the chain; the cap stops a deep stack from
-        // squeezing the card into nothing.
-        .ml(theme::scaled_px(
-            if nested { 0. } else { 16. } + depth.min(MAX_INDENT_DEPTH) as f32 * 14.,
-        ))
-        .when(!nested, |el| el.mr_4().mb_2())
-        .when(nested, |el| el.mb_1())
-        .flex()
-        .flex_row()
-        // A flex child in a column shrinks below its own content by default,
-        // so on a full list every card was squeezed into the one under it
-        // (user report). Cards keep their two-line height; the column
-        // scrolls instead.
-        .flex_shrink_0()
-        .overflow_hidden()
-        .rounded_md()
-        .border_1()
-        .border_color(card_border())
-        .bg(dash_card_bg())
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(click)
-        .on_mouse_down(gpui::MouseButton::Right, menu)
-        .when(pr.is_draft, |el| el.opacity(0.65))
-        // The state, as a stripe. One card = one colour, so a screen of them
-        // stays readable.
-        .child(
-            div()
-                .w(theme::scaled_px(3.))
-                .flex_shrink_0()
-                .bg(rgb(accent)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .gap_px()
-                .px_3()
-                .py_2()
-                // Line 1 — CI, title, review decision. The CI mark leads:
-                // titles are ragged, so a right-hand glyph column never lined
-                // up and you had to hunt for it card by card (user request).
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .w(theme::scaled_px(12.))
-                                .text_color(rgb(c))
-                                .child(SharedString::from(g)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .truncate()
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(title)),
-                        )
-                        .when(!rv.is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .text_color(rgb(rvc))
-                                    .child(SharedString::from(rv.to_string())),
-                            )
-                        }),
-                )
-                // Line 2 — identity and the "why", all muted.
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_color(rgb(theme().color_branch))
-                                .child(SharedString::from(format!("#{}", pr.number))),
-                        )
-                        .child(dot())
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .max_w(theme::scaled_px(120.))
-                                .truncate()
-                                .child(SharedString::from(format!("@{}", pr.author))),
-                        )
-                        .child(dot())
-                        .child(
-                            div()
-                                .min_w(px(0.))
-                                .truncate()
-                                .child(SharedString::from(format!(
-                                    "{} \u{2192} {}",
-                                    pr.head, pr.base
-                                ))),
-                        )
-                        .when(!reason.is_empty(), |el| {
-                            el.child(dot()).child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_color(rgb(accent))
-                                    .child(SharedString::from(reason.clone())),
-                            )
-                        }),
-                ),
-        )
-        .into_any_element()
-}
-
-#[cfg(test)]
-mod stack_run_tests {
-    use super::stack_runs;
-
-    /// `stack_order` emits root-then-chain; the splitter has to cut at every
-    /// depth-0 row and nowhere else, or two adjacent stacks merge into one box.
-    #[test]
-    fn splits_at_every_root() {
-        let rows = [(0, 0), (1, 1), (2, 2), (3, 0), (4, 0), (5, 1)];
-        let runs = stack_runs(&rows);
-        assert_eq!(runs.len(), 3);
-        assert_eq!(runs[0], vec![(0, 0), (1, 1), (2, 2)]);
-        assert_eq!(runs[1], vec![(3, 0)]);
-        assert_eq!(runs[2], vec![(4, 0), (5, 1)]);
-        assert!(stack_runs(&[]).is_empty());
-    }
 }

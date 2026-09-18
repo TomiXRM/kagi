@@ -21,8 +21,8 @@
 use gpui::{div, prelude::*, px, relative, rgb, Context, ListState, SharedString};
 use kagi_domain::github::Mergeable;
 use kagi_domain::github::{
-    stack_order, CiState, Comment, PrAttention, PrGroup, PrReason, PullRequest, Review,
-    ReviewComment, ReviewState,
+    stack_order, CiState, Comment, PrAttention, PrGroup, PrListFilter, PrReason, PrSection, PrSort,
+    PullRequest, Review, ReviewComment, ReviewState,
 };
 use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
@@ -120,6 +120,15 @@ pub struct PrModeState {
     pub view: PrView,
     /// Right column width (unscaled px); the left shares `SidebarState::width`.
     pub right_w: f32,
+    /// Which slice the home list shows, and in what order. Mode-wide for the
+    /// same reason `view` is: it is a reading preference, not a property of a
+    /// PR.
+    pub filter: PrListFilter,
+    pub sort: PrSort,
+    /// Which navigator sections are unfolded, indexed by
+    /// [`PrSection::index`]. The Inbox opens with the mode; the rest are the
+    /// viewer's own lists and stay folded until asked for.
+    pub sections_open: [bool; PrSection::ALL.len()],
 }
 
 impl Default for PrModeState {
@@ -130,6 +139,9 @@ impl Default for PrModeState {
             focus: PrFocus::List,
             view: PrView::Overview,
             right_w: RIGHT_W,
+            filter: PrListFilter::default(),
+            sort: PrSort::default(),
+            sections_open: [true, false, false, false],
         }
     }
 }
@@ -612,6 +624,35 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Fold or unfold one navigator section (ADR-0200).
+    pub fn pr_mode_toggle_section(&mut self, section: PrSection, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode_mut() {
+            let slot = &mut m.sections_open[section.index()];
+            *slot = !*slot;
+        }
+        cx.notify();
+    }
+
+    /// Which slice the home list shows.
+    pub fn pr_mode_set_filter(&mut self, filter: PrListFilter, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode_mut() {
+            m.filter = filter;
+        }
+        cx.notify();
+    }
+
+    /// Cycle the home list's order — the chip is one control, not three.
+    pub fn pr_mode_cycle_sort(&mut self, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode_mut() {
+            m.sort = match m.sort {
+                PrSort::Updated => PrSort::Created,
+                PrSort::Created => PrSort::Number,
+                PrSort::Number => PrSort::Updated,
+            };
+        }
+        cx.notify();
+    }
+
     /// ←/→: cycle the focused pane (List → Commits → Files → Stack).
     pub fn pr_mode_cycle_focus(&mut self, delta: i32, cx: &mut Context<Self>) {
         const ORDER: [PrFocus; 4] = [
@@ -779,9 +820,6 @@ impl KagiApp {
 // ────────────────────────────────────────────────────────────
 
 const RIGHT_W: f32 = 320.0;
-/// Deepest indent level drawn in the left list; beyond it depth is shown by
-/// the └ marker only, so a tall stack can never push rows out of the pane.
-pub(super) const MAX_INDENT_DEPTH: usize = 3;
 /// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
 /// than this clipped the descenders of the title against the meta row.
 const CARD_H: f32 = 42.0;
@@ -1002,12 +1040,133 @@ pub fn reason_text(r: &PrReason) -> String {
     }
 }
 
-/// The left list's display order — shared by the renderer and ↑/↓ stepping so
-/// they can never disagree.
-fn pr_list_order(app: &KagiApp) -> Vec<PullRequest> {
-    focus_queue(app)
+/// A fold-and-count header, the shape the navigator's sections share with the
+/// Graph page's sections: a disclosure mark, the name, the count.
+fn render_section_header(
+    section: PrSection,
+    count: usize,
+    open: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.pr_mode_toggle_section(section, cx);
+    });
+    div()
+        .id(("pr-mode-section", section.index()))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .px_3()
+        .pt_2()
+        .pb_1()
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(toggle)
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(if open {
+                    "\u{25BE}"
+                } else {
+                    "\u{25B8}"
+                })),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(pr_section_label(section))),
+        )
+        .child(div().flex_1().min_w(px(0.)))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(if count > 0 && section == PrSection::Inbox {
+                    theme().color_branch
+                } else {
+                    theme().text_muted
+                }))
+                .child(SharedString::from(count.to_string())),
+        )
+        .into_any_element()
+}
+
+pub(super) fn pr_section_label(section: PrSection) -> &'static str {
+    match section {
+        PrSection::Inbox => Msg::PrSectionInbox.t(),
+        PrSection::Mine => Msg::PrSectionMine.t(),
+        PrSection::Review => Msg::PrSectionReview.t(),
+        PrSection::Assigned => Msg::PrSectionAssigned.t(),
+    }
+}
+
+/// One visible row of the navigator.
+///
+/// Sections are filters, so the same PR can be two rows — under `MY PRS` and
+/// again under `REVIEW`. The list is built once and used by both the renderer
+/// and ↑/↓ stepping, so what the arrows walk is exactly what is on screen.
+/// The attention verdict rides along because both consumers want it and it is
+/// derived from the PR, not fetched.
+#[derive(Clone)]
+pub(super) struct PrListRow {
+    pub pr: PullRequest,
+    pub attention: PrAttention,
+    pub why: PrReason,
+}
+
+/// Every section header in order, each with its members and whether it is
+/// unfolded. Headers are always returned — a section with nothing in it says
+/// so with a zero, which is information.
+pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>)> {
+    let me = app.github_login.clone();
+    let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
+    let open = app
+        .pr_mode()
+        .map(|m| m.sections_open)
+        .unwrap_or([true, false, false, false]);
+    PrSection::ALL
         .into_iter()
-        .flat_map(|(_, m)| m.into_iter().map(|(p, _)| p))
+        .map(|section| {
+            let mut members: Vec<PrListRow> = app
+                .ui()
+                .github_prs
+                .iter()
+                .filter(|pr| section.accepts(pr, me.as_deref(), &local))
+                .map(|pr| {
+                    let group = pr.group_for(me.as_deref(), &local);
+                    let (attention, why) =
+                        pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
+                    PrListRow {
+                        pr: pr.clone(),
+                        attention,
+                        why,
+                    }
+                })
+                .collect();
+            // Stack order within a section so a chain still reads top-down.
+            let prs: Vec<PullRequest> = members.iter().map(|r| r.pr.clone()).collect();
+            let order = stack_order(&prs);
+            members = order
+                .into_iter()
+                .map(|(ix, _)| members[ix].clone())
+                .collect();
+            (section, open[section.index()], members)
+        })
+        .collect()
+}
+
+/// The navigator's visible rows, top to bottom — folded sections contribute
+/// none. Shared by the renderer and ↑/↓ stepping so they cannot disagree.
+fn pr_list_order(app: &KagiApp) -> Vec<PullRequest> {
+    pr_sections(app)
+        .into_iter()
+        .filter(|(_, open, _)| *open)
+        .flat_map(|(_, _, members)| members.into_iter().map(|r| r.pr))
         .collect()
 }
 
@@ -1053,39 +1212,21 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
                 .child(SharedString::from(Msg::PrPaneEmpty.t())),
         );
     }
-    for (bucket, members) in focus_queue(app) {
-        body = body.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .px_3()
-                .pt_2()
-                .pb_1()
-                .child(
-                    div()
-                        .w(theme::scaled_px(6.))
-                        .h(theme::scaled_px(6.))
-                        .rounded_full()
-                        .flex_shrink_0()
-                        .bg(rgb(attention_color(bucket))),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(format!(
-                            "{} ({})",
-                            queue_bucket_label(bucket),
-                            members.len()
-                        ))),
-                ),
-        );
-        for (pr, why) in members {
-            let stacked = pr.is_stacked_on(&all);
-            body = body.child(render_pr_card(&pr, bucket, &why, stacked, active_pr, cx));
+    for (section, open, members) in pr_sections(app) {
+        body = body.child(render_section_header(section, members.len(), open, cx));
+        if !open {
+            continue;
+        }
+        for row in members {
+            let stacked = row.pr.is_stacked_on(&all);
+            body = body.child(render_pr_card(
+                &row.pr,
+                row.attention,
+                &row.why,
+                stacked,
+                active_pr,
+                cx,
+            ));
         }
     }
 
@@ -2288,26 +2429,16 @@ mod view_reset_tests {
 #[cfg(test)]
 mod stack_tests {
     use super::{reason_text, stack_for, StackRow};
-    use kagi_domain::github::{CiState, Mergeable, PrReason, PullRequest, ReviewState};
+    use kagi_domain::github::{CiState, Mergeable, PrReason, PullRequest};
 
     pub(super) fn pr(number: u64, head: &str, base: &str) -> PullRequest {
         PullRequest {
             number,
-            title: String::new(),
             head: head.into(),
-            head_sha: String::new(),
             base: base.into(),
-            is_draft: false,
-            ci: CiState::None,
-            review: ReviewState::None,
-            url: String::new(),
-            author: String::new(),
-            reviewers: Vec::new(),
-            body: String::new(),
-            checks: Vec::new(),
-            mergeable: Mergeable::default(),
             cross_repository: false,
             base_repo: "o/r".into(),
+            ..Default::default()
         }
     }
 

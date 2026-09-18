@@ -45,16 +45,13 @@ pub fn pull_request(number: u64, title: &str, head: &str) -> kagi_domain::github
         head: head.to_string(),
         head_sha: format!("{number:040x}"),
         base: "main".to_string(),
-        is_draft: false,
         ci: CiState::Success,
         review: ReviewState::Approved,
         url: format!("https://github.com/example/repo/pull/{number}"),
         author: "alice".to_string(),
-        reviewers: Vec::new(),
-        body: String::new(),
-        checks: Vec::new(),
         mergeable: Mergeable::Clean,
         cross_repository: false,
         base_repo: "github.com/example/repo".to_string(),
+        ..Default::default()
     }
 }

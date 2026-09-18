@@ -38,7 +38,8 @@ pub fn gh_available() -> bool {
 /// field — the base repository's identity comes out of `url` instead.
 pub(crate) const FIELDS: &str =
     "number,title,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,\
-statusCheckRollup,url,author,reviewRequests,body,mergeable,isCrossRepository";
+statusCheckRollup,url,author,reviewRequests,body,mergeable,isCrossRepository,\
+assignees,labels,changedFiles,additions,deletions,createdAt,updatedAt";
 
 /// Fields requested from `gh issue list`. `gh issue list` excludes pull
 /// requests server-side; the parser also rejects PR-shaped values defensively.
@@ -71,8 +72,63 @@ pub fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>, GitError> {
     Ok(arr.iter().filter_map(pr_from_value).collect())
 }
 
+/// `assignees` / `reviewRequests`-style arrays of `{login}` → logins, empty
+/// ones dropped. GitHub's shape is identical on an issue and a pull request,
+/// so both parsers read it here rather than each spelling it out.
+fn logins_at(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("login").and_then(serde_json::Value::as_str))
+                .filter(|login| !login.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `labels` → labels with their GitHub colours; an entry with no name is not a
+/// label. Shared by the issue and pull-request parsers for the same reason as
+/// [`logins_at`].
+fn labels_at(value: &serde_json::Value) -> Vec<IssueLabel> {
+    value
+        .get("labels")
+        .and_then(serde_json::Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let text = |key: &str| {
+                        entry
+                            .get(key)
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string()
+                    };
+                    Some(IssueLabel {
+                        name: entry.get("name")?.as_str()?.to_string(),
+                        color: text("color"),
+                        description: text("description"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    // Counts are display-only; an absent or negative one is 0 rather than a
+    // reason to drop the whole PR from the list.
+    let count = |k: &str| {
+        v.get(k)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+            .min(u32::MAX as u64) as u32
+    };
     let conclusions: Vec<Option<String>> = v
         .get("statusCheckRollup")
         .and_then(|x| x.as_array())
@@ -146,16 +202,7 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string(),
-        reviewers: v
-            .get("reviewRequests")
-            .and_then(|x| x.as_array())
-            .map(|rs| {
-                rs.iter()
-                    .filter_map(|r| r.get("login").and_then(|x| x.as_str()))
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default(),
+        reviewers: logins_at(v, "reviewRequests"),
         body: s("body"),
         checks,
         mergeable,
@@ -170,6 +217,13 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
         // repository, host included — and `gh pr list --json` has no
         // `baseRepository` field to ask for it (#701 final review 3).
         base_repo: crate::backend::remote_ref::repo_identity(&s("url")).unwrap_or_default(),
+        assignees: logins_at(v, "assignees"),
+        labels: labels_at(v),
+        changed_files: count("changedFiles"),
+        additions: count("additions"),
+        deletions: count("deletions"),
+        created_at: s("createdAt"),
+        updated_at: s("updatedAt"),
     })
 }
 

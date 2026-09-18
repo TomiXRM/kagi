@@ -169,17 +169,14 @@ fn unmergeable_pr() -> kagi_domain::github::PullRequest {
         head: "feature".into(),
         head_sha: "0".repeat(40),
         base: "main".into(),
-        is_draft: false,
         ci: CiState::Success,
         review: ReviewState::Approved,
         url: "https://github.test/pr/7".into(),
         author: "tester".into(),
-        reviewers: Vec::new(),
-        body: String::new(),
-        checks: Vec::new(),
         mergeable: Mergeable::Clean,
         cross_repository: false,
         base_repo: "o/r".into(),
+        ..Default::default()
     }
 }
 

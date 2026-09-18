@@ -2,9 +2,10 @@
 //! `kagi_git::github`; independent of Git and UI state.
 
 /// Aggregate CI state of a PR's head commit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CiState {
     /// No checks reported (or `gh` returned none).
+    #[default]
     None,
     Pending,
     Success,
@@ -12,9 +13,10 @@ pub enum CiState {
 }
 
 /// GitHub's `reviewDecision`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReviewState {
     /// No decision yet (also: no reviewers requested).
+    #[default]
     None,
     ReviewRequired,
     ChangesRequested,
@@ -60,6 +62,57 @@ pub struct PullRequest {
     /// the plan freezes this identity, not a remote name. Empty when `url`
     /// could not be read that way.
     pub base_repo: String,
+    /// Logins assigned to the PR (`assignees`), for the detail rail.
+    pub assignees: Vec<String>,
+    /// Labels with their GitHub colours. Same shape as an Issue's labels —
+    /// one label model, not two.
+    pub labels: Vec<IssueLabel>,
+    /// `changedFiles` / `additions` / `deletions`, so the list can say how big
+    /// a PR is without opening it (opening one computes the diff locally).
+    pub changed_files: u32,
+    pub additions: u32,
+    pub deletions: u32,
+    /// `createdAt` / `updatedAt`, verbatim RFC-3339 as `gh` returns them
+    /// (always UTC, zero-padded, fixed width). Kept as text on purpose: in
+    /// that form lexicographic order *is* chronological order, so sorting
+    /// needs no date parsing in this crate; rendering an age uses
+    /// `kagi_ui_core::time_parse::iso_to_epoch`, which already exists.
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Hand-written, not derived, for one field: `cross_repository` defaults to
+/// **true**, matching the parser's reading of an absent `isCrossRepository`
+/// (#701). A PR whose provenance is unknown must not have `--delete-branch`
+/// promised for it, and a `..Default::default()` fixture is exactly such a PR.
+impl Default for PullRequest {
+    fn default() -> Self {
+        Self {
+            number: 0,
+            title: String::new(),
+            head: String::new(),
+            head_sha: String::new(),
+            base: String::new(),
+            is_draft: false,
+            ci: CiState::None,
+            review: ReviewState::None,
+            url: String::new(),
+            author: String::new(),
+            reviewers: Vec::new(),
+            body: String::new(),
+            checks: Vec::new(),
+            mergeable: Mergeable::Unknown,
+            cross_repository: true,
+            base_repo: String::new(),
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            changed_files: 0,
+            additions: 0,
+            deletions: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
 }
 
 /// Which sidebar group a PR belongs to, from the viewer's perspective.
@@ -96,6 +149,128 @@ impl PullRequest {
             .iter()
             .any(|o| o.number != self.number && o.head == self.base)
     }
+}
+
+/// Which slice of the *open* pull requests the list is showing.
+///
+/// The two are disjoint, so their counts add up to what was fetched: GitHub
+/// calls a draft "open" too, and a header that said `OPEN 12 · DRAFT 3` out of
+/// twelve would be counting three of them twice. A merged slice is not here
+/// because merged PRs are a different fetch (`list_merged_prs`) with a
+/// different field set; a chip for them arrives with that data, not before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrListFilter {
+    /// Open and ready for review.
+    #[default]
+    Open,
+    /// Open, but marked draft.
+    Draft,
+}
+
+impl PrListFilter {
+    pub fn accepts(self, pr: &PullRequest) -> bool {
+        match self {
+            Self::Open => !pr.is_draft,
+            Self::Draft => pr.is_draft,
+        }
+    }
+}
+
+/// One section of the pull-request navigator.
+///
+/// These are **filters, not a partition**: a PR the viewer owns, was asked to
+/// review and is assigned to belongs in three of them, exactly as GitHub's own
+/// pull-request views overlap. Section counts therefore need not add up to the
+/// number of open PRs, and a row is drawn once per section it matches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrSection {
+    /// There is something for the viewer to do: it is theirs and broken or
+    /// ready, or their review was asked for.
+    Inbox,
+    /// Authored by the viewer, or its head branch exists locally.
+    Mine,
+    /// The viewer's review was requested.
+    Review,
+    /// The viewer is an assignee.
+    Assigned,
+}
+
+impl PrSection {
+    pub const ALL: [PrSection; 4] = [
+        PrSection::Inbox,
+        PrSection::Mine,
+        PrSection::Review,
+        PrSection::Assigned,
+    ];
+
+    /// Index into a fixed-size per-section array (fold state).
+    pub fn index(self) -> usize {
+        match self {
+            Self::Inbox => 0,
+            Self::Mine => 1,
+            Self::Review => 2,
+            Self::Assigned => 3,
+        }
+    }
+
+    /// Whether `pr` belongs in this section for the viewer `me`.
+    ///
+    /// Without a known login nothing is the viewer's: `Inbox` then keeps only
+    /// what is broken or ready on a locally-checked-out branch, and the three
+    /// viewer-relative sections are empty rather than guessing whose they are.
+    pub fn accepts(self, pr: &PullRequest, me: Option<&str>, local_branches: &[String]) -> bool {
+        let is_me = |login: &String| me.is_some_and(|m| m.eq_ignore_ascii_case(login));
+        let group = pr.group_for(me, local_branches);
+        match self {
+            Self::Inbox => {
+                let (attention, _) =
+                    pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
+                matches!(attention, PrAttention::NeedsYou | PrAttention::Ready)
+                    || group == PrGroup::ReviewRequested
+            }
+            Self::Mine => group == PrGroup::Mine,
+            Self::Review => pr.reviewers.iter().any(is_me),
+            Self::Assigned => pr.assignees.iter().any(is_me),
+        }
+    }
+}
+
+/// How the list is ordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrSort {
+    /// Most recently updated first — what `gh pr list` already returns, and
+    /// the order the header calls `SORT: UPDATED`.
+    #[default]
+    Updated,
+    /// Newest PR first.
+    Created,
+    /// Highest number first.
+    Number,
+}
+
+/// Order `prs` in place.
+///
+/// `created_at` / `updated_at` are `gh`'s RFC-3339 UTC strings — fixed width,
+/// zero-padded, same offset — so comparing them as text is comparing the
+/// instants they name, and this crate needs no date parsing to sort. A PR
+/// whose timestamp is missing (a reduced field set) sorts last rather than
+/// first: an empty string is the smallest, and it is not evidence of age.
+pub fn sort_prs(prs: &mut [PullRequest], sort: PrSort) {
+    match sort {
+        PrSort::Updated => {
+            prs.sort_by(|a, b| stamp_key(&b.updated_at).cmp(&stamp_key(&a.updated_at)))
+        }
+        PrSort::Created => {
+            prs.sort_by(|a, b| stamp_key(&b.created_at).cmp(&stamp_key(&a.created_at)))
+        }
+        PrSort::Number => prs.sort_by(|a, b| b.number.cmp(&a.number)),
+    }
+}
+
+/// A missing timestamp must not read as "oldest possible"; ordering is
+/// descending, so the absent ones are keyed below every real stamp.
+fn stamp_key(stamp: &str) -> Option<&str> {
+    (!stamp.is_empty()).then_some(stamp)
 }
 
 /// Order PRs as a stack forest for display: roots (base is not another open
@@ -170,22 +345,124 @@ mod tests {
     fn mk(n: u64, head: &str, base: &str) -> PullRequest {
         PullRequest {
             number: n,
-            title: String::new(),
             head: head.into(),
-            head_sha: String::new(),
             base: base.into(),
-            is_draft: false,
-            ci: CiState::None,
-            review: ReviewState::None,
-            url: String::new(),
-            author: String::new(),
-            reviewers: Vec::new(),
-            body: String::new(),
-            checks: Vec::new(),
-            mergeable: Mergeable::default(),
             cross_repository: false,
             base_repo: "o/r".into(),
+            ..Default::default()
         }
+    }
+
+    #[test]
+    fn the_two_list_slices_partition_what_was_fetched() {
+        let open = PullRequest {
+            number: 1,
+            ..Default::default()
+        };
+        let draft = PullRequest {
+            number: 2,
+            is_draft: true,
+            ..Default::default()
+        };
+        for (slice, wanted) in [
+            (PrListFilter::Open, vec![1]),
+            (PrListFilter::Draft, vec![2]),
+        ] {
+            let kept: Vec<u64> = [&open, &draft]
+                .into_iter()
+                .filter(|pr| slice.accepts(pr))
+                .map(|pr| pr.number)
+                .collect();
+            assert_eq!(kept, wanted, "{slice:?}");
+        }
+    }
+
+    #[test]
+    fn navigator_sections_overlap_because_they_are_filters() {
+        // Mine, broken, review asked of me, and assigned to me — all at once.
+        let everything = PullRequest {
+            number: 1,
+            author: "me".into(),
+            ci: CiState::Failure,
+            reviewers: vec!["ME".into()],
+            assignees: vec!["me".into()],
+            ..Default::default()
+        };
+        let matched: Vec<PrSection> = PrSection::ALL
+            .into_iter()
+            .filter(|s| s.accepts(&everything, Some("me"), &[]))
+            .collect();
+        assert_eq!(matched, PrSection::ALL.to_vec(), "one PR, four sections");
+
+        // Someone else's, quietly waiting: in none of them.
+        let theirs = PullRequest {
+            number: 2,
+            author: "them".into(),
+            ..Default::default()
+        };
+        assert!(!PrSection::ALL
+            .into_iter()
+            .any(|s| s.accepts(&theirs, Some("me"), &[])));
+    }
+
+    #[test]
+    fn without_a_login_only_local_evidence_fills_the_inbox() {
+        // A failing PR on a branch that is checked out here is actionable even
+        // when `gh` could not say who the viewer is; the viewer-relative
+        // sections stay empty rather than claiming it is theirs.
+        let pr = PullRequest {
+            number: 1,
+            head: "feat/x".into(),
+            author: "them".into(),
+            ci: CiState::Failure,
+            reviewers: vec!["me".into()],
+            assignees: vec!["me".into()],
+            ..Default::default()
+        };
+        let local = vec!["feat/x".to_string()];
+        assert!(PrSection::Inbox.accepts(&pr, None, &local));
+        assert!(PrSection::Mine.accepts(&pr, None, &local), "local branch");
+        for section in [PrSection::Review, PrSection::Assigned] {
+            assert!(!section.accepts(&pr, None, &local), "{section:?}");
+        }
+    }
+
+    #[test]
+    fn section_indices_are_distinct_and_dense() {
+        let mut seen: Vec<usize> = PrSection::ALL.into_iter().map(PrSection::index).collect();
+        seen.sort_unstable();
+        assert_eq!(seen, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn sorting_reads_githubs_timestamps_as_instants() {
+        let stamped = |n: u64, created: &str, updated: &str| PullRequest {
+            number: n,
+            created_at: created.into(),
+            updated_at: updated.into(),
+            ..Default::default()
+        };
+        // #2 was created last but touched first; #3 has no timestamps at all.
+        // Note the day/month digits: a naive numeric or length-based compare
+        // would put 2026-02-09 after 2026-10-01.
+        let mut prs = vec![
+            stamped(1, "2026-02-09T00:00:00Z", "2026-10-01T00:00:00Z"),
+            stamped(2, "2026-10-01T00:00:00Z", "2026-02-09T00:00:00Z"),
+            stamped(3, "", ""),
+        ];
+
+        sort_prs(&mut prs, PrSort::Updated);
+        assert_eq!(numbers(&prs), vec![1, 2, 3], "newest update first");
+
+        sort_prs(&mut prs, PrSort::Created);
+        assert_eq!(numbers(&prs), vec![2, 1, 3], "newest PR first");
+
+        sort_prs(&mut prs, PrSort::Number);
+        assert_eq!(numbers(&prs), vec![3, 2, 1]);
+    }
+
+    fn numbers(prs: &[PullRequest]) -> Vec<u64> {
+        prs.iter().map(|pr| pr.number).collect()
     }
 
     #[test]
@@ -290,21 +567,13 @@ mod tests {
     fn grouping_is_by_author_local_branch_then_review_request() {
         let mut pr = PullRequest {
             number: 1,
-            title: String::new(),
             head: "feat/x".into(),
-            head_sha: String::new(),
             base: "main".into(),
-            is_draft: false,
-            ci: CiState::None,
-            review: ReviewState::None,
-            url: String::new(),
             author: "alice".into(),
             reviewers: vec!["bob".into()],
-            body: String::new(),
-            checks: Vec::new(),
-            mergeable: Mergeable::default(),
             cross_repository: false,
             base_repo: "o/r".into(),
+            ..Default::default()
         };
         let local = vec!["main".to_string()];
         assert_eq!(pr.group_for(Some("alice"), &local), PrGroup::Mine);
@@ -553,19 +822,13 @@ mod attention_tests {
             number: 1,
             title: "t".into(),
             head: "feat".into(),
-            head_sha: String::new(),
             base: "main".into(),
-            is_draft: false,
             ci: CiState::Success,
-            review: ReviewState::None,
-            url: String::new(),
             author: "me".into(),
-            reviewers: Vec::new(),
-            body: String::new(),
-            checks: Vec::new(),
             mergeable: Mergeable::Clean,
             cross_repository: false,
             base_repo: "o/r".into(),
+            ..Default::default()
         }
     }
 

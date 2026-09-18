@@ -53,17 +53,14 @@ pub fn pr(number: u64, head: &str) -> PullRequest {
         head: head.into(),
         head_sha: format!("{number:0>40}"),
         base: "main".into(),
-        is_draft: false,
         ci: CiState::Success,
         review: ReviewState::Approved,
         url: format!("https://github.test/o/r/pull/{number}"),
         author: "tester".into(),
-        reviewers: Vec::new(),
-        body: String::new(),
-        checks: Vec::new(),
         mergeable: Mergeable::Clean,
         cross_repository: false,
         base_repo: "github.test/o/r".into(),
+        ..Default::default()
     }
 }
 

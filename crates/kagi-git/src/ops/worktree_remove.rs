@@ -475,7 +475,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let path = wt.join("scratch.txt");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0)).unwrap();
             let failed = odb_backup_worktree(&repo, &wt, &mut Vec::new());
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
             assert!(failed.is_err(), "unreadable dirty content must stop backup");

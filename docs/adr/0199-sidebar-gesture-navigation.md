@@ -72,20 +72,29 @@ is flattened every frame regardless of which page is on screen. A GitHub page
 with an empty list is treated as *not* cached, because drawing its empty state
 mid-gesture would claim the neighbour has nothing in it.
 
-**The gesture owns the wheel while it is live** (`SidebarSwipe::owns_wheel`), so
-a horizontal swipe has no vertical component. A scrollable list is the innermost
+**A horizontal gesture owns the wheel** (`SidebarSwipe::owns_wheel`), so a
+sideways swipe has no vertical component. A scrollable list is the innermost
 hitbox under the pointer and consumes the `y` delta itself, which no bubble-phase
 listener can undo — gpui exposes only bubble-phase `on_scroll_wheel`. So while
 the gesture owns the wheel, one `occlude()`-ing layer covers the viewport and
 carries the same listener: `Hitbox::should_handle_scroll` is false for everything
-a `BlockMouse` hitbox covers, so the pages beneath stop scrolling entirely. The
-claim starts with the gesture and is dropped the moment the axis resolves
-*vertical*, so a vertical gesture keeps scrolling the list; it is held for the
-whole settle so momentum cannot scroll the page either.
+a `BlockMouse` hitbox covers, so the pages beneath stop scrolling entirely. It is
+held for the whole settle too, so momentum cannot scroll the page either.
 
-Known limit: the layer appears on the frame *after* the gesture's first event,
-so a swipe that begins over a scrollable list leaks that one event's `y` delta.
-Closing it would need a capture-phase wheel listener, which gpui does not offer.
+The claim waits for the axis to resolve **horizontal** — it is not taken while the
+axis is undecided. Claiming it earlier stopped a list mid-scroll as soon as a
+gesture had any sideways component at all (user report): with `dx ≈ dy` neither
+axis was claimed, so the layer sat there holding the wheel for the whole gesture.
+For the same reason the vertical claim no longer requires dominance: past
+`AXIS_CLAIM_DISTANCE`, anything `x` does not dominate is vertical, because
+scrolling a list is the common case. A release that never became horizontal ends
+the gesture outright rather than settling a zero offset, which would hold the
+wheel for a frame after every list scroll.
+
+Cost of waiting: the first `AXIS_CLAIM_DISTANCE` of a horizontal swipe can still
+scroll the list under it. That is the right trade — a briefly-nudged list beats a
+list that stops scrolling — and closing it entirely would need a capture-phase
+wheel listener, which gpui does not offer.
 
 Reduced motion (ADR-0173) skips the animation and runs the same terminal
 immediately, so the navigation still happens through one code path.

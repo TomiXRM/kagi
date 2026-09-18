@@ -11,7 +11,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - **The Graph sidebar's `Pull Requests (N)` row was removed.** The pinned Graph / PRs / Issues navigator above the list already names that workspace, so the row was a second entry point to the same takeover. (ADR-0199)
 - **The page a gesture is sliding toward shows its real content when that content is already loaded.** The branch navigator always does (it is local Git data); a PR or Issue page does once its list has arrived, so moving between workspaces you have already visited previews the actual lists rather than a placeholder. A page whose list has never loaded still slides in as a shell — the preview only reads what is cached, and never starts a fetch. (ADR-0199)
 - **The sidebar now starts 240px wide** instead of 200px, so grouped branch names fit before being ellipsised. Dragging the divider still overrides it.
-- **A sideways swipe no longer scrolls the list underneath it.** Once a gesture is under way it owns the wheel, so the page it is dragging stops taking the vertical part of the motion; a gesture that turns out to be vertical hands the wheel straight back and scrolls the list as before. (ADR-0199)
+- **A sideways swipe no longer scrolls the list underneath it.** Once the gesture is clearly horizontal it owns the wheel, so the page it is dragging stops taking the vertical part of the motion. A gesture that is anything else — including one with a slight sideways component — stays the list's, and scrolls it exactly as before. (ADR-0199)
 
 ## [0.38.0] — 2026-09-17
 

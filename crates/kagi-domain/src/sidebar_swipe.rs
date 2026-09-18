@@ -16,8 +16,9 @@ pub const RESISTANCE: f32 = 0.35;
 /// `|raw_dx / width|` at or beyond which a release commits to the neighbour.
 pub const COMMIT_PROGRESS: f32 = 0.20;
 
-/// Axis lock: the gesture is horizontal once it has moved this far and
-/// dominates the vertical travel by [`HORIZONTAL_DOMINANCE`].
+/// Axis lock. The gesture is horizontal only once it has moved this far *and*
+/// dominates the vertical travel: scrolling a list is the common case, so a
+/// diagonal gesture resolves vertical rather than sitting undecided.
 const AXIS_CLAIM_DISTANCE: f32 = 8.0;
 const HORIZONTAL_DOMINANCE: f32 = 1.2;
 
@@ -137,7 +138,7 @@ impl SidebarSwipe {
             let ay = raw_y.abs();
             if ax > AXIS_CLAIM_DISTANCE && ax > ay * HORIZONTAL_DOMINANCE {
                 axis = Axis::Horizontal;
-            } else if ay > AXIS_CLAIM_DISTANCE && ay > ax * HORIZONTAL_DOMINANCE {
+            } else if ay > AXIS_CLAIM_DISTANCE {
                 axis = Axis::Vertical;
             }
         }
@@ -150,12 +151,19 @@ impl SidebarSwipe {
 
     /// Fingers lifted: decide on the raw distance, then settle from the
     /// current offset. The page is only reported by [`Self::tick`].
+    ///
+    /// A gesture that never became horizontal moved nothing, so it ends
+    /// outright — settling a zero offset would hold the wheel for a frame after
+    /// every list scroll.
     pub fn release(&mut self) {
         let Phase::Tracking { axis, raw_x, .. } = self.phase else {
             return;
         };
-        self.pending = if axis == Axis::Horizontal && (raw_x / self.width).abs() >= COMMIT_PROGRESS
-        {
+        if axis != Axis::Horizontal {
+            self.cancel();
+            return;
+        }
+        self.pending = if (raw_x / self.width).abs() >= COMMIT_PROGRESS {
             self.neighbour_for(raw_x)
         } else {
             None
@@ -218,16 +226,17 @@ impl SidebarSwipe {
     /// Whether the gesture owns the wheel, so the page under it must not
     /// scroll.
     ///
-    /// True from the first event of a gesture until its axis resolves
-    /// *vertical*, and again for the whole settle. That is what removes the
-    /// vertical component of a horizontal swipe: the page beneath cannot
-    /// consume the `y` delta while the sidebar is being dragged. A gesture that
-    /// turns out to be vertical hands the wheel back, having withheld only the
-    /// events before the axis was known.
+    /// True only once the axis has resolved *horizontal*, and for the whole
+    /// settle. That is what removes the vertical component of a sideways swipe:
+    /// the page beneath cannot consume the `y` delta while the sidebar is being
+    /// dragged. Claiming it any earlier stopped a list mid-scroll on a gesture
+    /// that merely had a slight sideways component (user report): the axis is
+    /// undecided below `AXIS_CLAIM_DISTANCE`, and an undecided gesture has no
+    /// grounds to take the wheel off the page.
     pub fn owns_wheel(&self) -> bool {
         match self.phase {
             Phase::Idle => false,
-            Phase::Tracking { axis, .. } => axis != Axis::Vertical,
+            Phase::Tracking { axis, .. } => axis == Axis::Horizontal,
             Phase::Settling { .. } => true,
         }
     }
@@ -324,14 +333,17 @@ mod tests {
         let mut idle = SidebarSwipe::default();
         assert!(!idle.owns_wheel(), "no gesture, no claim");
 
-        // Claimed before the axis is known, kept once it is horizontal, and
-        // held through the settle so momentum cannot scroll the page either.
+        // The page keeps the wheel until the gesture is provably horizontal,
+        // and the claim is held through the settle so momentum cannot scroll it.
         idle.start(1, 3, W);
-        assert!(idle.owns_wheel());
+        assert!(
+            !idle.owns_wheel(),
+            "a gesture with no axis yet takes nothing"
+        );
         idle.move_by(-4.0, 3.0);
         assert!(
-            idle.owns_wheel(),
-            "an undecided axis still withholds scroll"
+            !idle.owns_wheel(),
+            "an undecided axis must leave the list scrolling"
         );
         idle.move_by(-60.0, 0.0);
         assert!(idle.owns_wheel());
@@ -340,11 +352,19 @@ mod tests {
         settle(&mut idle);
         assert!(!idle.owns_wheel(), "a settled sidebar returns the wheel");
 
-        let vertical = tracking(1, 0.0, 40.0);
-        assert!(
-            !vertical.owns_wheel(),
-            "a vertical gesture belongs to the page under it"
-        );
+        // A slight sideways component must not stop a list scroll (user
+        // report): anything that is not dominated by `x` resolves vertical, and
+        // releasing it ends the gesture without a settle to hold the wheel.
+        for (x, y) in [(0.0, 40.0), (12.0, 12.0), (20.0, 30.0)] {
+            let mut vertical = tracking(1, x, y);
+            assert!(
+                !vertical.owns_wheel(),
+                "({x}, {y}) belongs to the page under it"
+            );
+            assert_eq!(vertical.offset(), 0.0);
+            vertical.release();
+            assert!(vertical.is_idle(), "({x}, {y}) must not settle");
+        }
     }
 
     #[test]

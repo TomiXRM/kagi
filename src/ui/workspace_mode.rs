@@ -345,6 +345,11 @@ impl KagiApp {
 
         self.sidebar.swipe.release();
         self.sidebar.settle_gen = self.sidebar.settle_gen.wrapping_add(1);
+        if !self.sidebar.swipe.is_settling() {
+            // Nothing was dragged (the gesture was a list scroll), so there is
+            // no animation to run and no frame loop to spawn.
+            return;
+        }
         // Reduce motion (ADR-0173): no animation, so the navigation is
         // immediate — but it still runs through the same settle terminal.
         if theme::reduce_motion() {

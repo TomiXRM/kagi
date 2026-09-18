@@ -1,17 +1,19 @@
-//! The PR swimlane pane — one lane per open PR tab, rows newest first.
+//! The PR's lane in its neighbourhood — the swimlane pane.
 //!
-//! The pane sits between the navigator and the PR body (ADR-0200). Lanes and
-//! row order come from `kagi_domain::pr_swimlane`, which is pure and tested;
-//! the drawing reuses `graph_view::graph_canvas`, the painter the commit list
-//! already uses, so a lane line and a node look the same here as there.
+//! The pane sits between the navigator and the PR body (ADR-0200) and shows
+//! the repository's own history windowed around the PR: its commits, plus
+//! [`CONTEXT_ROWS`] either side, with only the PR's own rows lit. A PR read in
+//! isolation says nothing about where it branched from or what has landed
+//! since; that is the whole point of a lane.
 //!
-//! Only commits the open tabs already carry are drawn: a tab holds its
-//! `merge-base..head` range from the moment it opens, so the pane needs no
-//! fetch of its own and no read on the render path.
+//! It therefore reuses the rows the commit list already built — lanes,
+//! colours and edges come from the one graph layout in `render`, so a lane
+//! here is the *same* lane as in the main graph rather than a second opinion
+//! about it. Nothing is laid out, fetched or read here.
+
+use std::collections::HashSet;
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString};
-use kagi_domain::graph::{EdgeKind, GraphEdge, NUM_COLORS};
-use kagi_domain::pr_swimlane::{lay_out, LaneRow, Swimlane};
 
 use super::graph_view;
 use super::i18n::Msg;
@@ -19,37 +21,40 @@ use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
 
-/// Row height, matching the navigator's cards' meta line rather than the
-/// commit list's 29px: the pane is a companion to the PR body, not a second
-/// history.
+/// Row height, matching the navigator's meta line rather than the commit
+/// list's 29px: the pane is a companion to the PR body, not a second history.
 const ROW_H: f32 = 27.0;
-/// How far a row that belongs to another PR is faded (mock 1d, option A).
-/// Recolouring the other lanes instead would need a second palette; fading the
-/// row says "not this PR" with the colours already on screen.
-const OTHER_LANE_OPACITY: f32 = 0.45;
+/// How many commits of context to show either side of the PR's own.
+const CONTEXT_ROWS: usize = 10;
+/// How far a commit outside the PR is faded. It is context, not the subject.
+const CONTEXT_OPACITY: f32 = 0.45;
+/// Lanes drawn before the rail stops widening. A repository-wide graph can be
+/// tens of lanes deep, and the pane is a companion pane, not the graph.
+const MAX_RAIL_LANES: usize = 6;
 
-/// The swimlane of every open PR tab, or `None` when no tab is open — the home
-/// list is what the centre shows then, and an empty lane pane beside it would
-/// be a column of nothing.
+/// The PR's lane in context, or `None` when there is nothing to place it in.
+///
+/// `None` in three cases, each for its own reason: no PR is on screen (Home
+/// keeps its tabs, so gating on "any tab open" once left the previous PR's
+/// lane standing beside the home list); the PR has no commits yet; or none of
+/// its commits are in the loaded history window, in which case there is no
+/// neighbourhood to show it in and a lane alone would be a worse version of
+/// the COMMITS tab.
 pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option<gpui::AnyElement> {
     let mode = app.pr_mode()?;
-    if mode.tabs.is_empty() {
-        return None;
-    }
-    let lanes: Vec<(u64, &[kagi_git::Commit])> = mode
-        .tabs
+    let tab = mode.active.and_then(|ix| mode.tabs.get(ix))?;
+    let number = tab.pr.number;
+    let view = app.view();
+
+    // The PR's commits, as positions in the history the commit list is showing.
+    let mut hits: Vec<usize> = tab
+        .commits
         .iter()
-        .map(|tab| (tab.pr.number, tab.commits.as_slice()))
+        .filter_map(|c| view.commit_row_index.get(&c.id).copied())
         .collect();
-    let view = lay_out(&lanes);
-    let active = mode
-        .active
-        .and_then(|ix| mode.tabs.get(ix))
-        .map(|tab| tab.pr.number);
-    let active_lane = active.and_then(|pr| view.lane_of(pr));
-    let commits = active_lane
-        .map(|lane| view.rows.iter().filter(|r| r.lane == lane).count())
-        .unwrap_or(0);
+    hits.sort_unstable();
+    let (lo, hi) = lane_window(*hits.first()?, *hits.last()?, view.rows.len())?;
+    let mine: HashSet<&kagi_git::CommitId> = tab.commits.iter().map(|c| &c.id).collect();
 
     let mut body = div()
         .id("pr-lane-body")
@@ -58,39 +63,75 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         .overflow_y_scroll()
         .flex()
         .flex_col();
-    for (ix, row) in view.rows.iter().enumerate() {
-        body = body.child(render_lane_row(ix, row, &view, active_lane, cx));
+    // ONE rail width for every row. Deriving it per row from that row's own
+    // lane made the rail change width down the pane, which is what made the
+    // lanes look broken (user report): a lane line only reads as a line if
+    // every row places it at the same x.
+    let lanes = (lo..=hi)
+        .filter_map(|ix| view.rows.get(ix))
+        .map(|row| row.lane + 1)
+        .max()
+        .unwrap_or(1);
+    let rail = gutter_width(lanes);
+    // The commit list draws the node as the author's avatar in compact-lane
+    // mode; the same setting means the same thing here.
+    let avatars = theme::graph_lane_compact().then(|| app.avatars.images.clone());
+    for ix in lo..=hi {
+        let Some(row) = view.rows.get(ix) else {
+            continue;
+        };
+        body = body.child(render_lane_row(
+            ix,
+            row,
+            number,
+            mine.contains(&row.id),
+            rail,
+            avatars.as_ref(),
+            cx,
+        ));
     }
 
     Some(
         div()
             .id("pr-lane")
-            .w(theme::scaled_px(lane_pane_width(view.lanes.len())))
+            .w(theme::scaled_px(rail + SUBJECT_W))
             .flex_shrink_0()
             .h_full()
             .flex()
             .flex_col()
             .bg(rgb(theme().bg_base))
-            .child(render_header(active, commits))
+            .child(render_header(number, hits.len()))
             .child(body)
             .into_any_element(),
     )
 }
 
-/// Wide enough for the lanes plus a readable slice of the subject. One lane is
-/// the common case (one PR open) and must not leave the subject in a sliver.
-fn lane_pane_width(lanes: usize) -> f32 {
-    let rail = gutter_width(lanes);
-    (rail + 260.0).min(520.0)
+/// The rows to draw: the PR's own span, widened by [`CONTEXT_ROWS`] either
+/// side and clipped to the history that is loaded.
+///
+/// `None` when there is no history to window — an empty list cannot show a
+/// lane, and `rows - 1` would wrap.
+fn lane_window(first: usize, last: usize, rows: usize) -> Option<(usize, usize)> {
+    let last_row = rows.checked_sub(1)?;
+    Some((
+        first.saturating_sub(CONTEXT_ROWS),
+        (last + CONTEXT_ROWS).min(last_row),
+    ))
 }
 
-/// The lane rail's own width: every lane, plus a half-lane of air so the last
-/// line is not flush against the subject.
+/// Width of the subject column beside the rail.
+const SUBJECT_W: f32 = 240.0;
+
+/// The rail's own width: the lanes in view, plus a half-lane of air so the
+/// last line is not flush against the subject.
 fn gutter_width(lanes: usize) -> f32 {
-    graph_view::LANE_W * (lanes.max(1) as f32 + 0.5)
+    graph_view::LANE_W * (lanes.clamp(1, MAX_RAIL_LANES) as f32 + 0.5)
 }
 
-fn render_header(active: Option<u64>, commits: usize) -> gpui::Div {
+/// The pane always has an active PR (see [`render_pr_lane`]), so the header
+/// names it rather than asking whether there is one. The count is the PR's own
+/// commits, not the windowed rows: the context is not part of the PR.
+fn render_header(number: u64, commits: usize) -> gpui::Div {
     div()
         .flex()
         .flex_row()
@@ -105,40 +146,34 @@ fn render_header(active: Option<u64>, commits: usize) -> gpui::Div {
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(rgb(theme().text_label))
         .child(SharedString::from(Msg::PrLaneTitle.t()))
-        .children(active.map(|pr| {
+        .child(
             div()
                 .font_weight(gpui::FontWeight::NORMAL)
                 .text_color(rgb(theme().color_branch))
                 .child(SharedString::from(format!(
-                    "#{pr} \u{00B7} {commits} {}",
+                    "#{number} \u{00B7} {commits} {}",
                     Msg::PrModeCommits.t()
-                )))
-        }))
+                ))),
+        )
 }
 
-/// One commit: its lane's node on the rail, then the subject.
+/// One history row: its node on the rail, then the subject.
+///
+/// A row of the PR is lit and selects that commit in the PR; a context row is
+/// faded and inert — clicking it would either navigate away from the PR being
+/// read or pretend the commit is part of it.
 fn render_lane_row(
     ix: usize,
-    row: &LaneRow,
-    view: &Swimlane,
-    active_lane: Option<usize>,
+    row: &super::commit_list::CommitRow,
+    number: u64,
+    is_mine: bool,
+    rail: f32,
+    avatars: Option<&std::collections::HashMap<String, std::sync::Arc<gpui::Image>>>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let is_active = active_lane == Some(row.lane);
-    // Every lane keeps its line through every row, so a lane reads as one
-    // continuous thread rather than as a dotted trail of its own commits.
-    let edges: Vec<GraphEdge> = (0..view.lanes.len())
-        .map(|lane| GraphEdge {
-            from_lane: lane,
-            to_lane: lane,
-            kind: EdgeKind::Pass,
-            color: lane % NUM_COLORS,
-        })
-        .collect();
-    let commit = row.commit.clone();
-    let pr = view.lanes.get(row.lane).copied().unwrap_or_default();
+    let commit = row.id.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_lane_select(pr, &commit, cx);
+        this.pr_lane_select(number, &commit, cx);
     });
     div()
         .id(("pr-lane-row", ix))
@@ -147,27 +182,69 @@ fn render_lane_row(
         .items_center()
         .flex_shrink_0()
         .h(theme::scaled_px(ROW_H))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .when(!is_active, |el| el.opacity(OTHER_LANE_OPACITY))
-        .child(
+        .when(!is_mine, |el| el.opacity(CONTEXT_OPACITY))
+        .when(is_mine, |el| {
+            el.cursor_pointer()
+                .hover(|s| s.bg(rgb(theme().surface)))
+                .on_click(click)
+        })
+        .child({
+            let lane_w = graph_view::lane_w();
+            // Same geometry the commit list uses, with no left pad and no
+            // horizontal scroll: the node's centre is its lane's centre.
+            let node_cx = (row.lane as f32) * lane_w + lane_w / 2.0;
+            let ring = theme::scaled(18.);
+            let inner_d = theme::scaled(15.);
+            let avatar = avatars.map(|images| {
+                let inner = div()
+                    .w(px(inner_d))
+                    .h(px(inner_d))
+                    .rounded_full()
+                    .overflow_hidden();
+                let inner = match images.get(&row.author_email).cloned() {
+                    Some(image) => inner.child(
+                        gpui::img(gpui::ImageSource::Image(image))
+                            .size_full()
+                            .rounded_full(),
+                    ),
+                    None => inner
+                        .bg(kagi_ui_core::avatar::avatar_color(&row.author_email))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(div().text_color(gpui::white()).text_xs().child(
+                            SharedString::from(kagi_ui_core::avatar::avatar_initial(&row.author)),
+                        )),
+                };
+                div()
+                    .absolute()
+                    .left(px(node_cx - ring / 2.))
+                    .top(px(theme::scaled(ROW_H) / 2. - ring / 2.))
+                    .w(px(ring))
+                    .h(px(ring))
+                    .rounded_full()
+                    .bg(theme().lane_color(row.node_color))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(inner)
+            });
             div()
-                .w(theme::scaled_px(gutter_width(view.lanes.len())))
+                // The rail is the same width on every row — that is what makes
+                // a lane read as one line down the pane.
+                .w(theme::scaled_px(rail))
                 .h_full()
                 .flex_shrink_0()
+                .relative()
                 .overflow_hidden()
                 .child(
                     div().size_full().child(
                         graph_view::graph_canvas(
                             row.lane,
-                            row.lane % NUM_COLORS,
-                            edges,
-                            // The tip of a lane is that PR's head — the commit a
-                            // merge would take, which is what `is_head` marks in
-                            // the commit list too.
-                            row.is_tip,
-                            false,
+                            row.node_color,
+                            row.edges.clone(),
+                            row.is_head,
+                            row.is_merge,
                             false,
                             0.,
                             0.,
@@ -175,8 +252,9 @@ fn render_lane_row(
                         )
                         .size_full(),
                     ),
-                ),
-        )
+                )
+                .children(avatar)
+        })
         .child(
             div()
                 .flex_1()
@@ -184,12 +262,12 @@ fn render_lane_row(
                 .pr_2()
                 .truncate()
                 .text_xs()
-                .text_color(rgb(if is_active {
+                .text_color(rgb(if is_mine {
                     theme().text_main
                 } else {
                     theme().text_muted
                 }))
-                .child(safe_text(&row.subject)),
+                .child(safe_text(&row.summary)),
         )
         .into_any_element()
 }
@@ -198,20 +276,44 @@ fn render_lane_row(
 mod tests {
     use super::*;
 
-    /// One PR open is the common case: the rail must not eat the subject, and
-    /// many lanes must not push the pane past the centre pane's share.
+    /// The rail must not eat the subject at any lane depth, and must stop
+    /// widening: a repository-wide graph is deeper than this pane is wide.
     #[test]
-    fn the_pane_leaves_room_for_the_subject_at_every_lane_count() {
-        let one = lane_pane_width(1);
-        assert!(
-            one - gutter_width(1) >= 200.0,
-            "one lane leaves {one} px, rail {}",
-            gutter_width(1)
+    fn the_rail_leaves_the_subject_room_to_read_and_stops_widening() {
+        for lanes in [0, 1, 3, MAX_RAIL_LANES, 40] {
+            let rail = gutter_width(lanes);
+            assert!(rail > 0.0, "{lanes} lanes still need a rail");
+            assert!(
+                SUBJECT_W >= 200.0,
+                "{lanes} lanes leave the subject {SUBJECT_W} px"
+            );
+        }
+        assert_eq!(
+            gutter_width(40),
+            gutter_width(MAX_RAIL_LANES),
+            "the rail is capped"
         );
-        assert!(lane_pane_width(40) <= 520.0, "capped for a deep stack");
-        assert!(lane_pane_width(4) > one, "more lanes, more rail");
-        // Zero lanes cannot be rendered (the pane is `None`), but the width
-        // helper must still not return a rail of nothing.
-        assert_eq!(gutter_width(0), gutter_width(1));
+        assert_eq!(
+            gutter_width(0),
+            gutter_width(1),
+            "no lane is still one lane"
+        );
+    }
+
+    /// The window is the PR's span plus context, clipped to what is loaded —
+    /// never past the last row, and never wrapping when nothing is.
+    #[test]
+    fn the_window_adds_context_without_leaving_the_loaded_history() {
+        assert_eq!(
+            lane_window(40, 44, 200),
+            Some((40 - CONTEXT_ROWS, 44 + CONTEXT_ROWS))
+        );
+        // At the head of history there is nothing above to show.
+        assert_eq!(lane_window(0, 2, 200), Some((0, 2 + CONTEXT_ROWS)));
+        // …and near its end, nothing below: the window clips, it does not
+        // index past the rows it was given.
+        assert_eq!(lane_window(190, 199, 200), Some((180, 199)));
+        assert_eq!(lane_window(0, 0, 1), Some((0, 0)));
+        assert_eq!(lane_window(0, 0, 0), None, "no history, no lane");
     }
 }

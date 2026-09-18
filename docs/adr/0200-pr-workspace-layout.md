@@ -70,23 +70,38 @@ what the reader acts on, "open" is not.
 would render half-empty columns. `PrListFilter` therefore has two variants, not
 three — a dead variant is a promise the data does not keep.
 
-### 4. The swimlane is its own layout, not the commit graph
+### 4. The swimlane is the PR's lane in its neighbourhood
 
-`kagi_domain::pr_swimlane` gives one lane per open PR tab and orders rows by
-committer time, newest first, stable on ties. This is deliberately **not**
-`kagi_domain::graph`: that one assigns lanes across a commit DAG and requires a
-topologically ordered slice, and a set of open PRs is a set of disjoint
-`merge-base..head` ranges with no edges between them — precisely the input its
-own contract calls unspecified. A commit shared by a stacked pair gets a row in
-each lane, because it is in both and hiding one would leave that lane with a
-gap it cannot explain.
+A PR read in isolation says nothing about where it branched from or what has
+landed since, which is the whole point of showing a lane at all. The pane
+therefore shows the repository's **own** history windowed around the PR — its
+commits plus ten rows either side — with only the PR's rows lit and the
+context faded to 45%. A context row is inert: clicking it would either
+navigate away from the PR being read or imply the commit is part of it.
 
-The *drawing* does reuse `graph_view::graph_canvas`, so a lane line and a node
-look the same here as in the commit list. Rows belonging to other PRs fade to
-45% (mock 1d option A); recolouring their lanes instead would need a second
-palette to say the same thing.
+It reuses the rows the commit list already built, so lanes, colours and edges
+come from the one graph layout in `render` and a lane here is the *same* lane
+as in the main graph rather than a second opinion about it. Nothing is laid
+out, fetched or read in the pane.
 
-The pane adds no read: a tab carries its commit range from the moment it opens.
+Two earlier attempts are recorded because both were user-reported bugs, and
+both came from the same mistake — treating "loaded" as "on screen":
+
+- Gating on *any open tab* left the previous PR's lane standing beside the
+  home list, because Home keeps its tabs (that is what makes going back into a
+  PR instant). The gate is the **active** tab.
+- Drawing *one lane per open tab* grew the rail a lane every time another PR
+  was opened, which says "these are related" about ranges that are merely both
+  loaded. There is exactly one lane: the PR's.
+
+A dedicated `pr_swimlane` layout existed for the per-tab version and was
+deleted with it: the windowed view needs no layout of its own, and the commit
+DAG's lanes are the right ones once the rows come from the DAG.
+
+The pane is `None` when no PR is on screen, when the PR has no commits, or
+when none of its commits are in the loaded history window — there is no
+neighbourhood to place it in then, and a lane alone would be a worse version
+of the COMMITS tab.
 
 ### 5. Commits are a tab; the rail carries facts
 

@@ -291,6 +291,20 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             cx.read(|cx| app.read(cx).workspace_mode()),
             WorkspaceMode::Prs
         );
+
+        // ADR-0200: the lane pane belongs to the PR on screen. Home keeps its
+        // tabs, so a pane gated on "any tab open" stood there with the lanes
+        // of the PR just left (user report).
+        let cached = cx.read(|cx| app.read(cx).ui().github_prs.first().cloned());
+        if let Some(pr) = cached {
+            app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
+            cx.run_until_parked();
+            app.update(cx, |app, cx| app.pr_mode_home(cx));
+            assert!(
+                measure(cx, win, "pr-mode-lane-pane").is_none(),
+                "back on the home list there is no PR to draw a lane for"
+            );
+        }
     }
 
     // Releasing under the 20% commit boundary returns to the origin page.

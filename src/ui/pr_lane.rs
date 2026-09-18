@@ -63,28 +63,25 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         .overflow_y_scroll()
         .flex()
         .flex_col();
-    // ONE rail width for every row. Deriving it per row from that row's own
-    // lane made the rail change width down the pane, which is what made the
-    // lanes look broken (user report): a lane line only reads as a line if
-    // every row places it at the same x.
-    let lanes = (lo..=hi)
-        .filter_map(|ix| view.rows.get(ix))
-        .map(|row| row.lane + 1)
-        .max()
-        .unwrap_or(1);
+    // Lane numbers come from the repository-wide graph, where a PR's branch
+    // can be lane 12 while the window only uses five lanes — and lane 12 is
+    // off the rail whatever the rail's width (user report). The window's lanes
+    // are therefore renumbered into consecutive columns, so "five lanes" means
+    // five columns and nothing needed to be brought into view at all.
+    let columns = lane_columns((lo..=hi).filter_map(|ix| view.rows.get(ix)).map(|r| r.lane));
+    let lanes = columns.len().max(1);
     let rail = gutter_width(lanes);
-    // The lane the PR itself sits on — what the rail must keep in view. Taken
-    // from the PR's own rows, so a PR whose branch is the fifth lane of five
-    // is not left off the right edge (user report).
-    let pr_lane = hits
+    // The column the PR itself sits on — what the rail must keep in view when
+    // there are more columns than fit.
+    let pr_column = hits
         .iter()
         .filter_map(|ix| view.rows.get(*ix))
-        .map(|row| row.lane)
+        .filter_map(|row| columns.get(&row.lane).copied())
         .min()
         .unwrap_or(0);
     let scroll = match mode.lane_scroll_x {
         Some(x) => x.clamp(0.0, max_scroll(lanes, rail)),
-        None => follow_scroll(pr_lane, rail),
+        None => follow_scroll(pr_column, rail),
     };
     // The commit list draws the node as the author's avatar in compact-lane
     // mode; the same setting means the same thing here.
@@ -98,9 +95,12 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             row,
             number,
             mine.contains(&row.id),
-            rail,
-            scroll,
-            avatars.as_ref(),
+            &Rail {
+                width: rail,
+                scroll,
+                columns: &columns,
+                avatars: avatars.as_ref(),
+            },
             cx,
         ));
     }
@@ -148,6 +148,33 @@ const SUBJECT_W: f32 = 240.0;
 /// last line is not flush against the subject.
 fn gutter_width(lanes: usize) -> f32 {
     graph_view::LANE_W * (lanes.clamp(1, MAX_RAIL_LANES) as f32 + 0.5)
+}
+
+/// Renumber the lanes a window actually uses into consecutive columns,
+/// keeping their left-to-right order.
+///
+/// The commit list's lanes are repository-wide: a PR's branch can be lane 12
+/// beside a mainline lane 0, with nothing in between. Drawing that literally
+/// puts the PR twelve lanes out, past any rail worth the width. Columns are
+/// the window's own answer — with five lanes in use there are five columns,
+/// and nothing has to be scrolled into view.
+fn lane_columns(lanes: impl Iterator<Item = usize>) -> std::collections::BTreeMap<usize, usize> {
+    let used: std::collections::BTreeSet<usize> = lanes.collect();
+    used.into_iter().zip(0..).collect()
+}
+
+/// A lane's column, or its own index when the window did not use it (an edge
+/// may pass through a lane no row in the window sits on).
+fn column_of(columns: &std::collections::BTreeMap<usize, usize>, lane: usize) -> usize {
+    columns.get(&lane).copied().unwrap_or_else(|| {
+        // Place it after everything the window did use, preserving order,
+        // rather than colliding with a real column.
+        columns
+            .range(..lane)
+            .next_back()
+            .map(|(_, column)| column + 1)
+            .unwrap_or(0)
+    })
 }
 
 /// The furthest the rail can scroll: whatever of the lanes does not fit.
@@ -200,6 +227,18 @@ fn render_header(number: u64, commits: usize) -> gpui::Div {
         )
 }
 
+/// What every row of the rail needs to know about the rail itself.
+struct Rail<'a> {
+    /// Rail width, the same on every row (that is what makes a lane a line).
+    width: f32,
+    /// Horizontal scroll, applied to the lane lines *and* the node together.
+    scroll: f32,
+    /// Global lane → column in this window (see [`lane_columns`]).
+    columns: &'a std::collections::BTreeMap<usize, usize>,
+    /// Author avatars when compact-lane mode draws nodes as avatars.
+    avatars: Option<&'a std::collections::HashMap<String, std::sync::Arc<gpui::Image>>>,
+}
+
 /// One history row: its node on the rail, then the subject.
 ///
 /// A row of the PR is lit and selects that commit in the PR; a context row is
@@ -210,11 +249,11 @@ fn render_lane_row(
     row: &super::commit_list::CommitRow,
     number: u64,
     is_mine: bool,
-    rail: f32,
-    scroll: f32,
-    avatars: Option<&std::collections::HashMap<String, std::sync::Arc<gpui::Image>>>,
+    rail: &Rail<'_>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let scroll = rail.scroll;
+    let avatars = rail.avatars;
     let commit = row.id.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         this.pr_lane_select(number, &commit, cx);
@@ -234,9 +273,11 @@ fn render_lane_row(
         })
         .child({
             let lane_w = graph_view::lane_w();
-            // Same geometry the commit list uses: no left pad, and the rail's
-            // own horizontal scroll subtracted so the node tracks its lane.
-            let node_cx = (row.lane as f32) * lane_w + lane_w / 2.0 - scroll;
+            // Global lanes are renumbered into this window's columns, then the
+            // rail's own scroll is subtracted — the same transform the canvas
+            // below gets, so a line and its node are one lane.
+            let column = column_of(rail.columns, row.lane);
+            let node_cx = (column as f32) * lane_w + lane_w / 2.0 - scroll;
             let ring = theme::scaled(18.);
             let inner_d = theme::scaled(15.);
             let avatar = avatars.map(|images| {
@@ -276,7 +317,7 @@ fn render_lane_row(
             div()
                 // The rail is the same width on every row — that is what makes
                 // a lane read as one line down the pane.
-                .w(theme::scaled_px(rail))
+                .w(theme::scaled_px(rail.width))
                 .h_full()
                 .flex_shrink_0()
                 .relative()
@@ -284,13 +325,27 @@ fn render_lane_row(
                 .child(
                     div().size_full().child(
                         graph_view::graph_canvas(
-                            row.lane,
+                            column,
                             row.node_color,
-                            row.edges.clone(),
+                            // Edges carry global lanes too, so they are mapped
+                            // with the node — an edge left on lane 12 beside a
+                            // node in column 1 is the line and the avatar
+                            // coming apart (user report).
+                            row.edges
+                                .iter()
+                                .map(|edge| kagi_domain::graph::GraphEdge {
+                                    from_lane: column_of(rail.columns, edge.from_lane),
+                                    to_lane: column_of(rail.columns, edge.to_lane),
+                                    kind: edge.kind.clone(),
+                                    color: edge.color,
+                                })
+                                .collect(),
                             row.is_head,
                             row.is_merge,
                             false,
-                            0.,
+                            // The canvas takes the same scroll the node is
+                            // offset by, so a line and its node move together.
+                            scroll,
                             0.,
                             Vec::new(),
                         )
@@ -359,6 +414,25 @@ mod tests {
         assert_eq!(lane_window(190, 199, 200), Some((180, 199)));
         assert_eq!(lane_window(0, 0, 1), Some((0, 0)));
         assert_eq!(lane_window(0, 0, 0), None, "no history, no lane");
+    }
+
+    /// The reported case: the PR's branch is a high lane in the
+    /// repository-wide graph, with nothing between it and the mainline. Once
+    /// the window's lanes are columns it is the second column, not the
+    /// twelfth, so no amount of rail width or scrolling was ever the fix.
+    #[test]
+    fn window_lanes_become_consecutive_columns() {
+        let columns = lane_columns([0usize, 12, 12, 0, 3].into_iter());
+        assert_eq!(columns.len(), 3, "three lanes in use, three columns");
+        assert_eq!(column_of(&columns, 0), 0);
+        assert_eq!(column_of(&columns, 3), 1);
+        assert_eq!(column_of(&columns, 12), 2, "the PR's lane is reachable");
+
+        // An edge may pass through a lane no row in the window sits on. It
+        // lands after the last column below it rather than on top of one.
+        assert_eq!(column_of(&columns, 7), 2);
+        assert_eq!(column_of(&columns, 99), 3);
+        assert_eq!(column_of(&lane_columns(std::iter::empty()), 5), 0);
     }
 
     /// The reported case: five lanes, the PR on the last one, a rail that

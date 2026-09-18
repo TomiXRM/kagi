@@ -65,7 +65,10 @@ fn status_text(id: &'static str, text: impl Into<SharedString>, color: u32) -> A
     .into_any_element()
 }
 
-fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+/// One sidebar page's content (ADR-0199): built for the Issues page whether it
+/// is on screen or the neighbour a gesture is sliding toward, so it must stay a
+/// pure read of `ui().github_issues`.
+pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let ui = app.ui();
     let issue_count = ui.github_issues.len().min(ISSUE_LIST_LIMIT);
     let selected = ui.selected_github_issue;
@@ -73,7 +76,6 @@ fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let loaded = ui.github_issues_loaded;
     let error = ui.github_issues_error.as_deref();
     let presentation = list_presentation(loading, loaded, error.is_some(), issue_count);
-    let swipe = cx.listener(KagiApp::sidebar_scroll);
 
     let mut body = div()
         .flex_1()
@@ -161,15 +163,13 @@ fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
 
     div()
         .id("issue-mode-list")
+        .w_full()
         .h_full()
+        .flex_1()
+        .min_h(px(0.))
         .flex()
         .flex_col()
         .bg(rgb(theme().sidebar))
-        .on_scroll_wheel(swipe)
-        .child(super::workspace_mode::render_sidebar_mode_nav(
-            super::workspace_mode::WorkspaceMode::Issues,
-            cx,
-        ))
         .child(body)
         .into_any_element()
 }
@@ -418,15 +418,14 @@ fn render_metadata(app: &KagiApp) -> AnyElement {
 
 /// Render the three-column, read-only Issues workspace.
 pub fn render_issues_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
-    let left = div()
-        .id("issue-mode-left-pane")
-        .w(theme::scaled_px(app.sidebar.width))
-        .flex_shrink_0()
-        .h_full()
-        .child(super::e2e::measure_control(
-            "issue-mode-left-pane",
-            render_issue_list(app, cx),
-        ));
+    let left = super::e2e::measure_control(
+        "issue-mode-left-pane",
+        super::workspace_mode::render_sidebar_pages(
+            app,
+            super::workspace_mode::WorkspaceMode::Issues,
+            cx,
+        ),
+    );
     let center = super::e2e::measure_control("issue-mode-center-pane", render_center(app));
     let right = super::e2e::measure_control("issue-mode-right-pane", render_metadata(app));
 

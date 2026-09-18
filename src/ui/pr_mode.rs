@@ -820,17 +820,15 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
     // there is no open PR, so it stood there empty — drop it and give the
     // width to the home screen (user request).
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
-    let left_w = app.sidebar.width;
     let right_w = app.pr_mode().map(|m| m.right_w).unwrap_or(RIGHT_W);
-    let left = div()
-        .id("pr-mode-left-pane")
-        .w(theme::scaled_px(left_w))
-        .flex_shrink_0()
-        .h_full()
-        .child(super::e2e::measure_control(
-            "pr-mode-left-pane",
-            render_pr_list(app, cx),
-        ));
+    let left = super::e2e::measure_control(
+        "pr-mode-left-pane",
+        super::workspace_mode::render_sidebar_pages(
+            app,
+            super::workspace_mode::WorkspaceMode::Prs,
+            cx,
+        ),
+    );
     let center = div()
         .id("pr-mode-center-pane")
         .flex_1()
@@ -1023,13 +1021,15 @@ fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
 }
 
 // ── Left: PR list, grouped, stack-ordered ────────────────────
-fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+//
+// One sidebar page's content (ADR-0199): built here for the PR page whether it
+// is the page on screen or the neighbour a gesture is sliding toward, so it
+// must stay a pure read of `ui().github_prs`.
+pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::List);
-    let left_w = app.sidebar.width;
     let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::List, cx);
     });
-    let swipe = cx.listener(KagiApp::sidebar_scroll);
     let all = app.ui().github_prs.clone();
     let active_pr = app
         .pr_mode()
@@ -1092,21 +1092,16 @@ fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement 
     focus_border(
         div()
             .id("pr-mode-list")
-            .w(theme::scaled_px(left_w))
-            .flex_shrink_0()
+            .w_full()
             .h_full()
+            .flex_1()
+            .min_h(px(0.))
             .flex()
             .flex_col()
             .bg(rgb(theme().sidebar))
-            .on_mouse_down(gpui::MouseButton::Left, focus_click)
-            .on_scroll_wheel(swipe),
+            .on_mouse_down(gpui::MouseButton::Left, focus_click),
         focused,
     )
-    // Keep the mode navigation fixed while only the PR rows scroll.
-    .child(super::workspace_mode::render_sidebar_mode_nav(
-        super::workspace_mode::WorkspaceMode::Prs,
-        cx,
-    ))
     .child(body)
     .into_any_element()
 }

@@ -460,6 +460,14 @@ pub fn active_modal_present(app: &KagiApp) -> bool {
     app.active_modal.is_some()
 }
 
+/// The sidebar's current gesture offset in rendered pixels (ADR-0199) — the
+/// one value its pages are positioned by, so a scenario can assert on the
+/// motion itself rather than on bounds the viewport clip hides.
+#[cfg(feature = "gui-e2e")]
+pub fn sidebar_page_offset(app: &KagiApp) -> f32 {
+    app.sidebar.swipe.offset()
+}
+
 /// What `render` runs every frame, callable on its own.
 ///
 /// `run_until_parked` cannot stand in for a frame here: it drains the

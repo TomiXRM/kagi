@@ -18,7 +18,6 @@ use gpui_component::Sizable as _;
 use kagi_git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
 
 use super::theme::{self, theme};
-use super::workspace_mode::WorkspaceMode;
 use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
 
 /// Uniform row height (unscaled) used for **every** virtualized sidebar row.
@@ -31,7 +30,13 @@ use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
 pub(super) const SIDEBAR_ROW_H: f32 = 24.0;
 
 /// Default sidebar width in pixels (T023). Previously `mod.rs::SIDEBAR_DEFAULT`.
-const SIDEBAR_DEFAULT_WIDTH: f32 = 200.0;
+///
+/// 240, not the original 200: branch names under LOCAL BRANCHES are grouped by
+/// prefix and indented, so the common `feature/...` leaf used to be ellipsised
+/// at the default width (user request). Well inside `SIDEBAR_MIN..SIDEBAR_MAX`,
+/// and this is only the starting width — the divider drag still owns it for the
+/// rest of the session (it is not written to `settings.json`).
+const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
 
 /// Consolidated Repository-Navigator (left sidebar) state.
 ///
@@ -62,8 +67,12 @@ pub struct SidebarState {
     pub filter: Option<Entity<InputState>>,
     /// Whether the navigator is shown (View → Toggle Sidebar). Default `true`.
     pub visible: bool,
-    /// Transient pointer gesture, never repository data.
+    /// Transient pointer gesture, never repository data (ADR-0199).
     pub swipe: kagi_domain::sidebar_swipe::SidebarSwipe,
+    /// Generation of the running settle animation. Bumped when a settle is
+    /// superseded or abandoned so its frame loop retires instead of ticking
+    /// the next gesture twice as fast.
+    pub settle_gen: u64,
 }
 
 impl SidebarState {
@@ -77,6 +86,7 @@ impl SidebarState {
             filter: None,
             visible: true,
             swipe: Default::default(),
+            settle_gen: 0,
         }
     }
 }
@@ -1460,30 +1470,31 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
 /// collapse behaviour from the old per-`for`-loop version is preserved in the
 /// per-row builders.
 ///
-/// State fields on `KagiApp`:
-/// - `sidebar_rows: Vec<SidebarRow>` (the virtualization source)
-/// - `sidebar_scroll_handle: UniformListScrollHandle`
-/// - `sidebar_collapsed` / `branch_groups_collapsed` / `sidebar_filter`
-pub fn render_sidebar(
-    filter_input: Option<Entity<InputState>>,
-    width: f32,
-    row_count: usize,
-    scroll_handle: gpui::UniformListScrollHandle,
-    cleanup_count: usize,
-    pr_count: usize,
-    mode: WorkspaceMode,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    // ── Workspace-mode navigation row (Arc-like Graph / PRs tabs) ──
-    // Reuses the existing WorkspaceMode dispatchers; no new mode state.
-    // A click always *shows* the named mode (not a toggle), matching the
-    // toolbar buttons (ADR-0137) so the highlight agrees with what is on
-    // screen. `mode` is passed in: reading `workspace_mode()` here would
-    // re-read KagiApp mid-render (it is being updated), which panics.
-    let mode_nav = super::workspace_mode::render_sidebar_mode_nav(mode, cx);
+/// State read from `KagiApp`:
+/// - `sidebar.rows` (the virtualization source, flattened in `render`)
+/// - `sidebar.scroll_handle` / `sidebar.filter`
+/// - `sidebar.collapsed` / `branch_groups_collapsed`
+/// - `view().cleanup_rows` (the merged-branches badge)
+///
+/// Every sidebar page is built by `workspace_mode::page_content`, which may ask
+/// for the Graph page while another page is on screen (a gesture previewing its
+/// neighbour). Deriving the inputs here rather than threading them from
+/// `render` is what lets that second call site exist at all.
+pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let filter_input = app.sidebar.filter.clone();
+    let row_count = app.sidebar.rows.len();
+    let scroll_handle = app.sidebar.scroll_handle.clone();
+    // ADR-0128: the badge counts merged-class rows only (stale-only rows are
+    // listed in the table but don't count as "merged").
+    let cleanup_count = app
+        .view()
+        .cleanup_rows
+        .iter()
+        .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
+        .count();
 
     // ── Filter input row (pinned above the virtualized list) ──────
-    let filter_area: gpui::AnyElement = if let Some(ref input_entity) = filter_input {
+    let filter_area: gpui::AnyElement = if let Some(input_entity) = &filter_input {
         div()
             .px_2()
             .py_1()
@@ -1560,48 +1571,6 @@ pub fn render_sidebar(
             .into_any_element()
     };
 
-    // ── Pull Requests entry (GitHub Phase 1b, pinned beside cleanup) ──
-    // "Pull Requests (N)" opens the takeover pane; hidden without gh.
-    let pr_entry: Option<gpui::AnyElement> = kagi_git::github::gh_available().then(|| {
-        let n = pr_count;
-        let open_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            this.toggle_pr_mode(cx);
-        });
-        let count_color = if n > 0 {
-            theme().color_branch
-        } else {
-            theme().text_muted
-        };
-        div()
-            .id("sidebar-pr-entry")
-            .mx_2()
-            .my_1()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .rounded(theme::scaled_px(4.))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .on_click(open_handler)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::PrPaneTitle.t())),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(count_color))
-                    .child(SharedString::from(format!("({})", n))),
-            )
-            .into_any_element()
-    });
-
     // ── Virtualized navigator list ────────────────────────────────
     let scrollbar_handle = scroll_handle.clone();
     let list = super::with_vertical_scrollbar(
@@ -1631,23 +1600,18 @@ pub fn render_sidebar(
         false,
     );
 
-    // ── Fixed-width outer shell ───────────────────────────────────
+    // ── Graph page content (the shell around it is the pages renderer) ──
     div()
-        // `width` is the unscaled, persisted sidebar width; scale at render so
-        // it tracks zoom uniformly with the text. The resize/drag math in
-        // mod.rs interprets cursor deltas in the same scaled space.
-        .w(theme::scaled_px(width))
-        .flex_shrink_0()
-        .h_full()
+        .flex_1()
+        .min_h(px(0.))
+        .w_full()
         .flex()
         .flex_col()
         .bg(rgb(theme().sidebar))
-        .on_scroll_wheel(cx.listener(KagiApp::sidebar_scroll))
-        .child(mode_nav)
         .child(filter_area)
         .child(cleanup_entry)
-        .children(pr_entry)
         .child(list)
+        .into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -1,33 +1,12 @@
 //! #643 Wave 4 S2b: GitHub evidence follows the session that observed it.
-use crate::evidence_support::deferred;
+use crate::evidence_support::{deferred, pull_request};
 use crate::macos::{build_fixture, mount, unmount};
 use gpui::VisualTestAppContext;
 use kagi::app::SessionId;
 use kagi::ui::{e2e, KagiApp};
-use kagi_domain::github::{CiState, Mergeable, PullRequest, ReviewState};
+use kagi_domain::github::PullRequest;
 use kagi_git::github::PrFetchError;
 use std::collections::HashSet;
-
-fn pull_request(number: u64, title: &str, head: &str) -> PullRequest {
-    PullRequest {
-        number,
-        title: title.to_string(),
-        head: head.to_string(),
-        head_sha: format!("{number:040x}"),
-        base: "main".to_string(),
-        is_draft: false,
-        ci: CiState::Success,
-        review: ReviewState::Approved,
-        url: format!("https://github.com/example/repo/pull/{number}"),
-        author: "alice".to_string(),
-        reviewers: Vec::new(),
-        body: String::new(),
-        checks: Vec::new(),
-        mergeable: Mergeable::Clean,
-        cross_repository: false,
-        base_repo: "github.com/example/repo".to_string(),
-    }
-}
 
 fn queue_ready(cx: &mut VisualTestAppContext, result: Result<Vec<PullRequest>, PrFetchError>) {
     e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move { result }));

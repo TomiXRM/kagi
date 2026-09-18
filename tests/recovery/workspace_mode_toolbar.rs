@@ -1,5 +1,6 @@
 //! Pull/Push/Branch/Stash/Pop/Undo/Redo/Terminal belong to Graph. PRs, Editor and
 //! Analyze must not draw them, and returning to Graph brings them back.
+use crate::evidence_support::pull_request;
 use crate::macos::{build_fixture, mount, repo_fingerprint, unmount};
 use gpui::{AnyWindowHandle, VisualTestAppContext};
 use kagi::ui::e2e;
@@ -33,6 +34,26 @@ fn swipe_phase(
             ..Default::default()
         },
     );
+}
+
+/// Draw one fresh frame and report the control's laid-out bounds.
+fn measure(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    control: &str,
+) -> Option<gpui::Bounds<gpui::Pixels>> {
+    e2e::clear_control_bounds(win.window_id(), control);
+    cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    e2e::control_bounds(win.window_id(), control)
+}
+
+/// Run the sidebar's settle animation to rest (ADR-0199). The settle is a
+/// timer-driven spring, so the test clock has to be advanced past it before
+/// the page it committed to becomes the active workspace.
+fn settle_sidebar(cx: &mut VisualTestAppContext) {
+    cx.advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
 }
 
 pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
@@ -163,24 +184,142 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         "successful empty Issue slice must have a visible state"
     );
 
-    // One committed gesture moves exactly one adjacent page. At either edge a
-    // further gesture is inert; without gh the Graph edge is inert as well.
-    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    // ── Sidebar gesture navigation (ADR-0199) ─────────────────────
+    // A gesture slides the sidebar's pages and nothing else: the main pane
+    // neither moves nor changes content until the sidebar has settled.
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    let left_before = measure(cx, win, "pr-mode-left-pane").expect("PR list column is drawn");
+    let center_before = measure(cx, win, "pr-mode-center-pane").expect("PR center is drawn");
+    swipe_phase(cx, win, swipe_position, 70.0, gpui::TouchPhase::Started);
+    let left_mid = measure(cx, win, "pr-mode-left-pane").expect("sidebar shell stays drawn");
+    let center_mid = measure(cx, win, "pr-mode-center-pane").expect("PR center stays drawn");
+    // Graph is local Git data, flattened every frame, so the page this gesture
+    // heads for is previewed as the real navigator — never as a shell.
+    e2e::clear_control_bounds(win.window_id(), "sidebar-adjacent-page-shell");
+    let adjacent =
+        measure(cx, win, "sidebar-adjacent-page").expect("the adjacent page follows it in");
+    assert!(
+        e2e::control_bounds(win.window_id(), "sidebar-adjacent-page-shell").is_none(),
+        "an already-loaded page is previewed with its own content"
+    );
+    let offset = cx.read(|cx| e2e::sidebar_page_offset(app.read(cx)));
+    assert_eq!(
+        (center_before.origin.x, center_before.size.width),
+        (center_mid.origin.x, center_mid.size.width),
+        "the main pane must not move while the sidebar is dragged"
+    );
+    assert_eq!(
+        (left_before.origin.x, left_before.size.width),
+        (left_mid.origin.x, left_mid.size.width),
+        "the sidebar shell is fixed; only the pages inside it slide"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Prs,
+        "the workspace must not change during a gesture"
+    );
+    assert!(
+        offset > 0.0 && offset < 70.0,
+        "the resisted sidebar offset ({offset}px) must trail the 70px gesture"
+    );
+    assert!(
+        offset < f32::from(left_mid.size.width),
+        "one gesture may never carry the sidebar past one page"
+    );
+    assert_eq!(
+        adjacent.size.width, left_before.size.width,
+        "a sliding page is translated, never re-laid out narrower"
+    );
+
+    swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Prs,
+        "the committed page must wait for the sidebar to settle"
+    );
+    settle_sidebar(cx);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Graph
+    );
+    assert!(
+        measure(cx, win, "sidebar-adjacent-page").is_none(),
+        "a settled sidebar shows one page at offset 0"
+    );
+
+    // A GitHub page has a shell only until its list has arrived.
     if kagi_git::github::gh_available() {
+        app.update(cx, |app, cx| app.show_graph_mode(cx));
         swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
+        assert!(
+            measure(cx, win, "sidebar-adjacent-page-shell").is_some(),
+            "an unloaded PR page has nothing to preview but its shape"
+        );
         swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+        settle_sidebar(cx);
+
+        // Cache one PR through the real fetch path, then gesture again.
+        app.update(cx, |app, cx| app.show_graph_mode(cx));
+        e2e::queue_github_pr_fetch(
+            cx.background_executor
+                .spawn(async move { Ok(vec![pull_request(7, "cached", "cached-head")]) }),
+        );
+        app.update(cx, |app, cx| app.refresh_github_prs(cx));
+        cx.run_until_parked();
+        swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
+        // Forget the shell the *previous* gesture drew, so this frame decides.
+        e2e::clear_control_bounds(win.window_id(), "sidebar-adjacent-page-shell");
+        assert!(
+            measure(cx, win, "sidebar-adjacent-page").is_some(),
+            "the PR page still slides in"
+        );
+        assert!(
+            e2e::control_bounds(win.window_id(), "sidebar-adjacent-page-shell").is_none(),
+            "a cached PR list must be shown instead of the shell"
+        );
+        swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+        settle_sidebar(cx);
         assert_eq!(
             cx.read(|cx| app.read(cx).workspace_mode()),
             WorkspaceMode::Prs
         );
+    }
+
+    // Releasing under the 20% commit boundary returns to the origin page.
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    swipe_phase(cx, win, swipe_position, 40.0, gpui::TouchPhase::Started);
+    swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+    settle_sidebar(cx);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Prs,
+        "40px of a 287px sidebar is under the commit boundary"
+    );
+
+    // One committed gesture moves exactly one adjacent page, however far it
+    // travels. At either edge a further gesture is inert; without gh the Graph
+    // edge is inert as well.
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    if kagi_git::github::gh_available() {
+        swipe_phase(cx, win, swipe_position, -2000.0, gpui::TouchPhase::Started);
+        swipe_phase(cx, win, swipe_position, -2000.0, gpui::TouchPhase::Moved);
+        swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+        settle_sidebar(cx);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).workspace_mode()),
+            WorkspaceMode::Prs,
+            "a huge gesture still moves exactly one page"
+        );
         swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
         swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+        settle_sidebar(cx);
         assert_eq!(
             cx.read(|cx| app.read(cx).workspace_mode()),
             WorkspaceMode::Issues
         );
         swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
         swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+        settle_sidebar(cx);
         assert_eq!(
             cx.read(|cx| app.read(cx).workspace_mode()),
             WorkspaceMode::Issues,
@@ -188,6 +327,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         );
         swipe_phase(cx, win, swipe_position, 70.0, gpui::TouchPhase::Started);
         swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+        settle_sidebar(cx);
         assert_eq!(
             cx.read(|cx| app.read(cx).workspace_mode()),
             WorkspaceMode::Prs
@@ -195,6 +335,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     } else {
         swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
         swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+        settle_sidebar(cx);
         assert_eq!(
             cx.read(|cx| app.read(cx).workspace_mode()),
             WorkspaceMode::Graph,
@@ -202,31 +343,21 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         );
     }
 
+    // Momentum scroll arrives as Moved/Ended with no Started (macOS maps the
+    // phase that way), so it must not navigate on its own.
     app.update(cx, |app, cx| app.show_pr_mode(cx));
-    swipe_phase(cx, win, swipe_position, 30.0, gpui::TouchPhase::Started);
-    swipe_phase(cx, win, swipe_position, 40.0, gpui::TouchPhase::Moved);
+    swipe_phase(cx, win, swipe_position, 100.0, gpui::TouchPhase::Moved);
+    swipe_phase(cx, win, swipe_position, 100.0, gpui::TouchPhase::Ended);
+    settle_sidebar(cx);
     assert_eq!(
         cx.read(|cx| app.read(cx).workspace_mode()),
         WorkspaceMode::Prs,
-        "swipe must not switch modes before release"
-    );
-    swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
-    assert_eq!(
-        cx.read(|cx| app.read(cx).workspace_mode()),
-        WorkspaceMode::Graph
-    );
-    swipe_phase(cx, win, swipe_position, -100.0, gpui::TouchPhase::Ended);
-    assert_eq!(
-        cx.read(|cx| app.read(cx).workspace_mode()),
-        WorkspaceMode::Graph,
-        "momentum without a new gesture must snap back"
+        "momentum without a new gesture must not navigate"
     );
 
     // Opening a modal occludes the sidebar, so it must cancel the in-flight
     // gesture at the canonical modal transition rather than waiting for wheel
-    // input that cannot reach the sidebar. Start in PRs so the assertion is
-    // independent of whether `gh` is available in the test environment.
-    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    // input that cannot reach the sidebar.
     assert!(!repo_actions_drawn(cx, win));
     swipe_phase(cx, win, swipe_position, 30.0, gpui::TouchPhase::Started);
     swipe_phase(cx, win, swipe_position, 40.0, gpui::TouchPhase::Moved);
@@ -234,6 +365,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(cx.read(|cx| app.read(cx).app_notice().is_some()));
     app.update(cx, |app, _| app.clear_app_notice());
     swipe_phase(cx, win, swipe_position, 0.0, gpui::TouchPhase::Ended);
+    settle_sidebar(cx);
     assert_eq!(
         cx.read(|cx| app.read(cx).workspace_mode()),
         WorkspaceMode::Prs,

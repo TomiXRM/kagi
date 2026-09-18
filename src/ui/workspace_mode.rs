@@ -7,7 +7,7 @@
 //! you would land in (user report).
 
 use super::{theme, EditorPendingIntent, KagiApp};
-use gpui::{div, prelude::*, rgb, Context, SharedString};
+use gpui::{div, prelude::*, px, relative, rgb, Context, SharedString};
 
 use super::i18n::Msg;
 use super::workspace::WorkspaceItem;
@@ -103,7 +103,179 @@ pub(super) fn render_sidebar_mode_nav(
     )
 }
 
+/// The ordered sidebar pages one gesture can move between (ADR-0199).
+///
+/// Editor and the unnamed takeovers are deliberately absent: they are entered
+/// explicitly, and a gesture inside them must not navigate. Without `gh` there
+/// is a single page, so every gesture snaps back.
+pub(super) fn nav_pages() -> &'static [WorkspaceMode] {
+    if kagi_git::github::gh_available() {
+        &[
+            WorkspaceMode::Graph,
+            WorkspaceMode::Prs,
+            WorkspaceMode::Issues,
+        ]
+    } else {
+        &[WorkspaceMode::Graph]
+    }
+}
+
+fn page_index(mode: WorkspaceMode) -> Option<usize> {
+    nav_pages().iter().position(|m| *m == mode)
+}
+
+/// One animation step of the settle. A fixed step keeps the spring identical
+/// under a dropped frame and under the test clock.
+const SETTLE_FRAME: std::time::Duration = std::time::Duration::from_millis(16);
+const SETTLE_DT: f32 = 0.016;
+
+/// One sidebar page, translated to `left` inside the clipped viewport.
+///
+/// Absolutely positioned on purpose: a margin would shrink the page's content
+/// box and reflow the list as it slides, and the gesture must translate the
+/// page, not re-lay it out.
+fn sidebar_page(left: f32) -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(px(left))
+        .w_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(theme::theme().sidebar))
+}
+
+/// The content of one sidebar page.
+///
+/// The single place a page's body is built, so the page a gesture is heading
+/// for looks exactly like the page it lands on. Every arm is a pure read of
+/// already-loaded state: none of them starts a fetch (that is what the
+/// `show_*_mode` dispatchers do). `Editor` and the unnamed takeovers keep the
+/// navigator, as they did before pages existed.
+fn page_content(app: &KagiApp, mode: WorkspaceMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    match mode {
+        WorkspaceMode::Prs => super::pr_mode::render_pr_list(app, cx),
+        WorkspaceMode::Issues => super::issues_mode::render_issue_list(app, cx),
+        _ => super::sidebar::render_sidebar(app, cx),
+    }
+}
+
+/// Whether `mode`'s page can be drawn from state that is already loaded.
+///
+/// The Graph page is local Git data, flattened into `sidebar.rows` every frame
+/// regardless of which page is on screen, so it is always ready. The GitHub
+/// pages are only ready once their list has arrived; showing an empty PR or
+/// Issue page mid-gesture would claim the neighbour has nothing in it.
+fn page_is_cached(app: &KagiApp, mode: WorkspaceMode) -> bool {
+    match mode {
+        WorkspaceMode::Prs => !app.ui().github_prs.is_empty(),
+        WorkspaceMode::Issues => !app.ui().github_issues.is_empty(),
+        WorkspaceMode::Graph => true,
+        WorkspaceMode::Editor | WorkspaceMode::Takeover => false,
+    }
+}
+
+/// What an adjacent page shows before its list has ever loaded: enough shape to
+/// read as a page sliding in, with nothing invented in it.
+fn adjacent_page_placeholder() -> gpui::AnyElement {
+    super::e2e::measure_control(
+        "sidebar-adjacent-page-shell",
+        div()
+            .id("sidebar-adjacent-page-shell")
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .px_3()
+            .py_3()
+            .children([1.0, 0.76, 0.92, 0.61, 0.84].into_iter().map(|w| {
+                div()
+                    .h(theme::scaled_px(14.))
+                    .w(relative(w))
+                    .rounded(theme::scaled_px(3.))
+                    .bg(rgb(theme::theme().surface))
+            })),
+    )
+}
+
+/// The one sidebar renderer (ADR-0199).
+///
+/// A stationary, fixed-width shell hosts the pinned page navigator and a
+/// clipped viewport. Inside the viewport the current page slides by the
+/// gesture's resisted offset and the adjacent page follows it in from the
+/// side being uncovered. Nothing here is visible to the main pane: the caller
+/// passes only its own page content, and the offset never leaves this module.
+///
+/// The navigator stays outside the viewport so it remains clickable and
+/// anchored, and so the shell keeps receiving wheel phases after the
+/// translated page has moved out from under the pointer — `Ended` must always
+/// arrive, or a gesture could never be released.
+pub(super) fn render_sidebar_pages(
+    app: &KagiApp,
+    mode: WorkspaceMode,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let offset = app.sidebar.swipe.offset();
+    let width = f32::from(theme::scaled_px(app.sidebar.width));
+    let mut viewport = div()
+        .relative()
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_hidden()
+        .child(sidebar_page(offset).child(page_content(app, mode, cx)));
+    if offset != 0.0 {
+        // The neighbour follows from the side the current page is uncovering.
+        let neighbour_left = offset - width * offset.signum();
+        let neighbour = page_index(mode)
+            .and_then(|origin| {
+                let target = if offset < 0.0 {
+                    origin.checked_add(1)?
+                } else {
+                    origin.checked_sub(1)?
+                };
+                nav_pages().get(target).copied()
+            })
+            .filter(|target| page_is_cached(app, *target));
+        // `measure_control` anchors its own relative wrapper, so it goes
+        // *inside* the positioned page — never around it.
+        viewport = viewport.child(
+            sidebar_page(neighbour_left).child(super::e2e::measure_control(
+                "sidebar-adjacent-page",
+                match neighbour {
+                    // Already-loaded evidence: show the real page the gesture is
+                    // heading for. Rendering reads cached state only — it never
+                    // starts a fetch, which is what opening the mode does.
+                    Some(target) => page_content(app, target, cx),
+                    None => adjacent_page_placeholder(),
+                },
+            )),
+        );
+    }
+
+    div()
+        // `sidebar.width` is the unscaled, persisted width; scale at render so
+        // it tracks zoom uniformly with the text. The resize/drag math in
+        // `render_divider` interprets cursor deltas in the same scaled space.
+        .w(theme::scaled_px(app.sidebar.width))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(theme::theme().sidebar))
+        .on_scroll_wheel(cx.listener(KagiApp::sidebar_scroll))
+        .child(render_sidebar_mode_nav(mode, cx))
+        .child(viewport)
+        .into_any_element()
+}
+
 impl KagiApp {
+    /// Trackpad wheel phases drive the gesture; only the sidebar moves.
+    ///
+    /// `Started` fixes the origin page for the whole gesture, `Moved`
+    /// accumulates raw distance, `Ended` decides and hands over to the settle.
+    /// macOS reports momentum scroll as `Moved` with no preceding `Started`
+    /// (`gpui_macos::events`), which the idle state machine ignores.
     pub(super) fn sidebar_scroll(
         &mut self,
         event: &gpui::ScrollWheelEvent,
@@ -111,16 +283,24 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         use gpui::{ScrollDelta, TouchPhase};
-        use kagi_domain::sidebar_swipe::SidebarSwipeResult;
 
         if self.active_modal.is_some() {
-            self.sidebar.swipe.cancel();
+            self.abandon_sidebar_gesture(cx);
             return;
         }
         match event.touch_phase {
-            TouchPhase::Started => self.sidebar.swipe.start(),
+            TouchPhase::Started => {
+                let Some(origin) = page_index(self.workspace_mode()) else {
+                    return;
+                };
+                // The commit boundary is a fraction of the sidebar the user can
+                // see, so it is measured in the same rendered pixels the
+                // viewport is laid out in.
+                let width = f32::from(theme::scaled_px(self.sidebar.width));
+                self.sidebar.swipe.start(origin, nav_pages().len(), width);
+            }
             TouchPhase::Cancelled => {
-                self.sidebar.swipe.cancel();
+                self.abandon_sidebar_gesture(cx);
                 return;
             }
             TouchPhase::Moved | TouchPhase::Ended => {}
@@ -129,28 +309,78 @@ impl KagiApp {
             ScrollDelta::Pixels(p) => (f32::from(p.x), f32::from(p.y)),
             ScrollDelta::Lines(p) => (p.x * 24.0, p.y * 24.0),
         };
-        // Trackpad deltas are physical input distances; UI zoom must not change
-        // how far the user's fingers have to travel to commit the same swipe.
+        let before = self.sidebar.swipe.offset();
         self.sidebar.swipe.move_by(x, y);
-        if event.touch_phase != TouchPhase::Ended {
+        if event.touch_phase == TouchPhase::Ended {
+            self.release_sidebar_gesture(cx);
+        } else if self.sidebar.swipe.offset() != before {
+            cx.notify();
+        }
+    }
+
+    /// Fingers lifted: spring the sidebar from where it is to its snap target.
+    /// The page the gesture chose is applied only when that settle finishes.
+    fn release_sidebar_gesture(&mut self, cx: &mut Context<Self>) {
+        use kagi_domain::sidebar_swipe::Settle;
+
+        self.sidebar.swipe.release();
+        self.sidebar.settle_gen = self.sidebar.settle_gen.wrapping_add(1);
+        // Reduce motion (ADR-0173): no animation, so the navigation is
+        // immediate — but it still runs through the same settle terminal.
+        if theme::reduce_motion() {
+            if let Settle::Finished(page) = self.sidebar.swipe.complete() {
+                self.finish_sidebar_settle(page, cx);
+            }
             return;
         }
+        let gen = self.sidebar.settle_gen;
+        cx.notify();
+        cx.spawn(async move |this, acx| loop {
+            acx.background_executor().timer(SETTLE_FRAME).await;
+            let running = this.update(acx, |app, cx| {
+                if app.sidebar.settle_gen != gen {
+                    return false;
+                }
+                match app.sidebar.swipe.tick(SETTLE_DT) {
+                    Settle::Running => {
+                        cx.notify();
+                        true
+                    }
+                    Settle::Finished(page) => {
+                        app.finish_sidebar_settle(page, cx);
+                        false
+                    }
+                    Settle::Idle => false,
+                }
+            });
+            if !matches!(running, Ok(true)) {
+                return;
+            }
+        })
+        .detach();
+    }
 
-        let mode = self.workspace_mode();
-        let result = self.sidebar.swipe.finish();
-        match (mode, result) {
-            (WorkspaceMode::Graph, SidebarSwipeResult::Next)
-                if kagi_git::github::gh_available() =>
-            {
-                self.show_pr_mode(cx);
-            }
-            (WorkspaceMode::Prs, SidebarSwipeResult::Previous) => self.show_graph_mode(cx),
-            (WorkspaceMode::Prs, SidebarSwipeResult::Next) if kagi_git::github::gh_available() => {
-                self.show_issues_mode(cx);
-            }
-            (WorkspaceMode::Issues, SidebarSwipeResult::Previous) => self.show_pr_mode(cx),
-            _ => {}
+    /// The settle rested: only now does the logical navigation happen. The
+    /// state machine has already cleared the pending page and normalised the
+    /// offset to 0, so switching the mode re-bases the sidebar on the new
+    /// active page and moves the main pane with it — in that order.
+    fn finish_sidebar_settle(&mut self, page: Option<usize>, cx: &mut Context<Self>) {
+        match page.and_then(|i| nav_pages().get(i).copied()) {
+            Some(WorkspaceMode::Graph) => self.show_graph_mode(cx),
+            Some(WorkspaceMode::Prs) => self.show_pr_mode(cx),
+            Some(WorkspaceMode::Issues) => self.show_issues_mode(cx),
+            _ => cx.notify(),
         }
+    }
+
+    /// Drop the gesture (and any settle in flight) without navigating.
+    fn abandon_sidebar_gesture(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar.swipe.is_idle() {
+            return;
+        }
+        self.sidebar.settle_gen = self.sidebar.settle_gen.wrapping_add(1);
+        self.sidebar.swipe.cancel();
+        cx.notify();
     }
 
     /// Close every center takeover that outranks `keep` in `resolve_workspace`.

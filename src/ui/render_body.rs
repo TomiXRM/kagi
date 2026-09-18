@@ -38,14 +38,7 @@ impl KagiApp {
         // adapter (`workspace::InspectorItem`) re-derives the full detail +
         // changed-files/badges inputs from `self` in its render.
         detail: Option<detail_panel::CommitDetail>,
-        // PERF-SIDEBAR-VIRT: the navigator is now virtualized from
-        // `self.sidebar.rows` (built in `render`); render_body only needs the
-        // row count + scroll handle + filter input for `render_sidebar`.
-        sidebar_row_count: usize,
-        sidebar_scroll_handle: UniformListScrollHandle,
-        sidebar_filter: Option<Entity<InputState>>,
         is_dirty: bool,
-        sidebar_width: f32,
         badge_col_w: f32,
         graph_col_w: f32,
         commit_scroll_handle: UniformListScrollHandle,
@@ -58,16 +51,6 @@ impl KagiApp {
         wip_diffstat: Option<WipDiffStat>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // ADR-0128: sidebar badge count — merged-class rows only (stale-only
-        // rows are listed in the table but don't count as "merged").
-        let cleanup_count = self
-            .view()
-            .cleanup_rows
-            .iter()
-            .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
-            .count();
-        let pr_count = self.ui().github_prs.len();
-
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -473,18 +456,10 @@ impl KagiApp {
             .min_h(px(0.))
             // ── Left slot (W5-MENU: hidden when toggled off) ──
             .when(layout.left == workspace::LeftPane::Navigator, |el| {
-                el.child(sidebar::render_sidebar(
-                    sidebar_filter,
-                    sidebar_width,
-                    sidebar_row_count,
-                    sidebar_scroll_handle,
-                    cleanup_count,
-                    pr_count,
-                    self.workspace_mode(),
-                    cx,
-                ))
-                // ── Sidebar divider ───────────────────────
-                .child(divider1)
+                let mode = self.workspace_mode();
+                el.child(workspace_mode::render_sidebar_pages(self, mode, cx))
+                    // ── Sidebar divider ───────────────────────
+                    .child(divider1)
             });
 
         // ── Center slot ──────────────────────────────────

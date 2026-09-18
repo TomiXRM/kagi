@@ -5,6 +5,13 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A horizontal trackpad gesture now slides the sidebar instead of switching the whole window at once.** Only the sidebar has a previous/next page: it follows the fingers — damped, so it trails them and can never travel past one page — and the main pane stays exactly where it is, showing the same content, for the whole gesture. Releasing under 20% of the sidebar's width springs it back; past that it snaps to the neighbouring page, and only when that spring comes to rest does the workspace itself change. One gesture therefore moves at most one page, however far it is flicked, and a release no longer makes the sidebar jump. (ADR-0199)
+- **The Graph sidebar's `Pull Requests (N)` row was removed.** The pinned Graph / PRs / Issues navigator above the list already names that workspace, so the row was a second entry point to the same takeover. (ADR-0199)
+- **The page a gesture is sliding toward shows its real content when that content is already loaded.** The branch navigator always does (it is local Git data); a PR or Issue page does once its list has arrived, so moving between workspaces you have already visited previews the actual lists rather than a placeholder. A page whose list has never loaded still slides in as a shell — the preview only reads what is cached, and never starts a fetch. (ADR-0199)
+- **The sidebar now starts 240px wide** instead of 200px, so grouped branch names fit before being ellipsised. Dragging the divider still overrides it.
+
 ## [0.38.0] — 2026-09-17
 
 ### Added

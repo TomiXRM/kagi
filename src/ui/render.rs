@@ -355,10 +355,11 @@ impl Render for KagiApp {
 
         // Clone modal state for render.
         let is_dirty = self.view().is_dirty;
-        // PERF-SIDEBAR-VIRT: the navigator data (branches/remotes/tags/…) is no
-        // longer cloned for render_sidebar — it's flattened into
+        // PERF-SIDEBAR-VIRT: the navigator data (branches/remotes/tags/…) is
+        // not cloned for the sidebar renderer — it is flattened into
         // `self.sidebar.rows` below and read by the virtualized list processor.
-        let sidebar_filter = self.sidebar.filter.clone();
+        // The renderer derives its own inputs from `self` (ADR-0199), so only
+        // the filter *text* is needed here, for the rebuild fingerprint.
         // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar.rows`
         // (honouring collapse + filter) so the "sidebar-list" uniform_list can
         // virtualize it. The processor reads the field.
@@ -401,8 +402,7 @@ impl Render for KagiApp {
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
-        let sidebar_row_count = self.sidebar.rows.len();
-        let sidebar_scroll_handle = self.sidebar.scroll_handle.clone();
+
         let plan_modal = self.plan_modal().cloned();
         let pull_modal = self.pull_modal().cloned();
         let history_modal = self.history_modal().cloned();
@@ -520,9 +520,8 @@ impl Render for KagiApp {
         }
         let status_summary = self.view().status_summary.clone();
 
-        // T023: pane widths for divider rendering.
-        let sidebar_width = self.sidebar.width;
-        // T030: inner column widths for the commit list.
+        // T030: inner column widths for the commit list. The sidebar's own
+        // width is read by its renderer (`render_sidebar_pages`).
         let badge_col_w = self.badge_col_w;
         let graph_col_w = self.graph_col_w;
 
@@ -727,11 +726,7 @@ impl Render for KagiApp {
                     row_count,
                     selected,
                     detail,
-                    sidebar_row_count,
-                    sidebar_scroll_handle,
-                    sidebar_filter,
                     is_dirty,
-                    sidebar_width,
                     badge_col_w,
                     graph_col_w,
                     commit_scroll_handle,

@@ -10,8 +10,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use kagi_domain::github::{
-    fold_ci, Check, Comment, Issue, IssueComment, IssueLabel, IssueState, Mergeable, PullRequest,
-    Review, ReviewComment, ReviewState,
+    fold_ci, Check, Comment, IssueLabel, Mergeable, PullRequest, Review, ReviewComment, ReviewState,
 };
 
 use crate::GitError;
@@ -41,15 +40,6 @@ pub(crate) const FIELDS: &str =
 statusCheckRollup,url,author,reviewRequests,body,mergeable,isCrossRepository,\
 assignees,labels,changedFiles,additions,deletions,createdAt,updatedAt";
 
-/// Fields requested from `gh issue list`. `gh issue list` excludes pull
-/// requests server-side; the parser also rejects PR-shaped values defensively.
-pub(crate) const ISSUE_LIST_FIELDS: &str =
-    "number,title,state,url,author,assignees,labels,createdAt,updatedAt";
-
-/// The list metadata plus the conversation loaded for a selected issue.
-pub(crate) const ISSUE_DETAIL_FIELDS: &str =
-    "number,title,state,url,author,assignees,labels,body,comments,createdAt,updatedAt";
-
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
 /// callers cache it (the sidebar's "Mine" grouping keys on it).
 pub fn current_login() -> Option<String> {
@@ -75,7 +65,7 @@ pub fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>, GitError> {
 /// `assignees` / `reviewRequests`-style arrays of `{login}` → logins, empty
 /// ones dropped. GitHub's shape is identical on an issue and a pull request,
 /// so both parsers read it here rather than each spelling it out.
-fn logins_at(value: &serde_json::Value, key: &str) -> Vec<String> {
+pub(crate) fn logins_at(value: &serde_json::Value, key: &str) -> Vec<String> {
     value
         .get(key)
         .and_then(serde_json::Value::as_array)
@@ -93,7 +83,7 @@ fn logins_at(value: &serde_json::Value, key: &str) -> Vec<String> {
 /// `labels` → labels with their GitHub colours; an entry with no name is not a
 /// label. Shared by the issue and pull-request parsers for the same reason as
 /// [`logins_at`].
-fn labels_at(value: &serde_json::Value) -> Vec<IssueLabel> {
+pub(crate) fn labels_at(value: &serde_json::Value) -> Vec<IssueLabel> {
     value
         .get("labels")
         .and_then(serde_json::Value::as_array)
@@ -224,131 +214,6 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
         deletions: count("deletions"),
         created_at: s("createdAt"),
         updated_at: s("updatedAt"),
-    })
-}
-
-/// Parse `gh issue list --json <ISSUE_LIST_FIELDS>` output.
-pub fn parse_issue_list(json: &str) -> Result<Vec<Issue>, GitError> {
-    let value: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
-    let Some(values) = value.as_array() else {
-        return Err(GitError::Other("gh json: expected issue array".into()));
-    };
-    Ok(values.iter().filter_map(issue_from_value).collect())
-}
-
-/// Parse `gh issue view --json <ISSUE_DETAIL_FIELDS>` output.
-pub fn parse_issue_detail(json: &str) -> Result<Issue, GitError> {
-    let value: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
-    issue_from_value(&value).ok_or_else(|| GitError::Other("gh json: missing issue number".into()))
-}
-
-fn issue_from_value(value: &serde_json::Value) -> Option<Issue> {
-    if value
-        .get("isPullRequest")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-        || value.get("pullRequest").is_some_and(|v| !v.is_null())
-    {
-        return None;
-    }
-    let string = |key: &str| {
-        value
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    };
-    let login = |entry: &serde_json::Value| {
-        entry
-            .get("login")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    };
-    let state = IssueState::from_github(&string("state"));
-    let assignees = value
-        .get("assignees")
-        .and_then(serde_json::Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(login)
-                .filter(|login| !login.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    let labels = value
-        .get("labels")
-        .and_then(serde_json::Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| {
-                    let name = entry.get("name")?.as_str()?.to_string();
-                    Some(IssueLabel {
-                        name,
-                        color: entry
-                            .get("color")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        description: entry
-                            .get("description")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let comments = value
-        .get("comments")
-        .and_then(serde_json::Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| {
-                    let body = entry
-                        .get("body")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    if body.trim().is_empty() {
-                        return None;
-                    }
-                    Some(IssueComment {
-                        author: entry.get("author").map(login).unwrap_or_default(),
-                        body,
-                        created_at: entry
-                            .get("createdAt")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        updated_at: entry
-                            .get("updatedAt")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(Issue {
-        number: value.get("number")?.as_u64()?,
-        title: string("title"),
-        state,
-        url: string("url"),
-        author: value.get("author").map(login).unwrap_or_default(),
-        assignees,
-        labels,
-        body: string("body"),
-        comments,
-        created_at: string("createdAt"),
-        updated_at: string("updatedAt"),
     })
 }
 
@@ -717,54 +582,6 @@ mod tests {
         assert_eq!(cs[1].line, 12);
         assert_eq!(cs[1].in_reply_to, Some(9));
         assert!(!cs[1].has_suggestion());
-    }
-
-    #[test]
-    fn parses_issue_list_without_pull_requests_and_with_nullable_fields() {
-        let json = r#"[
-          {"number":7,"title":"real issue","state":"OPEN",
-           "url":"https://github.com/o/r/issues/7","author":{"login":"alice"},
-           "assignees":null,
-           "labels":[{"name":"bug","color":"d73a4a","description":null}],
-           "createdAt":"t1","updatedAt":"t2"},
-          {"number":8,"title":"a pull request","state":"OPEN",
-           "isPullRequest":true,"url":"https://github.com/o/r/pull/8"},
-          {"number":9,"title":"sparse","state":"CLOSED","author":null}
-        ]"#;
-        let issues = parse_issue_list(json).unwrap();
-        assert_eq!(
-            issues.iter().map(|issue| issue.number).collect::<Vec<_>>(),
-            vec![7, 9],
-            "PR-shaped values never enter the issue list"
-        );
-        assert_eq!(issues[0].labels[0].description, "");
-        assert!(issues[0].assignees.is_empty());
-        assert_eq!(issues[1].state, IssueState::Closed);
-        assert_eq!(issues[1].author, "");
-    }
-
-    #[test]
-    fn parses_issue_detail_comments_and_missing_optional_fields() {
-        let json = r#"{
-          "number":7,"title":"broken","state":"OPEN","body":null,
-          "comments":[
-            {"author":{"login":"bob"},"body":"confirmed","createdAt":"t3","updatedAt":null},
-            {"author":null,"body":"  "}
-          ]
-        }"#;
-        let issue = parse_issue_detail(json).unwrap();
-        assert_eq!(issue.number, 7);
-        assert_eq!(issue.body, "");
-        assert_eq!(issue.comments.len(), 1);
-        assert_eq!(issue.comments[0].author, "bob");
-        assert_eq!(issue.comments[0].updated_at, "");
-    }
-
-    #[test]
-    fn issue_parsers_reject_wrong_top_level_shapes() {
-        assert!(parse_issue_list("{}").is_err());
-        assert!(parse_issue_detail("[]").is_err());
-        assert!(parse_issue_detail(r#"{"title":"missing number"}"#).is_err());
     }
 
     #[test]

@@ -18,9 +18,8 @@
 use std::collections::HashMap;
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString};
-use kagi_domain::github::{
-    sort_prs, PrAttention, PrListFilter, PrReason, PrSection, PrSort, PullRequest,
-};
+use kagi_domain::github::{PrAttention, PrReason, PullRequest};
+use kagi_domain::pr_list::{sort_prs, PrListFilter, PrSection, PrSort};
 
 use super::i18n::Msg;
 use super::pr_mode::{

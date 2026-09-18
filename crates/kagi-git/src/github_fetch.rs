@@ -10,9 +10,9 @@ use std::time::Duration;
 
 use kagi_domain::github::{Issue, PullRequest};
 
-use crate::github::{
-    parse_issue_detail, parse_issue_list, parse_pr_list, FIELDS, ISSUE_DETAIL_FIELDS,
-    ISSUE_LIST_FIELDS,
+use crate::github::{parse_pr_list, FIELDS};
+use crate::github_issue::{
+    parse_issue_detail, parse_issue_list, ISSUE_DETAIL_FIELDS, ISSUE_LIST_FIELDS,
 };
 
 const GH_TIMEOUT: Duration = Duration::from_secs(60);

@@ -54,6 +54,7 @@ pub mod pr_conversation;
 pub mod pr_dashboard;
 pub mod pr_merge_status;
 pub mod pr_mode;
+pub mod pr_nav;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_squash;

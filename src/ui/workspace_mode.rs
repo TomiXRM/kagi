@@ -155,7 +155,7 @@ fn sidebar_page(left: f32) -> gpui::Div {
 /// navigator, as they did before pages existed.
 fn page_content(app: &KagiApp, mode: WorkspaceMode, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     match mode {
-        WorkspaceMode::Prs => super::pr_mode::render_pr_list(app, cx),
+        WorkspaceMode::Prs => super::pr_nav::render_pr_list(app, cx),
         WorkspaceMode::Issues => super::issues_mode::render_issue_list(app, cx),
         _ => super::sidebar::render_sidebar(app, cx),
     }

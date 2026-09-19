@@ -15,7 +15,10 @@ use crate::github_issue::{
     parse_issue_detail, parse_issue_list, ISSUE_DETAIL_FIELDS, ISSUE_LIST_FIELDS,
 };
 
-const GH_TIMEOUT: Duration = Duration::from_secs(60);
+/// The bound every `gh` invocation runs under — reads here, and the `gh pr
+/// comment` write in `github_comment`. One definition, so a write can never
+/// end up unbounded because it was spelled somewhere else.
+pub(crate) const GH_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Why a read-only `gh` fetch produced no data.
 ///

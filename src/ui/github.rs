@@ -488,4 +488,92 @@ impl KagiApp {
             cx.notify();
         }
     }
+
+    /// Post the composer's text as a comment on the open PR (ADR-0200).
+    ///
+    /// The explicit click is the approval - there is no confirmation modal, for
+    /// the same reason staging has none. Everything else is the write family:
+    /// the transport hold and the in-flight latch gate it, `finish_run` admits
+    /// it with an owner stamp, and `kagi_git::github::pr_comment` records the
+    /// attempt at its own transport boundary, so the receipt exists even if the
+    /// reader has switched tabs by the time `gh` answers.
+    pub fn start_pr_comment(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let Some((number, body)) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| (t.pr.number, t.comment_draft.clone()))
+        else {
+            return;
+        };
+        if body.trim().is_empty() {
+            return;
+        }
+        let Some(pr) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| t.pr.clone())
+        else {
+            return;
+        };
+        if self.reject_transport_hold(&repo_path, &format!("pr-comment #{number}")) {
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let plan = std::sync::Arc::new(kagi_git::github::plan_pr_comment(&pr, &body));
+        if !plan.blockers.is_empty() {
+            klog!("refused: pr-comment plan has blockers, not executing");
+            self.record_op(
+                "pr-comment",
+                plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            return;
+        }
+        let rp = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_body = body.clone();
+        let dispatched = self.finish_run(
+            cx,
+            "pr-comment",
+            i18n::Op::PrComment,
+            plan.clone(),
+            repo_path,
+            move || {
+                Ok(kagi_git::github::pr_comment(
+                    &rp, number, &bg_body, &bg_plan,
+                ))
+            },
+            |_| None,
+            move |done| match done {
+                Ok(kagi_git::OperationOutcome::PrComment { .. }) => {
+                    klog!("executed: pr-comment #{}", number);
+                    RunPresentation::none().pr_comment(number)
+                }
+                Ok(_) => RunPresentation::none(),
+                Err(failure) => {
+                    klog!("pr-comment failed: {}", failure.message);
+                    RunPresentation::none()
+                }
+            },
+        );
+        if dispatched {
+            self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+                "{} #{}…",
+                Msg::PrCommentPost.t(),
+                number
+            )));
+            cx.notify();
+        }
+    }
 }

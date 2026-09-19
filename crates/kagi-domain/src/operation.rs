@@ -244,6 +244,14 @@ pub enum OperationOutcome {
         detail: String,
         confirmed: bool,
     },
+    /// `gh pr comment`'s receipt for a comment posted to a PR. Like
+    /// [`Self::PrMerge`], a non-`Operation` remote write recorded at its own
+    /// transport boundary. `detail` is the new comment's URL when gh printed
+    /// one — the only handle that identifies what was posted.
+    PrComment {
+        number: u64,
+        detail: String,
+    },
     /// Deleted branch tip retained by a mandatory commit recovery ref (#584).
     DeleteBranch {
         name: String,

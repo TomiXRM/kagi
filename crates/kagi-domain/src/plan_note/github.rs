@@ -40,6 +40,10 @@ pub enum GithubNote {
     /// warning (#351) — the suggestion is written to the working tree only;
     /// review it with hunk staging before committing.
     SuggestionWorkingTreeOnly,
+    /// blocker — a pull-request comment with no text. `gh pr comment` would
+    /// happily post an empty comment; there is nothing to say and nothing to
+    /// undo it with but a manual delete, so the plan refuses it.
+    CommentBodyEmpty,
 }
 
 impl GithubNote {
@@ -85,6 +89,9 @@ impl GithubNote {
             GithubNote::SuggestionWorkingTreeOnly => {
                 "This edits the working tree only — nothing is committed. Review it with hunk staging before you commit.".to_string()
             }
+            GithubNote::CommentBodyEmpty => {
+                "The comment is empty. Write something before posting it.".to_string()
+            }
         }
     }
 }
@@ -96,6 +103,8 @@ pub enum GithubTitle {
     MergePr { number: u64, method: String },
     /// `Apply suggestion to '<path>'` (#351).
     ApplySuggestion { path: String },
+    /// `Comment on pull request #<n>`.
+    CommentPr { number: u64 },
 }
 
 impl GithubTitle {
@@ -107,6 +116,9 @@ impl GithubTitle {
             }
             GithubTitle::ApplySuggestion { path } => {
                 format!("Apply suggestion to '{}'", path)
+            }
+            GithubTitle::CommentPr { number } => {
+                format!("Comment on pull request #{}", number)
             }
         }
     }
@@ -230,5 +242,17 @@ mod tests {
                 "GitHub keeps a 'Revert' button on #42 after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted."
             );
         }
+    }
+
+    #[test]
+    fn comment_title_and_empty_body_blocker() {
+        assert_eq!(
+            GithubTitle::CommentPr { number: 42 }.message_en(),
+            "Comment on pull request #42"
+        );
+        assert_eq!(
+            GithubNote::CommentBodyEmpty.message_en(),
+            "The comment is empty. Write something before posting it."
+        );
     }
 }

@@ -56,6 +56,7 @@ pub mod pr_lane;
 pub mod pr_merge_status;
 pub mod pr_mode;
 pub mod pr_nav;
+pub mod pr_page;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_squash;
@@ -1081,6 +1082,12 @@ pub struct KagiApp {
     /// Issue #352: the command-palette search box (lazily built when the palette
     /// first opens; needs a `Window`). `None` until then / in headless paths.
     pub command_palette_input: Option<Entity<InputState>>,
+    /// The PR page's comment composer (ADR-0200). One input for the window: the
+    /// text belongs to the PR being read and is parked in that tab's
+    /// `comment_draft` when another PR takes the box over.
+    pub pr_comment_input: Option<Entity<InputState>>,
+    /// Which PR the composer currently holds the text of.
+    pub pr_comment_for: Option<u64>,
     /// Issue #352: index of the highlighted row in the command palette's current
     /// (filtered) result list. Reset to 0 on open and on every query change.
     pub command_palette_selected: usize,
@@ -1334,6 +1341,8 @@ impl KagiApp {
             theme_select: None,
             analyze_ignore_input: None,
             command_palette_input: None,
+            pr_comment_input: None,
+            pr_comment_for: None,
             command_palette_selected: 0,
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).

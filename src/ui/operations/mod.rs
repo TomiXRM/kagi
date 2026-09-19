@@ -86,6 +86,8 @@ pub(crate) struct RunPresentation {
     reload: bool,
     open_operation_log: bool,
     github_merge: Option<GithubMergePresentation>,
+    /// A posted PR comment: clear the composer and re-read the thread.
+    pr_comment: Option<u64>,
     commit_panel_failure: Option<CommitPanelFailure>,
     outcome_notice: Option<String>,
 }
@@ -129,6 +131,11 @@ impl RunPresentation {
 
     pub(crate) fn github_merge(mut self, number: u64, detail: String) -> Self {
         self.github_merge = Some(GithubMergePresentation { number, detail });
+        self
+    }
+
+    pub(crate) fn pr_comment(mut self, number: u64) -> Self {
+        self.pr_comment = Some(number);
         self
     }
     pub(crate) fn update_commit_panel(mut self, failure: CommitPanelFailure) -> Self {
@@ -556,6 +563,12 @@ impl KagiApp {
             self.pr_mode_close_tab_for(merged.number, cx);
             self.refresh_github_prs(cx);
             self.fetch_async(true, cx);
+        }
+        if let Some(number) = presentation.pr_comment {
+            // The comment is on the server now, so the box has nothing left to
+            // hold and the thread is one read out of date.
+            self.clear_pr_comment_draft(number, cx);
+            self.pr_mode_reload_conversation(number, cx);
         }
         if let Some(status) = presentation.status {
             self.status_footer = status;

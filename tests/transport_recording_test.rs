@@ -12,7 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Mutex;
 
-use kagi_git::github::{merge_pr, plan_pr_merge, MergeMethod};
+use kagi_git::github::{merge_pr, plan_pr_comment, plan_pr_merge, pr_comment, MergeMethod};
 use kagi_git::oplog::{read_oplog_tail, Actor, OpOutcome};
 
 /// PATH and KAGI_LOG_DIR are process-global; the tests in this binary share them.
@@ -101,9 +101,14 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf, Environment)
 }
 
 fn latest_outcome() -> OpOutcome {
+    latest_outcome_of("pr-merge")
+}
+
+/// The single entry the log must hold, and the op it must be filed under.
+fn latest_outcome_of(op: &str) -> OpOutcome {
     let entries = read_oplog_tail(10);
     assert_eq!(entries.len(), 1, "exactly one entry per accepted attempt");
-    assert_eq!(entries[0].op, "pr-merge");
+    assert_eq!(entries[0].op, op);
     entries[0].outcome.clone()
 }
 
@@ -321,6 +326,106 @@ fn pr_merge_reports_recording_failure_without_hiding_the_merge() {
     };
     assert_eq!(attempted.op, "pr-merge");
     assert!(matches!(attempted.outcome, OpOutcome::Success { .. }));
+}
+
+// ── `gh pr comment` — the same boundary contract, without a server re-read ──
+
+/// The comment body arrives on **stdin** (`--body-file -`), so the fake `gh`
+/// must drain it: what it captures is the proof the text never rode in argv.
+/// `$2` dispatch as above — `pr comment …` and the `repo view` that resolves
+/// the `-R` identity are answered by one script.
+fn gh_comment_script(comment: &str) -> String {
+    format!(
+        "#!/bin/sh\ncase \"$2\" in\ncomment) cat > ./posted-body.txt; {comment} ;;\n\
+         view) case \"$*\" in *owner,name*) echo 'acme/widgets' ;; *) exit 2 ;; esac ;;\n\
+         *) exit 2 ;;\nesac\n"
+    )
+}
+
+const COMMENT_OK: &str = "echo 'https://example.invalid/acme/widgets/pull/501#issuecomment-99'";
+const COMMENT_FAILS: &str = "echo 'GraphQL: Resource not accessible by integration' >&2; exit 1";
+const COMMENT_BODY: &str = "LGTM, shipping it";
+
+fn comment_plan() -> kagi_git::OperationPlan {
+    let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
+    plan_pr_comment(&pr, COMMENT_BODY)
+}
+
+#[test]
+fn pr_comment_records_before_returning_when_the_ui_completion_is_dropped() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (bin, workdir, _restore) = fixture(root.path());
+    fake_gh(&bin, &gh_comment_script(COMMENT_OK));
+
+    let report = pr_comment(&workdir, 501, COMMENT_BODY, &comment_plan());
+    let Ok(kagi_git::OperationOutcome::PrComment { number, detail }) = &report.result else {
+        panic!("expected a posted comment, got {:?}", report.result);
+    };
+    assert_eq!(*number, 501);
+    assert!(
+        detail.contains("issuecomment-99"),
+        "the new comment's URL is the handle that identifies it: {detail}"
+    );
+    assert!(matches!(
+        report.recording,
+        kagi_git::backend::recording::Recording::Appended { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(workdir.join("posted-body.txt")).unwrap(),
+        COMMENT_BODY,
+        "the body must reach gh on stdin, whole and unquoted"
+    );
+
+    // No UI callback ran: this is the dropped-completion path.
+    let entries = read_oplog_tail(10);
+    assert_eq!(
+        entries.len(),
+        1,
+        "the comment must be recorded exactly once"
+    );
+    let entry = &entries[0];
+    assert_eq!(entry.op, "pr-comment");
+    assert_eq!(entry.actor, Actor::Human);
+    assert_eq!(
+        entry.worktree.as_deref(),
+        Some(workdir.display().to_string().as_str()),
+        "the recording must name the worktree it ran in"
+    );
+    let OpOutcome::Success { after } = &entry.outcome else {
+        panic!("expected a recorded success, got {:?}", entry.outcome);
+    };
+    assert!(
+        after.dirty.contains("issuecomment-99"),
+        "the receipt keeps the comment's URL: {}",
+        after.dirty
+    );
+}
+
+#[test]
+fn a_refused_pr_comment_is_still_recorded_with_ghs_own_reason() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    // A refused post is an accepted attempt too — one entry, not zero. This is
+    // the whole reason the boundary records instead of the UI completion.
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (bin, workdir, _restore) = fixture(root.path());
+    fake_gh(&bin, &gh_comment_script(COMMENT_FAILS));
+
+    let report = pr_comment(&workdir, 501, COMMENT_BODY, &comment_plan());
+    assert!(report.result.is_err(), "a refused post is not an Ok");
+    let OpOutcome::Failed { error } = latest_outcome_of("pr-comment") else {
+        panic!("a clean non-zero exit must be recorded as Failed");
+    };
+    assert!(
+        error.contains("Resource not accessible by integration"),
+        "gh's own reason must survive into the receipt: {error}"
+    );
 }
 
 #[path = "support/isolated.rs"]

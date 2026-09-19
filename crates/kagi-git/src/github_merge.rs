@@ -115,7 +115,11 @@ pub fn pr_merge_status(workdir: &Path, number: u64) -> Result<PrMergeStatus, Git
 }
 
 /// `owner`/`name` for the repo at `workdir`, via `gh repo view`.
-fn repo_owner_name(workdir: &Path) -> Result<(String, String), GitError> {
+///
+/// `pub(crate)`: the `gh pr comment` boundary in `github_comment` addresses
+/// its mutation with the same identity, and resolving it a second way would
+/// let two GitHub writes from the same worktree name two repositories.
+pub(crate) fn repo_owner_name(workdir: &Path) -> Result<(String, String), GitError> {
     let out = crate::cli::gh_command()
         .args([
             "repo",

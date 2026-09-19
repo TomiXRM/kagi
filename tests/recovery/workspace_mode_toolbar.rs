@@ -330,6 +330,22 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                 );
             }
 
+            // ADR-0200 §8/§9: the PR's properties are rows of its own page, and
+            // the comment box is pinned under the feed. Both must be on screen
+            // for the PR being read - a rail or a modal would fail this.
+            for control in ["pr-mode-properties", "pr-mode-composer"] {
+                e2e::clear_control_bounds(win.window_id(), control);
+            }
+            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            let properties =
+                measure(cx, win, "pr-mode-properties").expect("the PR's properties are drawn");
+            let composer = measure(cx, win, "pr-mode-composer").expect("the comment box is drawn");
+            assert!(
+                f32::from(properties.origin.y) < f32::from(composer.origin.y),
+                "the properties open the page and the composer closes it"
+            );
+
             app.update(cx, |app, cx| app.pr_mode_home(cx));
             assert!(
                 measure(cx, win, "pr-mode-lane-pane").is_none(),

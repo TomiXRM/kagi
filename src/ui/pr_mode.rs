@@ -67,6 +67,9 @@ pub struct PrTab {
     /// The background conversation fetch has come back (ok or not). Until
     /// then the empty lists above mean "not yet", not "none".
     pub conversation_loaded: bool,
+    /// The composer's text for this PR, parked here while another PR holds the
+    /// box (ADR-0200).
+    pub comment_draft: String,
     /// ADR-0145: conflicts a merge would produce, computed locally on first
     /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
     /// = computed and clean, which is a different thing to say than "unknown".
@@ -262,6 +265,7 @@ impl KagiApp {
             comments: Vec::new(),
             line_comments: Vec::new(),
             conversation_loaded: false,
+            comment_draft: String::new(),
             feed_scroll: gpui::ScrollHandle::new(),
             conflicts: None,
             conflict_selected: None,
@@ -803,6 +807,96 @@ impl KagiApp {
         }
     }
 
+    /// Lazy-create the PR comment composer and keep its text with the PR it was
+    /// typed for (ADR-0200). Runs on the window-bearing render pass, because
+    /// `InputState::new` needs a `&mut Window` and `render_pr_mode` has none.
+    ///
+    /// Switching PRs parks the text in the tab it belongs to and loads the new
+    /// tab's draft, so a half-written comment is never posted to the wrong PR
+    /// and never silently lost.
+    /// Re-read the conversation of `number` after a write to it (ADR-0200).
+    /// The load itself already freezes its owner, so a tab switch mid-flight
+    /// lands the rows on the PR they belong to and nowhere else.
+    pub(crate) fn pr_mode_reload_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
+        self.pr_mode_load_conversation(number, cx);
+    }
+
+    /// Empty the composer for `number` - the text is on the server now. Only
+    /// the box currently holding that PR's text is reset, so a draft parked for
+    /// another PR survives.
+    pub(crate) fn clear_pr_comment_draft(&mut self, number: u64, cx: &mut Context<Self>) {
+        if let Some(tab) = self
+            .pr_mode_mut()
+            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+        {
+            tab.comment_draft.clear();
+        }
+        if self.pr_comment_for == Some(number) {
+            // `InputState::set_value` needs a `&mut Window`, which a completion
+            // callback has none of. Dropping the entity is what the next
+            // window-bearing frame rebuilds from the (now empty) draft.
+            self.pr_comment_input = None;
+            self.pr_comment_for = None;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn sync_pr_comment_input(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| t.pr.number);
+        let Some(number) = open else {
+            return;
+        };
+        if self.pr_comment_input.is_none() {
+            let input = cx.new(|cx| {
+                gpui_component::input::InputState::new(window, cx)
+                    .multi_line(true)
+                    .auto_grow(2, 8)
+                    .placeholder(Msg::PrCommentPlaceholder.t())
+            });
+            self.pr_comment_input = Some(input);
+        }
+        let Some(input) = self.pr_comment_input.clone() else {
+            return;
+        };
+        if self.pr_comment_for == Some(number) {
+            // Same PR: the box is the truth, the tab keeps the copy.
+            let text = input.read(cx).value().to_string();
+            if let Some(tab) = self
+                .pr_mode_mut()
+                .and_then(|m| m.active.and_then(|ix| m.tabs.get_mut(ix)))
+            {
+                if tab.comment_draft != text {
+                    tab.comment_draft = text;
+                }
+            }
+            return;
+        }
+        // Another PR took the box: park the old text, load this tab's draft.
+        let parked = input.read(cx).value().to_string();
+        if let Some(previous) = self.pr_comment_for.take() {
+            if let Some(tab) = self
+                .pr_mode_mut()
+                .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == previous))
+            {
+                tab.comment_draft = parked;
+            }
+        }
+        let draft = self
+            .pr_mode()
+            .and_then(|m| m.tabs.iter().find(|t| t.pr.number == number))
+            .map(|t| t.comment_draft.clone())
+            .unwrap_or_default();
+        input.update(cx, |state, cx| state.set_value(draft, window, cx));
+        self.pr_comment_for = Some(number);
+    }
+
     pub(super) fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.focus = f;
@@ -906,6 +1000,9 @@ const COMMIT_STRIP_MAX_H: f32 = 210.0;
 const ROW_H: f32 = 24.0;
 pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
+    // Faces for the logins on this page (ADR-0200). One attempt per login per
+    // process; the pass is a set lookup once they are in hand.
+    app.ensure_pr_avatars(cx);
     let left = super::e2e::measure_control(
         "pr-mode-left-pane",
         super::workspace_mode::render_sidebar_pages(
@@ -1579,6 +1676,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             super::pr_merge_status::render(&status_view, cx)
         });
         content = content.child(super::pr_conversation::render_feed(
+            app,
             super::pr_conversation::Feed {
                 pr: &pr,
                 reviews: &reviews,
@@ -1643,11 +1741,20 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         content = content.child(diff_el);
     }
 
-    // Every pixel of the body is the view's own: the files, the checks and the
-    // facts live in the swimlane pane's lower third (ADR-0200), not in a
-    // column of their own. A pane that exists to describe the PR must not eat
-    // the width of the diff being read (user report).
-    col.child(content).into_any_element()
+    // Every pixel of the body is the view's own: the files and the checks live
+    // in the swimlane pane's lower third (ADR-0200), not in a column of their
+    // own. A pane that exists to describe the PR must not eat the width of the
+    // diff being read (user report).
+    //
+    // The composer is pinned under the feed rather than scrolling with it, the
+    // way github.com keeps it reachable at the foot of the conversation.
+    col.child(content)
+        .children(
+            show_feed
+                .then(|| super::pr_page::render_composer(app, cx))
+                .flatten(),
+        )
+        .into_any_element()
 }
 
 /// The per-check list, so "CI failed" names the job. Clicking a row opens
@@ -1744,13 +1851,12 @@ fn render_checks(tab: &PrTab, cx: &mut Context<KagiApp>) -> Option<gpui::AnyElem
 }
 
 /// What the swimlane pane's lower third shows about the PR on screen: the
-/// files of the view when a file view is open, and otherwise the checks and
-/// the facts (who is on it, how it is labelled, whether a worktree here has it
-/// checked out).
+/// files of the view when a file view is open, and otherwise the checks.
 ///
 /// It lives in an existing pane on purpose. As a column of its own - left or
 /// right of the body - it only narrowed the diff the reader came for
-/// (ADR-0200, user report).
+/// (ADR-0200, user report). The PR's *properties* are not here: they are the
+/// first rows of the PR's own page, where github.com's reader looks for them.
 pub(super) fn render_pr_detail(
     app: &KagiApp,
     tab: &PrTab,
@@ -1770,7 +1876,6 @@ pub(super) fn render_pr_detail(
         .flex()
         .flex_col()
         .children(render_checks(tab, cx))
-        .child(render_rail_facts(app, &tab.pr))
         .into_any_element()
 }
 
@@ -1900,7 +2005,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
 /// GitHub's own six-hex label colour, or the neutral border when it is absent
 /// or malformed. A label's colour is how it is recognised at a glance, so it
 /// is worth carrying through rather than painting every pill the same.
-fn label_color(hex: &str) -> u32 {
+pub(super) fn label_color(hex: &str) -> u32 {
     u32::from_str_radix(hex.trim_start_matches('#'), 16)
         .ok()
         .filter(|_| hex.trim_start_matches('#').len() == 6)
@@ -1908,107 +2013,6 @@ fn label_color(hex: &str) -> u32 {
 }
 
 /// REVIEWERS / ASSIGNEES / LABELS / WORKTREE — the facts about the PR itself.
-fn render_rail_facts(app: &KagiApp, pr: &PullRequest) -> gpui::AnyElement {
-    // A worktree here that has the PR's head branch checked out: the answer to
-    // "can I just go and look at this?", which no GitHub field can give.
-    let worktree = app
-        .view()
-        .worktrees
-        .iter()
-        .find(|w| w.branch.as_deref() == Some(pr.head.as_str()))
-        .map(|w| {
-            let dirt = w.wip.as_ref().map(|wip| wip.total()).unwrap_or(0);
-            (
-                w.name.clone(),
-                match dirt {
-                    0 => Msg::PrRailWorktreeClean.t().to_string(),
-                    n => super::i18n::unstaged_not_included(n),
-                },
-            )
-        });
-
-    let people = |logins: &[String]| {
-        let mut row = div().flex().flex_row().flex_wrap().gap_1().text_xs();
-        if logins.is_empty() {
-            return row
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::PrRailNone.t()));
-        }
-        for login in logins {
-            row = row.child(
-                div()
-                    .text_color(rgb(theme().text_sub))
-                    .child(safe_text(&format!("@{login}"))),
-            );
-        }
-        row
-    };
-
-    let mut col = div().flex().flex_col().flex_shrink_0();
-    for (label, body) in [
-        (Msg::PrRailReviewers.t(), people(&pr.reviewers)),
-        (Msg::PrRailAssignees.t(), people(&pr.assignees)),
-    ] {
-        col = col
-            .child(
-                section_label(label.to_string())
-                    .border_t_1()
-                    .border_color(rgb(theme().surface)),
-            )
-            .child(div().px_3().pb_1().child(body));
-    }
-    if !pr.labels.is_empty() {
-        let mut pills = div().flex().flex_row().flex_wrap().gap_1();
-        for label in &pr.labels {
-            pills = pills.child(
-                div()
-                    .px_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(label_color(&label.color)))
-                    .text_xs()
-                    .text_color(rgb(theme().text_sub))
-                    .child(safe_text(&label.name)),
-            );
-        }
-        col = col
-            .child(
-                section_label(Msg::PrRailLabels.t().to_string())
-                    .border_t_1()
-                    .border_color(rgb(theme().surface)),
-            )
-            .child(div().px_3().pb_1().child(pills));
-    }
-    if let Some((name, state)) = worktree {
-        col = col
-            .child(
-                section_label(Msg::PrRailWorktree.t().to_string())
-                    .border_t_1()
-                    .border_color(rgb(theme().surface)),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .pb_1()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme().text_main))
-                            .child(safe_text(&name)),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(state)),
-                    ),
-            );
-    }
-    col.into_any_element()
-}
-
 #[cfg(test)]
 mod view_reset_tests {
     use super::*;

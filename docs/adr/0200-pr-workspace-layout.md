@@ -13,15 +13,14 @@ the navigator grouped PRs by the Focus Queue's *action* buckets with no folds
 and no counts; the commit list was a 210px strip pinned above every view; the
 detail rail carried the PR's stack and its changed files but none of the facts
 GitHub's own sidebar carries. A mock (Claude Design, `git-swim-lane-client-ui`)
-gave the target shape, and a second GPUI GitHub client (`e1`) gave a reference
-for the interactions.
+gave the target shape; **github.com itself is the behavioural reference** -
+what kagi shows for a PR should read the way that PR reads on GitHub.
 
-`e1` is a **design** reference only. Its transport is REST with a device-flow
-token; kagi delegates authentication to `gh` and stores no token, which is the
-whole reason it can claim that what kagi shows and what an agent sees never
-differ. Its split-diff row model and its lane layout are also already solved
-here — `src/ui/diff_split.rs` and `kagi_domain::graph` predate it and are
-wired into this mode.
+Kagi's own constraints do not move for it: authentication is delegated to `gh`
+and no token is stored, which is the whole reason kagi can claim that what it
+shows and what an agent sees never differ; the split-diff row model and the
+lane layout are already solved here (`src/ui/diff_split.rs`,
+`kagi_domain::graph`) and are wired into this mode.
 
 ## Decision
 
@@ -158,11 +157,9 @@ measures the row instead of trusting a constant.
 
 ### 7. 概要 and レビュー are one page; the tabs are navigation into it
 
-`e1` (`crates/e1-views/src/detail.rs`) draws its Conversation as a single
-`div + overflow_y_scroll` holding a hand-ordered column — facets, merge card,
-body markdown, then the comments — and reserves real tab switching for Files.
-Reading a PR on github.com is the same motion: the description and the
-conversation are one scroll, not two destinations.
+Reading a PR on github.com is one motion: the properties, the checks, the
+description and the conversation are a single scroll, and only the files are a
+destination of their own. kagi's 概要/レビュー split had no counterpart there.
 
 kagi's 概要 and レビュー tabs drew two separate scroll panes, so reading a
 review meant losing the description. They are now **one feed**
@@ -182,6 +179,50 @@ Three consequences worth stating:
 - The animated loading row stays **above** the feed: `with_animation` does not
   tick inside a scroll pane. The description is readable while the
   conversation is still in flight, which is the point of merging them.
+
+### 8. The PR's properties are the first rows of its page
+
+github.com keeps Labels / Assignees / Reviewers in a right-hand column. kagi
+does not: §5 removed the only column that could hold them, because a column of
+metadata beside a diff is what the diff loses width to. They are instead the
+first rows of the PR's own page - name/value rows with a fixed name column, so
+they read as a table - ahead of the merge card and the description.
+
+`render_pr_properties` (`src/ui/pr_mode.rs`) is the **only** renderer of those
+facts; the swimlane pane's lower third keeps the checks and the file list. A
+second copy in the rail would be a second thing to keep true.
+
+### 9. Logins have faces, and a comment can be written
+
+A reviewer list reads at a glance only with avatars beside the names, so the
+avatar map gained a second key space: a **GitHub login** beside the commit
+author emails it already held. Nothing else changed - a login has no `@` and an
+email does, so the two cannot collide, and `commit_header::avatar_circle` is
+now `pub` and renders both rather than growing a fourth hand-rolled copy of the
+same circle. `ensure_pr_avatars` fetches one URL per login from GitHub's avatar
+CDN, disk-cached, once per process per login: no API call and no token.
+
+**Writing a comment** follows the write family exactly, with no new machinery:
+
+- `kagi_git::github::pr_comment` is the recorded transport boundary. The body
+  goes to `gh pr comment --body-file -` **on stdin**, never in argv: arbitrary
+  user text as an argument is a quoting hazard and a length limit. The receipt
+  is `Success` on exit 0, `Failed` on a clean non-zero exit, and `Unknown` on
+  an unproven termination - there is no server re-read, so an unproven post is
+  reported as unproven rather than guessed at, and the transport hold stops it
+  being retried blindly.
+- `KagiApp::start_pr_comment` gates on the transport hold and the in-flight
+  latch and dispatches through `finish_run`, so the attempt is recorded before
+  the completion crosses the tab guard - the record exists even if the reader
+  has switched tabs.
+- The explicit click is the approval; there is no confirmation modal, the same
+  exemption staging has. An empty body is a plan **blocker**, not a plan that
+  posts nothing.
+- One composer exists per window, pinned under the feed where github.com keeps
+  it. Its text belongs to the PR it was typed for: switching PRs parks the
+  draft on the tab it came from (`PrTab::comment_draft`) and loads the new
+  tab's. A posted comment clears that draft and re-reads the thread through the
+  existing owner-frozen conversation load.
 
 ## Consequences
 

@@ -490,6 +490,11 @@ pub use crate::github_merge::{
     QueuePosition,
 };
 
+// The `gh pr comment` write (plan + recorded boundary) lives in
+// `github_comment` and is re-exported here so the public path stays
+// `kagi_git::github::*`.
+pub use crate::github_comment::{comment_args, plan_pr_comment, pr_comment};
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -25,13 +25,18 @@ use crate::i18n::Msg;
 use crate::theme::{self, theme};
 
 /// One round avatar: the resolved GitHub/Gravatar image when the background
-/// resolution pass (ADR-0037/0123, bin-side) has one for `email`, else the
+/// resolution pass (ADR-0037/0123, bin-side) has one for `key`, else the
 /// deterministic initial-on-colour circle (T020 fallback). Same treatment
 /// Graph mode's Inspector uses — `size` is 18px for a commit's own author,
 /// 16px for a co-author row, matching `inspector.rs`.
-fn avatar_circle(
+///
+/// `key` is whatever the resolution pass keyed the image under: a commit
+/// author's email in Graph mode, a GitHub **login** on the PR page (ADR-0200).
+/// It is also the hash input for the fallback colour, so one person keeps one
+/// colour wherever they appear under the same key.
+pub fn avatar_circle(
     size: f32,
-    email: &str,
+    key: &str,
     display_name: &str,
     avatars: &AvatarImages,
 ) -> impl IntoElement {
@@ -41,7 +46,7 @@ fn avatar_circle(
         .flex_shrink_0()
         .rounded_full()
         .overflow_hidden();
-    match avatars.get(email).cloned() {
+    match avatars.get(key).cloned() {
         Some(image) => circle.child(
             gpui::img(gpui::ImageSource::Image(image))
                 .size_full()
@@ -51,7 +56,7 @@ fn avatar_circle(
             .flex()
             .items_center()
             .justify_center()
-            .bg(avatar_color(email))
+            .bg(avatar_color(key))
             .text_xs()
             .text_color(rgb(theme().bg_base))
             .child(SharedString::from(avatar_initial(display_name))),

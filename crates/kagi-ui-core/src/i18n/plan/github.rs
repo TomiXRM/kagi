@@ -41,6 +41,9 @@ pub fn note_ja(note: &GithubNote) -> String {
             "suggestion のレビュー後にファイルが変更されています。誤った行を書き換える恐れがあるため拒否します。現在のファイルでレビューを開き直してください。\nfile `{}`",
             path
         ),
+        GithubNote::CommentBodyEmpty => {
+            "コメント本文が空です。投稿する文章を入力してください。".to_string()
+        }
         GithubNote::SuggestionWorkingTreeOnly => {
             "作業ツリーだけを書き換えます(commit しません)。commit 前に hunk staging で確認してください。".to_string()
         }
@@ -52,6 +55,9 @@ pub fn title_ja(title: &GithubTitle) -> String {
     match title {
         GithubTitle::MergePr { number, method } => {
             format!("pull request #{} を merge ({})", number, method)
+        }
+        GithubTitle::CommentPr { number } => {
+            format!("pull request #{} にコメントを投稿", number)
         }
         GithubTitle::ApplySuggestion { path } => {
             format!("`{}` に suggestion を適用", path)

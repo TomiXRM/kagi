@@ -156,6 +156,7 @@ fn conversation_items(
     reviews: &[Review],
     comments: &[Comment],
     line_comments: &[ReviewComment],
+    avatars: &kagi_ui_core::avatar::AvatarImages,
     cx: &mut Context<KagiApp>,
 ) -> Vec<gpui::AnyElement> {
     use gpui_component::text::{TextView, TextViewStyle};
@@ -268,11 +269,14 @@ fn conversation_items(
                         .mb_2()
                         .border_b_1()
                         .border_color(rgb(theme().selected))
+                        .child(kagi_ui_core::commit_header::avatar_circle(
+                            18., &e.author, &e.author, avatars,
+                        ))
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(rgb(theme().text_main))
-                                .child(safe_text(&format!("@{}", e.author))),
+                                .child(safe_text(&e.author)),
                         )
                         .children(e.tag.as_ref().map(|t| {
                             use kagi_domain::github::TagSeverity;
@@ -353,7 +357,7 @@ fn conversation_items(
 }
 
 /// The PR's page: its description and its conversation, one scroll, in the
-/// order a reader goes through them (ADR-0200, `e1`'s Conversation tab).
+/// order a reader goes through them - the order github.com uses (ADR-0200).
 ///
 /// Exactly **two children**, and that is a contract: the 概要 and レビュー tabs
 /// scroll this feed to child 0 and child 1 rather than swapping the body, so
@@ -371,7 +375,11 @@ pub(super) struct Feed<'a> {
     pub scroll: &'a gpui::ScrollHandle,
 }
 
-pub(super) fn render_feed(feed: Feed<'_>, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub(super) fn render_feed(
+    app: &KagiApp,
+    feed: Feed<'_>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let Feed {
         pr,
         reviews,
@@ -381,7 +389,14 @@ pub(super) fn render_feed(feed: Feed<'_>, cx: &mut Context<KagiApp>) -> gpui::An
         merge_card,
         scroll,
     } = feed;
-    let items = conversation_items(pr, reviews, comments, line_comments, cx);
+    let items = conversation_items(
+        pr,
+        reviews,
+        comments,
+        line_comments,
+        &app.avatars.images,
+        cx,
+    );
     let count = items.len();
     let overview = div()
         .id("pr-feed-overview")
@@ -389,6 +404,12 @@ pub(super) fn render_feed(feed: Feed<'_>, cx: &mut Context<KagiApp>) -> gpui::An
         .flex()
         .flex_col()
         .gap_3()
+        // The properties come first, the way they do on github.com: who is on
+        // this PR and how it is labelled is what you check before reading it.
+        .child(super::e2e::measure_control(
+            "pr-mode-properties",
+            super::pr_page::render_pr_properties(app, pr),
+        ))
         .children(merge_card)
         .child(description_card(pr, cx));
     let review =

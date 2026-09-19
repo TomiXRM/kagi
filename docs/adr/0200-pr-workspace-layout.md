@@ -260,6 +260,7 @@ APPROVE - a plan blocker, not a disabled button with no reason.
 
 A posted comment or review settles **before** the completion's tab guard, and
 it settles against the `(session, repository)` pair the write was planned with
+
 - never against what is on screen when `gh` answers:
 
 - `settle_pr_write(owner, repo, number)` empties **that owner's** draft and
@@ -283,9 +284,10 @@ diff row model, not to this page.
 
 ### 11. The properties are editable from their rows
 
-Reviewers, assignees and labels each open a picker from the gear **or from
-the value itself** - "なし" is an invitation to add and an existing value an
-invitation to change (user request). The picker carries a fuzzy filter box
+Reviewers, assignees and labels each open a picker **from the value itself** -
+"なし" is an invitation to add and an existing value an invitation to change.
+A gear at the end of the row came first and was dropped: the value already
+says what a gear would (user request). The picker carries a fuzzy filter box
 (the command palette's matcher): a login is remembered by a few letters more
 often than by its spelling. Selected values always stay listed whatever the
 filter says, so a filter can never hide what is about to be sent. The box is

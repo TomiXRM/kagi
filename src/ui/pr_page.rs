@@ -106,9 +106,9 @@ pub(super) fn render_pr_properties(
         pills.into_any_element()
     };
 
-    // One row per property: a fixed-width name, then the value, then the gear
-    // that edits it (ADR-0200 §11). A field with no editor - the worktree line,
-    // which is local truth - passes `None` and gets no gear.
+    // One row per property: a fixed-width name, then the value - which is the
+    // editor's click target (ADR-0200 §11). A field with no editor - the
+    // worktree line, which is local truth - passes `None` and is inert.
     let row = |name: &str, value: gpui::AnyElement, field: Option<super::modals::PrField>| {
         div()
             .flex()
@@ -124,9 +124,9 @@ pub(super) fn render_pr_properties(
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(name.to_string())),
             )
-            // The value itself opens the editor too - "なし" is an invitation
-            // to add, an existing value an invitation to change - not only the
-            // gear at the end of the row (user request).
+            // The value is the editor's way in - "なし" is an invitation to add,
+            // an existing value an invitation to change. There is no gear:
+            // the value already says what a gear would (user request).
             .child(match field {
                 Some(field) => {
                     let open =
@@ -158,29 +158,6 @@ pub(super) fn render_pr_properties(
                 }
                 None => div().flex_1().min_w(px(0.)).child(value).into_any_element(),
             })
-            .children(field.map(|field| {
-                let open = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-                    this.open_pr_fields_modal(field, cx);
-                });
-                div()
-                    .id(match field {
-                        super::modals::PrField::Reviewers => "pr-field-reviewers",
-                        super::modals::PrField::Assignees => "pr-field-assignees",
-                        super::modals::PrField::Labels => "pr-field-labels",
-                    })
-                    .flex_shrink_0()
-                    .px_1()
-                    .rounded_sm()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .cursor_pointer()
-                    .hover(|s| {
-                        s.bg(rgb(theme().surface))
-                            .text_color(rgb(theme().text_main))
-                    })
-                    .on_click(open)
-                    .child(SharedString::from("\u{2699}"))
-            }))
     };
 
     // Boxed, like the description and the comments below it: a bare list of

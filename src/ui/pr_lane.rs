@@ -64,10 +64,25 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
     // off the rail whatever the rail's width (user report). The window's lanes
     // are therefore renumbered into consecutive columns, so "five lanes" means
     // five columns and nothing needed to be brought into view at all.
+    // The commit the branch grew from - the PR's merge-base - drawn under
+    // the window even when it is further than the context rows reach, behind
+    // an elision row saying how many commits were skipped (user request). A
+    // base inside the window is simply one of its rows; one not loaded at all
+    // cannot be drawn.
+    let root: Option<usize> = window.and_then(|(_, hi)| {
+        root_row(
+            hi,
+            view.commit_row_index.get(&tab.base).copied(),
+            view.rows.len(),
+        )
+    });
     let columns = match window {
-        Some((lo, hi)) => {
-            lane_columns((lo..=hi).filter_map(|ix| view.rows.get(ix)).map(|r| r.lane))
-        }
+        Some((lo, hi)) => lane_columns(
+            (lo..=hi)
+                .chain(root)
+                .filter_map(|ix| view.rows.get(ix))
+                .map(|r| r.lane),
+        ),
         None => lane_columns(std::iter::empty()),
     };
     let lanes = columns.len().max(1);
@@ -112,6 +127,25 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
                 },
                 cx,
             ));
+        }
+        if let Some(root_ix) = root {
+            if let Some(row) = view.rows.get(root_ix) {
+                body = body
+                    .child(render_elision_row(root_ix - hi - 1, rail))
+                    .child(render_lane_row(
+                        root_ix,
+                        row,
+                        number,
+                        false,
+                        &Rail {
+                            width: rail,
+                            scroll,
+                            columns: &columns,
+                            avatars: avatars.as_ref(),
+                        },
+                        cx,
+                    ));
+            }
         }
         // Horizontal wheel/trackpad deltas scroll the rail; vertical ones are
         // left to the body's own scroll, exactly as the commit list's graph
@@ -278,6 +312,46 @@ struct Rail<'a> {
     avatars: Option<&'a std::collections::HashMap<String, std::sync::Arc<gpui::Image>>>,
 }
 
+/// The row to draw as the branch's root under the window: the merge-base's
+/// row when it lies below the window's last row `hi` and inside the loaded
+/// history. Inside the window it is already drawn; unloaded it cannot be.
+fn root_row(hi: usize, base: Option<usize>, rows: usize) -> Option<usize> {
+    base.filter(|ix| *ix > hi && *ix < rows)
+}
+
+/// The gap between the window and the PR's root: a dotted rule across the
+/// rail and the count of commits it stands for, at row height so the root
+/// under it reads as "the same column, further down".
+fn render_elision_row(skipped: usize, rail: f32) -> gpui::AnyElement {
+    div()
+        .id("pr-lane-elision")
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .h(theme::scaled_px(ROW_H))
+        .child(
+            div()
+                .w(theme::scaled_px(rail))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from("\u{22ee}")),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(super::i18n::pr_lane_elided(skipped))),
+        )
+        .into_any_element()
+}
+
 /// One history row: its node on the rail, then the subject.
 ///
 /// A row of the PR is lit and selects that commit in the PR; a context row is
@@ -421,6 +495,25 @@ fn render_lane_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The branch root is drawn under the window only when it is actually
+    /// further down than the context reaches and is loaded at all.
+    #[test]
+    fn the_root_is_drawn_only_beyond_the_window_and_within_history() {
+        assert_eq!(root_row(20, Some(45), 200), Some(45), "past the window");
+        assert_eq!(
+            root_row(20, Some(15), 200),
+            None,
+            "inside the window: already a row"
+        );
+        assert_eq!(
+            root_row(20, Some(20), 200),
+            None,
+            "the window's own last row"
+        );
+        assert_eq!(root_row(20, Some(250), 200), None, "not loaded");
+        assert_eq!(root_row(20, None, 200), None, "unknown base");
+    }
 
     /// The reported dashed line beside every subject: the main graph's
     /// WIP→HEAD connector (and a squash ghost link) rode the row's edges into

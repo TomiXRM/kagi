@@ -571,6 +571,7 @@ pub enum Msg {
     PrReviewRequestChanges,
     PrEditApply,
     PrFieldsApply,
+    PrFieldsFilterPlaceholder,
     PrCommentPlaceholder,
     PrCommentPost,
     PrSuggestion,
@@ -1686,6 +1687,8 @@ impl Msg {
             (Ja, PrReviewApprove) => "承認",
             (En, PrReviewRequestChanges) => "REQUEST CHANGES",
             (Ja, PrReviewRequestChanges) => "修正を依頼",
+            (En, PrFieldsFilterPlaceholder) => "Type to filter…",
+            (Ja, PrFieldsFilterPlaceholder) => "絞り込み…",
             (En, PrFieldsApply) => "Apply",
             (Ja, PrFieldsApply) => "適用",
             (En, PrEditApply) => "Edit",
@@ -2383,6 +2386,18 @@ pub fn wip_row_other(n: usize) -> String {
 }
 
 /// Commit-panel warning shown when unstaged changes exist and won't be included.
+/// The swimlane's elision row between the window and the PR's root commit.
+pub fn pr_lane_elided(n: usize) -> String {
+    match lang() {
+        Lang::En => format!(
+            "{} commit{} elided \u{00b7} branch root below",
+            n,
+            if n == 1 { "" } else { "s" }
+        ),
+        Lang::Ja => format!("{} コミット省略 \u{00b7} 下がブランチの根", n),
+    }
+}
+
 /// The checks card's second line: how many ran, and how many failed (mock 7a).
 pub fn pr_checks_counts(total: usize, failed: usize) -> String {
     match (lang(), failed) {

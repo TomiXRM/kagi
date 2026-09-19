@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Operations run from `cargo run` are recorded again.** Cargo hands the binary `CARGO_MANIFEST_DIR`, which the operation log reads as "this is a test harness — refuse the real `~/.kagi` unless `KAGI_LOG_DIR` says where to write". That guard exists so a failed fixture can never write into a developer's home, but a developer launching the app through cargo is not a fixture, and every operation came back "changed but not recorded". The app now drops the marker at startup when `KAGI_LOG_DIR` is unset; test binaries never run that startup, and every test that spawns the app sets `KAGI_LOG_DIR`, so their isolation is unchanged.
+
 ### Changed
 
 - **A horizontal trackpad gesture now slides the sidebar instead of switching the whole window at once.** Only the sidebar has a previous/next page: it follows the fingers — damped, so it trails them and can never travel past one page — and the main pane stays exactly where it is, showing the same content, for the whole gesture. Releasing under 20% of the sidebar's width springs it back; past that it snaps to the neighbouring page, and only when that spring comes to rest does the workspace itself change. One gesture therefore moves at most one page, however far it is flicked, and a release no longer makes the sidebar jump. (ADR-0199)

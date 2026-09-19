@@ -82,6 +82,18 @@ fn headless_mode() -> bool {
 
 fn main() {
     install_panic_log_hook();
+    // `cargo run` hands the binary `CARGO_MANIFEST_DIR`, which the oplog reads
+    // as "I am a test harness - refuse the real ~/.kagi unless KAGI_LOG_DIR
+    // says where to write" (#573). That guard is for test *binaries*, which
+    // never reach this `main`; a developer launching the app through cargo is
+    // not a fixture, and every operation they ran came back "changed but not
+    // recorded" (user report). Every test that spawns this binary sets
+    // KAGI_LOG_DIR, which wins over the default, so dropping the marker here
+    // changes nothing for them.
+    if std::env::var_os("KAGI_LOG_DIR").is_none() {
+        // SAFETY: first thing in `main`, before any thread exists.
+        unsafe { std::env::remove_var("CARGO_MANIFEST_DIR") };
+    }
     // GUI launches get launchd's bare PATH — resolve the login shell's before
     // anything shells out (gh / external editor / mergetool). See shell_env.rs.
     shell_env::ensure_login_shell_path();

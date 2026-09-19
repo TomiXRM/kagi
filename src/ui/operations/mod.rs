@@ -425,7 +425,10 @@ impl KagiApp {
                     // coming back and pressing the button sent it twice
                     // (review finding).
                     if let Some(number) = presentation.pr_comment.take() {
-                        app.settle_pr_write(Some(stamp.session), number, cx);
+                        // `repo_path` is the one the write was planned against,
+                        // frozen at dispatch - not `app.repo_path`, which is
+                        // whatever is on screen now (review finding).
+                        app.settle_pr_write(Some(stamp.session), repo_path.clone(), number, cx);
                     }
                     if !current {
                         klog!("op result dropped: tab switched during op");

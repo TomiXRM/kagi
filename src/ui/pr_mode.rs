@@ -297,21 +297,28 @@ impl KagiApp {
     /// run side by side so each tab's loader ends on its own data.
     fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
         let owner = self.active_session();
-        self.pr_mode_load_conversation_for(owner, number, cx);
-    }
-
-    /// The same load, for a named owner rather than whoever is active. A write
-    /// that completes after a tab switch must re-read the thread of the tab it
-    /// was posted from, not of the tab now on screen (review finding).
-    fn pr_mode_load_conversation_for(
-        &mut self,
-        owner: Option<crate::app::SessionId>,
-        number: u64,
-        cx: &mut Context<Self>,
-    ) {
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
+        self.pr_mode_load_conversation_for(owner, repo, number, cx);
+    }
+
+    /// The same load, for a named owner and the repository the read belongs to
+    /// rather than whatever is on screen when it starts.
+    ///
+    /// Both are parameters because of the same class of bug: a write that
+    /// completes after a tab switch must re-read the thread of the tab it was
+    /// posted from, through *that tab's* repository. Reading `self.repo_path`
+    /// here would run `gh` against whichever repository is active - or not at
+    /// all, on Welcome or a remote view - and file the answer on the original
+    /// PR (review findings, `w5:p19`).
+    fn pr_mode_load_conversation_for(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        repo: std::path::PathBuf,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
         let repo2 = repo.clone();
         cx.spawn(async move |this, acx| {
             // #347: mergeStateStatus + merge-queue position. A failure
@@ -843,11 +850,12 @@ impl KagiApp {
     pub(crate) fn settle_pr_write(
         &mut self,
         owner: Option<crate::app::SessionId>,
+        repo: std::path::PathBuf,
         number: u64,
         cx: &mut Context<Self>,
     ) {
         self.clear_pr_comment_draft_for(owner, number, cx);
-        self.pr_mode_load_conversation_for(owner, number, cx);
+        self.pr_mode_load_conversation_for(owner, repo, number, cx);
     }
 
     /// Empty the composer for `number` in `owner`'s tabs - the text is on the

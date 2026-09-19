@@ -404,8 +404,12 @@ pub(super) fn render_feed(
         .flex()
         .flex_col()
         .gap_3()
-        // The properties come first, the way they do on github.com: who is on
-        // this PR and how it is labelled is what you check before reading it.
+        // What you opened, then who is on it, then the PR itself - the
+        // properties are what you check before reading the description.
+        .child(super::e2e::measure_control(
+            "pr-mode-headline",
+            super::pr_page::render_pr_headline(pr),
+        ))
         .child(super::e2e::measure_control(
             "pr-mode-properties",
             super::pr_page::render_pr_properties(app, pr),

@@ -1084,12 +1084,17 @@ fn section_label(text: String) -> gpui::Div {
 /// requested relationship for free: the card is a shade DARKER than its
 /// surroundings in dark themes and LIGHTER in light ones, with no blending
 /// and no per-theme table.
+/// A reading card on the PR page: one step off the page's own background, so
+/// the card is legible without the page turning grey.
 pub(super) fn card_bg() -> u32 {
-    theme().bg_base
+    theme().panel
 }
 
+/// The PR page itself. It is the app's base background, like every other main
+/// pane - it used to be `surface`, which read as a grey panel beside the black
+/// ones around it (user report).
 pub(super) fn card_pane_bg() -> u32 {
-    theme().surface
+    theme().bg_base
 }
 
 /// The card is defined by its border rather than a heavy fill, so the border

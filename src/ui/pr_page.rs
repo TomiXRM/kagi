@@ -122,9 +122,18 @@ pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::Any
             .child(div().flex_1().min_w(px(0.)).child(value))
     };
 
+    // Boxed, like the description and the comments below it: a bare list of
+    // rows floating on the page read as page furniture rather than as the
+    // PR's own facts (user request).
     let mut col = div()
         .id("pr-mode-properties")
         .w_full()
+        .rounded_lg()
+        .bg(rgb(super::pr_mode::card_bg()))
+        .border_1()
+        .border_color(super::pr_mode::card_border())
+        .px_4()
+        .py_2()
         .flex()
         .flex_col()
         .child(row(Msg::PrRailReviewers.t(), people(&pr.reviewers)))
@@ -152,6 +161,55 @@ pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::Any
         ));
     }
     col.into_any_element()
+}
+
+/// The PR's own headline, at the top of its page: `#N` and the title, then the
+/// branch pair (ADR-0200, mock 7a).
+///
+/// The toolbar above shows the title too, but truncated into a strip shared
+/// with the buttons - which is not where a reader looks for what they opened
+/// (user report). Here it has the width of the page.
+pub(super) fn render_pr_headline(pr: &PullRequest) -> gpui::AnyElement {
+    div()
+        .id("pr-mode-headline")
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_baseline()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_sm()
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(format!("#{}", pr.number))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_lg()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(theme().text_main))
+                        .child(safe_text(&pr.title)),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .text_xs()
+                .text_color(rgb(theme().color_branch))
+                .child(safe_text(&format!("{} → {}", pr.head, pr.base))),
+        )
+        .into_any_element()
 }
 
 /// The comment composer, pinned at the foot of the PR's page (ADR-0200).

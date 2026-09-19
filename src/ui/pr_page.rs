@@ -518,7 +518,7 @@ pub(super) fn render_composer(
     app: &KagiApp,
     cx: &mut Context<KagiApp>,
 ) -> Option<gpui::AnyElement> {
-    use gpui_component::Disableable as _;
+    use gpui_component::{Disableable as _, Sizable as _};
     let input = app.pr_comment_input.clone()?;
     let number = app
         .pr_mode()
@@ -566,23 +566,44 @@ pub(super) fn render_composer(
                     // GitHub requires words on a "request changes" review and
                     // allows a wordless approval, so only one of the three is
                     // usable with an empty box (mock 7a).
+                    // Small, with an icon each: three full-size text buttons
+                    // outweighed the box they act on (user request). The
+                    // verdicts carry their colour; a plain comment does not.
                     .child(
-                        gpui_component::button::Button::new("pr-review-request-changes")
-                            .label(Msg::PrReviewRequestChanges.t())
-                            .disabled(empty || review_held)
-                            .on_click(request_changes),
+                        super::button_style::KagiButton::accent_icon(
+                            "pr-review-request-changes",
+                            "icons/review-request-changes.svg",
+                            Msg::PrReviewRequestChanges.t(),
+                            theme().color_warning,
+                            cx,
+                        )
+                        .small()
+                        .disabled(empty || review_held)
+                        .on_click(request_changes),
                     )
                     .child(
-                        gpui_component::button::Button::new("pr-review-approve")
-                            .label(Msg::PrReviewApprove.t())
-                            .disabled(review_held)
-                            .on_click(approve),
+                        super::button_style::KagiButton::accent_icon(
+                            "pr-review-approve",
+                            "icons/review-approve.svg",
+                            Msg::PrReviewApprove.t(),
+                            theme().color_success,
+                            cx,
+                        )
+                        .small()
+                        .disabled(review_held)
+                        .on_click(approve),
                     )
                     .child(
-                        gpui_component::button::Button::new("pr-comment-post")
-                            .label(Msg::PrCommentPost.t())
-                            .disabled(empty || held)
-                            .on_click(post),
+                        super::button_style::KagiButton::accent_icon(
+                            "pr-comment-post",
+                            "icons/comment-send.svg",
+                            Msg::PrCommentPost.t(),
+                            theme().color_branch,
+                            cx,
+                        )
+                        .small()
+                        .disabled(empty || held)
+                        .on_click(post),
                     ),
             )
             .into_any_element(),

@@ -248,6 +248,13 @@ boundary (`gh pr review --approve` / `--request-changes`, op name
 wordless approval, so an empty box blocks REQUEST CHANGES and COMMENT but not
 APPROVE - a plan blocker, not a disabled button with no reason.
 
+A posted comment or review settles **before** the completion's tab guard,
+for the session that posted it: the composer is emptied and that tab's thread
+re-read. Doing it through the presentation path (which the guard drops) left
+the text in the box when the post landed while the reader was on another tab,
+so coming back and pressing the button sent the same comment twice (review
+finding, `w5:p19`).
+
 Still not built from frame 7: the per-check **LOG** button and the CI-log
 screen (7c) need a `gh run view` read that does not exist yet, and the FILES
 tab's unified/split toggle with inline review comments (7d) is a change to the

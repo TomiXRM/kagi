@@ -296,11 +296,23 @@ impl KagiApp {
     /// (never per list refresh — the list ticker must stay one call). The two
     /// run side by side so each tab's loader ends on its own data.
     fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
+        let owner = self.active_session();
+        self.pr_mode_load_conversation_for(owner, number, cx);
+    }
+
+    /// The same load, for a named owner rather than whoever is active. A write
+    /// that completes after a tab switch must re-read the thread of the tab it
+    /// was posted from, not of the tab now on screen (review finding).
+    fn pr_mode_load_conversation_for(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
         let repo2 = repo.clone();
-        let owner = self.active_session();
         cx.spawn(async move |this, acx| {
             // #347: mergeStateStatus + merge-queue position. A failure
             // (non-GitHub host, old gh, no MQ) is not fatal — the card just
@@ -820,19 +832,35 @@ impl KagiApp {
     /// Switching PRs parks the text in the tab it belongs to and loads the new
     /// tab's draft, so a half-written comment is never posted to the wrong PR
     /// and never silently lost.
-    /// Re-read the conversation of `number` after a write to it (ADR-0200).
-    /// The load itself already freezes its owner, so a tab switch mid-flight
-    /// lands the rows on the PR they belong to and nowhere else.
-    pub(crate) fn pr_mode_reload_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
-        self.pr_mode_load_conversation(number, cx);
+    /// What a posted comment or review settles, for the session that posted it
+    /// (ADR-0200, review finding): the composer is emptied and the thread is
+    /// re-read.
+    ///
+    /// This runs **before** the completion's tab guard on purpose. Clearing
+    /// the draft through the presentation path meant a post that succeeded
+    /// while the reader was on another tab left the text in the box: coming
+    /// back and pressing the button again sent the same comment twice.
+    pub(crate) fn settle_pr_write(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_pr_comment_draft_for(owner, number, cx);
+        self.pr_mode_load_conversation_for(owner, number, cx);
     }
 
-    /// Empty the composer for `number` - the text is on the server now. Only
-    /// the box currently holding that PR's text is reset, so a draft parked for
-    /// another PR survives.
-    pub(crate) fn clear_pr_comment_draft(&mut self, number: u64, cx: &mut Context<Self>) {
+    /// Empty the composer for `number` in `owner`'s tabs - the text is on the
+    /// server now. The shared input is only reset when it is actually holding
+    /// that PR's text, so a draft parked for another PR survives.
+    pub(crate) fn clear_pr_comment_draft_for(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(tab) = self
-            .pr_mode_mut()
+            .pr_mode_of(owner)
             .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
         {
             tab.comment_draft.clear();

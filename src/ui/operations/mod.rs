@@ -417,6 +417,16 @@ impl KagiApp {
                         &repo_path,
                         presentation.history.take(),
                     );
+                    // A posted comment or review settles for the session that
+                    // posted it, whatever is on screen now: the composer is
+                    // emptied and the thread re-read. Leaving this to the
+                    // presentation below meant a post that landed while the
+                    // reader was on another tab left its text in the box, and
+                    // coming back and pressing the button sent it twice
+                    // (review finding).
+                    if let Some(number) = presentation.pr_comment.take() {
+                        app.settle_pr_write(Some(stamp.session), number, cx);
+                    }
                     if !current {
                         klog!("op result dropped: tab switched during op");
                         continue;
@@ -563,12 +573,6 @@ impl KagiApp {
             self.pr_mode_close_tab_for(merged.number, cx);
             self.refresh_github_prs(cx);
             self.fetch_async(true, cx);
-        }
-        if let Some(number) = presentation.pr_comment {
-            // The comment is on the server now, so the box has nothing left to
-            // hold and the thread is one read out of date.
-            self.clear_pr_comment_draft(number, cx);
-            self.pr_mode_reload_conversation(number, cx);
         }
         if let Some(status) = presentation.status {
             self.status_footer = status;

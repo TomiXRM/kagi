@@ -469,6 +469,10 @@ impl KagiApp {
         {
             return true;
         }
+        // GitHub-owned content does not depend on the local ref having caught
+        // up. Start it before the local reconstruction can return early.
+        self.prioritize_pr_details(pr.number, cx);
+        self.pr_mode_load_conversation(pr.number, cx);
         let tip = |name: &str| {
             self.view()
                 .remote_branches
@@ -507,8 +511,6 @@ impl KagiApp {
             mode.tabs.insert(ix, tab);
             mode.active = active;
         }
-        self.prioritize_pr_details(pr.number, cx);
-        self.pr_mode_load_conversation(pr.number, cx);
         cx.notify();
         true
     }

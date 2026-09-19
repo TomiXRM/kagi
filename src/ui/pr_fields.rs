@@ -100,6 +100,38 @@ impl KagiApp {
         .detach();
     }
 
+    /// Build the picker's filter box while the picker is open and drop it
+    /// when it closes. Runs on the window-bearing render pass:
+    /// `InputState::new` needs a `&mut Window`, and the overlay renderer has
+    /// none. Focused on creation, so typing starts at once.
+    pub(crate) fn sync_pr_fields_input(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = self.pr_fields_modal().is_some();
+        match (open, self.pr_fields_input.is_some()) {
+            (true, false) => {
+                let input = cx.new(|cx| {
+                    gpui_component::input::InputState::new(window, cx)
+                        .placeholder(Msg::PrFieldsFilterPlaceholder.t())
+                });
+                cx.subscribe(&input, |_this, _input, event, cx| {
+                    if matches!(event, gpui_component::input::InputEvent::Change) {
+                        cx.notify();
+                    }
+                })
+                .detach();
+                input.update(cx, |st, cx| st.focus(window, cx));
+                self.pr_fields_input = Some(input);
+            }
+            (false, true) => {
+                self.pr_fields_input = None;
+            }
+            _ => {}
+        }
+    }
+
     /// Toggle one value in the open picker.
     pub fn pr_fields_toggle(&mut self, value: String, cx: &mut Context<Self>) {
         if let Some(modal) = self.pr_fields_modal_mut() {
@@ -116,6 +148,7 @@ impl KagiApp {
 /// The picker overlay: every value the PR carries or the repository offers,
 /// with the selected ones marked. One scroll region, per #454.
 pub(crate) fn render_pr_fields_modal(
+    app: &KagiApp,
     modal: PrFieldsModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -135,6 +168,29 @@ pub(crate) fn render_pr_fields_modal(
         }
     }
     let loading = modal.candidates.is_none();
+    // Fuzzy filter (the command palette's matcher): a login is remembered by
+    // a few letters more often than by its spelling. Selected values always
+    // stay listed, so a filter can never hide what is about to be sent.
+    let query = app
+        .pr_fields_input
+        .as_ref()
+        .map(|input| input.read(cx).value().to_string())
+        .unwrap_or_default();
+    let rows: Vec<String> = if query.trim().is_empty() {
+        rows
+    } else {
+        let mut scored: Vec<(i64, String)> = rows
+            .into_iter()
+            .filter_map(|value| {
+                if modal.selected.contains(&value) {
+                    return Some((i64::MAX, value));
+                }
+                super::command_palette::fuzzy_match(&query, &value).map(|score| (score, value))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        scored.into_iter().map(|(_, value)| value).collect()
+    };
     let changed = {
         let (add, remove) = kagi_domain::github::PrFieldEdit::diff(&modal.current, &modal.selected);
         !add.is_empty() || !remove.is_empty()
@@ -218,6 +274,11 @@ pub(crate) fn render_pr_fields_modal(
         ))
         .child(
             modal_body()
+                .children(
+                    app.pr_fields_input
+                        .as_ref()
+                        .map(gpui_component::input::Input::new),
+                )
                 .child(list)
                 // A read that failed says so; it never masquerades as "the
                 // repository offers nothing".

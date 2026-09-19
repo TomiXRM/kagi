@@ -299,7 +299,7 @@ impl KagiApp {
             el.child(render_pr_merge_modal(modal, cx))
         })
         .when_some(self.pr_fields_modal().cloned(), |el, modal| {
-            el.child(super::pr_fields::render_pr_fields_modal(modal, cx))
+            el.child(super::pr_fields::render_pr_fields_modal(self, modal, cx))
         })
         .when_some(stash_drop_modal, |el, modal| {
             el.child(render_stash_drop_modal(modal, cx))

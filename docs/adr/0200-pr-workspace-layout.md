@@ -283,7 +283,14 @@ diff row model, not to this page.
 
 ### 11. The properties are editable from their rows
 
-Reviewers, assignees and labels each carry a gear that opens a picker
+Reviewers, assignees and labels each open a picker from the gear **or from
+the value itself** - "なし" is an invitation to add and an existing value an
+invitation to change (user request). The picker carries a fuzzy filter box
+(the command palette's matcher): a login is remembered by a few letters more
+often than by its spelling. Selected values always stay listed whatever the
+filter says, so a filter can never hide what is about to be sent. The box is
+built while the picker is open and dropped with it, on the window-bearing
+render pass like every other input. Each opens a picker
 (`src/ui/pr_fields.rs`, `ActiveModal::PrFields`). The picker opens on what the
 PR already carries and starts a background read of what the repository offers
 (`gh label list`, `gh api repos/…/assignees`); the read only ever *adds*

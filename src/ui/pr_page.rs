@@ -124,7 +124,40 @@ pub(super) fn render_pr_properties(
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(name.to_string())),
             )
-            .child(div().flex_1().min_w(px(0.)).child(value))
+            // The value itself opens the editor too - "なし" is an invitation
+            // to add, an existing value an invitation to change - not only the
+            // gear at the end of the row (user request).
+            .child(match field {
+                Some(field) => {
+                    let open =
+                        cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                            this.open_pr_fields_modal(field, cx);
+                        });
+                    div()
+                        .id(match field {
+                            super::modals::PrField::Reviewers => "pr-field-open-reviewers",
+                            super::modals::PrField::Assignees => "pr-field-open-assignees",
+                            super::modals::PrField::Labels => "pr-field-open-labels",
+                        })
+                        .flex_1()
+                        .min_w(px(0.))
+                        .px_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme().surface)))
+                        .on_click(open)
+                        .child(super::e2e::measure_control(
+                            match field {
+                                super::modals::PrField::Reviewers => "pr-field-value-reviewers",
+                                super::modals::PrField::Assignees => "pr-field-value-assignees",
+                                super::modals::PrField::Labels => "pr-field-value-labels",
+                            },
+                            value,
+                        ))
+                        .into_any_element()
+                }
+                None => div().flex_1().min_w(px(0.)).child(value).into_any_element(),
+            })
             .children(field.map(|field| {
                 let open = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                     this.open_pr_fields_modal(field, cx);

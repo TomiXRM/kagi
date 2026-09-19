@@ -1091,6 +1091,9 @@ pub struct KagiApp {
     pub pr_comment_for: Option<u64>,
     /// Counter behind `PrFieldsModal::generation`.
     pub pr_fields_generation: u64,
+    /// The field picker's fuzzy filter box; exists only while the picker is
+    /// open (built on the window-bearing render pass, like every input).
+    pub pr_fields_input: Option<Entity<InputState>>,
     /// Issue #352: index of the highlighted row in the command palette's current
     /// (filtered) result list. Reset to 0 on open and on every query change.
     pub command_palette_selected: usize,
@@ -1347,6 +1350,7 @@ impl KagiApp {
             pr_comment_input: None,
             pr_comment_for: None,
             pr_fields_generation: 0,
+            pr_fields_input: None,
             command_palette_selected: 0,
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).

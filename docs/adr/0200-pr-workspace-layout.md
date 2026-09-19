@@ -248,12 +248,23 @@ boundary (`gh pr review --approve` / `--request-changes`, op name
 wordless approval, so an empty box blocks REQUEST CHANGES and COMMENT but not
 APPROVE - a plan blocker, not a disabled button with no reason.
 
-A posted comment or review settles **before** the completion's tab guard,
-for the session that posted it: the composer is emptied and that tab's thread
-re-read. Doing it through the presentation path (which the guard drops) left
-the text in the box when the post landed while the reader was on another tab,
-so coming back and pressing the button sent the same comment twice (review
-finding, `w5:p19`).
+A posted comment or review settles **before** the completion's tab guard, and
+it settles against the `(session, repository)` pair the write was planned with
+- never against what is on screen when `gh` answers:
+
+- `settle_pr_write(owner, repo, number)` empties **that owner's** draft and
+  re-reads **that repository's** thread. Both halves were review findings
+  (`w5:p19`). Clearing the draft through the presentation path - which the
+  guard drops - left the text in the box when the post landed while the reader
+  was on another tab, so coming back and pressing the button sent the same
+  comment twice. Reading `self.repo_path` in the reload ran `gh pr view #N`
+  against whichever repository was active and filed the answer on the original
+  PR, and on Welcome or a remote view (`repo_path == None`) skipped the reload
+  entirely.
+- `pr_mode_load_conversation_for` therefore takes the owner *and* the
+  repository as parameters. That is the invariant: a completion acts on the tab
+  and the repository it came from. Neither may be re-derived from current app
+  state - `finish_run` already holds the frozen pair and passes it down.
 
 Still not built from frame 7: the per-check **LOG** button and the CI-log
 screen (7c) need a `gh run view` read that does not exist yet, and the FILES

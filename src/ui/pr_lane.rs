@@ -208,6 +208,14 @@ fn column_of(columns: &std::collections::BTreeMap<usize, usize>, lane: usize) ->
     })
 }
 
+/// A WIP→HEAD connector or a squash ghost link: the main graph's edges about
+/// the local working tree, marked on the edge's colour sentinel exactly as
+/// `graph_canvas` tells them apart before painting them dashed.
+fn is_local_connector(edge: &kagi_domain::graph::GraphEdge) -> bool {
+    edge.color == super::graph_squash::GHOST_COLOR
+        || super::graph_wip::wip_color_index(edge.color).is_some()
+}
+
 /// The furthest the rail can scroll: whatever of the lanes does not fit.
 pub(super) fn max_scroll(lanes: usize, rail: f32) -> f32 {
     (lanes as f32 * graph_view::LANE_W - rail).max(0.0)
@@ -362,8 +370,16 @@ fn render_lane_row(
                             // with the node — an edge left on lane 12 beside a
                             // node in column 1 is the line and the avatar
                             // coming apart (user report).
+                            // The WIP→HEAD connectors (#472) and squash ghost
+                            // links ride the same edge list, on lanes no row
+                            // in this window sits on. They are about the
+                            // local working tree, not the PR; kept, the
+                            // column remap dropped them after the last real
+                            // column - a dashed line beside every subject
+                            // (user report).
                             row.edges
                                 .iter()
+                                .filter(|edge| !is_local_connector(edge))
                                 .map(|edge| kagi_domain::graph::GraphEdge {
                                     from_lane: column_of(rail.columns, edge.from_lane),
                                     to_lane: column_of(rail.columns, edge.to_lane),
@@ -405,6 +421,29 @@ fn render_lane_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reported dashed line beside every subject: the main graph's
+    /// WIP→HEAD connector (and a squash ghost link) rode the row's edges into
+    /// the lane, where the column remap put it after the last real column.
+    /// Both are local-working-tree edges and must not reach the lane; an
+    /// ordinary parent edge must.
+    #[test]
+    fn local_connectors_stay_out_of_the_lane() {
+        use kagi_domain::graph::{EdgeKind, GraphEdge};
+        let edge = |color: usize| GraphEdge {
+            from_lane: 3,
+            to_lane: 3,
+            kind: EdgeKind::Pass,
+            color,
+        };
+        assert!(is_local_connector(&edge(
+            super::super::graph_wip::wip_color(2)
+        )));
+        assert!(is_local_connector(&edge(
+            super::super::graph_squash::GHOST_COLOR
+        )));
+        assert!(!is_local_connector(&edge(2)));
+    }
 
     /// The rail must not eat the subject at any lane depth, and must stop
     /// widening: a repository-wide graph is deeper than this pane is wide.

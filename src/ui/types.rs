@@ -101,7 +101,8 @@ pub enum FooterStatus {
     Failed(SharedString),
     /// Idle state: shows repo name / branch info (no colour tint).
     Idle(SharedString),
-    /// W2-STATUS: a git operation is in progress (shown in blue with ⟳).
+    /// W2-STATUS: a git operation is in progress (blue, with the spinning
+    /// sync icon - `render_overlay::sync_spinner`).
     Busy(SharedString),
 }
 

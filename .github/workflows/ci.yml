@@ -73,6 +73,9 @@ jobs:
           # canonical verification recipe references must remain real files (#544)
           - skill-refs
           - busy-labels
+          # an in-flight indicator is an animated element, never a ⟳ glyph
+          # that cannot turn (user report)
+          - static-spinner
           # one 4-digit number, one ADR — parallel merges produced two
           # duplicate numbers before this gate existed (#620)
           - adr-unique-number

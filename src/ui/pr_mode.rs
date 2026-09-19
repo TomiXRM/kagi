@@ -575,7 +575,9 @@ impl KagiApp {
     /// Fetch the PR list now rather than waiting out the 60s ticker.
     pub fn pr_mode_refresh(&mut self, cx: &mut Context<Self>) {
         klog!("pr-mode: refresh");
-        self.push_toast(ToastKind::Info, Msg::PrRefreshing.t(), cx);
+        // In flight, so it takes the spinning sync icon rather than a glyph
+        // that cannot turn (user report).
+        self.push_toast(ToastKind::Sync, Msg::PrRefreshing.t(), cx);
         self.refresh_github_prs(cx);
     }
 

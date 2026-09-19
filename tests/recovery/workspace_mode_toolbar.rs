@@ -393,6 +393,42 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                 counts[0] == counts[1] && counts[0] > 2,
                 "both tabs read one list: {counts:?}"
             );
+            // The レビュー tab is on screen: the entries under its heading
+            // must actually be drawn, not merely counted (user report: "PR
+            // reviews are not shown").
+            for _ in 0..2 {
+                cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                    .unwrap();
+            }
+            let drawn: Vec<bool> = (0..3)
+                .map(|i| {
+                    e2e::control_bounds(win.window_id(), &format!("pr-feed-entry-{i}")).is_some()
+                })
+                .collect();
+            let heights: Vec<Option<f32>> = (0..3)
+                .map(|i| {
+                    e2e::control_bounds(win.window_id(), &format!("pr-feed-entry-{i}"))
+                        .map(|b| f32::from(b.size.height))
+                })
+                .collect();
+            let _ = heights;
+            assert!(
+                drawn.iter().any(|d| *d),
+                "at least the first entry under the heading is drawn: {drawn:?}"
+            );
+            // ...and the heading sits at the top of the page, not at its
+            // bottom edge with the reviews below the fold: pressing レビュー
+            // must show reviews, which is the whole point of the tab.
+            let heading = e2e::control_bounds(win.window_id(), "pr-feed-review")
+                .expect("the heading is drawn after the レビュー tab");
+            let pane = e2e::control_bounds(win.window_id(), "pr-mode-center-pane")
+                .expect("the centre pane is measured");
+            let from_top = f32::from(heading.origin.y) - f32::from(pane.origin.y);
+            assert!(
+                from_top < f32::from(pane.size.height) / 2.0,
+                "the レビュー tab must put its heading in the upper half of the page, got {from_top}px from the top of a {}px pane",
+                f32::from(pane.size.height)
+            );
 
             // mock 7a/7b: the checks card is folded on the page, and opens to
             // the per-check rows in place. The fixture PR carries one check,

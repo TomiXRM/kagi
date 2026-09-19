@@ -537,7 +537,10 @@ pub(super) fn render_feed_item(
             match entries.as_ref().and_then(|e| e.get(i)) {
                 Some(entry) => {
                     let avatars = app.avatars.images.clone();
-                    block(render_entry(number, i, entry, &avatars, cx))
+                    block(super::e2e::measure_control(
+                        format!("pr-feed-entry-{i}"),
+                        render_entry(number, i, entry, &avatars, cx),
+                    ))
                 }
                 None => div().into_any_element(),
             }
@@ -583,7 +586,14 @@ pub(super) fn render_feed(
         state.reset(count);
     }
     if let Some(anchor) = app.pr_mode_mut().and_then(|m| m.feed_anchor.take()) {
-        state.scroll_to_reveal_item(if anchor == 0 { 0 } else { heading_ix });
+        // `scroll_to`, not `scroll_to_reveal_item`: reveal is the *minimal*
+        // scroll, which brought the conversation heading in at the bottom
+        // edge with every review still below the fold - "the reviews are not
+        // shown" (user report). A tab press puts its section at the top.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: if anchor == 0 { 0 } else { heading_ix },
+            offset_in_item: px(0.),
+        });
     }
     let render = cx.processor(move |app: &mut KagiApp, ix: usize, _window, cx| {
         render_feed_item(app, tab_ix, ix, cx)

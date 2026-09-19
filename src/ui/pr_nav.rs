@@ -10,7 +10,8 @@ use kagi_domain::github::{stack_order, PrAttention, PrGroup, PullRequest, Review
 use kagi_domain::pr_list::PrSection;
 
 use super::i18n::Msg;
-use super::pr_mode::{attention_color, focus_border, PrFocus};
+use super::pr_attention::attention_color;
+use super::pr_mode::{focus_border, PrFocus};
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;

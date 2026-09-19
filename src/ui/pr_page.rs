@@ -169,7 +169,7 @@ pub(super) fn render_pr_properties(
         .rounded_lg()
         .bg(rgb(super::pr_mode::card_bg()))
         .border_1()
-        .border_color(super::pr_mode::card_border())
+        .border_color(super::pr_attention::card_border())
         .px_4()
         .py_2()
         .flex()
@@ -432,7 +432,7 @@ pub(super) fn render_checks_card(
         .rounded_lg()
         .bg(rgb(super::pr_mode::card_bg()))
         .border_1()
-        .border_color(super::pr_mode::card_border())
+        .border_color(super::pr_attention::card_border())
         .flex()
         .flex_col()
         .child(summary);
@@ -445,7 +445,7 @@ pub(super) fn render_checks_card(
             _ => 2,
         });
         for (i, c) in ordered.iter().enumerate() {
-            let (g, colour) = super::pr_mode::ci_glyph(c.state);
+            let (g, colour) = super::pr_attention::ci_glyph(c.state);
             let url = c.url.clone();
             let has_url = !url.is_empty();
             let open_in_browser =

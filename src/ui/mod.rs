@@ -50,6 +50,7 @@ mod fonts;
 mod github;
 mod github_pr_detail;
 pub mod issues_mode;
+mod pr_attention;
 pub mod pr_conflicts;
 pub mod pr_conversation;
 pub mod pr_dashboard;

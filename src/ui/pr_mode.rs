@@ -21,10 +21,7 @@
 use gpui::{
     div, prelude::*, px, relative, rgb, Context, ListState, SharedString, UniformListScrollHandle,
 };
-use kagi_domain::github::{
-    stack_order, CiState, Comment, Mergeable, PrAttention, PrGroup, PrReason, PullRequest, Review,
-    ReviewComment, ReviewState,
-};
+use kagi_domain::github::{Comment, Mergeable, PullRequest, Review, ReviewComment, ReviewState};
 use kagi_domain::pr_list::{PrListFilter, PrSection, PrSort};
 use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
@@ -34,6 +31,7 @@ use super::diff_view::{build_main_diff_view, MainDiffView};
 // most attacker-controllable text in the app — anyone can open a PR. Route every
 // such display string through `safe_text` (control-byte neutralization).
 use super::i18n::Msg;
+use super::pr_attention::ci_glyph;
 use super::render_helpers::render_diff_list;
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
@@ -1228,104 +1226,6 @@ pub(super) fn card_pane_bg() -> u32 {
     theme().bg_base
 }
 
-/// The card is defined by its border rather than a heavy fill, so the border
-/// is a muted-foreground tint instead of the near-background `selected`.
-pub(super) fn card_border() -> gpui::Hsla {
-    let mut c: gpui::Hsla = rgb(theme().text_muted).into();
-    c.a = if theme().dark { 0.45 } else { 0.55 };
-    c
-}
-
-pub(super) fn ci_glyph(ci: CiState) -> (&'static str, u32) {
-    match ci {
-        CiState::Success => ("\u{2713}", theme().color_success),
-        CiState::Failure => ("\u{2717}", theme().color_blocker),
-        CiState::Pending => ("\u{25CF}", theme().color_warning),
-        CiState::None => ("\u{25CB}", theme().text_muted),
-    }
-}
-
-/// The Focus Queue: PRs bucketed by *what the user should do*, not by owner.
-/// Everything is derived from data the list already carries (checks, review
-/// decision, mergeable) — no extra API calls.
-pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> {
-    let login = app.github_login.clone();
-    let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
-    let mut buckets: Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> = [
-        PrAttention::NeedsYou,
-        PrAttention::Pending,
-        PrAttention::InProgress,
-        PrAttention::Ready,
-        PrAttention::Waiting,
-        PrAttention::Dormant,
-    ]
-    .into_iter()
-    .map(|a| (a, Vec::new()))
-    .collect();
-    for pr in &app.ui().github_prs {
-        let group = pr.group_for(login.as_deref(), &local);
-        let (att, why) = pr.attention_with_status(
-            group == PrGroup::Mine,
-            group == PrGroup::ReviewRequested,
-            app.pr_status_availability(pr),
-        );
-        if let Some(slot) = buckets.iter_mut().find(|(a, _)| *a == att) {
-            slot.1.push((pr.clone(), why));
-        }
-    }
-    // Stack order within each bucket so a chain still reads top-down.
-    for (_, members) in buckets.iter_mut() {
-        let prs: Vec<PullRequest> = members.iter().map(|(p, _)| p.clone()).collect();
-        let reordered: Vec<(PullRequest, PrReason)> = stack_order(&prs)
-            .into_iter()
-            .map(|(ix, _)| members[ix].clone())
-            .collect();
-        *members = reordered;
-    }
-    buckets.retain(|(_, m)| !m.is_empty());
-    buckets
-}
-
-pub fn queue_bucket_label(a: PrAttention) -> &'static str {
-    match a {
-        PrAttention::NeedsYou => Msg::PrQueueNeedsYou.t(),
-        PrAttention::Pending => Msg::PrQueuePending.t(),
-        PrAttention::InProgress => Msg::PrQueueInProgress.t(),
-        PrAttention::Ready => Msg::PrQueueReady.t(),
-        PrAttention::Waiting => Msg::PrQueueWaiting.t(),
-        PrAttention::Dormant => Msg::PrQueueDormant.t(),
-    }
-}
-
-/// The queue's colour language: action state, not GitHub state.
-pub fn attention_color(a: PrAttention) -> u32 {
-    match a {
-        PrAttention::NeedsYou => theme().color_blocker,
-        PrAttention::Pending => theme().text_muted,
-        PrAttention::InProgress => theme().color_warning,
-        PrAttention::Ready => theme().color_success,
-        PrAttention::Waiting => theme().color_branch,
-        PrAttention::Dormant => theme().text_muted,
-    }
-}
-
-pub fn reason_text(r: &PrReason) -> String {
-    match r {
-        PrReason::CiFailed(n) => {
-            format!("{} CI {}", n, if *n == 1 { "failure" } else { "failures" })
-        }
-        PrReason::ChangesRequested => Msg::PrWhyChangesRequested.t().to_string(),
-        PrReason::Conflicting => Msg::PrWhyConflicting.t().to_string(),
-        PrReason::CiRunning => Msg::PrWhyCiRunning.t().to_string(),
-        PrReason::ReadyToMerge => Msg::PrWhyReadyToMerge.t().to_string(),
-        PrReason::ReviewRequested => Msg::PrWhyReviewRequested.t().to_string(),
-        PrReason::AwaitingReview => Msg::PrWhyAwaitingReview.t().to_string(),
-        PrReason::Pending => Msg::PrWhyPending.t().to_string(),
-        PrReason::Draft => Msg::PrDraft.t().to_string(),
-        PrReason::None => String::new(),
-    }
-}
-
 /// A pane's focus cue: a 2px accent top border when it owns the arrow keys.
 pub(super) fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
     el.border_t_2().border_color(rgb(if focused {
@@ -2078,8 +1978,7 @@ mod view_reset_tests {
 
 #[cfg(test)]
 mod pr_fixture_tests {
-    use super::reason_text;
-    use kagi_domain::github::{PrReason, PullRequest};
+    use kagi_domain::github::PullRequest;
 
     pub(super) fn pr(number: u64, head: &str, base: &str) -> PullRequest {
         PullRequest {
@@ -2090,14 +1989,5 @@ mod pr_fixture_tests {
             base_repo: "o/r".into(),
             ..Default::default()
         }
-    }
-
-    /// The one arm of `reason_text` the compiler cannot check: the count is
-    /// interpolated and the noun is pluralised.
-    #[test]
-    fn ci_failure_count_is_pluralised() {
-        assert_eq!(reason_text(&PrReason::CiFailed(1)), "1 CI failure");
-        assert_eq!(reason_text(&PrReason::CiFailed(3)), "3 CI failures");
-        assert_eq!(reason_text(&PrReason::CiFailed(0)), "0 CI failures");
     }
 }

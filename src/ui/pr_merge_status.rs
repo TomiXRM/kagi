@@ -18,7 +18,8 @@ use kagi_domain::merge_state::{
 use kagi_git::github::PrMergeStatus;
 
 use super::i18n::Msg;
-use super::pr_mode::{card_bg, card_border};
+use super::pr_attention::card_border;
+use super::pr_mode::card_bg;
 use super::theme::theme;
 use super::KagiApp;
 

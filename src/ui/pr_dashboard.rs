@@ -23,7 +23,7 @@ use kagi_domain::github::{PrAttention, PrDetailAvailability, PrReason, PullReque
 use kagi_domain::pr_list::{sort_prs, PrListFilter, PrSection, PrSort};
 
 use super::i18n::Msg;
-use super::pr_mode::{
+use super::pr_attention::{
     attention_color, card_border, ci_glyph, focus_queue, queue_bucket_label, reason_text,
 };
 use super::render_helpers::safe_text;
@@ -240,7 +240,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
             let scroll = app
                 .pr_mode()
                 .map(|mode| mode.dashboard_scroll.clone())
-                .unwrap_or_else(gpui::UniformListScrollHandle::new);
+                .unwrap_or_default();
             body = body.child(
                 uniform_list(
                     "pr-home-list",

@@ -2389,12 +2389,8 @@ pub fn wip_row_other(n: usize) -> String {
 /// The swimlane's elision row between the window and the PR's root commit.
 pub fn pr_lane_elided(n: usize) -> String {
     match lang() {
-        Lang::En => format!(
-            "{} commit{} elided \u{00b7} branch root below",
-            n,
-            if n == 1 { "" } else { "s" }
-        ),
-        Lang::Ja => format!("{} コミット省略 \u{00b7} 下がブランチの根", n),
+        Lang::En => format!("{} commit{} elided", n, if n == 1 { "" } else { "s" }),
+        Lang::Ja => format!("{} コミット省略", n),
     }
 }
 

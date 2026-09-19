@@ -99,17 +99,18 @@ impl KagiApp {
                     // an expired token or an offline machine keeps the last good
                     // data instead of being shown as an empty inbox.
                     let outcome = kagi_git::github::apply_pr_fetch(&mut ui.github_prs, result);
-                    match &outcome.error {
+                    let moved = match &outcome.error {
                         None => {
-                            super::github_pr_detail::sync_open_pr_tabs(ui);
                             ui.github_error = None;
                             ui.github_unavailable = false;
+                            super::github_pr_detail::sync_open_pr_tabs(ui)
                         }
                         // No GitHub remote: a defined "nothing here" state, not a
                         // failure to report on every 60s tick.
                         Some(e) if e.is_unavailable() => {
                             ui.github_error = None;
                             ui.github_unavailable = true;
+                            Vec::new()
                         }
                         Some(e) => {
                             // Recorded, not toasted: this also runs on a 60s ticker,
@@ -131,17 +132,16 @@ impl KagiApp {
                             }
                             return;
                         }
-                    }
+                    };
                     if outcome.changed || !ui.github_prs_loaded {
                         klog!("github: prs={}", ui.github_prs.len());
                         ui.github_prs_loaded = true;
                         ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
                     }
-                    true
+                    moved
                 };
-                if answered {
-                    app.refresh_pr_detail_targets(owner, repo.clone(), cx);
-                }
+                app.reload_moved_pr_tabs(owner_is_active, &answered, cx);
+                app.refresh_pr_detail_targets(owner, repo.clone(), cx);
                 if owner_is_active {
                     cx.notify();
                 }

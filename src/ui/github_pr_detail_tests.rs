@@ -1,6 +1,6 @@
 use super::*;
 use gpui::{px, ListState};
-use kagi_git::{ChangeKind, FileStatus};
+use kagi_git::{ChangeKind, CommitId, FileStatus};
 
 fn pr(number: u64, head: &str) -> PullRequest {
     PullRequest {
@@ -169,18 +169,37 @@ fn response_for_a_different_head_never_marks_the_slot_fresh() {
 }
 
 #[test]
-fn list_head_change_updates_the_open_copy_and_invalidates_local_diff_state() {
+fn list_head_change_invalidates_then_local_reload_restores_the_open_tab() {
     let mut tab = tab("old");
     let mut listed = pr(1, "new");
     listed.title = "new title".into();
     sync_open_pr_from_list(&mut tab, &listed);
     assert_eq!(tab.pr.title, "new title");
     assert_eq!(tab.pr.head_sha, "new");
-    assert_eq!(tab.head, CommitId("new".into()));
+    assert_eq!(
+        tab.head,
+        CommitId("old".into()),
+        "old local head triggers reload"
+    );
     assert!(tab.files.is_empty());
     assert_eq!(tab.selected_file, None);
     assert_eq!(tab.comment_draft, "keep me");
     assert!(tab.conversation_loaded);
+
+    install_local_pr_head(
+        &mut tab,
+        CommitId("new-base".into()),
+        CommitId("new-base-tip".into()),
+        CommitId("new".into()),
+        Vec::new(),
+        vec![FileStatus {
+            path: "new.rs".into(),
+            change: ChangeKind::Added,
+        }],
+    );
+    assert_eq!(tab.head, CommitId("new".into()));
+    assert_eq!(tab.files[0].path, std::path::PathBuf::from("new.rs"));
+    assert_eq!(tab.selected_file, Some(0));
 }
 
 #[test]

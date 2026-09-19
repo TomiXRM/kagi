@@ -179,8 +179,7 @@ impl Default for PrModeState {
     }
 }
 
-const COMMIT_LIMIT: usize = 500;
-
+pub(super) const COMMIT_LIMIT: usize = 500;
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
         if self.pr_mode().is_some() {
@@ -213,6 +212,7 @@ impl KagiApp {
             .pr_mode()
             .and_then(|m| m.tabs.iter().position(|t| t.pr.number == pr.number))
         {
+            self.reload_pr_tab_head(pr, cx);
             if let Some(m) = self.pr_mode_mut() {
                 m.active = Some(ix);
                 // Another PR, another lane: the rail goes back to following it
@@ -306,7 +306,7 @@ impl KagiApp {
     /// in the background and drop them on the matching tab. Once per tab open
     /// (never per list refresh — the list ticker must stay one call). The two
     /// run side by side so each tab's loader ends on its own data.
-    fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub(super) fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
         let owner = self.active_session();
         let Some(repo) = self.repo_path.clone() else {
             return;
@@ -1047,7 +1047,7 @@ impl KagiApp {
         }
     }
 
-    fn pr_tab_reload_diff(&self, tab: &mut PrTab) {
+    pub(super) fn pr_tab_reload_diff(&self, tab: &mut PrTab) {
         let Some(session) = self.ui().repo_session.as_ref() else {
             return;
         };

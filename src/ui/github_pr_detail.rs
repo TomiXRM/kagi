@@ -9,12 +9,11 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use super::pr_mode::{PrTab, COMMIT_LIMIT};
+use super::{KagiApp, TabUiState};
 use gpui::Context;
 use kagi_domain::github::{PrBodyDetail, PrDetailAvailability, PrStatusDetail, PullRequest};
-use kagi_git::CommitId;
-
-use super::pr_mode::PrTab;
-use super::{KagiApp, TabUiState};
+use kagi_git::{Commit, CommitId, FileStatus};
 
 const DETAIL_CONCURRENCY: usize = 2;
 const VISIBLE_DEBOUNCE: Duration = Duration::from_millis(200);
@@ -359,7 +358,6 @@ fn sync_open_pr_from_list(tab: &mut PrTab, listed: &PullRequest) {
     if !head_changed {
         return;
     }
-    tab.head = CommitId(listed.head_sha.clone());
     tab.commits.clear();
     tab.files.clear();
     tab.selected_commit = None;
@@ -373,22 +371,45 @@ fn sync_open_pr_from_list(tab: &mut PrTab, listed: &PullRequest) {
     tab.merge_status_loaded = false;
 }
 
+pub(super) fn install_local_pr_head(
+    tab: &mut PrTab,
+    base: CommitId,
+    base_tip: CommitId,
+    head: CommitId,
+    commits: Vec<Commit>,
+    files: Vec<FileStatus>,
+) {
+    tab.base = base;
+    tab.base_tip = base_tip;
+    tab.head = head;
+    tab.commits = commits;
+    tab.files = files;
+    tab.selected_commit = None;
+    tab.selected_file = (!tab.files.is_empty()).then_some(0);
+}
+
 /// Keep every open copy on the latest L1 identity. A moved head invalidates
 /// locally derived commit/diff/conflict state until the tab is reopened from
 /// fetched refs; conversation data belongs to the PR number and is retained.
-pub(super) fn sync_open_pr_tabs(ui: &mut TabUiState) {
+pub(super) fn sync_open_pr_tabs(ui: &mut TabUiState) -> Vec<PullRequest> {
     let Some(mode) = ui.pr_mode.as_mut() else {
-        return;
+        return Vec::new();
     };
+    let mut moved = Vec::new();
     for tab in &mut mode.tabs {
         if let Some(listed) = ui
             .github_prs
             .iter()
             .find(|pr| pr.number == tab.pr.number && pr.base_repo == tab.pr.base_repo)
         {
+            let head_changed = tab.pr.head_sha != listed.head_sha;
             sync_open_pr_from_list(tab, listed);
+            if head_changed {
+                moved.push(listed.clone());
+            }
         }
     }
+    moved
 }
 
 fn apply_status_copies<'a>(
@@ -418,6 +439,80 @@ fn apply_body_copies<'a>(
 }
 
 impl KagiApp {
+    pub(super) fn reload_moved_pr_tabs(
+        &mut self,
+        owner_is_active: bool,
+        moved: &[PullRequest],
+        cx: &mut Context<Self>,
+    ) {
+        if owner_is_active {
+            for pr in moved {
+                self.reload_pr_tab_head(pr, cx);
+            }
+        }
+    }
+
+    /// Rebuild local, head-dependent tab content after L1 reports a moved
+    /// head. If its ref is still old, activation retries after the next read.
+    pub(super) fn reload_pr_tab_head(&mut self, pr: &PullRequest, cx: &mut Context<Self>) -> bool {
+        let Some(ix) = self.pr_mode().and_then(|mode| {
+            mode.tabs
+                .iter()
+                .position(|tab| tab.pr.number == pr.number && tab.pr.base_repo == pr.base_repo)
+        }) else {
+            return false;
+        };
+        if self
+            .pr_mode()
+            .and_then(|mode| mode.tabs.get(ix))
+            .is_some_and(|tab| tab.head.0 == pr.head_sha)
+        {
+            return true;
+        }
+        let tip = |name: &str| {
+            self.view()
+                .remote_branches
+                .iter()
+                .find(|branch| branch.name == name)
+                .map(|branch| branch.target.clone())
+        };
+        let (Some(base_tip), Some(head)) = (tip(&pr.base), tip(&pr.head)) else {
+            return false;
+        };
+        if head.0 != pr.head_sha {
+            return false;
+        }
+        let Some(session) = self.ui().repo_session.as_ref() else {
+            return false;
+        };
+        let repo = session.backend();
+        let base = repo
+            .merge_base(&base_tip, &head)
+            .unwrap_or_else(|_| base_tip.clone());
+        let commits = repo
+            .commits_between(&base, &head, COMMIT_LIMIT)
+            .unwrap_or_default();
+        let files = repo.compare_commits(&base, &head).unwrap_or_default();
+        let active = self.pr_mode().and_then(|mode| mode.active);
+        let Some(mut tab) = self
+            .pr_mode_mut()
+            .and_then(|mode| (ix < mode.tabs.len()).then(|| mode.tabs.remove(ix)))
+        else {
+            return false;
+        };
+        tab.pr = pr.clone();
+        install_local_pr_head(&mut tab, base, base_tip, head, commits, files);
+        self.pr_tab_reload_diff(&mut tab);
+        if let Some(mode) = self.pr_mode_mut() {
+            mode.tabs.insert(ix, tab);
+            mode.active = active;
+        }
+        self.prioritize_pr_details(pr.number, cx);
+        self.pr_mode_load_conversation(pr.number, cx);
+        cx.notify();
+        true
+    }
+
     pub(super) fn pr_status_availability(&self, pr: &PullRequest) -> PrDetailAvailability {
         self.ui().pr_details.availability(
             pr.number,

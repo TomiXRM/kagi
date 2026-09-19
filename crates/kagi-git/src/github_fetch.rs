@@ -195,8 +195,7 @@ pub fn apply_pr_fetch(
 ) -> PrFetchOutcome {
     match fetched {
         Ok(prs) => {
-            let changed = *cache != prs;
-            *cache = prs;
+            let changed = kagi_domain::github::apply_pr_list(cache, prs);
             PrFetchOutcome {
                 changed,
                 error: None,

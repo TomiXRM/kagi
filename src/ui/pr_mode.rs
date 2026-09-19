@@ -1245,6 +1245,7 @@ pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, 
     let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
     let mut buckets: Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> = [
         PrAttention::NeedsYou,
+        PrAttention::Pending,
         PrAttention::InProgress,
         PrAttention::Ready,
         PrAttention::Waiting,
@@ -1276,6 +1277,7 @@ pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, 
 pub fn queue_bucket_label(a: PrAttention) -> &'static str {
     match a {
         PrAttention::NeedsYou => Msg::PrQueueNeedsYou.t(),
+        PrAttention::Pending => Msg::PrQueuePending.t(),
         PrAttention::InProgress => Msg::PrQueueInProgress.t(),
         PrAttention::Ready => Msg::PrQueueReady.t(),
         PrAttention::Waiting => Msg::PrQueueWaiting.t(),
@@ -1287,6 +1289,7 @@ pub fn queue_bucket_label(a: PrAttention) -> &'static str {
 pub fn attention_color(a: PrAttention) -> u32 {
     match a {
         PrAttention::NeedsYou => theme().color_blocker,
+        PrAttention::Pending => theme().text_muted,
         PrAttention::InProgress => theme().color_warning,
         PrAttention::Ready => theme().color_success,
         PrAttention::Waiting => theme().color_branch,
@@ -1305,6 +1308,7 @@ pub fn reason_text(r: &PrReason) -> String {
         PrReason::ReadyToMerge => Msg::PrWhyReadyToMerge.t().to_string(),
         PrReason::ReviewRequested => Msg::PrWhyReviewRequested.t().to_string(),
         PrReason::AwaitingReview => Msg::PrWhyAwaitingReview.t().to_string(),
+        PrReason::Pending => Msg::PrWhyPending.t().to_string(),
         PrReason::Draft => Msg::PrDraft.t().to_string(),
         PrReason::None => String::new(),
     }

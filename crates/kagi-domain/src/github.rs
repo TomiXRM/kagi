@@ -63,6 +63,67 @@ pub struct PrBodyDetail {
     pub deletions: u32,
 }
 
+/// Whether the volatile L2 fields can be used for an attention verdict.
+/// `Stale` means a previous value exists but its refresh failed; callers may
+/// display that value as stale, but must not present it as a current verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrDetailAvailability {
+    #[default]
+    Missing,
+    Loading,
+    Fresh,
+    Stale,
+}
+
+/// Replace the list-owned fields while retaining details fetched separately
+/// for the same PR head. A changed head deliberately drops L2/L3 from the
+/// composed value so old checks and statistics never describe the new commit.
+pub fn apply_pr_list(cache: &mut Vec<PullRequest>, incoming: Vec<PullRequest>) -> bool {
+    let previous = std::mem::take(cache);
+    let mut merged = Vec::with_capacity(incoming.len());
+    for mut listed in incoming {
+        if let Some(old) = previous
+            .iter()
+            .find(|old| old.number == listed.number && old.head_sha == listed.head_sha)
+        {
+            listed.ci = old.ci;
+            listed.checks.clone_from(&old.checks);
+            listed.mergeable = old.mergeable;
+            listed.body.clone_from(&old.body);
+            listed.changed_files = old.changed_files;
+            listed.additions = old.additions;
+            listed.deletions = old.deletions;
+        }
+        merged.push(listed);
+    }
+    let changed = previous != merged;
+    *cache = merged;
+    changed
+}
+
+/// Apply exactly the L2-owned fields when the request still names this PR head.
+pub fn apply_pr_status(pr: &mut PullRequest, detail: &PrStatusDetail) -> bool {
+    if pr.number != detail.number || pr.head_sha != detail.head_sha {
+        return false;
+    }
+    pr.ci = detail.ci;
+    pr.checks.clone_from(&detail.checks);
+    pr.mergeable = detail.mergeable;
+    true
+}
+
+/// Apply exactly the L3-owned fields when the request still names this PR head.
+pub fn apply_pr_body(pr: &mut PullRequest, detail: &PrBodyDetail) -> bool {
+    if pr.number != detail.number || pr.head_sha != detail.head_sha {
+        return false;
+    }
+    pr.body.clone_from(&detail.body);
+    pr.changed_files = detail.changed_files;
+    pr.additions = detail.additions;
+    pr.deletions = detail.deletions;
+    true
+}
+
 impl ReviewVerdict {
     /// The `gh pr review` flag that submits this verdict.
     pub fn flag(self) -> &'static str {
@@ -206,6 +267,99 @@ impl PullRequest {
         } else {
             PrGroup::Others
         }
+    }
+}
+
+#[cfg(test)]
+mod detail_merge_tests {
+    use super::*;
+
+    fn listed(head: &str) -> PullRequest {
+        PullRequest {
+            number: 42,
+            title: "new title".into(),
+            head_sha: head.into(),
+            review: ReviewState::Approved,
+            updated_at: "new-time".into(),
+            ..Default::default()
+        }
+    }
+
+    fn detailed(head: &str) -> PullRequest {
+        PullRequest {
+            title: "old title".into(),
+            ci: CiState::Failure,
+            checks: vec![Check {
+                name: "ci".into(),
+                workflow: "test".into(),
+                state: CiState::Failure,
+                url: String::new(),
+            }],
+            mergeable: Mergeable::Conflicting,
+            body: "body".into(),
+            changed_files: 3,
+            additions: 8,
+            deletions: 5,
+            updated_at: "old-time".into(),
+            ..listed(head)
+        }
+    }
+
+    #[test]
+    fn list_refresh_updates_only_l1_and_preserves_same_head_details() {
+        let mut cache = vec![detailed("same")];
+        assert!(apply_pr_list(&mut cache, vec![listed("same")]));
+        let pr = &cache[0];
+        assert_eq!(pr.title, "new title");
+        assert_eq!(pr.updated_at, "new-time", "updatedAt is L1-owned");
+        assert_eq!(pr.checks.len(), 1);
+        assert_eq!(pr.mergeable, Mergeable::Conflicting);
+        assert_eq!(pr.body, "body");
+        assert_eq!((pr.changed_files, pr.additions, pr.deletions), (3, 8, 5));
+    }
+
+    #[test]
+    fn changed_head_does_not_present_old_details_as_current() {
+        let mut cache = vec![detailed("old")];
+        apply_pr_list(&mut cache, vec![listed("new")]);
+        let pr = &cache[0];
+        assert!(pr.checks.is_empty());
+        assert_eq!(pr.mergeable, Mergeable::Unknown);
+        assert!(pr.body.is_empty());
+        assert_eq!((pr.changed_files, pr.additions, pr.deletions), (0, 0, 0));
+    }
+
+    #[test]
+    fn detail_appliers_accept_empty_values_and_reject_wrong_head() {
+        let mut pr = detailed("same");
+        let status = PrStatusDetail {
+            number: 42,
+            head_sha: "same".into(),
+            ci: CiState::None,
+            checks: Vec::new(),
+            mergeable: Mergeable::Clean,
+        };
+        assert!(apply_pr_status(&mut pr, &status));
+        assert!(pr.checks.is_empty());
+        assert_eq!(pr.mergeable, Mergeable::Clean);
+
+        let body = PrBodyDetail {
+            number: 42,
+            head_sha: "same".into(),
+            updated_at: "detail-time".into(),
+            body: String::new(),
+            changed_files: 0,
+            additions: 0,
+            deletions: 0,
+        };
+        assert!(apply_pr_body(&mut pr, &body));
+        assert!(pr.body.is_empty());
+        assert_eq!((pr.changed_files, pr.additions, pr.deletions), (0, 0, 0));
+        assert_eq!(pr.updated_at, "old-time", "L3 cannot overwrite L1 fields");
+
+        let mut wrong = status;
+        wrong.head_sha = "moved".into();
+        assert!(!apply_pr_status(&mut pr, &wrong));
     }
 }
 
@@ -581,6 +735,8 @@ pub enum Mergeable {
 pub enum PrAttention {
     /// Something is wrong and it is yours to fix.
     NeedsYou,
+    /// L2 is absent, in flight, or stale, so readiness is not yet known.
+    Pending,
     /// Work is happening; nothing to do but wait.
     InProgress,
     /// Green and yours — merge it.
@@ -603,6 +759,7 @@ pub enum PrReason {
     ReviewRequested,
     AwaitingReview,
     Draft,
+    Pending,
     None,
 }
 
@@ -618,16 +775,32 @@ impl PullRequest {
     /// Classify for the Focus Queue. `mine` is [`PullRequest::group_for`] ==
     /// `Mine`; a PR that is not yours can never be "yours to fix".
     pub fn attention(&self, mine: bool, review_requested: bool) -> (PrAttention, PrReason) {
+        self.attention_with_status(mine, review_requested, PrDetailAvailability::Fresh)
+    }
+
+    /// Classify for the Focus Queue without turning absent L2 data into a
+    /// fabricated `CiState::None` / `Mergeable::Unknown` verdict.
+    pub fn attention_with_status(
+        &self,
+        mine: bool,
+        review_requested: bool,
+        status: PrDetailAvailability,
+    ) -> (PrAttention, PrReason) {
         if mine {
+            // reviewDecision is L1-owned, so this conclusion is valid before
+            // checks and mergeability arrive.
+            if self.review == ReviewState::ChangesRequested {
+                return (PrAttention::NeedsYou, PrReason::ChangesRequested);
+            }
+            if status != PrDetailAvailability::Fresh {
+                return (PrAttention::Pending, PrReason::Pending);
+            }
             if self.mergeable == Mergeable::Conflicting {
                 return (PrAttention::NeedsYou, PrReason::Conflicting);
             }
             let failed = self.failed_checks();
             if failed > 0 || self.ci == CiState::Failure {
                 return (PrAttention::NeedsYou, PrReason::CiFailed(failed.max(1)));
-            }
-            if self.review == ReviewState::ChangesRequested {
-                return (PrAttention::NeedsYou, PrReason::ChangesRequested);
             }
             if self.ci == CiState::Pending {
                 return (PrAttention::InProgress, PrReason::CiRunning);
@@ -723,6 +896,27 @@ mod attention_tests {
         assert_eq!(
             p.attention(true, false),
             (PrAttention::Ready, PrReason::ReadyToMerge)
+        );
+    }
+
+    #[test]
+    fn missing_or_stale_l2_is_pending_but_l1_changes_requested_is_final() {
+        let mut p = pr();
+        p.review = ReviewState::Approved;
+        for status in [
+            PrDetailAvailability::Missing,
+            PrDetailAvailability::Loading,
+            PrDetailAvailability::Stale,
+        ] {
+            assert_eq!(
+                p.attention_with_status(true, false, status),
+                (PrAttention::Pending, PrReason::Pending)
+            );
+        }
+        p.review = ReviewState::ChangesRequested;
+        assert_eq!(
+            p.attention_with_status(true, false, PrDetailAvailability::Missing),
+            (PrAttention::NeedsYou, PrReason::ChangesRequested)
         );
     }
 

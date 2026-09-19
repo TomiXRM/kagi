@@ -516,6 +516,7 @@ pub enum Msg {
     PrModeCommits,
     /// Focus Queue buckets.
     PrQueueNeedsYou,
+    PrQueuePending,
     PrQueueInProgress,
     PrQueueReady,
     PrQueueWaiting,
@@ -555,6 +556,7 @@ pub enum Msg {
     PrWhyReadyToMerge,
     PrWhyReviewRequested,
     PrWhyAwaitingReview,
+    PrWhyPending,
     /// Right rail + tabs.
     PrModeChecks,
     PrModeReview,
@@ -1597,6 +1599,8 @@ impl Msg {
             (Ja, PrModeCommits) => "commit",
             (En, PrQueueNeedsYou) => "NEEDS YOU",
             (Ja, PrQueueNeedsYou) => "対応が必要",
+            (En, PrQueuePending) => "DETERMINING",
+            (Ja, PrQueuePending) => "判定待ち",
             (En, PrQueueInProgress) => "IN PROGRESS",
             (Ja, PrQueueInProgress) => "進行中",
             (En, PrQueueReady) => "READY",
@@ -1665,6 +1669,8 @@ impl Msg {
             (Ja, PrWhyReviewRequested) => "レビュー依頼",
             (En, PrWhyAwaitingReview) => "Awaiting review",
             (Ja, PrWhyAwaitingReview) => "レビュー待ち",
+            (En, PrWhyPending) => "Determining",
+            (Ja, PrWhyPending) => "判定待ち",
             (En, PrModeChecks) => "CHECKS",
             (Ja, PrModeChecks) => "チェック",
             (En, PrModeReview) => "REVIEW",

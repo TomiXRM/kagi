@@ -170,6 +170,28 @@ fn a_genuine_empty_response_is_the_only_thing_that_empties_the_list() {
     assert!(cache.is_empty(), "a real empty response replaces the list");
 }
 
+#[test]
+fn successful_l1_refresh_preserves_details_for_the_same_head() {
+    let mut cache = kagi_git::github::parse_pr_list(
+        r#"[{"number":7,"title":"old","headRefOid":"sha","body":"kept","changedFiles":4,"additions":9,"deletions":2,"mergeable":"CONFLICTING","statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}]"#,
+    )
+    .unwrap();
+    let listed = kagi_git::github::parse_pr_list(
+        r#"[{"number":7,"title":"new","headRefOid":"sha","updatedAt":"now"}]"#,
+    )
+    .unwrap();
+    let outcome = apply_pr_fetch(&mut cache, Ok(listed));
+    assert!(outcome.changed);
+    assert_eq!(cache[0].title, "new");
+    assert_eq!(cache[0].body, "kept");
+    assert_eq!(cache[0].changed_files, 4);
+    assert_eq!(cache[0].checks.len(), 1);
+    assert_eq!(
+        cache[0].mergeable,
+        kagi_domain::github::Mergeable::Conflicting
+    );
+}
+
 /// (c) An expired token keeps the last good list — the #506 bug.
 #[test]
 fn an_auth_failure_keeps_the_previous_list() {

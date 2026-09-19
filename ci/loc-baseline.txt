@@ -29,7 +29,7 @@ src/ui/modals.rs 879
 src/ui/operations/branch.rs 1149
 src/ui/operations/commit.rs 1233
 src/ui/operations/modal_state.rs 1079
-src/ui/pr_mode.rs 2075
+src/ui/pr_mode.rs 2087
 src/ui/render.rs 824
 src/ui/render_header.rs 814
 src/ui/settings_view.rs 823

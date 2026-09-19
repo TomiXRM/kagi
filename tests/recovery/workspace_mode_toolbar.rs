@@ -316,8 +316,50 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         let cached = cx.read(|cx| app.read(cx).ui().github_prs.first().cloned());
         if let Some(pr) = cached {
+            // The conversation lands through the injected read: two reviews
+            // and one issue comment, which must become three entries of the
+            // page's list. The first virtualized feed flattened the entries
+            // *before* assigning what had landed and showed none (review
+            // finding, w5:p19).
+            e2e::queue_github_pr_conversation(cx.background_executor.spawn(async move {
+                use kagi_domain::github::{Comment, Review};
+                (
+                    Ok((
+                        vec![
+                            Review {
+                                author: "alice".into(),
+                                state: "APPROVED".into(),
+                                body: "looks good".into(),
+                                submitted_at: "2026-09-01T00:00:00Z".into(),
+                            },
+                            Review {
+                                author: "bob".into(),
+                                state: "COMMENTED".into(),
+                                body: "one nit".into(),
+                                submitted_at: "2026-09-02T00:00:00Z".into(),
+                            },
+                        ],
+                        vec![Comment {
+                            author: "carol".into(),
+                            body: "thanks".into(),
+                            created_at: "2026-09-03T00:00:00Z".into(),
+                        }],
+                    )),
+                    Ok(Vec::new()),
+                )
+            }));
             app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
             cx.run_until_parked();
+            cx.read(|cx| {
+                let m = app.read(cx).pr_mode().expect("PR mode");
+                let tab = &m.tabs[m.active.unwrap()];
+                assert!(tab.conversation_loaded, "the injected conversation landed");
+                assert_eq!(
+                    tab.feed_entries.len(),
+                    3,
+                    "every review and comment that landed is an entry of the page"
+                );
+            });
             // ADR-0200: 概要 and レビュー are two anchors into ONE virtualized
             // list, and the tabs are navigation into it. Each tab must draw
             // its own anchor, and both must be looking at the same list - the

@@ -240,7 +240,7 @@ pub(super) fn conversation_entries(
 /// One conversation card. Bodies go through the same markdown pipeline (and
 /// the same sanitiser) as the description.
 fn render_entry(
-    pr: &PullRequest,
+    number: u64,
     i: usize,
     e: &Entry,
     avatars: &kagi_ui_core::avatar::AvatarImages,
@@ -345,12 +345,12 @@ fn render_entry(
                 ),
         )
         .when(!e.hunk.trim().is_empty(), |el| {
-            el.child(render_diff_hunk(&e.hunk, pr.number as usize * 1000 + i, cx))
+            el.child(render_diff_hunk(&e.hunk, number as usize * 1000 + i, cx))
         })
         .when(!body.trim().is_empty(), |el| {
             el.child(
                 TextView::markdown(
-                    ("pr-convo-md", pr.number as usize * 1000 + i),
+                    ("pr-convo-md", number as usize * 1000 + i),
                     SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
                 )
                 .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
@@ -410,87 +410,138 @@ pub(super) fn render_feed_item(
     ix: usize,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let Some(tab) = app.pr_mode().and_then(|m| m.tabs.get(tab_ix)) else {
-        return div().into_any_element();
-    };
-    let pr = tab.pr.clone();
-    let entries = tab.feed_entries.clone();
-    let loaded = tab.conversation_loaded;
-    let merge_status = tab.merge_status.clone();
-    let has_merge_card = merge_status
-        .as_ref()
-        .map(|status| {
-            super::pr_merge_status::render(
-                &super::pr_merge_status::view_from(status, pr.review),
-                cx,
-            )
-            .is_some()
-        })
-        .unwrap_or(false);
-    let items = feed_items(&pr, has_merge_card, entries.len());
-    let Some(item) = items.get(ix).copied() else {
-        return div().into_any_element();
-    };
-    let block = |el: gpui::AnyElement| div().w_full().pb_3().child(el).into_any_element();
-    match item {
-        FeedItem::Headline => block(super::e2e::measure_control(
-            "pr-mode-headline",
-            super::pr_page::render_pr_headline(app, &pr),
-        )),
-        FeedItem::Properties => block(super::e2e::measure_control(
-            "pr-mode-properties",
-            super::pr_page::render_pr_properties(app, &pr, cx),
-        )),
-        FeedItem::Checks => super::pr_page::render_checks_card(app, &pr, cx)
-            .map(block)
-            .unwrap_or_else(|| div().into_any_element()),
-        FeedItem::MergeCard => merge_status
+    // Decide what the item is by borrowing; clone only what that item needs.
+    // Every visible entry used to copy the whole `PullRequest` (body, checks,
+    // labels) and the merge status - the cost the `Rc` on the entries was
+    // there to avoid (review finding, `w5:p19`).
+    let (item, number, review_state) = {
+        let Some(tab) = app.pr_mode().and_then(|m| m.tabs.get(tab_ix)) else {
+            return div().into_any_element();
+        };
+        let has_merge_card = tab
+            .merge_status
             .as_ref()
-            .and_then(|status| {
+            .map(|status| {
                 super::pr_merge_status::render(
-                    &super::pr_merge_status::view_from(status, pr.review),
+                    &super::pr_merge_status::view_from(status, tab.pr.review),
                     cx,
                 )
+                .is_some()
             })
-            .map(block)
-            .unwrap_or_else(|| div().into_any_element()),
-        FeedItem::Description => block(description_card(&pr, cx)),
-        FeedItem::Conversation => block(super::e2e::measure_control(
-            "pr-feed-review",
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .pt_2()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(format!(
-                    "{} ({})",
-                    Msg::PrModeReview.t(),
-                    entries.len()
-                ))),
-        )),
-        // "None" and "not fetched yet" are different things to say; the
-        // animated dots live above the feed, outside this scroll pane.
-        FeedItem::Empty => block(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(if loaded {
-                    Msg::PrModeNoReview.t()
-                } else {
-                    Msg::EditorWorkspaceLoading.t()
-                }))
-                .into_any_element(),
-        ),
-        FeedItem::Entry(i) => match entries.get(i) {
-            Some(entry) => {
-                let avatars = app.avatars.images.clone();
-                block(render_entry(&pr, i, entry, &avatars, cx))
-            }
+            .unwrap_or(false);
+        let items = feed_items(&tab.pr, has_merge_card, tab.feed_entries.len());
+        let Some(item) = items.get(ix).copied() else {
+            return div().into_any_element();
+        };
+        (item, tab.pr.number, tab.pr.review)
+    };
+    let block = |el: gpui::AnyElement| div().w_full().pb_3().child(el).into_any_element();
+    // The page-level cards are one item each and need the PR; cloning it once
+    // for those few items is fine. Entries do not go through this path.
+    let pr_for_card = |app: &KagiApp| {
+        app.pr_mode()
+            .and_then(|m| m.tabs.get(tab_ix))
+            .map(|t| t.pr.clone())
+    };
+    match item {
+        FeedItem::Headline => match pr_for_card(app) {
+            Some(pr) => block(super::e2e::measure_control(
+                "pr-mode-headline",
+                super::pr_page::render_pr_headline(app, &pr),
+            )),
             None => div().into_any_element(),
         },
+        FeedItem::Properties => match pr_for_card(app) {
+            Some(pr) => block(super::e2e::measure_control(
+                "pr-mode-properties",
+                super::pr_page::render_pr_properties(app, &pr, cx),
+            )),
+            None => div().into_any_element(),
+        },
+        FeedItem::Checks => match pr_for_card(app) {
+            Some(pr) => super::pr_page::render_checks_card(app, &pr, cx)
+                .map(block)
+                .unwrap_or_else(|| div().into_any_element()),
+            None => div().into_any_element(),
+        },
+        FeedItem::MergeCard => {
+            let status = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .and_then(|t| t.merge_status.clone());
+            status
+                .as_ref()
+                .and_then(|status| {
+                    super::pr_merge_status::render(
+                        &super::pr_merge_status::view_from(status, review_state),
+                        cx,
+                    )
+                })
+                .map(block)
+                .unwrap_or_else(|| div().into_any_element())
+        }
+        FeedItem::Description => match pr_for_card(app) {
+            Some(pr) => block(description_card(&pr, cx)),
+            None => div().into_any_element(),
+        },
+        FeedItem::Conversation => {
+            let count = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .map(|t| t.feed_entries.len())
+                .unwrap_or(0);
+            block(super::e2e::measure_control(
+                "pr-feed-review",
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(format!(
+                        "{} ({})",
+                        Msg::PrModeReview.t(),
+                        count
+                    ))),
+            ))
+        }
+        // "None" and "not fetched yet" are different things to say; the
+        // animated dots live above the feed, outside this scroll pane.
+        FeedItem::Empty => {
+            let loaded = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .map(|t| t.conversation_loaded)
+                .unwrap_or(false);
+            block(
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(if loaded {
+                        Msg::PrModeNoReview.t()
+                    } else {
+                        Msg::EditorWorkspaceLoading.t()
+                    }))
+                    .into_any_element(),
+            )
+        }
+        FeedItem::Entry(i) => {
+            // One `Rc` bump for the entries, one `Arc`-map clone for the
+            // avatars; the entry itself is borrowed out of the `Rc`.
+            let entries = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .map(|t| t.feed_entries.clone());
+            match entries.as_ref().and_then(|e| e.get(i)) {
+                Some(entry) => {
+                    let avatars = app.avatars.images.clone();
+                    block(render_entry(number, i, entry, &avatars, cx))
+                }
+                None => div().into_any_element(),
+            }
+        }
     }
 }
 

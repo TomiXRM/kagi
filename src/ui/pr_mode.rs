@@ -354,18 +354,27 @@ impl KagiApp {
             });
         })
         .detach();
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_github_pr_conversation();
+        #[cfg(not(feature = "gui-e2e"))]
+        let injected: Option<gpui::Task<super::e2e::PrConversationResult>> = None;
         cx.spawn(async move |this, acx| {
-            let (convo, lines) = acx
-                .background_executor()
-                .spawn(async move {
-                    // Two calls: `gh pr view` for the verdicts + issue
-                    // comments, `gh api` for the line comments (where Copilot
-                    // / Codex put code suggestions — not exposed by --json).
-                    let convo = kagi_git::github::pr_conversation(&repo, number);
-                    let lines = kagi_git::github::pr_review_comments(&repo, number);
-                    (convo, lines)
-                })
-                .await;
+            let (convo, lines) = match injected {
+                Some(task) => task.await,
+                None => {
+                    acx.background_executor()
+                        .spawn(async move {
+                            // Two calls: `gh pr view` for the verdicts + issue
+                            // comments, `gh api` for the line comments (where
+                            // Copilot / Codex put code suggestions — not
+                            // exposed by --json).
+                            let convo = kagi_git::github::pr_conversation(&repo, number);
+                            let lines = kagi_git::github::pr_review_comments(&repo, number);
+                            (convo, lines)
+                        })
+                        .await
+                }
+            };
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
                     .pr_mode_of(owner)
@@ -376,11 +385,6 @@ impl KagiApp {
                 // Stop the loader even on failure; the pane then falls back to
                 // its "no reviews" wording as before.
                 t.conversation_loaded = true;
-                t.feed_entries = std::rc::Rc::new(super::pr_conversation::conversation_entries(
-                    &t.reviews,
-                    &t.comments,
-                    &t.line_comments,
-                ));
                 cx.notify();
                 let Ok((reviews, comments)) = convo else {
                     return;
@@ -396,6 +400,14 @@ impl KagiApp {
                 t.reviews = reviews;
                 t.comments = comments;
                 t.line_comments = line_comments;
+                // Flattened from what just landed - after the assignment, or
+                // the list is built from the empty lists it replaced (review
+                // finding, `w5:p19`).
+                t.feed_entries = std::rc::Rc::new(super::pr_conversation::conversation_entries(
+                    &t.reviews,
+                    &t.comments,
+                    &t.line_comments,
+                ));
             });
         })
         .detach();

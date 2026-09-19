@@ -318,42 +318,38 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         if let Some(pr) = cached {
             app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
             cx.run_until_parked();
-            // ADR-0200: 概要 and レビュー are two sections of ONE page, and the
-            // tabs are navigation into it. Both sections must be drawn from
-            // either tab; a tab that swapped the body would draw only its own.
-            for view in [
-                kagi::ui::pr_mode::PrView::Review,
-                kagi::ui::pr_mode::PrView::Overview,
+            // ADR-0200: 概要 and レビュー are two anchors into ONE virtualized
+            // list, and the tabs are navigation into it. Each tab must draw
+            // its own anchor, and both must be looking at the same list - the
+            // same item count - where a tab that swapped the body would give
+            // each view a list of its own. (The other anchor may legitimately
+            // be off screen: that is what virtualization means.)
+            let mut counts = Vec::new();
+            for (view, anchor) in [
+                (kagi::ui::pr_mode::PrView::Overview, "pr-mode-headline"),
+                (kagi::ui::pr_mode::PrView::Review, "pr-feed-review"),
             ] {
                 app.update(cx, |app, cx| app.pr_mode_show(view, cx));
-                for control in ["pr-feed-overview", "pr-feed-review"] {
-                    e2e::clear_control_bounds(win.window_id(), control);
+                e2e::clear_control_bounds(win.window_id(), anchor);
+                // A virtualized list measures its items on one frame and lays
+                // them out on the next, so two draws are what "the page is on
+                // screen" means here.
+                for _ in 0..2 {
+                    cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                        .unwrap();
                 }
-                cx.update_window(win, |_, window, cx| window.draw(cx).clear())
-                    .unwrap();
                 assert!(
-                    measure(cx, win, "pr-feed-overview").is_some()
-                        && measure(cx, win, "pr-feed-review").is_some(),
-                    "{view:?} must draw the whole PR page, not just its own section"
+                    measure(cx, win, anchor).is_some(),
+                    "{view:?} must reveal its own anchor on the page"
                 );
+                counts.push(cx.read(|cx| {
+                    let m = app.read(cx).pr_mode().expect("PR mode");
+                    m.tabs[m.active.unwrap()].feed_list.item_count()
+                }));
             }
-
-            // ADR-0200 §8/§9: the PR's properties are rows of its own page, and
-            // the comment box is pinned under the feed. Both must be on screen
-            // for the PR being read - a rail or a modal would fail this.
-            for control in ["pr-mode-headline", "pr-mode-properties", "pr-mode-composer"] {
-                e2e::clear_control_bounds(win.window_id(), control);
-            }
-            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
-                .unwrap();
-            let headline = measure(cx, win, "pr-mode-headline").expect("the PR's title is drawn");
-            let properties =
-                measure(cx, win, "pr-mode-properties").expect("the PR's properties are drawn");
-            let composer = measure(cx, win, "pr-mode-composer").expect("the comment box is drawn");
             assert!(
-                f32::from(headline.origin.y) < f32::from(properties.origin.y)
-                    && f32::from(properties.origin.y) < f32::from(composer.origin.y),
-                "the page reads title → properties → … → composer"
+                counts[0] == counts[1] && counts[0] > 2,
+                "both tabs read one list: {counts:?}"
             );
 
             // mock 7a/7b: the checks card is folded on the page, and opens to

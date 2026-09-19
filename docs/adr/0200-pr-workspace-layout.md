@@ -168,11 +168,21 @@ description, and the conversation. Both tabs draw the same feed; pressing one
 scrolls the feed to its section through `ScrollHandle::scroll_to_top_of_item`.
 The lit chip is therefore "where you jumped", not "which body is mounted".
 
+The feed is a **virtualized list** (`gpui::list`, the same element the diff
+uses), not a scrolling column: its items are the headline, the properties,
+the checks card, the merge card, the description, the conversation heading
+and then one item per conversation entry (`FeedItem`). A PR with dozens of
+Copilot line comments laid every card out on every frame and scrolled in
+stutters (user report); now only the visible items exist. The entries are
+flattened once, when the conversation lands (`PrTab::feed_entries`), and the
+`ListState` lives on the tab so the scroll survives a switch. The tabs reveal
+item 0 and the heading's index through `scroll_to_reveal_item`; that index is
+looked up per frame because the optional cards shift it.
+
 Three consequences worth stating:
 
-- The two children are a **contract**: an optional merge card rides *inside*
-  the first child and an empty conversation still renders its heading, because
-  an anchor index that moved with the data would scroll to the wrong place.
+- The heading is always an item, even with no entries (an `Empty` item follows
+  it), so the レビュー tab always has something to reveal.
 - The jump is **consumed once** (`PrModeState::feed_anchor` is `take`n by the
   renderer). A later frame - a fetch landing, a resize - must not drag the
   reader back to the heading.

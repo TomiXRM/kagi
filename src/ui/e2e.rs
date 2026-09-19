@@ -106,6 +106,43 @@ pub(crate) fn measure_control(
         control.into_any_element()
     }
 }
+/// Record a container's own bounds from *inside* it: an absolute, full-size
+/// canvas to add as one more child of an already-sized element.
+///
+/// `measure_control` wraps its control in an auto-sized `relative` div, which
+/// is right for a button or a row but wrong for a pane whose children size
+/// themselves with `h_full` / `flex_1`: the percentage then resolves against
+/// the wrapper's *content* height, and a virtualized list inside the PR page
+/// was handed a 16px viewport (test-only, but it made the scenario blind).
+pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    use gpui::IntoElement as _;
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = name.into();
+        gpui::canvas(
+            move |bounds, window, _| {
+                CONTROL_BOUNDS.with(|map| {
+                    map.borrow_mut()
+                        .insert((window.window_handle().window_id(), name.clone()), bounds);
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        let _ = name;
+        use gpui::IntoElement as _;
+        gpui::div().into_any_element()
+    }
+}
+
 pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElement {
     #[cfg(feature = "gui-e2e")]
     use gpui::{IntoElement as _, ParentElement as _};

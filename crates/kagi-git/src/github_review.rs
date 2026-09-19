@@ -28,7 +28,7 @@ use kagi_domain::plan::{OperationPlan, StateSummary};
 use kagi_domain::plan_note::{GithubNote, GithubTitle, PlanDisposition, PlanNote, PlanTitle};
 
 use crate::github_fetch::GH_TIMEOUT;
-use crate::github_merge::repo_owner_name;
+use crate::github_merge::resolve_base_repo;
 use crate::GitError;
 
 /// Build the `gh pr review` argument vector. Pure and unit-tested, so the
@@ -212,21 +212,18 @@ pub fn plan_pr_review(pr: &PullRequest, verdict: ReviewVerdict, body: &str) -> O
 /// instead of letting the UI offer a retry that could leave two reviews.
 pub fn pr_review(
     workdir: &Path,
+    base_repo: &str,
     number: u64,
     verdict: ReviewVerdict,
     body: &str,
     plan: &OperationPlan,
 ) -> crate::backend::recording::RunReport {
-    // The repository identity, resolved the same way the merge and comment
-    // paths resolve it, so two GitHub writes from one worktree cannot address
-    // two repositories. Failing to resolve it is a clean failure: nothing ran.
-    let result = match repo_owner_name(workdir) {
-        Ok((owner, name)) if !owner.is_empty() && !name.is_empty() => {
-            review_transport(workdir, &format!("{owner}/{name}"), number, verdict, body)
-        }
-        Ok(_) => Err(GitError::Other(
-            "gh could not name the repository to review in".to_string(),
-        )),
+    // The repository identity the PR already carries — see
+    // [`resolve_base_repo`]. Asking `gh repo view` first would make submitting
+    // a review depend on a network round trip that has nothing to do with the
+    // review; `repo_owner_name` is the fallback, not the source.
+    let result = match resolve_base_repo(workdir, base_repo) {
+        Ok(repo) => review_transport(workdir, &repo, number, verdict, body),
         Err(error) => Err(error),
     };
     let outcome = match &result {

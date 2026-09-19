@@ -271,6 +271,30 @@ screen (7c) need a `gh run view` read that does not exist yet, and the FILES
 tab's unified/split toggle with inline review comments (7d) is a change to the
 diff row model, not to this page.
 
+### 11. The properties are editable from their rows
+
+Reviewers, assignees and labels each carry a gear that opens a picker
+(`src/ui/pr_fields.rs`, `ActiveModal::PrFields`). The picker opens on what the
+PR already carries and starts a background read of what the repository offers
+(`gh label list`, `gh api repos/…/assignees`); the read only ever *adds*
+candidates, so a value can be removed with no network at all. Confirming
+sends the **diff** between the opening snapshot and the selection through
+`kagi_git::github::pr_edit` (`gh pr edit`, one `--add-*`/`--remove-*` flag per
+value, op name `pr-edit`), so two readers editing different values do not
+overwrite each other's field wholesale. An empty diff is a plan blocker.
+
+On success the owner's copy of the PR takes the new values at once
+(`apply_pr_fields`, owner-scoped like every other write settlement) and the
+list is re-fetched to confirm them from GitHub.
+
+**No GitHub write derives the repository from a network call.** The first
+comment write resolved it with `gh repo view`, which is a round trip, and so
+commenting failed with "not a GitHub repo" whenever GitHub was unreachable -
+while `PullRequest::base_repo` held the answer the whole time (user report).
+Every `gh` mutation now takes that frozen `<host>/<owner>/<repo>` from its
+caller; `repo_owner_name` is a fallback for an empty one only. A test keeps it
+so: the fake `gh` exits loudly if it is ever asked for `repo view`.
+
 ## Consequences
 
 - Three files passed the 800-LOC ceiling and were split on feature boundaries

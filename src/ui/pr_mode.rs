@@ -839,6 +839,52 @@ impl KagiApp {
     /// Switching PRs parks the text in the tab it belongs to and loads the new
     /// tab's draft, so a half-written comment is never posted to the wrong PR
     /// and never silently lost.
+    /// Carry a confirmed field edit into the owner's copy of the PR
+    /// (ADR-0200 §11). The tab holds its own `PullRequest` snapshot, so a
+    /// successful `gh pr edit` has to land there or the rows keep showing the
+    /// values the write just replaced until the next list fetch.
+    pub(crate) fn apply_pr_fields(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        number: u64,
+        field: super::modals::PrField,
+        selected: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tab) = self
+            .pr_mode_of(owner)
+            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+        {
+            match field {
+                super::modals::PrField::Reviewers => tab.pr.reviewers = selected,
+                super::modals::PrField::Assignees => tab.pr.assignees = selected,
+                super::modals::PrField::Labels => {
+                    // A label's colour comes from the repository, not from the
+                    // picker: keep the one already known and leave a new
+                    // label's pill neutral until the next fetch names it.
+                    let known: std::collections::HashMap<String, String> = tab
+                        .pr
+                        .labels
+                        .iter()
+                        .map(|l| (l.name.clone(), l.color.clone()))
+                        .collect();
+                    tab.pr.labels = selected
+                        .into_iter()
+                        .map(|name| kagi_domain::github::IssueLabel {
+                            color: known.get(&name).cloned().unwrap_or_default(),
+                            name,
+                            description: String::new(),
+                        })
+                        .collect();
+                }
+            }
+        }
+        // The list the navigator and the home table read is a separate copy;
+        // re-fetch it rather than patching two models by hand.
+        self.refresh_github_prs(cx);
+        cx.notify();
+    }
+
     /// What a posted comment or review settles, for the session that posted it
     /// (ADR-0200, review finding): the composer is emptied and the thread is
     /// re-read.

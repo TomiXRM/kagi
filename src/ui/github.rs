@@ -543,6 +543,10 @@ impl KagiApp {
         let rp = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_body = body.clone();
+        // The repository identity the PR already carries. Re-deriving it with
+        // `gh repo view` is a network round trip, and commenting failed with
+        // "not a GitHub repo" whenever GitHub was unreachable (user report).
+        let base_repo = pr.base_repo.clone();
         let dispatched = self.finish_run(
             cx,
             "pr-comment",
@@ -551,7 +555,7 @@ impl KagiApp {
             repo_path,
             move || {
                 Ok(kagi_git::github::pr_comment(
-                    &rp, number, &bg_body, &bg_plan,
+                    &rp, &base_repo, number, &bg_body, &bg_plan,
                 ))
             },
             |_| None,
@@ -626,6 +630,7 @@ impl KagiApp {
         let rp = repo_path.clone();
         let bg_plan = plan.clone();
         let bg_body = body.clone();
+        let base_repo = pr.base_repo.clone();
         let dispatched = self.finish_run(
             cx,
             "pr-review",
@@ -634,7 +639,7 @@ impl KagiApp {
             repo_path,
             move || {
                 Ok(kagi_git::github::pr_review(
-                    &rp, number, verdict, &bg_body, &bg_plan,
+                    &rp, &base_repo, number, verdict, &bg_body, &bg_plan,
                 ))
             },
             |_| None,
@@ -656,6 +661,107 @@ impl KagiApp {
             self.status_footer = FooterStatus::Busy(SharedString::from(format!(
                 "{} #{}\u{2026}",
                 Msg::PrReviewSubmit.t(),
+                number
+            )));
+            cx.notify();
+        }
+    }
+
+    /// Apply the field picker's selection through `gh pr edit` (ADR-0200 §11).
+    ///
+    /// The write is the diff between what the PR carried when the picker
+    /// opened and what is selected now, so two readers editing different
+    /// values do not overwrite each other's field wholesale.
+    pub fn start_pr_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(modal) = self.pr_fields_modal().cloned() else {
+            return;
+        };
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let Some(pr) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| t.pr.clone())
+        else {
+            return;
+        };
+        let (add, remove) = kagi_domain::github::PrFieldEdit::diff(&modal.current, &modal.selected);
+        let mut edit = kagi_domain::github::PrFieldEdit::default();
+        match modal.field {
+            crate::ui::modals::PrField::Reviewers => {
+                edit.add_reviewers = add;
+                edit.remove_reviewers = remove;
+            }
+            crate::ui::modals::PrField::Assignees => {
+                edit.add_assignees = add;
+                edit.remove_assignees = remove;
+            }
+            crate::ui::modals::PrField::Labels => {
+                edit.add_labels = add;
+                edit.remove_labels = remove;
+            }
+        }
+        let number = modal.number;
+        if self.reject_transport_hold(&repo_path, &format!("pr-edit #{number}")) {
+            self.clear_pr_fields_modal();
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let plan = std::sync::Arc::new(kagi_git::github::plan_pr_edit(&pr, &edit));
+        if !plan.blockers.is_empty() {
+            klog!("refused: pr-edit plan has blockers, not executing");
+            self.record_op(
+                "pr-edit",
+                plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            self.clear_pr_fields_modal();
+            return;
+        }
+        let rp = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_edit = edit.clone();
+        let base_repo = modal.base_repo.clone();
+        let field = modal.field;
+        let selected = modal.selected.clone();
+        let dispatched = self.finish_run(
+            cx,
+            "pr-edit",
+            i18n::Op::PrEdit,
+            plan.clone(),
+            repo_path,
+            move || {
+                Ok(kagi_git::github::pr_edit(
+                    &rp, &base_repo, number, &bg_edit, &bg_plan,
+                ))
+            },
+            |_| None,
+            move |done| match done {
+                Ok(kagi_git::OperationOutcome::PrEdit { .. }) => {
+                    klog!("executed: pr-edit #{}", number);
+                    RunPresentation::none().pr_edit(number, field, selected.clone())
+                }
+                Ok(_) => RunPresentation::none(),
+                Err(failure) => {
+                    klog!("pr-edit failed: {}", failure.message);
+                    RunPresentation::none()
+                }
+            },
+        );
+        if dispatched {
+            self.clear_pr_fields_modal();
+            self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+                "{} #{}\u{2026}",
+                Msg::PrEditApply.t(),
                 number
             )));
             cx.notify();

@@ -372,6 +372,40 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             );
             app.update(cx, |app, cx| app.pr_mode_toggle_checks(cx));
 
+            // ADR-0200 §11: the gear on a properties row opens the field
+            // picker with what the PR already carries, before any read of
+            // what the repository offers has returned - so a value can be
+            // removed offline. Confirm is dead until something changed.
+            app.update(cx, |app, cx| {
+                app.open_pr_fields_modal(kagi::ui::modals::PrField::Reviewers, cx)
+            });
+            cx.read(|cx| {
+                let modal = app
+                    .read(cx)
+                    .pr_fields_modal()
+                    .cloned()
+                    .expect("the picker is the active modal");
+                assert_eq!(modal.number, 7);
+                assert_eq!(
+                    modal.selected, modal.current,
+                    "opens on the PR's own values"
+                );
+            });
+            app.update(cx, |app, cx| app.pr_fields_toggle("octocat".into(), cx));
+            cx.read(|cx| {
+                let modal = app.read(cx).pr_fields_modal().cloned().unwrap();
+                assert!(modal.selected.contains(&"octocat".to_string()));
+                let (add, remove) =
+                    kagi_domain::github::PrFieldEdit::diff(&modal.current, &modal.selected);
+                assert_eq!(add, vec!["octocat".to_string()]);
+                assert!(remove.is_empty());
+            });
+            app.update(cx, |app, cx| {
+                app.clear_pr_fields_modal();
+                cx.notify();
+            });
+            cx.read(|cx| assert!(app.read(cx).pr_fields_modal().is_none()));
+
             app.update(cx, |app, cx| app.pr_mode_home(cx));
             assert!(
                 measure(cx, win, "pr-mode-lane-pane").is_none(),

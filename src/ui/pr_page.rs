@@ -29,7 +29,11 @@ const PROPERTY_NAME_W: f32 = 78.0;
 /// Logins carry their avatar when the background pass has resolved one
 /// (`ensure_pr_avatars`), and their initial circle until then - a name with a
 /// face beside it is how a reviewer list is read at a glance.
-pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::AnyElement {
+pub(super) fn render_pr_properties(
+    app: &KagiApp,
+    pr: &PullRequest,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     // A worktree here that has the PR's head branch checked out: the answer to
     // "can I just go and look at this?", which no GitHub field can give.
     let worktree = app
@@ -102,9 +106,10 @@ pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::Any
         pills.into_any_element()
     };
 
-    // One row per property: a fixed-width name, then the value. The names line
-    // up so the column reads as a table rather than as a list of sentences.
-    let row = |name: &str, value: gpui::AnyElement| {
+    // One row per property: a fixed-width name, then the value, then the gear
+    // that edits it (ADR-0200 §11). A field with no editor - the worktree line,
+    // which is local truth - passes `None` and gets no gear.
+    let row = |name: &str, value: gpui::AnyElement, field: Option<super::modals::PrField>| {
         div()
             .flex()
             .flex_row()
@@ -120,6 +125,29 @@ pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::Any
                     .child(SharedString::from(name.to_string())),
             )
             .child(div().flex_1().min_w(px(0.)).child(value))
+            .children(field.map(|field| {
+                let open = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                    this.open_pr_fields_modal(field, cx);
+                });
+                div()
+                    .id(match field {
+                        super::modals::PrField::Reviewers => "pr-field-reviewers",
+                        super::modals::PrField::Assignees => "pr-field-assignees",
+                        super::modals::PrField::Labels => "pr-field-labels",
+                    })
+                    .flex_shrink_0()
+                    .px_1()
+                    .rounded_sm()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .cursor_pointer()
+                    .hover(|s| {
+                        s.bg(rgb(theme().surface))
+                            .text_color(rgb(theme().text_main))
+                    })
+                    .on_click(open)
+                    .child(SharedString::from("\u{2699}"))
+            }))
     };
 
     // Boxed, like the description and the comments below it: a bare list of
@@ -136,9 +164,21 @@ pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::Any
         .py_2()
         .flex()
         .flex_col()
-        .child(row(Msg::PrRailReviewers.t(), people(&pr.reviewers)))
-        .child(row(Msg::PrRailAssignees.t(), people(&pr.assignees)))
-        .child(row(Msg::PrRailLabels.t(), labels));
+        .child(row(
+            Msg::PrRailReviewers.t(),
+            people(&pr.reviewers),
+            Some(super::modals::PrField::Reviewers),
+        ))
+        .child(row(
+            Msg::PrRailAssignees.t(),
+            people(&pr.assignees),
+            Some(super::modals::PrField::Assignees),
+        ))
+        .child(row(
+            Msg::PrRailLabels.t(),
+            labels,
+            Some(super::modals::PrField::Labels),
+        ));
     if let Some((name, state)) = worktree {
         col = col.child(row(
             Msg::PrRailWorktree.t(),
@@ -158,6 +198,7 @@ pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::Any
                         .child(SharedString::from(state)),
                 )
                 .into_any_element(),
+            None,
         ));
     }
     col.into_any_element()

@@ -52,6 +52,7 @@ pub mod issues_mode;
 pub mod pr_conflicts;
 pub mod pr_conversation;
 pub mod pr_dashboard;
+pub mod pr_fields;
 pub mod pr_lane;
 pub mod pr_merge_status;
 pub mod pr_mode;
@@ -2942,6 +2943,7 @@ impl KagiApp {
             M::StashDrop(_) => self.start_stash_drop(cx),
             M::PushTag(_) => self.start_push_tag(cx),
             M::PrMerge(_) => self.start_pr_merge(cx),
+            M::PrFields(_) => self.start_pr_edit(cx),
             M::Push(_) => self.start_push(cx),
             M::BranchPlan(_) => self.start_branch_plan(cx),
             M::SetUpstream(_) => self.start_set_upstream(cx),
@@ -3032,6 +3034,7 @@ impl KagiApp {
             M::StashDrop(_) => self.cancel_stash_drop_modal(),
             M::PushTag(_) => self.cancel_push_tag_modal(),
             M::PrMerge(_) => self.cancel_pr_merge_modal(),
+            M::PrFields(_) => self.clear_pr_fields_modal(),
             M::Push(_) => self.cancel_push_modal(),
             M::BranchPlan(_) => self.cancel_branch_plan_modal(),
             M::SetUpstream(_) => self.cancel_set_upstream_modal(),

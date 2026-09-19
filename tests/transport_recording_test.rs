@@ -12,9 +12,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Mutex;
 
-use kagi_domain::github::ReviewVerdict;
+use kagi_domain::github::{PrFieldEdit, ReviewVerdict};
 use kagi_git::github::{
-    merge_pr, plan_pr_comment, plan_pr_merge, plan_pr_review, pr_comment, pr_review, MergeMethod,
+    merge_pr, plan_pr_comment, plan_pr_edit, plan_pr_merge, plan_pr_review, pr_comment, pr_edit,
+    pr_review, MergeMethod,
 };
 use kagi_git::oplog::{read_oplog_tail, Actor, OpOutcome};
 
@@ -29,6 +30,12 @@ const PR_JSON: &str = r#"[{"number":501,"title":"transport recording",
   "mergeable":"MERGEABLE","statusCheckRollup":[],
   "url":"https://example.invalid/acme/widgets/pull/501","author":{"login":"a"},
   "reviewRequests":[],"body":""}]"#;
+
+/// The `<host>/<owner>/<repo>` the PR itself carries. Every write below is
+/// handed this instead of letting the transport ask `gh repo view` for it:
+/// that lookup is a network round trip, and a PR that already knows where it
+/// lives must not need GitHub to be reachable before it can be written to.
+const BASE_REPO: &str = "example.invalid/acme/widgets";
 
 struct Environment {
     path: Option<OsString>,
@@ -364,7 +371,7 @@ fn pr_comment_records_before_returning_when_the_ui_completion_is_dropped() {
     let (bin, workdir, _restore) = fixture(root.path());
     fake_gh(&bin, &gh_comment_script(COMMENT_OK));
 
-    let report = pr_comment(&workdir, 501, COMMENT_BODY, &comment_plan());
+    let report = pr_comment(&workdir, BASE_REPO, 501, COMMENT_BODY, &comment_plan());
     let Ok(kagi_git::OperationOutcome::PrComment { number, detail }) = &report.result else {
         panic!("expected a posted comment, got {:?}", report.result);
     };
@@ -420,7 +427,7 @@ fn a_refused_pr_comment_is_still_recorded_with_ghs_own_reason() {
     let (bin, workdir, _restore) = fixture(root.path());
     fake_gh(&bin, &gh_comment_script(COMMENT_FAILS));
 
-    let report = pr_comment(&workdir, 501, COMMENT_BODY, &comment_plan());
+    let report = pr_comment(&workdir, BASE_REPO, 501, COMMENT_BODY, &comment_plan());
     assert!(report.result.is_err(), "a refused post is not an Ok");
     let OpOutcome::Failed { error } = latest_outcome_of("pr-comment") else {
         panic!("a clean non-zero exit must be recorded as Failed");
@@ -466,6 +473,7 @@ fn a_wordless_approval_records_its_verdict_without_sending_a_body() {
 
     let report = pr_review(
         &workdir,
+        BASE_REPO,
         501,
         ReviewVerdict::Approve,
         "",
@@ -513,6 +521,7 @@ fn a_request_changes_review_sends_its_body_on_stdin_and_is_recorded() {
 
     let report = pr_review(
         &workdir,
+        BASE_REPO,
         501,
         ReviewVerdict::RequestChanges,
         REVIEW_BODY,
@@ -550,6 +559,147 @@ fn a_request_changes_review_sends_its_body_on_stdin_and_is_recorded() {
         "the receipt names the verdict: {}",
         after.dirty
     );
+}
+
+// ── `gh pr edit` — the metadata half, and the identity it must not look up ──
+
+/// A `gh` that **refuses** to be asked where the repository is.
+///
+/// `gh repo view` is a network round trip. Every write here is handed the
+/// PR's own `<host>/<owner>/<repo>`, so reaching for that lookup is a bug,
+/// not a fallback — and a silent one, because on a working network it would
+/// simply succeed. So the stand-in fails loudly instead: exit 9 and a marker
+/// file the test can find. `$1 $2` distinguishes `repo view` from `pr view`.
+///
+/// `pr edit` records its whole argv, one argument per line: that capture is
+/// the proof each value got its own flag rather than a comma-joined list.
+fn gh_strict_script() -> String {
+    format!(
+        "#!/bin/sh\ncase \"$1 $2\" in\n\
+         'repo view') echo 'gh repo view must not be called' > ./repo-view-called.txt; exit 9 ;;\n\
+         esac\ncase \"$2\" in\n\
+         edit) printf '%s\\n' \"$@\" > ./edit-argv.txt; echo '{PR_URL}' ;;\n\
+         comment) cat > ./posted-body.txt; {COMMENT_OK} ;;\n\
+         *) exit 2 ;;\nesac\n"
+    )
+}
+
+const PR_URL: &str = "https://example.invalid/acme/widgets/pull/501";
+
+fn edit_plan(edit: &PrFieldEdit) -> kagi_git::OperationPlan {
+    let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
+    plan_pr_edit(&pr, edit)
+}
+
+/// Two reviewers added and one label removed, in one call: the argv proves
+/// one flag per value (a comma-joined list would split a label containing a
+/// comma) and that `-R` names the repository the mutation lands in.
+#[test]
+fn pr_edit_sends_one_flag_per_value_and_records_its_receipt() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (bin, workdir, _restore) = fixture(root.path());
+    fake_gh(&bin, &gh_strict_script());
+
+    let edit = PrFieldEdit {
+        add_reviewers: vec!["bob".into(), "carol".into()],
+        remove_labels: vec!["wip".into()],
+        ..Default::default()
+    };
+    let report = pr_edit(&workdir, BASE_REPO, 501, &edit, &edit_plan(&edit));
+    let Ok(kagi_git::OperationOutcome::PrEdit { number, detail }) = &report.result else {
+        panic!("expected an applied edit, got {:?}", report.result);
+    };
+    assert_eq!(*number, 501);
+    assert!(detail.contains("/pull/501"), "gh's own words: {detail}");
+
+    let argv: Vec<String> = std::fs::read_to_string(workdir.join("edit-argv.txt"))
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        argv,
+        vec![
+            "pr",
+            "edit",
+            "-R",
+            BASE_REPO,
+            "501",
+            "--add-reviewer",
+            "bob",
+            "--add-reviewer",
+            "carol",
+            "--remove-label",
+            "wip",
+        ],
+        "every value gets its own flag, and -R names the repository"
+    );
+    assert!(
+        !workdir.join("repo-view-called.txt").exists(),
+        "the PR's own base repo was in hand; gh repo view must not be asked"
+    );
+
+    // No UI callback ran: this is the dropped-completion path.
+    let entries = read_oplog_tail(10);
+    assert_eq!(entries.len(), 1, "the edit is recorded exactly once");
+    let entry = &entries[0];
+    assert_eq!(entry.op, "pr-edit");
+    assert_eq!(entry.actor, Actor::Human);
+    assert_eq!(
+        entry.worktree.as_deref(),
+        Some(workdir.display().to_string().as_str()),
+        "the recording must name the worktree it ran in"
+    );
+    let OpOutcome::Success { after } = &entry.outcome else {
+        panic!("expected a recorded success, got {:?}", entry.outcome);
+    };
+    assert!(
+        after.dirty.contains("+2 reviewers, -1 label") && after.dirty.contains("/pull/501"),
+        "the receipt summarises the change and keeps gh's handle: {}",
+        after.dirty
+    );
+}
+
+/// The reported bug: commenting resolved `-R` with `gh repo view`, a network
+/// call, so an unreachable GitHub failed with "not a GitHub repo" even though
+/// the PR in hand already carried its identity. The stand-in `gh` here treats
+/// that lookup as a hard error, so the only way this passes is by not making
+/// it.
+#[test]
+fn a_comment_never_asks_gh_where_the_repo_is_when_the_pr_already_knows() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (bin, workdir, _restore) = fixture(root.path());
+    fake_gh(&bin, &gh_strict_script());
+
+    let report = pr_comment(&workdir, BASE_REPO, 501, COMMENT_BODY, &comment_plan());
+    assert!(
+        matches!(
+            &report.result,
+            Ok(kagi_git::OperationOutcome::PrComment { number: 501, .. })
+        ),
+        "the comment must post without a repository lookup, got {:?}",
+        report.result
+    );
+    assert!(
+        !workdir.join("repo-view-called.txt").exists(),
+        "gh repo view is a network round trip the PR's base_repo makes unnecessary"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workdir.join("posted-body.txt")).unwrap(),
+        COMMENT_BODY
+    );
+    assert!(matches!(
+        latest_outcome_of("pr-comment"),
+        OpOutcome::Success { .. }
+    ));
 }
 
 #[path = "support/isolated.rs"]

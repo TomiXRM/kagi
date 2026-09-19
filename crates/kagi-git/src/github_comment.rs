@@ -22,7 +22,7 @@ use kagi_domain::plan::{OperationPlan, StateSummary};
 use kagi_domain::plan_note::{GithubNote, GithubTitle, PlanDisposition, PlanNote, PlanTitle};
 
 use crate::github_fetch::GH_TIMEOUT;
-use crate::github_merge::repo_owner_name;
+use crate::github_merge::resolve_base_repo;
 use crate::GitError;
 
 /// Build the `gh pr comment` argument vector. Pure and unit-tested, so the two
@@ -178,20 +178,17 @@ pub fn plan_pr_comment(pr: &PullRequest, body: &str) -> OperationPlan {
 /// instead of letting the UI offer a retry that could post the comment twice.
 pub fn pr_comment(
     workdir: &Path,
+    base_repo: &str,
     number: u64,
     body: &str,
     plan: &OperationPlan,
 ) -> crate::backend::recording::RunReport {
-    // The repository identity, resolved the same way the merge path resolves
-    // it, so two GitHub writes from one worktree cannot address two
-    // repositories. Failing to resolve it is a clean failure: nothing ran.
-    let result = match repo_owner_name(workdir) {
-        Ok((owner, name)) if !owner.is_empty() && !name.is_empty() => {
-            comment_transport(workdir, &format!("{owner}/{name}"), number, body)
-        }
-        Ok(_) => Err(GitError::Other(
-            "gh could not name the repository to comment on".to_string(),
-        )),
+    // The repository identity the PR already carries. Resolving it with `gh
+    // repo view` instead would make posting a comment depend on GitHub being
+    // reachable before the comment is even sent — the failure this parameter
+    // exists to remove. `repo_owner_name` is the fallback, not the source.
+    let result = match resolve_base_repo(workdir, base_repo) {
+        Ok(repo) => comment_transport(workdir, &repo, number, body),
         Err(error) => Err(error),
     };
     let outcome = match &result {

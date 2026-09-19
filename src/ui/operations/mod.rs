@@ -88,6 +88,9 @@ pub(crate) struct RunPresentation {
     github_merge: Option<GithubMergePresentation>,
     /// A posted PR comment: clear the composer and re-read the thread.
     pr_comment: Option<u64>,
+    /// A confirmed field edit: the tab's own copy of the PR carries these
+    /// values now, until the next list fetch confirms them from GitHub.
+    pr_edit: Option<(u64, crate::ui::modals::PrField, Vec<String>)>,
     commit_panel_failure: Option<CommitPanelFailure>,
     outcome_notice: Option<String>,
 }
@@ -136,6 +139,16 @@ impl RunPresentation {
 
     pub(crate) fn pr_comment(mut self, number: u64) -> Self {
         self.pr_comment = Some(number);
+        self
+    }
+
+    pub(crate) fn pr_edit(
+        mut self,
+        number: u64,
+        field: crate::ui::modals::PrField,
+        selected: Vec<String>,
+    ) -> Self {
+        self.pr_edit = Some((number, field, selected));
         self
     }
     pub(crate) fn update_commit_panel(mut self, failure: CommitPanelFailure) -> Self {
@@ -424,6 +437,12 @@ impl KagiApp {
                     // reader was on another tab left its text in the box, and
                     // coming back and pressing the button sent it twice
                     // (review finding).
+                    if let Some((number, field, selected)) = presentation.pr_edit.take() {
+                        // The write succeeded, so the owner's copy of the PR
+                        // carries the new values; the list ticker is what
+                        // confirms them from GitHub afterwards.
+                        app.apply_pr_fields(Some(stamp.session), number, field, selected, cx);
+                    }
                     if let Some(number) = presentation.pr_comment.take() {
                         // `repo_path` is the one the write was planned against,
                         // frozen at dispatch - not `app.repo_path`, which is

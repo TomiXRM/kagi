@@ -412,7 +412,7 @@ pub(super) fn render_feed(
         ))
         .child(super::e2e::measure_control(
             "pr-mode-properties",
-            super::pr_page::render_pr_properties(app, pr),
+            super::pr_page::render_pr_properties(app, pr, cx),
         ))
         // Can this merge? The second question after "what is this", so the
         // checks card sits above the description (mock 7a).

@@ -190,6 +190,30 @@ impl KagiApp {
         }
     }
 
+    pub fn pr_fields_modal(&self) -> Option<&super::super::modals::PrFieldsModal> {
+        match &self.active_modal {
+            Some(ActiveModal::PrFields(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn pr_fields_modal_mut(&mut self) -> Option<&mut super::super::modals::PrFieldsModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::PrFields(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn set_pr_fields_modal(&mut self, m: super::super::modals::PrFieldsModal) {
+        self.replace_modal_from_user(ActiveModal::PrFields(m));
+    }
+
+    pub fn clear_pr_fields_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::PrFields(_))) {
+            self.active_modal = None;
+        }
+    }
+
     pub fn push_tag_modal(&self) -> Option<&PushTagModal> {
         match &self.active_modal {
             Some(ActiveModal::PushTag(m)) => Some(m),

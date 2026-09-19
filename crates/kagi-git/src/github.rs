@@ -499,6 +499,13 @@ pub use crate::github_comment::{comment_args, plan_pr_comment, pr_comment};
 // `github_review` and is re-exported here for the same reason.
 pub use crate::github_review::{plan_pr_review, pr_review, review_args};
 
+// The `gh pr edit` write (plan + recorded boundary) and the two picker reads
+// it is composed from live in `github_edit`, re-exported here for the same
+// reason.
+pub use crate::github_edit::{
+    edit_args, plan_pr_edit, pr_edit, repo_assignable_users, repo_labels,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

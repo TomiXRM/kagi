@@ -50,6 +50,7 @@ pub mod drafts;
 mod file_history;
 pub mod github;
 pub mod github_comment;
+pub mod github_edit;
 pub mod github_fetch;
 pub mod github_issue;
 pub mod github_merge;

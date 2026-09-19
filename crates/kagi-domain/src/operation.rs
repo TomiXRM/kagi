@@ -262,6 +262,15 @@ pub enum OperationOutcome {
         verdict: String,
         detail: String,
     },
+    /// `gh pr edit`'s receipt for a reviewer / assignee / label change on a
+    /// PR — the metadata half of the same remote-write family as
+    /// [`Self::PrComment`]. `detail` is gh's own words (the PR's URL when it
+    /// printed one); *what* changed is in the plan the receipt carries, not
+    /// re-read from the server.
+    PrEdit {
+        number: u64,
+        detail: String,
+    },
     /// Deleted branch tip retained by a mandatory commit recovery ref (#584).
     DeleteBranch {
         name: String,

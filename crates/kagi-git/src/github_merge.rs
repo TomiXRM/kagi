@@ -142,6 +142,28 @@ pub(crate) fn repo_owner_name(workdir: &Path) -> Result<(String, String), GitErr
         .ok_or_else(|| GitError::Other("unexpected repo view output".into()))
 }
 
+/// The `-R` identity for a GitHub write: the caller's frozen `base_repo` when
+/// it has one, [`repo_owner_name`] only when it does not.
+///
+/// The order matters, and it is the fix for a real failure. `gh repo view` is
+/// a **network** round trip, so resolving the identity that way made every
+/// write depend on GitHub being reachable *twice* — an offline machine failed
+/// with "not a GitHub repo" even though the PR snapshot in hand already
+/// carried its own `<host>/<owner>/<repo>`. A PR knows where it lives; ask the
+/// network only when nobody told us.
+pub(crate) fn resolve_base_repo(workdir: &Path, base_repo: &str) -> Result<String, GitError> {
+    let frozen = base_repo.trim();
+    if !frozen.is_empty() {
+        return Ok(frozen.to_string());
+    }
+    match repo_owner_name(workdir)? {
+        (owner, name) if !owner.is_empty() && !name.is_empty() => Ok(format!("{owner}/{name}")),
+        _ => Err(GitError::Other(
+            "gh could not name the repository to write to".to_string(),
+        )),
+    }
+}
+
 /// Parse the `gh api graphql` merge-status response. Pure; unit-tested. A
 /// missing `mergeQueueEntry` (non-MQ repo, or not queued) yields `queue: None`
 /// so the UI hides the queue section — nothing to break.

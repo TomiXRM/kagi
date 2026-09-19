@@ -846,6 +846,7 @@ impl KagiApp {
     pub(crate) fn apply_pr_fields(
         &mut self,
         owner: Option<crate::app::SessionId>,
+        repo: std::path::PathBuf,
         number: u64,
         field: super::modals::PrField,
         selected: Vec<String>,
@@ -880,8 +881,11 @@ impl KagiApp {
             }
         }
         // The list the navigator and the home table read is a separate copy;
-        // re-fetch it rather than patching two models by hand.
-        self.refresh_github_prs(cx);
+        // re-fetch it rather than patching two models by hand - for the
+        // owner's session and repository, whatever is on screen now.
+        if let Some(owner) = owner {
+            self.refresh_github_prs_for(owner, repo, cx);
+        }
         cx.notify();
     }
 

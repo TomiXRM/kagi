@@ -139,6 +139,11 @@ pub enum PrField {
 /// all.
 #[derive(Clone)]
 pub struct PrFieldsModal {
+    /// Which opening of the picker this is. The candidate read captures it,
+    /// and a read that comes back for an earlier opening - the picker was
+    /// closed and reopened on the same PR and field meanwhile - is dropped
+    /// rather than overwriting the new one (review finding, `w5:p19`).
+    pub generation: u64,
     pub number: u64,
     /// `<host>/<owner>/<repo>`, frozen when the picker opened: the write must
     /// address the repository the PR belongs to, not whatever is active when

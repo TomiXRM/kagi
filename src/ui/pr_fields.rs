@@ -47,7 +47,10 @@ impl KagiApp {
             PrField::Assignees => pr.assignees.clone(),
             PrField::Labels => pr.labels.iter().map(|l| l.name.clone()).collect(),
         };
+        self.pr_fields_generation = self.pr_fields_generation.wrapping_add(1);
+        let generation = self.pr_fields_generation;
         self.set_pr_fields_modal(PrFieldsModal {
+            generation,
             number: pr.number,
             base_repo: pr.base_repo.clone(),
             field,
@@ -63,7 +66,6 @@ impl KagiApp {
             return;
         };
         let base_repo = pr.base_repo.clone();
-        let number = pr.number;
         cx.spawn(async move |this, acx| {
             let read = acx
                 .background_executor()
@@ -82,7 +84,7 @@ impl KagiApp {
                 let Some(modal) = app.pr_fields_modal_mut() else {
                     return;
                 };
-                if modal.number != number || modal.field != field {
+                if modal.generation != generation {
                     return;
                 }
                 match read {

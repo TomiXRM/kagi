@@ -46,6 +46,18 @@ impl KagiApp {
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
+        self.refresh_github_prs_for(owner, repo, cx);
+    }
+
+    /// The same fetch for a named session and its repository. A write that
+    /// settles after a tab switch must refresh the list of the tab it came
+    /// from, not of the tab now on screen (review finding, `w5:p19`).
+    pub(crate) fn refresh_github_prs_for(
+        &mut self,
+        owner: crate::app::SessionId,
+        repo: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
         #[cfg(feature = "gui-e2e")]
         let injected = super::e2e::take_github_pr_fetch();
         #[cfg(not(feature = "gui-e2e"))]

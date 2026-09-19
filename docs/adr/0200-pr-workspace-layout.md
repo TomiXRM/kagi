@@ -285,7 +285,12 @@ overwrite each other's field wholesale. An empty diff is a plan blocker.
 
 On success the owner's copy of the PR takes the new values at once
 (`apply_pr_fields`, owner-scoped like every other write settlement) and the
-list is re-fetched to confirm them from GitHub.
+list is re-fetched **for that owner's session and repository**
+(`refresh_github_prs_for`) - not through `refresh_github_prs`, which reads the
+active tab and would refresh the wrong list after a switch. The candidate read
+is keyed by a per-opening `generation`: a read that returns for an earlier
+opening of the same PR and field is dropped, so a stale failure cannot blank a
+freshly loaded list (both review findings, `w5:p19`).
 
 **No GitHub write derives the repository from a network call.** The first
 comment write resolved it with `gh repo view`, which is a round trip, and so

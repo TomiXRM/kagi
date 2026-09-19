@@ -441,7 +441,14 @@ impl KagiApp {
                         // The write succeeded, so the owner's copy of the PR
                         // carries the new values; the list ticker is what
                         // confirms them from GitHub afterwards.
-                        app.apply_pr_fields(Some(stamp.session), number, field, selected, cx);
+                        app.apply_pr_fields(
+                            Some(stamp.session),
+                            repo_path.clone(),
+                            number,
+                            field,
+                            selected,
+                            cx,
+                        );
                     }
                     if let Some(number) = presentation.pr_comment.take() {
                         // `repo_path` is the one the write was planned against,

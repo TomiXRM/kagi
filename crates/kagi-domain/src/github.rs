@@ -36,6 +36,31 @@ pub enum ReviewVerdict {
     Comment,
 }
 
+/// L2 data fetched for one pull request. The head SHA is part of the payload so
+/// a completion can never attach checks from an old head to the current PR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrStatusDetail {
+    pub number: u64,
+    pub head_sha: String,
+    pub ci: CiState,
+    pub checks: Vec<Check>,
+    pub mergeable: Mergeable,
+}
+
+/// L3 data fetched for one pull request. An empty body and zero counts are
+/// valid fetched values; presence of this value, rather than its contents,
+/// records that the detail request succeeded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrBodyDetail {
+    pub number: u64,
+    pub head_sha: String,
+    pub updated_at: String,
+    pub body: String,
+    pub changed_files: u32,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
 impl ReviewVerdict {
     /// The `gh pr review` flag that submits this verdict.
     pub fn flag(self) -> &'static str {

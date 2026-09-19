@@ -10,7 +10,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use kagi_domain::github::{
-    fold_ci, Check, Comment, IssueLabel, Mergeable, PullRequest, Review, ReviewComment, ReviewState,
+    fold_ci, Check, Comment, IssueLabel, Mergeable, PrBodyDetail, PrStatusDetail, PullRequest,
+    Review, ReviewComment, ReviewState,
 };
 
 use crate::GitError;
@@ -35,10 +36,17 @@ pub fn gh_available() -> bool {
 /// an unknown one *before* the API call, which would break every PR fetch.
 /// `field_names_are_accepted_by_gh` guards that. There is no `baseRepository`
 /// field — the base repository's identity comes out of `url` instead.
-pub(crate) const FIELDS: &str =
-    "number,title,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,\
-statusCheckRollup,url,author,reviewRequests,body,mergeable,isCrossRepository,\
-assignees,labels,changedFiles,additions,deletions,createdAt,updatedAt";
+pub(crate) const PR_LIST_FIELDS: &str =
+    "number,title,headRefName,headRefOid,baseRefName,isDraft,author,updatedAt,createdAt,\
+labels,assignees,reviewRequests,reviewDecision,url,isCrossRepository";
+
+/// L2: volatile merge/check state for one PR. Kept separate from the list so
+/// one expensive rollup cannot make the entire repository query time out.
+pub(crate) const PR_STATUS_FIELDS: &str = "number,headRefOid,statusCheckRollup,mergeable";
+
+/// L3: the selected PR's large body and aggregate diff statistics.
+pub(crate) const PR_BODY_FIELDS: &str =
+    "number,headRefOid,updatedAt,body,changedFiles,additions,deletions";
 
 /// The authenticated `gh` user's login, or `None` when logged out. One call;
 /// callers cache it (the sidebar's "Mine" grouping keys on it).
@@ -60,6 +68,58 @@ pub fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>, GitError> {
         serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
     let arr = v.as_array().cloned().unwrap_or_default();
     Ok(arr.iter().filter_map(pr_from_value).collect())
+}
+
+/// Parse one `gh pr view --json PR_STATUS_FIELDS` response.
+pub fn parse_pr_status_detail(json: &str) -> Result<PrStatusDetail, GitError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {e}")))?;
+    let (ci, checks) = checks_at(&value);
+    Ok(PrStatusDetail {
+        number: required_number(&value)?,
+        head_sha: string_at(&value, "headRefOid"),
+        ci,
+        checks,
+        mergeable: mergeable_at(&value),
+    })
+}
+
+/// Parse one `gh pr view --json PR_BODY_FIELDS` response.
+pub fn parse_pr_body_detail(json: &str) -> Result<PrBodyDetail, GitError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {e}")))?;
+    Ok(PrBodyDetail {
+        number: required_number(&value)?,
+        head_sha: string_at(&value, "headRefOid"),
+        updated_at: string_at(&value, "updatedAt"),
+        body: string_at(&value, "body"),
+        changed_files: count_at(&value, "changedFiles"),
+        additions: count_at(&value, "additions"),
+        deletions: count_at(&value, "deletions"),
+    })
+}
+
+fn required_number(value: &serde_json::Value) -> Result<u64, GitError> {
+    value
+        .get("number")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| GitError::Other("gh json: missing PR number".into()))
+}
+
+fn string_at(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn count_at(value: &serde_json::Value, key: &str) -> u32 {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32
 }
 
 /// `assignees` / `reviewRequests`-style arrays of `{login}` → logins, empty
@@ -110,15 +170,57 @@ pub(crate) fn labels_at(value: &serde_json::Value) -> Vec<IssueLabel> {
 }
 
 fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
-    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-    // Counts are display-only; an absent or negative one is 0 rather than a
-    // reason to drop the whole PR from the list.
-    let count = |k: &str| {
-        v.get(k)
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0)
-            .min(u32::MAX as u64) as u32
+    let s = |k: &str| string_at(v, k);
+    let (ci, checks) = checks_at(v);
+    let mergeable = mergeable_at(v);
+    let review = match s("reviewDecision").as_str() {
+        "APPROVED" => ReviewState::Approved,
+        "CHANGES_REQUESTED" => ReviewState::ChangesRequested,
+        "REVIEW_REQUIRED" => ReviewState::ReviewRequired,
+        _ => ReviewState::None,
     };
+    Some(PullRequest {
+        number: v.get("number")?.as_u64()?,
+        title: s("title"),
+        head: s("headRefName"),
+        head_sha: s("headRefOid"),
+        base: s("baseRefName"),
+        is_draft: v.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false),
+        ci,
+        review,
+        url: s("url"),
+        author: v
+            .get("author")
+            .and_then(|a| a.get("login"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        reviewers: logins_at(v, "reviewRequests"),
+        body: s("body"),
+        checks,
+        mergeable,
+        // Absent (a reduced field set, or an older `gh`) reads as
+        // cross-repository: the plan then refuses `--delete-branch` rather
+        // than promising a deletion it cannot account for (#701).
+        cross_repository: v
+            .get("isCrossRepository")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(true),
+        // `https://<host>/<owner>/<repo>/pull/<n>` already names the base
+        // repository, host included — and `gh pr list --json` has no
+        // `baseRepository` field to ask for it (#701 final review 3).
+        base_repo: crate::backend::remote_ref::repo_identity(&s("url")).unwrap_or_default(),
+        assignees: logins_at(v, "assignees"),
+        labels: labels_at(v),
+        changed_files: count_at(v, "changedFiles"),
+        additions: count_at(v, "additions"),
+        deletions: count_at(v, "deletions"),
+        created_at: s("createdAt"),
+        updated_at: s("updatedAt"),
+    })
+}
+
+fn checks_at(v: &serde_json::Value) -> (kagi_domain::github::CiState, Vec<Check>) {
     let conclusions: Vec<Option<String>> = v
         .get("statusCheckRollup")
         .and_then(|x| x.as_array())
@@ -165,56 +267,15 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
                 .collect()
         })
         .unwrap_or_default();
-    let mergeable = match s("mergeable").as_str() {
+    (fold_ci(&refs), checks)
+}
+
+fn mergeable_at(v: &serde_json::Value) -> Mergeable {
+    match string_at(v, "mergeable").as_str() {
         "MERGEABLE" => Mergeable::Clean,
         "CONFLICTING" => Mergeable::Conflicting,
         _ => Mergeable::Unknown,
-    };
-    let review = match s("reviewDecision").as_str() {
-        "APPROVED" => ReviewState::Approved,
-        "CHANGES_REQUESTED" => ReviewState::ChangesRequested,
-        "REVIEW_REQUIRED" => ReviewState::ReviewRequired,
-        _ => ReviewState::None,
-    };
-    Some(PullRequest {
-        number: v.get("number")?.as_u64()?,
-        title: s("title"),
-        head: s("headRefName"),
-        head_sha: s("headRefOid"),
-        base: s("baseRefName"),
-        is_draft: v.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false),
-        ci: fold_ci(&refs),
-        review,
-        url: s("url"),
-        author: v
-            .get("author")
-            .and_then(|a| a.get("login"))
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        reviewers: logins_at(v, "reviewRequests"),
-        body: s("body"),
-        checks,
-        mergeable,
-        // Absent (a reduced field set, or an older `gh`) reads as
-        // cross-repository: the plan then refuses `--delete-branch` rather
-        // than promising a deletion it cannot account for (#701).
-        cross_repository: v
-            .get("isCrossRepository")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(true),
-        // `https://<host>/<owner>/<repo>/pull/<n>` already names the base
-        // repository, host included — and `gh pr list --json` has no
-        // `baseRepository` field to ask for it (#701 final review 3).
-        base_repo: crate::backend::remote_ref::repo_identity(&s("url")).unwrap_or_default(),
-        assignees: logins_at(v, "assignees"),
-        labels: labels_at(v),
-        changed_files: count("changedFiles"),
-        additions: count("additions"),
-        deletions: count("deletions"),
-        created_at: s("createdAt"),
-        updated_at: s("updatedAt"),
-    })
+    }
 }
 
 /// Reviews + issue comments for one PR — the "review chat". One `gh pr view`
@@ -477,7 +538,7 @@ pub fn plan_pr_merge(
 // path stays `kagi_git::github::*`.
 pub use crate::github_fetch::{
     apply_pr_fetch, classify_gh_failure, issue_detail, list_issues, list_merged_prs, list_open_prs,
-    PrFetchError, PrFetchOutcome,
+    pr_body_detail, pr_status_detail, PrFetchError, PrFetchOutcome,
 };
 
 // #347 merge-lifecycle backend (version detection, mergeStateStatus + merge
@@ -555,6 +616,31 @@ mod tests {
         assert_eq!(prs[0].mergeable, Mergeable::Clean);
         assert_eq!(prs[1].mergeable, Mergeable::Conflicting);
         assert_eq!(prs[1].failed_checks(), 1);
+    }
+
+    #[test]
+    fn parses_status_and_body_details_without_conflating_empty_with_missing() {
+        let status = parse_pr_status_detail(
+            r#"{"number":42,"headRefOid":"abc","mergeable":"CONFLICTING","statusCheckRollup":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(status.number, 42);
+        assert_eq!(status.head_sha, "abc");
+        assert!(status.checks.is_empty(), "a fetched empty rollup is valid");
+        assert_eq!(status.ci, CiState::None);
+        assert_eq!(status.mergeable, Mergeable::Conflicting);
+
+        let body = parse_pr_body_detail(
+            r#"{"number":42,"headRefOid":"abc","updatedAt":"t","body":"","changedFiles":0,"additions":0,"deletions":0}"#,
+        )
+        .unwrap();
+        assert_eq!(body.number, 42);
+        assert_eq!(body.head_sha, "abc");
+        assert!(body.body.is_empty(), "a fetched empty body is valid");
+        assert_eq!(
+            (body.changed_files, body.additions, body.deletions),
+            (0, 0, 0)
+        );
     }
 
     #[test]

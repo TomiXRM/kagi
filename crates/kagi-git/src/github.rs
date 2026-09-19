@@ -495,6 +495,10 @@ pub use crate::github_merge::{
 // `kagi_git::github::*`.
 pub use crate::github_comment::{comment_args, plan_pr_comment, pr_comment};
 
+// The `gh pr review` write (plan + recorded boundary) lives in
+// `github_review` and is re-exported here for the same reason.
+pub use crate::github_review::{plan_pr_review, pr_review, review_args};
+
 #[cfg(test)]
 mod tests {
     use super::*;

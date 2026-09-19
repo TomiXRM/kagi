@@ -252,6 +252,16 @@ pub enum OperationOutcome {
         number: u64,
         detail: String,
     },
+    /// `gh pr review`'s receipt for a review submitted on a PR — the verdict
+    /// half of the same remote-write family as [`Self::PrComment`].
+    /// `verdict` is [`crate::github::ReviewVerdict::as_str`], so the receipt
+    /// names *which* review was submitted; `detail` is gh's own words (the
+    /// review's URL when it printed one).
+    PrReview {
+        number: u64,
+        verdict: String,
+        detail: String,
+    },
     /// Deleted branch tip retained by a mandatory commit recovery ref (#584).
     DeleteBranch {
         name: String,

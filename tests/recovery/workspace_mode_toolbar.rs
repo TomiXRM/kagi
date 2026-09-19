@@ -271,12 +271,20 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         // Cache one PR through the real fetch path, then gesture again.
         app.update(cx, |app, cx| app.show_graph_mode(cx));
         e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move {
-            Ok(vec![
+            Ok(vec![kagi_domain::github::PullRequest {
+                // One check, so the page's checks card exists to fold and
+                // unfold (mock 7a/7b).
+                checks: vec![kagi_domain::github::Check {
+                    name: "build".into(),
+                    workflow: "ci".into(),
+                    state: kagi_domain::github::CiState::Success,
+                    url: "https://example.com/run/1".into(),
+                }],
                 // `main` is the fixture's only branch, and a head the repository
                 // actually has is what lets the PR open a tab at all - which is
                 // what the feed assertions below need.
-                pull_request(7, "cached", "main"),
-            ])
+                ..pull_request(7, "cached", "main")
+            }])
         }));
         app.update(cx, |app, cx| app.refresh_github_prs(cx));
         cx.run_until_parked();
@@ -347,6 +355,22 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                     && f32::from(properties.origin.y) < f32::from(composer.origin.y),
                 "the page reads title → properties → … → composer"
             );
+
+            // mock 7a/7b: the checks card is folded on the page, and opens to
+            // the per-check rows in place. The fixture PR carries one check,
+            // so the card exists and the disclosure must change the pane's
+            // height rather than open a second surface.
+            let folded = measure(cx, win, "pr-mode-checks").expect("the checks card is drawn");
+            app.update(cx, |app, cx| app.pr_mode_toggle_checks(cx));
+            e2e::clear_control_bounds(win.window_id(), "pr-mode-checks");
+            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            let opened = measure(cx, win, "pr-mode-checks").expect("the checks card stays drawn");
+            assert!(
+                f32::from(opened.size.height) > f32::from(folded.size.height),
+                "opening the checks card must reveal its rows in place"
+            );
+            app.update(cx, |app, cx| app.pr_mode_toggle_checks(cx));
 
             app.update(cx, |app, cx| app.pr_mode_home(cx));
             assert!(

@@ -44,6 +44,10 @@ pub fn note_ja(note: &GithubNote) -> String {
         GithubNote::CommentBodyEmpty => {
             "コメント本文が空です。投稿する文章を入力してください。".to_string()
         }
+        GithubNote::ReviewBodyEmpty { verdict } => format!(
+            "GitHub は「{}」のレビューにコメントを必須としています。何を変えてほしいかを書いてから提出してください。",
+            verdict
+        ),
         GithubNote::SuggestionWorkingTreeOnly => {
             "作業ツリーだけを書き換えます(commit しません)。commit 前に hunk staging で確認してください。".to_string()
         }
@@ -58,6 +62,9 @@ pub fn title_ja(title: &GithubTitle) -> String {
         }
         GithubTitle::CommentPr { number } => {
             format!("pull request #{} にコメントを投稿", number)
+        }
+        GithubTitle::ReviewPr { number, verdict } => {
+            format!("pull request #{} をレビュー ({})", number, verdict)
         }
         GithubTitle::ApplySuggestion { path } => {
             format!("`{}` に suggestion を適用", path)

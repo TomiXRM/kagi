@@ -124,24 +124,24 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         body.on_scroll_wheel(scroll_by)
     });
 
-    // The pane's lower third describes the PR: the files of the view, or the
-    // checks and the facts about it. That used to be a pane of its own, which
-    // only narrowed the diff the reader came for (ADR-0200, user report) -
-    // this pane is already here, and a lane needs only the rows around the PR.
-    // With no lane to draw, the detail is the whole pane rather than a third
-    // of an empty one.
+    // The pane's lower third lists the files of a file view. The checks and
+    // the properties left it for the PR's own page (mock 7a), so on every
+    // other view there is nothing to put here and the lane takes the height
+    // back rather than keeping an empty third.
     let has_lane = lane_body.is_some();
-    let detail = div()
-        .id("pr-lane-detail")
-        .when(has_lane, |el| {
-            el.h(relative(1. / 3.))
-                .flex_shrink_0()
-                .border_t_1()
-                .border_color(rgb(theme().surface))
-        })
-        .when(!has_lane, |el| el.flex_1().min_h(px(0.)))
-        .bg(rgb(theme().panel))
-        .child(super::pr_mode::render_pr_detail(app, tab, cx));
+    let detail = super::pr_mode::render_pr_detail(app, cx).map(|body| {
+        div()
+            .id("pr-lane-detail")
+            .when(has_lane, |el| {
+                el.h(relative(1. / 3.))
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(rgb(theme().surface))
+            })
+            .when(!has_lane, |el| el.flex_1().min_h(px(0.)))
+            .bg(rgb(theme().panel))
+            .child(body)
+    });
 
     Some(
         div()
@@ -154,7 +154,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             .bg(rgb(theme().bg_base))
             .child(render_header(number, hits.len()))
             .children(lane_body)
-            .child(detail)
+            .children(detail)
             .into_any_element(),
     )
 }

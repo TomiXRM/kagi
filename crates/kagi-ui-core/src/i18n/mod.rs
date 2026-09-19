@@ -562,6 +562,13 @@ pub enum Msg {
     PrModeNoReview,
     PrModeMerge,
     PrModeMergeDone,
+    PrChecksPassed,
+    PrChecksFailed,
+    PrChecksRunning,
+    PrChecksOpenInBrowser,
+    PrReviewApprove,
+    PrReviewSubmit,
+    PrReviewRequestChanges,
     PrCommentPlaceholder,
     PrCommentPost,
     PrSuggestion,
@@ -1663,6 +1670,20 @@ impl Msg {
             (Ja, PrModeOverview) => "概要",
             (En, PrModeNoReview) => "No reviews or comments yet.",
             (Ja, PrModeNoReview) => "レビュー・コメントはまだありません。",
+            (En, PrChecksPassed) => "All checks have passed",
+            (Ja, PrChecksPassed) => "チェックはすべて成功",
+            (En, PrChecksFailed) => "Some checks failed",
+            (Ja, PrChecksFailed) => "失敗したチェックがあります",
+            (En, PrChecksRunning) => "Checks are still running",
+            (Ja, PrChecksRunning) => "チェックを実行中",
+            (En, PrChecksOpenInBrowser) => "OPEN IN BROWSER",
+            (Ja, PrChecksOpenInBrowser) => "ブラウザで開く",
+            (En, PrReviewSubmit) => "Review",
+            (Ja, PrReviewSubmit) => "レビュー",
+            (En, PrReviewApprove) => "APPROVE",
+            (Ja, PrReviewApprove) => "承認",
+            (En, PrReviewRequestChanges) => "REQUEST CHANGES",
+            (Ja, PrReviewRequestChanges) => "修正を依頼",
             (En, PrCommentPlaceholder) => "Leave a comment…",
             (Ja, PrCommentPlaceholder) => "コメントを書く…",
             (En, PrCommentPost) => "COMMENT",
@@ -2356,6 +2377,16 @@ pub fn wip_row_other(n: usize) -> String {
 }
 
 /// Commit-panel warning shown when unstaged changes exist and won't be included.
+/// The checks card's second line: how many ran, and how many failed (mock 7a).
+pub fn pr_checks_counts(total: usize, failed: usize) -> String {
+    match (lang(), failed) {
+        (Lang::En, 0) => format!("{} successful checks", total),
+        (Lang::En, f) => format!("{} checks · {} failed", total, f),
+        (Lang::Ja, 0) => format!("チェック {} 件すべて成功", total),
+        (Lang::Ja, f) => format!("チェック {} 件中 {} 件が失敗", total, f),
+    }
+}
+
 /// Was the hardcoded `"⚠ N unstaged change(s) not included"`.
 pub fn unstaged_not_included(n: usize) -> String {
     let plural = if n == 1 { "" } else { "s" };

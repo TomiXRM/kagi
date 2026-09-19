@@ -44,6 +44,12 @@ pub enum GithubNote {
     /// happily post an empty comment; there is nothing to say and nothing to
     /// undo it with but a manual delete, so the plan refuses it.
     CommentBodyEmpty,
+    /// blocker — a review that GitHub requires words for (`--request-changes`
+    /// or `--comment`) was submitted with none. An approval may be wordless;
+    /// these two are refused by the API, so the plan refuses them first
+    /// rather than sending a request that cannot succeed. `verdict` is the
+    /// [`crate::github::ReviewVerdict`] slug.
+    ReviewBodyEmpty { verdict: String },
 }
 
 impl GithubNote {
@@ -92,6 +98,10 @@ impl GithubNote {
             GithubNote::CommentBodyEmpty => {
                 "The comment is empty. Write something before posting it.".to_string()
             }
+            GithubNote::ReviewBodyEmpty { verdict } => format!(
+                "GitHub requires a comment on a '{}' review. Write what you want changed before submitting it.",
+                verdict
+            ),
         }
     }
 }
@@ -105,6 +115,8 @@ pub enum GithubTitle {
     ApplySuggestion { path: String },
     /// `Comment on pull request #<n>`.
     CommentPr { number: u64 },
+    /// `Review pull request #<n> (<verdict>)`.
+    ReviewPr { number: u64, verdict: String },
 }
 
 impl GithubTitle {
@@ -119,6 +131,9 @@ impl GithubTitle {
             }
             GithubTitle::CommentPr { number } => {
                 format!("Comment on pull request #{}", number)
+            }
+            GithubTitle::ReviewPr { number, verdict } => {
+                format!("Review pull request #{} ({})", number, verdict)
             }
         }
     }

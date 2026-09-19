@@ -124,6 +124,9 @@ pub struct PrModeState {
     pub active: Option<usize>,
     /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
     pub focus: PrFocus,
+    /// Whether the checks card on the PR page is expanded (mock 7b). Folded
+    /// by default: "all checks have passed" is the whole answer most days.
+    pub checks_open: bool,
     /// Which section of the feed the next frame must scroll to: child 0 is the
     /// description, child 1 the conversation. `None` once consumed - a tab
     /// press is a jump, not a position the renderer keeps re-asserting.
@@ -157,6 +160,7 @@ impl Default for PrModeState {
             tabs: Vec::new(),
             active: None,
             focus: PrFocus::List,
+            checks_open: false,
             feed_anchor: None,
             view: PrView::Overview,
             filter: PrListFilter::default(),
@@ -839,6 +843,14 @@ impl KagiApp {
             // window-bearing frame rebuilds from the (now empty) draft.
             self.pr_comment_input = None;
             self.pr_comment_for = None;
+        }
+        cx.notify();
+    }
+
+    /// Fold/unfold the PR page's checks card (mock 7a/7b).
+    pub fn pr_mode_toggle_checks(&mut self, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode_mut() {
+            m.checks_open = !m.checks_open;
         }
         cx.notify();
     }
@@ -1764,126 +1776,19 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .into_any_element()
 }
 
-/// The per-check list, so "CI failed" names the job. Clicking a row opens
-/// that check's run page. `None` when the PR reported no checks - an empty
-/// section header says nothing the reader can use.
-///
-/// It lives in the PR body's facts rail (ADR-0200): the mock has no outer
-/// right pane, and checks are a fact about the PR rather than a third pane of
-/// the window.
-fn render_checks(tab: &PrTab, cx: &mut Context<KagiApp>) -> Option<gpui::AnyElement> {
-    let checks = tab.pr.checks.clone();
-    if checks.is_empty() {
-        return None;
-    }
-    let failed = tab.pr.failed_checks();
-    let mut list = div()
-        .id("pr-mode-checks")
-        .flex_shrink_0()
-        .max_h(theme::scaled_px(150.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col();
-    // Failures first: the actionable ones must not need scrolling.
-    let mut ordered = checks.clone();
-    ordered.sort_by_key(|c| match c.state {
-        CiState::Failure => 0,
-        CiState::Pending => 1,
-        _ => 2,
-    });
-    for (i, c) in ordered.iter().enumerate() {
-        let (g, color) = ci_glyph(c.state);
-        let url = c.url.clone();
-        let open = cx.listener(move |_this: &mut KagiApp, _: &gpui::ClickEvent, _w, _cx| {
-            if !url.is_empty() {
-                let _ = std::process::Command::new("open").arg(&url).spawn();
-            }
-        });
-        let label = if c.workflow.is_empty() || c.workflow == c.name {
-            c.name.clone()
-        } else {
-            format!("{} / {}", c.workflow, c.name)
-        };
-        list = list.child(
-            div()
-                .id(("pr-mode-check", i))
-                .h(theme::scaled_px(ROW_H))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .text_sm()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(open)
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_color(rgb(color))
-                        .child(SharedString::from(g)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(if c.state == CiState::Failure {
-                            theme().text_main
-                        } else {
-                            theme().text_sub
-                        }))
-                        .child(safe_text(&label)),
-                ),
-        );
-    }
-    Some(
-        div()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .child(section_label(format!(
-                "{} ({}{})",
-                Msg::PrModeChecks.t(),
-                checks.len(),
-                if failed > 0 {
-                    format!(", {} failed", failed)
-                } else {
-                    String::new()
-                }
-            )))
-            .child(list)
-            .into_any_element(),
-    )
-}
-
-/// What the swimlane pane's lower third shows about the PR on screen: the
-/// files of the view when a file view is open, and otherwise the checks.
-///
-/// It lives in an existing pane on purpose. As a column of its own - left or
-/// right of the body - it only narrowed the diff the reader came for
-/// (ADR-0200, user report). The PR's *properties* are not here: they are the
-/// first rows of the PR's own page, where github.com's reader looks for them.
+/// The swimlane pane's lower third: the files of the view, when a file view
+/// is open. `None` otherwise - the checks and the properties are rows of the
+/// PR's own page (mock 7a), and a pane that is empty is better closed than
+/// kept as a third of the lane's height.
 pub(super) fn render_pr_detail(
     app: &KagiApp,
-    tab: &PrTab,
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> Option<gpui::AnyElement> {
     let files_view = app
         .pr_mode()
         .map(|m| matches!(m.view, PrView::Diff | PrView::Conflicts))
         .unwrap_or(false);
-    if files_view {
-        return render_file_list(app, cx);
-    }
-    div()
-        .id("pr-mode-facts")
-        .size_full()
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .children(render_checks(tab, cx))
-        .into_any_element()
+    files_view.then(|| render_file_list(app, cx))
 }
 
 /// The files of the view on screen, listed in the swimlane pane's lower third.

@@ -408,12 +408,15 @@ pub(super) fn render_feed(
         // properties are what you check before reading the description.
         .child(super::e2e::measure_control(
             "pr-mode-headline",
-            super::pr_page::render_pr_headline(pr),
+            super::pr_page::render_pr_headline(app, pr),
         ))
         .child(super::e2e::measure_control(
             "pr-mode-properties",
             super::pr_page::render_pr_properties(app, pr),
         ))
+        // Can this merge? The second question after "what is this", so the
+        // checks card sits above the description (mock 7a).
+        .children(super::pr_page::render_checks_card(app, pr, cx))
         .children(merge_card)
         .child(description_card(pr, cx));
     let review =

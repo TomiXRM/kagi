@@ -163,19 +163,45 @@ pub(super) fn render_pr_properties(app: &KagiApp, pr: &PullRequest) -> gpui::Any
     col.into_any_element()
 }
 
-/// The PR's own headline, at the top of its page: `#N` and the title, then the
-/// branch pair (ADR-0200, mock 7a).
+/// The PR's own headline, at the top of its page (mock 7a): `#N` and the
+/// title, then one meta row - state, author, branch pair, size.
 ///
 /// The toolbar above shows the title too, but truncated into a strip shared
-/// with the buttons - which is not where a reader looks for what they opened
-/// (user report). Here it has the width of the page.
-pub(super) fn render_pr_headline(pr: &PullRequest) -> gpui::AnyElement {
+/// with the buttons, which is not where a reader looks for what they opened
+/// (user report). Here it has the width of the page, and the facts that
+/// answer "what am I looking at" sit under it rather than in four places.
+pub(super) fn render_pr_headline(app: &KagiApp, pr: &PullRequest) -> gpui::AnyElement {
+    // Draft / merged / open, as GitHub states it. `gh pr list` gives kagi only
+    // open PRs plus the draft flag, so those are the two states it can claim.
+    let (state, state_ink) = if pr.is_draft {
+        (Msg::PrHomeDraft.t(), theme().text_muted)
+    } else {
+        (Msg::PrHomeOpen.t(), theme().color_success)
+    };
+    let chip = |text: SharedString, ink: u32, border: u32| {
+        div()
+            .flex_shrink_0()
+            .px_2()
+            .py(px(1.))
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(border))
+            .text_xs()
+            .text_color(rgb(ink))
+            .child(text)
+    };
+    let age = (!pr.updated_at.is_empty())
+        .then(|| kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at))
+        .flatten()
+        .map(|at| {
+            kagi_ui_core::time::relative_time(at, kagi_ui_core::time::now_unix_secs()).to_string()
+        });
     div()
         .id("pr-mode-headline")
         .w_full()
         .flex()
         .flex_col()
-        .gap_1()
+        .gap_2()
         .child(
             div()
                 .flex()
@@ -203,13 +229,231 @@ pub(super) fn render_pr_headline(pr: &PullRequest) -> gpui::AnyElement {
             div()
                 .flex()
                 .flex_row()
+                .flex_wrap()
                 .items_center()
-                .gap_1()
+                .gap_2()
                 .text_xs()
-                .text_color(rgb(theme().color_branch))
-                .child(safe_text(&format!("{} → {}", pr.head, pr.base))),
+                .text_color(rgb(theme().text_muted))
+                .child(chip(
+                    SharedString::from(state.to_string()),
+                    state_ink,
+                    theme().selected,
+                ))
+                .child(kagi_ui_core::commit_header::avatar_circle(
+                    16.,
+                    &pr.author,
+                    &pr.author,
+                    &app.avatars.images,
+                ))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(theme().text_sub))
+                        .child(safe_text(&pr.author)),
+                )
+                .children(age.map(|age| {
+                    div()
+                        .flex_shrink_0()
+                        .child(SharedString::from(age))
+                        .into_any_element()
+                }))
+                .child(chip(
+                    safe_text(&format!("{} \u{2192} {}", pr.head, pr.base)),
+                    theme().color_branch,
+                    theme().selected,
+                ))
+                // The size of the change, which is what decides whether this
+                // is a read-now or a read-later.
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(theme().color_success))
+                        .child(SharedString::from(format!("+{}", pr.additions))),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(theme().color_blocker))
+                        .child(SharedString::from(format!("\u{2212}{}", pr.deletions))),
+                )
+                .child(div().flex_shrink_0().child(SharedString::from(format!(
+                    "{} {}",
+                    pr.changed_files,
+                    Msg::PrModeFiles.t()
+                )))),
         )
         .into_any_element()
+}
+
+/// The checks card on the PR page (mock 7a folded / 7b open): one line that
+/// answers "can this merge", and the per-check list behind a disclosure.
+///
+/// `None` when the PR reported no checks - an empty card says nothing. It is
+/// on the page rather than in the swimlane pane because whether CI passed is
+/// the second thing a reader wants after the title, not a fact filed away in
+/// a companion pane (mock 7a).
+pub(super) fn render_checks_card(
+    app: &KagiApp,
+    pr: &PullRequest,
+    cx: &mut Context<KagiApp>,
+) -> Option<gpui::AnyElement> {
+    let checks = pr.checks.clone();
+    if checks.is_empty() {
+        return None;
+    }
+    let failed = pr.failed_checks();
+    let pending = checks
+        .iter()
+        .filter(|c| c.state == kagi_domain::github::CiState::Pending)
+        .count();
+    let open = app.pr_mode().map(|m| m.checks_open).unwrap_or(false);
+    let (glyph, ink, headline) = if failed > 0 {
+        (
+            "\u{2717}",
+            theme().color_blocker,
+            Msg::PrChecksFailed.t().to_string(),
+        )
+    } else if pending > 0 {
+        (
+            "\u{25CF}",
+            theme().color_warning,
+            Msg::PrChecksRunning.t().to_string(),
+        )
+    } else {
+        (
+            "\u{2713}",
+            theme().color_success,
+            Msg::PrChecksPassed.t().to_string(),
+        )
+    };
+    let toggle = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.pr_mode_toggle_checks(cx);
+    });
+    let summary = div()
+        .id("pr-mode-checks-summary")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(toggle)
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(rgb(ink))
+                .child(SharedString::from(glyph)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(theme().text_main))
+                        .child(SharedString::from(headline)),
+                )
+                .child(div().text_xs().text_color(rgb(theme().text_muted)).child(
+                    SharedString::from(super::i18n::pr_checks_counts(checks.len(), failed)),
+                )),
+        )
+        // The disclosure marker is the state, so folded and open are told
+        // apart without reading the rows.
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(if open {
+                    "\u{2304}"
+                } else {
+                    "\u{203a}"
+                })),
+        );
+
+    let mut card = div()
+        .id("pr-mode-checks")
+        .w_full()
+        .rounded_lg()
+        .bg(rgb(super::pr_mode::card_bg()))
+        .border_1()
+        .border_color(super::pr_mode::card_border())
+        .flex()
+        .flex_col()
+        .child(summary);
+    if open {
+        // Failures first: the actionable ones must not need scrolling.
+        let mut ordered = checks.clone();
+        ordered.sort_by_key(|c| match c.state {
+            kagi_domain::github::CiState::Failure => 0,
+            kagi_domain::github::CiState::Pending => 1,
+            _ => 2,
+        });
+        for (i, c) in ordered.iter().enumerate() {
+            let (g, colour) = super::pr_mode::ci_glyph(c.state);
+            let url = c.url.clone();
+            let has_url = !url.is_empty();
+            let open_in_browser =
+                cx.listener(move |_this: &mut KagiApp, _: &gpui::ClickEvent, _w, _cx| {
+                    if !url.is_empty() {
+                        let _ = std::process::Command::new("open").arg(&url).spawn();
+                    }
+                });
+            let label = if c.workflow.is_empty() || c.workflow == c.name {
+                c.name.clone()
+            } else {
+                format!("{} / {}", c.workflow, c.name)
+            };
+            card = card.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_4()
+                    .py_1()
+                    .border_t_1()
+                    .border_color(rgb(theme().selected))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(rgb(colour))
+                            .child(SharedString::from(g)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .text_xs()
+                            .text_color(rgb(theme().text_sub))
+                            .child(safe_text(&label)),
+                    )
+                    .when(has_url, |el| {
+                        el.child(
+                            div()
+                                .id(("pr-mode-check-open", i))
+                                .flex_shrink_0()
+                                .px_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(theme().selected))
+                                .text_xs()
+                                .text_color(rgb(theme().text_muted))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme().surface)))
+                                .on_click(open_in_browser)
+                                .child(SharedString::from(Msg::PrChecksOpenInBrowser.t())),
+                        )
+                    }),
+            );
+        }
+    }
+    Some(super::e2e::measure_control("pr-mode-checks", card))
 }
 
 /// The comment composer, pinned at the foot of the PR's page (ADR-0200).
@@ -234,8 +478,18 @@ pub(super) fn render_composer(
         app.transport_holds
             .contains(repo, &format!("pr-comment #{number}"))
     });
+    let review_held = app.repo_path.as_ref().is_some_and(|repo| {
+        app.transport_holds
+            .contains(repo, &format!("pr-review #{number}"))
+    });
     let post = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         this.start_pr_comment(cx);
+    });
+    let approve = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.start_pr_review(kagi_domain::github::ReviewVerdict::Approve, cx);
+    });
+    let request_changes = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        this.start_pr_review(kagi_domain::github::ReviewVerdict::RequestChanges, cx);
     });
     Some(
         div()
@@ -252,12 +506,33 @@ pub(super) fn render_composer(
             .bg(rgb(theme().panel))
             .child(gpui_component::input::Input::new(&input))
             .child(
-                div().flex().flex_row().items_center().justify_end().child(
-                    gpui_component::button::Button::new("pr-comment-post")
-                        .label(Msg::PrCommentPost.t())
-                        .disabled(empty || held)
-                        .on_click(post),
-                ),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .gap_2()
+                    // GitHub requires words on a "request changes" review and
+                    // allows a wordless approval, so only one of the three is
+                    // usable with an empty box (mock 7a).
+                    .child(
+                        gpui_component::button::Button::new("pr-review-request-changes")
+                            .label(Msg::PrReviewRequestChanges.t())
+                            .disabled(empty || review_held)
+                            .on_click(request_changes),
+                    )
+                    .child(
+                        gpui_component::button::Button::new("pr-review-approve")
+                            .label(Msg::PrReviewApprove.t())
+                            .disabled(review_held)
+                            .on_click(approve),
+                    )
+                    .child(
+                        gpui_component::button::Button::new("pr-comment-post")
+                            .label(Msg::PrCommentPost.t())
+                            .disabled(empty || held)
+                            .on_click(post),
+                    ),
             )
             .into_any_element(),
     )

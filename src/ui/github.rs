@@ -576,4 +576,89 @@ impl KagiApp {
             cx.notify();
         }
     }
+
+    /// Submit a review on the open PR (ADR-0200, mock 7a): APPROVE or REQUEST
+    /// CHANGES, with the composer's text as the review body.
+    ///
+    /// Same shape as [`Self::start_pr_comment`] - the click is the approval,
+    /// the transport hold and the write latch gate it, and
+    /// `kagi_git::github::pr_review` records the attempt at its own transport
+    /// boundary. GitHub requires words on a "request changes" review; that is
+    /// a plan blocker, not a silent no-op.
+    pub fn start_pr_review(
+        &mut self,
+        verdict: kagi_domain::github::ReviewVerdict,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let Some((pr, body)) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| (t.pr.clone(), t.comment_draft.clone()))
+        else {
+            return;
+        };
+        let number = pr.number;
+        if self.reject_transport_hold(&repo_path, &format!("pr-review #{number}")) {
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let plan = std::sync::Arc::new(kagi_git::github::plan_pr_review(&pr, verdict, &body));
+        if !plan.blockers.is_empty() {
+            klog!("refused: pr-review plan has blockers, not executing");
+            self.record_op(
+                "pr-review",
+                plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            return;
+        }
+        let rp = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_body = body.clone();
+        let dispatched = self.finish_run(
+            cx,
+            "pr-review",
+            i18n::Op::PrReview,
+            plan.clone(),
+            repo_path,
+            move || {
+                Ok(kagi_git::github::pr_review(
+                    &rp, number, verdict, &bg_body, &bg_plan,
+                ))
+            },
+            |_| None,
+            move |done| match done {
+                Ok(kagi_git::OperationOutcome::PrReview { .. }) => {
+                    klog!("executed: pr-review #{}", number);
+                    // A review carries the same text the composer held, so it
+                    // clears and the thread re-reads exactly like a comment.
+                    RunPresentation::none().pr_comment(number)
+                }
+                Ok(_) => RunPresentation::none(),
+                Err(failure) => {
+                    klog!("pr-review failed: {}", failure.message);
+                    RunPresentation::none()
+                }
+            },
+        );
+        if dispatched {
+            self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+                "{} #{}\u{2026}",
+                Msg::PrReviewSubmit.t(),
+                number
+            )));
+            cx.notify();
+        }
+    }
 }

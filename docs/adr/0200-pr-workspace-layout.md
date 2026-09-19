@@ -224,6 +224,35 @@ CDN, disk-cached, once per process per login: no API call and no token.
   tab's. A posted comment clears that draft and re-reads the thread through the
   existing owner-frozen conversation load.
 
+### 10. The checks card and the review verdicts (mock 7a/7b)
+
+The mock's PR page answers three questions in order: what is this (title,
+state, author, branch pair, size), who is on it (properties), **can it merge**
+(checks), then what it says (description, conversation). Kagi's checks had
+been filed in the swimlane pane's lower third, which is not where the second
+question is asked. They are a card on the page now, folded to one line - "all
+checks have passed / N successful checks" - and opening it lists the checks
+in place with OPEN IN BROWSER per row. The fold is mode-wide state
+(`PrModeState::checks_open`), because it is a reading preference and not a
+property of one PR.
+
+With the checks gone the swimlane pane's lower third exists only for the file
+views; on every other view it is `None` and the lane takes the height back
+instead of keeping an empty third.
+
+The composer grew the mock's other two buttons. They are reviews, not
+comments: `kagi_git::github::pr_review` is a second recorded transport
+boundary (`gh pr review --approve` / `--request-changes`, op name
+`pr-review`), with the same stdin body and the same Unknown-is-held rule as
+`pr_comment`. GitHub requires words on a "request changes" review and allows a
+wordless approval, so an empty box blocks REQUEST CHANGES and COMMENT but not
+APPROVE - a plan blocker, not a disabled button with no reason.
+
+Still not built from frame 7: the per-check **LOG** button and the CI-log
+screen (7c) need a `gh run view` read that does not exist yet, and the FILES
+tab's unified/split toggle with inline review comments (7d) is a change to the
+diff row model, not to this page.
+
 ## Consequences
 
 - Three files passed the 800-LOC ceiling and were split on feature boundaries

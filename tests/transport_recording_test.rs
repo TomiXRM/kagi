@@ -12,7 +12,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Mutex;
 
-use kagi_git::github::{merge_pr, plan_pr_comment, plan_pr_merge, pr_comment, MergeMethod};
+use kagi_domain::github::ReviewVerdict;
+use kagi_git::github::{
+    merge_pr, plan_pr_comment, plan_pr_merge, plan_pr_review, pr_comment, pr_review, MergeMethod,
+};
 use kagi_git::oplog::{read_oplog_tail, Actor, OpOutcome};
 
 /// PATH and KAGI_LOG_DIR are process-global; the tests in this binary share them.
@@ -425,6 +428,127 @@ fn a_refused_pr_comment_is_still_recorded_with_ghs_own_reason() {
     assert!(
         error.contains("Resource not accessible by integration"),
         "gh's own reason must survive into the receipt: {error}"
+    );
+}
+
+// ── `gh pr review` — the verdict half of the same boundary contract ──
+
+/// `$2` dispatch as above. A review only reads stdin when `--body-file -` is
+/// in the argv, so the script drains it only then: what it captures is the
+/// proof the review text never rode in argv, and its *absence* for a
+/// wordless approval is the proof kagi did not invent an empty body file.
+fn gh_review_script(review: &str) -> String {
+    format!(
+        "#!/bin/sh\ncase \"$2\" in\n\
+         review) case \"$*\" in *--body-file*) cat > ./review-body.txt ;; esac; {review} ;;\n\
+         view) case \"$*\" in *owner,name*) echo 'acme/widgets' ;; *) exit 2 ;; esac ;;\n\
+         *) exit 2 ;;\nesac\n"
+    )
+}
+
+const REVIEW_OK: &str = "echo 'https://example.invalid/acme/widgets/pull/501#pullrequestreview-7'";
+const REVIEW_BODY: &str = "line 3 leaks the handle; please close it";
+
+fn review_plan(verdict: ReviewVerdict, body: &str) -> kagi_git::OperationPlan {
+    let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
+    plan_pr_review(&pr, verdict, body)
+}
+
+#[test]
+fn a_wordless_approval_records_its_verdict_without_sending_a_body() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (bin, workdir, _restore) = fixture(root.path());
+    fake_gh(&bin, &gh_review_script(REVIEW_OK));
+
+    let report = pr_review(
+        &workdir,
+        501,
+        ReviewVerdict::Approve,
+        "",
+        &review_plan(ReviewVerdict::Approve, ""),
+    );
+    let Ok(kagi_git::OperationOutcome::PrReview {
+        number,
+        verdict,
+        detail,
+    }) = &report.result
+    else {
+        panic!("expected a submitted review, got {:?}", report.result);
+    };
+    assert_eq!(*number, 501);
+    assert_eq!(verdict, "approve", "the receipt names which review it was");
+    assert!(
+        detail.contains("pullrequestreview-7"),
+        "the review's URL is the handle that identifies it: {detail}"
+    );
+    assert!(
+        !workdir.join("review-body.txt").exists(),
+        "a wordless approval must not hand gh a body file"
+    );
+
+    // No UI callback ran: this is the dropped-completion path.
+    let OpOutcome::Success { after } = latest_outcome_of("pr-review") else {
+        panic!("expected a recorded success");
+    };
+    assert!(
+        after.dirty.contains("approve") && after.dirty.contains("pullrequestreview-7"),
+        "the receipt keeps the verdict and the review's URL: {}",
+        after.dirty
+    );
+}
+
+#[test]
+fn a_request_changes_review_sends_its_body_on_stdin_and_is_recorded() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (bin, workdir, _restore) = fixture(root.path());
+    fake_gh(&bin, &gh_review_script(REVIEW_OK));
+
+    let report = pr_review(
+        &workdir,
+        501,
+        ReviewVerdict::RequestChanges,
+        REVIEW_BODY,
+        &review_plan(ReviewVerdict::RequestChanges, REVIEW_BODY),
+    );
+    let Ok(kagi_git::OperationOutcome::PrReview { verdict, .. }) = &report.result else {
+        panic!("expected a submitted review, got {:?}", report.result);
+    };
+    assert_eq!(verdict, "request-changes");
+    assert!(matches!(
+        report.recording,
+        kagi_git::backend::recording::Recording::Appended { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(workdir.join("review-body.txt")).unwrap(),
+        REVIEW_BODY,
+        "the body must reach gh on stdin, whole and unquoted"
+    );
+
+    let entries = read_oplog_tail(10);
+    assert_eq!(entries.len(), 1, "the review is recorded exactly once");
+    let entry = &entries[0];
+    assert_eq!(entry.op, "pr-review");
+    assert_eq!(entry.actor, Actor::Human);
+    assert_eq!(
+        entry.worktree.as_deref(),
+        Some(workdir.display().to_string().as_str()),
+        "the recording must name the worktree it ran in"
+    );
+    let OpOutcome::Success { after } = &entry.outcome else {
+        panic!("expected a recorded success, got {:?}", entry.outcome);
+    };
+    assert!(
+        after.dirty.contains("request-changes"),
+        "the receipt names the verdict: {}",
+        after.dirty
     );
 }
 

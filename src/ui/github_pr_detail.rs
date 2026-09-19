@@ -11,8 +11,10 @@ use std::time::{Duration, Instant};
 
 use gpui::Context;
 use kagi_domain::github::{PrBodyDetail, PrDetailAvailability, PrStatusDetail, PullRequest};
+use kagi_git::CommitId;
 
-use super::KagiApp;
+use super::pr_mode::PrTab;
+use super::{KagiApp, TabUiState};
 
 const DETAIL_CONCURRENCY: usize = 2;
 const VISIBLE_DEBOUNCE: Duration = Duration::from_millis(200);
@@ -187,6 +189,14 @@ impl PrDetailController {
             }
             return;
         }
+        if self.active.iter().any(|(active_key, generation)| {
+            active_key == &key
+                && self.slots.get(&key).is_some_and(|slot| {
+                    slot.generation == *generation && slot.head_sha == pr.head_sha
+                })
+        }) {
+            return;
+        }
         let slot = self.slots.entry(key.clone()).or_default();
         if slot.head_sha != pr.head_sha {
             slot.generation = slot.generation.wrapping_add(1);
@@ -248,24 +258,33 @@ impl PrDetailController {
         started: &StartedDetail,
         result: &Result<DetailResult, kagi_git::github::PrFetchError>,
         now: Instant,
-    ) -> bool {
+    ) -> Option<bool> {
         self.active
             .remove(&(started.request.key.clone(), started.generation));
-        let Some(slot) = self.slots.get_mut(&started.request.key) else {
-            return false;
-        };
+        let slot = self.slots.get_mut(&started.request.key)?;
         if slot.generation != started.generation || slot.head_sha != started.request.head_sha {
-            return false;
+            return None;
         }
+        let payload_matches = result.as_ref().is_ok_and(|detail| {
+            detail.matches(
+                started.request.key.number,
+                &started.request.head_sha,
+                started.request.key.stage,
+            )
+        });
         match result {
-            Ok(_) => {
+            Ok(_) if payload_matches => {
                 slot.availability = PrDetailAvailability::Fresh;
                 slot.refreshed_at = Some(now);
                 slot.successful_head = Some(started.request.head_sha.clone());
                 slot.next_retry_at = None;
                 slot.error = None;
+                self.pending.retain(|request| {
+                    request.key != started.request.key
+                        || request.head_sha != started.request.head_sha
+                });
             }
-            Err(error) => {
+            other => {
                 slot.availability =
                     if slot.successful_head.as_deref() == Some(started.request.head_sha.as_str()) {
                         PrDetailAvailability::Stale
@@ -273,10 +292,13 @@ impl PrDetailController {
                         PrDetailAvailability::Missing
                     };
                 slot.next_retry_at = Some(now + RETRY_DELAY);
-                slot.error = Some(error.to_string());
+                slot.error = Some(match other {
+                    Ok(_) => "pull request head changed while loading details".to_string(),
+                    Err(error) => error.to_string(),
+                });
             }
         }
-        true
+        Some(payload_matches)
     }
 
     fn reconcile_heads(&mut self, prs: &[PullRequest]) {
@@ -315,6 +337,58 @@ impl PrDetailController {
 enum DetailResult {
     Status(PrStatusDetail),
     Body(PrBodyDetail),
+}
+
+impl DetailResult {
+    fn matches(&self, number: u64, head_sha: &str, stage: PrDetailStage) -> bool {
+        match (self, stage) {
+            (Self::Status(detail), PrDetailStage::Status) => {
+                detail.number == number && detail.head_sha == head_sha
+            }
+            (Self::Body(detail), PrDetailStage::Body) => {
+                detail.number == number && detail.head_sha == head_sha
+            }
+            _ => false,
+        }
+    }
+}
+
+fn sync_open_pr_from_list(tab: &mut PrTab, listed: &PullRequest) {
+    let head_changed = tab.pr.head_sha != listed.head_sha;
+    tab.pr = listed.clone();
+    if !head_changed {
+        return;
+    }
+    tab.head = CommitId(listed.head_sha.clone());
+    tab.commits.clear();
+    tab.files.clear();
+    tab.selected_commit = None;
+    tab.selected_file = None;
+    tab.diff = None;
+    tab.conflicts = None;
+    tab.conflict_selected = None;
+    tab.conflict_preview = None;
+    tab.conflict_at = 0;
+    tab.merge_status = None;
+    tab.merge_status_loaded = false;
+}
+
+/// Keep every open copy on the latest L1 identity. A moved head invalidates
+/// locally derived commit/diff/conflict state until the tab is reopened from
+/// fetched refs; conversation data belongs to the PR number and is retained.
+pub(super) fn sync_open_pr_tabs(ui: &mut TabUiState) {
+    let Some(mode) = ui.pr_mode.as_mut() else {
+        return;
+    };
+    for tab in &mut mode.tabs {
+        if let Some(listed) = ui
+            .github_prs
+            .iter()
+            .find(|pr| pr.number == tab.pr.number && pr.base_repo == tab.pr.base_repo)
+        {
+            sync_open_pr_from_list(tab, listed);
+        }
+    }
 }
 
 fn apply_status_copies<'a>(
@@ -532,10 +606,13 @@ impl KagiApp {
         let Some(ui) = self.ui.get_mut(&owner) else {
             return;
         };
-        if !ui.pr_details.settle(started, &result, Instant::now()) {
+        let Some(should_apply) = ui.pr_details.settle(started, &result, Instant::now()) else {
             return;
-        }
-        if let Ok(detail) = result {
+        };
+        if should_apply {
+            let Ok(detail) = result else {
+                unreachable!("only a matching success can be applied")
+            };
             match detail {
                 DetailResult::Status(detail) => {
                     let opened = ui
@@ -561,113 +638,5 @@ impl KagiApp {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn pr(number: u64, head: &str) -> PullRequest {
-        PullRequest {
-            number,
-            head_sha: head.into(),
-            base_repo: "github.com/acme/widgets".into(),
-            ..Default::default()
-        }
-    }
-
-    fn path() -> PathBuf {
-        PathBuf::from("/repo")
-    }
-
-    #[test]
-    fn queue_never_starts_more_than_two_or_duplicates_a_stage() {
-        let mut controller = PrDetailController::default();
-        controller.enqueue(path(), &pr(1, "a"), PrDetailStage::Status, false, false);
-        controller.enqueue(path(), &pr(1, "a"), PrDetailStage::Status, false, false);
-        controller.enqueue(path(), &pr(2, "b"), PrDetailStage::Status, false, false);
-        controller.enqueue(path(), &pr(3, "c"), PrDetailStage::Status, false, false);
-        let first = controller.take_next(Instant::now()).unwrap();
-        let second = controller.take_next(Instant::now()).unwrap();
-        assert_ne!(first.request.key, second.request.key);
-        assert!(controller.take_next(Instant::now()).is_none());
-        assert_eq!(controller.active.len(), 2);
-    }
-
-    #[test]
-    fn offscreen_pending_rows_are_removed_but_opened_rows_stay() {
-        let mut controller = PrDetailController::default();
-        controller.enqueue(path(), &pr(1, "a"), PrDetailStage::Status, false, false);
-        controller.enqueue(path(), &pr(2, "b"), PrDetailStage::Status, true, false);
-        controller.observe_visible(BTreeSet::new(), BTreeSet::from([2]), 1, Instant::now());
-        assert_eq!(controller.pending.len(), 1);
-        assert_eq!(controller.pending[0].key.number, 2);
-    }
-
-    #[test]
-    fn a_failed_refresh_keeps_success_as_stale_and_delays_retry() {
-        let mut controller = PrDetailController::default();
-        let pr = pr(1, "a");
-        controller.enqueue(path(), &pr, PrDetailStage::Status, false, false);
-        let first = controller.take_next(Instant::now()).unwrap();
-        let ok = Ok(DetailResult::Status(PrStatusDetail {
-            number: 1,
-            head_sha: "a".into(),
-            ci: Default::default(),
-            checks: Vec::new(),
-            mergeable: Default::default(),
-        }));
-        assert!(controller.settle(&first, &ok, Instant::now()));
-        controller.enqueue(path(), &pr, PrDetailStage::Status, false, true);
-        let refresh = controller.take_next(Instant::now()).unwrap();
-        let failed = Err(kagi_git::github::PrFetchError::Network("offline".into()));
-        assert!(controller.settle(&refresh, &failed, Instant::now()));
-        assert_eq!(
-            controller.availability(1, "github.com/acme/widgets", PrDetailStage::Status, "a"),
-            PrDetailAvailability::Stale
-        );
-        controller.enqueue(path(), &pr, PrDetailStage::Status, false, true);
-        assert!(controller.take_next(Instant::now()).is_none());
-        assert_eq!(
-            controller.availability(1, "github.com/acme/widgets", PrDetailStage::Status, "a"),
-            PrDetailAvailability::Stale,
-            "retry backoff must not disguise stale data as an active load"
-        );
-    }
-
-    #[test]
-    fn changed_head_invalidates_old_completion() {
-        let mut controller = PrDetailController::default();
-        controller.enqueue(path(), &pr(1, "old"), PrDetailStage::Status, false, false);
-        let old = controller.take_next(Instant::now()).unwrap();
-        controller.enqueue(path(), &pr(1, "new"), PrDetailStage::Status, false, false);
-        let result = Ok(DetailResult::Status(PrStatusDetail {
-            number: 1,
-            head_sha: "old".into(),
-            ci: Default::default(),
-            checks: Vec::new(),
-            mergeable: Default::default(),
-        }));
-        assert!(!controller.settle(&old, &result, Instant::now()));
-        assert_eq!(
-            controller.availability(1, "github.com/acme/widgets", PrDetailStage::Status, "new"),
-            PrDetailAvailability::Loading
-        );
-        assert!(controller.take_next(Instant::now()).is_some());
-    }
-
-    #[test]
-    fn one_apply_function_updates_list_and_open_copies_only_for_the_same_head() {
-        let mut list = vec![pr(1, "same"), pr(2, "other")];
-        let mut opened = vec![pr(1, "same"), pr(1, "moved")];
-        let detail = PrStatusDetail {
-            number: 1,
-            head_sha: "same".into(),
-            ci: kagi_domain::github::CiState::Success,
-            checks: Vec::new(),
-            mergeable: kagi_domain::github::Mergeable::Clean,
-        };
-        apply_status_copies(&mut list, opened.iter_mut(), &detail);
-        assert_eq!(list[0].ci, kagi_domain::github::CiState::Success);
-        assert_eq!(opened[0].ci, kagi_domain::github::CiState::Success);
-        assert_eq!(list[1].ci, kagi_domain::github::CiState::None);
-        assert_eq!(opened[1].ci, kagi_domain::github::CiState::None);
-    }
-}
+#[path = "github_pr_detail_tests.rs"]
+mod tests;

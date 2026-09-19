@@ -101,6 +101,7 @@ impl KagiApp {
                     let outcome = kagi_git::github::apply_pr_fetch(&mut ui.github_prs, result);
                     match &outcome.error {
                         None => {
+                            super::github_pr_detail::sync_open_pr_tabs(ui);
                             ui.github_error = None;
                             ui.github_unavailable = false;
                         }

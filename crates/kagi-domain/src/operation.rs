@@ -244,6 +244,33 @@ pub enum OperationOutcome {
         detail: String,
         confirmed: bool,
     },
+    /// `gh pr comment`'s receipt for a comment posted to a PR. Like
+    /// [`Self::PrMerge`], a non-`Operation` remote write recorded at its own
+    /// transport boundary. `detail` is the new comment's URL when gh printed
+    /// one — the only handle that identifies what was posted.
+    PrComment {
+        number: u64,
+        detail: String,
+    },
+    /// `gh pr review`'s receipt for a review submitted on a PR — the verdict
+    /// half of the same remote-write family as [`Self::PrComment`].
+    /// `verdict` is [`crate::github::ReviewVerdict::as_str`], so the receipt
+    /// names *which* review was submitted; `detail` is gh's own words (the
+    /// review's URL when it printed one).
+    PrReview {
+        number: u64,
+        verdict: String,
+        detail: String,
+    },
+    /// `gh pr edit`'s receipt for a reviewer / assignee / label change on a
+    /// PR — the metadata half of the same remote-write family as
+    /// [`Self::PrComment`]. `detail` is gh's own words (the PR's URL when it
+    /// printed one); *what* changed is in the plan the receipt carries, not
+    /// re-read from the server.
+    PrEdit {
+        number: u64,
+        detail: String,
+    },
     /// Deleted branch tip retained by a mandatory commit recovery ref (#584).
     DeleteBranch {
         name: String,

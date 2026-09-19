@@ -17,7 +17,8 @@ use std::sync::Mutex;
 
 use kagi_domain::github::PullRequest;
 use kagi_git::github::{
-    apply_pr_fetch, issue_detail, list_issues, list_merged_prs, list_open_prs, PrFetchError,
+    apply_pr_fetch, issue_detail, list_issues, list_merged_prs, list_open_prs, pr_body_detail,
+    pr_status_detail, PrFetchError,
 };
 
 /// PATH is process-global; the tests in this binary share it.
@@ -90,6 +91,76 @@ const NETWORK: &str = "echo 'dial tcp: lookup api.github.com: no such host' >&2;
 const INVALID: &str = "echo 'not json at all'";
 const UNAVAILABLE: &str = "echo 'none of the git remotes configured for this repository point to a known GitHub host' >&2; exit 1";
 const RATE_LIMITED: &str = "echo 'HTTP 429: API rate limit exceeded' >&2; exit 1";
+
+#[test]
+fn l1_requests_only_lightweight_fields() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+case "$*" in
+  *statusCheckRollup*|*mergeable*|*body*|*changedFiles*|*additions*|*deletions*)
+    echo "heavy field in L1: $*" >&2; exit 1 ;;
+esac
+echo '[{"number":1,"title":"small","headRefName":"h","headRefOid":"sha","baseRefName":"main","isDraft":false,"url":"https://github.com/o/r/pull/1"}]'
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let prs = list_open_prs(&workdir).expect("lightweight list");
+    assert_eq!(prs.len(), 1);
+    assert_eq!(prs[0].head_sha, "sha");
+    assert!(prs[0].checks.is_empty());
+}
+
+#[test]
+fn l2_and_l3_are_individual_repo_addressed_reads() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+case "$*" in
+  "pr view -R ghe.example/acme/widgets 42 --json number,headRefOid,statusCheckRollup,mergeable")
+    echo '{"number":42,"headRefOid":"sha","statusCheckRollup":[],"mergeable":"MERGEABLE"}' ;;
+  "pr view -R ghe.example/acme/widgets 42 --json number,headRefOid,updatedAt,body,changedFiles,additions,deletions")
+    echo '{"number":42,"headRefOid":"sha","updatedAt":"t","body":"","changedFiles":0,"additions":0,"deletions":0}' ;;
+  *) echo "wrong command: $*" >&2; exit 1 ;;
+esac
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let status = pr_status_detail(&workdir, "ghe.example/acme/widgets", 42).unwrap();
+    let body = pr_body_detail(&workdir, "ghe.example/acme/widgets", 42).unwrap();
+    assert_eq!(status.head_sha, "sha");
+    assert!(status.checks.is_empty());
+    assert_eq!(body.changed_files, 0);
+    assert!(body.body.is_empty());
+}
+
+#[test]
+fn l1_retries_a_504_once_and_no_other_failure() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (bin, workdir) = (root.path().join("bin"), root.path().join("repo"));
+    for dir in [&bin, &workdir] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let count = root.path().join("count");
+    let script = format!(
+        r#"count=$(cat '{count}' 2>/dev/null || echo 0)
+count=$((count + 1))
+echo "$count" > '{count}'
+echo 'HTTP 504: Gateway Timeout' >&2
+exit 1"#,
+        count = count.display()
+    );
+    let _restore = Environment::install(&bin);
+    fake_gh(&bin, &script);
+    let error = list_open_prs(&workdir).expect_err("both attempts fail");
+    assert!(error.is_gateway_timeout());
+    assert_eq!(std::fs::read_to_string(&count).unwrap().trim(), "2");
+
+    std::fs::write(&count, "0\n").unwrap();
+    fake_gh(&bin, AUTH);
+    assert!(matches!(
+        list_open_prs(&workdir),
+        Err(PrFetchError::Auth(_))
+    ));
+    assert_eq!(std::fs::read_to_string(&count).unwrap().trim(), "0");
+}
 
 /// (b) The one answer that may empty the list: `gh` said there are none.
 #[test]

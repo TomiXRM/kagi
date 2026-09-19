@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Operations run from `cargo run` are recorded again.** Cargo hands the binary `CARGO_MANIFEST_DIR`, which the operation log reads as "this is a test harness — refuse the real `~/.kagi` unless `KAGI_LOG_DIR` says where to write". That guard exists so a failed fixture can never write into a developer's home, but a developer launching the app through cargo is not a fixture, and every operation came back "changed but not recorded". The app now drops the marker at startup when `KAGI_LOG_DIR` is unset; test binaries never run that startup, and every test that spawns the app sets `KAGI_LOG_DIR`, so their isolation is unchanged.
+
 ### Changed
 
 - **A horizontal trackpad gesture now slides the sidebar instead of switching the whole window at once.** Only the sidebar has a previous/next page: it follows the fingers — damped, so it trails them and can never travel past one page — and the main pane stays exactly where it is, showing the same content, for the whole gesture. Releasing under 20% of the sidebar's width springs it back; past that it snaps to the neighbouring page, and only when that spring comes to rest does the workspace itself change. One gesture therefore moves at most one page, however far it is flicked, and a release no longer makes the sidebar jump. (ADR-0199)
@@ -12,12 +16,20 @@ All notable changes to Kagi are documented here. Format loosely follows
 - **The page a gesture is sliding toward shows its real content when that content is already loaded.** The branch navigator always does (it is local Git data); a PR or Issue page does once its list has arrived, so moving between workspaces you have already visited previews the actual lists rather than a placeholder. A page whose list has never loaded still slides in as a shell — the preview only reads what is cached, and never starts a fetch. (ADR-0199)
 - **The sidebar now starts 240px wide** instead of 200px, so grouped branch names fit before being ellipsised. Dragging the divider still overrides it.
 - **A sideways swipe no longer scrolls the list underneath it.** Once the gesture is clearly horizontal it owns the wheel, so the page it is dragging stops taking the vertical part of the motion. A gesture that is anything else — including one with a slight sideways component — stays the list's, and scrolls it exactly as before. (ADR-0199)
+- **In-flight indicators actually turn.** The rotating arrow on a "working" snackbar and in the status-bar footer was a text glyph, which cannot rotate — so a running operation looked like a hung one, while Fetch's own spinner (a real animated icon) turned as expected. Both now use that same animated icon, and the plain Info toasts — which report something that has already happened, like "Copied …" — use a bullet instead of an arrow that promises motion. Reduce Motion still renders every spinner still. A repository gate refuses a new rotating-arrow glyph in a string, so this cannot come back.
 - **The PR workspace was rebuilt around what you triage on.** With no PR open the centre is a table — number, title over its branch pair, state, author, checks, changed files, age — under a strip carrying the open/draft counts and one sort control, in place of the wall of cards. The list's numbers now come from the fetch itself, so a row says how big a PR is and how stale it is without opening it. (ADR-0200)
 - **The PR navigator is INBOX / MY PRS / REVIEW / ASSIGNED,** each with a count and a fold. They are filters rather than buckets, so a PR that is yours, awaiting your review and assigned to you appears in all three — the way GitHub's own views overlap. Without a known GitHub login the viewer-relative sections stay empty instead of guessing whose the PRs are. (ADR-0200)
 - **Open PRs get a swimlane beside the body:** one lane per open PR tab, its commits newest first, the other PRs' rows faded. Clicking a commit shows it in the PR that owns it, switching to that PR's tab first. It draws only commits the open tabs already carry, so it costs no extra request. (ADR-0200)
+- **A PR with a long conversation scrolls smoothly.** The PR page is now a virtualized list — the same element the diff uses — so only the cards on screen are laid out; before, every review and line comment was built on every frame and a PR with dozens of Copilot comments stuttered. (ADR-0200)
+- **The PR's 概要 and レビュー are one page again.** They were two separate scrolling panes, so reading a review meant losing sight of the description. Now the description (with its merge-status card) and the whole conversation are one scroll, the way the PR reads on github.com, and the two tabs are navigation into it: pressing 概要 or レビュー scrolls that page to the section instead of replacing what is on screen. The description is readable while the conversation is still being fetched. FILES, COMMITS and Conflicts remain real tabs. (ADR-0200)
+- **The PR page opens with the PR's own title.** `#N`, the title at full width and its `head → base` pair now head the page, above the properties — the toolbar's copy is truncated into a strip it shares with the buttons, which is not where you look for what you just opened. The reviewers/assignees/labels rows are boxed like the description and the comments below them, and the page itself is the app's base background instead of the grey panel it used to paint. (ADR-0200)
+- **The PR page reads like the PR: title, who, checks, then the discussion.** The head of the page now carries the state, the author with their avatar, the `head → base` pair and the size of the change (`+N −M`, N files). CI is a card on the page instead of a list filed in the swimlane pane: one line — "all checks have passed · N successful checks" — that unfolds in place to the individual checks, each with a button that opens its run in the browser. And the comment box gained the other two things you do at the foot of a PR: **APPROVE** and **REQUEST CHANGES**, posted through `gh pr review`. GitHub requires words on a "request changes" review and allows a wordless approval, so an empty box refuses the first and permits the second, with the reason shown rather than a dead button. (ADR-0200)
+- **Reviewers, assignees and labels can be changed from the PR page.** Each row carries a gear that opens a picker: it lists what the PR already has plus what the repository offers, and applying it sends only the difference through `gh pr edit`. The PR on screen takes the new values at once and the list is re-fetched to confirm them. (ADR-0200)
+- **Commenting works when GitHub is slow.** Posting a comment or review looked up the repository with a network call before sending, and failed with "not a GitHub repo" when that call timed out — even though the PR already knows which repository it belongs to. Every GitHub write now uses that stored identity instead. (ADR-0200)
+- **A PR's properties are shown, and a comment can be posted from the PR page.** Reviewers, assignees, labels and the worktree line are now the first rows of the PR's own page, as a name/value table ahead of the description — GitHub keeps them in a right-hand column, which is exactly the width the diff would lose. GitHub logins carry their avatar: the PR's reviewers and assignees, and every author in the conversation, get the same circle the commit list uses (a real avatar once fetched, the initial circle until then). At the foot of the page there is a comment box: typing and pressing COMMENT posts through `gh pr comment` and re-reads the thread. The text follows the PR it was typed for — switching PRs parks the draft and brings back that PR's own — an empty box cannot be posted, and a post whose result could not be proven is reported as unproven instead of being retried. (ADR-0200)
 - **The PR's commits are their own tab** instead of a 210px strip pinned above every view, and the tab row carries counts — files, discussion, commits. Picking a commit still takes you to its diff. (ADR-0200)
 - **The PR detail rail is gone; its contents moved under the swimlane.** The 320px pane on the right of the PR workspace — the stack, CI checks, and the changed-file list — no longer exists, and the diff gets the whole width of the body. The checks, reviewers, assignees, labels and worktree line now sit in the lower third of the swimlane pane, which is already on screen for the PR being read; on the FILES and Conflicts tabs that area lists the files instead, so a file is still one click. The inferred PR **stack** was dropped with the pane — it came from other open PRs' base/head links rather than from `gh` — and ←/→ now cycles list → commits → files. Labels keep GitHub's own colour, and the worktree line answers what no GitHub field can: whether a worktree here has this PR's branch checked out, and whether it is clean. (ADR-0200)
-- **A PR row in the navigator reads `#N title` over `● state  branch`.** The number joins the title, because together they are how a PR is named out loud, and the second line names the head branch — what tells two similarly titled PRs apart, and what a worktree is named after. The dot carries the row's attention colour, the open PR is marked at its left edge, and the failed/total check count and the agent badge stay at the right. The attention *reason* left the row: the section header above it already says why the PR is there, and the home table still spells it out. (ADR-0200)
+- **A PR row in the navigator is the title, then a smaller line with its state and its number.** The title gets its own line with air under it; below it the state dot sits at the left and `#N` hard against the right, so a list of rows ends in a column of numbers. The head branch left the row — it repeated what the title says — and so did the attention *reason*: the section header above already says why the PR is there, and the home table still spells it out. The dot carries the row's attention colour, the open PR is marked at its left edge, and the failed/total check count and the agent badge ride between the state and the number. (ADR-0200)
 
 ## [0.38.0] — 2026-09-17
 
@@ -110,17 +122,20 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.34.0] — 2026-09-07
 
 ### Added
+
 - **Flower Road gains balanced light and dark swimlane palettes** with stronger graph-row tinting while preserving the existing badge colours. (#529)
 - **Deleting an unmerged branch now requires a deliberate two-step confirmation**, with its full tip retained through a ref-backed recovery handle. (#585)
 - **Worktree WIP rows now connect directly to their checked-out commits** with lane-coloured dashed paths, making each worktree's next commit position visible in the graph. (#474)
 - **Linked-worktree WIP rows now open an inline commit panel** where stage, unstage, commit, amend and discard target that worktree without loading another graph tab. (#477, #478, #479, #480)
 
 ### Changed
+
 - Local stash push, apply, pop and drop now run through one application-owned planning, admission and receipt lifecycle. (#541)
 - CLI and MCP operations now share one agent contract and return the receipt produced by their own confirmed run. (#571)
 - Remote stash drop now runs as a typed application-layer SSH job with frozen connection identity and explicit recovery evidence. (#572)
 
 ### Fixed
+
 - Release checks require the complete blocking CI aggregate from the target
   commit's newest workflow run and latest attempt, including the gate selftests. (#519)
 - Branch cleanup retains remote recovery OIDs when subsequent local deletion
@@ -149,6 +164,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - CLI and MCP confirmations preserve oplog receipts and backup recovery handles when execution fails or completes only partially. (#589)
 
 ### Changed (internal)
+
 - Commit, compare and staging diffs share one patch decoder and inspect binary
   flags after libgit2 materializes content rather than guessing from empty hunks. (#519)
 - The application-layer ownership and delivery model is specified before feature migration. (#521)
@@ -176,6 +192,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.33.0] — 2026-09-06
 
 ### Added
+
 - **Popup content is copyable.** Every plan card carries a hover-quiet copy
   button: one on the title row for the whole dialog (title, current →
   predicted, warnings, blockers, the row list, the recovery text and the
@@ -188,6 +205,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   (`M 115  A 2  D 5`).
 
 ### Fixed
+
 - **Large file and commit lists are reachable again.** The amend card cut its
   staged-file list at ten rows with no "+N more" and no scroll; discard cut its
   skipped list at twenty; the push preview cut commits at ten. Every row is
@@ -210,6 +228,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   them into one sentence.
 
 ### Changed (internal)
+
 - Every modal is built from one shell (`modal_card` / `modal_body` /
   `modal_scroll_body` / `modal_list_panel` / `modal_section`), with one rule:
   a card has exactly one scroll region per panel and never a scroller inside a
@@ -226,6 +245,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.13.7] — 2026-07-23
 
 ### Fixed
+
 - **Push preview no longer over-counts commits for a branch with no upstream.**
   When a branch had never been pushed, the "commits to push" preview walked
   every commit reachable from `HEAD` back to the root instead of excluding
@@ -242,6 +262,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.13.6] — 2026-07-23
 
 ### Fixed
+
 - **Japanese text no longer renders thin on Linux (Ubuntu).** The bundled Noto
   Sans JP fallback shipped as a variable font whose default weight axis is Thin
   (100); on Linux GPUI's text backend rendered every weight at that default, so
@@ -257,6 +278,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.6.0] — 2026-06-22
 
 ### Added
+
 - **Activity tab.** A new repository Activity view shows commit/merge history
   as a compact chart plus contributor rankings. Granularity now covers fixed
   recent windows (Day / Week / Month / Year) and an **All** mode for whole-history
@@ -270,6 +292,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   stay available independently.
 
 ### Security & safety
+
 - **`Backend::run` scaffolds the enforced plan→preflight→execute pipeline**
   (ADR-0104). A new single entry point runs `preflight_check` (or
   `preflight_check_stash` for stash apply/pop) before dispatch, and the old
@@ -298,6 +321,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   rather than executing a stale plan.
 
 ### Performance
+
 - **External-change refresh no longer blocks the UI** (T-REARCH-030).
   `reload_external` (triggered by a terminal `git commit`, a sibling worktree,
   or auto-fetch) now runs the git2 snapshot on a background thread and applies
@@ -312,6 +336,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   finishes.
 
 ### Fixed
+
 - **CLI-argument tabs now open a real `RepoSession` on startup.** Passing a repo
   path on the command line no longer leaves the tab in a partially initialized
   state.
@@ -326,6 +351,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   connectors align with the graph padding.
 
 ### Changed
+
 - **`src/git/history.rs` renamed to `file_history.rs`** (ADR-0108). It
   collided with `kagi_domain::history` (the undo/redo operation history); the
   two describe different concepts and the collision made it unclear which
@@ -334,6 +360,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   line-add/delete totals, keeping the UI compact and fast to scan.
 
 ### Changed (internal)
+
 - **Extracted `kagi-git` as a workspace crate** (ADR-0115). The Git backend now
   lives under `crates/kagi-git`, owns the `git2` dependency, and is imported by
   callers/tests through `kagi_git::`.
@@ -357,6 +384,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   roadmap, and the release/refactor handoff docs.
 
 ### Removed (internal)
+
 - Dead code (Phase 0 sweep): `Backend::repo()` escape hatch (0 callers), the
   redundant `tempfile` under `[dev-dependencies]`, 23 dead `take_*` and 15
   dead `*_mut` modal accessors, the unused `CommandState::Hidden` variant,
@@ -366,6 +394,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.4.0] — 2026-06-19
 
 ### Added
+
 - **Branch Solo focus mode.** Right-click a branch badge in the graph and choose
   **Solo** to dim every commit that isn't in that branch's history; choose **Exit
   Solo** to restore. History is walked via first-parent ancestry. (#47)
@@ -375,6 +404,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   staged + unstaged `+N / -M` count, refreshed from the backend on load/reload.
 
 ### Changed
+
 - The WIP-row diffstat is rendered at the **right end** of the row, larger and
   bold, for better legibility.
 - Per-file **Stage / Unstage** buttons in the commit panel are slightly smaller
@@ -383,6 +413,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.22] — 2026-06-19
 
 ### Fixed
+
 - **Smart Commit now finds the Claude Code / Codex CLIs in the macOS app bundle.**
   A `.app` launched from Finder/Dock doesn't inherit the login shell's `PATH`, so
   CLIs installed via mise / Homebrew / `~/.local/bin` showed as "not on PATH"
@@ -390,11 +421,13 @@ All notable changes to Kagi are documented here. Format loosely follows
   both detection and execution. (#44)
 
 ### Docs
+
 - Added a **File History** section to the README (English + Japanese).
 
 ## [0.3.21] — 2026-06-19
 
 ### Changed
+
 - **Refreshed the app icon.** Regenerated the macOS `.icns` and Linux PNGs from
   an updated source image. Added `assets/README.md` documenting the icon
   pipeline (`xtask icon` / `scripts/make_icon.sh`).
@@ -402,6 +435,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.20] — 2026-06-19
 
 ### Added
+
 - **Smart Commit can use the Claude Code / Codex CLIs.** If you have the `claude`
   or `codex` CLI installed and logged in, you can pick it as the commit-message
   provider in Settings (in addition to local Ollama). kagi runs it
@@ -415,6 +449,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - **New colour themes:** Pinky Boo, Catppuccin Latte, and Dracula.
 
 ### Fixed
+
 - **In-app update now works for the AppImage build** (issue #29). The updater
   replaces the writable `.AppImage` file itself (download → verify → swap →
   relaunch) instead of bailing out. The tar.gz install path is unchanged.
@@ -425,16 +460,19 @@ All notable changes to Kagi are documented here. Format loosely follows
   the notes scroll, the markdown is sized down, and it follows the dark theme.
 
 ### Changed
+
 - **The theme list is sorted alphabetically** (the default, Catppuccin Mocha,
   stays first) so the Settings picker stays tidy as themes are added.
 
 ### Docs
+
 - Added a research note on GitHub pull-request integration (how GitButler/Fork
   do it; recommended approach for kagi) for a future feature.
 
 ## [0.3.19] — 2026-06-19
 
 ### Added
+
 - **Switch branches without a forced stash.** Branch checkout no longer blocks on
   *any* uncommitted change — it only blocks when your local changes actually
   collide with the target branch (a path that differs between the two and is
@@ -442,6 +480,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   branch with a heads-up warning, matching how commit checkout already behaved.
 
 ### Fixed
+
 - **Stage/Unstage button colours.** The buttons used gpui-component's filled
   `success`/`warning` variants whose hover/foreground colours kagi never mapped,
   so the white label washed out (and gpui-component 0.5.1 hardcodes the hover
@@ -463,12 +502,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.18] — 2026-06-18
 
 ### Added
+
 - **Settings theme picker is now a real dropdown** (gpui-component `Select`) with
   keyboard navigation, replacing the hand-rolled inline option list. The On/Off
   toggles (Compact graph, Auto-fetch) are proper `Switch`es and the language
   choice is a `RadioGroup`.
 
 ### Fixed
+
 - **Settings rows could overflow the panel.** Wide controls combined with
   unbreakable (CJK) labels pushed the control past the panel's clipped edge,
   hiding it; the label column now shrinks so the control stays inside.
@@ -480,6 +521,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   uses the per-theme colours, readable across all themes.
 
 ### Changed (internal)
+
 - **Adopted gpui-component widgets across the UI.** Hand-rolled buttons throughout
   the modals, conflict views, inspector, commit panel, file-history/diff headers,
   and tab strip are now the shared `Button`; the conflict editor's icon button and
@@ -494,6 +536,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.17] — 2026-06-17
 
 ### Fixed
+
 - **Branch-picker dialog could swallow a row click.** The overlay's clickable
   rows were not occluded, so a mouse-down on a branch propagated to the
   full-screen dismiss scrim beneath it and closed the overlay before the row's
@@ -501,6 +544,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   occludes, matching every other menu/modal.
 
 ### Changed (internal)
+
 - **Tuned the release build profile** (`lto = "thin"`, `codegen-units = 1`,
   `strip = true`). Kagi's interactive cost is dominated by tree-sitter
   highlighting, git2 diffs and commit-graph layout, so this makes distributed
@@ -514,6 +558,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.16] — 2026-06-17
 
 ### Added
+
 - **Remote stash drop over SSH.** The stash context-menu **Drop** now works in
   the read-only remote view (ADR-0089 Phase 3): the same danger-confirm modal and
   oplog as local, executing `git stash drop` on the host over the system-`ssh`
@@ -524,6 +569,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   resolution on the host. Same confirm + oplog discipline as local pull (ADR-0098).
 
 ### Fixed
+
 - **Commit detail panel no longer hidden on repos with long commit messages.**
   The center commit-list column had no flex `min-width`, so a long commit/merge
   message could push the right-hand Inspector off-screen (most visible on remote
@@ -535,6 +581,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   connection lines stay visible (ADR-0088).
 
 ### Changed (internal)
+
 - **Codebase structural refactor (issue #13).** Added `AGENTS.md`; split the
   `ui/mod.rs` god-file into `types.rs` / `render.rs` / `operations/` and
   `git/ops.rs` into per-op modules; extracted `settings.rs`; introduced an
@@ -545,6 +592,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.15] — 2026-06-17
 
 ### Added
+
 - **Remote repositories over SSH (read-only).** Connect to a host over SSH from
   **File → "Connect to Remote Host…"**, browse its directories, and open a repo
   to inspect its graph/branches/tags/commits and per-commit file diffs — all
@@ -564,6 +612,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.14] — 2026-06-16
 
 ### Added
+
 - **Stashes in the commit graph.** Each stash now appears as a row directly
   below the WIP row, in yellow with a stash (inbox) icon, and draws a branch
   line down to the commit it was created on — so you can see where each stash
@@ -571,6 +620,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   stash row to Pop, right-click for the Pop/Apply/Drop menu.
 
 ### Fixed
+
 - The branch/tag (and stash) **label→node connector line now extends into the
   BRANCH/TAG pane** instead of stopping at the column boundary, and runs level
   across the divider (previously a ~1px step).
@@ -578,12 +628,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.13] — 2026-06-16
 
 ### Changed
+
 - **Stash actions in the sidebar.** Left-clicking a stash now **pops** it
   (apply + remove) instead of applying-and-keeping — so a stash you act on
   actually goes away. Right-click opens a menu with **Pop**, **Apply** (keep),
   and **Drop** (ADR-0087).
 
 ### Added
+
 - **Drop a stash directly.** A new Drop action deletes a stash entry without
   touching the working tree, behind a danger-confirm modal that shows how to
   recover it (`git stash store <oid>`). The dropped commit is recorded in the
@@ -592,6 +644,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.12] — 2026-06-16
 
 ### Added
+
 - **Background progress is a single, unified snackbar.** Every slow operation
   (merge, pull, push, stash, checkout, commit, …) runs off the UI thread and
   shows one busy snackbar with a large spinning sync icon + label
@@ -599,6 +652,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   (ADR-0086).
 
 ### Changed
+
 - **No-op Push / Pull no longer pops a dialog.** When there's nothing to push
   or pull (already up to date), Kagi shows a quick "Already up to date"
   snackbar with the same big sync icon instead of opening a confirmation modal.
@@ -608,6 +662,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   is now just "Merge" (it could overflow the window with long branch names).
 
 ### Fixed
+
 - **Add/add text conflicts show in the conflict editor.** Files added on both
   sides (no common ancestor) — e.g. `.h` headers — were misdetected as binary
   and hidden; they now materialize as a 3-way text conflict.
@@ -619,12 +674,14 @@ All notable changes to Kagi are documented here. Format loosely follows
   folders — equivalent to `git clean -fd` but recoverable (ADR-0083).
 
 ### Performance
+
 - **Branch / tag / remote sidebar is virtualized** (uniform_list), so scrolling
   and terminal typing stay smooth on large repositories.
 
 ## [0.3.11] — 2026-06-15
 
 ### Fixed
+
 - **Fonts render consistently on Linux.** Kagi now bundles **Inter** (UI) and
   **JetBrains Mono** (terminal / conflict editor / code) and loads them at
   startup, instead of relying on the platform default and the macOS-only "Menlo"
@@ -635,15 +692,18 @@ All notable changes to Kagi are documented here. Format loosely follows
   floor), so it always fits on small / scaled displays.
 
 ### Changed
+
 - Polished theme colors for secondary controls and the title bar.
 
 ### Docs / internal
+
 - Documented the Linux build dependencies (apt packages) for building from
   source. Silenced macOS dead-code warnings for the Linux-only in-app menu.
 
 ## [0.3.10] — 2026-06-15
 
 ### Fixed
+
 - **Linux AppImage installer now works with no arguments.** The zip nested the
   install script under `scripts/` while the AppImage and icon sat at the root, so
   `install_linux_desktop.sh` couldn't find them and only printed its usage
@@ -654,6 +714,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.9] — 2026-06-15
 
 ### Added
+
 - **Checkout a remote-only branch from the commit graph.** Right-clicking a
   commit that carries a remote-only badge (e.g. `origin/feature` with no local
   branch) now offers **"Checkout '<remote>' as local branch…"** — it creates a
@@ -661,6 +722,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   hidden when a local branch of that name already exists.
 
 ### Changed
+
 - **Enter approves / Esc cancels the active modal.** When any confirmation/plan
   modal is open, Enter confirms it and Esc cancels it.
 - **Taller title bar** for a bit more padding around the tabs and traffic lights.
@@ -668,6 +730,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.8] — 2026-06-15
 
 ### Added
+
 - **Cmd+Z / Cmd+Shift+Z for Undo / Redo** of git operations (ADR-0084). Bound so
   they never shadow text-input undo (in the commit message box) or the
   integrated terminal's Cmd+Z — they only act on the commit graph.
@@ -677,6 +740,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   Switching tabs re-seeds from the new repo's reflog.
 
 ### Changed
+
 - **Undo of a commit now uses `git reset --soft` semantics** — the undone
   commit's changes come back **staged** (index untouched, working tree
   preserved), instead of unstaged. Still a safe ref-only move: no `reset --hard`,
@@ -685,6 +749,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.7] — 2026-06-15
 
 ### Added
+
 - **Drag-and-drop merge of upstream-only branches.** A remote-tracking branch
   with no local counterpart (e.g. `origin/feature`) can now be dragged — from a
   commit-graph remote badge or the sidebar remotes list — onto the current branch
@@ -695,6 +760,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   toggle (on by default).
 
 ### Changed
+
 - **The 🔁 Refresh button now also fetches** the remote in the background (so a
   merge done on GitHub shows up). It re-reads local state instantly and pulls the
   remote quietly — failures (offline / no remote) are silent.
@@ -704,6 +770,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   after a remote merge" dead-end. A no-op pull/push is harmless.
 
 ### Fixed
+
 - **"Discard all" now removes newly-added (untracked) files** too, instead of
   leaving them. Untracked files are deleted from disk after their content is backed
   up to the ODB (recorded in the oplog) — recoverable with `git cat-file -p <sha>`,
@@ -713,6 +780,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.6] — 2026-06-15
 
 ### Added
+
 - **Two new themes: Tokyo Night and IBM PC.** Tokyo Night is a navy/blue-green
   dark theme; IBM PC is a black-background CGA 16-colour theme.
 - **Smart commit message: the Suggest button now uses the local LLM when one is
@@ -724,6 +792,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   appear and slide back out (fade out) when they expire or are dismissed.
 
 ### Changed
+
 - **Themed window title bar.** The title bar is no longer the default OS gray —
   it is transparent so kagi's themed top bar (the repo tab strip) fills the
   title-bar area and follows the active theme. The strip is draggable and, on
@@ -732,6 +801,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   jumping to line start. Double-click word-select and ⌘A already worked.
 
 ### Fixed
+
 - **Line-level conflict merge interleaves by position.** When taking individual
   lines from both sides of a hunk, the result now keeps each line in its
   original position instead of grouping all of one side first — so "base on the
@@ -742,6 +812,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.5] — 2026-06-15
 
 ### Performance
+
 - **Commit panel no longer janks the whole UI.** It used to run a full
   `working_tree_status` every render frame (for the staged preview) and read every
   untracked file for a diffstat — so opening it on a large repo dropped the app to
@@ -751,6 +822,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   changes.
 
 ### Added
+
 - **WIP auto-refreshes on working-tree changes**, not only on git operations: the
   watcher now watches the working tree and refreshes the WIP / commit panel when
   files change on disk (background status check; a no-op when nothing the repo
@@ -759,6 +831,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   across restarts.
 
 ### Fixed
+
 - Watcher no longer reloads this view on **sibling worktree / submodule** git
   activity (`.git/worktrees/…`, `.git/modules/…`) — fixes the reload storm from an
   active Claude Code worktree.
@@ -772,6 +845,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.4] — 2026-06-14
 
 ### Added
+
 - **In-app auto-update** (ADR-0082). On startup Kagi checks GitHub Releases in the
   background (best-effort, silent on failure, opt-out via Settings) and shows an
   **"↑ Update vX.Y.Z"** chip in the header when a newer release exists. Clicking it
@@ -789,6 +863,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.3] — 2026-06-14
 
 ### Added
+
 - **Windows build** (x86_64), experimental / best-effort. Releases now ship
   `kagi-<version>-x86_64-windows.zip` (a self-contained `kagi.exe` — assets are
   embedded). The terminal uses `cmd.exe` and settings/avatars/oplog resolve under
@@ -796,6 +871,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   maintainers, and unsigned (SmartScreen warns on first launch).
 
 ### Fixed
+
 - **Conflict editor, mismatched-length sides.** Scrolling the longer of the two
   panes was clamped to the shorter side's line count (the panes share one scroll
   handle but had unequal row counts); each hunk now blank-pads the shorter side so
@@ -809,6 +885,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ## [0.3.1] — 2026-06-14
 
 ### Fixed
+
 - **Could not commit after resolving a merge conflict.** After resolving all
   conflicts and clicking **Continue**, Kagi advanced to the commit panel but the
   commit could not be completed: the resolutions were never staged (the per-file
@@ -826,6 +903,7 @@ internal re-architecture. See `docs/rearch/` for the architecture work and
 `docs/adr/0072`–`0081` for the decisions behind it.
 
 ### Added
+
 - **Drag-and-drop branch merge** (ADR-0079, T-DNDMERGE-001). Drag a local-branch
   label — from the commit-graph **BRANCH / TAG** badges *or* the sidebar branch list —
   and drop it onto the current branch to **start** a merge. The dropped label follows
@@ -850,6 +928,7 @@ internal re-architecture. See `docs/rearch/` for the architecture work and
   markers / secrets / large binaries) still show the safety modal.
 
 ### Fixed
+
 - Integrated **terminal arrow keys** (shell history) and **Escape** (vim/less) now
   work — they were being consumed by global diff/close key bindings.
 - Settings window: the top-right gear icon now renders (missing bundled SVG), the
@@ -858,6 +937,7 @@ internal re-architecture. See `docs/rearch/` for the architecture work and
 - Header toolbar button cluster is now centered (was right-shifted).
 
 ### Changed (internal — v1.0 re-architecture groundwork)
+
 - Extracted a pure **`kagi-domain`** crate (commit/graph/diff/conflict model, rules,
   plan types — zero `git2`/`gpui`) (ADR-0072).
 - Introduced a **`Backend` façade** + unified **`Operation`** pipeline; the **UI no
@@ -868,10 +948,12 @@ internal re-architecture. See `docs/rearch/` for the architecture work and
   the suite stays green at every commit.
 
 ## [0.2.0]
+
 - Conflict Mode (line-level 3-pane editor, merge-into-conflict), commit suite,
   repo tabs, themes, EN/JA UI, uniform zoom, integrated terminal, GitHub avatars,
   cross-platform distribution. (See the v0.2.0 release notes / git history.)
 
 ## [0.1.0]
+
 - Initial release: commit-graph UX, branch/tag/stash/worktree management, staging +
   commit, cherry-pick / revert / amend / discard with dry-run safety.

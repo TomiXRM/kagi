@@ -123,6 +123,42 @@ pub struct PrMergeModal {
     pub delete_branch: bool,
 }
 
+/// Which of the PR's editable fields the picker is editing (ADR-0200 §11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrField {
+    Reviewers,
+    Assignees,
+    Labels,
+}
+
+/// State for the PR field picker: the gear on a properties row (ADR-0200 §11).
+///
+/// `candidates: None` means the list of people or labels the repository offers
+/// is still being read. The picker is usable before it arrives - what the PR
+/// already carries is always listed, so a value can be removed with no read at
+/// all.
+#[derive(Clone)]
+pub struct PrFieldsModal {
+    /// Which opening of the picker this is. The candidate read captures it,
+    /// and a read that comes back for an earlier opening - the picker was
+    /// closed and reopened on the same PR and field meanwhile - is dropped
+    /// rather than overwriting the new one (review finding, `w5:p19`).
+    pub generation: u64,
+    pub number: u64,
+    /// `<host>/<owner>/<repo>`, frozen when the picker opened: the write must
+    /// address the repository the PR belongs to, not whatever is active when
+    /// it is confirmed.
+    pub base_repo: String,
+    pub field: PrField,
+    /// What the PR has now - the baseline the write is diffed against.
+    pub current: Vec<String>,
+    /// What the user has toggled to.
+    pub selected: Vec<String>,
+    /// What the repository offers, once read.
+    pub candidates: Option<Vec<String>>,
+    pub error: Option<SharedString>,
+}
+
 /// State for a standalone stash **drop** confirmation (ADR-0087, Destructive).
 #[derive(Clone)]
 pub struct PushTagModal {
@@ -753,6 +789,7 @@ pub enum ActiveModal {
     StashDrop(StashDropModal),
     PushTag(PushTagModal),
     PrMerge(PrMergeModal),
+    PrFields(PrFieldsModal),
     Push(PushPlanModal),
     BranchPlan(BranchPlanModal),
     SetUpstream(SetUpstreamModal),
@@ -803,6 +840,7 @@ impl ActiveModal {
             | M::StashDrop(_)
             | M::PushTag(_)
             | M::PrMerge(_)
+            | M::PrFields(_)
             | M::Push(_)
             | M::BranchPlan(_)
             | M::SetUpstream(_)

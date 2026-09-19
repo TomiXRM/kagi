@@ -40,6 +40,20 @@ pub enum GithubNote {
     /// warning (#351) — the suggestion is written to the working tree only;
     /// review it with hunk staging before committing.
     SuggestionWorkingTreeOnly,
+    /// blocker — a pull-request comment with no text. `gh pr comment` would
+    /// happily post an empty comment; there is nothing to say and nothing to
+    /// undo it with but a manual delete, so the plan refuses it.
+    CommentBodyEmpty,
+    /// blocker — a review that GitHub requires words for (`--request-changes`
+    /// or `--comment`) was submitted with none. An approval may be wordless;
+    /// these two are refused by the API, so the plan refuses them first
+    /// rather than sending a request that cannot succeed. `verdict` is the
+    /// [`crate::github::ReviewVerdict`] slug.
+    ReviewBodyEmpty { verdict: String },
+    /// blocker — a `gh pr edit` with no reviewer, assignee or label change in
+    /// it. `gh` would accept the call and change nothing; a round trip and an
+    /// oplog receipt for a no-op is worse than refusing it at plan time.
+    FieldEditEmpty { number: u64 },
 }
 
 impl GithubNote {
@@ -85,6 +99,17 @@ impl GithubNote {
             GithubNote::SuggestionWorkingTreeOnly => {
                 "This edits the working tree only — nothing is committed. Review it with hunk staging before you commit.".to_string()
             }
+            GithubNote::CommentBodyEmpty => {
+                "The comment is empty. Write something before posting it.".to_string()
+            }
+            GithubNote::ReviewBodyEmpty { verdict } => format!(
+                "GitHub requires a comment on a '{}' review. Write what you want changed before submitting it.",
+                verdict
+            ),
+            GithubNote::FieldEditEmpty { number } => format!(
+                "Nothing on #{} would change. Pick a reviewer, assignee or label to add or remove first.",
+                number
+            ),
         }
     }
 }
@@ -96,6 +121,12 @@ pub enum GithubTitle {
     MergePr { number: u64, method: String },
     /// `Apply suggestion to '<path>'` (#351).
     ApplySuggestion { path: String },
+    /// `Comment on pull request #<n>`.
+    CommentPr { number: u64 },
+    /// `Review pull request #<n> (<verdict>)`.
+    ReviewPr { number: u64, verdict: String },
+    /// `Edit pull request #<n>`.
+    EditPr { number: u64 },
 }
 
 impl GithubTitle {
@@ -107,6 +138,15 @@ impl GithubTitle {
             }
             GithubTitle::ApplySuggestion { path } => {
                 format!("Apply suggestion to '{}'", path)
+            }
+            GithubTitle::CommentPr { number } => {
+                format!("Comment on pull request #{}", number)
+            }
+            GithubTitle::ReviewPr { number, verdict } => {
+                format!("Review pull request #{} ({})", number, verdict)
+            }
+            GithubTitle::EditPr { number } => {
+                format!("Edit pull request #{}", number)
             }
         }
     }
@@ -230,5 +270,29 @@ mod tests {
                 "GitHub keeps a 'Revert' button on #42 after the merge. Locally, the merge commit can be undone with:\n  git revert -m 1 <merge-sha>\nThe branch itself is restorable from the PR page if it was deleted."
             );
         }
+    }
+
+    #[test]
+    fn comment_title_and_empty_body_blocker() {
+        assert_eq!(
+            GithubTitle::CommentPr { number: 42 }.message_en(),
+            "Comment on pull request #42"
+        );
+        assert_eq!(
+            GithubNote::CommentBodyEmpty.message_en(),
+            "The comment is empty. Write something before posting it."
+        );
+    }
+
+    #[test]
+    fn edit_title_and_empty_edit_blocker() {
+        assert_eq!(
+            GithubTitle::EditPr { number: 42 }.message_en(),
+            "Edit pull request #42"
+        );
+        assert_eq!(
+            GithubNote::FieldEditEmpty { number: 42 }.message_en(),
+            "Nothing on #42 would change. Pick a reviewer, assignee or label to add or remove first."
+        );
     }
 }

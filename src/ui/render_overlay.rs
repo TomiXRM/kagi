@@ -16,20 +16,26 @@ use crate::ui::modal_renderers::*;
 // the whole `KagiApp`. The busy snackbar stays on `KagiApp` (driven by
 // the write latch); see `KagiApp::render_toasts`.
 
-/// The big spinning sync icon shared by the busy snackbar and the
-/// sync-flavoured no-op toasts (`ToastKind::Sync`), so every sync-icon
-/// snackbar looks identical. `key` keeps each animation instance distinct.
-pub(crate) fn big_sync_icon(accent: u32, key: impl Into<gpui::ElementId>) -> gpui::AnyElement {
+/// The rotating sync icon, at `size` px. **Every** rotating arrow in the app
+/// comes from here: a static ⟳ promises motion it does not deliver, which is
+/// what a reader reads as "stuck" (user report). `key` keeps each animation
+/// instance distinct.
+///
+/// Reduce motion renders it still - there the stillness is the setting, not a
+/// hung operation.
+pub(crate) fn sync_spinner(
+    size: f32,
+    accent: u32,
+    key: impl Into<gpui::ElementId>,
+) -> gpui::AnyElement {
     use gpui::AnimationExt as _;
     const SPIN_MS: u64 = 700;
     let icon = gpui::svg()
         .path("icons/refresh-cw.svg")
-        // ~2× the header spinner (user request) so the snackbar reads
-        // clearly as "working".
-        .w(theme::scaled_px(32.0))
-        .h(theme::scaled_px(32.0))
+        .flex_shrink_0()
+        .w(theme::scaled_px(size))
+        .h(theme::scaled_px(size))
         .text_color(rgb(accent));
-    // Reduce motion: static icon, no per-frame rotation tick.
     if theme::reduce_motion() {
         return icon.into_any_element();
     }
@@ -43,6 +49,14 @@ pub(crate) fn big_sync_icon(accent: u32, key: impl Into<gpui::ElementId>) -> gpu
         },
     )
     .into_any_element()
+}
+
+/// The big spinning sync icon shared by the busy snackbar and the
+/// sync-flavoured toasts (`ToastKind::Sync`), so every sync-icon snackbar
+/// looks identical. ~2× the header spinner (user request) so it reads
+/// clearly as "working".
+pub(crate) fn big_sync_icon(accent: u32, key: impl Into<gpui::ElementId>) -> gpui::AnyElement {
+    sync_spinner(32.0, accent, key)
 }
 
 /// How far a toast card is displaced at `delta` of its slide animation.
@@ -59,7 +73,11 @@ impl gpui::Render for toast_stack::ToastStack {
         let mut stack = div().flex().flex_col().gap_2();
         for toast in self.toasts() {
             let (accent, glyph) = match toast.kind {
-                ToastKind::Info => (theme().color_branch, "\u{27f3}"), // ⟳
+                // A bullet, not ⟳: an Info toast reports something that already
+                // happened ("Copied …"), and a rotating arrow that never turns
+                // reads as an operation that never finished (user report).
+                // In-flight messages use `ToastKind::Sync` and its spinner.
+                ToastKind::Info => (theme().color_branch, "\u{2022}"), // •
                 ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
                 ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
                 ToastKind::Sync => (theme().color_branch, ""),
@@ -279,6 +297,9 @@ impl KagiApp {
         // ── Stash drop modal overlay (ADR-0087) ─────────
         .when_some(self.pr_merge_modal().cloned(), |el, modal| {
             el.child(render_pr_merge_modal(modal, cx))
+        })
+        .when_some(self.pr_fields_modal().cloned(), |el, modal| {
+            el.child(super::pr_fields::render_pr_fields_modal(self, modal, cx))
         })
         .when_some(stash_drop_modal, |el, modal| {
             el.child(render_stash_drop_modal(modal, cx))

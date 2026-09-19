@@ -64,10 +64,25 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
     // off the rail whatever the rail's width (user report). The window's lanes
     // are therefore renumbered into consecutive columns, so "five lanes" means
     // five columns and nothing needed to be brought into view at all.
+    // The commit the branch grew from - the PR's merge-base - drawn under
+    // the window even when it is further than the context rows reach, behind
+    // an elision row saying how many commits were skipped (user request). A
+    // base inside the window is simply one of its rows; one not loaded at all
+    // cannot be drawn.
+    let root: Option<usize> = window.and_then(|(_, hi)| {
+        root_row(
+            hi,
+            view.commit_row_index.get(&tab.base).copied(),
+            view.rows.len(),
+        )
+    });
     let columns = match window {
-        Some((lo, hi)) => {
-            lane_columns((lo..=hi).filter_map(|ix| view.rows.get(ix)).map(|r| r.lane))
-        }
+        Some((lo, hi)) => lane_columns(
+            (lo..=hi)
+                .chain(root)
+                .filter_map(|ix| view.rows.get(ix))
+                .map(|r| r.lane),
+        ),
         None => lane_columns(std::iter::empty()),
     };
     let lanes = columns.len().max(1);
@@ -113,6 +128,25 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
                 cx,
             ));
         }
+        if let Some(root_ix) = root {
+            if let Some(row) = view.rows.get(root_ix) {
+                body = body
+                    .child(render_elision_row(root_ix - hi - 1, rail))
+                    .child(render_lane_row(
+                        root_ix,
+                        row,
+                        number,
+                        false,
+                        &Rail {
+                            width: rail,
+                            scroll,
+                            columns: &columns,
+                            avatars: avatars.as_ref(),
+                        },
+                        cx,
+                    ));
+            }
+        }
         // Horizontal wheel/trackpad deltas scroll the rail; vertical ones are
         // left to the body's own scroll, exactly as the commit list's graph
         // column does.
@@ -124,24 +158,24 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         body.on_scroll_wheel(scroll_by)
     });
 
-    // The pane's lower third describes the PR: the files of the view, or the
-    // checks and the facts about it. That used to be a pane of its own, which
-    // only narrowed the diff the reader came for (ADR-0200, user report) -
-    // this pane is already here, and a lane needs only the rows around the PR.
-    // With no lane to draw, the detail is the whole pane rather than a third
-    // of an empty one.
+    // The pane's lower third lists the files of a file view. The checks and
+    // the properties left it for the PR's own page (mock 7a), so on every
+    // other view there is nothing to put here and the lane takes the height
+    // back rather than keeping an empty third.
     let has_lane = lane_body.is_some();
-    let detail = div()
-        .id("pr-lane-detail")
-        .when(has_lane, |el| {
-            el.h(relative(1. / 3.))
-                .flex_shrink_0()
-                .border_t_1()
-                .border_color(rgb(theme().surface))
-        })
-        .when(!has_lane, |el| el.flex_1().min_h(px(0.)))
-        .bg(rgb(theme().panel))
-        .child(super::pr_mode::render_pr_detail(app, tab, cx));
+    let detail = super::pr_mode::render_pr_detail(app, cx).map(|body| {
+        div()
+            .id("pr-lane-detail")
+            .when(has_lane, |el| {
+                el.h(relative(1. / 3.))
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(rgb(theme().surface))
+            })
+            .when(!has_lane, |el| el.flex_1().min_h(px(0.)))
+            .bg(rgb(theme().panel))
+            .child(body)
+    });
 
     Some(
         div()
@@ -154,7 +188,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             .bg(rgb(theme().bg_base))
             .child(render_header(number, hits.len()))
             .children(lane_body)
-            .child(detail)
+            .children(detail)
             .into_any_element(),
     )
 }
@@ -206,6 +240,14 @@ fn column_of(columns: &std::collections::BTreeMap<usize, usize>, lane: usize) ->
             .map(|(_, column)| column + 1)
             .unwrap_or(0)
     })
+}
+
+/// A WIP→HEAD connector or a squash ghost link: the main graph's edges about
+/// the local working tree, marked on the edge's colour sentinel exactly as
+/// `graph_canvas` tells them apart before painting them dashed.
+fn is_local_connector(edge: &kagi_domain::graph::GraphEdge) -> bool {
+    edge.color == super::graph_squash::GHOST_COLOR
+        || super::graph_wip::wip_color_index(edge.color).is_some()
 }
 
 /// The furthest the rail can scroll: whatever of the lanes does not fit.
@@ -268,6 +310,46 @@ struct Rail<'a> {
     columns: &'a std::collections::BTreeMap<usize, usize>,
     /// Author avatars when compact-lane mode draws nodes as avatars.
     avatars: Option<&'a std::collections::HashMap<String, std::sync::Arc<gpui::Image>>>,
+}
+
+/// The row to draw as the branch's root under the window: the merge-base's
+/// row when it lies below the window's last row `hi` and inside the loaded
+/// history. Inside the window it is already drawn; unloaded it cannot be.
+fn root_row(hi: usize, base: Option<usize>, rows: usize) -> Option<usize> {
+    base.filter(|ix| *ix > hi && *ix < rows)
+}
+
+/// The gap between the window and the PR's root: a dotted rule across the
+/// rail and the count of commits it stands for, at row height so the root
+/// under it reads as "the same column, further down".
+fn render_elision_row(skipped: usize, rail: f32) -> gpui::AnyElement {
+    div()
+        .id("pr-lane-elision")
+        .flex()
+        .flex_row()
+        .items_center()
+        .flex_shrink_0()
+        .h(theme::scaled_px(ROW_H))
+        .child(
+            div()
+                .w(theme::scaled_px(rail))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from("\u{22ee}")),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(super::i18n::pr_lane_elided(skipped))),
+        )
+        .into_any_element()
 }
 
 /// One history row: its node on the rail, then the subject.
@@ -362,8 +444,16 @@ fn render_lane_row(
                             // with the node — an edge left on lane 12 beside a
                             // node in column 1 is the line and the avatar
                             // coming apart (user report).
+                            // The WIP→HEAD connectors (#472) and squash ghost
+                            // links ride the same edge list, on lanes no row
+                            // in this window sits on. They are about the
+                            // local working tree, not the PR; kept, the
+                            // column remap dropped them after the last real
+                            // column - a dashed line beside every subject
+                            // (user report).
                             row.edges
                                 .iter()
+                                .filter(|edge| !is_local_connector(edge))
                                 .map(|edge| kagi_domain::graph::GraphEdge {
                                     from_lane: column_of(rail.columns, edge.from_lane),
                                     to_lane: column_of(rail.columns, edge.to_lane),
@@ -405,6 +495,48 @@ fn render_lane_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The branch root is drawn under the window only when it is actually
+    /// further down than the context reaches and is loaded at all.
+    #[test]
+    fn the_root_is_drawn_only_beyond_the_window_and_within_history() {
+        assert_eq!(root_row(20, Some(45), 200), Some(45), "past the window");
+        assert_eq!(
+            root_row(20, Some(15), 200),
+            None,
+            "inside the window: already a row"
+        );
+        assert_eq!(
+            root_row(20, Some(20), 200),
+            None,
+            "the window's own last row"
+        );
+        assert_eq!(root_row(20, Some(250), 200), None, "not loaded");
+        assert_eq!(root_row(20, None, 200), None, "unknown base");
+    }
+
+    /// The reported dashed line beside every subject: the main graph's
+    /// WIP→HEAD connector (and a squash ghost link) rode the row's edges into
+    /// the lane, where the column remap put it after the last real column.
+    /// Both are local-working-tree edges and must not reach the lane; an
+    /// ordinary parent edge must.
+    #[test]
+    fn local_connectors_stay_out_of_the_lane() {
+        use kagi_domain::graph::{EdgeKind, GraphEdge};
+        let edge = |color: usize| GraphEdge {
+            from_lane: 3,
+            to_lane: 3,
+            kind: EdgeKind::Pass,
+            color,
+        };
+        assert!(is_local_connector(&edge(
+            super::super::graph_wip::wip_color(2)
+        )));
+        assert!(is_local_connector(&edge(
+            super::super::graph_squash::GHOST_COLOR
+        )));
+        assert!(!is_local_connector(&edge(2)));
+    }
 
     /// The rail must not eat the subject at any lane depth, and must stop
     /// widening: a repository-wide graph is deeper than this pane is wide.

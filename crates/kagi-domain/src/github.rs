@@ -1,6 +1,8 @@
 //! Pure GitHub pull-request and read-only Issue display models. Filled by
 //! `kagi_git::github`; independent of Git and UI state.
 
+pub use crate::github_edit::PrFieldEdit;
+
 /// Aggregate CI state of a PR's head commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CiState {
@@ -21,6 +23,72 @@ pub enum ReviewState {
     ReviewRequired,
     ChangesRequested,
     Approved,
+}
+
+/// The verdict a review is submitted with — the write-side counterpart of
+/// [`ReviewState`], which is what GitHub reports back afterwards.
+///
+/// Pure data: the flag is the one `gh pr review` understands, and
+/// [`ReviewVerdict::requires_body`] is GitHub's own rule, written down once
+/// here rather than re-derived at each call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewVerdict {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+/// L2 data fetched for one pull request. The head SHA is part of the payload so
+/// a completion can never attach checks from an old head to the current PR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrStatusDetail {
+    pub number: u64,
+    pub head_sha: String,
+    pub ci: CiState,
+    pub checks: Vec<Check>,
+    pub mergeable: Mergeable,
+}
+
+/// L3 data fetched for one pull request. An empty body and zero counts are
+/// valid fetched values; presence of this value, rather than its contents,
+/// records that the detail request succeeded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrBodyDetail {
+    pub number: u64,
+    pub head_sha: String,
+    pub updated_at: String,
+    pub body: String,
+    pub changed_files: u32,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
+impl ReviewVerdict {
+    /// The `gh pr review` flag that submits this verdict.
+    pub fn flag(self) -> &'static str {
+        match self {
+            ReviewVerdict::Approve => "--approve",
+            ReviewVerdict::RequestChanges => "--request-changes",
+            ReviewVerdict::Comment => "--comment",
+        }
+    }
+
+    /// Stable slug for the oplog receipt and the operation outcome. Not the
+    /// flag: a receipt is read by people, and `--approve` reads like an
+    /// invocation detail rather than what happened.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReviewVerdict::Approve => "approve",
+            ReviewVerdict::RequestChanges => "request-changes",
+            ReviewVerdict::Comment => "comment",
+        }
+    }
+
+    /// GitHub refuses a `REQUEST_CHANGES` or `COMMENT` review with no body —
+    /// only an approval may be wordless.
+    pub fn requires_body(self) -> bool {
+        !matches!(self, ReviewVerdict::Approve)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

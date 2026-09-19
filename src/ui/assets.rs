@@ -9,7 +9,9 @@
 //!
 //! The SVG files in `assets/icons/` are copied verbatim from
 //! gpui-component v0.5.1 (`crates/assets/assets/icons/`, Apache-2.0,
-//! originally lucide.dev ISC).
+//! originally lucide.dev ISC), except `comment-send`, `review-approve` and
+//! `review-request-changes`, drawn here in the same 24px / stroke-2 idiom for
+//! the PR page's composer (ADR-0200).
 
 use std::borrow::Cow;
 
@@ -171,6 +173,18 @@ const ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/window-restore.svg",
         include_bytes!("../../assets/icons/window-restore.svg"),
+    ),
+    (
+        "icons/comment-send.svg",
+        include_bytes!("../../assets/icons/comment-send.svg"),
+    ),
+    (
+        "icons/review-approve.svg",
+        include_bytes!("../../assets/icons/review-approve.svg"),
+    ),
+    (
+        "icons/review-request-changes.svg",
+        include_bytes!("../../assets/icons/review-request-changes.svg"),
     ),
     (
         "icons/window-close.svg",

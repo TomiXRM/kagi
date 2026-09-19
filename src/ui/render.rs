@@ -252,6 +252,9 @@ impl Render for KagiApp {
 
         // Modal text inputs: lazy-create + sync (needs Window).
         self.sync_modal_inputs(window, cx);
+        // The PR page's comment composer, for the same reason (ADR-0200).
+        self.sync_pr_comment_input(window, cx);
+        self.sync_pr_fields_input(window, cx);
 
         if std::env::var("KAGI_DEBUG_RENDER").as_deref() == Ok("1") {
             use std::sync::atomic::{AtomicU64, Ordering as O};

@@ -46,6 +46,18 @@ impl KagiApp {
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
+        self.refresh_github_prs_for(owner, repo, cx);
+    }
+
+    /// The same fetch for a named session and its repository. A write that
+    /// settles after a tab switch must refresh the list of the tab it came
+    /// from, not of the tab now on screen (review finding, `w5:p19`).
+    pub(crate) fn refresh_github_prs_for(
+        &mut self,
+        owner: crate::app::SessionId,
+        repo: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
         #[cfg(feature = "gui-e2e")]
         let injected = super::e2e::take_github_pr_fetch();
         #[cfg(not(feature = "gui-e2e"))]
@@ -483,6 +495,285 @@ impl KagiApp {
             self.status_footer = FooterStatus::Busy(SharedString::from(format!(
                 "{} #{}…",
                 Msg::PrModeMerge.t(),
+                number
+            )));
+            cx.notify();
+        }
+    }
+
+    /// Post the composer's text as a comment on the open PR (ADR-0200).
+    ///
+    /// The explicit click is the approval - there is no confirmation modal, for
+    /// the same reason staging has none. Everything else is the write family:
+    /// the transport hold and the in-flight latch gate it, `finish_run` admits
+    /// it with an owner stamp, and `kagi_git::github::pr_comment` records the
+    /// attempt at its own transport boundary, so the receipt exists even if the
+    /// reader has switched tabs by the time `gh` answers.
+    pub fn start_pr_comment(&mut self, cx: &mut Context<Self>) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let Some((number, body)) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| (t.pr.number, t.comment_draft.clone()))
+        else {
+            return;
+        };
+        if body.trim().is_empty() {
+            return;
+        }
+        let Some(pr) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| t.pr.clone())
+        else {
+            return;
+        };
+        if self.reject_transport_hold(&repo_path, &format!("pr-comment #{number}")) {
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let plan = std::sync::Arc::new(kagi_git::github::plan_pr_comment(&pr, &body));
+        if !plan.blockers.is_empty() {
+            klog!("refused: pr-comment plan has blockers, not executing");
+            self.record_op(
+                "pr-comment",
+                plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            return;
+        }
+        let rp = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_body = body.clone();
+        // The repository identity the PR already carries. Re-deriving it with
+        // `gh repo view` is a network round trip, and commenting failed with
+        // "not a GitHub repo" whenever GitHub was unreachable (user report).
+        let base_repo = pr.base_repo.clone();
+        let dispatched = self.finish_run(
+            cx,
+            "pr-comment",
+            i18n::Op::PrComment,
+            plan.clone(),
+            repo_path,
+            move || {
+                Ok(kagi_git::github::pr_comment(
+                    &rp, &base_repo, number, &bg_body, &bg_plan,
+                ))
+            },
+            |_| None,
+            move |done| match done {
+                Ok(kagi_git::OperationOutcome::PrComment { .. }) => {
+                    klog!("executed: pr-comment #{}", number);
+                    RunPresentation::none().pr_comment(number)
+                }
+                Ok(_) => RunPresentation::none(),
+                Err(failure) => {
+                    klog!("pr-comment failed: {}", failure.message);
+                    RunPresentation::none()
+                }
+            },
+        );
+        if dispatched {
+            self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+                "{} #{}…",
+                Msg::PrCommentPost.t(),
+                number
+            )));
+            cx.notify();
+        }
+    }
+
+    /// Submit a review on the open PR (ADR-0200, mock 7a): APPROVE or REQUEST
+    /// CHANGES, with the composer's text as the review body.
+    ///
+    /// Same shape as [`Self::start_pr_comment`] - the click is the approval,
+    /// the transport hold and the write latch gate it, and
+    /// `kagi_git::github::pr_review` records the attempt at its own transport
+    /// boundary. GitHub requires words on a "request changes" review; that is
+    /// a plan blocker, not a silent no-op.
+    pub fn start_pr_review(
+        &mut self,
+        verdict: kagi_domain::github::ReviewVerdict,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let Some((pr, body)) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| (t.pr.clone(), t.comment_draft.clone()))
+        else {
+            return;
+        };
+        let number = pr.number;
+        if self.reject_transport_hold(&repo_path, &format!("pr-review #{number}")) {
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let plan = std::sync::Arc::new(kagi_git::github::plan_pr_review(&pr, verdict, &body));
+        if !plan.blockers.is_empty() {
+            klog!("refused: pr-review plan has blockers, not executing");
+            self.record_op(
+                "pr-review",
+                plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            return;
+        }
+        let rp = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_body = body.clone();
+        let base_repo = pr.base_repo.clone();
+        let dispatched = self.finish_run(
+            cx,
+            "pr-review",
+            i18n::Op::PrReview,
+            plan.clone(),
+            repo_path,
+            move || {
+                Ok(kagi_git::github::pr_review(
+                    &rp, &base_repo, number, verdict, &bg_body, &bg_plan,
+                ))
+            },
+            |_| None,
+            move |done| match done {
+                Ok(kagi_git::OperationOutcome::PrReview { .. }) => {
+                    klog!("executed: pr-review #{}", number);
+                    // A review carries the same text the composer held, so it
+                    // clears and the thread re-reads exactly like a comment.
+                    RunPresentation::none().pr_comment(number)
+                }
+                Ok(_) => RunPresentation::none(),
+                Err(failure) => {
+                    klog!("pr-review failed: {}", failure.message);
+                    RunPresentation::none()
+                }
+            },
+        );
+        if dispatched {
+            self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+                "{} #{}\u{2026}",
+                Msg::PrReviewSubmit.t(),
+                number
+            )));
+            cx.notify();
+        }
+    }
+
+    /// Apply the field picker's selection through `gh pr edit` (ADR-0200 §11).
+    ///
+    /// The write is the diff between what the PR carried when the picker
+    /// opened and what is selected now, so two readers editing different
+    /// values do not overwrite each other's field wholesale.
+    pub fn start_pr_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(modal) = self.pr_fields_modal().cloned() else {
+            return;
+        };
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let Some(pr) = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| t.pr.clone())
+        else {
+            return;
+        };
+        let (add, remove) = kagi_domain::github::PrFieldEdit::diff(&modal.current, &modal.selected);
+        let mut edit = kagi_domain::github::PrFieldEdit::default();
+        match modal.field {
+            crate::ui::modals::PrField::Reviewers => {
+                edit.add_reviewers = add;
+                edit.remove_reviewers = remove;
+            }
+            crate::ui::modals::PrField::Assignees => {
+                edit.add_assignees = add;
+                edit.remove_assignees = remove;
+            }
+            crate::ui::modals::PrField::Labels => {
+                edit.add_labels = add;
+                edit.remove_labels = remove;
+            }
+        }
+        let number = modal.number;
+        if self.reject_transport_hold(&repo_path, &format!("pr-edit #{number}")) {
+            self.clear_pr_fields_modal();
+            self.present_app_notice();
+            cx.notify();
+            return;
+        }
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let plan = std::sync::Arc::new(kagi_git::github::plan_pr_edit(&pr, &edit));
+        if !plan.blockers.is_empty() {
+            klog!("refused: pr-edit plan has blockers, not executing");
+            self.record_op(
+                "pr-edit",
+                plan.current.clone(),
+                OpOutcome::Refused {
+                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
+                },
+                &repo_path,
+                cx,
+            );
+            self.clear_pr_fields_modal();
+            return;
+        }
+        let rp = repo_path.clone();
+        let bg_plan = plan.clone();
+        let bg_edit = edit.clone();
+        let base_repo = modal.base_repo.clone();
+        let field = modal.field;
+        let selected = modal.selected.clone();
+        let dispatched = self.finish_run(
+            cx,
+            "pr-edit",
+            i18n::Op::PrEdit,
+            plan.clone(),
+            repo_path,
+            move || {
+                Ok(kagi_git::github::pr_edit(
+                    &rp, &base_repo, number, &bg_edit, &bg_plan,
+                ))
+            },
+            |_| None,
+            move |done| match done {
+                Ok(kagi_git::OperationOutcome::PrEdit { .. }) => {
+                    klog!("executed: pr-edit #{}", number);
+                    RunPresentation::none().pr_edit(number, field, selected.clone())
+                }
+                Ok(_) => RunPresentation::none(),
+                Err(failure) => {
+                    klog!("pr-edit failed: {}", failure.message);
+                    RunPresentation::none()
+                }
+            },
+        );
+        if dispatched {
+            self.clear_pr_fields_modal();
+            self.status_footer = FooterStatus::Busy(SharedString::from(format!(
+                "{} #{}\u{2026}",
+                Msg::PrEditApply.t(),
                 number
             )));
             cx.notify();

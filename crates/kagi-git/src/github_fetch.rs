@@ -10,12 +10,18 @@ use std::time::Duration;
 
 use kagi_domain::github::{Issue, PullRequest};
 
-use crate::github::{parse_pr_list, FIELDS};
+use crate::github::{
+    parse_pr_body_detail, parse_pr_list, parse_pr_status_detail, PR_BODY_FIELDS, PR_LIST_FIELDS,
+    PR_STATUS_FIELDS,
+};
 use crate::github_issue::{
     parse_issue_detail, parse_issue_list, ISSUE_DETAIL_FIELDS, ISSUE_LIST_FIELDS,
 };
 
-const GH_TIMEOUT: Duration = Duration::from_secs(60);
+/// The bound every `gh` invocation runs under — reads here, and the `gh pr
+/// comment` write in `github_comment`. One definition, so a write can never
+/// end up unbounded because it was spelled somewhere else.
+pub(crate) const GH_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Why a read-only `gh` fetch produced no data.
 ///
@@ -69,6 +75,15 @@ impl PrFetchError {
     /// so a cached list may be cleared.
     pub fn is_unavailable(&self) -> bool {
         matches!(self, PrFetchError::Unavailable(_))
+    }
+
+    /// GitHub's GraphQL front end timed out. Only the L1 list caller uses this
+    /// to make one delayed retry; rate-limit responses are classified earlier
+    /// and therefore never enter this path.
+    pub fn is_gateway_timeout(&self) -> bool {
+        let detail = self.detail().to_ascii_lowercase();
+        matches!(self, PrFetchError::Network(_) | PrFetchError::Unknown(_))
+            && (detail.contains("http 504") || detail.contains("gateway timeout"))
     }
 
     fn kind(&self) -> &'static str {
@@ -241,11 +256,75 @@ fn fetch_prs(workdir: &Path, args: &[&str]) -> Result<Vec<PullRequest>, PrFetchE
 /// ([`PrFetchError`]) so an expired token or an offline machine keeps the last
 /// good data instead of being shown as an empty inbox (#506).
 pub fn list_open_prs(workdir: &Path) -> Result<Vec<PullRequest>, PrFetchError> {
-    fetch_prs(
+    let args = [
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        PR_LIST_FIELDS,
+    ];
+    let first = fetch_prs(workdir, &args);
+    if first.as_ref().is_err_and(PrFetchError::is_gateway_timeout) {
+        std::thread::sleep(l1_retry_delay());
+        fetch_prs(workdir, &args)
+    } else {
+        first
+    }
+}
+
+fn l1_retry_delay() -> Duration {
+    let jitter = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.subsec_millis() as u64)
+        .unwrap_or(0)
+        % 1_001;
+    Duration::from_millis(1_000 + jitter)
+}
+
+/// Volatile checks and mergeability for one PR (L2).
+pub fn pr_status_detail(
+    workdir: &Path,
+    base_repo: &str,
+    number: u64,
+) -> Result<kagi_domain::github::PrStatusDetail, PrFetchError> {
+    let number = number.to_string();
+    fetch_json(
         workdir,
         &[
-            "pr", "list", "--state", "open", "--limit", "100", "--json", FIELDS,
+            "pr",
+            "view",
+            "-R",
+            base_repo,
+            &number,
+            "--json",
+            PR_STATUS_FIELDS,
         ],
+        parse_pr_status_detail,
+    )
+}
+
+/// Body and aggregate statistics for the selected PR (L3).
+pub fn pr_body_detail(
+    workdir: &Path,
+    base_repo: &str,
+    number: u64,
+) -> Result<kagi_domain::github::PrBodyDetail, PrFetchError> {
+    let number = number.to_string();
+    fetch_json(
+        workdir,
+        &[
+            "pr",
+            "view",
+            "-R",
+            base_repo,
+            &number,
+            "--json",
+            PR_BODY_FIELDS,
+        ],
+        parse_pr_body_detail,
     )
 }
 
@@ -318,7 +397,7 @@ mod tests {
     use crate::github::parse_pr_list;
 
     /// `gh` validates `--json` field names *before* it calls the API and exits
-    /// on the first unknown one, so a bad name in [`FIELDS`] breaks every PR
+    /// on the first unknown one, so a bad name in any field set breaks that PR
     /// fetch above. Fixtures cannot catch that — they hand finished JSON
     /// straight to `parse_pr_list` (#701 final review 3, where
     /// `baseRepository` shipped). `--limit 0` is rejected *after* field
@@ -342,11 +421,13 @@ mod tests {
         if !ask("number,noSuchFieldAtAll").is_some_and(|out| out.contains(UNKNOWN)) {
             return; // this `gh` cannot tell us; a developer machine's can
         }
-        let stderr = ask(FIELDS).expect("gh answered a moment ago");
-        assert!(
-            !stderr.contains(UNKNOWN),
-            "FIELDS names something gh pr list does not have: {stderr}"
-        );
+        for fields in [PR_LIST_FIELDS, PR_STATUS_FIELDS, PR_BODY_FIELDS] {
+            let stderr = ask(fields).expect("gh answered a moment ago");
+            assert!(
+                !stderr.contains(UNKNOWN),
+                "PR fields name something gh does not have: {stderr}"
+            );
+        }
     }
 
     const SAMPLE: &str = r#"[

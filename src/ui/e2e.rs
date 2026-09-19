@@ -106,6 +106,43 @@ pub(crate) fn measure_control(
         control.into_any_element()
     }
 }
+/// Record a container's own bounds from *inside* it: an absolute, full-size
+/// canvas to add as one more child of an already-sized element.
+///
+/// `measure_control` wraps its control in an auto-sized `relative` div, which
+/// is right for a button or a row but wrong for a pane whose children size
+/// themselves with `h_full` / `flex_1`: the percentage then resolves against
+/// the wrapper's *content* height, and a virtualized list inside the PR page
+/// was handed a 16px viewport (test-only, but it made the scenario blind).
+pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    use gpui::IntoElement as _;
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = name.into();
+        gpui::canvas(
+            move |bounds, window, _| {
+                CONTROL_BOUNDS.with(|map| {
+                    map.borrow_mut()
+                        .insert((window.window_handle().window_id(), name.clone()), bounds);
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        let _ = name;
+        use gpui::IntoElement as _;
+        gpui::div().into_any_element()
+    }
+}
+
 pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElement {
     #[cfg(feature = "gui-e2e")]
     use gpui::{IntoElement as _, ParentElement as _};
@@ -669,6 +706,38 @@ thread_local! {
     static CLEANUP_SCAN: RefCell<Option<gpui::Task<CleanupScanResult>>> = const { RefCell::new(None) };
     static ECOSYSTEM_MINE: RefCell<Option<gpui::Task<EcosystemMineResult>>> = const { RefCell::new(None) };
     static SQUASH_SCAN: RefCell<Option<gpui::Task<SquashScanResult>>> = const { RefCell::new(None) };
+}
+
+/// What one conversation read returns: the verdicts + issue comments, and the
+/// line comments, each with its own failure. Unconditional so the production
+/// load site can name it in its `None` arm.
+pub type PrConversationResult = (
+    Result<
+        (
+            Vec<kagi_domain::github::Review>,
+            Vec<kagi_domain::github::Comment>,
+        ),
+        kagi_git::GitError,
+    >,
+    Result<Vec<kagi_domain::github::ReviewComment>, kagi_git::GitError>,
+);
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static GITHUB_PR_CONVERSATION: RefCell<Option<gpui::Task<PrConversationResult>>> =
+        const { RefCell::new(None) };
+}
+
+/// Stand in for the next PR conversation read (`gh pr view` + `gh api`), so a
+/// scenario can land reviews and comments on a tab without GitHub (ADR-0200).
+#[cfg(feature = "gui-e2e")]
+pub fn queue_github_pr_conversation(task: gpui::Task<PrConversationResult>) {
+    GITHUB_PR_CONVERSATION.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_github_pr_conversation() -> Option<gpui::Task<PrConversationResult>> {
+    GITHUB_PR_CONVERSATION.with(|slot| slot.borrow_mut().take())
 }
 
 #[cfg(feature = "gui-e2e")]

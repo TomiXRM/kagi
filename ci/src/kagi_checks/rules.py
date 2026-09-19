@@ -221,6 +221,26 @@ RULES: tuple[Rule, ...] = (
         samples_ok=("// headless by construction: no gpui in this crate\n",),
     ),
     Rule(
+        name="static-spinner",
+        summary="no rotating-arrow glyph standing in for a spinner (user report)",
+        # U+27F3 is a *character*: it cannot turn, so an in-flight indicator
+        # drawn with it reads as an operation that hung. Every spinner goes
+        # through `render_overlay::sync_spinner`, which animates the SVG (and
+        # deliberately stands still under reduce-motion).
+        pattern=r'"[^"\n]*(?:\\u\{27f3\}|\u27f3)',
+        globs=RUST_SOURCES,
+        excludes=("ci/",),
+        message=(
+            "a rotating-arrow glyph cannot rotate - use "
+            "render_overlay::sync_spinner for an in-flight indicator"
+        ),
+        samples=(
+            'SharedString::from(format!("\\u{27f3} {}", msg))',
+            'ToastKind::Info => (theme().color_branch, "\u27f3"),',
+        ),
+        samples_ok=('sync_spinner(10., footer_color, "footer-busy")',),
+    ),
+    Rule(
         name="klog-raw",
         summary="no same-line raw [kagi] emission (ADR-0096)",
         # Same-line only: `[ \t]*`, never `\s*`, because `\s` spans newlines and

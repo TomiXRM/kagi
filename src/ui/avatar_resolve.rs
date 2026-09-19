@@ -7,6 +7,7 @@
 use gpui::{prelude::*, Context};
 
 use super::{avatar_fetch, KagiApp};
+use kagi_ui_core::klog;
 
 impl KagiApp {
     /// W11-AVATAR (ADR-0037): start avatar resolution for the current repo.
@@ -100,6 +101,73 @@ impl KagiApp {
                     "[kagi] avatar: resolved={} pending={} offline={}",
                     outcome.resolved, outcome.pending, offline
                 );
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    /// Avatars for the GitHub **logins** on the PR page (ADR-0200): its author,
+    /// its reviewers and assignees, and everyone in its conversation.
+    ///
+    /// Keyed by login in the same `avatars.images` map the commit rows use -
+    /// a login has no `@`, a commit author's email does, so the two key spaces
+    /// cannot collide. The URL is GitHub's own avatar CDN, which needs no API
+    /// call and no token: one GET per login, disk-cached by
+    /// [`super::avatar_fetch`], attempted once per process.
+    pub(crate) fn ensure_pr_avatars(&mut self, cx: &mut Context<Self>) {
+        if avatar_fetch::offline() {
+            return;
+        }
+        let Some(mode) = self.pr_mode() else {
+            return;
+        };
+        let Some(tab) = mode.active.and_then(|ix| mode.tabs.get(ix)) else {
+            return;
+        };
+        let mut candidates: Vec<String> = Vec::new();
+        candidates.push(tab.pr.author.clone());
+        candidates.extend(tab.pr.reviewers.iter().cloned());
+        candidates.extend(tab.pr.assignees.iter().cloned());
+        candidates.extend(tab.reviews.iter().map(|r| r.author.clone()));
+        candidates.extend(tab.comments.iter().map(|c| c.author.clone()));
+        candidates.extend(tab.line_comments.iter().map(|c| c.author.clone()));
+
+        let mut logins: Vec<String> = Vec::new();
+        for login in candidates {
+            if login.is_empty() || self.avatars.images.contains_key(&login) {
+                continue;
+            }
+            if self.avatars.attempted.insert(login.clone()) {
+                logins.push(login);
+            }
+        }
+        if logins.is_empty() {
+            return;
+        }
+
+        let task = cx.background_spawn(async move {
+            let mut out: Vec<(String, std::sync::Arc<gpui::Image>)> = Vec::new();
+            for login in logins {
+                let url = avatar_fetch::avatar_url_for_username(&login);
+                if let Some(image) =
+                    avatar_fetch::fetch_avatar_bytes(&url).and_then(avatar_fetch::image_from_bytes)
+                {
+                    out.push((login, image));
+                }
+            }
+            out
+        });
+        cx.spawn(async move |this, acx| {
+            let images = task.await;
+            let _ = this.update(acx, |app, cx| {
+                if images.is_empty() {
+                    return;
+                }
+                let n = images.len();
+                for (login, image) in images {
+                    app.avatars.images.insert(login, image);
+                }
+                klog!("avatar: pr logins resolved={}", n);
                 cx.notify();
             });
         })

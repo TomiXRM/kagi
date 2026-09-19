@@ -50,10 +50,10 @@ impl KagiApp {
             FooterStatus::Success(msg) => (theme().color_success, msg.clone()),
             FooterStatus::Failed(msg) => (theme().color_blocker, msg.clone()),
             FooterStatus::Idle(msg) => (theme().text_muted, msg.clone()),
-            FooterStatus::Busy(msg) => (
-                theme().color_branch,
-                SharedString::from(format!("\u{27f3} {}", msg)), // ⟳ msg
-            ),
+            // The spinner is an element, not a glyph: the ⟳ in the text never
+            // turned, so a running operation looked like a stuck one (user
+            // report). See `render_overlay::sync_spinner`.
+            FooterStatus::Busy(msg) => (theme().color_branch, msg.clone()),
         };
 
         // ── Status chips (view-model — ADR-0076 / issue #13 P5) ──
@@ -221,6 +221,10 @@ impl KagiApp {
             .ml(theme::scaled_px(6.))
             .truncate()
             .text_color(rgb(footer_color))
+            .children(
+                matches!(status_footer, FooterStatus::Busy(_))
+                    .then(|| super::render_overlay::sync_spinner(10., footer_color, "footer-busy")),
+            )
             .child(SharedString::from(view_models::footer_line(&footer_text)));
         #[cfg(feature = "gui-e2e")]
         {

@@ -56,6 +56,13 @@ pub struct PrTab {
     pub selected_file: Option<usize>,
     pub diff: Option<MainDiffView>,
     pub diff_scroll: ListState,
+    /// The 概要/レビュー page's virtualized list. The tabs are navigation:
+    /// they reveal an item of this list instead of swapping the body
+    /// (ADR-0200); the state lives here so the scroll survives a tab switch.
+    pub feed_list: ListState,
+    /// The conversation flattened for that list, rebuilt when the
+    /// conversation lands - not per frame, and never for items off screen.
+    pub feed_entries: std::rc::Rc<Vec<super::pr_conversation::Entry>>,
     /// Reviews + issue comments + line comments ("review chat"), fetched once
     /// per tab open.
     pub reviews: Vec<Review>,
@@ -64,6 +71,9 @@ pub struct PrTab {
     /// The background conversation fetch has come back (ok or not). Until
     /// then the empty lists above mean "not yet", not "none".
     pub conversation_loaded: bool,
+    /// The composer's text for this PR, parked here while another PR holds the
+    /// box (ADR-0200).
+    pub comment_draft: String,
     /// ADR-0145: conflicts a merge would produce, computed locally on first
     /// open of the Conflicts tab. `None` = not computed yet; `Some(Ok(vec![]))`
     /// = computed and clean, which is a different thing to say than "unknown".
@@ -118,6 +128,13 @@ pub struct PrModeState {
     pub active: Option<usize>,
     /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
     pub focus: PrFocus,
+    /// Whether the checks card on the PR page is expanded (mock 7b). Folded
+    /// by default: "all checks have passed" is the whole answer most days.
+    pub checks_open: bool,
+    /// Which section of the feed the next frame must scroll to: child 0 is the
+    /// description, child 1 the conversation. `None` once consumed - a tab
+    /// press is a jump, not a position the renderer keeps re-asserting.
+    pub feed_anchor: Option<usize>,
     /// Which body the center shows. Mode-wide, NOT per tab: switching PRs
     /// while reading reviews should keep showing reviews (user request).
     pub view: PrView,
@@ -147,6 +164,8 @@ impl Default for PrModeState {
             tabs: Vec::new(),
             active: None,
             focus: PrFocus::List,
+            checks_open: false,
+            feed_anchor: None,
             view: PrView::Overview,
             filter: PrListFilter::default(),
             sort: PrSort::default(),
@@ -254,6 +273,9 @@ impl KagiApp {
             comments: Vec::new(),
             line_comments: Vec::new(),
             conversation_loaded: false,
+            comment_draft: String::new(),
+            feed_list: ListState::new(0, gpui::ListAlignment::Top, px(400.)),
+            feed_entries: std::rc::Rc::new(Vec::new()),
             conflicts: None,
             conflict_selected: None,
             conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
@@ -279,11 +301,30 @@ impl KagiApp {
     /// (never per list refresh — the list ticker must stay one call). The two
     /// run side by side so each tab's loader ends on its own data.
     fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
+        let owner = self.active_session();
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
+        self.pr_mode_load_conversation_for(owner, repo, number, cx);
+    }
+
+    /// The same load, for a named owner and the repository the read belongs to
+    /// rather than whatever is on screen when it starts.
+    ///
+    /// Both are parameters because of the same class of bug: a write that
+    /// completes after a tab switch must re-read the thread of the tab it was
+    /// posted from, through *that tab's* repository. Reading `self.repo_path`
+    /// here would run `gh` against whichever repository is active - or not at
+    /// all, on Welcome or a remote view - and file the answer on the original
+    /// PR (review findings, `w5:p19`).
+    fn pr_mode_load_conversation_for(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        repo: std::path::PathBuf,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
         let repo2 = repo.clone();
-        let owner = self.active_session();
         cx.spawn(async move |this, acx| {
             // #347: mergeStateStatus + merge-queue position. A failure
             // (non-GitHub host, old gh, no MQ) is not fatal — the card just
@@ -313,18 +354,27 @@ impl KagiApp {
             });
         })
         .detach();
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_github_pr_conversation();
+        #[cfg(not(feature = "gui-e2e"))]
+        let injected: Option<gpui::Task<super::e2e::PrConversationResult>> = None;
         cx.spawn(async move |this, acx| {
-            let (convo, lines) = acx
-                .background_executor()
-                .spawn(async move {
-                    // Two calls: `gh pr view` for the verdicts + issue
-                    // comments, `gh api` for the line comments (where Copilot
-                    // / Codex put code suggestions — not exposed by --json).
-                    let convo = kagi_git::github::pr_conversation(&repo, number);
-                    let lines = kagi_git::github::pr_review_comments(&repo, number);
-                    (convo, lines)
-                })
-                .await;
+            let (convo, lines) = match injected {
+                Some(task) => task.await,
+                None => {
+                    acx.background_executor()
+                        .spawn(async move {
+                            // Two calls: `gh pr view` for the verdicts + issue
+                            // comments, `gh api` for the line comments (where
+                            // Copilot / Codex put code suggestions — not
+                            // exposed by --json).
+                            let convo = kagi_git::github::pr_conversation(&repo, number);
+                            let lines = kagi_git::github::pr_review_comments(&repo, number);
+                            (convo, lines)
+                        })
+                        .await
+                }
+            };
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
                     .pr_mode_of(owner)
@@ -350,6 +400,14 @@ impl KagiApp {
                 t.reviews = reviews;
                 t.comments = comments;
                 t.line_comments = line_comments;
+                // Flattened from what just landed - after the assignment, or
+                // the list is built from the empty lists it replaced (review
+                // finding, `w5:p19`).
+                t.feed_entries = std::rc::Rc::new(super::pr_conversation::conversation_entries(
+                    &t.reviews,
+                    &t.comments,
+                    &t.line_comments,
+                ));
             });
         })
         .detach();
@@ -360,6 +418,13 @@ impl KagiApp {
     pub fn pr_mode_show(&mut self, view: PrView, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.view = view;
+            // 概要 and レビュー are one page: the tab scrolls the feed to its
+            // section rather than replacing what is on screen (ADR-0200).
+            m.feed_anchor = match view {
+                PrView::Overview => Some(0),
+                PrView::Review => Some(1),
+                _ => None,
+            };
         }
         if view == PrView::Conflicts {
             self.pr_mode_load_conflicts(cx);
@@ -555,7 +620,9 @@ impl KagiApp {
     /// Fetch the PR list now rather than waiting out the 60s ticker.
     pub fn pr_mode_refresh(&mut self, cx: &mut Context<Self>) {
         klog!("pr-mode: refresh");
-        self.push_toast(ToastKind::Info, Msg::PrRefreshing.t(), cx);
+        // In flight, so it takes the spinning sync icon rather than a glyph
+        // that cannot turn (user report).
+        self.push_toast(ToastKind::Sync, Msg::PrRefreshing.t(), cx);
         self.refresh_github_prs(cx);
     }
 
@@ -787,6 +854,171 @@ impl KagiApp {
         }
     }
 
+    /// Lazy-create the PR comment composer and keep its text with the PR it was
+    /// typed for (ADR-0200). Runs on the window-bearing render pass, because
+    /// `InputState::new` needs a `&mut Window` and `render_pr_mode` has none.
+    ///
+    /// Switching PRs parks the text in the tab it belongs to and loads the new
+    /// tab's draft, so a half-written comment is never posted to the wrong PR
+    /// and never silently lost.
+    /// Carry a confirmed field edit into the owner's copy of the PR
+    /// (ADR-0200 §11). The tab holds its own `PullRequest` snapshot, so a
+    /// successful `gh pr edit` has to land there or the rows keep showing the
+    /// values the write just replaced until the next list fetch.
+    pub(crate) fn apply_pr_fields(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        repo: std::path::PathBuf,
+        number: u64,
+        field: super::modals::PrField,
+        selected: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tab) = self
+            .pr_mode_of(owner)
+            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+        {
+            match field {
+                super::modals::PrField::Reviewers => tab.pr.reviewers = selected,
+                super::modals::PrField::Assignees => tab.pr.assignees = selected,
+                super::modals::PrField::Labels => {
+                    // A label's colour comes from the repository, not from the
+                    // picker: keep the one already known and leave a new
+                    // label's pill neutral until the next fetch names it.
+                    let known: std::collections::HashMap<String, String> = tab
+                        .pr
+                        .labels
+                        .iter()
+                        .map(|l| (l.name.clone(), l.color.clone()))
+                        .collect();
+                    tab.pr.labels = selected
+                        .into_iter()
+                        .map(|name| kagi_domain::github::IssueLabel {
+                            color: known.get(&name).cloned().unwrap_or_default(),
+                            name,
+                            description: String::new(),
+                        })
+                        .collect();
+                }
+            }
+        }
+        // The list the navigator and the home table read is a separate copy;
+        // re-fetch it rather than patching two models by hand - for the
+        // owner's session and repository, whatever is on screen now.
+        if let Some(owner) = owner {
+            self.refresh_github_prs_for(owner, repo, cx);
+        }
+        cx.notify();
+    }
+
+    /// What a posted comment or review settles, for the session that posted it
+    /// (ADR-0200, review finding): the composer is emptied and the thread is
+    /// re-read.
+    ///
+    /// This runs **before** the completion's tab guard on purpose. Clearing
+    /// the draft through the presentation path meant a post that succeeded
+    /// while the reader was on another tab left the text in the box: coming
+    /// back and pressing the button again sent the same comment twice.
+    pub(crate) fn settle_pr_write(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        repo: std::path::PathBuf,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_pr_comment_draft_for(owner, number, cx);
+        self.pr_mode_load_conversation_for(owner, repo, number, cx);
+    }
+
+    /// Empty the composer for `number` in `owner`'s tabs - the text is on the
+    /// server now. The shared input is only reset when it is actually holding
+    /// that PR's text, so a draft parked for another PR survives.
+    pub(crate) fn clear_pr_comment_draft_for(
+        &mut self,
+        owner: Option<crate::app::SessionId>,
+        number: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tab) = self
+            .pr_mode_of(owner)
+            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+        {
+            tab.comment_draft.clear();
+        }
+        if self.pr_comment_for == Some(number) {
+            // `InputState::set_value` needs a `&mut Window`, which a completion
+            // callback has none of. Dropping the entity is what the next
+            // window-bearing frame rebuilds from the (now empty) draft.
+            self.pr_comment_input = None;
+            self.pr_comment_for = None;
+        }
+        cx.notify();
+    }
+
+    /// Fold/unfold the PR page's checks card (mock 7a/7b).
+    pub fn pr_mode_toggle_checks(&mut self, cx: &mut Context<Self>) {
+        if let Some(m) = self.pr_mode_mut() {
+            m.checks_open = !m.checks_open;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn sync_pr_comment_input(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = self
+            .pr_mode()
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| t.pr.number);
+        let Some(number) = open else {
+            return;
+        };
+        if self.pr_comment_input.is_none() {
+            let input = cx.new(|cx| {
+                gpui_component::input::InputState::new(window, cx)
+                    .multi_line(true)
+                    .auto_grow(2, 8)
+                    .placeholder(Msg::PrCommentPlaceholder.t())
+            });
+            self.pr_comment_input = Some(input);
+        }
+        let Some(input) = self.pr_comment_input.clone() else {
+            return;
+        };
+        if self.pr_comment_for == Some(number) {
+            // Same PR: the box is the truth, the tab keeps the copy.
+            let text = input.read(cx).value().to_string();
+            if let Some(tab) = self
+                .pr_mode_mut()
+                .and_then(|m| m.active.and_then(|ix| m.tabs.get_mut(ix)))
+            {
+                if tab.comment_draft != text {
+                    tab.comment_draft = text;
+                }
+            }
+            return;
+        }
+        // Another PR took the box: park the old text, load this tab's draft.
+        let parked = input.read(cx).value().to_string();
+        if let Some(previous) = self.pr_comment_for.take() {
+            if let Some(tab) = self
+                .pr_mode_mut()
+                .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == previous))
+            {
+                tab.comment_draft = parked;
+            }
+        }
+        let draft = self
+            .pr_mode()
+            .and_then(|m| m.tabs.iter().find(|t| t.pr.number == number))
+            .map(|t| t.comment_draft.clone())
+            .unwrap_or_default();
+        input.update(cx, |state, cx| state.set_value(draft, window, cx));
+        self.pr_comment_for = Some(number);
+    }
+
     pub(super) fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.focus = f;
@@ -858,9 +1090,6 @@ impl KagiApp {
 // Rendering — three columns inside one center-takeover element
 // ────────────────────────────────────────────────────────────
 
-/// Card height: two rows (18 + 15) plus breathing room. Tighter line boxes
-/// than this clipped the descenders of the title against the meta row.
-pub(super) const CARD_H: f32 = 42.0;
 /// The centre view is mode-wide so that switching PRs while reading reviews
 /// keeps showing reviews. Conflicts is the exception: it only exists for a PR
 /// that has them, so carrying it to one that does not leaves the pane on a tab
@@ -893,6 +1122,9 @@ const COMMIT_STRIP_MAX_H: f32 = 210.0;
 const ROW_H: f32 = 24.0;
 pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
+    // Faces for the logins on this page (ADR-0200). One attempt per login per
+    // process; the pass is a set lookup once they are in hand.
+    app.ensure_pr_avatars(cx);
     let left = super::e2e::measure_control(
         "pr-mode-left-pane",
         super::workspace_mode::render_sidebar_pages(
@@ -901,16 +1133,19 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
             cx,
         ),
     );
+    // Measured from inside, not wrapped: the body's height chain (`h_full`,
+    // `flex_1`) must reach the virtualized feed unbroken.
     let center = div()
         .id("pr-mode-center-pane")
+        .relative()
         .flex_1()
         .min_w(px(0.))
         .min_h(px(0.))
         .h_full()
-        .child(super::e2e::measure_control(
-            "pr-mode-center-pane",
-            render_center(app, cx),
-        ));
+        .flex()
+        .flex_col()
+        .child(render_center(app, cx))
+        .child(super::e2e::measure_inside("pr-mode-center-pane"));
     // The swimlane sits between the navigator and the body: it is about the
     // PRs, not about the file being read, and it is absent with no tab open.
     let lane = super::pr_lane::render_pr_lane(app, cx)
@@ -972,12 +1207,17 @@ fn section_label(text: String) -> gpui::Div {
 /// requested relationship for free: the card is a shade DARKER than its
 /// surroundings in dark themes and LIGHTER in light ones, with no blending
 /// and no per-theme table.
+/// A reading card on the PR page: one step off the page's own background, so
+/// the card is legible without the page turning grey.
 pub(super) fn card_bg() -> u32 {
-    theme().bg_base
+    theme().panel
 }
 
+/// The PR page itself. It is the app's base background, like every other main
+/// pane - it used to be `surface`, which read as a grey panel beside the black
+/// ones around it (user report).
 pub(super) fn card_pane_bg() -> u32 {
-    theme().surface
+    theme().bg_base
 }
 
 /// The card is defined by its border rather than a heavy fill, so the border
@@ -1124,7 +1364,6 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         conflict_selected,
         conflict_scroll,
         conflict_at,
-        merge_status,
         conversation_loaded,
         merge_status_loaded,
     ) = {
@@ -1139,11 +1378,13 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.conflict_selected,
             t.conflict_scroll.clone(),
             t.conflict_at,
-            t.merge_status.clone(),
             t.conversation_loaded,
             t.merge_status_loaded,
         )
     };
+    // 概要 and レビュー are two sections of one page, so both tabs draw it;
+    // which chip is lit is which section the reader last jumped to.
+    let show_feed = matches!(view, PrView::Overview | PrView::Review);
     let show_description = view == PrView::Overview;
     let show_review = view == PrView::Review;
 
@@ -1544,36 +1785,15 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     // pinned above every other view (ADR-0200).
     if view == PrView::Commits {
         content = content.child(strip.flex_1().max_h(relative(1.)));
-    } else if show_review {
-        content = if conversation_loaded {
-            content.child(super::pr_conversation::render_conversation(
-                &pr,
-                &reviews,
-                &comments,
-                &line_comments,
-                cx,
-            ))
-        } else {
-            content.child(
-                super::pr_conversation::render_loading()
-                    .flex_1()
-                    .items_start()
-                    .pt_8(),
-            )
-        };
-    } else if show_description {
-        // #347: the merge-status card above the description - the four
-        // `mergeStateStatus` actions, queue position, and what is still missing.
-        if !merge_status_loaded {
+    } else if show_feed {
+        // #347: the merge-status card rides at the top of the feed - the four
+        // `mergeStateStatus` actions, queue position, and what is still
+        // missing. The animated loading rows stay above the scroll pane:
+        // `with_animation` does not tick inside one.
+        if !merge_status_loaded || !conversation_loaded {
             content = content.child(super::pr_conversation::render_loading());
         }
-        if let Some(status) = &merge_status {
-            let status_view = super::pr_merge_status::view_from(status, pr.review);
-            if let Some(card) = super::pr_merge_status::render(&status_view, cx) {
-                content = content.child(card);
-            }
-        }
-        content = content.child(super::pr_conversation::render_description(&pr, cx));
+        content = content.child(super::pr_conversation::render_feed(app, ix, cx));
     } else if view == PrView::Conflicts {
         let body: gpui::AnyElement = match conflicts.as_ref() {
             None => pr_center_note(SharedString::from("\u{2026}")),
@@ -1627,135 +1847,35 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         content = content.child(diff_el);
     }
 
-    // Every pixel of the body is the view's own: the files, the checks and the
-    // facts live in the swimlane pane's lower third (ADR-0200), not in a
-    // column of their own. A pane that exists to describe the PR must not eat
-    // the width of the diff being read (user report).
-    col.child(content).into_any_element()
+    // Every pixel of the body is the view's own: the files and the checks live
+    // in the swimlane pane's lower third (ADR-0200), not in a column of their
+    // own. A pane that exists to describe the PR must not eat the width of the
+    // diff being read (user report).
+    //
+    // The composer is pinned under the feed rather than scrolling with it, the
+    // way github.com keeps it reachable at the foot of the conversation.
+    col.child(content)
+        .children(
+            show_feed
+                .then(|| super::pr_page::render_composer(app, cx))
+                .flatten(),
+        )
+        .into_any_element()
 }
 
-/// The per-check list, so "CI failed" names the job. Clicking a row opens
-/// that check's run page. `None` when the PR reported no checks - an empty
-/// section header says nothing the reader can use.
-///
-/// It lives in the PR body's facts rail (ADR-0200): the mock has no outer
-/// right pane, and checks are a fact about the PR rather than a third pane of
-/// the window.
-fn render_checks(tab: &PrTab, cx: &mut Context<KagiApp>) -> Option<gpui::AnyElement> {
-    let checks = tab.pr.checks.clone();
-    if checks.is_empty() {
-        return None;
-    }
-    let failed = tab.pr.failed_checks();
-    let mut list = div()
-        .id("pr-mode-checks")
-        .flex_shrink_0()
-        .max_h(theme::scaled_px(150.))
-        .overflow_y_scroll()
-        .flex()
-        .flex_col();
-    // Failures first: the actionable ones must not need scrolling.
-    let mut ordered = checks.clone();
-    ordered.sort_by_key(|c| match c.state {
-        CiState::Failure => 0,
-        CiState::Pending => 1,
-        _ => 2,
-    });
-    for (i, c) in ordered.iter().enumerate() {
-        let (g, color) = ci_glyph(c.state);
-        let url = c.url.clone();
-        let open = cx.listener(move |_this: &mut KagiApp, _: &gpui::ClickEvent, _w, _cx| {
-            if !url.is_empty() {
-                let _ = std::process::Command::new("open").arg(&url).spawn();
-            }
-        });
-        let label = if c.workflow.is_empty() || c.workflow == c.name {
-            c.name.clone()
-        } else {
-            format!("{} / {}", c.workflow, c.name)
-        };
-        list = list.child(
-            div()
-                .id(("pr-mode-check", i))
-                .h(theme::scaled_px(ROW_H))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .text_sm()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(open)
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_color(rgb(color))
-                        .child(SharedString::from(g)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(if c.state == CiState::Failure {
-                            theme().text_main
-                        } else {
-                            theme().text_sub
-                        }))
-                        .child(safe_text(&label)),
-                ),
-        );
-    }
-    Some(
-        div()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .child(section_label(format!(
-                "{} ({}{})",
-                Msg::PrModeChecks.t(),
-                checks.len(),
-                if failed > 0 {
-                    format!(", {} failed", failed)
-                } else {
-                    String::new()
-                }
-            )))
-            .child(list)
-            .into_any_element(),
-    )
-}
-
-/// What the swimlane pane's lower third shows about the PR on screen: the
-/// files of the view when a file view is open, and otherwise the checks and
-/// the facts (who is on it, how it is labelled, whether a worktree here has it
-/// checked out).
-///
-/// It lives in an existing pane on purpose. As a column of its own - left or
-/// right of the body - it only narrowed the diff the reader came for
-/// (ADR-0200, user report).
+/// The swimlane pane's lower third: the files of the view, when a file view
+/// is open. `None` otherwise - the checks and the properties are rows of the
+/// PR's own page (mock 7a), and a pane that is empty is better closed than
+/// kept as a third of the lane's height.
 pub(super) fn render_pr_detail(
     app: &KagiApp,
-    tab: &PrTab,
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> Option<gpui::AnyElement> {
     let files_view = app
         .pr_mode()
         .map(|m| matches!(m.view, PrView::Diff | PrView::Conflicts))
         .unwrap_or(false);
-    if files_view {
-        return render_file_list(app, cx);
-    }
-    div()
-        .id("pr-mode-facts")
-        .size_full()
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .children(render_checks(tab, cx))
-        .child(render_rail_facts(app, &tab.pr))
-        .into_any_element()
+    files_view.then(|| render_file_list(app, cx))
 }
 
 /// The files of the view on screen, listed in the swimlane pane's lower third.
@@ -1884,7 +2004,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
 /// GitHub's own six-hex label colour, or the neutral border when it is absent
 /// or malformed. A label's colour is how it is recognised at a glance, so it
 /// is worth carrying through rather than painting every pill the same.
-fn label_color(hex: &str) -> u32 {
+pub(super) fn label_color(hex: &str) -> u32 {
     u32::from_str_radix(hex.trim_start_matches('#'), 16)
         .ok()
         .filter(|_| hex.trim_start_matches('#').len() == 6)
@@ -1892,107 +2012,6 @@ fn label_color(hex: &str) -> u32 {
 }
 
 /// REVIEWERS / ASSIGNEES / LABELS / WORKTREE — the facts about the PR itself.
-fn render_rail_facts(app: &KagiApp, pr: &PullRequest) -> gpui::AnyElement {
-    // A worktree here that has the PR's head branch checked out: the answer to
-    // "can I just go and look at this?", which no GitHub field can give.
-    let worktree = app
-        .view()
-        .worktrees
-        .iter()
-        .find(|w| w.branch.as_deref() == Some(pr.head.as_str()))
-        .map(|w| {
-            let dirt = w.wip.as_ref().map(|wip| wip.total()).unwrap_or(0);
-            (
-                w.name.clone(),
-                match dirt {
-                    0 => Msg::PrRailWorktreeClean.t().to_string(),
-                    n => super::i18n::unstaged_not_included(n),
-                },
-            )
-        });
-
-    let people = |logins: &[String]| {
-        let mut row = div().flex().flex_row().flex_wrap().gap_1().text_xs();
-        if logins.is_empty() {
-            return row
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::PrRailNone.t()));
-        }
-        for login in logins {
-            row = row.child(
-                div()
-                    .text_color(rgb(theme().text_sub))
-                    .child(safe_text(&format!("@{login}"))),
-            );
-        }
-        row
-    };
-
-    let mut col = div().flex().flex_col().flex_shrink_0();
-    for (label, body) in [
-        (Msg::PrRailReviewers.t(), people(&pr.reviewers)),
-        (Msg::PrRailAssignees.t(), people(&pr.assignees)),
-    ] {
-        col = col
-            .child(
-                section_label(label.to_string())
-                    .border_t_1()
-                    .border_color(rgb(theme().surface)),
-            )
-            .child(div().px_3().pb_1().child(body));
-    }
-    if !pr.labels.is_empty() {
-        let mut pills = div().flex().flex_row().flex_wrap().gap_1();
-        for label in &pr.labels {
-            pills = pills.child(
-                div()
-                    .px_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(label_color(&label.color)))
-                    .text_xs()
-                    .text_color(rgb(theme().text_sub))
-                    .child(safe_text(&label.name)),
-            );
-        }
-        col = col
-            .child(
-                section_label(Msg::PrRailLabels.t().to_string())
-                    .border_t_1()
-                    .border_color(rgb(theme().surface)),
-            )
-            .child(div().px_3().pb_1().child(pills));
-    }
-    if let Some((name, state)) = worktree {
-        col = col
-            .child(
-                section_label(Msg::PrRailWorktree.t().to_string())
-                    .border_t_1()
-                    .border_color(rgb(theme().surface)),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .pb_1()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme().text_main))
-                            .child(safe_text(&name)),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(state)),
-                    ),
-            );
-    }
-    col.into_any_element()
-}
-
 #[cfg(test)]
 mod view_reset_tests {
     use super::*;

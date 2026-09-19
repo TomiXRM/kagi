@@ -15,8 +15,9 @@ use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::KagiApp;
 
-/// The PR description as rendered markdown, in the diff area.
-pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+/// The PR description as rendered markdown - the card alone, with no scroll
+/// container of its own: it is the first section of the feed (ADR-0200).
+fn description_card(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     use gpui_component::text::{TextView, TextViewStyle};
     use gpui_component::ActiveTheme as _;
     let body = if pr.body.trim().is_empty() {
@@ -95,12 +96,7 @@ pub(super) fn render_description(pr: &PullRequest, cx: &mut Context<KagiApp>) ->
         });
     div()
         .id("pr-mode-description")
-        .flex_1()
-        .min_h(px(0.))
         .w_full()
-        .overflow_y_scroll()
-        .bg(rgb(card_pane_bg()))
-        .p_4()
         .child(
             div()
                 // Fill the pane (edge-aligned with the commit strip above); a
@@ -151,44 +147,37 @@ pub(super) fn render_loading() -> gpui::Div {
         )
 }
 
-/// The review conversation: submitted reviews and issue comments, newest
-/// last, each as a card with the author's verdict. Bodies go through the same
-/// markdown pipeline (and the same sanitiser) as the description.
-pub(super) fn render_conversation(
-    pr: &PullRequest,
+/// One entry of the conversation: a review, an issue comment or a line
+/// comment, flattened so the feed's virtualized list can render any one of
+/// them without building the others (a PR with dozens of Copilot comments
+/// stuttered when every card was laid out every frame - user report).
+#[derive(Clone)]
+pub struct Entry {
+    author: String,
+    verdict: Option<(String, u32)>,
+    body: String,
+    at: String,
+    /// `path:line` for a line-level comment (Copilot / Codex suggestions).
+    anchor: Option<String>,
+    /// The comment carries a ```suggestion block.
+    suggestion: bool,
+    /// Severity tag lifted out of the body (Codex `P1`, Copilot `MUST`).
+    tag: Option<kagi_domain::github::CommentTag>,
+    /// The diff hunk GitHub shows above a line comment - the code the
+    /// comment is about. This is what reads as "the code proposal" on
+    /// github.com (Copilot's comments carry it instead of a
+    /// ```suggestion fence).
+    hunk: String,
+}
+
+/// The conversation, oldest first: submitted reviews, issue comments and line
+/// comments in one timeline (ISO-8601 sorts lexically). Pure; rebuilt when the
+/// tab's conversation lands, not per frame.
+pub(super) fn conversation_entries(
     reviews: &[Review],
     comments: &[Comment],
     line_comments: &[ReviewComment],
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    use gpui_component::text::{TextView, TextViewStyle};
-    use gpui_component::ActiveTheme as _;
-
-    let style = TextViewStyle {
-        heading_base_font_size: theme::scaled_px(15.),
-        highlight_theme: cx.theme().highlight_theme.clone(),
-        is_dark: cx.theme().mode.is_dark(),
-        ..Default::default()
-    };
-
-    // One timeline, ordered by timestamp (ISO-8601 sorts lexically).
-    struct Entry {
-        author: String,
-        verdict: Option<(String, u32)>,
-        body: String,
-        at: String,
-        /// `path:line` for a line-level comment (Copilot / Codex suggestions).
-        anchor: Option<String>,
-        /// The comment carries a ```suggestion block.
-        suggestion: bool,
-        /// Severity tag lifted out of the body (Codex `P1`, Copilot `MUST`).
-        tag: Option<kagi_domain::github::CommentTag>,
-        /// The diff hunk GitHub shows above a line comment — the code the
-        /// comment is about. This is what reads as "the code proposal" on
-        /// github.com (Copilot's comments carry it instead of a
-        /// ```suggestion fence).
-        hunk: String,
-    }
+) -> Vec<Entry> {
     let mut entries: Vec<Entry> = Vec::new();
     for r in reviews {
         let (tag, r_body) = kagi_domain::github::extract_comment_tag(&r.body);
@@ -245,135 +234,399 @@ pub(super) fn render_conversation(
         });
     }
     entries.sort_by(|a, b| a.at.cmp(&b.at));
+    entries
+}
 
-    let mut col = div()
-        .id("pr-mode-conversation")
-        .flex_1()
-        .min_h(px(0.))
+/// One conversation card. Bodies go through the same markdown pipeline (and
+/// the same sanitiser) as the description.
+fn render_entry(
+    number: u64,
+    i: usize,
+    e: &Entry,
+    avatars: &kagi_ui_core::avatar::AvatarImages,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    use gpui_component::text::{TextView, TextViewStyle};
+    use gpui_component::ActiveTheme as _;
+
+    let style = TextViewStyle {
+        heading_base_font_size: theme::scaled_px(15.),
+        highlight_theme: cx.theme().highlight_theme.clone(),
+        is_dark: cx.theme().mode.is_dark(),
+        ..Default::default()
+    };
+    let body = kagi_domain::message::sanitize_markdown_for_view(&e.body);
+    let body = kagi_ui_editor::markdown::pad_inline_code(&body);
+    div()
         .w_full()
-        .overflow_y_scroll()
-        .bg(rgb(card_pane_bg()))
-        .p_4()
+        .rounded_lg()
+        .bg(rgb(card_bg()))
+        .border_1()
+        .border_color(card_border())
+        .px_4()
+        .py_3()
         .flex()
         .flex_col()
-        .gap_3();
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .pb_2()
+                .mb_2()
+                .border_b_1()
+                .border_color(rgb(theme().selected))
+                .child(kagi_ui_core::commit_header::avatar_circle(
+                    18., &e.author, &e.author, avatars,
+                ))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(theme().text_main))
+                        .child(safe_text(&e.author)),
+                )
+                .children(e.tag.as_ref().map(|t| {
+                    use kagi_domain::github::TagSeverity;
+                    let c = match t.severity {
+                        TagSeverity::High => theme().color_blocker,
+                        TagSeverity::Medium => theme().color_warning,
+                        TagSeverity::Low => theme().text_sub,
+                    };
+                    let (bg, border, fg) = super::theme::badge_style(c);
+                    div()
+                        .px_1()
+                        .rounded_sm()
+                        .bg(gpui::rgba(bg))
+                        .border_1()
+                        .border_color(gpui::rgba(border))
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(fg))
+                        .child(SharedString::from(t.label.clone()))
+                }))
+                .children(e.verdict.as_ref().map(|(t, c)| {
+                    div()
+                        .px_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(*c))
+                        .text_xs()
+                        .text_color(rgb(*c))
+                        .child(SharedString::from(t.clone()))
+                }))
+                .when(e.suggestion, |el| {
+                    el.child(
+                        div()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(theme().color_branch))
+                            .text_xs()
+                            .text_color(rgb(theme().color_branch))
+                            .child(SharedString::from(Msg::PrSuggestion.t())),
+                    )
+                })
+                .child(div().flex_1())
+                .children(e.anchor.as_ref().map(|a| {
+                    div()
+                        .min_w(px(0.))
+                        .truncate()
+                        .font_family(super::MONO_FONT)
+                        .text_xs()
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(a.clone()))
+                }))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(e.at.clone())),
+                ),
+        )
+        .when(!e.hunk.trim().is_empty(), |el| {
+            el.child(render_diff_hunk(&e.hunk, number as usize * 1000 + i, cx))
+        })
+        .when(!body.trim().is_empty(), |el| {
+            el.child(
+                TextView::markdown(
+                    ("pr-convo-md", number as usize * 1000 + i),
+                    SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
+                )
+                .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
+                .selectable(true)
+                .style(style.clone()),
+            )
+        })
+        .into_any_element()
+}
 
-    if entries.is_empty() {
-        return col
-            .child(
+/// What sits at each index of the PR page's virtualized list (ADR-0200).
+///
+/// One list, one scroll, rendered item by item by `gpui::list`: only what is
+/// on screen is laid out, so a PR with a long conversation scrolls as smoothly
+/// as one with none (user report). The 概要 / レビュー tabs reveal item 0 and
+/// the conversation heading respectively.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FeedItem {
+    Headline,
+    Properties,
+    Checks,
+    MergeCard,
+    Description,
+    /// The conversation heading; the anchor the レビュー tab reveals.
+    Conversation,
+    /// "None yet" / "loading" - only when there are no entries.
+    Empty,
+    Entry(usize),
+}
+
+/// The page's items, in reading order, from what the tab currently holds.
+/// Optional blocks are simply absent, so indices are recomputed per frame and
+/// the heading's index is looked up rather than assumed.
+pub(super) fn feed_items(pr: &PullRequest, merge_card: bool, entries: usize) -> Vec<FeedItem> {
+    let mut items = vec![FeedItem::Headline, FeedItem::Properties];
+    if !pr.checks.is_empty() {
+        items.push(FeedItem::Checks);
+    }
+    if merge_card {
+        items.push(FeedItem::MergeCard);
+    }
+    items.push(FeedItem::Description);
+    items.push(FeedItem::Conversation);
+    if entries == 0 {
+        items.push(FeedItem::Empty);
+    }
+    items.extend((0..entries).map(FeedItem::Entry));
+    items
+}
+
+/// Render one item of the page for the active tab `tab_ix`. Called by the
+/// list for the visible items only, through `cx.processor`, so it has the
+/// same `&mut KagiApp` the rest of the PR page renders with.
+pub(super) fn render_feed_item(
+    app: &mut KagiApp,
+    tab_ix: usize,
+    ix: usize,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    // Decide what the item is by borrowing; clone only what that item needs.
+    // Every visible entry used to copy the whole `PullRequest` (body, checks,
+    // labels) and the merge status - the cost the `Rc` on the entries was
+    // there to avoid (review finding, `w5:p19`).
+    let (item, number, review_state) = {
+        let Some(tab) = app.pr_mode().and_then(|m| m.tabs.get(tab_ix)) else {
+            return div().into_any_element();
+        };
+        let has_merge_card = tab
+            .merge_status
+            .as_ref()
+            .map(|status| {
+                super::pr_merge_status::render(
+                    &super::pr_merge_status::view_from(status, tab.pr.review),
+                    cx,
+                )
+                .is_some()
+            })
+            .unwrap_or(false);
+        let items = feed_items(&tab.pr, has_merge_card, tab.feed_entries.len());
+        let Some(item) = items.get(ix).copied() else {
+            return div().into_any_element();
+        };
+        (item, tab.pr.number, tab.pr.review)
+    };
+    let block = |el: gpui::AnyElement| div().w_full().pb_3().child(el).into_any_element();
+    // The page-level cards are one item each and need the PR; cloning it once
+    // for those few items is fine. Entries do not go through this path.
+    let pr_for_card = |app: &KagiApp| {
+        app.pr_mode()
+            .and_then(|m| m.tabs.get(tab_ix))
+            .map(|t| t.pr.clone())
+    };
+    match item {
+        FeedItem::Headline => match pr_for_card(app) {
+            Some(pr) => block(super::e2e::measure_control(
+                "pr-mode-headline",
+                super::pr_page::render_pr_headline(app, &pr),
+            )),
+            None => div().into_any_element(),
+        },
+        FeedItem::Properties => match pr_for_card(app) {
+            Some(pr) => block(super::e2e::measure_control(
+                "pr-mode-properties",
+                super::pr_page::render_pr_properties(app, &pr, cx),
+            )),
+            None => div().into_any_element(),
+        },
+        FeedItem::Checks => match pr_for_card(app) {
+            Some(pr) => super::pr_page::render_checks_card(app, &pr, cx)
+                .map(block)
+                .unwrap_or_else(|| div().into_any_element()),
+            None => div().into_any_element(),
+        },
+        FeedItem::MergeCard => {
+            let status = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .and_then(|t| t.merge_status.clone());
+            status
+                .as_ref()
+                .and_then(|status| {
+                    super::pr_merge_status::render(
+                        &super::pr_merge_status::view_from(status, review_state),
+                        cx,
+                    )
+                })
+                .map(block)
+                .unwrap_or_else(|| div().into_any_element())
+        }
+        FeedItem::Description => match pr_for_card(app) {
+            Some(pr) => block(description_card(&pr, cx)),
+            None => div().into_any_element(),
+        },
+        FeedItem::Conversation => {
+            let count = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .map(|t| t.feed_entries.len())
+                .unwrap_or(0);
+            block(super::e2e::measure_control(
+                "pr-feed-review",
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(format!(
+                        "{} ({})",
+                        Msg::PrModeReview.t(),
+                        count
+                    ))),
+            ))
+        }
+        // "None" and "not fetched yet" are different things to say; the
+        // animated dots live above the feed, outside this scroll pane.
+        FeedItem::Empty => {
+            let loaded = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .map(|t| t.conversation_loaded)
+                .unwrap_or(false);
+            block(
                 div()
                     .text_sm()
                     .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::PrModeNoReview.t())),
+                    .child(SharedString::from(if loaded {
+                        Msg::PrModeNoReview.t()
+                    } else {
+                        Msg::EditorWorkspaceLoading.t()
+                    }))
+                    .into_any_element(),
             )
-            .into_any_element();
+        }
+        FeedItem::Entry(i) => {
+            // One `Rc` bump for the entries, one `Arc`-map clone for the
+            // avatars; the entry itself is borrowed out of the `Rc`.
+            let entries = app
+                .pr_mode()
+                .and_then(|m| m.tabs.get(tab_ix))
+                .map(|t| t.feed_entries.clone());
+            match entries.as_ref().and_then(|e| e.get(i)) {
+                Some(entry) => {
+                    let avatars = app.avatars.images.clone();
+                    block(super::e2e::measure_control(
+                        format!("pr-feed-entry-{i}"),
+                        render_entry(number, i, entry, &avatars, cx),
+                    ))
+                }
+                None => div().into_any_element(),
+            }
+        }
     }
+}
 
-    for (i, e) in entries.iter().enumerate() {
-        let body = kagi_domain::message::sanitize_markdown_for_view(&e.body);
-        let body = kagi_ui_editor::markdown::pad_inline_code(&body);
-        col = col.child(
-            div()
-                .w_full()
-                .rounded_lg()
-                .bg(rgb(card_bg()))
-                .border_1()
-                .border_color(card_border())
-                .px_4()
-                .py_3()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .pb_2()
-                        .mb_2()
-                        .border_b_1()
-                        .border_color(rgb(theme().selected))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .child(safe_text(&format!("@{}", e.author))),
-                        )
-                        .children(e.tag.as_ref().map(|t| {
-                            use kagi_domain::github::TagSeverity;
-                            let c = match t.severity {
-                                TagSeverity::High => theme().color_blocker,
-                                TagSeverity::Medium => theme().color_warning,
-                                TagSeverity::Low => theme().text_sub,
-                            };
-                            let (bg, border, fg) = super::theme::badge_style(c);
-                            div()
-                                .px_1()
-                                .rounded_sm()
-                                .bg(gpui::rgba(bg))
-                                .border_1()
-                                .border_color(gpui::rgba(border))
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(rgb(fg))
-                                .child(SharedString::from(t.label.clone()))
-                        }))
-                        .children(e.verdict.as_ref().map(|(t, c)| {
-                            div()
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(rgb(*c))
-                                .text_xs()
-                                .text_color(rgb(*c))
-                                .child(SharedString::from(t.clone()))
-                        }))
-                        .when(e.suggestion, |el| {
-                            el.child(
-                                div()
-                                    .px_1()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(theme().color_branch))
-                                    .text_xs()
-                                    .text_color(rgb(theme().color_branch))
-                                    .child(SharedString::from(Msg::PrSuggestion.t())),
-                            )
-                        })
-                        .child(div().flex_1())
-                        .children(e.anchor.as_ref().map(|a| {
-                            div()
-                                .min_w(px(0.))
-                                .truncate()
-                                .font_family(super::MONO_FONT)
-                                .text_xs()
-                                .text_color(rgb(theme().text_sub))
-                                .child(SharedString::from(a.clone()))
-                        }))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_muted))
-                                .child(SharedString::from(e.at.clone())),
-                        ),
+/// The PR's page as one virtualized list (see [`FeedItem`]). `tab_ix` is the
+/// active tab; the list's own `ListState` lives on that tab so its scroll
+/// survives a tab switch. A tab press has already asked for its anchor
+/// through `PrModeState::feed_anchor`; it is consumed here, once.
+pub(super) fn render_feed(
+    app: &mut KagiApp,
+    tab_ix: usize,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let (state, count, heading_ix) = {
+        let Some(tab) = app.pr_mode().and_then(|m| m.tabs.get(tab_ix)) else {
+            return div().into_any_element();
+        };
+        let has_merge_card = tab
+            .merge_status
+            .as_ref()
+            .map(|status| {
+                super::pr_merge_status::render(
+                    &super::pr_merge_status::view_from(status, tab.pr.review),
+                    cx,
                 )
-                .when(!e.hunk.trim().is_empty(), |el| {
-                    el.child(render_diff_hunk(&e.hunk, pr.number as usize * 1000 + i, cx))
-                })
-                .when(!body.trim().is_empty(), |el| {
-                    el.child(
-                        TextView::markdown(
-                            ("pr-convo-md", pr.number as usize * 1000 + i),
-                            SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
-                        )
-                        .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
-                        .selectable(true)
-                        .style(style.clone()),
-                    )
-                }),
-        );
+                .is_some()
+            })
+            .unwrap_or(false);
+        let items = feed_items(&tab.pr, has_merge_card, tab.feed_entries.len());
+        let heading_ix = items
+            .iter()
+            .position(|i| *i == FeedItem::Conversation)
+            .unwrap_or(0);
+        (tab.feed_list.clone(), items.len(), heading_ix)
+    };
+    // The list only learns its length through `reset`, which also drops the
+    // scroll position - so only when the length actually changed (a fetch
+    // landing, a card appearing), never per frame.
+    if state.item_count() != count {
+        state.reset(count);
     }
-    col.into_any_element()
+    if let Some(anchor) = app.pr_mode_mut().and_then(|m| m.feed_anchor.take()) {
+        // `scroll_to`, not `scroll_to_reveal_item`: reveal is the *minimal*
+        // scroll, which brought the conversation heading in at the bottom
+        // edge with every review still below the fold - "the reviews are not
+        // shown" (user report). A tab press puts its section at the top.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: if anchor == 0 { 0 } else { heading_ix },
+            offset_in_item: px(0.),
+        });
+    }
+    let render = cx.processor(move |app: &mut KagiApp, ix: usize, _window, cx| {
+        render_feed_item(app, tab_ix, ix, cx)
+    });
+    // The same shell `render_diff_list` gives its list: a relative flex column
+    // that hands the list `flex_1`, plus the theme's scrollbar. Anything
+    // looser (a bare wrapper, or `size_full` on the list) resolved the list
+    // to 0px high and it drew nothing.
+    let scrollbar_handle = state.clone();
+    div()
+        .id("pr-mode-feed")
+        .flex_1()
+        .min_h(px(0.))
+        // `h_full` + `overflow_hidden`, as the diff pane: a `list` takes the
+        // height it is *given*, and a flex child with only `flex_1` gives it
+        // none until the column's height is definite.
+        .h_full()
+        .overflow_hidden()
+        .w_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(card_pane_bg()))
+        .px_4()
+        .pt_4()
+        .child(super::render_helpers::with_vertical_scrollbar(
+            "pr-mode-feed-scroll",
+            &scrollbar_handle,
+            gpui::list(state, move |ix, window, cx| render(ix, window, cx))
+                .flex_1()
+                .min_h(px(0.)),
+            true,
+        ))
+        .into_any_element()
 }
 
 /// The `diff_hunk` GitHub attaches to a line comment — the code the comment

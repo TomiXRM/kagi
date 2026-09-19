@@ -115,7 +115,11 @@ pub fn pr_merge_status(workdir: &Path, number: u64) -> Result<PrMergeStatus, Git
 }
 
 /// `owner`/`name` for the repo at `workdir`, via `gh repo view`.
-fn repo_owner_name(workdir: &Path) -> Result<(String, String), GitError> {
+///
+/// `pub(crate)`: the `gh pr comment` boundary in `github_comment` addresses
+/// its mutation with the same identity, and resolving it a second way would
+/// let two GitHub writes from the same worktree name two repositories.
+pub(crate) fn repo_owner_name(workdir: &Path) -> Result<(String, String), GitError> {
     let out = crate::cli::gh_command()
         .args([
             "repo",
@@ -136,6 +140,28 @@ fn repo_owner_name(workdir: &Path) -> Result<(String, String), GitError> {
     s.split_once('/')
         .map(|(o, n)| (o.to_string(), n.to_string()))
         .ok_or_else(|| GitError::Other("unexpected repo view output".into()))
+}
+
+/// The `-R` identity for a GitHub write: the caller's frozen `base_repo` when
+/// it has one, [`repo_owner_name`] only when it does not.
+///
+/// The order matters, and it is the fix for a real failure. `gh repo view` is
+/// a **network** round trip, so resolving the identity that way made every
+/// write depend on GitHub being reachable *twice* — an offline machine failed
+/// with "not a GitHub repo" even though the PR snapshot in hand already
+/// carried its own `<host>/<owner>/<repo>`. A PR knows where it lives; ask the
+/// network only when nobody told us.
+pub(crate) fn resolve_base_repo(workdir: &Path, base_repo: &str) -> Result<String, GitError> {
+    let frozen = base_repo.trim();
+    if !frozen.is_empty() {
+        return Ok(frozen.to_string());
+    }
+    match repo_owner_name(workdir)? {
+        (owner, name) if !owner.is_empty() && !name.is_empty() => Ok(format!("{owner}/{name}")),
+        _ => Err(GitError::Other(
+            "gh could not name the repository to write to".to_string(),
+        )),
+    }
 }
 
 /// Parse the `gh api graphql` merge-status response. Pure; unit-tested. A

@@ -29,6 +29,7 @@ pub mod diffstat;
 pub mod file_history;
 pub mod generated;
 pub mod github;
+pub mod github_edit;
 pub mod graph;
 pub mod head;
 pub mod history;

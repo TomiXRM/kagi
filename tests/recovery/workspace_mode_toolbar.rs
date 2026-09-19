@@ -270,10 +270,22 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
 
         // Cache one PR through the real fetch path, then gesture again.
         app.update(cx, |app, cx| app.show_graph_mode(cx));
-        e2e::queue_github_pr_fetch(
-            cx.background_executor
-                .spawn(async move { Ok(vec![pull_request(7, "cached", "cached-head")]) }),
-        );
+        e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move {
+            Ok(vec![kagi_domain::github::PullRequest {
+                // One check, so the page's checks card exists to fold and
+                // unfold (mock 7a/7b).
+                checks: vec![kagi_domain::github::Check {
+                    name: "build".into(),
+                    workflow: "ci".into(),
+                    state: kagi_domain::github::CiState::Success,
+                    url: "https://example.com/run/1".into(),
+                }],
+                // `main` is the fixture's only branch, and a head the repository
+                // actually has is what lets the PR open a tab at all - which is
+                // what the feed assertions below need.
+                ..pull_request(7, "cached", "main")
+            }])
+        }));
         app.update(cx, |app, cx| app.refresh_github_prs(cx));
         cx.run_until_parked();
         swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
@@ -297,10 +309,177 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         // ADR-0200: the lane pane belongs to the PR on screen. Home keeps its
         // tabs, so a pane gated on "any tab open" stood there with the lanes
         // of the PR just left (user report).
+        // A PR tab only opens against branches the repository has actually
+        // fetched, so give the fixture the remote-tracking ref its PR names.
+        crate::macos::git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        app.update(cx, |app, cx| app.reload(cx));
+        cx.run_until_parked();
         let cached = cx.read(|cx| app.read(cx).ui().github_prs.first().cloned());
         if let Some(pr) = cached {
+            // The conversation lands through the injected read: two reviews
+            // and one issue comment, which must become three entries of the
+            // page's list. The first virtualized feed flattened the entries
+            // *before* assigning what had landed and showed none (review
+            // finding, w5:p19).
+            e2e::queue_github_pr_conversation(cx.background_executor.spawn(async move {
+                use kagi_domain::github::{Comment, Review};
+                (
+                    Ok((
+                        vec![
+                            Review {
+                                author: "alice".into(),
+                                state: "APPROVED".into(),
+                                body: "looks good".into(),
+                                submitted_at: "2026-09-01T00:00:00Z".into(),
+                            },
+                            Review {
+                                author: "bob".into(),
+                                state: "COMMENTED".into(),
+                                body: "one nit".into(),
+                                submitted_at: "2026-09-02T00:00:00Z".into(),
+                            },
+                        ],
+                        vec![Comment {
+                            author: "carol".into(),
+                            body: "thanks".into(),
+                            created_at: "2026-09-03T00:00:00Z".into(),
+                        }],
+                    )),
+                    Ok(Vec::new()),
+                )
+            }));
             app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
             cx.run_until_parked();
+            cx.read(|cx| {
+                let m = app.read(cx).pr_mode().expect("PR mode");
+                let tab = &m.tabs[m.active.unwrap()];
+                assert!(tab.conversation_loaded, "the injected conversation landed");
+                assert_eq!(
+                    tab.feed_entries.len(),
+                    3,
+                    "every review and comment that landed is an entry of the page"
+                );
+            });
+            // ADR-0200: 概要 and レビュー are two anchors into ONE virtualized
+            // list, and the tabs are navigation into it. Each tab must draw
+            // its own anchor, and both must be looking at the same list - the
+            // same item count - where a tab that swapped the body would give
+            // each view a list of its own. (The other anchor may legitimately
+            // be off screen: that is what virtualization means.)
+            let mut counts = Vec::new();
+            for (view, anchor) in [
+                (kagi::ui::pr_mode::PrView::Overview, "pr-mode-headline"),
+                (kagi::ui::pr_mode::PrView::Review, "pr-feed-review"),
+            ] {
+                app.update(cx, |app, cx| app.pr_mode_show(view, cx));
+                e2e::clear_control_bounds(win.window_id(), anchor);
+                // A virtualized list measures its items on one frame and lays
+                // them out on the next, so two draws are what "the page is on
+                // screen" means here.
+                for _ in 0..2 {
+                    cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                        .unwrap();
+                }
+                assert!(
+                    measure(cx, win, anchor).is_some(),
+                    "{view:?} must reveal its own anchor on the page"
+                );
+                counts.push(cx.read(|cx| {
+                    let m = app.read(cx).pr_mode().expect("PR mode");
+                    m.tabs[m.active.unwrap()].feed_list.item_count()
+                }));
+            }
+            assert!(
+                counts[0] == counts[1] && counts[0] > 2,
+                "both tabs read one list: {counts:?}"
+            );
+            // The レビュー tab is on screen: the entries under its heading
+            // must actually be drawn, not merely counted (user report: "PR
+            // reviews are not shown").
+            for _ in 0..2 {
+                cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                    .unwrap();
+            }
+            let drawn: Vec<bool> = (0..3)
+                .map(|i| {
+                    e2e::control_bounds(win.window_id(), &format!("pr-feed-entry-{i}")).is_some()
+                })
+                .collect();
+            let heights: Vec<Option<f32>> = (0..3)
+                .map(|i| {
+                    e2e::control_bounds(win.window_id(), &format!("pr-feed-entry-{i}"))
+                        .map(|b| f32::from(b.size.height))
+                })
+                .collect();
+            let _ = heights;
+            assert!(
+                drawn.iter().any(|d| *d),
+                "at least the first entry under the heading is drawn: {drawn:?}"
+            );
+            // ...and the heading sits at the top of the page, not at its
+            // bottom edge with the reviews below the fold: pressing レビュー
+            // must show reviews, which is the whole point of the tab.
+            let heading = e2e::control_bounds(win.window_id(), "pr-feed-review")
+                .expect("the heading is drawn after the レビュー tab");
+            let pane = e2e::control_bounds(win.window_id(), "pr-mode-center-pane")
+                .expect("the centre pane is measured");
+            let from_top = f32::from(heading.origin.y) - f32::from(pane.origin.y);
+            assert!(
+                from_top < f32::from(pane.size.height) / 2.0,
+                "the レビュー tab must put its heading in the upper half of the page, got {from_top}px from the top of a {}px pane",
+                f32::from(pane.size.height)
+            );
+
+            // mock 7a/7b: the checks card is folded on the page, and opens to
+            // the per-check rows in place. The fixture PR carries one check,
+            // so the card exists and the disclosure must change the pane's
+            // height rather than open a second surface.
+            let folded = measure(cx, win, "pr-mode-checks").expect("the checks card is drawn");
+            app.update(cx, |app, cx| app.pr_mode_toggle_checks(cx));
+            e2e::clear_control_bounds(win.window_id(), "pr-mode-checks");
+            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            let opened = measure(cx, win, "pr-mode-checks").expect("the checks card stays drawn");
+            assert!(
+                f32::from(opened.size.height) > f32::from(folded.size.height),
+                "opening the checks card must reveal its rows in place"
+            );
+            app.update(cx, |app, cx| app.pr_mode_toggle_checks(cx));
+
+            // ADR-0200 §11: the gear on a properties row opens the field
+            // picker with what the PR already carries, before any read of
+            // what the repository offers has returned - so a value can be
+            // removed offline. Confirm is dead until something changed.
+            app.update(cx, |app, cx| {
+                app.open_pr_fields_modal(kagi::ui::modals::PrField::Reviewers, cx)
+            });
+            cx.read(|cx| {
+                let modal = app
+                    .read(cx)
+                    .pr_fields_modal()
+                    .cloned()
+                    .expect("the picker is the active modal");
+                assert_eq!(modal.number, 7);
+                assert_eq!(
+                    modal.selected, modal.current,
+                    "opens on the PR's own values"
+                );
+            });
+            app.update(cx, |app, cx| app.pr_fields_toggle("octocat".into(), cx));
+            cx.read(|cx| {
+                let modal = app.read(cx).pr_fields_modal().cloned().unwrap();
+                assert!(modal.selected.contains(&"octocat".to_string()));
+                let (add, remove) =
+                    kagi_domain::github::PrFieldEdit::diff(&modal.current, &modal.selected);
+                assert_eq!(add, vec!["octocat".to_string()]);
+                assert!(remove.is_empty());
+            });
+            app.update(cx, |app, cx| {
+                app.clear_pr_fields_modal();
+                cx.notify();
+            });
+            cx.read(|cx| assert!(app.read(cx).pr_fields_modal().is_none()));
+
             app.update(cx, |app, cx| app.pr_mode_home(cx));
             assert!(
                 measure(cx, win, "pr-mode-lane-pane").is_none(),

@@ -15,10 +15,11 @@
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
-use gpui::{div, prelude::*, px, rgb, Context, SharedString};
-use kagi_domain::github::{PrAttention, PrReason, PullRequest};
+use gpui::{div, prelude::*, px, rgb, uniform_list, Context, SharedString};
+use kagi_domain::github::{PrAttention, PrDetailAvailability, PrReason, PullRequest};
 use kagi_domain::pr_list::{sort_prs, PrListFilter, PrSection, PrSort};
 
 use super::i18n::Msg;
@@ -132,7 +133,6 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .id("pr-mode-dashboard")
         .flex_1()
         .min_h(px(0.))
-        .overflow_y_scroll()
         .flex()
         .flex_col()
         .pb_4();
@@ -223,13 +223,56 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(Msg::PrPaneEmpty.t())),
             );
-        }
-        for pr in rows {
-            let (bucket, why) = att
-                .get(&pr.number)
-                .cloned()
-                .unwrap_or((PrAttention::Dormant, PrReason::None));
-            body = body.child(render_table_row(&pr, bucket, &why, now, cx));
+        } else {
+            let rows: Rc<Vec<(PullRequest, PrAttention, PrReason)>> = Rc::new(
+                rows.into_iter()
+                    .map(|pr| {
+                        let (bucket, why) = att
+                            .get(&pr.number)
+                            .cloned()
+                            .unwrap_or((PrAttention::Dormant, PrReason::None));
+                        (pr, bucket, why)
+                    })
+                    .collect(),
+            );
+            let row_count = rows.len();
+            let render_rows = rows.clone();
+            let scroll = app
+                .pr_mode()
+                .map(|mode| mode.dashboard_scroll.clone())
+                .unwrap_or_else(gpui::UniformListScrollHandle::new);
+            body = body.child(
+                uniform_list(
+                    "pr-home-list",
+                    row_count,
+                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        let start = range.start.saturating_sub(2);
+                        let end = (range.end + 2).min(render_rows.len());
+                        let visible: BTreeSet<u64> = render_rows[start..end]
+                            .iter()
+                            .map(|(pr, _, _)| pr.number)
+                            .collect();
+                        this.observe_visible_prs(visible, cx);
+                        range
+                            .filter_map(|index| {
+                                render_rows.get(index).map(|(pr, bucket, why)| {
+                                    render_table_row(
+                                        pr,
+                                        *bucket,
+                                        why,
+                                        this.pr_status_availability(pr),
+                                        now,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .track_scroll(&scroll)
+                .flex_1()
+                .min_h(px(0.)),
+            );
         }
     }
 
@@ -298,6 +341,7 @@ fn render_table_row(
     pr: &PullRequest,
     bucket: PrAttention,
     why: &PrReason,
+    status: PrDetailAvailability,
     now: i64,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -314,10 +358,16 @@ fn render_table_row(
         },
     );
     let (glyph, glyph_ink) = ci_glyph(pr.ci);
-    let checks = match (pr.checks.len(), pr.failed_checks()) {
-        (0, _) => String::new(),
-        (total, 0) => format!("{glyph}{total}"),
-        (total, failed) => format!("\u{2717}{failed}/{total}"),
+    let checks = match status {
+        PrDetailAvailability::Fresh => match (pr.checks.len(), pr.failed_checks()) {
+            (0, _) => glyph.to_string(),
+            (total, 0) => format!("{glyph}{total}"),
+            (total, failed) => format!("\u{2717}{failed}/{total}"),
+        },
+        PrDetailAvailability::Missing | PrDetailAvailability::Loading => {
+            Msg::PrWhyPending.t().to_string()
+        }
+        PrDetailAvailability::Stale => format!("{}*", Msg::PrWhyPending.t()),
     };
     // An age needs an instant; the list's stamp is text (see `PullRequest`).
     let age = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)

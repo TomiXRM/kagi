@@ -69,61 +69,77 @@ impl KagiApp {
         if injected.is_none() && !kagi_git::github::gh_available() {
             return;
         }
+        let generation = {
+            let Some(ui) = self.ui.get_mut(&owner) else {
+                return;
+            };
+            ui.begin_github_prs_request()
+        };
         cx.spawn(async move |this, acx| {
+            let fetch_repo = repo.clone();
             let result = match injected {
                 Some(task) => task.await,
                 None => {
                     acx.background_executor()
-                        .spawn(async move { kagi_git::github::list_open_prs(&repo) })
+                        .spawn(async move { kagi_git::github::list_open_prs(&fetch_repo) })
                         .await
                 }
             };
             let _ = this.update(acx, |app, cx| {
                 let owner_is_active = app.active_session() == Some(owner);
-                let Some(ui) = app.ui.get_mut(&owner) else {
-                    return;
-                };
-                // #506: only a fetch that actually answered may replace the
-                // list. `apply_pr_fetch` holds that rule for both PR callers —
-                // an expired token or an offline machine keeps the last good
-                // data instead of being shown as an empty inbox.
-                let outcome = kagi_git::github::apply_pr_fetch(&mut ui.github_prs, result);
-                match &outcome.error {
-                    None => {
-                        ui.github_error = None;
-                        ui.github_unavailable = false;
-                    }
-                    // No GitHub remote: a defined "nothing here" state, not a
-                    // failure to report on every 60s tick.
-                    Some(e) if e.is_unavailable() => {
-                        ui.github_error = None;
-                        ui.github_unavailable = true;
-                    }
-                    Some(e) => {
-                        // Recorded, not toasted: this also runs on a 60s ticker,
-                        // and a toast per tick would be its own bug. The PR home
-                        // screen reads it so a failed fetch stops looking like
-                        // "you have no pull requests" (user-visible lie when the
-                        // token expires or the machine is offline).
-                        let text = fetch_error_text(e);
-                        // Once per *distinct* failure: this runs every 60s and
-                        // a logged-out session would otherwise repeat the same
-                        // contract line forever.
-                        if ui.github_error.as_deref() != Some(text.as_str()) {
-                            klog!("github: error: {}", e);
-                        }
-                        ui.github_error = Some(text);
-                        ui.github_unavailable = false;
-                        if owner_is_active {
-                            cx.notify();
-                        }
+                let answered = {
+                    let Some(ui) = app.ui.get_mut(&owner) else {
+                        return;
+                    };
+                    if !ui.accept_github_prs_completion(generation) {
                         return;
                     }
-                }
-                if outcome.changed || !ui.github_prs_loaded {
-                    klog!("github: prs={}", ui.github_prs.len());
-                    ui.github_prs_loaded = true;
-                    ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
+                    // #506: only a fetch that actually answered may replace the
+                    // list. `apply_pr_fetch` holds that rule for both PR callers —
+                    // an expired token or an offline machine keeps the last good
+                    // data instead of being shown as an empty inbox.
+                    let outcome = kagi_git::github::apply_pr_fetch(&mut ui.github_prs, result);
+                    match &outcome.error {
+                        None => {
+                            ui.github_error = None;
+                            ui.github_unavailable = false;
+                        }
+                        // No GitHub remote: a defined "nothing here" state, not a
+                        // failure to report on every 60s tick.
+                        Some(e) if e.is_unavailable() => {
+                            ui.github_error = None;
+                            ui.github_unavailable = true;
+                        }
+                        Some(e) => {
+                            // Recorded, not toasted: this also runs on a 60s ticker,
+                            // and a toast per tick would be its own bug. The PR home
+                            // screen reads it so a failed fetch stops looking like
+                            // "you have no pull requests" (user-visible lie when the
+                            // token expires or the machine is offline).
+                            let text = fetch_error_text(e);
+                            // Once per *distinct* failure: this runs every 60s and
+                            // a logged-out session would otherwise repeat the same
+                            // contract line forever.
+                            if ui.github_error.as_deref() != Some(text.as_str()) {
+                                klog!("github: error: {}", e);
+                            }
+                            ui.github_error = Some(text);
+                            ui.github_unavailable = false;
+                            if owner_is_active {
+                                cx.notify();
+                            }
+                            return;
+                        }
+                    }
+                    if outcome.changed || !ui.github_prs_loaded {
+                        klog!("github: prs={}", ui.github_prs.len());
+                        ui.github_prs_loaded = true;
+                        ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
+                    }
+                    true
+                };
+                if answered {
+                    app.refresh_pr_detail_targets(owner, repo.clone(), cx);
                 }
                 if owner_is_active {
                     cx.notify();

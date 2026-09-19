@@ -18,7 +18,9 @@
 //! whole PR, or for one selected commit. Nothing is checked out. Inputs
 //! (creating / editing a PR) deliberately go to GitHub's own UI.
 
-use gpui::{div, prelude::*, px, relative, rgb, Context, ListState, SharedString};
+use gpui::{
+    div, prelude::*, px, relative, rgb, Context, ListState, SharedString, UniformListScrollHandle,
+};
 use kagi_domain::github::{
     stack_order, CiState, Comment, Mergeable, PrAttention, PrGroup, PrReason, PullRequest, Review,
     ReviewComment, ReviewState,
@@ -144,6 +146,9 @@ pub struct PrModeState {
     /// PR.
     pub filter: PrListFilter,
     pub sort: PrSort,
+    /// The PR home table is virtualized so its layout processor can report the
+    /// visible PR-number set to the lazy detail controller.
+    pub dashboard_scroll: UniformListScrollHandle,
     /// Which navigator sections are unfolded, indexed by
     /// [`PrSection::index`]. The Inbox opens with the mode; the rest are the
     /// viewer's own lists and stay folded until asked for.
@@ -169,6 +174,7 @@ impl Default for PrModeState {
             view: PrView::Overview,
             filter: PrListFilter::default(),
             sort: PrSort::default(),
+            dashboard_scroll: UniformListScrollHandle::new(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
         }
@@ -217,6 +223,7 @@ impl KagiApp {
                 reset_view_if_not_conflicting(m, pr);
             }
             cx.notify();
+            self.prioritize_pr_details(pr.number, cx);
             return;
         }
         let tip = |name: &str| {
@@ -293,6 +300,7 @@ impl KagiApp {
         m.active = Some(m.tabs.len() - 1);
         reset_view_if_not_conflicting(m, pr);
         cx.notify();
+        self.prioritize_pr_details(pr.number, cx);
         self.pr_mode_load_conversation(pr.number, cx);
     }
 
@@ -1256,7 +1264,11 @@ pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, 
     .collect();
     for pr in &app.ui().github_prs {
         let group = pr.group_for(login.as_deref(), &local);
-        let (att, why) = pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
+        let (att, why) = pr.attention_with_status(
+            group == PrGroup::Mine,
+            group == PrGroup::ReviewRequested,
+            app.pr_status_availability(pr),
+        );
         if let Some(slot) = buckets.iter_mut().find(|(a, _)| *a == att) {
             slot.1.push((pr.clone(), why));
         }

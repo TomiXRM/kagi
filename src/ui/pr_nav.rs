@@ -112,11 +112,21 @@ pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>
                 .ui()
                 .github_prs
                 .iter()
-                .filter(|pr| section.accepts(pr, me.as_deref(), &local))
+                .filter(|pr| {
+                    section.accepts_with_status(
+                        pr,
+                        me.as_deref(),
+                        &local,
+                        app.pr_status_availability(pr),
+                    )
+                })
                 .map(|pr| {
                     let group = pr.group_for(me.as_deref(), &local);
-                    let (attention, _why) =
-                        pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
+                    let (attention, _why) = pr.attention_with_status(
+                        group == PrGroup::Mine,
+                        group == PrGroup::ReviewRequested,
+                        app.pr_status_availability(pr),
+                    );
                     PrListRow {
                         pr: pr.clone(),
                         attention,

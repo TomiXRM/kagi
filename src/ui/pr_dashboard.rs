@@ -380,6 +380,12 @@ fn render_table_row(
     };
     div()
         .id(("pr-home-row", pr.number as usize))
+        // The row must take the table's width, not its own content's: without
+        // `w_full` the title cell's `flex_1` had nothing to fill, every row was
+        // as wide as its title, and the fixed columns landed at a different x
+        // on each row (user report).
+        .w_full()
+        .overflow_hidden()
         .flex()
         .flex_row()
         .items_center()
@@ -459,10 +465,14 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_FILES))
                 .flex_shrink_0()
-                .child(SharedString::from(if pr.changed_files > 0 {
-                    pr.changed_files.to_string()
-                } else {
-                    String::new()
+                // Blank only for a fetched zero; a count not fetched yet says
+                // so, like the checks cell (user report).
+                .child(SharedString::from(match status {
+                    PrDetailAvailability::Fresh if pr.changed_files > 0 => {
+                        pr.changed_files.to_string()
+                    }
+                    PrDetailAvailability::Fresh => String::new(),
+                    _ => "\u{2026}".to_string(),
                 })),
         )
         .child(

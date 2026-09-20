@@ -1164,6 +1164,11 @@ use crate::ui::{
 /// Registered after `gpui_component::init`, which several of these deliberately
 /// outrank — keep the order.
 pub(crate) fn bind_app_keys(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new(
+        "secondary-shift-enter",
+        super::issues_composer::FocusIssueEditor,
+        Some("IssueComposer"),
+    )]);
     // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
     // the toggle key for the bottom panel. context = None means the binding
     // fires regardless of focus context. GUI-CLICK: was `cmd-j`, which on

@@ -524,8 +524,86 @@ pub struct Issue {
     pub labels: Vec<IssueLabel>,
     pub body: String,
     pub comments: Vec<IssueComment>,
+    /// Aggregate comment count from the list read. Detail reads also fill the
+    /// comments themselves, but the sidebar must not fetch every conversation.
+    pub comment_count: usize,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// The four mutually-exclusive Issue navigator filters. The selected value is
+/// session-owned UI intent; membership itself is a pure projection of the
+/// latest successful list read and the process-wide viewer login cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IssueListTab {
+    #[default]
+    AssignedToMe,
+    CreatedByMe,
+    MentioningMe,
+    RecentlyUpdated,
+}
+
+impl IssueListTab {
+    pub const ALL: [Self; 4] = [
+        Self::AssignedToMe,
+        Self::CreatedByMe,
+        Self::MentioningMe,
+        Self::RecentlyUpdated,
+    ];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::AssignedToMe => 0,
+            Self::CreatedByMe => 1,
+            Self::MentioningMe => 2,
+            Self::RecentlyUpdated => 3,
+        }
+    }
+
+    fn accepts(self, issue: &Issue, viewer: Option<&str>, mentioned: &[u64]) -> bool {
+        match self {
+            Self::AssignedToMe => viewer.is_some_and(|viewer| {
+                issue
+                    .assignees
+                    .iter()
+                    .any(|login| login.eq_ignore_ascii_case(viewer))
+            }),
+            Self::CreatedByMe => {
+                viewer.is_some_and(|viewer| issue.author.eq_ignore_ascii_case(viewer))
+            }
+            Self::MentioningMe => mentioned.contains(&issue.number),
+            Self::RecentlyUpdated => true,
+        }
+    }
+}
+
+/// One successful Issue-list response. These fields move through the same
+/// request generation so a failed refresh cannot combine old Issues with new
+/// mention membership or a different write destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueListSnapshot {
+    pub issues: Vec<Issue>,
+    pub mentioned_numbers: Vec<u64>,
+    pub base_repo: String,
+}
+
+/// Filter and sort the existing open-Issue list without another fetch.
+pub fn filtered_issues<'a>(
+    issues: &'a [Issue],
+    tab: IssueListTab,
+    viewer: Option<&str>,
+    mentioned: &[u64],
+) -> Vec<&'a Issue> {
+    let mut filtered: Vec<&Issue> = issues
+        .iter()
+        .filter(|issue| tab.accepts(issue, viewer, mentioned))
+        .collect();
+    filtered.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.number.cmp(&a.number))
+    });
+    filtered
 }
 
 #[cfg(test)]
@@ -538,6 +616,43 @@ mod issue_tests {
         assert_eq!(IssueState::from_github("CLOSED"), IssueState::Closed);
         assert_eq!(IssueState::from_github(""), IssueState::Unknown);
         assert_eq!(IssueState::from_github("MERGED"), IssueState::Unknown);
+    }
+
+    fn issue(number: u64, author: &str, assignees: &[&str], updated_at: &str) -> Issue {
+        Issue {
+            number,
+            title: format!("issue {number}"),
+            state: IssueState::Open,
+            url: String::new(),
+            author: author.into(),
+            assignees: assignees.iter().map(|name| (*name).into()).collect(),
+            labels: Vec::new(),
+            body: String::new(),
+            comments: Vec::new(),
+            comment_count: 0,
+            created_at: String::new(),
+            updated_at: updated_at.into(),
+        }
+    }
+
+    #[test]
+    fn issue_tabs_filter_client_side_and_sort_newest_first() {
+        let issues = vec![
+            issue(1, "alice", &["bob"], "2026-01-01T00:00:00Z"),
+            issue(2, "bob", &["alice"], "2026-01-03T00:00:00Z"),
+            issue(3, "ALICE", &[], "2026-01-02T00:00:00Z"),
+        ];
+        let numbers = |tab| {
+            filtered_issues(&issues, tab, Some("Alice"), &[1])
+                .into_iter()
+                .map(|issue| issue.number)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(numbers(IssueListTab::AssignedToMe), vec![2]);
+        assert_eq!(numbers(IssueListTab::CreatedByMe), vec![3, 1]);
+        assert_eq!(numbers(IssueListTab::MentioningMe), vec![1]);
+        assert_eq!(numbers(IssueListTab::RecentlyUpdated), vec![2, 3, 1]);
+        assert!(filtered_issues(&issues, IssueListTab::AssignedToMe, None, &[]).is_empty());
     }
 }
 

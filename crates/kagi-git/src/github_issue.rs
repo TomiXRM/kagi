@@ -6,21 +6,39 @@
 //! else, and the Issue half is self-contained. Pure; the callers are in
 //! `github_fetch.rs`.
 
-use kagi_domain::github::{Issue, IssueComment, IssueState};
+use kagi_domain::github::{Issue, IssueComment, IssueListSnapshot, IssueState};
 
 use super::github::{labels_at, logins_at};
 use crate::GitError;
 
-/// Fields requested from `gh issue list`. `gh issue list` excludes pull
-/// requests server-side; the parser also rejects PR-shaped values defensively.
-pub(crate) const ISSUE_LIST_FIELDS: &str =
-    "number,title,state,url,author,assignees,labels,createdAt,updatedAt";
+/// One GraphQL request replaces `gh issue list` and adds exactly one search
+/// alias for `mentions:@me`. Comment totals and the repository Issue nodes are
+/// part of that same read, so rendering any tab never starts more I/O.
+pub(crate) const ISSUE_LIST_QUERY: &str = r#"
+query($owner: String!, $name: String!, $mentions: String!) {
+  repository(owner: $owner, name: $name) {
+    issues(first: 100, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number title state url createdAt updatedAt
+        author { login }
+        assignees(first: 20) { nodes { login } }
+        labels(first: 20) { nodes { name color description } }
+        comments { totalCount }
+      }
+    }
+  }
+  mentions: search(query: $mentions, type: ISSUE, first: 100) {
+    nodes { ... on Issue { number } }
+  }
+}
+"#;
 
 /// The list metadata plus the conversation loaded for a selected issue.
 pub(crate) const ISSUE_DETAIL_FIELDS: &str =
     "number,title,state,url,author,assignees,labels,body,comments,createdAt,updatedAt";
 
-/// Parse `gh issue list --json <ISSUE_LIST_FIELDS>` output.
+/// Parse the legacy flat Issue-list shape. Kept as a public pure parser for
+/// callers and fixtures; the workspace transport now uses GraphQL below.
 pub fn parse_issue_list(json: &str) -> Result<Vec<Issue>, GitError> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
@@ -28,6 +46,52 @@ pub fn parse_issue_list(json: &str) -> Result<Vec<Issue>, GitError> {
         return Err(GitError::Other("gh json: expected issue array".into()));
     };
     Ok(values.iter().filter_map(issue_from_value).collect())
+}
+
+/// Parse the atomic list + mention-membership response. `base_repo` is the
+/// frozen identity used to address this very request and is carried
+/// with the successful snapshot for later writes.
+pub fn parse_issue_list_snapshot(
+    json: &str,
+    base_repo: &str,
+) -> Result<IssueListSnapshot, GitError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
+    if let Some(errors) = value
+        .get("errors")
+        .and_then(serde_json::Value::as_array)
+        .filter(|errors| !errors.is_empty())
+    {
+        let detail = errors
+            .iter()
+            .filter_map(|error| error.get("message").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(GitError::Other(if detail.is_empty() {
+            "gh graphql: partial response".into()
+        } else {
+            format!("gh graphql: {detail}")
+        }));
+    }
+    let values = value
+        .pointer("/data/repository/issues/nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| GitError::Other("gh json: expected repository issue nodes".into()))?;
+    let mentioned = value
+        .pointer("/data/mentions/nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| GitError::Other("gh json: expected mention search nodes".into()))?;
+    let mut mentioned_numbers: Vec<u64> = mentioned
+        .iter()
+        .filter_map(|entry| entry.get("number").and_then(serde_json::Value::as_u64))
+        .collect();
+    mentioned_numbers.sort_unstable();
+    mentioned_numbers.dedup();
+    Ok(IssueListSnapshot {
+        issues: values.iter().filter_map(issue_from_value).collect(),
+        mentioned_numbers,
+        base_repo: base_repo.to_string(),
+    })
 }
 
 /// Parse `gh issue view --json <ISSUE_DETAIL_FIELDS>` output.
@@ -63,9 +127,39 @@ fn issue_from_value(value: &serde_json::Value) -> Option<Issue> {
             .to_string()
     };
     let state = IssueState::from_github(&string("state"));
-    let assignees = logins_at(value, "assignees");
-    let labels = labels_at(value);
-    let comments = value
+    let assignees = connection_nodes(value, "assignees")
+        .map(|nodes| {
+            nodes
+                .iter()
+                .map(login)
+                .filter(|name| !name.is_empty())
+                .collect()
+        })
+        .unwrap_or_else(|| logins_at(value, "assignees"));
+    let labels = connection_nodes(value, "labels")
+        .map(|nodes| {
+            nodes
+                .iter()
+                .filter_map(|entry| {
+                    let name = entry.get("name")?.as_str()?.to_string();
+                    Some(kagi_domain::github::IssueLabel {
+                        name,
+                        color: entry
+                            .get("color")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        description: entry
+                            .get("description")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| labels_at(value));
+    let comments: Vec<IssueComment> = value
         .get("comments")
         .and_then(serde_json::Value::as_array)
         .map(|entries| {
@@ -107,10 +201,22 @@ fn issue_from_value(value: &serde_json::Value) -> Option<Issue> {
         assignees,
         labels,
         body: string("body"),
+        comment_count: value
+            .pointer("/comments/totalCount")
+            .and_then(serde_json::Value::as_u64)
+            .map(|count| usize::try_from(count).unwrap_or(usize::MAX))
+            .unwrap_or(comments.len()),
         comments,
         created_at: string("createdAt"),
         updated_at: string("updatedAt"),
     })
+}
+
+fn connection_nodes<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Option<&'a Vec<serde_json::Value>> {
+    value.get(key)?.get("nodes")?.as_array()
 }
 
 #[cfg(test)]
@@ -154,8 +260,52 @@ mod tests {
         assert_eq!(issue.number, 7);
         assert_eq!(issue.body, "");
         assert_eq!(issue.comments.len(), 1);
+        assert_eq!(issue.comment_count, 1);
         assert_eq!(issue.comments[0].author, "bob");
         assert_eq!(issue.comments[0].updated_at, "");
+    }
+
+    #[test]
+    fn parses_graphql_list_mentions_and_comment_totals_together() {
+        let json = r#"{
+          "data": {
+            "repository": {"issues": {"nodes": [{
+              "number": 7, "title": "broken", "state": "OPEN",
+              "url": "https://github.com/o/r/issues/7",
+              "author": {"login": "alice"},
+              "assignees": {"nodes": [{"login": "bob"}]},
+              "labels": {"nodes": [{"name": "bug", "color": "d73a4a", "description": null}]},
+              "comments": {"totalCount": 12},
+              "createdAt": "t1", "updatedAt": "t2"
+            }]}},
+            "mentions": {"nodes": [{"number": 7}, {"number": 7}, {"number": 9}]}
+          }
+        }"#;
+        let snapshot = parse_issue_list_snapshot(json, "github.com/o/r").unwrap();
+        assert_eq!(snapshot.base_repo, "github.com/o/r");
+        assert_eq!(snapshot.mentioned_numbers, vec![7, 9]);
+        assert_eq!(snapshot.issues[0].assignees, vec!["bob"]);
+        assert_eq!(snapshot.issues[0].labels[0].name, "bug");
+        assert_eq!(snapshot.issues[0].comment_count, 12);
+        assert!(snapshot.issues[0].comments.is_empty());
+    }
+
+    #[test]
+    fn graphql_list_rejects_missing_mentions_and_partial_errors() {
+        let missing = r#"{"data":{"repository":{"issues":{"nodes":[]}}}}"#;
+        assert!(parse_issue_list_snapshot(missing, "github.com/o/r")
+            .unwrap_err()
+            .to_string()
+            .contains("mention search nodes"));
+
+        let partial = r#"{
+          "data":{"repository":{"issues":{"nodes":[]}},"mentions":null},
+          "errors":[{"message":"search unavailable"}]
+        }"#;
+        assert!(parse_issue_list_snapshot(partial, "github.com/o/r")
+            .unwrap_err()
+            .to_string()
+            .contains("search unavailable"));
     }
 
     #[test]

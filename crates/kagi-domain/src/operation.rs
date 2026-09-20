@@ -252,6 +252,14 @@ pub enum OperationOutcome {
         number: u64,
         detail: String,
     },
+    /// GitHub Issue writes record their receipt at the transport boundary.
+    IssueCreate {
+        detail: String,
+    },
+    IssueComment {
+        number: u64,
+        detail: String,
+    },
     /// `gh pr review`'s receipt for a review submitted on a PR — the verdict
     /// half of the same remote-write family as [`Self::PrComment`].
     /// `verdict` is [`crate::github::ReviewVerdict::as_str`], so the receipt

@@ -86,9 +86,13 @@ fn issues_messages_and_comment_count_switch() {
     let _g = LOCK.lock();
     set_lang_no_persist(Lang::En);
     assert_eq!(Msg::IssuesEmpty.t(), "No open issues");
+    assert_eq!(Msg::IssuesAssignedToMe.t(), "Assigned to me");
+    assert_eq!(Msg::IssueBackToList.t(), "← Issues");
     assert_eq!(issue_comments(2), "Comments (2)");
     set_lang_no_persist(Lang::Ja);
     assert_eq!(Msg::IssuesEmpty.t(), "open Issues はありません");
+    assert_eq!(Msg::IssuesAssignedToMe.t(), "自分の担当");
+    assert_eq!(Msg::IssueBackToList.t(), "Issues に戻る");
     assert_eq!(issue_comments(2), "コメント (2)");
     set_lang_no_persist(Lang::En);
 }

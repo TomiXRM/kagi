@@ -70,3 +70,40 @@ Worktree → PR** の一筆書き、Feed のカード化。
 3. 進捗 `[report] <hash> <要旨>`、質問 `[ask]` → `herdr pane send-text w5:p0 '…'`。
 4. 完了: 自ペインに `[done]` + 検証結果。PR は w5:p0 が作る(base = `feat/pr-lazy-fetch`)。
 5. 並行して w5:p1C からの PR レビュー依頼は従来どおり受けること。
+
+## 追記 1 - サイドバーと main pane の出し分け(w5:p0 決定、2026-09-20)
+
+PR 画面と同じ sidebar navigation を追加しつつ、Issue のホームでは当初設計どおり
+**Composer の下に open Issue 一覧を多く表示**する。Issue 選択中だけ main pane を
+Composer + Thread + Reply に切り替える。
+
+### 決定
+
+1. サイドバーは 4 タブ(PR の Mine/Review と同じ見た目): `Assigned to me` /
+   `Created by me` / `Mentioning me` / `Recently updated`。タブに件数。
+   行 = `#N タイトル · 更新経過 · コメント数`、選択行をハイライト、`updated_at` 降順。
+2. 4 タブは**既存 list の client-side filter**(`Issue.author` / `assignees` /
+   `updated_at` は既にある)。追加 fetch は `mentions:@me` の番号集合だけ
+   (既存の list GraphQL に `search(query:"repo:.. is:issue is:open mentions:@me")` を
+   1 alias 追加、number のみ)。viewer login は PR の "Mine" と同じキャッシュを使う。
+   一覧 + mentions 番号集合を同じ 1 リクエストで取得し、追加プロセスを起動しない。
+3. 未選択の main pane は Composer(上) + open Issue 一覧(下、最大100件、
+   `updated_at` 降順)。この一覧は sidebar の選択 filter に連動せず常に全件を表示する。
+   Issue 選択時は Composer + Thread + Reply に切り替える。Thread 上部の明示的な
+   「Issues に戻る」control で選択を解除し、全件一覧の home に戻る。
+4. サイドバーの見た目は PR サイドバー(`pr_mode.rs` の `render_pr_list`)と同じ部品・
+   同じ余白・同じ selected 色を使う。新しい行 renderer を作らない。
+5. E2E: `workspace_mode_toolbar` の Issues 節に「タブ切替で sidebar filter が変わる、
+   main home には filter と独立した複数行の全件一覧がある、選択で Thread に切り替わる、
+   戻ると全件一覧が復帰する」を追加。i18n EN/JA。
+
+### 受け入れ
+
+- Issues を開く: サイドバーに 4 タブ + 絞込一覧、main は Composer + open Issue 全件一覧。
+- `Created by me` の件数 = 自分が author の open issue 数。`Mentioning me` は
+  mentions 検索の結果と一致。
+- 行クリックで main は Composer + Thread + Reply に切り替わり、サイドバーの一覧は
+  残る(PR と同じ)。`Issues に戻る`で Thread が消え、main 全件一覧が復帰する。
+
+順序: この追記を #745 のブランチに追加コミット(review round 3 として)。P2 の画像
+添付(gh 2.100 `--attach`)はこの後。

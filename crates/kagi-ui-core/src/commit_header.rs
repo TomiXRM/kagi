@@ -20,7 +20,7 @@ use kagi_domain::file_history::CommitSummary;
 use kagi_domain::message::reflow_message;
 use kagi_domain::trailers::parse_coauthors;
 
-use crate::avatar::{avatar_color, avatar_initial, AvatarImages};
+use crate::avatar::{avatar_color, avatar_initial, avatar_initials, AvatarImages};
 use crate::i18n::Msg;
 use crate::theme::{self, theme};
 
@@ -39,6 +39,26 @@ pub fn avatar_circle(
     key: &str,
     display_name: &str,
     avatars: &AvatarImages,
+) -> impl IntoElement {
+    avatar_circle_with_fallback(size, key, avatars, avatar_initial(display_name))
+}
+
+/// Larger timeline avatar with a two-character fallback. Resolved images use
+/// exactly the same login/email-keyed cache as [`avatar_circle`].
+pub fn avatar_circle_with_initials(
+    size: f32,
+    key: &str,
+    display_name: &str,
+    avatars: &AvatarImages,
+) -> impl IntoElement {
+    avatar_circle_with_fallback(size, key, avatars, avatar_initials(display_name))
+}
+
+fn avatar_circle_with_fallback(
+    size: f32,
+    key: &str,
+    avatars: &AvatarImages,
+    fallback: String,
 ) -> impl IntoElement {
     let circle = div()
         .w(theme::scaled_px(size))
@@ -59,7 +79,7 @@ pub fn avatar_circle(
             .bg(avatar_color(key))
             .text_xs()
             .text_color(rgb(theme().bg_base))
-            .child(SharedString::from(avatar_initial(display_name))),
+            .child(SharedString::from(fallback)),
     }
 }
 

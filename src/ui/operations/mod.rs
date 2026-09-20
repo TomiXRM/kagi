@@ -17,6 +17,8 @@ pub mod discard;
 pub mod editor_fs;
 pub mod force_lease;
 pub mod history;
+#[cfg(feature = "gui-e2e")]
+mod issue_write_e2e;
 pub mod merge;
 pub mod modal_state;
 pub mod pull_push;
@@ -88,6 +90,7 @@ pub(crate) struct RunPresentation {
     github_merge: Option<GithubMergePresentation>,
     /// A posted PR comment: clear the composer and re-read the thread.
     pr_comment: Option<u64>,
+    issue_write: Option<(Option<u64>, u64)>,
     /// A confirmed field edit: the tab's own copy of the PR carries these
     /// values now, until the next list fetch confirms them from GitHub.
     pr_edit: Option<(u64, crate::ui::modals::PrField, Vec<String>)>,
@@ -139,6 +142,11 @@ impl RunPresentation {
 
     pub(crate) fn pr_comment(mut self, number: u64) -> Self {
         self.pr_comment = Some(number);
+        self
+    }
+
+    pub(crate) fn issue_write(mut self, number: Option<u64>, revision: u64) -> Self {
+        self.issue_write = Some((number, revision));
         self
     }
 
@@ -455,6 +463,47 @@ impl KagiApp {
                         // frozen at dispatch - not `app.repo_path`, which is
                         // whatever is on screen now (review finding).
                         app.settle_pr_write(Some(stamp.session), repo_path.clone(), number, cx);
+                    }
+                    if let Some((number, revision)) = presentation.issue_write.take() {
+                        app.settle_issue_write(
+                            stamp.session,
+                            repo_path.clone(),
+                            number,
+                            revision,
+                            cx,
+                        );
+                    }
+                    // Issue writes target a remote service, so a confirmed
+                    // refusal still matters after its owning tab is left. The
+                    // ordinary presentation below is visit-bound; queue this
+                    // one owner-named failure before that guard instead. Keep
+                    // every current completion on the existing path so the
+                    // same failure is never delivered twice.
+                    if !current
+                        && matches!(op_name, "issue-create" | "issue-comment")
+                        && matches!(
+                            &report.recording.entry().outcome,
+                            kagi_git::oplog::OpOutcome::Failed { .. }
+                                | kagi_git::oplog::OpOutcome::Refused { .. }
+                        )
+                    {
+                        // Unknown/reconcile never enters this branch. A
+                        // recording failure was already queued by
+                        // `settle_run_receipt`; it stays first because loss of
+                        // the receipt and rejection by GitHub are distinct.
+                        if let Some(message) = presentation
+                            .outcome_notice
+                            .as_deref()
+                            .or(failure_message.as_deref())
+                            .map(|message| format!("{}: {message}", repo_path.display()))
+                        {
+                            app.enqueue_run_outcome_notice(
+                                id,
+                                &report.recording,
+                                failure_message.as_deref(),
+                                Some(message),
+                            );
+                        }
                     }
                     if !current {
                         klog!("op result dropped: tab switched during op");

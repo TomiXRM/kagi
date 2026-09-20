@@ -8,14 +8,14 @@
 use std::path::Path;
 use std::time::Duration;
 
-use kagi_domain::github::{Issue, PullRequest};
+use kagi_domain::github::{Issue, IssueListSnapshot, PullRequest};
 
 use crate::github::{
     parse_pr_body_detail, parse_pr_list, parse_pr_status_detail, PR_BODY_FIELDS, PR_LIST_FIELDS,
     PR_STATUS_FIELDS,
 };
 use crate::github_issue::{
-    parse_issue_detail, parse_issue_list, ISSUE_DETAIL_FIELDS, ISSUE_LIST_FIELDS,
+    parse_issue_detail, parse_issue_list_snapshot, ISSUE_DETAIL_FIELDS, ISSUE_LIST_QUERY,
 };
 
 /// The bound every `gh` invocation runs under — reads here, and the `gh pr
@@ -360,24 +360,66 @@ pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>,
 /// Open Issues for the repository at `workdir`, newest-updated first.
 ///
 /// This is a bounded initial slice, not a count or an exhaustive repository
-/// history. `gh issue list` excludes pull requests by contract;
-/// `parse_issue_list` additionally rejects PR-shaped JSON so a fixture or
-/// future CLI change cannot mix them into the Issue workspace.
-pub fn list_issues(workdir: &Path) -> Result<Vec<Issue>, PrFetchError> {
-    fetch_json(
-        workdir,
-        &[
-            "issue",
-            "list",
-            "--state",
-            "open",
-            "--limit",
-            "100",
-            "--json",
-            ISSUE_LIST_FIELDS,
-        ],
-        parse_issue_list,
-    )
+/// history. The repository list and the one `mentions:@me` search alias share
+/// one GraphQL request; the parser rejects PR-shaped nodes defensively.
+pub fn list_issues(
+    workdir: &Path,
+    frozen_base_repo: Option<&str>,
+) -> Result<IssueListSnapshot, PrFetchError> {
+    // Keep gh's canonical default-repository semantics (including
+    // `gh repo set-default` and forks). Guessing from `origin` can address a
+    // different repository and would freeze the wrong mutation destination.
+    let base_repo = match frozen_base_repo
+        .map(str::trim)
+        .filter(|repo| !repo.is_empty())
+    {
+        Some(repo) => repo.to_string(),
+        None => issue_repository(workdir)?,
+    };
+    let mut parts = base_repo.split('/');
+    let (Some(host), Some(owner), Some(name), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(PrFetchError::Invalid(format!(
+            "invalid repository identity: {base_repo}"
+        )));
+    };
+    let owner_field = format!("owner={owner}");
+    let name_field = format!("name={name}");
+    let mentions_field = format!("mentions=repo:{owner}/{name} is:issue is:open mentions:@me");
+    let query_field = format!("query={ISSUE_LIST_QUERY}");
+    let args = [
+        "api",
+        "graphql",
+        "--hostname",
+        host,
+        "-F",
+        owner_field.as_str(),
+        "-F",
+        name_field.as_str(),
+        "-F",
+        mentions_field.as_str(),
+        "-f",
+        query_field.as_str(),
+    ];
+    fetch_json(workdir, &args, |json| {
+        parse_issue_list_snapshot(json, &base_repo)
+    })
+}
+
+/// Resolve the Issues destination with gh's default-repository rules. The
+/// caller carries this identity through the same owner/generation as the
+/// GraphQL list result; mutations never re-resolve it at dispatch.
+pub fn issue_repository(workdir: &Path) -> Result<String, PrFetchError> {
+    fetch_json(workdir, &["repo", "view", "--json", "url"], |json| {
+        let value: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| crate::GitError::Other(e.to_string()))?;
+        value
+            .get("url")
+            .and_then(|url| url.as_str())
+            .and_then(crate::backend::remote_ref::repo_identity)
+            .ok_or_else(|| crate::GitError::Other("missing GitHub repository identity".into()))
+    })
 }
 
 /// Full read-only data for one selected issue, including body and comments.

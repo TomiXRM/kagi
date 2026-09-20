@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Issues に常設の Markdown Composer、Preview、コード貼付、永続 draft と本文からの既定タイトルを追加。Issue 作成と Thread の返信は送信先をタブに固定し、transport 境界で記録します。結果不明の投稿は再送しません。（ADR-0201）
+
 ### Fixed
 
 - **大規模 repository でも PR 一覧が GitHub GraphQL の 504 で開けなくならないようにしました。** 一覧は軽量な field だけを最大100件取得し、checks と mergeability は画面に見えている行へ、body と変更統計は開いた PR へ最大2並列で後追いします。未取得の CI を「check なし」や merge 可能として扱わず「判定待ち」と表示し、一覧更新・失敗・head 更新をまたいでも各段階が所有する値だけを安全に保持または無効化します。HTTP 504 の再試行は一覧だけ1回です。（ADR-0186）

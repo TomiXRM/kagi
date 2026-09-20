@@ -47,6 +47,9 @@ pub enum GithubNote {
     /// happily post an empty comment; there is nothing to say and nothing to
     /// undo it with but a manual delete, so the plan refuses it.
     CommentBodyEmpty,
+    /// blocker — a new Issue has no explicit title and its body has no
+    /// meaningful title candidate after Markdown structure is removed.
+    IssueTitleEmpty,
     /// blocker — a review that GitHub requires words for (`--request-changes`
     /// or `--comment`) was submitted with none. An approval may be wordless;
     /// these two are refused by the API, so the plan refuses them first
@@ -109,6 +112,10 @@ impl GithubNote {
             GithubNote::CommentBodyEmpty => {
                 "The comment is empty. Write something before posting it.".to_string()
             }
+            GithubNote::IssueTitleEmpty => {
+                "The issue title is empty. Write a title or add meaningful text to the body."
+                    .to_string()
+            }
             GithubNote::ReviewBodyEmpty { verdict } => format!(
                 "GitHub requires a comment on a '{}' review. Write what you want changed before submitting it.",
                 verdict
@@ -124,22 +131,40 @@ impl GithubNote {
 /// Plan titles for the GitHub PR ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubTitle {
+    CreateIssue,
+    CommentIssue {
+        number: u64,
+    },
     /// `Merge pull request #<n> (<method>)`.
-    MergePr { number: u64, method: String },
+    MergePr {
+        number: u64,
+        method: String,
+    },
     /// `Apply suggestion to '<path>'` (#351).
-    ApplySuggestion { path: String },
+    ApplySuggestion {
+        path: String,
+    },
     /// `Comment on pull request #<n>`.
-    CommentPr { number: u64 },
+    CommentPr {
+        number: u64,
+    },
     /// `Review pull request #<n> (<verdict>)`.
-    ReviewPr { number: u64, verdict: String },
+    ReviewPr {
+        number: u64,
+        verdict: String,
+    },
     /// `Edit pull request #<n>`.
-    EditPr { number: u64 },
+    EditPr {
+        number: u64,
+    },
 }
 
 impl GithubTitle {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
+            GithubTitle::CreateIssue => "Create issue".into(),
+            GithubTitle::CommentIssue { number } => format!("Comment on issue #{number}"),
             GithubTitle::MergePr { number, method } => {
                 format!("Merge pull request #{} ({})", number, method)
             }
@@ -288,6 +313,10 @@ mod tests {
         assert_eq!(
             GithubNote::CommentBodyEmpty.message_en(),
             "The comment is empty. Write something before posting it."
+        );
+        assert_eq!(
+            GithubNote::IssueTitleEmpty.message_en(),
+            "The issue title is empty. Write a title or add meaningful text to the body."
         );
     }
 

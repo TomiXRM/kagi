@@ -24,52 +24,15 @@ fn render_section_header(
     open: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_toggle_section(section, cx);
-    });
-    div()
-        .id(("pr-mode-section", section.index()))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .px_3()
-        .pt_2()
-        .pb_1()
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(toggle)
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(if open {
-                    "\u{25BE}"
-                } else {
-                    "\u{25B8}"
-                })),
-        )
-        .child(
-            div()
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(pr_section_label(section))),
-        )
-        .child(div().flex_1().min_w(px(0.)))
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(if count > 0 && section == PrSection::Inbox {
-                    theme().color_branch
-                } else {
-                    theme().text_muted
-                }))
-                .child(SharedString::from(count.to_string())),
-        )
-        .into_any_element()
+    super::workspace_mode::sidebar_section_header(
+        ("pr-mode-section", section.index()),
+        pr_section_label(section),
+        count,
+        open,
+        section == PrSection::Inbox,
+        cx,
+        move |this, _, _w, cx| this.pr_mode_toggle_section(section, cx),
+    )
 }
 
 pub(super) fn pr_section_label(section: PrSection) -> &'static str {
@@ -383,22 +346,14 @@ fn render_pr_card(
                         .child(SharedString::from(format!("#{}", pr.number))),
                 ),
         );
-    let row = div()
+    let row = super::workspace_mode::sidebar_list_row(is_active)
         .id(("pr-mode-card", pr.number as usize))
-        .flex()
-        .flex_row()
         // The row fits its two lines and its padding - it is not given a fixed
         // height. A fixed 42px did fit two bare line boxes, but not once the
         // rows gained the mock's vertical padding: the text then overflowed
         // its own row and drew across the hairline below it (user report).
         // Tight line boxes keep it compact without a magic number to keep in
         // sync.
-        .overflow_hidden()
-        .cursor_pointer()
-        .border_b_1()
-        .border_color(rgb(theme().surface))
-        .when(is_active, |el| el.bg(rgb(theme().selected)))
-        .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(click)
         .on_mouse_down(gpui::MouseButton::Right, menu)
         .when(pr.is_draft, |el| el.opacity(0.7))

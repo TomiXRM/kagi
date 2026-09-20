@@ -86,6 +86,30 @@ pub fn avatar_initial(name: &str) -> String {
     }
 }
 
+/// Return up to two compact initials for larger identity avatars.
+///
+/// Camel-case logins prefer their next uppercase boundary (`TomiXRM` → `TX`);
+/// otherwise the first two alphanumeric characters are used (`akagenoin` →
+/// `AK`). The one-character helper above remains unchanged for compact commit
+/// and PR chrome.
+pub fn avatar_initials(name: &str) -> String {
+    let letters: Vec<char> = name.chars().filter(|ch| ch.is_alphanumeric()).collect();
+    let Some(first) = letters.first().copied() else {
+        return "?".to_string();
+    };
+    let second = letters
+        .iter()
+        .copied()
+        .skip(1)
+        .find(|ch| ch.is_uppercase())
+        .or_else(|| letters.get(1).copied());
+    first
+        .to_uppercase()
+        .chain(second.into_iter().flat_map(char::to_uppercase))
+        .take(2)
+        .collect()
+}
+
 // ──────────────────────────────────────────────────────────────
 // Unit tests
 // ──────────────────────────────────────────────────────────────
@@ -201,6 +225,14 @@ mod tests {
     #[test]
     fn test_initial_single_char() {
         assert_eq!(avatar_initial("z"), "Z");
+    }
+
+    #[test]
+    fn test_compact_initials_for_timeline_avatars() {
+        assert_eq!(avatar_initials("TomiXRM"), "TX");
+        assert_eq!(avatar_initials("akagenoin"), "AK");
+        assert_eq!(avatar_initials(""), "?");
+        assert_eq!(avatar_initials("田中"), "田中");
     }
 
     /// Multi-code-point uppercase (e.g. German ß → SS).

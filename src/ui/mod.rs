@@ -48,8 +48,13 @@ pub mod file_history;
 pub mod file_menu;
 mod fonts;
 mod github;
+mod github_issues;
 mod github_pr_detail;
+mod issues_composer;
+#[cfg(feature = "gui-e2e")]
+mod issues_composer_e2e;
 pub mod issues_mode;
+mod issues_thread;
 mod pr_attention;
 pub mod pr_conflicts;
 pub mod pr_conversation;
@@ -3194,6 +3199,12 @@ pub fn run_app(app_state: KagiApp) {
         // Registered last, and unconditionally — headless persists themes too.
         cx.on_app_quit(|_cx| async move { settings::flush() })
             .detach();
+        cx.on_app_quit(|_cx| async move {
+            if let Err(error) = kagi_git::drafts::flush_issue_drafts() {
+                eprintln!("Issue draft flush: {error}");
+            }
+        })
+        .detach();
 
         // T025: initialize gpui-component (registers key bindings, themes, etc.)
         gpui_component::init(cx);

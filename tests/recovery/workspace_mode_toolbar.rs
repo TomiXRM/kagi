@@ -65,6 +65,8 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     // A non-default width must be shared, not merely equal by coincidence.
     app.update(cx, |app, cx| {
         app.sidebar.width = 287.0;
+        // Composer-only coverage supplies read evidence; no real gh repo lookup.
+        app.seed_issue_composer_for_e2e(cx);
         cx.notify();
     });
     let mut graph_nav_width = None;
@@ -148,13 +150,12 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     );
 
     // Entering Issues starts its list request at the UI boundary, before any
-    // completion can land. The takeover owns all three columns and exposes the
+    // completion can land. The takeover owns its sidebar + main pane and exposes the
     // loading state rather than borrowing the graph or PR workspace.
     app.update(cx, |app, cx| app.show_issues_mode(cx));
     for control in [
         "issue-mode-left-pane",
         "issue-mode-center-pane",
-        "issue-mode-right-pane",
         "issue-mode-list-loading",
     ] {
         e2e::clear_control_bounds(win.window_id(), control);
@@ -168,7 +169,6 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     for control in [
         "issue-mode-left-pane",
         "issue-mode-center-pane",
-        "issue-mode-right-pane",
         "issue-mode-list-loading",
     ] {
         assert!(
@@ -176,14 +176,350 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             "{control} must be visible when Issues opens"
         );
     }
+    assert!(
+        e2e::control_bounds(win.window_id(), "issue-mode-right-pane").is_none(),
+        "Issues follows the PR two-pane structure; no duplicate metadata rail"
+    );
 
     app.update(cx, |app, cx| app.show_empty_issues_for_e2e(cx));
     e2e::clear_control_bounds(win.window_id(), "issue-mode-list-empty");
+    e2e::clear_control_bounds(win.window_id(), "issue-main-list-empty");
     cx.update_window(win, |_, window, cx| window.draw(cx).clear())
         .unwrap();
     assert!(
         e2e::control_bounds(win.window_id(), "issue-mode-list-empty").is_some(),
         "successful empty Issue slice must have a visible state"
+    );
+    assert!(
+        e2e::control_bounds(win.window_id(), "issue-main-list-empty").is_some(),
+        "the empty Issue home must keep its list empty state below Composer"
+    );
+
+    // The sidebar's four session-owned filters keep the PR navigator's
+    // section/row geometry. The home pane independently keeps the full open
+    // Issue feed below Composer, regardless of the selected sidebar filter.
+    app.update(cx, |app, cx| app.seed_issue_navigation_for_e2e(cx));
+    for index in 0..4 {
+        assert!(
+            measure(cx, win, &format!("issue-filter-tab-{index}")).is_some(),
+            "Issue filter {index} must be visible"
+        );
+    }
+    assert!(measure(cx, win, "issue-mode-card-1").is_some());
+    assert!(measure(cx, win, "issue-mode-card-2").is_none());
+    assert!(measure(cx, win, "issue-composer").is_some());
+    assert!(measure(cx, win, "issue-main-list").is_some());
+    for number in 1..=4 {
+        assert!(
+            measure(cx, win, &format!("issue-main-row-{number}")).is_some(),
+            "the unselected home must show open Issue #{number}"
+        );
+    }
+
+    let created_tab = measure(cx, win, "issue-filter-tab-1").expect("Created by me tab");
+    cx.simulate_click(win, created_tab.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(measure(cx, win, "issue-mode-card-1").is_none());
+    assert!(measure(cx, win, "issue-mode-card-2").is_some());
+    assert!(
+        measure(cx, win, "issue-main-row-1").is_some()
+            && measure(cx, win, "issue-main-row-2").is_some(),
+        "sidebar filtering must not filter the full home feed"
+    );
+
+    // Click the first (newest) main row. It is guaranteed to be in the center
+    // viewport even when the compact Composer grows; lower rows are reachable
+    // through the center pane's production scrollbar.
+    let center = measure(cx, win, "issue-mode-center-pane").expect("Issues main pane");
+    let main_recent = measure(cx, win, "issue-main-row-4").expect("visible main Issue row");
+    assert!(
+        main_recent.origin.y >= center.origin.y
+            && main_recent.origin.y + main_recent.size.height
+                <= center.origin.y + center.size.height,
+        "the newest main Issue row must be inside the clickable center viewport"
+    );
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+    })
+    .unwrap();
+    assert!(
+        cx.update_window(win, |_, window, cx| {
+            app.read(cx).issue_inputs_focused_for_e2e(None, window, cx)
+        })
+        .unwrap(),
+        "the production New Issue input must own focus before row selection"
+    );
+    cx.simulate_click(win, main_recent.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_issue_for_e2e()),
+        Some(4),
+        "the main row click handler must update the session-owned selection"
+    );
+    assert!(measure(cx, win, "issue-thread").is_some());
+    assert!(measure(cx, win, "issue-thread-back").is_some());
+    assert!(measure(cx, win, "issue-main-list").is_none());
+    assert!(
+        measure(cx, win, "issue-composer").is_none(),
+        "selecting an Issue must hide the New Issue Composer"
+    );
+    assert!(
+        measure(cx, win, "issue-reply-composer").is_some(),
+        "the selected Thread must keep its Reply Composer"
+    );
+    assert!(
+        !cx.update_window(win, |_, window, cx| {
+            app.read(cx).issue_inputs_focused_for_e2e(None, window, cx)
+        })
+        .unwrap(),
+        "the hidden New Issue inputs must release focus after row selection"
+    );
+    assert!(
+        measure(cx, win, "issue-mode-card-2").is_some(),
+        "the sidebar remains while the Thread is shown"
+    );
+
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_issue_reply_input_for_e2e(4, window, cx)
+        });
+    })
+    .unwrap();
+    assert!(
+        cx.update_window(win, |_, window, cx| {
+            app.read(cx)
+                .issue_inputs_focused_for_e2e(Some(4), window, cx)
+        })
+        .unwrap(),
+        "the production Reply input must own focus before returning home"
+    );
+    let back = measure(cx, win, "issue-thread-back").expect("Issues home control");
+    cx.simulate_click(win, back.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(measure(cx, win, "issue-thread").is_none());
+    assert!(measure(cx, win, "issue-main-list").is_some());
+    assert!(measure(cx, win, "issue-main-row-1").is_some());
+    assert!(measure(cx, win, "issue-main-row-4").is_some());
+    assert!(measure(cx, win, "issue-composer").is_some());
+    assert!(
+        measure(cx, win, "issue-reply-composer").is_none(),
+        "returning home must hide the Reply Composer"
+    );
+    assert!(
+        !cx.update_window(win, |_, window, cx| {
+            app.read(cx)
+                .issue_inputs_focused_for_e2e(Some(4), window, cx)
+        })
+        .unwrap(),
+        "the hidden Reply input must release focus after returning home"
+    );
+    assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), None);
+
+    // The compact Composer has one stable mode toggle: eye in edit mode and
+    // square-pen in preview mode. The old two-button controls must not coexist.
+    assert!(measure(cx, win, "issue-composer-mode-toggle").is_some());
+    assert!(measure(cx, win, "issue-composer-write").is_none());
+    assert!(measure(cx, win, "issue-composer-preview").is_none());
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_issue_title_for_e2e(window, cx);
+        });
+    })
+    .unwrap();
+    cx.simulate_keystrokes(win, "enter");
+    cx.run_until_parked();
+    let (body_revealed, body_focused, title_value, body_value) = cx
+        .update_window(win, |_, window, cx| {
+            app.read(cx).issue_composer_enter_state_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert!(body_revealed, "plain Enter must reveal the body editor");
+    assert!(body_focused, "plain Enter must focus the body editor");
+    assert!(
+        title_value.is_empty(),
+        "plain Enter must not insert a newline in the title InputState: {title_value:?}"
+    );
+    assert!(
+        body_value.is_empty(),
+        "the title Enter action must not fall through into the body InputState: {body_value:?}"
+    );
+    let (empty_draft, _) = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e());
+    assert!(
+        empty_draft.title.is_empty() && empty_draft.body.is_empty(),
+        "Enter must not insert a newline or otherwise edit the empty draft"
+    );
+
+    // Editor changes must reach the actual session-owned draft subscription.
+    // Do not set draft.body directly: that would hide a missing Change listener.
+    let compact = measure(cx, win, "issue-composer").expect("Composer is always visible");
+    let original = "USB が復帰しない\n再現条件を調べる\n";
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.insert_issue_body_for_e2e(original, window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (draft, focused) = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e());
+    assert_eq!(draft.body, original);
+    assert!(
+        draft.title.is_empty(),
+        "default title is a projection, not an edit"
+    );
+    assert_eq!(draft.effective_title(), "USB が復帰しない");
+    assert!(!focused);
+
+    let mode_toggle = measure(cx, win, "issue-composer-mode-toggle").expect("Composer mode toggle");
+    cx.simulate_click(win, mode_toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).issue_preview_for_e2e()));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        original
+    );
+    assert!(
+        measure(cx, win, "issue-composer-mode-toggle").is_some(),
+        "preview mode must keep the same single toggle control"
+    );
+    assert!(measure(cx, win, "issue-composer-write").is_none());
+    assert!(measure(cx, win, "issue-composer-preview").is_none());
+    let mode_toggle = measure(cx, win, "issue-composer-mode-toggle").expect("Composer mode toggle");
+    cx.simulate_click(win, mode_toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(!cx.read(|cx| app.read(cx).issue_preview_for_e2e()));
+    // Focus the existing source input again without changing its text/history.
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.insert_issue_body_for_e2e("", window, cx));
+    })
+    .unwrap();
+
+    // Dispatch the real registered shortcut under the focused Input context.
+    // This proves it reaches Composer rather than Input Enter/modal checkout.
+    cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.simulate_keystrokes(win, "secondary-shift-enter");
+    let expanded = measure(cx, win, "issue-composer").expect("focused Composer is visible");
+    assert!(cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().1));
+    assert!(
+        expanded.size.height > compact.size.height + gpui::px(100.),
+        "Focus Editor must expand the real rendered source editor"
+    );
+
+    // Paste is dispatched through Input's action; the wrapper must capture it
+    // before Input consumes it. The clipboard itself must remain untouched.
+    // Input's undo grouping uses wall-clock instant, not GPUI's test clock.
+    // Separate the earlier typing from this paste as two editing gestures.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let pasted = "fn reproduce() {\n    reconnect();\n}";
+    app.update(cx, |_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(pasted.into()));
+    });
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (draft, _) = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e());
+    assert_eq!(
+        draft.body,
+        format!("{original}```rust\n{pasted}\n```\n"),
+        "multiline paste must be fenced and inserted at the existing cursor"
+    );
+    app.update(cx, |_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(pasted)
+        );
+    });
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(gpui_component::input::Undo), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        original,
+        "one Undo must remove the paste without erasing the earlier draft"
+    );
+    cx.simulate_keystrokes(win, "secondary-shift-enter");
+    assert!(!cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().1));
+
+    // Focus mode belongs to whichever Composer owns the focused input. A
+    // Reply must hide the New Issue Composer and thread just as New Issue does.
+    app.update(cx, |app, cx| app.seed_issue_reply_for_e2e(7, cx));
+    measure(cx, win, "issue-reply-composer").expect("Reply Composer is visible");
+    let reply_mode_toggle = measure(cx, win, "issue-reply-mode-toggle").expect("Reply mode toggle");
+    assert!(measure(cx, win, "issue-reply-write").is_none());
+    assert!(measure(cx, win, "issue-reply-preview").is_none());
+    cx.simulate_click(win, reply_mode_toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).issue_reply_preview_for_e2e(7)));
+    let reply_mode_toggle = measure(cx, win, "issue-reply-mode-toggle")
+        .expect("Reply mode toggle stays stable in Preview");
+    cx.simulate_click(win, reply_mode_toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(!cx.read(|cx| app.read(cx).issue_reply_preview_for_e2e(7)));
+    assert!(
+        !cx.read(|cx| app.read(cx).issue_reply_has_title_input_for_e2e(7)),
+        "Reply must not allocate the New Issue-only title InputState"
+    );
+    let reply = "Reply body still follows InputState::Change";
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.insert_issue_reply_body_for_e2e(7, reply, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let reply_draft = cx.read(|cx| app.read(cx).issue_reply_draft_for_e2e(7));
+    assert_eq!(reply_draft.body, reply);
+    assert!(reply_draft.title.is_empty());
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_issue_reply_input_for_e2e(7, window, cx)
+        });
+    })
+    .unwrap();
+    cx.simulate_keystrokes(win, "secondary-shift-enter");
+    assert!(cx.read(|cx| app.read(cx).issue_reply_focused_for_e2e(7)));
+    assert!(
+        measure(cx, win, "issue-reply-composer").is_some(),
+        "the focused Reply stays visible"
+    );
+    assert!(
+        measure(cx, win, "issue-composer").is_none(),
+        "Reply focus must hide the New Issue Composer"
+    );
+    // Selecting another row must exit #7's focus before metadata and the
+    // eventual Reply destination move to #8.
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.select_issue_for_e2e(8, window, cx));
+    })
+    .unwrap();
+    assert!(!cx.read(|cx| app.read(cx).issue_reply_focused_for_e2e(7)));
+    assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), Some(8));
+    assert!(measure(cx, win, "issue-composer").is_none());
+    assert!(measure(cx, win, "issue-reply-composer").is_none());
+
+    // A write completion still consumes the exact sent draft after the user
+    // leaves Issues, but must not let its follow-up refresh reopen the mode.
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Graph
+    );
+    app.update(cx, |app, cx| app.settle_issue_write_for_e2e(cx));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Graph,
+        "settling a hidden Issues write must not reopen Issues"
+    );
+    let settled_draft = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0);
+    assert!(
+        settled_draft.title.is_empty() && settled_draft.body.is_empty(),
+        "the posted draft must still be consumed while Issues is hidden"
     );
 
     // ── Sidebar gesture navigation (ADR-0199) ─────────────────────

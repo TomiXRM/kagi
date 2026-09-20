@@ -704,27 +704,28 @@ fn contrast_ratio(a: u32, b: u32) -> f64 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
-/// Label colour for a filled primary button.
+/// Label colour for a filled semantic button.
 ///
 /// Most themes originally used their base background as the label, which
-/// preserves their intended dark/light appearance. Flower Road's soft pink is
-/// too close to its ivory base for a commit button, so retain that choice only
-/// when it meets WCAG AA. Its dark ink is then preferred; pure black/white is
-/// the final fallback and always gives one accessible option.
-fn primary_button_foreground(theme: &Theme) -> u32 {
+/// preserves their intended dark/light appearance. Retain that choice only
+/// when it meets WCAG AA, then prefer the theme's text colour; pure black/white
+/// is the final fallback and always gives one accessible option.
+fn filled_button_foreground(background: u32, theme: &Theme) -> u32 {
     const MIN_CONTRAST: f64 = 4.5;
 
-    if contrast_ratio(theme.color_branch, theme.bg_base) >= MIN_CONTRAST {
+    if contrast_ratio(background, theme.bg_base) >= MIN_CONTRAST {
         theme.bg_base
-    } else if contrast_ratio(theme.color_branch, theme.text_main) >= MIN_CONTRAST {
+    } else if contrast_ratio(background, theme.text_main) >= MIN_CONTRAST {
         theme.text_main
-    } else if contrast_ratio(theme.color_branch, 0x000000)
-        >= contrast_ratio(theme.color_branch, 0xffffff)
-    {
+    } else if contrast_ratio(background, 0x000000) >= contrast_ratio(background, 0xffffff) {
         0x000000
     } else {
         0xffffff
     }
+}
+
+fn primary_button_foreground(theme: &Theme) -> u32 {
+    filled_button_foreground(theme.color_branch, theme)
 }
 
 /// Push kagi's active [`theme()`] palette into `gpui_component`'s global
@@ -846,6 +847,11 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.button_danger_foreground = to_hsla(0xffffff);
     gc.colors.button_danger_hover = to_hsla(k.color_blocker);
     gc.colors.button_danger_active = to_hsla(k.color_blocker);
+    let warning_foreground = filled_button_foreground(k.color_warning, k);
+    gc.colors.button_warning = to_hsla(k.color_warning);
+    gc.colors.button_warning_foreground = to_hsla(warning_foreground);
+    gc.colors.button_warning_hover = to_hsla(k.color_warning);
+    gc.colors.button_warning_active = to_hsla(k.color_warning);
 
     // ── Status colours (Notification, Alert, etc.) ──────────────
     gc.colors.success = to_hsla(k.color_success);
@@ -1402,6 +1408,20 @@ mod tests {
                 "{}: primary button label {foreground:#08x} is only {contrast:.2}:1 on {:#08x}",
                 t.slug,
                 t.color_branch,
+            );
+        }
+    }
+
+    #[test]
+    fn warning_button_labels_meet_wcag_aa() {
+        for t in THEMES {
+            let foreground = filled_button_foreground(t.color_warning, t);
+            let contrast = contrast_ratio(t.color_warning, foreground);
+            assert!(
+                contrast >= 4.5,
+                "{}: warning button label {foreground:#08x} is only {contrast:.2}:1 on {:#08x}",
+                t.slug,
+                t.color_warning,
             );
         }
     }

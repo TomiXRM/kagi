@@ -389,6 +389,22 @@ pub(super) fn render_composer(
     if !empty_create {
         content = content.child(body);
     }
+    let submit = Button::new(SharedString::from(format!("{id}-submit")))
+        .icon(Icon::empty().path("icons/comment-send.svg"))
+        .label(if number.is_some() {
+            Msg::IssueReply.t()
+        } else {
+            Msg::IssueCreate.t()
+        });
+    // The standard warning variant is filled from Kagi's synchronized warning
+    // button tokens. Keep the unavailable state on Button's neutral disabled
+    // path instead of leaving an amber tint that looks actionable.
+    let submit = if disabled { submit } else { submit.warning() }
+        .rounded(px(999.))
+        .h(theme::scaled_px(36.))
+        .px_3()
+        .disabled(disabled)
+        .on_click(cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)));
     content =
         content.child(
             div()
@@ -459,7 +475,6 @@ pub(super) fn render_composer(
                                 } else {
                                     "icons/window-maximize.svg"
                                 }))
-                                .link()
                                 .small()
                                 .tooltip_with_action(
                                     if editor.focused {
@@ -474,26 +489,7 @@ pub(super) fn render_composer(
                                     app.toggle_issue_focus(number, window, cx)
                                 })),
                         )
-                        .child(
-                            super::button_style::KagiButton::accent_icon(
-                                SharedString::from(format!("{id}-submit")),
-                                "icons/comment-send.svg",
-                                if number.is_some() {
-                                    Msg::IssueReply.t()
-                                } else {
-                                    Msg::IssueCreate.t()
-                                },
-                                theme().color_warning,
-                                cx,
-                            )
-                            .rounded(px(999.))
-                            .h(theme::scaled_px(36.))
-                            .px_3()
-                            .disabled(disabled)
-                            .on_click(
-                                cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)),
-                            ),
-                        ),
+                        .child(submit),
                 ),
         );
     if let Some(error) = editor.save_error.as_ref() {

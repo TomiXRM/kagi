@@ -380,6 +380,20 @@ pub fn list_issues(workdir: &Path) -> Result<Vec<Issue>, PrFetchError> {
     )
 }
 
+/// Resolve the Issues workspace destination once, as a read, before composing.
+/// Mutations receive this frozen identity and never resolve it at dispatch.
+pub fn issue_repository(workdir: &Path) -> Result<String, PrFetchError> {
+    fetch_json(workdir, &["repo", "view", "--json", "url"], |json| {
+        let value: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| crate::GitError::Other(e.to_string()))?;
+        value
+            .get("url")
+            .and_then(|url| url.as_str())
+            .and_then(crate::backend::remote_ref::repo_identity)
+            .ok_or_else(|| crate::GitError::Other("missing GitHub repository identity".into()))
+    })
+}
+
 /// Full read-only data for one selected issue, including body and comments.
 pub fn issue_detail(workdir: &Path, number: u64) -> Result<Issue, PrFetchError> {
     let number = number.to_string();

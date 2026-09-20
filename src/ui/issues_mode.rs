@@ -1,4 +1,4 @@
-//! Read-only GitHub Issues workspace (ADR-0198).
+//! Composer-first GitHub Issues workspace (ADR-0198 / ADR-0201).
 //!
 //! Rendering consumes the session-owned Issue snapshot in `TabUiState`. Network
 //! requests are started only by workspace-mode and row-selection handlers.
@@ -190,13 +190,19 @@ fn selected_issue(app: &KagiApp) -> Option<&Issue> {
         .or_else(|| ui.github_issues.iter().find(|issue| issue.number == number))
 }
 
-fn render_center(app: &KagiApp) -> AnyElement {
-    let ui = app.ui();
-    let selected = ui.selected_github_issue;
-    let loading = selected.is_some() && ui.github_issue_detail_loading == selected;
-    let error = selected.and(ui.github_issue_detail_error.as_deref());
-    let detail = selected.and_then(|number| ui.github_issue_details.get(&number));
-
+fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+    let selected = app.ui().selected_github_issue;
+    let editors = &app.ui().issue_composer.editors;
+    let focused = if editors.get(&None).is_some_and(|editor| editor.focused) {
+        Some(None)
+    } else {
+        selected.and_then(|number| {
+            editors
+                .get(&Some(number))
+                .is_some_and(|editor| editor.focused)
+                .then_some(Some(number))
+        })
+    };
     let mut center = div()
         .id("issue-mode-center-pane")
         .flex_1()
@@ -206,120 +212,23 @@ fn render_center(app: &KagiApp) -> AnyElement {
         .overflow_y_scrollbar()
         .flex()
         .flex_col()
-        .bg(rgb(theme().bg_base));
-
-    if selected.is_none() {
-        return center
-            .child(status_text(
-                "issue-mode-detail-empty",
-                Msg::IssueSelect.t(),
-                theme().text_muted,
-            ))
-            .into_any_element();
-    }
-    if loading {
-        return center
-            .child(status_text(
-                "issue-mode-detail-loading",
-                Msg::IssueLoading.t(),
-                theme().text_muted,
-            ))
-            .into_any_element();
-    }
-    if let Some(message) = error {
-        return center
-            .child(status_text(
-                "issue-mode-detail-error",
-                safe_text(message),
-                theme().color_blocker,
-            ))
-            .into_any_element();
-    }
-    let Some(issue) = detail else {
-        return center
-            .child(status_text(
-                "issue-mode-detail-empty",
-                Msg::IssueDetailsUnavailable.t(),
-                theme().text_muted,
-            ))
-            .into_any_element();
-    };
-
-    center = center
-        .p_4()
         .gap_3()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_xl()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(theme().text_main))
-                        .whitespace_normal()
-                        .child(safe_text(&issue.title)),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(safe_text(&format!(
-                            "#{} · {} · @{}",
-                            issue.number,
-                            issue_state_text(issue.state),
-                            issue.author
-                        ))),
-                ),
-        )
-        .child(
-            div()
-                .p_3()
-                .rounded_md()
-                .bg(rgb(theme().panel))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .whitespace_normal()
-                .child(if issue.body.is_empty() {
-                    SharedString::from(Msg::IssueNoDescription.t())
-                } else {
-                    safe_text(&issue.body)
-                }),
-        );
-
-    if !issue.comments.is_empty() {
-        center = center.child(
-            div()
-                .pt_2()
-                .text_sm()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_label))
-                .child(SharedString::from(super::i18n::issue_comments(
-                    issue.comments.len(),
-                ))),
-        );
-        for comment in &issue.comments {
-            center =
-                center.child(
-                    div()
-                        .p_3()
-                        .rounded_md()
-                        .bg(rgb(theme().panel))
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(div().text_xs().text_color(rgb(theme().text_muted)).child(
-                            safe_text(&format!("@{} · {}", comment.author, comment.created_at)),
-                        ))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .whitespace_normal()
-                                .child(safe_text(&comment.body)),
-                        ),
-                );
+        .p_3()
+        .bg(rgb(theme().bg_base));
+    if let Some(number) = focused {
+        center = center.child(super::issues_composer::render_composer(app, number, cx));
+    } else {
+        center = center.child(super::issues_composer::render_composer(app, None, cx));
+        if let Some(number) = selected {
+            center = center
+                .child(super::issues_thread::render_thread(app, cx))
+                .child(super::issues_composer::render_composer(
+                    app,
+                    Some(number),
+                    cx,
+                ));
+        } else {
+            center = center.child(render_issue_list(app, cx));
         }
     }
     center.into_any_element()
@@ -426,7 +335,7 @@ pub fn render_issues_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> AnyEl
             cx,
         ),
     );
-    let center = super::e2e::measure_control("issue-mode-center-pane", render_center(app));
+    let center = super::e2e::measure_control("issue-mode-center-pane", render_center(app, cx));
     let right = super::e2e::measure_control("issue-mode-right-pane", render_metadata(app));
 
     div()

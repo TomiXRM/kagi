@@ -65,6 +65,8 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     // A non-default width must be shared, not merely equal by coincidence.
     app.update(cx, |app, cx| {
         app.sidebar.width = 287.0;
+        // Composer-only coverage supplies read evidence; no real gh repo lookup.
+        app.seed_issue_composer_for_e2e(cx);
         cx.notify();
     });
     let mut graph_nav_width = None;
@@ -185,6 +187,125 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         e2e::control_bounds(win.window_id(), "issue-mode-list-empty").is_some(),
         "successful empty Issue slice must have a visible state"
     );
+
+    // Editor changes must reach the actual session-owned draft subscription.
+    // Do not set draft.body directly: that would hide a missing Change listener.
+    let compact = measure(cx, win, "issue-composer").expect("Composer is always visible");
+    let original = "USB が復帰しない\n再現条件を調べる\n";
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.insert_issue_body_for_e2e(original, window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (draft, focused) = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e());
+    assert_eq!(draft.body, original);
+    assert!(
+        draft.title.is_empty(),
+        "default title is a projection, not an edit"
+    );
+    assert_eq!(draft.effective_title(), "USB が復帰しない");
+    assert!(!focused);
+
+    let preview = measure(cx, win, "issue-composer-preview").expect("Preview button");
+    cx.simulate_click(win, preview.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).issue_preview_for_e2e()));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        original
+    );
+    let write = measure(cx, win, "issue-composer-write").expect("Write button");
+    cx.simulate_click(win, write.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(!cx.read(|cx| app.read(cx).issue_preview_for_e2e()));
+    // Focus the existing source input again without changing its text/history.
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.insert_issue_body_for_e2e("", window, cx));
+    })
+    .unwrap();
+
+    // Dispatch the real registered shortcut under the focused Input context.
+    // This proves it reaches Composer rather than Input Enter/modal checkout.
+    cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.simulate_keystrokes(win, "secondary-shift-enter");
+    let expanded = measure(cx, win, "issue-composer").expect("focused Composer is visible");
+    assert!(cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().1));
+    assert!(
+        expanded.size.height > compact.size.height + gpui::px(100.),
+        "Focus Editor must expand the real rendered source editor"
+    );
+
+    // Paste is dispatched through Input's action; the wrapper must capture it
+    // before Input consumes it. The clipboard itself must remain untouched.
+    // Input's undo grouping uses wall-clock instant, not GPUI's test clock.
+    // Separate the earlier typing from this paste as two editing gestures.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let pasted = "fn reproduce() {\n    reconnect();\n}";
+    app.update(cx, |_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(pasted.into()));
+    });
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (draft, _) = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e());
+    assert_eq!(
+        draft.body,
+        format!("{original}```rust\n{pasted}\n```\n"),
+        "multiline paste must be fenced and inserted at the existing cursor"
+    );
+    app.update(cx, |_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(pasted)
+        );
+    });
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(gpui_component::input::Undo), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        original,
+        "one Undo must remove the paste without erasing the earlier draft"
+    );
+    cx.simulate_keystrokes(win, "secondary-shift-enter");
+    assert!(!cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().1));
+
+    // Focus mode belongs to whichever Composer owns the focused input. A
+    // Reply must hide the New Issue Composer and thread just as New Issue does.
+    app.update(cx, |app, cx| app.seed_issue_reply_for_e2e(7, cx));
+    measure(cx, win, "issue-reply-composer").expect("Reply Composer is visible");
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_issue_reply_input_for_e2e(7, window, cx)
+        });
+    })
+    .unwrap();
+    cx.simulate_keystrokes(win, "secondary-shift-enter");
+    assert!(cx.read(|cx| app.read(cx).issue_reply_focused_for_e2e(7)));
+    assert!(
+        measure(cx, win, "issue-reply-composer").is_some(),
+        "the focused Reply stays visible"
+    );
+    assert!(
+        measure(cx, win, "issue-composer").is_none(),
+        "Reply focus must hide the New Issue Composer"
+    );
+    // Selecting another row must exit #7's focus before metadata and the
+    // eventual Reply destination move to #8.
+    app.update(cx, |app, cx| app.select_issue_for_e2e(8, cx));
+    assert!(!cx.read(|cx| app.read(cx).issue_reply_focused_for_e2e(7)));
+    assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), Some(8));
+    assert!(measure(cx, win, "issue-composer").is_some());
+    assert!(measure(cx, win, "issue-reply-composer").is_none());
 
     // ── Sidebar gesture navigation (ADR-0199) ─────────────────────
     // A gesture slides the sidebar's pages and nothing else: the main pane

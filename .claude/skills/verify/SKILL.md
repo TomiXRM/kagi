@@ -91,6 +91,9 @@ The current suite covers:
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze
   (`KAGI_GUI_E2E_ONLY=workspace_mode_toolbar`, via the `tb-repo-actions` control bound);
+  the same scenario covers the Issues Composer's real input-change subscription,
+  Markdown Preview, scoped Focus Editor, multiline Paste and Undo without a live
+  GitHub write (ADR-0201; `src/ui/issues_composer_e2e.rs` seeds only read-side state);
 - dirty Pull auto-stash success and Pull-failure restoration, including the persistent error modal.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff
   re-anchored to its renumbered row, the Compare pane and its file diff re-read, a

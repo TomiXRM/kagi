@@ -255,6 +255,7 @@ impl Render for KagiApp {
         // The PR page's comment composer, for the same reason (ADR-0200).
         self.sync_pr_comment_input(window, cx);
         self.sync_pr_fields_input(window, cx);
+        self.sync_issue_inputs(window, cx);
 
         if std::env::var("KAGI_DEBUG_RENDER").as_deref() == Ok("1") {
             use std::sync::atomic::{AtomicU64, Ordering as O};

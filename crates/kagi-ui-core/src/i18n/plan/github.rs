@@ -65,6 +65,8 @@ pub fn note_ja(note: &GithubNote) -> String {
 /// Japanese rendering of one GitHub title.
 pub fn title_ja(title: &GithubTitle) -> String {
     match title {
+        GithubTitle::CreateIssue => "Issue を作成".into(),
+        GithubTitle::CommentIssue { number } => format!("Issue #{number} に返信"),
         GithubTitle::MergePr { number, method } => {
             format!("pull request #{} を merge ({})", number, method)
         }

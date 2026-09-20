@@ -1,4 +1,4 @@
-//! Commit-message draft autosave — T-COMMIT-007 (ADR-0042).
+//! Shared commit-message / Issue draft autosave — ADR-0042.
 //!
 //! Persists a work-in-progress commit message **per repository + branch** so it
 //! survives an application restart, and clears it once the commit succeeds.
@@ -25,8 +25,13 @@
 //! - [`save_draft`] — write (or delete, when empty) the draft for a branch
 //! - [`load_draft`] — read the draft for a branch (`None` when absent/corrupt)
 //! - [`clear_draft`] — delete the draft for a branch (e.g. after a commit)
+//! - [`queue_issue_draft`] / [`flush_issue_drafts`] — latest-value Issue autosave
+//! - [`load_issue_draft`] — read the latest pending or saved Issue draft
+//! - [`issue_draft_version`] / [`clear_issue_draft_if_version`] — completion guards
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::GitError;
@@ -82,6 +87,22 @@ pub fn save_draft(
         )
     })?;
 
+    save_draft_at(&path, repo_path, branch, message, mode)
+}
+
+// The queue fixes the storage path before its debounce/background flush. Both
+// APIs share the same serialization and atomic replacement implementation.
+fn save_draft_at(
+    path: &Path,
+    repo_path: &Path,
+    branch: &str,
+    message: &str,
+    mode: &str,
+) -> Result<(), GitError> {
+    if message.trim().is_empty() {
+        return clear_draft_at(path);
+    }
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             GitError::Other(format!(
@@ -96,9 +117,20 @@ pub fn save_draft(
     let updated = now_unix();
     let json = draft_to_json(&repo_str, branch, message, mode, updated);
 
-    std::fs::write(&path, json.as_bytes()).map_err(|e| {
-        GitError::Other(format!("draft: write failed for {}: {}", path.display(), e))
-    })?;
+    // Both commit and Issue drafts use this atomic replacement boundary.
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| GitError::Other("draft: missing directory".into()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| GitError::Other(format!("draft: temporary file: {e}")))?;
+    temporary
+        .write_all(json.as_bytes())
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|e| GitError::Other(format!("draft: write failed: {e}")))?;
+    temporary
+        .persist(path)
+        .map_err(|e| GitError::Other(format!("draft: replace {}: {e}", path.display())))?;
 
     Ok(())
 }
@@ -109,7 +141,11 @@ pub fn save_draft(
 /// corrupt — a broken draft must never prevent the user from committing.
 pub fn load_draft(repo_path: &Path, branch: &str) -> Option<Draft> {
     let path = draft_file_path(repo_path, branch)?;
-    let content = std::fs::read_to_string(&path).ok()?;
+    load_draft_at(&path)
+}
+
+fn load_draft_at(path: &Path) -> Option<Draft> {
+    let content = std::fs::read_to_string(path).ok()?;
     parse_draft_json(&content)
 }
 
@@ -129,7 +165,11 @@ pub fn clear_draft(repo_path: &Path, branch: &str) -> Result<(), GitError> {
         )
     })?;
 
-    match std::fs::remove_file(&path) {
+    clear_draft_at(&path)
+}
+
+fn clear_draft_at(path: &Path) -> Result<(), GitError> {
+    match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(GitError::Other(format!(
@@ -138,6 +178,167 @@ pub fn clear_draft(repo_path: &Path, branch: &str) -> Result<(), GitError> {
             e
         ))),
     }
+}
+
+/// A colon cannot occur in a Git branch name, so Issue keys never collide with
+/// commit-message drafts. Storage is captured when queued, not when flushed.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct IssueDraftKey {
+    path: Option<PathBuf>,
+    repo: PathBuf,
+    branch: String,
+}
+
+impl IssueDraftKey {
+    fn new(repo: &Path, number: Option<u64>) -> Self {
+        let branch = match number {
+            Some(number) => format!(":issue:{number}"),
+            None => ":issue:new".to_owned(),
+        };
+        Self {
+            path: draft_file_path(repo, &branch),
+            repo: repo.to_path_buf(),
+            branch,
+        }
+    }
+}
+
+#[derive(Default)]
+struct IssueDraftQueue {
+    pending: BTreeMap<IssueDraftKey, (String, String)>,
+    // Retain versions after flush and clear for process-lifetime completion
+    // guards, including when the tab that dispatched a write has closed.
+    versions: BTreeMap<IssueDraftKey, u64>,
+    last_version: u64,
+}
+
+impl IssueDraftQueue {
+    fn advance(&mut self, key: &IssueDraftKey) -> u64 {
+        self.last_version = self
+            .last_version
+            .checked_add(1)
+            .expect("Issue draft version exhausted");
+        self.versions.insert(key.clone(), self.last_version);
+        self.last_version
+    }
+}
+
+fn issue_drafts() -> &'static Mutex<IssueDraftQueue> {
+    static QUEUE: OnceLock<Mutex<IssueDraftQueue>> = OnceLock::new();
+    QUEUE.get_or_init(|| Mutex::new(IssueDraftQueue::default()))
+}
+
+/// Replace the latest pending Issue draft in memory, without filesystem I/O.
+///
+/// `None` is the new-Issue Composer; `Some(number)` is that Issue's Reply.
+/// Queue two empty strings to clear. The caller schedules a background flush
+/// after its debounce and calls [`flush_issue_drafts`] again before exiting.
+/// Returns the new token to capture when dispatching an Issue write.
+pub fn queue_issue_draft(repo: &Path, number: Option<u64>, title: &str, body: &str) -> u64 {
+    let key = IssueDraftKey::new(repo, number);
+    let mut queue = issue_drafts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let version = queue.advance(&key);
+    queue
+        .pending
+        .insert(key, (title.to_owned(), body.to_owned()));
+    version
+}
+
+/// Read (or allocate) the process-lifetime version of this storage key, without
+/// filesystem I/O. Capture before loading and check again before applying it.
+pub fn issue_draft_version(repo: &Path, number: Option<u64>) -> u64 {
+    let key = IssueDraftKey::new(repo, number);
+    let mut queue = issue_drafts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match queue.versions.get(&key) {
+        Some(version) => *version,
+        None => queue.advance(&key),
+    }
+}
+
+/// Consume the posted version only if it is still current, queuing a clear.
+/// No tab needs to remain alive and no disk I/O occurs here. Globally unique
+/// tokens locate their original storage key even if KAGI_LOG_DIR has changed;
+/// repo and Issue identity must still match. A repeated completion is a no-op.
+pub fn clear_issue_draft_if_version(repo: &Path, number: Option<u64>, version: u64) -> bool {
+    let requested = IssueDraftKey::new(repo, number);
+    let mut queue = issue_drafts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let key = queue.versions.iter().find_map(|(key, current)| {
+        (*current == version && key.repo == requested.repo && key.branch == requested.branch)
+            .then(|| key.clone())
+    });
+    let Some(key) = key else {
+        return false;
+    };
+    queue.advance(&key);
+    queue.pending.insert(key, (String::new(), String::new()));
+    true
+}
+
+/// Persist all pending Issue drafts using the existing atomic draft boundary.
+///
+/// Keep the lock during writes: an older flush cannot run after a newer clear,
+/// resurrecting a submitted draft. Failed entries remain queued for retry;
+/// independent entries are still attempted and the first failure is returned.
+pub fn flush_issue_drafts() -> Result<(), GitError> {
+    let mut queue = issue_drafts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut first_error = None;
+    queue.pending.retain(|key, (title, body)| {
+        let result = match key.path.as_deref() {
+            Some(path) => {
+                let message = if title.is_empty() && body.is_empty() {
+                    String::new()
+                } else {
+                    // A string tuple serializes without a fallible custom
+                    // serializer. The outer ADR-0042 record stays unchanged.
+                    serde_json::json!([title, body]).to_string()
+                };
+                save_draft_at(path, &key.repo, &key.branch, &message, "issue-composer")
+            }
+            None => Err(GitError::Other(
+                "draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".into(),
+            )),
+        };
+        match result {
+            Ok(()) => false,
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+                true
+            }
+        }
+    });
+    first_error.map_or(Ok(()), Err)
+}
+
+/// Load the most recent Issue draft, including an update not yet flushed.
+/// A pending clear takes precedence over an older file. Missing/corrupt or
+/// unrelated-mode files follow the existing lenient load contract.
+pub fn load_issue_draft(repo: &Path, number: Option<u64>) -> Option<(String, String)> {
+    let key = IssueDraftKey::new(repo, number);
+    let queue = issue_drafts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((title, body)) = queue.pending.get(&key) {
+        return if title.is_empty() && body.is_empty() {
+            None
+        } else {
+            Some((title.clone(), body.clone()))
+        };
+    }
+    let draft = load_draft_at(key.path.as_deref()?)?;
+    if draft.mode != "issue-composer" {
+        return None;
+    }
+    serde_json::from_str(&draft.message).ok()
 }
 
 // ────────────────────────────────────────────────────────────

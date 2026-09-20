@@ -124,22 +124,40 @@ impl GithubNote {
 /// Plan titles for the GitHub PR ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubTitle {
+    CreateIssue,
+    CommentIssue {
+        number: u64,
+    },
     /// `Merge pull request #<n> (<method>)`.
-    MergePr { number: u64, method: String },
+    MergePr {
+        number: u64,
+        method: String,
+    },
     /// `Apply suggestion to '<path>'` (#351).
-    ApplySuggestion { path: String },
+    ApplySuggestion {
+        path: String,
+    },
     /// `Comment on pull request #<n>`.
-    CommentPr { number: u64 },
+    CommentPr {
+        number: u64,
+    },
     /// `Review pull request #<n> (<verdict>)`.
-    ReviewPr { number: u64, verdict: String },
+    ReviewPr {
+        number: u64,
+        verdict: String,
+    },
     /// `Edit pull request #<n>`.
-    EditPr { number: u64 },
+    EditPr {
+        number: u64,
+    },
 }
 
 impl GithubTitle {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
+            GithubTitle::CreateIssue => "Create issue".into(),
+            GithubTitle::CommentIssue { number } => format!("Comment on issue #{number}"),
             GithubTitle::MergePr { number, method } => {
                 format!("Merge pull request #{} ({})", number, method)
             }

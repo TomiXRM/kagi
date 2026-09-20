@@ -334,6 +334,7 @@ pub struct TabUiState {
     pub github_issue_detail_loading: Option<u64>,
     pub github_issue_detail_error: Option<String>,
     pub github_issue_detail_gen: u64,
+    pub(super) issue_composer: super::issues_composer::IssuesComposerState,
     /// Scan revisions reject superseded completions without consulting the active tab.
     pub cleanup_gen: u64,
     pub cleanup_scanning: bool,
@@ -407,6 +408,7 @@ impl Default for TabUiState {
             github_issue_detail_loading: None,
             github_issue_detail_error: None,
             github_issue_detail_gen: 0,
+            issue_composer: Default::default(),
             cleanup_gen: 0,
             cleanup_scanning: false,
             cleanup_prs: Vec::new(),

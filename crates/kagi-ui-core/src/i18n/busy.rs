@@ -3,6 +3,8 @@ use super::{lang, Lang};
 
 // check-busy-labels validates operation producers against this table.
 const LABELS: &[(&str, &str, &str)] = &[
+    ("issue-create", "Creating issue…", "Issue を作成中…"),
+    ("issue-comment", "Posting reply…", "返信を投稿中…"),
     ("merge-plan", "Planning merge…", "merge を計画中…"),
     ("merge", "Merging…", "merge 中…"),
     ("merge-into", "Merging…", "merge 中…"),

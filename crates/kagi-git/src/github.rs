@@ -6,6 +6,10 @@
 //! tool AI agents use, so what kagi shows and what an agent sees never differ.
 //! `--json` keeps the output stable. Everything here is read-only.
 
+pub use crate::github_issue_write::{
+    issue_comment, issue_comment_args, issue_create, issue_create_args, plan_issue_comment,
+    plan_issue_create,
+};
 use std::path::Path;
 use std::sync::OnceLock;
 

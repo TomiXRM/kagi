@@ -111,6 +111,7 @@ impl TabUiState {
             github_issue_detail_loading: _,
             github_issue_detail_error: _,
             github_issue_detail_gen: _,
+            issue_composer: _,
             cleanup_scanning: _,
             cleanup_prs: _,
             cleanup_prs_stale: _,

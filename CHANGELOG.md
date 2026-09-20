@@ -5,6 +5,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-20
+
 ### Added
 
 - Issues に常設の Markdown Composer、Preview、コード貼付、永続 draft と本文からの既定タイトルを追加。Issue 作成と Thread の返信は送信先をタブに固定し、transport 境界で記録します。結果不明の投稿は再送しません。（ADR-0201）

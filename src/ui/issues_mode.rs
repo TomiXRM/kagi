@@ -113,8 +113,17 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                         .id("issue-mode-list-refreshing")
                         .px_3()
                         .py_1()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
                         .text_xs()
                         .text_color(rgb(theme().text_muted))
+                        .child(super::render_overlay::sync_spinner(
+                            10.,
+                            theme().text_muted,
+                            "issue-sidebar-refresh-spinner",
+                        ))
                         .child(Msg::IssuesRefreshing.t()),
                 );
             }
@@ -294,8 +303,17 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
                     div()
                         .px_3()
                         .py_1()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
                         .text_xs()
                         .text_color(rgb(theme().text_muted))
+                        .child(super::render_overlay::sync_spinner(
+                            10.,
+                            theme().text_muted,
+                            "issue-main-refresh-spinner",
+                        ))
                         .child(Msg::IssuesRefreshing.t()),
                 );
             }

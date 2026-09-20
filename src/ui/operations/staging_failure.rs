@@ -37,7 +37,7 @@ impl StageAction {
 struct StageFailure {
     recording: Recording,
     footer: String,
-    notice: bool,
+    needs_notice: bool,
 }
 impl StageFailure {
     fn record(
@@ -78,10 +78,11 @@ impl StageFailure {
                 i18n::op_failed(i18n::Op::RecordOperation, error)
             ));
         }
+        let needs_notice = matches!(recording, Recording::Failed { .. });
         Self {
             recording,
             footer,
-            notice: !refused,
+            needs_notice,
         }
     }
 }
@@ -111,7 +112,7 @@ impl KagiApp {
         // presentation. Never append a second time or turn this into success.
         self.present_recorded(&failure.recording, cx);
         self.status_footer = FooterStatus::Failed(failure.footer.clone().into());
-        if failure.notice {
+        if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());
             self.present_app_notice();
         }

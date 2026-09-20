@@ -174,11 +174,9 @@ impl KagiApp {
                 FooterStatus::Failed(footer.clone().into())
             };
         }
-        if !success && !conflict_partial {
+        if !success && !conflict_partial && report.evidence.unknown {
             let mut notice = modals::AppNotice::from(format!("{}: {}", entry.repo, footer));
-            if report.evidence.unknown {
-                notice.inspect = Some(id);
-            }
+            notice.inspect = Some(id);
             self.app_notices.push_back(notice);
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
@@ -447,13 +445,12 @@ impl KagiApp {
                         FooterStatus::Failed(footer.into())
                     };
                 }
-                if !success {
+                if !success
+                    && matches!(report.recording.entry().outcome, OpOutcome::Unknown { .. })
+                    && !report.progress.termination_unknown
+                {
                     let mut notice = modals::AppNotice::from(text);
-                    if matches!(report.recording.entry().outcome, OpOutcome::Unknown { .. })
-                        && !report.progress.termination_unknown
-                    {
-                        notice.inspect = Some(id);
-                    }
+                    notice.inspect = Some(id);
                     self.app_notices.push_back(notice);
                 }
                 if let kagi_git::backend::remove::Recording::Failed { error, .. } = report.recording
@@ -561,10 +558,6 @@ impl KagiApp {
                 FooterStatus::Failed(footer.into())
             };
         }
-        if !success {
-            self.app_notices
-                .push_back(format!("{}: {}", entry.repo, summary).into());
-        }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = recording {
             self.app_notices
                 .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
@@ -625,11 +618,9 @@ impl KagiApp {
                 }
             }
         }
-        if !success {
+        if !success && matches!(entry.outcome, OpOutcome::Unknown { .. }) {
             let mut notice = modals::AppNotice::from(format!("{}: {summary}", entry.repo));
-            if matches!(entry.outcome, OpOutcome::Unknown { .. }) {
-                notice.inspect = Some(id);
-            }
+            notice.inspect = Some(id);
             self.app_notices.push_back(notice);
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {

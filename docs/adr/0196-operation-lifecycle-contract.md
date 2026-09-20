@@ -314,9 +314,10 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 2. async plan は `offer_plan_from_async` で空 slot にだけ confirmation を出す。
    競合時は生 plan を queue せず、`PlanToken` / one-shot approval を失効し、
    planning latch を解放して fresh plan の再実行案内を queue する。
-3. 実行済み write の terminal outcome は oplog receipt を真実とし、通知を
-   `AppNotice` queue 末尾へ送る。foreground modal は置換しない。
-   `Unknown` / `Partial` の acknowledge / inspect capability は通知に保持する。
+3. 実行済み write の terminal outcome は oplog receipt を真実とし、短い toast で
+   到着を知らせる。記録済み結果を閉じるだけの `AppNotice` は作らない。
+   `Unknown` / `Partial` の acknowledge / inspect capability がある場合だけ、その操作を
+   `AppNotice` queue 末尾へ送り、foreground modal は置換しない。
 4. async in-place update は expected variant と modal generation / request identity が
    current の場合だけ payload を更新する。新規 modal を作る能力は持たない。
 

@@ -102,7 +102,7 @@ impl gpui::Render for toast_stack::ToastStack {
             // Explicit width so the animated margin-left slides the whole card
             // horizontally (a stretched flex child wouldn't translate cleanly).
             let card = div()
-                .w(theme::scaled_px(460.))
+                .w_full()
                 .flex()
                 .flex_row()
                 .when(is_sync, |d| d.items_center().gap_3())
@@ -119,7 +119,10 @@ impl gpui::Render for toast_stack::ToastStack {
                 .child(
                     div()
                         .flex_1()
+                        .min_w_0()
                         .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
                         .child(toast.message.clone()),
                 )
                 .child(

@@ -25,6 +25,7 @@ impl KagiApp {
             .bottom(theme::scaled_px(34.))
             .left(theme::scaled_px(super::TOAST_INSET_PX))
             .w(theme::scaled_px(460.))
+            .max_w(gpui::relative(0.9))
             .flex()
             .flex_col()
             .gap_2();
@@ -39,7 +40,6 @@ impl KagiApp {
         stack = stack.child(toast_stack);
         Some(stack.into_any())
     }
-
     /// A snackbar shown while an async op runs: a continuously spinning sync
     /// icon + a friendly label (user request — a non-blocking alternative to a
     /// modal busy-spinner). Driven automatically by the write latch, so every async
@@ -48,7 +48,7 @@ impl KagiApp {
         let accent = theme().color_branch;
         let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
         div()
-            .w(theme::scaled_px(460.))
+            .w_full()
             .flex()
             .flex_row()
             .items_center()

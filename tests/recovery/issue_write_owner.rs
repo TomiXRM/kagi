@@ -1,4 +1,4 @@
-//! Issue-write terminal notices follow the frozen owner across tab switches.
+//! Issue-write failures remain durable without opening a modal after a tab switch.
 
 use gpui::VisualTestAppContext;
 
@@ -20,8 +20,8 @@ pub fn scenario_issue_failure_notice_survives_tab_switch(cx: &mut VisualTestAppC
     cx.run_until_parked();
 
     // Start from A and leave before its synthetic recorded terminal can land.
-    // B already has a modal by then, so the outcome must queue without taking
-    // over the visible slot.
+    // B already has a modal by then. The recorded failure must not take over
+    // the visible slot or add a dismiss-only notice behind it.
     app.update(cx, |app, cx| {
         assert!(app.start_failed_issue_create_for_e2e(repo.clone(), cx));
         app.switch_repo(1, cx);
@@ -37,14 +37,16 @@ pub fn scenario_issue_failure_notice_survives_tab_switch(cx: &mut VisualTestAppC
             Some("tab B foreground notice"),
             "the departed owner's failure must not replace B's modal"
         );
-        assert!(
-            kagi::ui::e2e::queued_notice_contains(state, repo.to_str().unwrap()),
-            "the queued failure must name its frozen repository owner"
-        );
-        assert!(
-            kagi::ui::e2e::queued_notice_contains(state, "the server refused the issue"),
-            "the queued failure must retain the confirmed transport error"
-        );
+        assert!(!kagi::ui::e2e::queued_notice_contains(
+            state,
+            "the server refused the issue"
+        ));
+        let panel = state.op_log.as_ref().unwrap().read(cx);
+        assert!(panel.entries().iter().any(|entry| {
+            entry.op == "issue-create"
+                && entry.repo == repo.display().to_string()
+                && matches!(entry.outcome, kagi_git::oplog::OpOutcome::Failed { .. })
+        }));
     });
 
     app.update(cx, |app, _| {
@@ -52,13 +54,7 @@ pub fn scenario_issue_failure_notice_survives_tab_switch(cx: &mut VisualTestAppC
         kagi::ui::e2e::present_app_notice(app);
     });
     cx.read(|cx| {
-        let state = app.read(cx);
-        let notice = state
-            .app_notice()
-            .expect("the departed owner's queued failure must become visible");
-        assert!(notice.message.contains(repo.to_str().unwrap()));
-        assert!(notice.message.contains("the server refused the issue"));
-        assert!(notice.inspect.is_none() && notice.acknowledge.is_none());
+        assert!(app.read(cx).app_notice().is_none());
     });
 
     // Current-tab delivery still owns the old path; this stale completion was
@@ -79,6 +75,6 @@ pub fn scenario_issue_failure_notice_survives_tab_switch(cx: &mut VisualTestAppC
     );
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS issue_failure_notice_survives_tab_switch: owner failure queued once behind B"
+        "[gui-e2e] PASS issue_failure_notice_survives_tab_switch: owner failure remains in Operation Log without a modal"
     );
 }

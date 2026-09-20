@@ -11,6 +11,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- **長いエラー通知が画面を覆わないようにしました。** スナックバーは画面幅内の1行要約に収め、完全な内容はOperation Logに残します。Operation Logへ記録済みの失敗では閉じるだけのポップアップを出さず、確認・照合が必要な場合とログ記録自体に失敗した場合だけモーダルを使います。（ADR-0192、ADR-0196）
 - **大規模 repository でも PR 一覧が GitHub GraphQL の 504 で開けなくならないようにしました。** 一覧は軽量な field だけを最大100件取得し、checks と mergeability は画面に見えている行へ、body と変更統計は開いた PR へ最大2並列で後追いします。未取得の CI を「check なし」や merge 可能として扱わず「判定待ち」と表示し、一覧更新・失敗・head 更新をまたいでも各段階が所有する値だけを安全に保持または無効化します。HTTP 504 の再試行は一覧だけ1回です。（ADR-0186）
 - **Operations run from `cargo run` are recorded again.** Cargo hands the binary `CARGO_MANIFEST_DIR`, which the operation log reads as "this is a test harness — refuse the real `~/.kagi` unless `KAGI_LOG_DIR` says where to write". That guard exists so a failed fixture can never write into a developer's home, but a developer launching the app through cargo is not a fixture, and every operation came back "changed but not recorded". The app now drops the marker at startup when `KAGI_LOG_DIR` is unset; test binaries never run that startup, and every test that spawns the app sets `KAGI_LOG_DIR`, so their isolation is unchanged.
 

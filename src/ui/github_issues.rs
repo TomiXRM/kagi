@@ -393,6 +393,9 @@ impl KagiApp {
                         editor.draft.clear_if_revision(editor.draft.revision);
                         editor.storage_version = next;
                         editor.sync_inputs = true;
+                        if number.is_none() {
+                            editor.body_revealed = false;
+                        }
                         if *session == owner {
                             owner_revision = Some(editor.draft.revision);
                         }

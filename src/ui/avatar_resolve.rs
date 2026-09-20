@@ -106,32 +106,15 @@ impl KagiApp {
         })
         .detach();
     }
-    /// Avatars for the GitHub **logins** on the PR page (ADR-0200): its author,
-    /// its reviewers and assignees, and everyone in its conversation.
-    ///
-    /// Keyed by login in the same `avatars.images` map the commit rows use -
-    /// a login has no `@`, a commit author's email does, so the two key spaces
-    /// cannot collide. The URL is GitHub's own avatar CDN, which needs no API
-    /// call and no token: one GET per login, disk-cached by
-    /// [`super::avatar_fetch`], attempted once per process.
-    pub(crate) fn ensure_pr_avatars(&mut self, cx: &mut Context<Self>) {
+    fn ensure_github_login_avatars(
+        &mut self,
+        candidates: Vec<String>,
+        source: &'static str,
+        cx: &mut Context<Self>,
+    ) {
         if avatar_fetch::offline() {
             return;
         }
-        let Some(mode) = self.pr_mode() else {
-            return;
-        };
-        let Some(tab) = mode.active.and_then(|ix| mode.tabs.get(ix)) else {
-            return;
-        };
-        let mut candidates: Vec<String> = Vec::new();
-        candidates.push(tab.pr.author.clone());
-        candidates.extend(tab.pr.reviewers.iter().cloned());
-        candidates.extend(tab.pr.assignees.iter().cloned());
-        candidates.extend(tab.reviews.iter().map(|r| r.author.clone()));
-        candidates.extend(tab.comments.iter().map(|c| c.author.clone()));
-        candidates.extend(tab.line_comments.iter().map(|c| c.author.clone()));
-
         let mut logins: Vec<String> = Vec::new();
         for login in candidates {
             if login.is_empty() || self.avatars.images.contains_key(&login) {
@@ -167,10 +150,52 @@ impl KagiApp {
                 for (login, image) in images {
                     app.avatars.images.insert(login, image);
                 }
-                klog!("avatar: pr logins resolved={}", n);
+                klog!("avatar: {} logins resolved={}", source, n);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Avatars for the GitHub **logins** on the PR page (ADR-0200): its author,
+    /// its reviewers and assignees, and everyone in its conversation.
+    ///
+    /// Keyed by login in the same `avatars.images` map the commit rows use -
+    /// a login has no `@`, a commit author's email does, so the two key spaces
+    /// cannot collide. The URL is GitHub's own avatar CDN, which needs no API
+    /// call and no token: one GET per login, disk-cached by
+    /// [`super::avatar_fetch`], attempted once per process.
+    pub(crate) fn ensure_pr_avatars(&mut self, cx: &mut Context<Self>) {
+        let Some(mode) = self.pr_mode() else {
+            return;
+        };
+        let Some(tab) = mode.active.and_then(|ix| mode.tabs.get(ix)) else {
+            return;
+        };
+        let mut candidates: Vec<String> = Vec::new();
+        candidates.push(tab.pr.author.clone());
+        candidates.extend(tab.pr.reviewers.iter().cloned());
+        candidates.extend(tab.pr.assignees.iter().cloned());
+        candidates.extend(tab.reviews.iter().map(|r| r.author.clone()));
+        candidates.extend(tab.comments.iter().map(|c| c.author.clone()));
+        candidates.extend(tab.line_comments.iter().map(|c| c.author.clone()));
+        self.ensure_github_login_avatars(candidates, "pr", cx);
+    }
+
+    /// Resolve the viewer, Issue authors, and the selected conversation's
+    /// authors through the same login-keyed cache and CDN path as PR avatars.
+    pub(crate) fn ensure_issue_avatars(&mut self, cx: &mut Context<Self>) {
+        let mut candidates = Vec::new();
+        candidates.extend(self.github_login.iter().cloned());
+        let ui = self.ui();
+        candidates.extend(ui.github_issues.iter().map(|issue| issue.author.clone()));
+        if let Some(issue) = ui
+            .selected_github_issue
+            .and_then(|number| ui.github_issue_details.get(&number))
+        {
+            candidates.push(issue.author.clone());
+            candidates.extend(issue.comments.iter().map(|comment| comment.author.clone()));
+        }
+        self.ensure_github_login_avatars(candidates, "issue", cx);
     }
 }

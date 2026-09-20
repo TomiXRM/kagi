@@ -232,7 +232,7 @@ fn post(
         .border_b_1()
         .border_color(rgb(theme().selected))
         .text_color(rgb(theme().text_main))
-        .child(kagi_ui_core::commit_header::avatar_circle(
+        .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
             40.,
             author,
             author,

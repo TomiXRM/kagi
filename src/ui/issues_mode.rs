@@ -4,7 +4,7 @@
 //! requests are started only by workspace-mode and row-selection handlers.
 
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString};
-use gpui_component::scroll::ScrollableElement;
+use gpui_component::{scroll::ScrollableElement, Icon, Sizable};
 use kagi_domain::github::{filtered_issues, Issue, IssueListTab, IssueState};
 
 use super::i18n::Msg;
@@ -363,7 +363,18 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
                             .pt_1()
                             .text_xs()
                             .text_color(rgb(theme().text_muted))
-                            .child(super::i18n::issue_comments(issue.comment_count))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        Icon::empty().path("icons/message-square.svg").with_size(
+                                            gpui_component::Size::Size(theme::scaled_px(14.)),
+                                        ),
+                                    )
+                                    .child(issue.comment_count.to_string()),
+                            )
                             .child(
                                 div()
                                     .flex()
@@ -382,6 +393,7 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
                 let row = div()
                     .id(("issue-main-row", number as usize))
                     .w_full()
+                    .min_h(theme::scaled_px(104.))
                     .flex()
                     .flex_row()
                     .gap(theme::scaled_px(14.))
@@ -392,7 +404,7 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(theme().surface)))
                     .on_click(select)
-                    .child(kagi_ui_core::commit_header::avatar_circle(
+                    .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
                         40.,
                         &issue.author,
                         &issue.author,
@@ -460,6 +472,7 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
 
 /// Render the sidebar navigator and Composer/Thread main workspace.
 pub fn render_issues_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+    app.ensure_issue_avatars(cx);
     let left = super::e2e::measure_control(
         "issue-mode-left-pane",
         super::workspace_mode::render_sidebar_pages(

@@ -6,11 +6,11 @@ use super::{
     KagiApp,
 };
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
-use gpui_component::input::{Input, InputEvent, InputState, Paste};
+use gpui_component::input::{Enter, Input, InputEvent, InputState, Paste};
 use gpui_component::{
     button::{Button, ButtonVariants as _},
     text::TextView,
-    Disableable, Selectable, Sizable,
+    Disableable, Icon, Selectable, Sizable,
 };
 use kagi_domain::issue_composer::{fenced_code_paste, IssueDraft};
 use std::collections::HashMap;
@@ -35,6 +35,7 @@ pub(super) struct IssueEditor {
     pub loaded: bool,
     pub loading: bool,
     pub sync_inputs: bool,
+    pub body_revealed: bool,
     pub preview: bool,
     pub focused: bool,
     pub saving: bool,
@@ -65,6 +66,7 @@ impl KagiApp {
                 let body = cx.new(|cx| {
                     InputState::new(window, cx)
                         .code_editor("markdown")
+                        .line_number(false)
                         .placeholder(if number.is_some() {
                             Msg::PrCommentPlaceholder.t()
                         } else {
@@ -72,9 +74,7 @@ impl KagiApp {
                         })
                 });
                 let title = number.is_none().then(|| {
-                    cx.new(|cx| {
-                        InputState::new(window, cx).placeholder(Msg::IssueTitleOptional.t())
-                    })
+                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::IssueComposeEmpty.t()))
                 });
                 body.update(cx, |st, cx| {
                     st.set_value(editor.draft.body.clone(), window, cx)
@@ -84,11 +84,40 @@ impl KagiApp {
                         st.set_value(editor.draft.title.clone(), window, cx)
                     });
                 }
-                let mut inputs = vec![body.clone()];
-                inputs.extend(title.iter().cloned());
-                for input in inputs {
+                let mut inputs = vec![(body.clone(), false)];
+                inputs.extend(title.iter().cloned().map(|input| (input, true)));
+                for (input, is_title) in inputs {
                     let repo = repo.clone();
-                    cx.subscribe(&input, move |app, _, event, cx| {
+                    cx.subscribe_in(&input, window, move |app, _, event, window, cx| {
+                        if number.is_none()
+                            && is_title
+                            && matches!(
+                                event,
+                                InputEvent::PressEnter {
+                                    secondary: false,
+                                    shift: false,
+                                }
+                            )
+                        {
+                            // A single-line Input deliberately propagates Enter before
+                            // emitting PressEnter. Consume that action before moving focus,
+                            // or the same key can reach the newly focused body editor and
+                            // insert a newline there.
+                            cx.stop_propagation();
+                            let body = app
+                                .ui
+                                .get_mut(&owner)
+                                .and_then(|ui| ui.issue_composer.editors.get_mut(&number))
+                                .and_then(|editor| {
+                                    editor.body_revealed = true;
+                                    editor.body_input.clone()
+                                });
+                            if let Some(body) = body {
+                                body.update(cx, |state, cx| state.focus(window, cx));
+                            }
+                            cx.notify();
+                            return;
+                        }
                         if !matches!(event, InputEvent::Change) {
                             return;
                         }
@@ -208,10 +237,28 @@ pub(super) fn render_composer(
             },
         )
     });
-    let disabled = !editor.loaded || state.base_repo.is_none() || held || app.op_latched();
+    let disabled = !editor.loaded
+        || editor.draft.body.trim().is_empty()
+        || state.base_repo.is_none()
+        || held
+        || app.op_latched();
+    // The empty mock is a single prompt. Reuse the existing title entity for
+    // it: its first Change naturally expands the body, while Enter explicitly
+    // reveals and focuses the existing body entity without putting a newline in
+    // the title.
+    let empty_create = number.is_none()
+        && !editor.focused
+        && !editor.preview
+        && !editor.body_revealed
+        && editor.draft.title.trim().is_empty()
+        && editor.draft.body.trim().is_empty();
     let viewer = app.github_login.as_deref().unwrap_or("?");
-    let avatar =
-        kagi_ui_core::commit_header::avatar_circle(40., viewer, viewer, &app.avatars.images);
+    let avatar = kagi_ui_core::commit_header::avatar_circle_with_initials(
+        40.,
+        viewer,
+        viewer,
+        &app.avatars.images,
+    );
     let mut composer = div()
         .id(id)
         .key_context("IssueComposer")
@@ -249,6 +296,8 @@ pub(super) fn render_composer(
                 .border_color(rgb(theme().selected))
                 .text_xs()
                 .text_color(rgb(theme().text_sub))
+                .gap_1()
+                .child(Icon::empty().path("icons/folder-open.svg").xsmall())
                 .child(repo),
         );
     if number.is_none() {
@@ -256,13 +305,27 @@ pub(super) fn render_composer(
             return div().into_any_element();
         };
         content = content.child(
-            Input::new(&title)
-                .appearance(false)
-                .bordered(false)
-                .focus_bordered(false)
+            div()
                 .h(theme::scaled_px(32.))
-                .text_size(theme::scaled_px(20.))
-                .font_weight(gpui::FontWeight::BOLD),
+                .on_action(cx.listener(|_, action: &Enter, _, cx| {
+                    if action.secondary || action.shift {
+                        cx.propagate();
+                    } else {
+                        // InputState emits PressEnter for its subscription, but
+                        // its single-line handler also asks the action to bubble.
+                        // Stop that plain Enter at the title boundary.
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(
+                    Input::new(&title)
+                        .appearance(false)
+                        .bordered(false)
+                        .focus_bordered(false)
+                        .h_full()
+                        .text_size(theme::scaled_px(20.))
+                        .font_weight(gpui::FontWeight::BOLD),
+                ),
         );
     }
     let body = if editor.preview {
@@ -323,17 +386,17 @@ pub(super) fn render_composer(
             )
             .into_any_element()
     };
-    content = content.child(body).child(
-        div()
-            .flex()
-            .justify_between()
-            .items_center()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
+    if !empty_create {
+        content = content.child(body);
+    }
+    content =
+        content.child(
+            div()
+                .flex()
+                .justify_between()
+                .items_center()
+                .child(
+                    div().flex().items_center().gap_2().child(
                         div()
                             .flex()
                             .items_center()
@@ -348,9 +411,10 @@ pub(super) fn render_composer(
                                     "issue-composer-write"
                                 },
                                 Button::new(SharedString::from(format!("{id}-write")))
-                                    .label(Msg::IssueWrite.t())
+                                    .icon(Icon::empty().path("icons/square-pen.svg"))
                                     .small()
                                     .selected(!editor.preview)
+                                    .tooltip(Msg::IssueWrite.t())
                                     .on_click(cx.listener(move |app, _, _, cx| {
                                         if let Some(editor) = app.ui_mut().and_then(|ui| {
                                             ui.issue_composer.editors.get_mut(&number)
@@ -367,9 +431,10 @@ pub(super) fn render_composer(
                                     "issue-composer-preview"
                                 },
                                 Button::new(SharedString::from(format!("{id}-preview")))
-                                    .label(Msg::IssuePreview.t())
+                                    .icon(Icon::empty().path("icons/eye.svg"))
                                     .small()
                                     .selected(editor.preview)
+                                    .tooltip(Msg::IssuePreview.t())
                                     .on_click(cx.listener(move |app, _, _, cx| {
                                         if let Some(editor) = app.ui_mut().and_then(|ui| {
                                             ui.issue_composer.editors.get_mut(&number)
@@ -379,40 +444,48 @@ pub(super) fn render_composer(
                                         cx.notify();
                                     })),
                             )),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("{id}-focus")))
-                            .label(if editor.focused {
-                                Msg::IssueExitFocus.t()
-                            } else {
-                                Msg::IssueFocusEditor.t()
-                            })
-                            .small()
-                            .on_click(cx.listener(move |app, _, window, cx| {
-                                app.toggle_issue_focus(number, window, cx)
-                            })),
                     ),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .children(number.is_none().then(|| {
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme().text_muted))
-                            .child(Msg::IssueComposeHint.t())
-                    }))
-                    .child(
-                        Button::new(SharedString::from(format!("{id}-submit")))
-                            .label(if number.is_some() {
-                                Msg::IssueReply.t()
-                            } else {
-                                Msg::IssueCreate.t()
-                            })
-                            .primary()
+                )
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            Button::new(SharedString::from(format!("{id}-focus")))
+                                .icon(Icon::empty().path(if editor.focused {
+                                    "icons/window-restore.svg"
+                                } else {
+                                    "icons/window-maximize.svg"
+                                }))
+                                .link()
+                                .small()
+                                .tooltip_with_action(
+                                    if editor.focused {
+                                        Msg::IssueExitFocus.t()
+                                    } else {
+                                        Msg::IssueFocusEditor.t()
+                                    },
+                                    &FocusIssueEditor,
+                                    Some("IssueComposer"),
+                                )
+                                .on_click(cx.listener(move |app, _, window, cx| {
+                                    app.toggle_issue_focus(number, window, cx)
+                                })),
+                        )
+                        .child(
+                            super::button_style::KagiButton::accent_icon(
+                                SharedString::from(format!("{id}-submit")),
+                                "icons/comment-send.svg",
+                                if number.is_some() {
+                                    Msg::IssueReply.t()
+                                } else {
+                                    Msg::IssueCreate.t()
+                                },
+                                theme().color_warning,
+                                cx,
+                            )
                             .rounded(px(999.))
                             .h(theme::scaled_px(36.))
                             .px_3()
@@ -420,9 +493,9 @@ pub(super) fn render_composer(
                             .on_click(
                                 cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)),
                             ),
-                    ),
-            ),
-    );
+                        ),
+                ),
+        );
     if let Some(error) = editor.save_error.as_ref() {
         content = content.child(
             div()

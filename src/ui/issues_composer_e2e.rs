@@ -1,7 +1,7 @@
 //! Window-bearing test access to the production Composer input subscription.
 //! No transport writes or replacement implementation of draft editing.
 
-use gpui::{Context, Window};
+use gpui::{App, Context, Focusable, Window};
 use kagi_domain::issue_composer::IssueDraft;
 
 use super::issues_composer::IssueEditor;
@@ -117,6 +117,51 @@ impl KagiApp {
             .get(&None)
             .expect("seeded Composer");
         (editor.draft.clone(), editor.focused)
+    }
+
+    /// Focus the production New Issue title input before the harness sends a
+    /// normal Enter key. The production InputEvent subscription owns the
+    /// reveal/focus transition being tested.
+    pub fn focus_issue_title_for_e2e(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_issue_inputs(window, cx);
+        let input = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .and_then(|editor| editor.title_input.clone())
+            .expect("New Issue title input created by window-bearing render");
+        input.update(cx, |state, cx| state.focus(window, cx));
+    }
+
+    /// Observe both halves of the production Enter transition: persistent
+    /// body visibility and transfer of window focus to the real body input.
+    pub fn issue_composer_enter_state_for_e2e(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> (bool, bool, String, String) {
+        let editor = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .expect("seeded Composer");
+        let body_focused = editor
+            .body_input
+            .as_ref()
+            .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
+        let title_value = editor
+            .title_input
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default();
+        let body_value = editor
+            .body_input
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default();
+        (editor.body_revealed, body_focused, title_value, body_value)
     }
 
     /// Settle the currently queued New Issue revision through the production

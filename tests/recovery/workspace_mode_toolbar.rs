@@ -263,6 +263,44 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(measure(cx, win, "issue-composer").is_some());
     assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), None);
 
+    // The compact Composer keeps its icon-only controls discoverable through
+    // the same E2E IDs, then plain Enter in the real title InputState reveals
+    // and focuses the existing body InputState without editing the title.
+    for control in ["issue-composer-write", "issue-composer-preview"] {
+        assert!(
+            measure(cx, win, control).is_some(),
+            "icon Composer control {control} must remain measurable"
+        );
+    }
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_issue_title_for_e2e(window, cx);
+        });
+    })
+    .unwrap();
+    cx.simulate_keystrokes(win, "enter");
+    cx.run_until_parked();
+    let (body_revealed, body_focused, title_value, body_value) = cx
+        .update_window(win, |_, window, cx| {
+            app.read(cx).issue_composer_enter_state_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert!(body_revealed, "plain Enter must reveal the body editor");
+    assert!(body_focused, "plain Enter must focus the body editor");
+    assert!(
+        title_value.is_empty(),
+        "plain Enter must not insert a newline in the title InputState: {title_value:?}"
+    );
+    assert!(
+        body_value.is_empty(),
+        "the title Enter action must not fall through into the body InputState: {body_value:?}"
+    );
+    let (empty_draft, _) = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e());
+    assert!(
+        empty_draft.title.is_empty() && empty_draft.body.is_empty(),
+        "Enter must not insert a newline or otherwise edit the empty draft"
+    );
+
     // Editor changes must reach the actual session-owned draft subscription.
     // Do not set draft.body directly: that would hide a missing Change listener.
     let compact = measure(cx, win, "issue-composer").expect("Composer is always visible");

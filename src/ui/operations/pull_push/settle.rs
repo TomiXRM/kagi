@@ -241,7 +241,8 @@ impl KagiApp {
             self.push_toast(
                 ToastKind::Error,
                 format!(
-                    "{}: {}",
+                    "{} — {}: {}",
+                    entry.repo,
                     entry.op,
                     crate::ui::oplog_panel::outcome_summary(&entry.outcome)
                 ),

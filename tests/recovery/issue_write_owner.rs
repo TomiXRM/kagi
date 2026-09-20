@@ -51,7 +51,10 @@ pub fn scenario_issue_failure_notice_survives_tab_switch(cx: &mut VisualTestAppC
             .read(cx)
             .toasts()
             .iter()
-            .any(|toast| toast.message.contains("the server refused the issue"))));
+            .any(
+                |toast| toast.message.contains("the server refused the issue")
+                    && toast.message.contains(&repo.display().to_string())
+            )));
     });
 
     app.update(cx, |app, _| {

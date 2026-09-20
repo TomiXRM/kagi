@@ -410,8 +410,13 @@ fn render_table_row(
                 .flex()
                 .flex_col()
                 .gap_px()
+                // `w_full` + `overflow_hidden`: a long title otherwise sets
+                // the column's intrinsic width and pushes the fixed columns
+                // to the right out of alignment (user report, zed).
+                .overflow_hidden()
                 .child(
                     div()
+                        .w_full()
                         .truncate()
                         .text_sm()
                         .text_color(rgb(theme().text_main))
@@ -419,6 +424,7 @@ fn render_table_row(
                 )
                 .child(
                     div()
+                        .w_full()
                         .truncate()
                         .child(safe_text(&format!("{} \u{2192} {}", pr.head, pr.base))),
                 ),

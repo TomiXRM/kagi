@@ -9,8 +9,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use kagi_git::drafts::{
-    clear_draft, clear_issue_draft_if_version, flush_issue_drafts, issue_draft_version, load_draft,
-    load_issue_draft, queue_issue_draft, save_draft,
+    clear_draft, clear_issue_draft_if_version, flush_issue_draft_if_version, flush_issue_drafts,
+    issue_draft_version, load_draft, load_issue_draft, queue_issue_draft, save_draft,
 };
 
 /// Serialize all env-var-using tests to prevent KAGI_LOG_DIR races.
@@ -291,6 +291,63 @@ fn failed_issue_flush_preserves_pending_value_for_retry() {
             Some(("title".into(), "retry body".into()))
         );
         assert!(load_draft(repo, ":issue:new").is_some());
+    });
+}
+
+#[test]
+fn keyed_issue_flush_does_not_borrow_another_storage_error() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|working| {
+        let blocked_root = tempfile::tempdir().expect("blocked storage parent");
+        let blocked = blocked_root.path().join("not-a-directory");
+        std::fs::write(&blocked, "block directory creation").expect("create blocker");
+        let failed_repo = Path::new("/tmp/kagi-it/issue-keyed-failed");
+        std::env::set_var("KAGI_LOG_DIR", &blocked);
+        let failed = queue_issue_draft(failed_repo, None, "failed", "retained body");
+
+        let saved_repo = Path::new("/tmp/kagi-it/issue-keyed-saved");
+        std::env::set_var("KAGI_LOG_DIR", working);
+        let stale = queue_issue_draft(saved_repo, Some(7), "", "stale reply");
+        assert!(!flush_issue_draft_if_version(saved_repo, Some(8), stale)
+            .expect("wrong Issue is not an error"));
+        assert_eq!(
+            load_issue_draft(saved_repo, Some(7)),
+            Some((String::new(), "stale reply".into())),
+            "wrong Issue must not consume the pending value"
+        );
+        let saved = queue_issue_draft(saved_repo, Some(7), "", "saved reply");
+        assert!(!flush_issue_draft_if_version(saved_repo, Some(7), stale)
+            .expect("superseded timer is not an error"));
+        assert_eq!(
+            load_issue_draft(saved_repo, Some(7)),
+            Some((String::new(), "saved reply".into())),
+            "stale version must not persist or consume the latest value"
+        );
+        assert!(flush_issue_draft_if_version(saved_repo, Some(7), saved)
+            .expect("unrelated valid destination must flush"));
+        assert!(!flush_issue_draft_if_version(saved_repo, Some(7), saved)
+            .expect("an already-flushed version is a no-op"));
+        assert_eq!(
+            load_issue_draft(saved_repo, Some(7)),
+            Some((String::new(), "saved reply".into()))
+        );
+
+        assert!(flush_issue_draft_if_version(failed_repo, None, failed).is_err());
+        std::env::set_var("KAGI_LOG_DIR", &blocked);
+        assert_eq!(
+            load_issue_draft(failed_repo, None),
+            Some(("failed".into(), "retained body".into()))
+        );
+
+        std::fs::remove_file(&blocked).expect("remove blocker");
+        assert!(flush_issue_draft_if_version(failed_repo, None, failed)
+            .expect("retry retained failed destination"));
+        assert_eq!(
+            load_issue_draft(failed_repo, None),
+            Some(("failed".into(), "retained body".into()))
+        );
     });
 }
 

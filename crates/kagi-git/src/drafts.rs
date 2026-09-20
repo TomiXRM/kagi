@@ -25,7 +25,8 @@
 //! - [`save_draft`] — write (or delete, when empty) the draft for a branch
 //! - [`load_draft`] — read the draft for a branch (`None` when absent/corrupt)
 //! - [`clear_draft`] — delete the draft for a branch (e.g. after a commit)
-//! - [`queue_issue_draft`] / [`flush_issue_drafts`] — latest-value Issue autosave
+//! - [`queue_issue_draft`] / [`flush_issue_draft_if_version`] — keyed Issue autosave
+//! - [`flush_issue_drafts`] — best-effort flush of every pending Issue draft
 //! - [`load_issue_draft`] — read the latest pending or saved Issue draft
 //! - [`issue_draft_version`] / [`clear_issue_draft_if_version`] — completion guards
 
@@ -232,7 +233,8 @@ fn issue_drafts() -> &'static Mutex<IssueDraftQueue> {
 ///
 /// `None` is the new-Issue Composer; `Some(number)` is that Issue's Reply.
 /// Queue two empty strings to clear. The caller schedules a background flush
-/// after its debounce and calls [`flush_issue_drafts`] again before exiting.
+/// through [`flush_issue_draft_if_version`] after its debounce; application
+/// shutdown calls [`flush_issue_drafts`] for anything still pending.
 /// Returns the new token to capture when dispatching an Issue write.
 pub fn queue_issue_draft(repo: &Path, number: Option<u64>, title: &str, body: &str) -> u64 {
     let key = IssueDraftKey::new(repo, number);
@@ -280,6 +282,53 @@ pub fn clear_issue_draft_if_version(repo: &Path, number: Option<u64>, version: u
     true
 }
 
+/// Persist one pending Issue draft only while `version` still identifies its
+/// `(repo, number, storage path)` key.
+///
+/// Returns `Ok(false)` when the timer was superseded or another flush already
+/// persisted the value. A failure leaves this entry pending for retry and can
+/// therefore be reported by its own editor without borrowing another draft's
+/// aggregate [`flush_issue_drafts`] error.
+pub fn flush_issue_draft_if_version(
+    repo: &Path,
+    number: Option<u64>,
+    version: u64,
+) -> Result<bool, GitError> {
+    let requested = IssueDraftKey::new(repo, number);
+    let mut queue = issue_drafts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let key = queue.versions.iter().find_map(|(key, current)| {
+        (*current == version && key.repo == requested.repo && key.branch == requested.branch)
+            .then(|| key.clone())
+    });
+    let Some(key) = key else {
+        return Ok(false);
+    };
+    let Some((title, body)) = queue.pending.get(&key) else {
+        return Ok(false);
+    };
+    persist_issue_draft(&key, title, body)?;
+    queue.pending.remove(&key);
+    Ok(true)
+}
+
+fn persist_issue_draft(key: &IssueDraftKey, title: &str, body: &str) -> Result<(), GitError> {
+    let Some(path) = key.path.as_deref() else {
+        return Err(GitError::Other(
+            "draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".into(),
+        ));
+    };
+    let message = if title.is_empty() && body.is_empty() {
+        String::new()
+    } else {
+        // A string tuple serializes without a fallible custom serializer. The
+        // outer ADR-0042 record stays unchanged.
+        serde_json::json!([title, body]).to_string()
+    };
+    save_draft_at(path, &key.repo, &key.branch, &message, "issue-composer")
+}
+
 /// Persist all pending Issue drafts using the existing atomic draft boundary.
 ///
 /// Keep the lock during writes: an older flush cannot run after a newer clear,
@@ -291,21 +340,7 @@ pub fn flush_issue_drafts() -> Result<(), GitError> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut first_error = None;
     queue.pending.retain(|key, (title, body)| {
-        let result = match key.path.as_deref() {
-            Some(path) => {
-                let message = if title.is_empty() && body.is_empty() {
-                    String::new()
-                } else {
-                    // A string tuple serializes without a fallible custom
-                    // serializer. The outer ADR-0042 record stays unchanged.
-                    serde_json::json!([title, body]).to_string()
-                };
-                save_draft_at(path, &key.repo, &key.branch, &message, "issue-composer")
-            }
-            None => Err(GitError::Other(
-                "draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".into(),
-            )),
-        };
+        let result = persist_issue_draft(key, title, body);
         match result {
             Ok(()) => false,
             Err(error) => {

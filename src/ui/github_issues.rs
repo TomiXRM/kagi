@@ -1,7 +1,19 @@
 //! Owner-bound Issue composer reads and writes. No completion reads active repo.
 use super::operations::RunPresentation;
 use super::*;
+use kagi_domain::issue_composer::IssueDraft;
 use std::sync::Arc;
+
+fn issue_write_title(ui: &TabUiState, number: Option<u64>, draft: &IssueDraft) -> String {
+    let Some(number) = number else {
+        return draft.effective_title();
+    };
+    ui.github_issue_details
+        .get(&number)
+        .or_else(|| ui.github_issues.iter().find(|issue| issue.number == number))
+        .map(|issue| issue.title.clone())
+        .unwrap_or_default()
+}
 
 impl KagiApp {
     /// Refresh the read-only Issue list for the session that starts the
@@ -243,12 +255,16 @@ impl KagiApp {
             acx.background_executor()
                 .timer(std::time::Duration::from_millis(250))
                 .await;
-            if kagi_git::drafts::issue_draft_version(&repo, number) != storage_version {
-                return;
-            }
+            let flush_repo = repo.clone();
             let result = acx
                 .background_executor()
-                .spawn(async { kagi_git::drafts::flush_issue_drafts() })
+                .spawn(async move {
+                    kagi_git::drafts::flush_issue_draft_if_version(
+                        &flush_repo,
+                        number,
+                        storage_version,
+                    )
+                })
                 .await;
             let _ = this.update(acx, |app, cx| {
                 let error = result.err().map(|e| e.to_string());
@@ -288,7 +304,7 @@ impl KagiApp {
         };
         let draft = editor.draft.clone();
         let storage_version = editor.storage_version;
-        let title = draft.effective_title();
+        let title = issue_write_title(ui, number, &draft);
         let op_name = if number.is_some() {
             "issue-comment"
         } else {
@@ -413,5 +429,47 @@ impl KagiApp {
             self.load_github_issue_detail_for(owner, repo, number, cx);
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kagi_domain::github::{Issue, IssueState};
+
+    fn issue(number: u64, title: &str) -> Issue {
+        Issue {
+            number,
+            title: title.into(),
+            state: IssueState::Open,
+            url: String::new(),
+            author: String::new(),
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            body: String::new(),
+            comments: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn issue_write_title_uses_create_fallback_but_real_reply_title() {
+        let mut ui = TabUiState::default();
+        ui.github_issues.push(issue(7, "list title"));
+        ui.github_issue_details.insert(7, issue(7, "detail title"));
+        ui.github_issues.push(issue(8, "fallback title"));
+        let draft = IssueDraft {
+            body: "reply body must not become its title".into(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            issue_write_title(&ui, None, &draft),
+            draft.effective_title()
+        );
+        assert_eq!(issue_write_title(&ui, Some(7), &draft), "detail title");
+        assert_eq!(issue_write_title(&ui, Some(8), &draft), "fallback title");
+        assert_eq!(issue_write_title(&ui, Some(9), &draft), "");
     }
 }

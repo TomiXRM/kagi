@@ -28,7 +28,9 @@ fn list_presentation(
     has_error: bool,
     count: usize,
 ) -> IssueListPresentation {
-    if loading && !loaded {
+    if count > 0 {
+        IssueListPresentation::Issues
+    } else if loading && !loaded {
         IssueListPresentation::Loading
     } else if has_error && !loaded {
         IssueListPresentation::Error
@@ -195,17 +197,28 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                                 .text_sm()
                                 .line_height(theme::scaled_px(18.))
                                 .text_color(rgb(theme().text_main))
-                                .child(safe_text(&format!("#{} {}", issue.number, issue.title))),
+                                .child(safe_text(&issue.title)),
                         )
                         .child(
                             div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .w_full()
                                 .text_size(theme::scaled_px(10.))
                                 .line_height(theme::scaled_px(13.))
                                 .text_color(rgb(theme().text_muted))
-                                .child(safe_text(&format!(
+                                .child(div().flex_shrink_0().child(safe_text(&format!(
                                     "{age} · {}",
                                     super::i18n::issue_comments(issue.comment_count)
-                                ))),
+                                ))))
+                                .child(div().flex_1().min_w(px(0.)))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .child(SharedString::from(format!("#{}", issue.number))),
+                                ),
                         );
                     let row = super::workspace_mode::sidebar_list_row(active_row)
                         .id(("issue-mode-card", number as usize))
@@ -541,6 +554,14 @@ mod tests {
         );
         assert_eq!(
             list_presentation(true, true, false, 1),
+            IssueListPresentation::Issues
+        );
+        assert_eq!(
+            list_presentation(true, false, false, 1),
+            IssueListPresentation::Issues
+        );
+        assert_eq!(
+            list_presentation(false, false, true, 1),
             IssueListPresentation::Issues
         );
     }

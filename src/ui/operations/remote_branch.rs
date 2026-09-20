@@ -14,6 +14,15 @@ use super::RunPresentation;
 use crate::ui::blocking_ops::*;
 use crate::ui::*;
 
+struct LoadedPrLocal {
+    base: CommitId,
+    base_tip: CommitId,
+    head: CommitId,
+    commits: Vec<kagi_git::Commit>,
+    files: Vec<kagi_git::FileStatus>,
+    diff: Option<crate::ui::diff_view::MainDiffView>,
+}
+
 impl KagiApp {
     /// Open the delete-remote-branch modal for `remote_branch` (e.g.
     /// `"origin/feature/x"`).
@@ -190,6 +199,318 @@ impl KagiApp {
             });
         })
         .detach();
+    }
+
+    /// Fetch the base and GitHub synthetic head ref, then finish opening the
+    /// PR tab that was shown immediately by the click. The owner and PR head
+    /// are frozen before the background work starts.
+    pub(crate) fn fetch_pr_for_open(
+        &mut self,
+        pr: kagi_domain::github::PullRequest,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(owner), Some(repo_path)) = (self.active_session(), self.repo_path.clone()) else {
+            return;
+        };
+        let Some(visit) = self.app_sessions.visit(owner) else {
+            return;
+        };
+        let already_loading = self
+            .pr_mode()
+            .and_then(|mode| {
+                mode.tabs
+                    .iter()
+                    .find(|tab| tab.pr.number == pr.number && tab.pr.base_repo == pr.base_repo)
+            })
+            .is_some_and(|tab| tab.local_refs_loading);
+        if already_loading {
+            return;
+        }
+        let generation = if let Some(tab) = self.pr_mode_mut().and_then(|mode| {
+            mode.tabs
+                .iter_mut()
+                .find(|tab| tab.pr.number == pr.number && tab.pr.base_repo == pr.base_repo)
+        }) {
+            tab.local_refs_loading = true;
+            tab.local_refs_generation = tab.local_refs_generation.wrapping_add(1);
+            tab.local_refs_generation
+        } else {
+            return;
+        };
+        self.start_pr_ref_fetch(owner, visit, repo_path, pr, generation, cx);
+    }
+
+    fn start_pr_ref_fetch(
+        &mut self,
+        owner: crate::app::SessionId,
+        visit: u64,
+        repo_path: std::path::PathBuf,
+        pr: kagi_domain::github::PullRequest,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self.app_sessions.visit(owner) != Some(visit)
+            || !self.ui.get(&owner).is_some_and(|ui| {
+                ui.pr_mode.as_ref().is_some_and(|mode| {
+                    mode.tabs.iter().any(|tab| {
+                        tab.pr.number == pr.number
+                            && tab.pr.base_repo == pr.base_repo
+                            && tab.pr.head_sha == pr.head_sha
+                            && tab.local_refs_loading
+                            && tab.local_refs_generation == generation
+                    })
+                })
+            })
+        {
+            return;
+        }
+        self.refresh_write_busy();
+        if self.op_latched() {
+            let retry_repo = repo_path.clone();
+            let retry_pr = pr.clone();
+            cx.spawn(async move |this, acx| {
+                acx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+                let _ = this.update(acx, |app, cx| {
+                    app.start_pr_ref_fetch(owner, visit, retry_repo, retry_pr, generation, cx);
+                });
+            })
+            .detach();
+            return;
+        }
+        let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
+            self.finish_pr_ref_load(owner, visit, generation, &pr, None, cx);
+            return;
+        };
+        klog!("pr-mode: fetch #{} start", pr.number);
+        let base_repo = pr.base_repo.clone();
+        let base_branch = pr.base.clone();
+        let head_sha = pr.head_sha.clone();
+        let number = pr.number;
+        let recorded_repo = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            let result = kagi_git::Backend::open(&repo_path).and_then(|backend| {
+                let (outcome, base_tip, head) =
+                    backend.fetch_pr_refs(&base_repo, number, &base_branch, &head_sha)?;
+                let base = backend
+                    .merge_base(&base_tip, &head)
+                    .unwrap_or_else(|_| base_tip.clone());
+                let commits =
+                    backend.commits_between(&base, &head, crate::ui::pr_mode::COMMIT_LIMIT)?;
+                let files = backend.compare_commits(&base, &head)?;
+                let diff = files.first().and_then(|file| {
+                    backend
+                        .compare_file_diff(&base, &head, &file.path)
+                        .ok()
+                        .map(|raw| {
+                            crate::ui::diff_view::build_main_diff_view(
+                                &raw,
+                                &file.path,
+                                0,
+                                MainDiffSource::Compare {
+                                    base: base.clone(),
+                                    target: CompareTarget::Commit(head.clone()),
+                                    file_index: 0,
+                                },
+                            )
+                        })
+                });
+                Ok((
+                    outcome,
+                    LoadedPrLocal {
+                        base,
+                        base_tip,
+                        head,
+                        commits,
+                        files,
+                        diff,
+                    },
+                ))
+            });
+            lease.complete_git(&result);
+            result
+        });
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| match result {
+                Ok((outcome, local)) => {
+                    app.refresh_write_busy();
+                    let commit_count = local.commits.len();
+                    let file_count = local.files.len();
+                    let applied =
+                        app.finish_pr_ref_load(owner, visit, generation, &pr, Some(local), cx);
+                    if applied && app.active_session() == Some(owner) && outcome.changed {
+                        app.reload(cx);
+                    }
+                    if !applied {
+                        app.retry_stale_pr_ref_load(owner, visit, &pr, cx);
+                    }
+                    klog!("pr-mode: fetch #{} ok", pr.number);
+                    klog!(
+                        "pr-mode: open #{} commits={} files={}",
+                        pr.number,
+                        commit_count,
+                        file_count
+                    );
+                }
+                Err(error) => {
+                    app.refresh_write_busy();
+                    let applied = app.finish_pr_ref_load(owner, visit, generation, &pr, None, cx);
+                    klog!("pr-mode: fetch #{} failed: {}", pr.number, error);
+                    let detail =
+                        format!("{} — PR #{}: {}", recorded_repo.display(), pr.number, error);
+                    let outcome = if matches!(error, kagi_git::GitError::TerminationUnknown(_)) {
+                        kagi_git::oplog::OpOutcome::Unknown {
+                            after: kagi_git::StateSummary {
+                                head: "unchanged".into(),
+                                dirty: "unchanged".into(),
+                            },
+                            evidence: detail,
+                        }
+                    } else {
+                        kagi_git::oplog::OpOutcome::Failed { error: detail }
+                    };
+                    app.record_pr_fetch_failure(
+                        owner,
+                        "fetch-pr",
+                        kagi_git::StateSummary {
+                            head: format!("PR #{}", pr.number),
+                            dirty: "unchanged".into(),
+                        },
+                        outcome,
+                        &recorded_repo,
+                        cx,
+                    );
+                    if !applied {
+                        app.retry_stale_pr_ref_load(owner, visit, &pr, cx);
+                    } else if app.app_sessions.visit(owner) == Some(visit) {
+                        app.refresh_github_prs_for(owner, recorded_repo, cx);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn finish_pr_ref_load(
+        &mut self,
+        owner: crate::app::SessionId,
+        visit: u64,
+        generation: u64,
+        pr: &kagi_domain::github::PullRequest,
+        local: Option<LoadedPrLocal>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.app_sessions.visit(owner) != Some(visit) {
+            return false;
+        }
+        let owner_is_active = self.active_session() == Some(owner);
+        let Some(ui) = self.ui.get_mut(&owner) else {
+            return false;
+        };
+        let Some(mode) = ui.pr_mode.as_mut() else {
+            return false;
+        };
+        let Some(tab) = mode.tabs.iter_mut().find(|tab| {
+            tab.pr.number == pr.number
+                && tab.pr.base_repo == pr.base_repo
+                && tab.pr.head_sha == pr.head_sha
+                && tab.local_refs_generation == generation
+        }) else {
+            return false;
+        };
+        tab.local_refs_loading = false;
+        let loaded = local.is_some();
+        if let Some(local) = local {
+            let diff = local.diff;
+            super::super::github_pr_detail::install_local_pr_head(
+                tab,
+                local.base,
+                local.base_tip,
+                local.head,
+                local.commits,
+                local.files,
+            );
+            tab.diff = diff;
+            tab.conflicts = None;
+            tab.conflict_selected = None;
+            tab.conflict_preview = None;
+            tab.conflict_at = 0;
+        }
+        let reload_conflicts = loaded
+            && owner_is_active
+            && mode.view == crate::ui::pr_mode::PrView::Conflicts
+            && mode.active.is_some_and(|ix| {
+                mode.tabs.get(ix).is_some_and(|open| {
+                    open.pr.number == pr.number && open.pr.base_repo == pr.base_repo
+                })
+            });
+        cx.notify();
+        if reload_conflicts {
+            self.pr_mode_load_conflicts(cx);
+        }
+        true
+    }
+
+    /// A newer L1 head may arrive while an older fetch owns the global fetch
+    /// lease. Once that stale request settles, hand the lease to the newest
+    /// tab intent instead of leaving the page empty until another click.
+    fn retry_stale_pr_ref_load(
+        &mut self,
+        owner: crate::app::SessionId,
+        visit: u64,
+        stale: &kagi_domain::github::PullRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != Some(owner) || self.app_sessions.visit(owner) != Some(visit) {
+            return;
+        }
+        let latest = self.pr_mode().and_then(|mode| {
+            mode.tabs
+                .iter()
+                .find(|tab| {
+                    tab.pr.number == stale.number
+                        && tab.pr.base_repo == stale.base_repo
+                        && tab.pr.head_sha != stale.head_sha
+                        && !tab.local_refs_loading
+                })
+                .map(|tab| tab.pr.clone())
+        });
+        if let Some(latest) = latest {
+            self.fetch_pr_for_open(latest, cx);
+        }
+    }
+
+    /// Persist a passive PR-load failure without replacing another tab's
+    /// footer or creating an expiring snackbar. The Operation Log owns the
+    /// complete error; when its repository is active, reveal that row.
+    fn record_pr_fetch_failure(
+        &mut self,
+        owner: crate::app::SessionId,
+        op: &str,
+        before: kagi_git::StateSummary,
+        outcome: kagi_git::oplog::OpOutcome,
+        repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let entry =
+            kagi_git::oplog::OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
+        if let Err(error) = kagi_git::oplog::append_oplog(&entry) {
+            klog!("oplog: write failed (non-fatal): {}", error);
+            self.present_oplog_write_failure(&error, cx);
+        }
+        if let Some(panel) = self.op_log.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.push(entry);
+                panel.collapse();
+                cx.notify();
+            });
+        }
+        if self.active_session() == Some(owner) {
+            self.bottom_panel_open = true;
+            self.bottom_tab = BottomTab::OperationLog;
+        }
     }
 }
 

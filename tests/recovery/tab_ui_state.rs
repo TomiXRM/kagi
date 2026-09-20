@@ -492,6 +492,46 @@ pub fn scenario_pr_mode_cleared_on_activation(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS pr_mode_cleared_on_activation");
 }
 
+/// A missing local PR ref is a loading state, not a navigation blocker. The
+/// page must exist before the background fetch can finish (or fail).
+pub fn scenario_pr_open_enters_before_ref_fetch(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    cx.run_until_parked();
+
+    app.update(cx, |app, cx| {
+        app.pr_mode_open(&crate::cleanup_publish_owner::pr(71, "never-fetched"), cx);
+        let mode = app.pr_mode().expect("PR mode is open");
+        assert_eq!(mode.tabs.len(), 1, "the click must create the PR page");
+        assert_eq!(mode.active, Some(0), "the new PR page must be visible");
+        assert!(
+            mode.tabs[0].local_refs_loading,
+            "the page must expose its local-ref loading state"
+        );
+        app.pr_mode_show(kagi::ui::pr_mode::PrView::Conflicts, cx);
+        assert!(
+            app.pr_mode().unwrap().tabs[0].conflicts.is_none(),
+            "conflict loading must wait for non-empty local refs"
+        );
+    });
+
+    cx.run_until_parked();
+    app.update(cx, |app, _| {
+        let tab = &app.pr_mode().unwrap().tabs[0];
+        assert!(
+            !tab.local_refs_loading,
+            "a failed fetch must settle instead of spinning forever"
+        );
+        assert!(
+            tab.head.0.is_empty(),
+            "failure must not invent a local head"
+        );
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pr_open_enters_before_ref_fetch");
+}
+
 pub fn scenario_tab_ui_state_rejects_detached_writer(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());

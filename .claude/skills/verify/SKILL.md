@@ -124,10 +124,11 @@ The current suite covers:
   plans after departure and revisit while releasing the planning latch.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
-  `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,smart_commit_generation_owner,smart_commit_modal_and_probe`.
+  `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.
   The position scenario preserves each tab's list/graph positions, paging limit,
   branch folds, and cleanup selection while proving a newly opened tab reads at
-  its own default limit. Smart Commit freezes the initiating session for spinner
+  its own default limit. The PR-open scenario proves an unfetched head enters
+  its page before the background ref fetch settles. Smart Commit freezes the initiating session for spinner
   and completion state, drops detached-owner completions, uses the shared modal
   slot without Enter/Escape fallthrough, resets modal-list scroll on replacement,
   and probes repository-independent capabilities once per global revision.

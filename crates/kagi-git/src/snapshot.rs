@@ -33,8 +33,8 @@ use super::{
 pub struct RepoSnapshot {
     /// Current HEAD state (attached / detached / unborn).
     pub head: Head,
-    /// Commits reachable from refs plus registered detached-worktree HEADs, in
-    /// topological order.
+    /// Commits reachable from refs, registered detached-worktree HEADs, and
+    /// Kagi's fetched PR heads, in topological order.
     pub commits: Vec<Commit>,
     /// Local branches, ordered by name.
     pub branches: Vec<Branch>,
@@ -82,8 +82,8 @@ pub struct RepoSnapshot {
 /// * `repo`         — A mutable reference to an already-opened [`Repository`].
 ///   `&mut` is required because `stash_foreach` mutably borrows the repo.
 /// * `commit_limit` — Ordinary-history budget. Pass `10_000` for the MVP.
-///   Detached-worktree roots are pinned beyond this budget when necessary, so
-///   `commits` can exceed it by at most the number of distinct detached roots.
+///   Detached-worktree and fetched-PR roots are pinned beyond this budget when
+///   necessary.
 ///
 /// # Unborn / empty repositories
 ///
@@ -125,12 +125,19 @@ fn snapshot_inner(
     // Detached linked-worktree HEADs are graph roots even when unreachable
     // from all named refs and the currently open HEAD (#595).
     let worktrees = collect_worktrees(repo, &status)?;
-    let detached_roots: Vec<CommitId> = worktrees
+    let mut required_roots: Vec<CommitId> = worktrees
         .iter()
         .filter(|worktree| !worktree.is_current && worktree.branch.is_none())
         .filter_map(|worktree| worktree.head.clone())
         .collect();
-    let commits = commit_log_with_roots(repo, commit_limit, &detached_roots)?;
+    if let Ok(refs) = repo.references_glob("refs/kagi/pr/**") {
+        required_roots.extend(
+            refs.flatten()
+                .filter_map(|reference| reference.target())
+                .map(|oid| CommitId(oid.to_string())),
+        );
+    }
+    let commits = commit_log_with_roots(repo, commit_limit, &required_roots)?;
     let branches = collect_branches(repo, &head)?;
     let remote_branches = collect_remote_branches(repo)?;
     let tags = collect_tags(repo)?;

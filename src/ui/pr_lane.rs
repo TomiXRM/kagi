@@ -44,6 +44,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
     let mode = app.pr_mode()?;
     let tab = mode.active.and_then(|ix| mode.tabs.get(ix))?;
     let number = tab.pr.number;
+    let local_refs_loading = tab.local_refs_loading;
     let view = app.view();
 
     // The PR's commits, as positions in the history the commit list is showing.
@@ -187,6 +188,17 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             .flex_col()
             .bg(rgb(theme().bg_base))
             .child(render_header(number, hits.len()))
+            .when(local_refs_loading, |lane| {
+                lane.child(
+                    div()
+                        .id("pr-lane-loading")
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(super::pr_conversation::render_loading()),
+                )
+            })
             .children(lane_body)
             .children(detail)
             .into_any_element(),

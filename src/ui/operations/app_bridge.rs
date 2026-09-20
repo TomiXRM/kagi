@@ -656,6 +656,16 @@ impl KagiApp {
         )));
         self.present_app_notice();
     }
+    pub(crate) fn present_oplog_write_failure(
+        &mut self,
+        error: impl std::fmt::Display,
+        cx: &mut Context<Self>,
+    ) {
+        let message = i18n::oplog_write_failed(error);
+        self.push_toast(ToastKind::Error, message.clone(), cx);
+        self.app_notices.push_back(message.into());
+        self.present_app_notice();
+    }
     pub(crate) fn present_app_notice(&mut self) {
         if self.has_active_modal() {
             return;

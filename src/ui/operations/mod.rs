@@ -474,7 +474,7 @@ impl KagiApp {
                         // Foreground presentation belongs to the frozen owner,
                         // while Operation Log is window-global and must still
                         // receive the durable result after a tab switch.
-                        app.insert_recorded_row(&report.recording, cx);
+                        app.present_recorded_background(&report.recording, cx);
                         klog!("op result dropped: tab switched during op");
                         continue;
                     }

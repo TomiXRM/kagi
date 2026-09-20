@@ -47,6 +47,11 @@ pub fn scenario_issue_failure_notice_survives_tab_switch(cx: &mut VisualTestAppC
                 && entry.repo == repo.display().to_string()
                 && matches!(entry.outcome, kagi_git::oplog::OpOutcome::Failed { .. })
         }));
+        assert!(state.toast_stack.as_ref().is_some_and(|stack| stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .any(|toast| toast.message.contains("the server refused the issue"))));
     });
 
     app.update(cx, |app, _| {

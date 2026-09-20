@@ -151,6 +151,12 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
             "a failed oplog append must reach the user: they are about to trust \
              a log that is missing this entry (#643 A1)"
         );
+        assert!(
+            app.read(cx).app_notice().is_some_and(
+                |notice| notice.message.contains("oplog") || notice.message.contains("記録")
+            ),
+            "a failed oplog append has no durable row, so its full error must remain in AppNotice"
+        );
     });
 
     drop(lock);

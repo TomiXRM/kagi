@@ -114,6 +114,14 @@ impl KagiApp {
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     if !current {
+                        let announce_at = report.announce();
+                        for (at, step) in report.steps.iter().enumerate() {
+                            if at == announce_at {
+                                app.present_recorded_background(&step.recording, cx);
+                            } else {
+                                app.insert_recorded_row(&step.recording, cx);
+                            }
+                        }
                         klog!("op result dropped: tab switched during op");
                         continue;
                     }
@@ -219,5 +227,27 @@ impl KagiApp {
                 cx.notify();
             });
         }
+    }
+
+    /// Put a background owner's receipt in the window-global Operation Log and
+    /// announce a non-success without changing the active tab's footer/panes.
+    pub(in crate::ui::operations) fn present_recorded_background(
+        &mut self,
+        recording: &kagi_git::backend::recording::Recording,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        if !matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) {
+            self.push_toast(
+                ToastKind::Error,
+                format!(
+                    "{}: {}",
+                    entry.op,
+                    crate::ui::oplog_panel::outcome_summary(&entry.outcome)
+                ),
+                cx,
+            );
+        }
+        self.insert_recorded_row(recording, cx);
     }
 }

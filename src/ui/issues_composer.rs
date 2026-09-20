@@ -1,9 +1,17 @@
 //! Session-owned source editors. Window-bearing render only creates inputs;
 //! subscriptions persist edits through the existing draft storage boundary.
-use super::{i18n::Msg, theme::theme, KagiApp};
+use super::{
+    i18n::Msg,
+    theme::{self, theme},
+    KagiApp,
+};
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::input::{Input, InputEvent, InputState, Paste};
-use gpui_component::{button::Button, text::TextView, Disableable, Sizable};
+use gpui_component::{
+    button::{Button, ButtonVariants as _},
+    text::TextView,
+    Disableable, Selectable, Sizable,
+};
 use kagi_domain::issue_composer::{fenced_code_paste, IssueDraft};
 use std::collections::HashMap;
 
@@ -201,32 +209,61 @@ pub(super) fn render_composer(
         )
     });
     let disabled = !editor.loaded || state.base_repo.is_none() || held || app.op_latched();
+    let viewer = app.github_login.as_deref().unwrap_or("?");
+    let avatar =
+        kagi_ui_core::commit_header::avatar_circle(40., viewer, viewer, &app.avatars.images);
     let mut composer = div()
         .id(id)
         .key_context("IssueComposer")
         .w_full()
         .flex()
-        .flex_col()
-        .gap_2()
-        .p_3()
-        .border_1()
-        .border_color(super::pr_attention::card_border())
+        .flex_row()
+        .gap(theme::scaled_px(14.))
+        .px(theme::scaled_px(24.))
+        .pt(theme::scaled_px(20.))
+        .pb(theme::scaled_px(14.))
+        .border_b_1()
+        .border_color(rgb(theme().selected))
         .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
             app.toggle_issue_focus(number, window, cx)
-        }))
+        }));
+    let repo = state
+        .base_repo
+        .clone()
+        .unwrap_or_else(|| Msg::IssueRepoUnavailable.t().into());
+    let mut content = div()
+        .flex_1()
+        .min_w(px(0.))
+        .flex()
+        .flex_col()
+        .gap(theme::scaled_px(10.))
         .child(
-            div().text_sm().text_color(rgb(theme().text_muted)).child(
-                state
-                    .base_repo
-                    .clone()
-                    .unwrap_or_else(|| Msg::IssueRepoUnavailable.t().into()),
-            ),
+            div()
+                .self_start()
+                .h(theme::scaled_px(28.))
+                .px(theme::scaled_px(10.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .border_1()
+                .border_color(rgb(theme().selected))
+                .text_xs()
+                .text_color(rgb(theme().text_sub))
+                .child(repo),
         );
     if number.is_none() {
         let Some(title) = editor.title_input.clone() else {
             return div().into_any_element();
         };
-        composer = composer.child(Input::new(&title).small());
+        content = content.child(
+            Input::new(&title)
+                .appearance(false)
+                .bordered(false)
+                .focus_bordered(false)
+                .h(theme::scaled_px(32.))
+                .text_size(theme::scaled_px(20.))
+                .font_weight(gpui::FontWeight::BOLD),
+        );
     }
     let body = if editor.preview {
         let markdown = kagi_ui_editor::markdown::pad_inline_code(
@@ -245,7 +282,6 @@ pub(super) fn render_composer(
     } else {
         let paste_input = input.clone();
         div()
-            .font_family(super::theme::MONO_FONT)
             .h(px(if editor.focused {
                 420.
             } else if editor.draft.body.lines().count() > 3 || editor.draft.body.contains("```") {
@@ -276,79 +312,119 @@ pub(super) fn render_composer(
                 });
                 cx.stop_propagation();
             }))
-            .child(Input::new(&input).h_full())
+            .child(
+                Input::new(&input)
+                    .appearance(false)
+                    .bordered(false)
+                    .focus_bordered(false)
+                    .h_full()
+                    .text_size(theme::scaled_px(15.))
+                    .line_height(theme::scaled_px(25.5)),
+            )
             .into_any_element()
     };
-    composer = composer.child(body).child(
+    content = content.child(body).child(
         div()
             .flex()
-            .gap_2()
+            .justify_between()
             .items_center()
-            .child(super::e2e::measure_control(
-                if number.is_some() {
-                    "issue-reply-write"
-                } else {
-                    "issue-composer-write"
-                },
-                Button::new(SharedString::from(format!("{id}-write")))
-                    .label(Msg::IssueWrite.t())
-                    .small()
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        if let Some(editor) = app
-                            .ui_mut()
-                            .and_then(|ui| ui.issue_composer.editors.get_mut(&number))
-                        {
-                            editor.preview = false;
-                        }
-                        cx.notify();
-                    })),
-            ))
-            .child(super::e2e::measure_control(
-                if number.is_some() {
-                    "issue-reply-preview"
-                } else {
-                    "issue-composer-preview"
-                },
-                Button::new(SharedString::from(format!("{id}-preview")))
-                    .label(Msg::IssuePreview.t())
-                    .small()
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        if let Some(editor) = app
-                            .ui_mut()
-                            .and_then(|ui| ui.issue_composer.editors.get_mut(&number))
-                        {
-                            editor.preview = true;
-                        }
-                        cx.notify();
-                    })),
-            ))
             .child(
-                Button::new(SharedString::from(format!("{id}-focus")))
-                    .label(if editor.focused {
-                        Msg::IssueExitFocus.t()
-                    } else {
-                        Msg::IssueFocusEditor.t()
-                    })
-                    .small()
-                    .on_click(cx.listener(move |app, _, window, cx| {
-                        app.toggle_issue_focus(number, window, cx)
-                    })),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(theme::scaled_px(2.))
+                            .p(theme::scaled_px(3.))
+                            .rounded_md()
+                            .bg(rgb(theme().surface))
+                            .child(super::e2e::measure_control(
+                                if number.is_some() {
+                                    "issue-reply-write"
+                                } else {
+                                    "issue-composer-write"
+                                },
+                                Button::new(SharedString::from(format!("{id}-write")))
+                                    .label(Msg::IssueWrite.t())
+                                    .small()
+                                    .selected(!editor.preview)
+                                    .on_click(cx.listener(move |app, _, _, cx| {
+                                        if let Some(editor) = app.ui_mut().and_then(|ui| {
+                                            ui.issue_composer.editors.get_mut(&number)
+                                        }) {
+                                            editor.preview = false;
+                                        }
+                                        cx.notify();
+                                    })),
+                            ))
+                            .child(super::e2e::measure_control(
+                                if number.is_some() {
+                                    "issue-reply-preview"
+                                } else {
+                                    "issue-composer-preview"
+                                },
+                                Button::new(SharedString::from(format!("{id}-preview")))
+                                    .label(Msg::IssuePreview.t())
+                                    .small()
+                                    .selected(editor.preview)
+                                    .on_click(cx.listener(move |app, _, _, cx| {
+                                        if let Some(editor) = app.ui_mut().and_then(|ui| {
+                                            ui.issue_composer.editors.get_mut(&number)
+                                        }) {
+                                            editor.preview = true;
+                                        }
+                                        cx.notify();
+                                    })),
+                            )),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("{id}-focus")))
+                            .label(if editor.focused {
+                                Msg::IssueExitFocus.t()
+                            } else {
+                                Msg::IssueFocusEditor.t()
+                            })
+                            .small()
+                            .on_click(cx.listener(move |app, _, window, cx| {
+                                app.toggle_issue_focus(number, window, cx)
+                            })),
+                    ),
             )
             .child(div().flex_1())
             .child(
-                Button::new(SharedString::from(format!("{id}-submit")))
-                    .label(if number.is_some() {
-                        Msg::IssueReply.t()
-                    } else {
-                        Msg::IssueCreate.t()
-                    })
-                    .small()
-                    .disabled(disabled)
-                    .on_click(cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx))),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .children(number.is_none().then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(Msg::IssueComposeHint.t())
+                    }))
+                    .child(
+                        Button::new(SharedString::from(format!("{id}-submit")))
+                            .label(if number.is_some() {
+                                Msg::IssueReply.t()
+                            } else {
+                                Msg::IssueCreate.t()
+                            })
+                            .primary()
+                            .rounded(px(999.))
+                            .h(theme::scaled_px(36.))
+                            .px_3()
+                            .disabled(disabled)
+                            .on_click(
+                                cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)),
+                            ),
+                    ),
             ),
     );
     if let Some(error) = editor.save_error.as_ref() {
-        composer = composer.child(
+        content = content.child(
             div()
                 .text_xs()
                 .text_color(rgb(theme().color_blocker))
@@ -356,7 +432,7 @@ pub(super) fn render_composer(
         );
     }
     if let Some(error) = state.repo_error.as_ref() {
-        composer = composer.child(
+        content = content.child(
             div()
                 .flex()
                 .items_center()
@@ -379,7 +455,7 @@ pub(super) fn render_composer(
     } else if editor.save_error.is_none()
         && (!editor.draft.body.trim().is_empty() || !editor.draft.title.trim().is_empty())
     {
-        composer = composer.child(div().text_xs().text_color(rgb(theme().text_muted)).child(
+        content = content.child(div().text_xs().text_color(rgb(theme().text_muted)).child(
             if editor.saving {
                 Msg::IssueDraftSaving.t()
             } else {
@@ -387,5 +463,6 @@ pub(super) fn render_composer(
             },
         ));
     }
+    composer = composer.child(avatar).child(content);
     super::e2e::measure_control(id, composer).into_any_element()
 }

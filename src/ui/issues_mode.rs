@@ -5,7 +5,7 @@
 
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString};
 use gpui_component::scroll::ScrollableElement;
-use kagi_domain::github::{filtered_issues, Issue, IssueListTab};
+use kagi_domain::github::{filtered_issues, Issue, IssueListTab, IssueState};
 
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
@@ -262,11 +262,7 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
         .flex_shrink_0()
         .flex()
         .flex_col()
-        .overflow_hidden()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().panel));
+        .overflow_hidden();
 
     list = match presentation {
         IssueListPresentation::Loading => list.child(status_text(
@@ -320,34 +316,88 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
                         kagi_ui_core::time::relative_time(at, kagi_ui_core::time::now_unix_secs())
                     })
                     .unwrap_or_else(|| issue.updated_at.clone());
-                let content =
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .px_3()
-                        .py_2()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .w_full()
-                                .truncate()
-                                .text_sm()
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(rgb(theme().text_main))
-                                .child(safe_text(&format!("#{} {}", issue.number, issue.title))),
-                        )
-                        .child(div().text_xs().text_color(rgb(theme().text_muted)).child(
-                            safe_text(&format!(
-                                "@{} · {age} · {}",
-                                issue.author,
-                                super::i18n::issue_comments(issue.comment_count)
-                            )),
-                        ));
-                let row = super::workspace_mode::sidebar_list_row(false)
+                let (state_label, state_color) = match issue.state {
+                    IssueState::Open => (Msg::IssueStateOpen.t(), theme().color_success),
+                    IssueState::Closed => (Msg::IssueStateClosed.t(), theme().text_muted),
+                    IssueState::Unknown => (Msg::IssueStateUnknown.t(), theme().text_muted),
+                };
+                let content = div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap_2()
+                            .text_xs()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(rgb(theme().text_main))
+                                    .child(safe_text(&format!("@{}", issue.author))),
+                            )
+                            .child(
+                                div()
+                                    .text_color(rgb(theme().text_muted))
+                                    .child(safe_text(&format!("#{} · {age}", issue.number))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .whitespace_normal()
+                            .text_size(theme::scaled_px(15.))
+                            .line_height(theme::scaled_px(22.5))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(rgb(theme().text_main))
+                            .child(safe_text(&issue.title)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(theme::scaled_px(18.))
+                            .pt_1()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(super::i18n::issue_comments(issue.comment_count))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .w(theme::scaled_px(8.))
+                                            .h(theme::scaled_px(8.))
+                                            .rounded_full()
+                                            .bg(rgb(state_color)),
+                                    )
+                                    .child(state_label),
+                            ),
+                    );
+                let row = div()
                     .id(("issue-main-row", number as usize))
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .gap(theme::scaled_px(14.))
+                    .px(theme::scaled_px(24.))
+                    .py(theme::scaled_px(16.))
+                    .border_b_1()
+                    .border_color(rgb(theme().selected))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(theme().surface)))
                     .on_click(select)
+                    .child(kagi_ui_core::commit_header::avatar_circle(
+                        40.,
+                        &issue.author,
+                        &issue.author,
+                        &app.avatars.images,
+                    ))
                     .child(content);
                 list = list.child(super::e2e::measure_control(
                     format!("issue-main-row-{number}"),
@@ -384,8 +434,6 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
         .overflow_y_scrollbar()
         .flex()
         .flex_col()
-        .gap_3()
-        .p_3()
         .bg(rgb(theme().bg_base))
         // Keep the pane's `h_full` / `flex_1` chain intact. Wrapping this in
         // `measure_control` gives its scroll viewport an auto-sized parent and

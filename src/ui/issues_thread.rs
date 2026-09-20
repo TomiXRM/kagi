@@ -36,6 +36,11 @@ fn back_to_issues(cx: &mut Context<KagiApp>) -> AnyElement {
         "issue-thread-back",
         div()
             .id("issue-thread-back")
+            .w_full()
+            .px(theme::scaled_px(24.))
+            .py_2()
+            .border_b_1()
+            .border_color(rgb(theme().selected))
             .cursor_pointer()
             .text_sm()
             .text_color(rgb(theme().color_branch))
@@ -51,7 +56,6 @@ fn thread_shell(back: AnyElement, content: AnyElement) -> AnyElement {
         .w_full()
         .flex()
         .flex_col()
-        .gap_2()
         .child(back)
         .child(content)
         .into_any_element()
@@ -104,7 +108,7 @@ pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElem
             ),
         );
     };
-    let mut content = div().flex().flex_col().gap_2();
+    let mut content = div().flex().flex_col();
     if let Some(message) = ui.github_issue_detail_error.as_deref() {
         content = content.child(status(
             "issue-mode-detail-error",
@@ -137,27 +141,17 @@ fn render_conversation(
         IssueState::Closed => Msg::IssueStateClosed.t(),
         IssueState::Unknown => Msg::IssueStateUnknown.t(),
     };
+    let state_color = if matches!(issue.state, IssueState::Open) {
+        theme().color_success
+    } else {
+        theme().text_muted
+    };
     let mut thread = div()
         .id("issue-thread")
         .w_full()
         .min_w(px(0.))
         .flex()
         .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .text_xl()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_main))
-                .whitespace_normal()
-                .child(safe_text(&format!("#{} {}", number, issue.title))),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(state),
-        )
         .child(post(
             app,
             format!("issue-thread-body-{number}"),
@@ -168,12 +162,16 @@ fn render_conversation(
             } else {
                 &issue.body
             },
+            Some((&format!("#{} {}", number, issue.title), state, state_color)),
             cx,
         ));
     if !issue.comments.is_empty() {
         thread = thread.child(
             div()
-                .pt_2()
+                .px(theme::scaled_px(24.))
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(theme().selected))
                 .text_sm()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(theme().text_label))
@@ -193,6 +191,7 @@ fn render_conversation(
             &comment.author,
             &comment.created_at,
             &comment.body,
+            None,
             cx,
         ));
     }
@@ -207,6 +206,7 @@ fn post(
     author: &str,
     created_at: &str,
     body: &str,
+    issue_meta: Option<(&str, &'static str, u32)>,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let body = kagi_domain::message::sanitize_markdown_for_view(body);
@@ -217,43 +217,86 @@ fn post(
         is_dark: cx.theme().mode.is_dark(),
         ..Default::default()
     };
+    let age = kagi_ui_core::time_parse::iso_to_epoch(created_at)
+        .map(|at| kagi_ui_core::time::relative_time(at, kagi_ui_core::time::now_unix_secs()))
+        .unwrap_or_else(|| created_at.to_string());
     div()
         .id(SharedString::from(id.clone()))
         .w_full()
         .min_w(px(0.))
-        .p_3()
-        .rounded_md()
-        .bg(rgb(theme().panel))
         .flex()
-        .flex_col()
-        .gap_2()
+        .flex_row()
+        .gap(theme::scaled_px(14.))
+        .px(theme::scaled_px(24.))
+        .py(theme::scaled_px(16.))
+        .border_b_1()
+        .border_color(rgb(theme().selected))
         .text_color(rgb(theme().text_main))
+        .child(kagi_ui_core::commit_header::avatar_circle(
+            40.,
+            author,
+            author,
+            &app.avatars.images,
+        ))
         .child(
             div()
+                .flex_1()
+                .min_w(px(0.))
                 .flex()
-                .flex_row()
-                .items_center()
+                .flex_col()
                 .gap_2()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(kagi_ui_core::commit_header::avatar_circle(
-                    18.,
-                    author,
-                    author,
-                    &app.avatars.images,
-                ))
-                .child(safe_text(&format!("@{author}")))
-                .child(div().flex_1())
-                .child(safe_text(created_at)),
-        )
-        .child(
-            TextView::markdown(
-                SharedString::from(format!("{id}-md")),
-                SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
-            )
-            .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
-            .selectable(true)
-            .style(style),
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap_2()
+                        .text_xs()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(rgb(theme().text_main))
+                                .child(safe_text(&format!("@{author}"))),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(theme().text_muted))
+                                .child(safe_text(&age)),
+                        ),
+                )
+                .children(issue_meta.map(|(title, _, _)| {
+                    div()
+                        .text_size(theme::scaled_px(20.))
+                        .line_height(theme::scaled_px(28.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(theme().text_main))
+                        .whitespace_normal()
+                        .child(safe_text(title))
+                }))
+                .child(
+                    TextView::markdown(
+                        SharedString::from(format!("{id}-md")),
+                        SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
+                    )
+                    .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
+                    .selectable(true)
+                    .style(style),
+                )
+                .children(issue_meta.map(|(_, label, color)| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .child(
+                            div()
+                                .w(theme::scaled_px(8.))
+                                .h(theme::scaled_px(8.))
+                                .rounded_full()
+                                .bg(rgb(color)),
+                        )
+                        .child(label)
+                })),
         )
         .into_any_element()
 }

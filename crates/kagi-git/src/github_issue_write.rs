@@ -39,6 +39,11 @@ pub fn issue_comment_args(base_repo: &str, number: u64) -> Vec<String> {
 /// Pure over the frozen repository identity and composed text.
 /// The caller derives the default title before freezing this plan.
 pub fn plan_issue_create(base_repo: &str, title: &str, body: &str) -> OperationPlan {
+    let blockers = if title.trim().is_empty() {
+        vec![PlanNote::Github(GithubNote::IssueTitleEmpty)]
+    } else {
+        Vec::new()
+    };
     issue_plan(
         GithubTitle::CreateIssue,
         StateSummary {
@@ -50,6 +55,7 @@ pub fn plan_issue_create(base_repo: &str, title: &str, body: &str) -> OperationP
             dirty: "issue created".into(),
         },
         body,
+        blockers,
     )
 }
 
@@ -66,6 +72,7 @@ pub fn plan_issue_comment(number: u64, title: &str, body: &str) -> OperationPlan
             dirty: format!("#{number} has one more comment"),
         },
         body,
+        Vec::new(),
     )
 }
 
@@ -74,12 +81,11 @@ fn issue_plan(
     current: StateSummary,
     predicted: StateSummary,
     body: &str,
+    mut blockers: Vec<PlanNote>,
 ) -> OperationPlan {
-    let blockers = if body.trim().is_empty() {
-        vec![PlanNote::Github(GithubNote::CommentBodyEmpty)]
-    } else {
-        Vec::new()
-    };
+    if body.trim().is_empty() {
+        blockers.push(PlanNote::Github(GithubNote::CommentBodyEmpty));
+    }
     OperationPlan {
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready

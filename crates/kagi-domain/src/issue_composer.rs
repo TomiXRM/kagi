@@ -23,7 +23,8 @@ impl IssueDraft {
         true
     }
 
-    /// Keep an explicit title; otherwise use the first nonempty body line.
+    /// Keep an explicit title; otherwise use the first meaningful body line.
+    /// Markdown structure prefixes are omitted and fence marker lines are skipped.
     /// The fallback is at most 60 Unicode scalar values, never a byte slice.
     /// This projection does not modify the original body or draft revision.
     pub fn effective_title(&self) -> String {
@@ -33,8 +34,7 @@ impl IssueDraft {
         }
         self.body
             .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
+            .find_map(title_candidate)
             .unwrap_or_default()
             .chars()
             .take(60)
@@ -56,9 +56,66 @@ impl IssueDraft {
     }
 }
 
+fn title_candidate(line: &str) -> Option<&str> {
+    let mut candidate = line.trim();
+    loop {
+        let stripped = strip_markdown_prefix(candidate);
+        if stripped == candidate {
+            break;
+        }
+        candidate = stripped.trim_start();
+    }
+    if candidate.is_empty() || is_fence_marker(candidate) {
+        None
+    } else {
+        Some(candidate.trim_end())
+    }
+}
+
+fn strip_markdown_prefix(line: &str) -> &str {
+    if let Some(rest) = line.strip_prefix('>') {
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return rest;
+        }
+    }
+
+    let heading_len = line.chars().take_while(|c| *c == '#').count();
+    if (1..=6).contains(&heading_len) {
+        let rest = &line[heading_len..]; // '#' is ASCII
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return rest;
+        }
+    }
+
+    if let Some(rest) = line.strip_prefix(|c| matches!(c, '-' | '+' | '*')) {
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return rest;
+        }
+    }
+
+    let digit_len = line.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digit_len > 0 {
+        let rest = &line[digit_len..]; // digits are ASCII
+        if let Some(rest) = rest.strip_prefix(|c| matches!(c, '.' | ')')) {
+            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                return rest;
+            }
+        }
+    }
+
+    line
+}
+
+fn is_fence_marker(line: &str) -> bool {
+    let marker = line.chars().next().unwrap_or_default();
+    (marker == '`' || marker == '~') && line.chars().take_while(|c| *c == marker).count() >= 3
+}
+
 /// Wrap multiline clipboard code without changing its contents. Single lines and
 /// Markdown already containing a complete fenced block remain byte-for-byte intact.
 /// Callers decide where to insert this text; this never rewrites the whole draft.
+/// `filename_hint` is reserved for future context-aware callers; the production UI
+/// currently passes `None`.
 pub fn fenced_code_paste(text: &str, filename_hint: Option<&str>) -> String {
     if text.lines().count() < 2 || contains_fenced_block(text) {
         return text.to_owned();
@@ -163,6 +220,57 @@ mod tests {
         };
         assert_eq!(draft.effective_title(), "鍵🔑".repeat(30));
         assert_eq!(draft.body.chars().count(), 80);
+    }
+
+    #[test]
+    fn code_only_body_skips_fence_markers_for_its_title() {
+        let draft = IssueDraft {
+            body: "```rust\nfn main() {\n    let ptr = *ptr;\n}\n```\n".into(),
+            ..Default::default()
+        };
+        let original = draft.clone();
+
+        assert_eq!(draft.effective_title(), "fn main() {");
+        assert_eq!(draft, original);
+    }
+
+    #[test]
+    fn fallback_title_strips_markdown_structure_prefixes() {
+        for (body, expected) in [
+            ("# Heading", "Heading"),
+            ("- list item", "list item"),
+            ("1. ordered item", "ordered item"),
+            ("> quoted item", "quoted item"),
+            ("> - ## nested item", "nested item"),
+        ] {
+            let draft = IssueDraft {
+                body: body.into(),
+                ..Default::default()
+            };
+            assert_eq!(draft.effective_title(), expected);
+        }
+    }
+
+    #[test]
+    fn fallback_title_keeps_code_that_only_resembles_markdown() {
+        for line in ["*ptr", "#include <stdio.h>", "-negative", ">= threshold"] {
+            let draft = IssueDraft {
+                body: line.into(),
+                ..Default::default()
+            };
+            assert_eq!(draft.effective_title(), line);
+        }
+    }
+
+    #[test]
+    fn empty_or_syntax_only_body_has_no_effective_title() {
+        for body in ["", " \n\t", "\n```rust\n```\n~~~\n~~~\n#\n-\n>\n"] {
+            let draft = IssueDraft {
+                body: body.into(),
+                ..Default::default()
+            };
+            assert_eq!(draft.effective_title(), "");
+        }
     }
 
     #[test]

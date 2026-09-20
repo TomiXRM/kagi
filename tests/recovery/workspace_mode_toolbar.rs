@@ -283,6 +283,21 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     // Reply must hide the New Issue Composer and thread just as New Issue does.
     app.update(cx, |app, cx| app.seed_issue_reply_for_e2e(7, cx));
     measure(cx, win, "issue-reply-composer").expect("Reply Composer is visible");
+    assert!(
+        !cx.read(|cx| app.read(cx).issue_reply_has_title_input_for_e2e(7)),
+        "Reply must not allocate the New Issue-only title InputState"
+    );
+    let reply = "Reply body still follows InputState::Change";
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.insert_issue_reply_body_for_e2e(7, reply, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let reply_draft = cx.read(|cx| app.read(cx).issue_reply_draft_for_e2e(7));
+    assert_eq!(reply_draft.body, reply);
+    assert!(reply_draft.title.is_empty());
     cx.update_window(win, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.focus_issue_reply_input_for_e2e(7, window, cx)
@@ -306,6 +321,25 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), Some(8));
     assert!(measure(cx, win, "issue-composer").is_some());
     assert!(measure(cx, win, "issue-reply-composer").is_none());
+
+    // A write completion still consumes the exact sent draft after the user
+    // leaves Issues, but must not let its follow-up refresh reopen the mode.
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Graph
+    );
+    app.update(cx, |app, cx| app.settle_issue_write_for_e2e(cx));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Graph,
+        "settling a hidden Issues write must not reopen Issues"
+    );
+    let settled_draft = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0);
+    assert!(
+        settled_draft.title.is_empty() && settled_draft.body.is_empty(),
+        "the posted draft must still be consumed while Issues is hidden"
+    );
 
     // ── Sidebar gesture navigation (ADR-0199) ─────────────────────
     // A gesture slides the sidebar's pages and nothing else: the main pane

@@ -47,6 +47,9 @@ pub enum GithubNote {
     /// happily post an empty comment; there is nothing to say and nothing to
     /// undo it with but a manual delete, so the plan refuses it.
     CommentBodyEmpty,
+    /// blocker — a new Issue has no explicit title and its body has no
+    /// meaningful title candidate after Markdown structure is removed.
+    IssueTitleEmpty,
     /// blocker — a review that GitHub requires words for (`--request-changes`
     /// or `--comment`) was submitted with none. An approval may be wordless;
     /// these two are refused by the API, so the plan refuses them first
@@ -108,6 +111,10 @@ impl GithubNote {
             }
             GithubNote::CommentBodyEmpty => {
                 "The comment is empty. Write something before posting it.".to_string()
+            }
+            GithubNote::IssueTitleEmpty => {
+                "The issue title is empty. Write a title or add meaningful text to the body."
+                    .to_string()
             }
             GithubNote::ReviewBodyEmpty { verdict } => format!(
                 "GitHub requires a comment on a '{}' review. Write what you want changed before submitting it.",
@@ -306,6 +313,10 @@ mod tests {
         assert_eq!(
             GithubNote::CommentBodyEmpty.message_en(),
             "The comment is empty. Write something before posting it."
+        );
+        assert_eq!(
+            GithubNote::IssueTitleEmpty.message_en(),
+            "The issue title is empty. Write a title or add meaningful text to the body."
         );
     }
 

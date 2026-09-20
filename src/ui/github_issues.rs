@@ -328,6 +328,7 @@ impl KagiApp {
             None => kagi_git::github::plan_issue_create(&base_repo, &title, &draft.body),
         });
         if !plan.blockers.is_empty() {
+            klog!("refused: {} plan has blockers, not executing", op_name);
             self.record_op(
                 op_name,
                 plan.current.clone(),
@@ -424,9 +425,14 @@ impl KagiApp {
                 cx,
             );
         }
-        self.refresh_github_issues_for(owner, repo.clone(), cx);
-        if let Some(number) = number {
-            self.load_github_issue_detail_for(owner, repo, number, cx);
+        let owner_kept_issues_open = self.ui.get(&owner).is_some_and(|ui| {
+            ui.github_issues_loading || ui.github_issues_loaded || ui.github_issues_error.is_some()
+        });
+        if owner_kept_issues_open {
+            self.refresh_github_issues_for(owner, repo.clone(), cx);
+            if let Some(number) = number {
+                self.load_github_issue_detail_for(owner, repo, number, cx);
+            }
         }
         cx.notify();
     }

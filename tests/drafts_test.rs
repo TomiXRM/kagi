@@ -180,6 +180,55 @@ fn issue_draft_round_trip_and_pending_latest_value() {
 }
 
 #[test]
+fn whitespace_only_issue_draft_clears_and_legacy_whitespace_loads_empty() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/issue-whitespace");
+        queue_issue_draft(repo, None, "title", "saved body");
+        flush_issue_drafts().expect("save initial draft");
+
+        queue_issue_draft(repo, None, " \t ", "\n  \r\n");
+        assert!(
+            load_issue_draft(repo, None).is_none(),
+            "pending whitespace-only tuple is an empty draft"
+        );
+        flush_issue_drafts().expect("delete whitespace-only draft");
+        assert!(load_draft(repo, ":issue:new").is_none());
+
+        let legacy = serde_json::json!([" \t", "\n  "]).to_string();
+        save_draft(repo, ":issue:7", &legacy, "issue-composer").expect("legacy whitespace tuple");
+        assert!(
+            load_issue_draft(repo, Some(7)).is_none(),
+            "legacy whitespace-only tuple reads as empty"
+        );
+    });
+}
+
+#[test]
+fn meaningful_issue_body_preserves_surrounding_whitespace() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/issue-whitespace-preserved");
+        let title = " \t ";
+        let body = "  meaningful body  \n\n  ";
+        queue_issue_draft(repo, Some(7), title, body);
+        assert_eq!(
+            load_issue_draft(repo, Some(7)),
+            Some((title.into(), body.into()))
+        );
+        flush_issue_drafts().expect("persist meaningful body exactly");
+        assert_eq!(
+            load_issue_draft(repo, Some(7)),
+            Some((title.into(), body.into()))
+        );
+    });
+}
+
+#[test]
 fn issue_drafts_isolate_repo_number_and_commit_branch() {
     if !crate::test_support::run_isolated() {
         return;

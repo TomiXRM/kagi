@@ -63,17 +63,24 @@ impl KagiApp {
                             Msg::IssueCompose.t()
                         })
                 });
-                let title = cx
-                    .new(|cx| InputState::new(window, cx).placeholder(Msg::IssueTitleOptional.t()));
+                let title = number.is_none().then(|| {
+                    cx.new(|cx| {
+                        InputState::new(window, cx).placeholder(Msg::IssueTitleOptional.t())
+                    })
+                });
                 body.update(cx, |st, cx| {
                     st.set_value(editor.draft.body.clone(), window, cx)
                 });
-                title.update(cx, |st, cx| {
-                    st.set_value(editor.draft.title.clone(), window, cx)
-                });
-                for input in [&body, &title] {
+                if let Some(title) = &title {
+                    title.update(cx, |st, cx| {
+                        st.set_value(editor.draft.title.clone(), window, cx)
+                    });
+                }
+                let mut inputs = vec![body.clone()];
+                inputs.extend(title.iter().cloned());
+                for input in inputs {
                     let repo = repo.clone();
-                    cx.subscribe(input, move |app, _, event, cx| {
+                    cx.subscribe(&input, move |app, _, event, cx| {
                         if !matches!(event, InputEvent::Change) {
                             return;
                         }
@@ -88,14 +95,17 @@ impl KagiApp {
                         if editor.sync_inputs {
                             return;
                         }
-                        let (Some(body), Some(title)) = (&editor.body_input, &editor.title_input)
-                        else {
+                        let Some(body) = &editor.body_input else {
                             return;
                         };
-                        let changed = editor.draft.update(
-                            title.read(cx).value().to_string(),
-                            body.read(cx).value().to_string(),
-                        );
+                        let title = editor
+                            .title_input
+                            .as_ref()
+                            .map(|title| title.read(cx).value().to_string())
+                            .unwrap_or_else(|| editor.draft.title.clone());
+                        let changed = editor
+                            .draft
+                            .update(title, body.read(cx).value().to_string());
                         if changed {
                             app.save_issue_draft_for(owner, repo.clone(), number, cx);
                         }
@@ -104,7 +114,7 @@ impl KagiApp {
                     .detach();
                 }
                 editor.body_input = Some(body);
-                editor.title_input = Some(title);
+                editor.title_input = title;
                 editor.sync_inputs = false;
             } else if editor.sync_inputs {
                 if let Some(input) = &editor.body_input {
@@ -172,7 +182,7 @@ pub(super) fn render_composer(
     let Some(editor) = state.editors.get(&number) else {
         return div().into_any_element();
     };
-    let (Some(input), Some(title)) = (editor.body_input.clone(), editor.title_input.clone()) else {
+    let Some(input) = editor.body_input.clone() else {
         return div().into_any_element();
     };
     let id = if number.is_some() {
@@ -213,6 +223,9 @@ pub(super) fn render_composer(
             ),
         );
     if number.is_none() {
+        let Some(title) = editor.title_input.clone() else {
+            return div().into_any_element();
+        };
         composer = composer.child(Input::new(&title).small());
     }
     let body = if editor.preview {
@@ -367,7 +380,7 @@ pub(super) fn render_composer(
                     ),
             );
     } else if editor.save_error.is_none()
-        && (!editor.draft.body.is_empty() || !editor.draft.title.is_empty())
+        && (!editor.draft.body.trim().is_empty() || !editor.draft.title.trim().is_empty())
     {
         composer = composer.child(div().text_xs().text_color(rgb(theme().text_muted)).child(
             if editor.saving {

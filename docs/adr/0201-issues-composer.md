@@ -7,7 +7,10 @@
 ## 決定
 
 Issues の中央は常設 Composer を先頭に置く。本文だけで作成でき、タイトル省略時は
-本文の最初の非空行から60 Unicode文字を取る。元の本文は変更しない。
+本文から Markdown の heading / list / quote 接頭辞と続く空白を除き、fence marker 行を
+飛ばした最初の有意味な行から60 Unicode文字を取る。元の本文は変更しない。
+構造 marker だけで候補が残らない場合は固定 placeholder を補わず、明示タイトルを
+必須とする plan blocker にする。
 InputState の Markdown source editor と既存 Markdown renderer を使用し、
 Write / Preview、行数による拡張、Focus Editor を提供する。WYSIWYG は追加しない。
 Focus Editor の secondary-shift-enter は IssueComposer context に限定する。

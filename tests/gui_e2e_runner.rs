@@ -112,6 +112,10 @@ mod fetch_owner;
 mod file_menu_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/issue_write_owner.rs"]
+mod issue_write_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/evidence_support.rs"]
 mod evidence_support;
 
@@ -1111,6 +1115,12 @@ mod macos {
             (
                 "stage_failure_notice",
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
+            (
+                "issue_failure_notice_survives_tab_switch",
+                Box::new(
+                    crate::issue_write_owner::scenario_issue_failure_notice_survives_tab_switch,
+                ),
             ),
             (
                 "workspace_mode_toolbar",

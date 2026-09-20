@@ -11,9 +11,11 @@
 //! - One draft = one file, named `<sha1(repo_path + "\0" + branch)>.json`.
 //!   Including `repo_path` keeps the same branch name in two different repos
 //!   from colliding.
-//! - Format: **hand-written JSON** (no `serde`, matching the project policy).
-//!   String fields are escaped/unescaped with the same rules as the oplog
-//!   writer (`"`, `\`, `\n`, `\r`, `\t`, and `\uXXXX` for other control chars).
+//! - Outer [`Draft`] record: **hand-written JSON**. String fields are
+//!   escaped/unescaped with the same rules as the oplog writer (`"`, `\`,
+//!   `\n`, `\r`, `\t`, and `\uXXXX` for other control chars).
+//! - Issue draft `message`: a `serde_json` string tuple `[title, body]` inside
+//!   that outer record. Commit-message draft payloads remain plain strings.
 //!
 //! Reads are deliberately lenient: a missing or corrupt file is treated as "no
 //! draft" so a broken file can never block a commit. Saving an empty (trimmed)
@@ -242,9 +244,12 @@ pub fn queue_issue_draft(repo: &Path, number: Option<u64>, title: &str, body: &s
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let version = queue.advance(&key);
-    queue
-        .pending
-        .insert(key, (title.to_owned(), body.to_owned()));
+    let value = if title.trim().is_empty() && body.trim().is_empty() {
+        (String::new(), String::new())
+    } else {
+        (title.to_owned(), body.to_owned())
+    };
+    queue.pending.insert(key, value);
     version
 }
 
@@ -373,7 +378,12 @@ pub fn load_issue_draft(repo: &Path, number: Option<u64>) -> Option<(String, Str
     if draft.mode != "issue-composer" {
         return None;
     }
-    serde_json::from_str(&draft.message).ok()
+    let (title, body): (String, String) = serde_json::from_str(&draft.message).ok()?;
+    if title.trim().is_empty() && body.trim().is_empty() {
+        None
+    } else {
+        Some((title, body))
+    }
 }
 
 // ────────────────────────────────────────────────────────────

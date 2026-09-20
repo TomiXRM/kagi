@@ -91,9 +91,17 @@ The current suite covers:
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze
   (`KAGI_GUI_E2E_ONLY=workspace_mode_toolbar`, via the `tb-repo-actions` control bound);
-  the same scenario covers the Issues Composer's real input-change subscription,
-  Markdown Preview, scoped Focus Editor, multiline Paste and Undo without a live
-  GitHub write (ADR-0201; `src/ui/issues_composer_e2e.rs` seeds only read-side state);
+  the same scenario covers the Issues Composer's real New/Reply input-change
+  subscriptions, the Reply's lack of a New Issue-only title entity, Markdown
+  Preview, scoped Focus Editor, multiline Paste and Undo, and successful write
+  settlement consuming its draft without reopening Issues after Graph is selected,
+  all without a live GitHub write (ADR-0201; `src/ui/issues_composer_e2e.rs` seeds
+  read-side state and enters the production settlement path);
+- Issue write failure ownership
+  (`KAGI_GUI_E2E_ONLY=issue_failure_notice_survives_tab_switch`,
+  `tests/recovery/issue_write_owner.rs`): a recorded Create failure that lands after
+  leaving its owner names the frozen repository, waits behind the current tab's modal,
+  and is presented exactly once without invoking a GitHub transport;
 - dirty Pull auto-stash success and Pull-failure restoration, including the persistent error modal.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff
   re-anchored to its renumbered row, the Compare pane and its file diff re-read, a

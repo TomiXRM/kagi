@@ -17,6 +17,8 @@ pub mod discard;
 pub mod editor_fs;
 pub mod force_lease;
 pub mod history;
+#[cfg(feature = "gui-e2e")]
+mod issue_write_e2e;
 pub mod merge;
 pub mod modal_state;
 pub mod pull_push;
@@ -470,6 +472,38 @@ impl KagiApp {
                             revision,
                             cx,
                         );
+                    }
+                    // Issue writes target a remote service, so a confirmed
+                    // refusal still matters after its owning tab is left. The
+                    // ordinary presentation below is visit-bound; queue this
+                    // one owner-named failure before that guard instead. Keep
+                    // every current completion on the existing path so the
+                    // same failure is never delivered twice.
+                    if !current
+                        && matches!(op_name, "issue-create" | "issue-comment")
+                        && matches!(
+                            &report.recording.entry().outcome,
+                            kagi_git::oplog::OpOutcome::Failed { .. }
+                                | kagi_git::oplog::OpOutcome::Refused { .. }
+                        )
+                    {
+                        // Unknown/reconcile never enters this branch. A
+                        // recording failure was already queued by
+                        // `settle_run_receipt`; it stays first because loss of
+                        // the receipt and rejection by GitHub are distinct.
+                        if let Some(message) = presentation
+                            .outcome_notice
+                            .as_deref()
+                            .or(failure_message.as_deref())
+                            .map(|message| format!("{}: {message}", repo_path.display()))
+                        {
+                            app.enqueue_run_outcome_notice(
+                                id,
+                                &report.recording,
+                                failure_message.as_deref(),
+                                Some(message),
+                            );
+                        }
                     }
                     if !current {
                         klog!("op result dropped: tab switched during op");

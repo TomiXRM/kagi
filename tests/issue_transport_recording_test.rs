@@ -4,7 +4,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use kagi_domain::plan_note::PlanDisposition;
+use kagi_domain::plan_note::{GithubNote, PlanDisposition, PlanNote};
 use kagi_git::backend::recording::{Recording, RunReport};
 use kagi_git::github::{
     issue_comment, issue_comment_args, issue_create, issue_create_args, plan_issue_comment,
@@ -277,6 +277,23 @@ fn empty_issue_and_reply_bodies_are_plan_blockers() {
         assert!(!plan.destructive);
         assert!(plan.recovery.is_none());
     }
+}
+
+#[test]
+fn empty_issue_title_is_a_create_only_plan_blocker() {
+    for title in ["", " \n\t"] {
+        let plan = plan_issue_create(REPO, title, BODY);
+        assert_eq!(plan.disposition, PlanDisposition::Blocked);
+        assert!(plan
+            .blockers
+            .contains(&PlanNote::Github(GithubNote::IssueTitleEmpty)));
+    }
+
+    let reply = plan_issue_comment(42, "", BODY);
+    assert_eq!(reply.disposition, PlanDisposition::Ready);
+    assert!(!reply
+        .blockers
+        .contains(&PlanNote::Github(GithubNote::IssueTitleEmpty)));
 }
 
 #[test]

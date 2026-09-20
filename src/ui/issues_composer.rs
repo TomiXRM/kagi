@@ -1,7 +1,7 @@
 //! Session-owned source editors. Window-bearing render only creates inputs;
 //! subscriptions persist edits through the existing draft storage boundary.
 use super::{
-    i18n::Msg,
+    i18n::{self, Lang, Msg},
     theme::{self, theme},
     KagiApp,
 };
@@ -32,6 +32,10 @@ pub(super) struct IssueEditor {
     pub storage_version: u64,
     pub body_input: Option<Entity<InputState>>,
     pub title_input: Option<Entity<InputState>>,
+    /// Language currently installed in the persistent InputState placeholders.
+    /// Unlike ordinary render text, InputState keeps the string it was created
+    /// with, so a live language switch must update it explicitly.
+    pub placeholder_lang: Option<Lang>,
     pub loaded: bool,
     pub loading: bool,
     pub sync_inputs: bool,
@@ -55,6 +59,7 @@ impl KagiApp {
             .into_iter()
             .take(if selected.is_some() { 2 } else { 1 })
         {
+            let active_lang = i18n::lang();
             let Some(editor) = self
                 .ui
                 .get_mut(&owner)
@@ -152,8 +157,33 @@ impl KagiApp {
                 }
                 editor.body_input = Some(body);
                 editor.title_input = title;
+                editor.placeholder_lang = Some(active_lang);
                 editor.sync_inputs = false;
-            } else if editor.sync_inputs {
+            } else {
+                if editor.placeholder_lang != Some(active_lang) {
+                    if let Some(input) = &editor.body_input {
+                        input.update(cx, |st, cx| {
+                            st.set_placeholder(
+                                if number.is_some() {
+                                    Msg::PrCommentPlaceholder.t()
+                                } else {
+                                    Msg::IssueCompose.t()
+                                },
+                                window,
+                                cx,
+                            )
+                        });
+                    }
+                    if let Some(input) = &editor.title_input {
+                        input.update(cx, |st, cx| {
+                            st.set_placeholder(Msg::IssueComposeEmpty.t(), window, cx)
+                        });
+                    }
+                    editor.placeholder_lang = Some(active_lang);
+                }
+                if !editor.sync_inputs {
+                    continue;
+                }
                 if let Some(input) = &editor.body_input {
                     input.update(cx, |st, cx| {
                         st.set_value(editor.draft.body.clone(), window, cx)

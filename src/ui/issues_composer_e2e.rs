@@ -4,10 +4,29 @@
 use gpui::{App, Context, Focusable, Window};
 use kagi_domain::issue_composer::IssueDraft;
 
+use super::i18n::{self, Lang};
 use super::issues_composer::IssueEditor;
 use super::KagiApp;
 
 impl KagiApp {
+    pub fn set_issue_input_lang_for_e2e(
+        &mut self,
+        lang: Lang,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        i18n::set_lang(lang);
+        self.sync_issue_inputs(window, cx);
+    }
+
+    pub fn issue_placeholder_lang_for_e2e(&self, number: Option<u64>) -> Option<Lang> {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&number)
+            .and_then(|editor| editor.placeholder_lang)
+    }
+
     /// Seed one Issue per navigator filter, with completed detail evidence for
     /// the row that the scenario opens. This drives only production filtering
     /// and rendering; no alternate E2E row implementation exists.

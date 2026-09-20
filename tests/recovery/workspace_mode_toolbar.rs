@@ -4,6 +4,7 @@ use crate::evidence_support::pull_request;
 use crate::macos::{build_fixture, mount, repo_fingerprint, unmount};
 use gpui::{AnyWindowHandle, VisualTestAppContext};
 use kagi::ui::e2e;
+use kagi::ui::i18n::{self, Lang};
 use kagi::ui::workspace_mode::WorkspaceMode;
 
 const REPO_ACTIONS: &str = "tb-repo-actions";
@@ -209,6 +210,33 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(measure(cx, win, "issue-mode-card-2").is_none());
     assert!(measure(cx, win, "issue-composer").is_some());
     assert!(measure(cx, win, "issue-main-list").is_some());
+    let original_lang = i18n::lang();
+    let alternate_lang = match original_lang {
+        Lang::En => Lang::Ja,
+        Lang::Ja => Lang::En,
+    };
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_placeholder_lang_for_e2e(None)),
+        Some(original_lang),
+        "the persistent Composer InputState must record its initial placeholder language"
+    );
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.set_issue_input_lang_for_e2e(alternate_lang, window, cx)
+        });
+    })
+    .unwrap();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_placeholder_lang_for_e2e(None)),
+        Some(alternate_lang),
+        "a live language switch must replace the existing InputState placeholder"
+    );
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.set_issue_input_lang_for_e2e(original_lang, window, cx)
+        });
+    })
+    .unwrap();
     for number in 1..=4 {
         assert!(
             measure(cx, win, &format!("issue-main-row-{number}")).is_some(),

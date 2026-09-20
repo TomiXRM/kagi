@@ -1679,7 +1679,7 @@ impl KagiApp {
                 // panel below still shows the entry, so nothing looks wrong until
                 // the next launch, when it is simply gone. Say it out loud
                 // (#643 A1).
-                self.push_toast(ToastKind::Error, i18n::oplog_write_failed(&e), cx);
+                self.present_oplog_write_failure(&e, cx);
             }
         }
 

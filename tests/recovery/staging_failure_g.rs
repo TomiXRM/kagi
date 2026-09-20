@@ -74,7 +74,7 @@ fn index_lock_failure_has_the_same_footer_and_receipt_for_single_and_batch() {
                 } else {
                     "失敗しました"
                 }));
-                assert!(failure.notice);
+                assert!(!failure.needs_notice);
                 let entries = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100);
                 assert_eq!(entries.len(), count + 1);
                 assert!(matches!(
@@ -120,7 +120,7 @@ fn failed_append_keeps_attempted_failure_and_explains_missing_record() {
     let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
     assert!(matches!(entry.outcome, OpOutcome::Failed { .. }));
     assert!(!failure.footer.contains("changed but not recorded"));
-    assert!(failure.notice);
+    assert!(failure.needs_notice);
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn trust_refusal_is_recorded_without_a_modal_or_index_change() {
         failure.recording.entry().outcome,
         OpOutcome::Refused { .. }
     ));
-    assert!(!failure.notice);
+    assert!(!failure.needs_notice);
     assert_eq!(
         kagi_git::oplog::read_oplog_tail_for_repo(dir.path(), 10).len(),
         1

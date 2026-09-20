@@ -137,11 +137,10 @@ EN/JA とも断定と可能性で文面を分ける（"will conflict" / "may con
 Option<SessionId>` を、要求した tab が表示されているときだけ消費する。reload 側はこの状態に
 一切触らない（触る必要が無くなった: モーダルは fetch の継続で即開き、以降の reload は replan）。
 
-**確認前 fetch の失敗は modal + oplog に残す（#626 review）。** footer と toast だけでは
-消えると何が起きたか分からない。CLAUDE.md の「User-facing errors must surface via the oplog
-and a modal」に従い、`AppNotice`（ユーザーが閉じるまで残り、reload で消えない唯一の modal）で
-伝え、ADR-0149 の non-run op 経路で `fetch` の `Failed` を oplog に永続化する。Pull の確認
-モーダルは出さない — 更新に失敗した知識に対して確定させてはいけないため。
+**確認前 fetch の失敗は toast + oplog に残す（#626 review、2026-09-20 改訂）。** toast は
+短い通知に限定し、完全なエラーは ADR-0149 の non-run op 経路で `fetch` の `Failed` として
+oplog に永続化する。記録済みの結果を閉じるだけの `AppNotice` は表示しない。Pull の確認
+モーダルも出さない — 更新に失敗した知識に対して確定させてはいけないため。
 
 ### 2b. 保留中の確認は「その fetch task」に配送する（#626 review 3 周目）
 
@@ -157,7 +156,7 @@ and a modal」に従い、`AppNotice`（ユーザーが閉じるまで残り、r
 
 | 完了時の状態 | 配送 |
 |---|---|
-| fetch 失敗 | oplog に `fetch` Failed を必ず記録。要求元 tab が表示中なら notice modal、そうでなければ park |
+| fetch 失敗 | oplog に `fetch` Failed を必ず記録し、短い toast を表示。modal / park は作らない |
 | 成功・要求元 tab 表示中・他の modal 無し | plan して確認モーダルを開く |
 | 成功・要求元 tab が**非表示** | その tab 用に park し、次にその tab がアクティブになった時に配送 |
 | 成功・別の modal が開いている | 要求を取り消す（新しいユーザー操作が勝つ）|

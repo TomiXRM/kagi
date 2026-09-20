@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use gpui::{Context, SharedString};
 
 use crate::ui::types::{Toast, ToastKind};
+use crate::ui::view_models::status_bar::footer_line;
 
 /// Maximum simultaneous toasts; oldest is dropped beyond this.
 pub const TOASTS_MAX: usize = 4;
@@ -50,12 +51,17 @@ impl ToastStack {
 
     /// Push a new toast. If over `TOASTS_MAX`, the oldest is dropped.
     pub fn push(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
+        // A toast is only the transient summary. The complete operation result
+        // lives in Operation Log, so never let raw multi-line stderr turn the
+        // overlay into a screen-sized card.
+        let message = message.into();
+        let message = SharedString::from(footer_line(message.as_ref()));
         let id = self.next_id;
         self.next_id += 1;
         self.toasts.push(Toast {
             id,
             kind,
-            message: message.into(),
+            message,
             born: Instant::now(),
             dismissing: None,
         });
@@ -180,6 +186,16 @@ mod tests {
         assert_eq!(stack.toasts().len(), TOASTS_MAX);
         // Oldest should have been dropped.
         assert!(!stack.toasts().iter().any(|t| t.message == "msg 0"));
+    }
+
+    #[test]
+    fn push_keeps_only_a_bounded_single_line_preview() {
+        let mut stack = ToastStack::new();
+        let long = format!("first line\n{}", "x".repeat(1_000));
+        stack.push(ToastKind::Error, long);
+        let message = stack.toasts()[0].message.as_ref();
+        assert_eq!(message, "first line…");
+        assert!(!message.contains('\n'));
     }
 
     #[test]

@@ -118,7 +118,7 @@ impl KagiApp {
     ///
     /// | state at completion | delivery |
     /// |---|---|
-    /// | fetch failed | oplog entry always; notice modal now if the tab is on screen, else parked |
+    /// | fetch failed | oplog entry + toast; no confirmation is opened |
     /// | ok, tab on screen, no other modal | plan and open the confirmation |
     /// | ok, tab **not** on screen | parked; opened when that tab is next activated |
     /// | ok, another modal open | request cancelled — the user's newer modal wins |
@@ -138,15 +138,9 @@ impl KagiApp {
             return;
         }
         if let Some(error) = fetch_error {
-            // Persisted first: the oplog entry must exist even when the modal
-            // has to wait for its tab.
+            // The durable explanation is the Operation Log row; record_op also
+            // emits its short-lived toast. There is no action for a modal.
             self.record_pull_fetch_failure(session, &error, cx);
-            if self.active_session() == Some(session) {
-                self.enqueue_outcome_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
-            } else {
-                self.pending_pull_confirm
-                    .insert(session, PullConfirmDelivery::FetchFailed(error));
-            }
             return;
         }
         if self.active_session() != Some(session) {
@@ -172,22 +166,12 @@ impl KagiApp {
                 klog!("pull-confirm: delivered on tab activation");
                 self.plan_and_offer_pull_modal_from_async(cx);
             }
-            PullConfirmDelivery::FetchFailed(error) => {
-                self.enqueue_outcome_notice(i18n::op_failed(i18n::Op::Fetch, &error).into());
-            }
         }
     }
 
     /// #625: a fetch run *for* a Pull confirmation failed, so there is no
-    /// confirmation to show — but the user pressed Pull and is owed an answer
-    /// that outlives a toast (CLAUDE.md: user-facing errors surface via the
-    /// oplog **and** a modal).
-    ///
-    /// This half is the durable one and always runs, even when the modal has to
-    /// wait for the tab that asked. The modal half is a notice, not the Pull
-    /// confirmation: there is nothing to confirm, and a plan built on knowledge
-    /// kagi just failed to refresh must not be confirmable. A notice is
-    /// dismissed by the user, never by a reload.
+    /// confirmation to show. The persisted Operation Log entry is the durable
+    /// explanation after the transient toast disappears.
     fn record_pull_fetch_failure(
         &mut self,
         session: crate::app::SessionId,

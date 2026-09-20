@@ -100,9 +100,10 @@ The current suite covers:
 - Issue write failure ownership
   (`KAGI_GUI_E2E_ONLY=issue_failure_notice_survives_tab_switch`,
   `tests/recovery/issue_write_owner.rs`): a recorded Create failure that lands after
-  leaving its owner names the frozen repository, waits behind the current tab's modal,
-  and is presented exactly once without invoking a GitHub transport;
-- dirty Pull auto-stash success and Pull-failure restoration, including the persistent error modal.
+  leaving its owner remains in Operation Log without replacing or extending the
+  current tab's modal queue, without invoking a GitHub transport;
+- dirty Pull auto-stash success and Pull-failure restoration, including a durable
+  Operation Log result without a dismiss-only error modal.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff
   re-anchored to its renumbered row, the Compare pane and its file diff re-read, a
   Commit Panel file diff re-read (closed once nothing is left to show), and the
@@ -212,10 +213,9 @@ records the rendered Remote Browse, Update, and AppNotice overlays: an arriving
 notice waits behind the occupied slot, Update consumes Enter without acting, and
 Esc closes it. The AppNotice replacement scenario proves unrelated modal setters
 preserve both actionable and plain unread notices. The production dirty-Pull
-failure scenarios prove the event distinction: an asynchronous arrival waits
-behind any occupied slot; a plain failure displaced by a newer modal is
-re-presented; the same plain failure stays discarded after the user closes it;
-queued notices retain arrival order; and a delayed Acknowledge still executes.
+failure scenarios prove a recorded fetch failure never replaces a foreground
+modal or extends an existing notice queue, stays durable in Operation Log, and
+does not interfere with a delayed Acknowledge action.
 The update-lifecycle scenario proves an installer remains window-owned while its
 modal is closed, rejects a second start after reopening, renders a retained
 completion, consumes Enter, and closes via Escape after the last repository tab
@@ -575,9 +575,9 @@ Use a fresh KAGI_LOG_DIR as with all cargo tests.
 
 Tier A filter: `KAGI_GUI_E2E_ONLY=stage_failure_notice`. The scenario covers editor
 paths, panel file indices and batch buttons under index.lock, including a linked
-worktree panel while the main tab remains active. It asserts footer + notice +
-oplog, the actual owning repo/path, unchanged indexes and no modal on admission
-refusal. Compile only when PM owns E execution.
+worktree panel while the main tab remains active. It asserts footer + toast +
+oplog without a dismiss-only modal, the actual owning repo/path, unchanged indexes,
+and a modal only when oplog persistence itself fails. Compile only when PM owns E execution.
 M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
 cause is visible and no success toast appears. If recording also fails, the
 attempted failure stays visible with the recording error; it is not a success.

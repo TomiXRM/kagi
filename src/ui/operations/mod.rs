@@ -176,9 +176,6 @@ impl RunPresentation {
 pub enum PullConfirmDelivery {
     /// Plan and open the confirmation.
     Confirm,
-    /// The pre-Pull fetch failed; show the notice (the oplog entry was already
-    /// written when the fetch completed).
-    FetchFailed(String),
 }
 use crate::ui::KagiApp;
 use gpui::{AppContext, Context, SharedString, Task};
@@ -473,39 +470,11 @@ impl KagiApp {
                             cx,
                         );
                     }
-                    // Issue writes target a remote service, so a confirmed
-                    // refusal still matters after its owning tab is left. The
-                    // ordinary presentation below is visit-bound; queue this
-                    // one owner-named failure before that guard instead. Keep
-                    // every current completion on the existing path so the
-                    // same failure is never delivered twice.
-                    if !current
-                        && matches!(op_name, "issue-create" | "issue-comment")
-                        && matches!(
-                            &report.recording.entry().outcome,
-                            kagi_git::oplog::OpOutcome::Failed { .. }
-                                | kagi_git::oplog::OpOutcome::Refused { .. }
-                        )
-                    {
-                        // Unknown/reconcile never enters this branch. A
-                        // recording failure was already queued by
-                        // `settle_run_receipt`; it stays first because loss of
-                        // the receipt and rejection by GitHub are distinct.
-                        if let Some(message) = presentation
-                            .outcome_notice
-                            .as_deref()
-                            .or(failure_message.as_deref())
-                            .map(|message| format!("{}: {message}", repo_path.display()))
-                        {
-                            app.enqueue_run_outcome_notice(
-                                id,
-                                &report.recording,
-                                failure_message.as_deref(),
-                                Some(message),
-                            );
-                        }
-                    }
                     if !current {
+                        // Foreground presentation belongs to the frozen owner,
+                        // while Operation Log is window-global and must still
+                        // receive the durable result after a tab switch.
+                        app.present_recorded_background(&report.recording, cx);
                         klog!("op result dropped: tab switched during op");
                         continue;
                     }
@@ -664,34 +633,28 @@ impl KagiApp {
         failure_message: Option<&str>,
         override_message: Option<String>,
     ) {
-        use kagi_git::oplog::OpOutcome;
         let entry = recording.entry();
-        let (message, inspect) = match &entry.outcome {
-            OpOutcome::Success { .. } | OpOutcome::Unknown { .. } => return,
-            OpOutcome::Partial { .. } => (
+        if !matches!(entry.outcome, kagi_git::oplog::OpOutcome::Partial { .. }) {
+            return;
+        }
+        let Some(inspect) = self.app_sessions.needs_reconcile(id).then_some(id) else {
+            return;
+        };
+        let message = override_message
+            .or_else(|| failure_message.map(str::to_owned))
+            .unwrap_or_else(|| {
                 format!(
                     "{}: {}",
                     entry.op,
                     crate::ui::oplog_panel::outcome_summary(&entry.outcome)
-                ),
-                self.app_sessions.needs_reconcile(id).then_some(id),
-            ),
-            OpOutcome::Failed { .. } | OpOutcome::Refused { .. } => (
-                override_message
-                    .or_else(|| failure_message.map(str::to_owned))
-                    .unwrap_or_else(|| {
-                        format!(
-                            "{}: {}",
-                            entry.op,
-                            crate::ui::oplog_panel::outcome_summary(&entry.outcome)
-                        )
-                    }),
-                None,
-            ),
-        };
+                )
+            });
+        // Recorded failures already have two surfaces: a transient toast and
+        // the durable Operation Log row. A modal is reserved for an outcome
+        // that needs an explicit inspect/acknowledge action.
         let mut notice =
             crate::ui::modals::AppNotice::from(crate::ui::i18n::recorded_outcome_notice(message));
-        notice.inspect = inspect;
+        notice.inspect = Some(inspect);
         self.enqueue_outcome_notice(notice);
     }
 

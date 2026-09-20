@@ -1573,12 +1573,9 @@ pub fn scenario_checkout_presents_backend_receipt(cx: &mut VisualTestAppContext)
             app.plan_modal().is_none(),
             "Failed must not restore the consumed checkout confirmation"
         );
-        let notice = app
-            .app_notice()
-            .expect("the checkout failure must reach AppNotice");
         assert!(
-            notice.inspect.is_none() && notice.acknowledge.is_none(),
-            "a known checkout failure does not require reconciliation"
+            app.app_notice().is_none(),
+            "a recorded checkout failure must not open a dismiss-only modal"
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         let shown: Vec<_> = panel
@@ -1658,12 +1655,9 @@ pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppConte
             app.cherry_pick_modal().is_none(),
             "Failed must not restore the consumed cherry-pick confirmation"
         );
-        let notice = app
-            .app_notice()
-            .expect("the cherry-pick failure must reach AppNotice");
         assert!(
-            notice.inspect.is_none() && notice.acknowledge.is_none(),
-            "a known cherry-pick failure does not require reconciliation"
+            app.app_notice().is_none(),
+            "a recorded cherry-pick failure must not open a dismiss-only modal"
         );
         let panel = app.op_log.as_ref().unwrap().read(cx);
         let shown: Vec<_> = panel

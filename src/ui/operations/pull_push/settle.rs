@@ -114,6 +114,14 @@ impl KagiApp {
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     if !current {
+                        let announce_at = report.announce();
+                        for (at, step) in report.steps.iter().enumerate() {
+                            if at == announce_at {
+                                app.present_recorded_background(&step.recording, cx);
+                            } else {
+                                app.insert_recorded_row(&step.recording, cx);
+                            }
+                        }
                         klog!("op result dropped: tab switched during op");
                         continue;
                     }
@@ -179,9 +187,8 @@ impl KagiApp {
                 }
                 for delivery in rest {
                     match delivery {
-                        // A failed write's terminal notice stays queued while a
-                        // foreground modal owns the slot. Mark the reads stale
-                        // and let the next reload pick them up.
+                        // A failed write stays durable in Operation Log. Mark
+                        // the reads stale and let the next reload pick them up.
                         Delivery::Invalidate(target) if failed => {
                             for session in app.app_sessions.sessions_for(&target.worktree) {
                                 app.reads.invalidate(session);
@@ -207,7 +214,7 @@ impl KagiApp {
     /// from the receipt that decided it — the siblings are still durable
     /// receipts the panel should hold, but they are not the answer to what the
     /// user asked for (#702 review P1).
-    fn insert_recorded_row(
+    pub(in crate::ui::operations) fn insert_recorded_row(
         &mut self,
         recording: &kagi_git::backend::recording::Recording,
         cx: &mut Context<Self>,
@@ -220,5 +227,28 @@ impl KagiApp {
                 cx.notify();
             });
         }
+    }
+
+    /// Put a background owner's receipt in the window-global Operation Log and
+    /// announce a non-success without changing the active tab's footer/panes.
+    pub(in crate::ui::operations) fn present_recorded_background(
+        &mut self,
+        recording: &kagi_git::backend::recording::Recording,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
+        if !matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) {
+            self.push_toast(
+                ToastKind::Error,
+                format!(
+                    "{} — {}: {}",
+                    entry.repo,
+                    entry.op,
+                    crate::ui::oplog_panel::outcome_summary(&entry.outcome)
+                ),
+                cx,
+            );
+        }
+        self.insert_recorded_row(recording, cx);
     }
 }

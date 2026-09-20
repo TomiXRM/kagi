@@ -9,7 +9,7 @@ use kagi_domain::plan_note::{PlanNote, PullNote};
 use kagi_git::oplog::{read_oplog_tail_for_repo, recovery, OpOutcome};
 
 use crate::macos::{build_fixture, git, mount, unmount};
-use crate::recovery_operations::{press_enter, press_key, wait_idle};
+use crate::recovery_operations::{press_enter, wait_idle};
 
 fn output(repo: &Path, args: &[&str]) -> String {
     let result = Command::new("git")
@@ -651,8 +651,8 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
 /// `steps` is `stash-push Success → pull Failed → stash-pop Success`, and
 /// the old presentation path announced each receipt: the last announcement won,
 /// so the window ended with a Pull failure modal over a `stash-pop: … → …`
-/// success footer and three toasts. The sibling receipts are panel rows now;
-/// exactly one of them — the decisive Pull AppNotice — is presented.
+/// success footer and three toasts. The receipts are panel rows now and the
+/// decisive failure gets one toast, without a dismiss-only modal.
 pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -707,12 +707,9 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
             app.pull_modal().is_none(),
             "Failed must not restore the consumed Pull confirmation"
         );
-        let notice = app
-            .app_notice()
-            .expect("the decisive Pull failure must reach AppNotice");
         assert!(
-            notice.inspect.is_none() && notice.acknowledge.is_none(),
-            "a known Failed outcome does not require reconciliation"
+            app.app_notice().is_none(),
+            "a recorded Pull failure must not open a dismiss-only modal"
         );
         match &app.status_footer {
             kagi::ui::FooterStatus::Failed(text) => assert!(
@@ -1079,18 +1076,15 @@ pub fn scenario_pull_auto_stash_failure_restores(cx: &mut VisualTestAppContext) 
             app.pull_modal().is_none(),
             "Failed must not restore the consumed Pull confirmation"
         );
-        let notice = app
-            .app_notice()
-            .expect("failed Pull must survive watcher reload as AppNotice");
         assert!(
-            notice.inspect.is_none() && notice.acknowledge.is_none(),
-            "a known Failed outcome does not require reconciliation"
+            app.app_notice().is_none(),
+            "the durable Operation Log row replaces the old plain AppNotice"
         );
     });
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_auto_stash_failure_restores: failed Pull restores changes and presents its notice"
+        "[gui-e2e] PASS pull_auto_stash_failure_restores: failed Pull restores changes and records its result"
     );
 }
 
@@ -1345,8 +1339,8 @@ pub fn scenario_pull_confirm_yields_to_another_modal(cx: &mut VisualTestAppConte
     );
 }
 
-/// #718 P2: a production dirty-Pull fetch failure is an asynchronous notice,
-/// not permission to destroy the Remote Browse modal the user opened meanwhile.
+/// A production dirty-Pull fetch failure is recorded without disturbing the
+/// Remote Browse modal the user opened meanwhile.
 pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -1368,8 +1362,8 @@ pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestA
     });
 
     // The fetch task has been dispatched but the executor has not run it yet.
-    // Removing the remote makes pull_push::deliver_pull_confirm take its real
-    // FetchFailed -> set_app_notice path while Remote Browse owns the slot.
+    // Removing the remote makes pull_push::deliver_pull_confirm record its
+    // real fetch-failure path while Remote Browse owns the slot.
     drop(remote_root);
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
@@ -1377,7 +1371,7 @@ pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestA
     cx.read(|cx| {
         assert!(
             app.read(cx).remote_browse().is_some(),
-            "async-notice-keeps-remote-browse: a Pull fetch failure must wait behind Remote Browse",
+            "a Pull fetch failure must not replace Remote Browse",
         );
     });
 
@@ -1386,7 +1380,7 @@ pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestA
         kagi::ui::e2e::present_app_notice(app);
         assert!(
             kagi::ui::e2e::app_notice_is_acknowledgeable(app),
-            "async-notice-preserves-queue-order: the notice already waiting must stay first",
+            "the actionable notice already waiting must stay first",
         );
         app.confirm_app_notice(cx);
         assert!(
@@ -1395,23 +1389,25 @@ pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestA
         );
         kagi::ui::e2e::present_app_notice(app);
     });
-    cx.read(|cx| {
-        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
-            .expect("the Pull fetch failure notice must follow the acknowledgement");
-        assert!(
-            message.contains("Fetch"),
-            "async-notice-presents-pull-failure: unexpected notice: {message}",
-        );
-    });
+    assert!(
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "the recorded fetch failure must not add a dismiss-only notice"
+    );
+    assert!(
+        records(repo, "fetch")
+            .iter()
+            .any(|entry| matches!(entry.outcome, OpOutcome::Failed { .. })),
+        "the fetch failure must remain durable in Operation Log"
+    );
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_failure_notice_waits_for_remote_browse: production failure waits behind the occupied slot"
+        "[gui-e2e] PASS pull_failure_notice_waits_for_remote_browse: production failure uses Operation Log without replacing the modal"
     );
 }
 
-/// #718 P2: asynchronous notices obey one FIFO rule even when another
-/// AppNotice, rather than a different modal kind, already owns the slot.
+/// A recorded fetch failure does not add a third item to an existing notice
+/// queue containing plain and actionable notices.
 pub fn scenario_pull_failure_notice_waits_for_app_notice(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -1462,24 +1458,19 @@ pub fn scenario_pull_failure_notice_waits_for_app_notice(cx: &mut VisualTestAppC
         );
         kagi::ui::e2e::present_app_notice(app);
     });
-    cx.read(|cx| {
-        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
-            .expect("the production Pull failure must be presented third");
-        assert!(
-            message.contains("Fetch"),
-            "async-notice-app-fifo-third: unexpected third notice: {message}",
-        );
-    });
+    assert!(
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "the recorded Pull failure must not become a third plain notice"
+    );
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_failure_notice_waits_for_app_notice: plain, actionable, and production failure notices stay FIFO"
+        "[gui-e2e] PASS pull_failure_notice_waits_for_app_notice: recorded failures do not extend the notice FIFO"
     );
 }
 
-/// #718 P2: displacement and explicit dismissal are different events. A plain
-/// production failure displaced before it can be read returns to the queue;
-/// once the user dismisses that same notice, it stays dismissed.
+/// A production fetch failure has no modal lifecycle: opening and closing a
+/// different modal cannot resurrect a dismiss-only failure notice.
 pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -1498,14 +1489,10 @@ pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTes
     drop(remote_root);
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
-    cx.read(|cx| {
-        let message = kagi::ui::e2e::app_notice_message(app.read(cx))
-            .expect("the production Pull fetch failure must be visible");
-        assert!(
-            message.contains("Fetch"),
-            "notice-event-separation-seeds-production-failure: unexpected notice: {message}"
-        );
-    });
+    assert!(
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "a recorded fetch failure must not create a plain AppNotice"
+    );
 
     app.update(cx, |app, cx| app.open_remote_browse(cx));
     assert!(
@@ -1516,25 +1503,20 @@ pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTes
         app.cancel_remote_browse();
         kagi::ui::e2e::present_app_notice(app);
     });
-    cx.read(|cx| {
-        let message = kagi::ui::e2e::app_notice_message(app.read(cx));
-        assert!(
-            message.is_some_and(|message| message.contains("Fetch")),
-            "notice-displacement-plain-is-retained: an unread plain failure must return to the queue; got {message:?}"
-        );
-    });
-
-    press_key(cx, &app, window, "escape");
-    cx.run_until_parked();
-    app.update(cx, |app, _| kagi::ui::e2e::present_app_notice(app));
     assert!(
         cx.read(|cx| app.read(cx).app_notice().is_none()),
-        "notice-dismissal-plain-stays-dismissed: an explicitly dismissed plain failure must not return to the queue"
+        "closing another modal must not materialize a recorded failure notice"
+    );
+    assert!(
+        records(repo, "fetch")
+            .iter()
+            .any(|entry| matches!(entry.outcome, OpOutcome::Failed { .. })),
+        "the complete fetch error remains available in Operation Log"
     );
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_failure_notice_displacement_vs_dismissal: unread plain failures survive displacement but not user dismissal"
+        "[gui-e2e] PASS pull_failure_notice_displacement_vs_dismissal: recorded failures have no modal lifecycle"
     );
 }
 

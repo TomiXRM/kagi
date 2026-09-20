@@ -8,6 +8,9 @@
 /// Plan notes for the GitHub PR ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubNote {
+    /// blocker — the L1 list did not provide the immutable head commit needed
+    /// by `gh pr merge --match-head-commit`.
+    HeadUnavailable { number: u64 },
     /// blocker — GitHub reports the PR as not mergeable (conflicts, or a
     /// branch-protection gate that is not satisfied).
     NotMergeable { number: u64 },
@@ -60,6 +63,10 @@ impl GithubNote {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
+            GithubNote::HeadUnavailable { number } => format!(
+                "The head commit for #{} is unavailable. Refresh the pull-request list before merging.",
+                number
+            ),
             GithubNote::NotMergeable { number } => format!(
                 "GitHub reports #{} as not mergeable. Resolve conflicts (or satisfy branch protection) first.",
                 number

@@ -319,6 +319,9 @@ pub struct TabUiState {
     pub github_error: Option<String>,
     pub github_unavailable: bool,
     pub github_prs_epoch: u64,
+    pub github_prs_gen: u64,
+    pub github_prs_loading: bool,
+    pub(super) pr_details: super::github_pr_detail::PrDetailController,
     /// Read-only Issues workspace data. Requests are session-owned and each
     /// generation accepts only its newest completion.
     pub github_issues: Vec<kagi_domain::github::Issue>,
@@ -391,6 +394,9 @@ impl Default for TabUiState {
             github_error: None,
             github_unavailable: false,
             github_prs_epoch: 0,
+            github_prs_gen: 0,
+            github_prs_loading: false,
+            pr_details: Default::default(),
             github_issues: Vec::new(),
             github_issues_loaded: false,
             github_issues_loading: false,
@@ -428,6 +434,20 @@ impl Default for TabUiState {
 }
 
 impl TabUiState {
+    pub(super) fn begin_github_prs_request(&mut self) -> u64 {
+        self.github_prs_gen = self.github_prs_gen.wrapping_add(1);
+        self.github_prs_loading = true;
+        self.github_prs_gen
+    }
+
+    pub(super) fn accept_github_prs_completion(&mut self, generation: u64) -> bool {
+        if generation != self.github_prs_gen {
+            return false;
+        }
+        self.github_prs_loading = false;
+        true
+    }
+
     /// Begin a list request and return the generation frozen into its task.
     pub(super) fn begin_github_issues_request(&mut self) -> u64 {
         self.github_issues_gen = self.github_issues_gen.wrapping_add(1);
@@ -549,6 +569,17 @@ mod github_issue_state_tests {
         assert!(state.finish_github_issues_request(new, Ok(vec![issue(2, "new")])));
         assert!(!state.finish_github_issues_request(old, Ok(vec![issue(1, "stale")])));
         assert_eq!(state.github_issues[0].number, 2);
+    }
+
+    #[test]
+    fn later_pr_list_request_rejects_delayed_completion() {
+        let mut state = TabUiState::default();
+        let old = state.begin_github_prs_request();
+        let newest = state.begin_github_prs_request();
+        assert!(!state.accept_github_prs_completion(old));
+        assert!(state.github_prs_loading);
+        assert!(state.accept_github_prs_completion(newest));
+        assert!(!state.github_prs_loading);
     }
 
     #[test]

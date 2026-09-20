@@ -447,6 +447,11 @@ pub fn plan_pr_merge(
 
     let mut blockers: Vec<PlanNote> = Vec::new();
     let mut warnings: Vec<PlanNote> = Vec::new();
+    if pr.head_sha.trim().is_empty() {
+        blockers.push(PlanNote::Github(GithubNote::HeadUnavailable {
+            number: pr.number,
+        }));
+    }
     if pr.is_draft {
         blockers.push(PlanNote::Github(GithubNote::IsDraft { number: pr.number }));
     }
@@ -539,6 +544,9 @@ pub fn plan_pr_merge(
 pub use crate::github_fetch::{
     apply_pr_fetch, classify_gh_failure, issue_detail, list_issues, list_merged_prs, list_open_prs,
     pr_body_detail, pr_status_detail, PrFetchError, PrFetchOutcome,
+};
+pub use crate::github_status_batch::{
+    parse_pr_status_batch, pr_status_details_batch, PrStatusBatchResult,
 };
 
 // #347 merge-lifecycle backend (version detection, mergeStateStatus + merge
@@ -718,6 +726,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn merge_plan_blocks_when_the_head_commit_is_unavailable() {
+        let pr = PullRequest {
+            number: 42,
+            head_sha: String::new(),
+            ..Default::default()
+        };
+        let plan = plan_pr_merge(&pr, MergeMethod::Merge, false, "main".into());
+        assert!(plan.blockers.iter().any(|note| matches!(
+            note,
+            PlanNote::Github(kagi_domain::plan_note::GithubNote::HeadUnavailable { number: 42 })
+        )));
     }
 
     #[test]

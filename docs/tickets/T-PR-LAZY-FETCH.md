@@ -87,3 +87,48 @@
 - 完了時: 全コミット hash と検証結果を自ペインに `[done]` で出し、w5:p19 にレビューを
   依頼(`herdr pane send-text w5:p19 'レビュー依頼: …'`)、指摘は自分で直して再依頼、
   `no further findings` を得たら w5:p0 に `[done]` を送る。
+
+## 追記 2 — L2 のバッチ化と先読み(w5:p0 決定、2026-09-20)
+
+体感「1 秒に 1 件ずつ埋まる」の実測: `gh pr view --json statusCheckRollup,mergeable`
+は **1 件 ≈ 0.7 s**(gh の起動+認証が大半)、同時実行 2 で可視 20 行 ≈ 7 s。
+対して `gh api graphql` で **20 件を 1 リクエスト**にすると **≈ 1.1 s**(Sushi-maker で計測)。
+
+### 決定
+
+1. **L2 の transport をバッチ GraphQL にする。** 可視窓の PR 番号集合を 1 リクエストに
+   まとめる(`repository(owner,name){ pullRequest(number:N){ number headRefOid mergeable
+   commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{
+   __typename ... on CheckRun{name conclusion status detailsUrl workflowRun{workflow{name}}}
+   ... on StatusContext{context state targetUrl}}}}}}} }` を番号ごとに alias で並べる、
+   または `search(type:ISSUE, query:"repo:o/r is:pr 1 2 3 …")` — 前者の alias 方式を採用:
+   結果が番号で確定し、search の遅延がない)。
+   - 1 リクエストの上限 **20 件**。可視集合が大きければ 20 件ずつ分割。
+   - **504/502 なら半分に割って再試行**(20→10→5、5 でも失敗ならその窓は失敗として
+     前回値保持 + RETRY_DELAY)。無条件の全体 retry はしない(追記 1 の規則どおり)。
+   - 応答の解析は既存 `parse_pr_status_detail` と**同じ `PrStatusDetail` を生成**する
+     (GraphQL の形は `gh pr view --json` の JSON と違うので変換層を 1 つ書く。
+     `CiState` の畳み込み規則 `fold_ci` は共有、テストで両経路の一致を固定)。
+   - 個別 `gh pr view` の L2 は**開いた PR の優先取得**にだけ残す(1 件を最速で埋める)。
+   - `-R`/owner・repo は凍結済み `base_repo` から(host 付き)。ネットワークで repo 名を
+     引かない。
+2. **先読み幅**: 可視窓の**上下に各 10 件**を候補に足す(ソート後の並び順ベース、
+   一覧の端でクランプ)。優先度は 可視 > 下方向の先読み > 上方向。バッチは
+   可視分を先に 1 リクエスト、先読み分を別リクエストに分ける(可視分の応答を
+   先読みに待たせない)。
+3. **同時実行**: バッチ化後は `DETAIL_CONCURRENCY = 2` のまま(= 同時 2 リクエスト、
+   最大 40 件が飛行中)。増やさない — secondary rate limit を踏まないため。
+4. L3(body/±/files)は現状どおり開いた PR のみ・個別。今回は触らない。
+5. **既存の所有/generation/owner 固定/失敗時 RETRY_DELAY の規則は無変更。** バッチの
+   完了は各 PR ごとに「その PR の generation・head」を照合して個別に適用する
+   (バッチ内の 1 件が古くても他は適用する)。
+
+### 受け入れ条件(追加)
+
+- 可視 20 行の checks/mergeable が **2 秒以内**に埋まる(Sushi-maker で目視、
+  `[kagi] pr-detail: batch n=<件数> ms=<所要>` の klog 契約行を追加して確認)。
+- 単体テスト: GraphQL 応答 → `PrStatusDetail` の変換が `gh pr view --json` 経路と
+  同じ `CiState`/checks/mergeable を出す(fixture JSON を両形で用意)。
+- 単体テスト: 504 時の分割(20→10→5→失敗)と、部分成功の個別適用。
+- 単体テスト: 先読み集合の計算(端でクランプ、可視 > 下 > 上 の優先、上限 20/リクエスト)。
+- `cargo test --workspace` 緑、`check-all` `::error 0`、clippy 新規なし。

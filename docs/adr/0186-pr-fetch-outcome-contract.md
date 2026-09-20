@@ -32,6 +32,43 @@ cache への適用は `github_fetch::apply_pr_fetch` 一箇所に置き、sideba
 refresh と Branch Cleanup scan の両方がそれを呼ぶ。呼び出し側ごとに分岐を
 書き直さないことがこの ADR の実体。
 
+### 一覧と詳細の三段階契約（T-PR-LAZY-FETCH）
+
+大規模 repository では、checks・body・統計を全 PR に展開する GraphQL query が
+GitHub の処理 timeout（HTTP 504）になる。このため open PR の read を次の三段階に
+分ける。
+
+| 段階 | 起動 | 所有する field |
+|---|---|---|
+| L1 一覧 | 60s tick / 手動更新 / tab 切替 | PR 集合・順序、`number,title,headRefName,headRefOid,baseRefName,isDraft,author,updatedAt,createdAt,labels,assignees,reviewRequests,reviewDecision,url,isCrossRepository` |
+| L2 状態 | open PR（優先）と PR home の可視行 | `statusCheckRollup,mergeable` |
+| L3 詳細 | open PR のみ | `body,changedFiles,additions,deletions` |
+
+L1 の成功は集合・順序と L1 field だけを置き換える。同じ `number + headRefOid` の
+L2/L3 は保持し、省略 field の空値で上書きしない。L2/L3 の成功は要求した field 群
+だけを更新し、空 body・空 checks・0 files も有効な答えとして反映する。head が変わった
+場合、旧 head の詳細を現在値として使わない。
+
+詳細 read は session-owned controller が管理する。開始時の session、worktree path、
+base repository、PR number、stage、generation を completion まで固定し、同じ
+`base repository + number + stage` を重複実行しない。同時実行は最大2件。古い
+generation と異なる head の completion は捨て、一覧から消えた PR を再挿入しない。
+成功は owner の一覧コピーと open `PrTab` コピーへ一箇所から適用する。失敗は前回値を
+保持し、stale/error と次回可能時刻だけを更新する。
+
+PR home は virtualized table の layout が報告した PR number 集合を 200ms debounce
+（最大待ち500ms）で予約する。open PR の L2/L3 は debounce を待たず優先するが、同じ
+同時実行上限を共有する。画面外へ出た home 由来の未開始要求は外す。
+
+L2 の未取得・取得中・期限切れ・更新失敗は値の `CiState::None` や
+`Mergeable::Unknown` と区別し、「判定待ち」として表示する。`ChangesRequested` の
+ように L1 だけで確定する `NeedsYou` は先に出してよいが、`Ready` は L2 成功前に
+確定しない。`headRefOid` が空の PR merge は `--match-head-commit` を固定できないため
+plan blocker とする。
+
+HTTP 504 の retry は L1 だけに置き、1〜2秒の jitter 後に1回だけ行う。共通
+`fetch_json`、L2/L3、rate-limit response はこの retry を使わない。
+
 ## 問題
 
 `list_open_prs` / `list_merged_prs` は `gh` の全非ゼロ終了を `Ok(Vec::new())`

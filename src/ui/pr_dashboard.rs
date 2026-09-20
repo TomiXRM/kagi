@@ -15,14 +15,15 @@
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
-use gpui::{div, prelude::*, px, rgb, Context, SharedString};
-use kagi_domain::github::{PrAttention, PrReason, PullRequest};
+use gpui::{div, prelude::*, px, rgb, uniform_list, Context, SharedString};
+use kagi_domain::github::{PrAttention, PrDetailAvailability, PrReason, PullRequest};
 use kagi_domain::pr_list::{sort_prs, PrListFilter, PrSection, PrSort};
 
 use super::i18n::Msg;
-use super::pr_mode::{
+use super::pr_attention::{
     attention_color, card_border, ci_glyph, focus_queue, queue_bucket_label, reason_text,
 };
 use super::render_helpers::safe_text;
@@ -132,7 +133,6 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .id("pr-mode-dashboard")
         .flex_1()
         .min_h(px(0.))
-        .overflow_y_scroll()
         .flex()
         .flex_col()
         .pb_4();
@@ -223,13 +223,56 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(Msg::PrPaneEmpty.t())),
             );
-        }
-        for pr in rows {
-            let (bucket, why) = att
-                .get(&pr.number)
-                .cloned()
-                .unwrap_or((PrAttention::Dormant, PrReason::None));
-            body = body.child(render_table_row(&pr, bucket, &why, now, cx));
+        } else {
+            let rows: Rc<Vec<(PullRequest, PrAttention, PrReason)>> = Rc::new(
+                rows.into_iter()
+                    .map(|pr| {
+                        let (bucket, why) = att
+                            .get(&pr.number)
+                            .cloned()
+                            .unwrap_or((PrAttention::Dormant, PrReason::None));
+                        (pr, bucket, why)
+                    })
+                    .collect(),
+            );
+            let row_count = rows.len();
+            let render_rows = rows.clone();
+            let scroll = app
+                .pr_mode()
+                .map(|mode| mode.dashboard_scroll.clone())
+                .unwrap_or_default();
+            body = body.child(
+                uniform_list(
+                    "pr-home-list",
+                    row_count,
+                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        let start = range.start.saturating_sub(2);
+                        let end = (range.end + 2).min(render_rows.len());
+                        let visible: BTreeSet<u64> = render_rows[start..end]
+                            .iter()
+                            .map(|(pr, _, _)| pr.number)
+                            .collect();
+                        this.observe_visible_prs(visible, cx);
+                        range
+                            .filter_map(|index| {
+                                render_rows.get(index).map(|(pr, bucket, why)| {
+                                    render_table_row(
+                                        pr,
+                                        *bucket,
+                                        why,
+                                        this.pr_status_availability(pr),
+                                        now,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .track_scroll(&scroll)
+                .flex_1()
+                .min_h(px(0.)),
+            );
         }
     }
 
@@ -298,6 +341,7 @@ fn render_table_row(
     pr: &PullRequest,
     bucket: PrAttention,
     why: &PrReason,
+    status: PrDetailAvailability,
     now: i64,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -314,10 +358,16 @@ fn render_table_row(
         },
     );
     let (glyph, glyph_ink) = ci_glyph(pr.ci);
-    let checks = match (pr.checks.len(), pr.failed_checks()) {
-        (0, _) => String::new(),
-        (total, 0) => format!("{glyph}{total}"),
-        (total, failed) => format!("\u{2717}{failed}/{total}"),
+    let checks = match status {
+        PrDetailAvailability::Fresh => match (pr.checks.len(), pr.failed_checks()) {
+            (0, _) => glyph.to_string(),
+            (total, 0) => format!("{glyph}{total}"),
+            (total, failed) => format!("\u{2717}{failed}/{total}"),
+        },
+        PrDetailAvailability::Missing | PrDetailAvailability::Loading => {
+            Msg::PrWhyPending.t().to_string()
+        }
+        PrDetailAvailability::Stale => format!("{}*", Msg::PrWhyPending.t()),
     };
     // An age needs an instant; the list's stamp is text (see `PullRequest`).
     let age = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
@@ -330,6 +380,12 @@ fn render_table_row(
     };
     div()
         .id(("pr-home-row", pr.number as usize))
+        // The row must take the table's width, not its own content's: without
+        // `w_full` the title cell's `flex_1` had nothing to fill, every row was
+        // as wide as its title, and the fixed columns landed at a different x
+        // on each row (user report).
+        .w_full()
+        .overflow_hidden()
         .flex()
         .flex_row()
         .items_center()
@@ -360,8 +416,13 @@ fn render_table_row(
                 .flex()
                 .flex_col()
                 .gap_px()
+                // `w_full` + `overflow_hidden`: a long title otherwise sets
+                // the column's intrinsic width and pushes the fixed columns
+                // to the right out of alignment (user report, zed).
+                .overflow_hidden()
                 .child(
                     div()
+                        .w_full()
                         .truncate()
                         .text_sm()
                         .text_color(rgb(theme().text_main))
@@ -369,6 +430,7 @@ fn render_table_row(
                 )
                 .child(
                     div()
+                        .w_full()
                         .truncate()
                         .child(safe_text(&format!("{} \u{2192} {}", pr.head, pr.base))),
                 ),
@@ -403,10 +465,14 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_FILES))
                 .flex_shrink_0()
-                .child(SharedString::from(if pr.changed_files > 0 {
-                    pr.changed_files.to_string()
-                } else {
-                    String::new()
+                // Blank only for a fetched zero; a count not fetched yet says
+                // so, like the checks cell (user report).
+                .child(SharedString::from(match status {
+                    PrDetailAvailability::Fresh if pr.changed_files > 0 => {
+                        pr.changed_files.to_string()
+                    }
+                    PrDetailAvailability::Fresh => String::new(),
+                    _ => "\u{2026}".to_string(),
                 })),
         )
         .child(

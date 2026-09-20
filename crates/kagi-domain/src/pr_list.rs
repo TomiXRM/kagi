@@ -5,7 +5,7 @@
 //! only this half is about presentation order. Pure, like the rest of the
 //! crate — the UI owns which slice is showing, never how one is decided.
 
-use crate::github::{PrAttention, PrGroup, PullRequest};
+use crate::github::{PrAttention, PrDetailAvailability, PrGroup, PullRequest};
 
 /// Which slice of the *open* pull requests the list is showing.
 ///
@@ -75,14 +75,31 @@ impl PrSection {
     /// what is broken or ready on a locally-checked-out branch, and the three
     /// viewer-relative sections are empty rather than guessing whose they are.
     pub fn accepts(self, pr: &PullRequest, me: Option<&str>, local_branches: &[String]) -> bool {
+        self.accepts_with_status(pr, me, local_branches, PrDetailAvailability::Fresh)
+    }
+
+    /// Section membership with an explicit L2 availability. Pending PRs stay
+    /// in Inbox so fetching them cannot depend on a verdict that needs L2.
+    pub fn accepts_with_status(
+        self,
+        pr: &PullRequest,
+        me: Option<&str>,
+        local_branches: &[String],
+        status: PrDetailAvailability,
+    ) -> bool {
         let is_me = |login: &String| me.is_some_and(|m| m.eq_ignore_ascii_case(login));
         let group = pr.group_for(me, local_branches);
         match self {
             Self::Inbox => {
-                let (attention, _) =
-                    pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
-                matches!(attention, PrAttention::NeedsYou | PrAttention::Ready)
-                    || group == PrGroup::ReviewRequested
+                let (attention, _) = pr.attention_with_status(
+                    group == PrGroup::Mine,
+                    group == PrGroup::ReviewRequested,
+                    status,
+                );
+                matches!(
+                    attention,
+                    PrAttention::NeedsYou | PrAttention::Pending | PrAttention::Ready
+                ) || group == PrGroup::ReviewRequested
             }
             Self::Mine => group == PrGroup::Mine,
             Self::Review => pr.reviewers.iter().any(is_me),

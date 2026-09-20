@@ -8,7 +8,8 @@ use gpui::{div, prelude::*, px, rgb, Context, SharedString};
 use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
 
 use super::i18n::Msg;
-use super::pr_mode::{card_bg, card_border, card_pane_bg, ci_glyph};
+use super::pr_attention::{card_border, ci_glyph};
+use super::pr_mode::{card_bg, card_pane_bg};
 // issue #414: `@login` handles come straight from `gh` JSON — sanitize before render.
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};

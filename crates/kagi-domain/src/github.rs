@@ -1,6 +1,11 @@
 //! Pure GitHub pull-request and read-only Issue display models. Filled by
 //! `kagi_git::github`; independent of Git and UI state.
 
+pub use crate::github_attention::{PrAttention, PrReason};
+pub use crate::github_detail::{
+    apply_pr_body, apply_pr_list, apply_pr_status, PrBodyDetail, PrDetailAvailability,
+    PrStatusDetail,
+};
 pub use crate::github_edit::PrFieldEdit;
 
 /// Aggregate CI state of a PR's head commit.
@@ -36,31 +41,6 @@ pub enum ReviewVerdict {
     Approve,
     RequestChanges,
     Comment,
-}
-
-/// L2 data fetched for one pull request. The head SHA is part of the payload so
-/// a completion can never attach checks from an old head to the current PR.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrStatusDetail {
-    pub number: u64,
-    pub head_sha: String,
-    pub ci: CiState,
-    pub checks: Vec<Check>,
-    pub mergeable: Mergeable,
-}
-
-/// L3 data fetched for one pull request. An empty body and zero counts are
-/// valid fetched values; presence of this value, rather than its contents,
-/// records that the detail request succeeded.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrBodyDetail {
-    pub number: u64,
-    pub head_sha: String,
-    pub updated_at: String,
-    pub body: String,
-    pub changed_files: u32,
-    pub additions: u32,
-    pub deletions: u32,
 }
 
 impl ReviewVerdict {
@@ -572,172 +552,6 @@ pub enum Mergeable {
     /// Mergeable, but blocked by branch protection (checks / reviews).
     Blocked,
     Conflicting,
-}
-
-/// What the viewer should do about this PR — the Focus Queue's grouping.
-/// Derived, never fetched: everything here comes from data the PR list
-/// already carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PrAttention {
-    /// Something is wrong and it is yours to fix.
-    NeedsYou,
-    /// Work is happening; nothing to do but wait.
-    InProgress,
-    /// Green and yours — merge it.
-    Ready,
-    /// Someone else's move (your review is requested, or you're waiting on one).
-    Waiting,
-    /// Everything else.
-    Dormant,
-}
-
-/// Why a PR landed in its [`PrAttention`] bucket — shown next to the state so
-/// the user never has to decode a glyph.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrReason {
-    CiFailed(usize),
-    ChangesRequested,
-    Conflicting,
-    CiRunning,
-    ReadyToMerge,
-    ReviewRequested,
-    AwaitingReview,
-    Draft,
-    None,
-}
-
-impl PullRequest {
-    /// Number of failing checks (0 when none / unknown).
-    pub fn failed_checks(&self) -> usize {
-        self.checks
-            .iter()
-            .filter(|c| c.state == CiState::Failure)
-            .count()
-    }
-
-    /// Classify for the Focus Queue. `mine` is [`PullRequest::group_for`] ==
-    /// `Mine`; a PR that is not yours can never be "yours to fix".
-    pub fn attention(&self, mine: bool, review_requested: bool) -> (PrAttention, PrReason) {
-        if mine {
-            if self.mergeable == Mergeable::Conflicting {
-                return (PrAttention::NeedsYou, PrReason::Conflicting);
-            }
-            let failed = self.failed_checks();
-            if failed > 0 || self.ci == CiState::Failure {
-                return (PrAttention::NeedsYou, PrReason::CiFailed(failed.max(1)));
-            }
-            if self.review == ReviewState::ChangesRequested {
-                return (PrAttention::NeedsYou, PrReason::ChangesRequested);
-            }
-            if self.ci == CiState::Pending {
-                return (PrAttention::InProgress, PrReason::CiRunning);
-            }
-            if self.is_draft {
-                return (PrAttention::InProgress, PrReason::Draft);
-            }
-            if self.review == ReviewState::Approved || self.mergeable == Mergeable::Clean {
-                return (PrAttention::Ready, PrReason::ReadyToMerge);
-            }
-            return (PrAttention::Waiting, PrReason::AwaitingReview);
-        }
-        if review_requested {
-            return (PrAttention::Waiting, PrReason::ReviewRequested);
-        }
-        (PrAttention::Dormant, PrReason::None)
-    }
-}
-
-#[cfg(test)]
-mod attention_tests {
-    use super::*;
-
-    fn pr() -> PullRequest {
-        PullRequest {
-            number: 1,
-            title: "t".into(),
-            head: "feat".into(),
-            base: "main".into(),
-            ci: CiState::Success,
-            author: "me".into(),
-            mergeable: Mergeable::Clean,
-            cross_repository: false,
-            base_repo: "o/r".into(),
-            ..Default::default()
-        }
-    }
-
-    fn check(state: CiState) -> Check {
-        Check {
-            name: "test".into(),
-            workflow: "ci".into(),
-            state,
-            url: String::new(),
-        }
-    }
-
-    /// The queue is ordered by what the user must do, and every bucket
-    /// carries a concrete reason (no glyph decoding).
-    #[test]
-    fn mine_failing_ci_needs_you_with_a_count() {
-        let mut p = pr();
-        p.ci = CiState::Failure;
-        p.checks = vec![
-            check(CiState::Failure),
-            check(CiState::Success),
-            check(CiState::Failure),
-        ];
-        assert_eq!(
-            p.attention(true, false),
-            (PrAttention::NeedsYou, PrReason::CiFailed(2))
-        );
-    }
-
-    #[test]
-    fn conflicts_outrank_ci_and_reviews() {
-        let mut p = pr();
-        p.mergeable = Mergeable::Conflicting;
-        p.ci = CiState::Failure;
-        assert_eq!(
-            p.attention(true, false),
-            (PrAttention::NeedsYou, PrReason::Conflicting)
-        );
-    }
-
-    #[test]
-    fn running_ci_and_drafts_are_in_progress_not_actionable() {
-        let mut p = pr();
-        p.ci = CiState::Pending;
-        assert_eq!(p.attention(true, false).0, PrAttention::InProgress);
-        let mut d = pr();
-        d.is_draft = true;
-        assert_eq!(
-            d.attention(true, false),
-            (PrAttention::InProgress, PrReason::Draft)
-        );
-    }
-
-    #[test]
-    fn green_and_approved_is_ready_to_merge() {
-        let mut p = pr();
-        p.review = ReviewState::Approved;
-        assert_eq!(
-            p.attention(true, false),
-            (PrAttention::Ready, PrReason::ReadyToMerge)
-        );
-    }
-
-    /// Someone else's PR is never "yours to fix" — a failing CI on it is
-    /// their problem; only a review request puts it in your queue.
-    #[test]
-    fn other_peoples_prs_only_surface_when_your_review_is_requested() {
-        let mut p = pr();
-        p.ci = CiState::Failure;
-        assert_eq!(p.attention(false, false).0, PrAttention::Dormant);
-        assert_eq!(
-            p.attention(false, true),
-            (PrAttention::Waiting, PrReason::ReviewRequested)
-        );
-    }
 }
 
 // ────────────────────────────────────────────────────────────

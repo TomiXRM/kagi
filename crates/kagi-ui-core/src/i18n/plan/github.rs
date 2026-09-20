@@ -5,6 +5,10 @@ use kagi_domain::plan_note::{GithubNote, GithubRecovery, GithubTitle};
 /// Japanese rendering of one GitHub note.
 pub fn note_ja(note: &GithubNote) -> String {
     match note {
+        GithubNote::HeadUnavailable { number } => format!(
+            "#{} の head commit を取得できていません。pull request 一覧を更新してから merge してください。",
+            number
+        ),
         GithubNote::NotMergeable { number } => format!(
             "#{} は merge できません。conflict 解消か branch 保護条件の充足が必要です。",
             number

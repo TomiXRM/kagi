@@ -10,7 +10,8 @@ use kagi_domain::github::{stack_order, PrAttention, PrGroup, PullRequest, Review
 use kagi_domain::pr_list::PrSection;
 
 use super::i18n::Msg;
-use super::pr_mode::{attention_color, focus_border, PrFocus};
+use super::pr_attention::attention_color;
+use super::pr_mode::{focus_border, PrFocus};
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -112,11 +113,21 @@ pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>
                 .ui()
                 .github_prs
                 .iter()
-                .filter(|pr| section.accepts(pr, me.as_deref(), &local))
+                .filter(|pr| {
+                    section.accepts_with_status(
+                        pr,
+                        me.as_deref(),
+                        &local,
+                        app.pr_status_availability(pr),
+                    )
+                })
                 .map(|pr| {
                     let group = pr.group_for(me.as_deref(), &local);
-                    let (attention, _why) =
-                        pr.attention(group == PrGroup::Mine, group == PrGroup::ReviewRequested);
+                    let (attention, _why) = pr.attention_with_status(
+                        group == PrGroup::Mine,
+                        group == PrGroup::ReviewRequested,
+                        app.pr_status_availability(pr),
+                    );
                     PrListRow {
                         pr: pr.clone(),
                         attention,

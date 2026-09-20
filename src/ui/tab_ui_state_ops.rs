@@ -106,6 +106,8 @@ impl TabUiState {
             github_issues_loading,
             github_issues_error,
             github_issues_gen: _,
+            github_issue_mentions: _,
+            github_issue_tab,
             selected_github_issue,
             github_issue_details: _,
             github_issue_detail_loading: _,
@@ -152,6 +154,10 @@ impl TabUiState {
             (
                 *github_issues_loaded || *github_issues_loading || github_issues_error.is_some(),
                 "issues_mode",
+            ),
+            (
+                *github_issue_tab != kagi_domain::github::IssueListTab::default(),
+                "github_issue_tab",
             ),
             (selected_github_issue.is_some(), "selected_github_issue"),
             (ecosystem_cache.is_some(), "ecosystem_cache"),

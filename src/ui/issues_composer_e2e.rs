@@ -8,6 +8,46 @@ use super::issues_composer::IssueEditor;
 use super::KagiApp;
 
 impl KagiApp {
+    /// Seed one Issue per navigator filter, with completed detail evidence for
+    /// the row that the scenario opens. This drives only production filtering
+    /// and rendering; no alternate E2E row implementation exists.
+    pub fn seed_issue_navigation_for_e2e(&mut self, cx: &mut Context<Self>) {
+        use kagi_domain::github::{Issue, IssueState};
+
+        let make =
+            |number, title: &str, author: &str, assignees: &[&str], updated_at: &str| Issue {
+                number,
+                title: title.into(),
+                state: IssueState::Open,
+                url: format!("https://github.com/example/fixture/issues/{number}"),
+                author: author.into(),
+                assignees: assignees.iter().map(|name| (*name).into()).collect(),
+                labels: Vec::new(),
+                body: format!("body for #{number}"),
+                comments: Vec::new(),
+                comment_count: number as usize,
+                created_at: "2026-09-01T00:00:00Z".into(),
+                updated_at: updated_at.into(),
+            };
+        let issues = vec![
+            make(1, "assigned", "bob", &["alice"], "2026-09-17T00:00:00Z"),
+            make(2, "created", "alice", &[], "2026-09-18T00:00:00Z"),
+            make(3, "mentioned", "carol", &[], "2026-09-19T00:00:00Z"),
+            make(4, "recent", "dave", &[], "2026-09-20T00:00:00Z"),
+        ];
+        self.github_login = Some("alice".into());
+        let ui = self.ui_mut().expect("fixture session");
+        ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
+        ui.github_issues = issues;
+        ui.github_issue_mentions = vec![3];
+        ui.github_issues_loaded = true;
+        ui.github_issues_loading = false;
+        ui.github_issues_error = None;
+        ui.github_issue_details
+            .insert(4, make(4, "recent", "dave", &[], "2026-09-20T00:00:00Z"));
+        cx.notify();
+    }
+
     /// Seed only completed read evidence, before entering Issues. This avoids
     /// requiring a real GitHub repository lookup for editor-only GUI coverage.
     pub fn seed_issue_composer_for_e2e(&mut self, cx: &mut Context<Self>) {

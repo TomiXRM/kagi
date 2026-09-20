@@ -266,18 +266,46 @@ fn merged_pr_evidence_is_kept_on_failure_and_replaced_only_by_an_answer() {
 fn issue_list_is_a_bounded_open_slice_and_excludes_pr_shaped_json() {
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let script = r#"
-test "$*" = "issue list --state open --limit 100 --json number,title,state,url,author,assignees,labels,createdAt,updatedAt" || { echo "wrong command: $*" >&2; exit 1; }
-cat <<'JSON'
-[
-  {"number":12,"title":"issue","state":"OPEN","url":"https://github.com/o/r/issues/12"},
+case "$*" in
+"repo view --json url") echo '{"url":"https://github.com/o/r"}' ;;
+api\ graphql*)
+  case "$*" in *"mentions=repo:o/r is:issue is:open mentions:@me"*) ;; *) echo "missing mentions alias input: $*" >&2; exit 1 ;; esac
+  cat <<'JSON'
+{"data":{"repository":{"issues":{"nodes":[
+  {"number":12,"title":"issue","state":"OPEN","url":"https://github.com/o/r/issues/12","comments":{"totalCount":4}},
   {"number":13,"title":"pr","state":"OPEN","isPullRequest":true,"url":"https://github.com/o/r/pull/13"}
-]
+]}},"mentions":{"nodes":[{"number":12}]}}}
 JSON
+  ;;
+*) echo "wrong command: $*" >&2; exit 1 ;;
+esac
 "#;
     let (_root, workdir, _restore) = fixture(script);
-    let issues = list_issues(&workdir).expect("issue list");
-    assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].number, 12);
+    let snapshot = list_issues(&workdir, None).expect("issue list");
+    assert_eq!(snapshot.issues.len(), 1);
+    assert_eq!(snapshot.issues[0].number, 12);
+    assert_eq!(snapshot.issues[0].comment_count, 4);
+    assert_eq!(snapshot.mentioned_numbers, vec![12]);
+    assert_eq!(snapshot.base_repo, "github.com/o/r");
+}
+
+#[test]
+fn issue_refresh_reuses_frozen_repository_identity() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+case "$*" in
+"repo view --json url") echo "unexpected identity refresh" >&2; exit 1 ;;
+api\ graphql*)
+  case "$*" in *"--hostname ghe.example"*"owner=acme"*"name=widgets"*) ;; *) echo "wrong frozen repository: $*" >&2; exit 1 ;; esac
+  echo '{"data":{"repository":{"issues":{"nodes":[]}},"mentions":{"nodes":[]}}}' ;;
+*) echo "wrong command: $*" >&2; exit 1 ;;
+esac
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let snapshot = list_issues(&workdir, Some("ghe.example/acme/widgets"))
+        .expect("refresh uses frozen repository");
+    assert!(snapshot.issues.is_empty());
+    assert_eq!(snapshot.base_repo, "ghe.example/acme/widgets");
 }
 
 #[test]

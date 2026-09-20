@@ -33,18 +33,21 @@ impl KagiApp {
         repo: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        let generation = {
+        let (generation, frozen_base_repo) = {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
             };
-            ui.begin_github_issues_request()
+            let frozen_base_repo = ui.issue_composer.base_repo.clone();
+            (ui.begin_github_issues_request(), frozen_base_repo)
         };
         cx.notify();
         cx.spawn(async move |this, acx| {
-            let result = acx
-                .background_executor()
-                .spawn(async move { kagi_git::github::list_issues(&repo) })
-                .await;
+            let result =
+                acx.background_executor()
+                    .spawn(async move {
+                        kagi_git::github::list_issues(&repo, frozen_base_repo.as_deref())
+                    })
+                    .await;
             let _ = this.update(acx, |app, cx| {
                 let owner_is_active = app.active_session() == Some(owner);
                 let Some(ui) = app.ui.get_mut(&owner) else {
@@ -78,6 +81,20 @@ impl KagiApp {
                 editor.focused = false;
             }
         });
+    }
+
+    pub(super) fn select_github_issue_tab(
+        &mut self,
+        tab: kagi_domain::github::IssueListTab,
+        cx: &mut Context<Self>,
+    ) {
+        self.with_ui(|ui| ui.github_issue_tab = tab);
+        cx.notify();
+    }
+
+    pub(super) fn return_to_issues_home(&mut self, cx: &mut Context<Self>) {
+        self.with_ui(TabUiState::clear_github_issue_selection);
+        cx.notify();
     }
 
     pub(super) fn load_github_issue_detail_for(
@@ -133,19 +150,12 @@ impl KagiApp {
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
-        let (draft_read, identity_read) = {
+        let draft_read = {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
             };
-            let identity_read =
-                if ui.issue_composer.base_repo.is_none() && !ui.issue_composer.repo_loading {
-                    ui.issue_composer.repo_loading = true;
-                    true
-                } else {
-                    false
-                };
             let editor = ui.issue_composer.editors.entry(number).or_default();
-            let draft_read = if editor.loading || editor.loaded {
+            if editor.loading || editor.loaded {
                 None
             } else {
                 editor.loading = true;
@@ -153,8 +163,7 @@ impl KagiApp {
                 let storage_version = kagi_git::drafts::issue_draft_version(&repo, number);
                 editor.storage_version = storage_version;
                 Some((storage_version, editor.draft.revision))
-            };
-            (draft_read, identity_read)
+            }
         };
         cx.notify();
 
@@ -181,32 +190,6 @@ impl KagiApp {
                         if let Some((title, body)) = draft {
                             editor.draft.update(title, body);
                             editor.sync_inputs = true;
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-        }
-
-        if identity_read {
-            cx.spawn(async move |this, acx| {
-                let identity = acx
-                    .background_executor()
-                    .spawn(async move { kagi_git::github_fetch::issue_repository(&repo) })
-                    .await;
-                let _ = this.update(acx, |app, cx| {
-                    let Some(ui) = app.ui.get_mut(&owner) else {
-                        return;
-                    };
-                    ui.issue_composer.repo_loading = false;
-                    match identity {
-                        Ok(identity) => {
-                            ui.issue_composer.base_repo = Some(identity);
-                            ui.issue_composer.repo_error = None;
-                        }
-                        Err(error) => {
-                            ui.issue_composer.repo_error = Some(error.to_string());
                         }
                     }
                     cx.notify();
@@ -454,6 +437,7 @@ mod tests {
             labels: Vec::new(),
             body: String::new(),
             comments: Vec::new(),
+            comment_count: 0,
             created_at: String::new(),
             updated_at: String::new(),
         }

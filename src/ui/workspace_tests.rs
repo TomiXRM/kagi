@@ -34,7 +34,7 @@ mod tests {
     }
 
     #[test]
-    fn issues_mode_uses_one_takeover_for_all_three_columns() {
+    fn issues_mode_uses_sidebar_and_main_takeover_without_outer_right_pane() {
         let layout = resolve_workspace(&WorkspaceInputs {
             issues_mode: true,
             ..base()

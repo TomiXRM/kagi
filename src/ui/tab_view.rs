@@ -329,6 +329,8 @@ pub struct TabUiState {
     pub github_issues_loading: bool,
     pub github_issues_error: Option<String>,
     pub github_issues_gen: u64,
+    pub github_issue_mentions: Vec<u64>,
+    pub github_issue_tab: kagi_domain::github::IssueListTab,
     pub selected_github_issue: Option<u64>,
     pub github_issue_details: HashMap<u64, kagi_domain::github::Issue>,
     pub github_issue_detail_loading: Option<u64>,
@@ -403,6 +405,8 @@ impl Default for TabUiState {
             github_issues_loading: false,
             github_issues_error: None,
             github_issues_gen: 0,
+            github_issue_mentions: Vec::new(),
+            github_issue_tab: Default::default(),
             selected_github_issue: None,
             github_issue_details: HashMap::new(),
             github_issue_detail_loading: None,
@@ -455,6 +459,10 @@ impl TabUiState {
         self.github_issues_gen = self.github_issues_gen.wrapping_add(1);
         self.github_issues_loading = true;
         self.github_issues_error = None;
+        if self.issue_composer.base_repo.is_none() {
+            self.issue_composer.repo_loading = true;
+            self.issue_composer.repo_error = None;
+        }
         self.github_issues_gen
     }
 
@@ -465,19 +473,30 @@ impl TabUiState {
     pub(super) fn finish_github_issues_request(
         &mut self,
         generation: u64,
-        result: Result<Vec<kagi_domain::github::Issue>, kagi_git::github::PrFetchError>,
+        result: Result<kagi_domain::github::IssueListSnapshot, kagi_git::github::PrFetchError>,
     ) -> bool {
         if generation != self.github_issues_gen {
             return false;
         }
         self.github_issues_loading = false;
         match result {
-            Ok(issues) => {
-                self.github_issues = issues;
+            Ok(snapshot) => {
+                self.github_issues = snapshot.issues;
+                self.github_issue_mentions = snapshot.mentioned_numbers;
+                self.issue_composer.base_repo = Some(snapshot.base_repo);
+                self.issue_composer.repo_loading = false;
+                self.issue_composer.repo_error = None;
                 self.github_issues_loaded = true;
                 self.github_issues_error = None;
             }
-            Err(error) => self.github_issues_error = Some(error.to_string()),
+            Err(error) => {
+                let error = error.to_string();
+                self.github_issues_error = Some(error.clone());
+                self.issue_composer.repo_loading = false;
+                if self.issue_composer.base_repo.is_none() {
+                    self.issue_composer.repo_error = Some(error);
+                }
+            }
         }
         true
     }
@@ -489,6 +508,19 @@ impl TabUiState {
         self.github_issue_detail_loading = Some(number);
         self.github_issue_detail_error = None;
         self.github_issue_detail_gen
+    }
+
+    /// Return to the Composer-only home without discarding a cached Thread or
+    /// Reply draft. Advancing the generation prevents an in-flight detail read
+    /// from reviving the selection after the user left it.
+    pub(super) fn clear_github_issue_selection(&mut self) {
+        self.github_issue_detail_gen = self.github_issue_detail_gen.wrapping_add(1);
+        self.selected_github_issue = None;
+        self.github_issue_detail_loading = None;
+        self.github_issue_detail_error = None;
+        for editor in self.issue_composer.editors.values_mut() {
+            editor.focused = false;
+        }
     }
 
     /// Settle only the newest detail request. A failure leaves any successfully
@@ -533,6 +565,7 @@ mod github_issue_state_tests {
             labels: Vec::new(),
             body: String::new(),
             comments: Vec::new(),
+            comment_count: 0,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -542,7 +575,20 @@ mod github_issue_state_tests {
     fn empty_success_is_loaded_but_failure_keeps_last_success() {
         let mut state = TabUiState::default();
         let first = state.begin_github_issues_request();
-        assert!(state.finish_github_issues_request(first, Ok(vec![issue(1, "kept")])));
+        let snapshot =
+            |issues, mentioned_numbers, base_repo: &str| kagi_domain::github::IssueListSnapshot {
+                issues,
+                mentioned_numbers,
+                base_repo: base_repo.into(),
+            };
+        assert!(state.finish_github_issues_request(
+            first,
+            Ok(snapshot(
+                vec![issue(1, "kept")],
+                vec![1],
+                "github.com/a/one"
+            ))
+        ));
 
         let failed = state.begin_github_issues_request();
         assert!(state.finish_github_issues_request(
@@ -555,9 +601,18 @@ mod github_issue_state_tests {
             .github_issues_error
             .as_deref()
             .is_some_and(|error| error.contains("login required")));
+        assert_eq!(state.github_issue_mentions, vec![1]);
+        assert_eq!(
+            state.issue_composer.base_repo.as_deref(),
+            Some("github.com/a/one"),
+            "a failed refresh keeps the frozen write destination"
+        );
 
         let empty = state.begin_github_issues_request();
-        assert!(state.finish_github_issues_request(empty, Ok(Vec::new())));
+        assert!(state.finish_github_issues_request(
+            empty,
+            Ok(snapshot(Vec::new(), vec![], "github.com/a/one"))
+        ));
         assert!(state.github_issues.is_empty());
         assert!(state.github_issues_loaded);
         assert!(state.github_issues_error.is_none());
@@ -568,9 +623,74 @@ mod github_issue_state_tests {
         let mut state = TabUiState::default();
         let old = state.begin_github_issues_request();
         let new = state.begin_github_issues_request();
-        assert!(state.finish_github_issues_request(new, Ok(vec![issue(2, "new")])));
-        assert!(!state.finish_github_issues_request(old, Ok(vec![issue(1, "stale")])));
+        assert!(state.finish_github_issues_request(
+            new,
+            Ok(kagi_domain::github::IssueListSnapshot {
+                issues: vec![issue(2, "new")],
+                mentioned_numbers: vec![2],
+                base_repo: "github.com/a/new".into(),
+            })
+        ));
+        assert!(!state.finish_github_issues_request(
+            old,
+            Ok(kagi_domain::github::IssueListSnapshot {
+                issues: vec![issue(1, "stale")],
+                mentioned_numbers: vec![1],
+                base_repo: "github.com/a/stale".into(),
+            })
+        ));
         assert_eq!(state.github_issues[0].number, 2);
+        assert_eq!(state.github_issue_mentions, vec![2]);
+        assert_eq!(
+            state.issue_composer.base_repo.as_deref(),
+            Some("github.com/a/new")
+        );
+    }
+
+    #[test]
+    fn list_identity_wait_and_refresh_failure_preserve_restored_draft() {
+        let mut state = TabUiState::default();
+        state.issue_composer.editors.insert(
+            None,
+            crate::ui::issues_composer::IssueEditor {
+                draft: kagi_domain::issue_composer::IssueDraft {
+                    title: "restored".into(),
+                    body: "keep me".into(),
+                    revision: 3,
+                },
+                loaded: true,
+                ..Default::default()
+            },
+        );
+        let failed = state.begin_github_issues_request();
+        assert!(state.issue_composer.repo_loading);
+        assert!(state.issue_composer.base_repo.is_none());
+        assert!(state
+            .finish_github_issues_request(failed, Err(PrFetchError::Network("offline".into()))));
+        assert_eq!(
+            state.issue_composer.editors[&None].draft.body.as_str(),
+            "keep me"
+        );
+        assert!(state.issue_composer.base_repo.is_none());
+
+        let success = state.begin_github_issues_request();
+        assert!(state.finish_github_issues_request(
+            success,
+            Ok(kagi_domain::github::IssueListSnapshot {
+                issues: Vec::new(),
+                mentioned_numbers: Vec::new(),
+                base_repo: "github.com/a/repo".into(),
+            })
+        ));
+        assert_eq!(
+            state.issue_composer.editors[&None].draft.body.as_str(),
+            "keep me",
+            "accepting the frozen destination never rewrites a restored draft"
+        );
+        assert_eq!(
+            state.issue_composer.base_repo.as_deref(),
+            Some("github.com/a/repo")
+        );
     }
 
     #[test]
@@ -590,8 +710,13 @@ mod github_issue_state_tests {
         let mut owner_b = TabUiState::default();
         let a = owner_a.begin_github_issues_request();
         let b = owner_b.begin_github_issues_request();
-        assert!(owner_b.finish_github_issues_request(b, Ok(vec![issue(20, "B")])));
-        assert!(owner_a.finish_github_issues_request(a, Ok(vec![issue(10, "A")])));
+        let result = |issue, repo: &str| kagi_domain::github::IssueListSnapshot {
+            issues: vec![issue],
+            mentioned_numbers: Vec::new(),
+            base_repo: repo.into(),
+        };
+        assert!(owner_b.finish_github_issues_request(b, Ok(result(issue(20, "B"), "b/r"))));
+        assert!(owner_a.finish_github_issues_request(a, Ok(result(issue(10, "A"), "a/r"))));
         assert_eq!(owner_a.github_issues[0].number, 10);
         assert_eq!(owner_b.github_issues[0].number, 20);
 
@@ -630,6 +755,25 @@ mod github_issue_state_tests {
             Some("cached"),
             "detail failure keeps the last successful value"
         );
+    }
+
+    #[test]
+    fn returning_home_invalidates_detail_without_dropping_cache_or_reply() {
+        let mut state = TabUiState::default();
+        let generation = state.begin_github_issue_detail_request(7);
+        state.github_issue_details.insert(7, issue(7, "cached"));
+        state
+            .issue_composer
+            .editors
+            .insert(Some(7), Default::default());
+        state.clear_github_issue_selection();
+        assert_eq!(state.selected_github_issue, None);
+        assert_eq!(state.github_issue_detail_loading, None);
+        assert!(state.github_issue_detail_error.is_none());
+        assert!(state.github_issue_details.contains_key(&7));
+        assert!(state.issue_composer.editors.contains_key(&Some(7)));
+        assert!(!state.finish_github_issue_detail_request(generation, 7, Ok(issue(7, "late"))));
+        assert_eq!(state.selected_github_issue, None);
     }
 }
 

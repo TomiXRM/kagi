@@ -150,13 +150,12 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     );
 
     // Entering Issues starts its list request at the UI boundary, before any
-    // completion can land. The takeover owns all three columns and exposes the
+    // completion can land. The takeover owns its sidebar + main pane and exposes the
     // loading state rather than borrowing the graph or PR workspace.
     app.update(cx, |app, cx| app.show_issues_mode(cx));
     for control in [
         "issue-mode-left-pane",
         "issue-mode-center-pane",
-        "issue-mode-right-pane",
         "issue-mode-list-loading",
     ] {
         e2e::clear_control_bounds(win.window_id(), control);
@@ -170,7 +169,6 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     for control in [
         "issue-mode-left-pane",
         "issue-mode-center-pane",
-        "issue-mode-right-pane",
         "issue-mode-list-loading",
     ] {
         assert!(
@@ -178,15 +176,92 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             "{control} must be visible when Issues opens"
         );
     }
+    assert!(
+        e2e::control_bounds(win.window_id(), "issue-mode-right-pane").is_none(),
+        "Issues follows the PR two-pane structure; no duplicate metadata rail"
+    );
 
     app.update(cx, |app, cx| app.show_empty_issues_for_e2e(cx));
     e2e::clear_control_bounds(win.window_id(), "issue-mode-list-empty");
+    e2e::clear_control_bounds(win.window_id(), "issue-main-list-empty");
     cx.update_window(win, |_, window, cx| window.draw(cx).clear())
         .unwrap();
     assert!(
         e2e::control_bounds(win.window_id(), "issue-mode-list-empty").is_some(),
         "successful empty Issue slice must have a visible state"
     );
+    assert!(
+        e2e::control_bounds(win.window_id(), "issue-main-list-empty").is_some(),
+        "the empty Issue home must keep its list empty state below Composer"
+    );
+
+    // The sidebar's four session-owned filters keep the PR navigator's
+    // section/row geometry. The home pane independently keeps the full open
+    // Issue feed below Composer, regardless of the selected sidebar filter.
+    app.update(cx, |app, cx| app.seed_issue_navigation_for_e2e(cx));
+    for index in 0..4 {
+        assert!(
+            measure(cx, win, &format!("issue-filter-tab-{index}")).is_some(),
+            "Issue filter {index} must be visible"
+        );
+    }
+    assert!(measure(cx, win, "issue-mode-card-1").is_some());
+    assert!(measure(cx, win, "issue-mode-card-2").is_none());
+    assert!(measure(cx, win, "issue-composer").is_some());
+    assert!(measure(cx, win, "issue-main-list").is_some());
+    for number in 1..=4 {
+        assert!(
+            measure(cx, win, &format!("issue-main-row-{number}")).is_some(),
+            "the unselected home must show open Issue #{number}"
+        );
+    }
+
+    let created_tab = measure(cx, win, "issue-filter-tab-1").expect("Created by me tab");
+    cx.simulate_click(win, created_tab.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(measure(cx, win, "issue-mode-card-1").is_none());
+    assert!(measure(cx, win, "issue-mode-card-2").is_some());
+    assert!(
+        measure(cx, win, "issue-main-row-1").is_some()
+            && measure(cx, win, "issue-main-row-2").is_some(),
+        "sidebar filtering must not filter the full home feed"
+    );
+
+    // Click the first (newest) main row. It is guaranteed to be in the center
+    // viewport even when the compact Composer grows; lower rows are reachable
+    // through the center pane's production scrollbar.
+    let center = measure(cx, win, "issue-mode-center-pane").expect("Issues main pane");
+    let main_recent = measure(cx, win, "issue-main-row-4").expect("visible main Issue row");
+    assert!(
+        main_recent.origin.y >= center.origin.y
+            && main_recent.origin.y + main_recent.size.height
+                <= center.origin.y + center.size.height,
+        "the newest main Issue row must be inside the clickable center viewport"
+    );
+    cx.simulate_click(win, main_recent.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_issue_for_e2e()),
+        Some(4),
+        "the main row click handler must update the session-owned selection"
+    );
+    assert!(measure(cx, win, "issue-thread").is_some());
+    assert!(measure(cx, win, "issue-thread-back").is_some());
+    assert!(measure(cx, win, "issue-main-list").is_none());
+    assert!(
+        measure(cx, win, "issue-mode-card-2").is_some(),
+        "the sidebar remains while the Thread is shown"
+    );
+
+    let back = measure(cx, win, "issue-thread-back").expect("Issues home control");
+    cx.simulate_click(win, back.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(measure(cx, win, "issue-thread").is_none());
+    assert!(measure(cx, win, "issue-main-list").is_some());
+    assert!(measure(cx, win, "issue-main-row-1").is_some());
+    assert!(measure(cx, win, "issue-main-row-4").is_some());
+    assert!(measure(cx, win, "issue-composer").is_some());
+    assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), None);
 
     // Editor changes must reach the actual session-owned draft subscription.
     // Do not set draft.body directly: that would hide a missing Change listener.

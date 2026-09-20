@@ -57,6 +57,78 @@ fn sidebar_mode_nav_cell(
         .into_any_element()
 }
 
+/// Shared PR/Issue navigator section chrome: disclosure state, label, count,
+/// padding and hover behavior stay identical across both GitHub pages.
+pub(super) fn sidebar_section_header(
+    id: (&'static str, usize),
+    label: &'static str,
+    count: usize,
+    open: bool,
+    emphasize_count: bool,
+    cx: &mut Context<KagiApp>,
+    on_click: impl Fn(&mut KagiApp, &gpui::ClickEvent, &mut gpui::Window, &mut Context<KagiApp>)
+        + 'static,
+) -> gpui::AnyElement {
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .px_3()
+        .pt_2()
+        .pb_1()
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme::theme().surface)))
+        .on_click(cx.listener(on_click))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(theme::theme().text_muted))
+                .child(SharedString::from(if open {
+                    "\u{25BE}"
+                } else {
+                    "\u{25B8}"
+                })),
+        )
+        .child(
+            div()
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(theme::theme().text_muted))
+                .child(SharedString::from(label)),
+        )
+        .child(div().flex_1().min_w(px(0.)))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(if count > 0 && emphasize_count {
+                    theme::theme().color_branch
+                } else {
+                    theme::theme().text_muted
+                }))
+                .child(SharedString::from(count.to_string())),
+        )
+        .into_any_element()
+}
+
+/// Shared selectable row shell for GitHub sidebar lists. Feature renderers
+/// provide only their content and handlers; spacing and selection colors are
+/// intentionally owned here once.
+pub(super) fn sidebar_list_row(active: bool) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .overflow_hidden()
+        .cursor_pointer()
+        .border_b_1()
+        .border_color(rgb(theme::theme().surface))
+        .when(active, |el| el.bg(rgb(theme::theme().selected)))
+        .hover(|s| s.bg(rgb(theme::theme().surface)))
+}
+
 /// Graph / PRs / Issues navigation, rendered in the sidebar but owned by
 /// workspace-mode dispatch so the visual highlight and resolved center takeover cannot drift.
 pub(super) fn render_sidebar_mode_nav(

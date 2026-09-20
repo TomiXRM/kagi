@@ -28,6 +28,35 @@ fn status(id: &'static str, text: impl Into<SharedString>, color: u32) -> AnyEle
     .into_any_element()
 }
 
+fn back_to_issues(cx: &mut Context<KagiApp>) -> AnyElement {
+    let click = cx.listener(|app: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
+        app.return_to_issues_home(cx);
+    });
+    super::e2e::measure_control(
+        "issue-thread-back",
+        div()
+            .id("issue-thread-back")
+            .cursor_pointer()
+            .text_sm()
+            .text_color(rgb(theme().color_branch))
+            .hover(|style| style.text_color(rgb(theme().text_main)))
+            .on_click(click)
+            .child(Msg::IssueBackToList.t()),
+    )
+    .into_any_element()
+}
+
+fn thread_shell(back: AnyElement, content: AnyElement) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(back)
+        .child(content)
+        .into_any_element()
+}
+
 /// Render the body followed by chronological comments, without a nested scroll
 /// container. The active session is the sole source of selection and detail.
 pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
@@ -42,10 +71,13 @@ pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElem
     if ui.github_issue_detail_loading == Some(number)
         && !ui.github_issue_details.contains_key(&number)
     {
-        return status(
-            "issue-mode-detail-loading",
-            Msg::IssueLoading.t(),
-            theme().text_muted,
+        return thread_shell(
+            back_to_issues(cx),
+            status(
+                "issue-mode-detail-loading",
+                Msg::IssueLoading.t(),
+                theme().text_muted,
+            ),
         );
     }
     if let Some(message) = ui
@@ -53,17 +85,23 @@ pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElem
         .as_deref()
         .filter(|_| !ui.github_issue_details.contains_key(&number))
     {
-        return status(
-            "issue-mode-detail-error",
-            safe_text(message),
-            theme().color_blocker,
+        return thread_shell(
+            back_to_issues(cx),
+            status(
+                "issue-mode-detail-error",
+                safe_text(message),
+                theme().color_blocker,
+            ),
         );
     }
     let Some(issue) = ui.github_issue_details.get(&number) else {
-        return status(
-            "issue-mode-detail-empty",
-            Msg::IssueDetailsUnavailable.t(),
-            theme().text_muted,
+        return thread_shell(
+            back_to_issues(cx),
+            status(
+                "issue-mode-detail-empty",
+                Msg::IssueDetailsUnavailable.t(),
+                theme().text_muted,
+            ),
         );
     };
     let mut content = div().flex().flex_col().gap_2();
@@ -80,9 +118,12 @@ pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElem
             theme().text_muted,
         ));
     }
-    content
-        .child(render_conversation(app, issue, cx))
-        .into_any_element()
+    thread_shell(
+        back_to_issues(cx),
+        content
+            .child(render_conversation(app, issue, cx))
+            .into_any_element(),
+    )
 }
 
 fn render_conversation(
@@ -155,7 +196,7 @@ fn render_conversation(
             cx,
         ));
     }
-    thread.into_any_element()
+    super::e2e::measure_control("issue-thread", thread).into_any_element()
 }
 
 /// Both the initial post and replies use the PR conversation's Markdown

@@ -356,29 +356,26 @@ pub(super) fn render_composer(
         );
     }
     if let Some(error) = state.repo_error.as_ref() {
-        composer =
-            composer.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .text_color(rgb(theme().color_blocker))
-                            .child(error.clone()),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("{id}-retry-repo")))
-                            .label(Msg::PrRefresh.t())
-                            .small()
-                            .disabled(state.repo_loading)
-                            .on_click(cx.listener(move |app, _, _, cx| {
-                                app.prepare_issue_composer(number, cx)
-                            })),
-                    ),
-            );
+        composer = composer.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .text_xs()
+                        .text_color(rgb(theme().color_blocker))
+                        .child(error.clone()),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("{id}-retry-repo")))
+                        .label(Msg::PrRefresh.t())
+                        .small()
+                        .disabled(state.repo_loading)
+                        .on_click(cx.listener(|app, _, _, cx| app.refresh_github_issues(cx))),
+                ),
+        );
     } else if editor.save_error.is_none()
         && (!editor.draft.body.trim().is_empty() || !editor.draft.title.trim().is_empty())
     {

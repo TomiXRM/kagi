@@ -65,3 +65,22 @@ Focus / Preview / paste と Undo を検証する。GUI 実行は sandbox 外の 
 
 AI タイトルは P1 本体の差分を抑えるため PM 承認条件により P2 へ延期する。
 画像添付、Add context、AI refinement、Sub-issues、Agent 起動、Feed カード化も対象外。
+
+## 追記 1: Issue navigator と Composer home
+
+sidebar は filter 付き navigation、未選択の main pane は常設 Composer と open Issue
+全件一覧(最大100件、`updated_at` 降順)を表示する。main 一覧は sidebar の選択 filter に
+連動せず、同じ純粋 filter の `RecentlyUpdated` 投影を再利用する。選択時は main を
+Composer + Thread + Reply に切り替える。Thread には selection だけを解除して home の
+全件一覧へ戻る明示 control を置く。Reply draft と detail cache は保持し、戻る操作は
+detail generation を進めて遅い completion が Thread を復活させない。
+
+sidebar の `Assigned to me` / `Created by me` / `Mentioning me` /
+`Recently updated` は `TabUiState` が選択を所有し、同じ open Issue snapshot を純粋に
+filter する。PR navigator と section/row chrome を共用する。mutation 用 repository
+identity は既存 `gh repo view` の default-repository semantics で解決する(origin から
+推測しない)。初回成功後は session に凍結した identity を refresh でも再利用する。
+その identity を使う一つの GraphQL request に Issue、comment count、
+`mentions:@me` の番号集合を含め、全結果を一つの owner/generation で原子的に受理する。
+失敗時は全て最後の成功値を保持し、render や tab 切替から追加 fetch しない。viewer
+login は既存 `KagiApp::github_login` cache を使う。

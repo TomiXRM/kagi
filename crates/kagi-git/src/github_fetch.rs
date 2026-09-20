@@ -220,7 +220,7 @@ pub fn apply_pr_fetch(
 
 /// Run one read-only `gh` JSON request through the shared hardened command and
 /// bounded subprocess runner.
-fn fetch_json<T>(
+pub(crate) fn fetch_json<T>(
     workdir: &Path,
     args: &[&str],
     parse: impl FnOnce(&str) -> Result<T, crate::GitError>,

@@ -545,6 +545,9 @@ pub use crate::github_fetch::{
     apply_pr_fetch, classify_gh_failure, issue_detail, list_issues, list_merged_prs, list_open_prs,
     pr_body_detail, pr_status_detail, PrFetchError, PrFetchOutcome,
 };
+pub use crate::github_status_batch::{
+    parse_pr_status_batch, pr_status_details_batch, PrStatusBatchResult,
+};
 
 // #347 merge-lifecycle backend (version detection, mergeStateStatus + merge
 // queue, enqueue/dequeue) lives in `github_merge` and is re-exported here so

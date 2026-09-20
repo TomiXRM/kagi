@@ -55,6 +55,7 @@ pub mod github_fetch;
 pub mod github_issue;
 pub mod github_merge;
 pub mod github_review;
+mod github_status_batch;
 pub mod hotspot;
 mod log;
 pub mod message_gen;

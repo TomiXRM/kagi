@@ -167,8 +167,8 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                     let number = issue.number;
                     let active_row = selected == Some(number);
                     let select = cx.listener(
-                        move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-                            this.load_github_issue_detail(number, cx);
+                        move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+                            this.load_github_issue_detail(number, window, cx);
                         },
                     );
                     let age = kagi_ui_core::time_parse::iso_to_epoch(&issue.updated_at)
@@ -307,8 +307,8 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
             for issue in issues.into_iter().take(ISSUE_LIST_LIMIT) {
                 let number = issue.number;
                 let select = cx.listener(
-                    move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-                        this.load_github_issue_detail(number, cx);
+                    move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+                        this.load_github_issue_detail(number, window, cx);
                     },
                 );
                 let age = kagi_ui_core::time_parse::iso_to_epoch(&issue.updated_at)
@@ -426,16 +426,6 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
 fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let selected = app.ui().selected_github_issue;
     let editors = &app.ui().issue_composer.editors;
-    let focused = if editors.get(&None).is_some_and(|editor| editor.focused) {
-        Some(None)
-    } else {
-        selected.and_then(|number| {
-            editors
-                .get(&Some(number))
-                .is_some_and(|editor| editor.focused)
-                .then_some(Some(number))
-        })
-    };
     let mut center = div()
         .id("issue-mode-center-pane")
         .relative()
@@ -451,20 +441,32 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
         // `measure_control` gives its scroll viewport an auto-sized parent and
         // can lay lower Issue rows outside the clickable window.
         .child(super::e2e::measure_inside("issue-mode-center-pane"));
-    if let Some(number) = focused {
-        center = center.child(super::issues_composer::render_composer(app, number, cx));
-    } else {
-        center = center.child(super::issues_composer::render_composer(app, None, cx));
-        if let Some(number) = selected {
-            center = center
-                .child(super::issues_thread::render_thread(app, cx))
-                .child(super::issues_composer::render_composer(
+    match selected {
+        Some(number) => {
+            if editors
+                .get(&Some(number))
+                .is_some_and(|editor| editor.focused)
+            {
+                center = center.child(super::issues_composer::render_composer(
                     app,
                     Some(number),
                     cx,
                 ));
-        } else {
-            center = center.child(render_main_issue_list(app, cx));
+            } else {
+                center = center
+                    .child(super::issues_thread::render_thread(app, cx))
+                    .child(super::issues_composer::render_composer(
+                        app,
+                        Some(number),
+                        cx,
+                    ));
+            }
+        }
+        None => {
+            center = center.child(super::issues_composer::render_composer(app, None, cx));
+            if !editors.get(&None).is_some_and(|editor| editor.focused) {
+                center = center.child(render_main_issue_list(app, cx));
+            }
         }
     }
     center.into_any_element()

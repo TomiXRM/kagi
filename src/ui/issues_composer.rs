@@ -10,7 +10,7 @@ use gpui_component::input::{Enter, Input, InputEvent, InputState, Paste};
 use gpui_component::{
     button::{Button, ButtonVariants as _},
     text::TextView,
-    Disableable, Icon, Selectable, Sizable,
+    Disableable, Icon, Sizable,
 };
 use kagi_domain::issue_composer::{fenced_code_paste, IssueDraft};
 use std::collections::HashMap;
@@ -389,6 +389,11 @@ pub(super) fn render_composer(
     if !empty_create {
         content = content.child(body);
     }
+    let (mode_icon, mode_tooltip) = if editor.preview {
+        ("icons/square-pen.svg", Msg::IssueWrite.t())
+    } else {
+        ("icons/eye.svg", Msg::IssuePreview.t())
+    };
     let submit = Button::new(SharedString::from(format!("{id}-submit")))
         .icon(Icon::empty().path("icons/comment-send.svg"))
         .label(if number.is_some() {
@@ -405,93 +410,66 @@ pub(super) fn render_composer(
         .px_3()
         .disabled(disabled)
         .on_click(cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)));
-    content =
-        content.child(
-            div()
-                .flex()
-                .justify_between()
-                .items_center()
-                .child(
-                    div().flex().items_center().gap_2().child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(theme::scaled_px(2.))
-                            .p(theme::scaled_px(3.))
-                            .rounded_md()
-                            .bg(rgb(theme().surface))
-                            .child(super::e2e::measure_control(
-                                if number.is_some() {
-                                    "issue-reply-write"
+    content = content.child(
+        div()
+            .flex()
+            .justify_between()
+            .items_center()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(super::e2e::measure_control(
+                        if number.is_some() {
+                            "issue-reply-mode-toggle"
+                        } else {
+                            "issue-composer-mode-toggle"
+                        },
+                        Button::new(SharedString::from(format!("{id}-mode-toggle")))
+                            .icon(Icon::empty().path(mode_icon))
+                            .small()
+                            .tooltip(mode_tooltip)
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                if let Some(editor) = app
+                                    .ui_mut()
+                                    .and_then(|ui| ui.issue_composer.editors.get_mut(&number))
+                                {
+                                    editor.preview = !editor.preview;
+                                }
+                                cx.notify();
+                            })),
+                    )),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        Button::new(SharedString::from(format!("{id}-focus")))
+                            .icon(Icon::empty().path(if editor.focused {
+                                "icons/window-restore.svg"
+                            } else {
+                                "icons/window-maximize.svg"
+                            }))
+                            .small()
+                            .tooltip_with_action(
+                                if editor.focused {
+                                    Msg::IssueExitFocus.t()
                                 } else {
-                                    "issue-composer-write"
+                                    Msg::IssueFocusEditor.t()
                                 },
-                                Button::new(SharedString::from(format!("{id}-write")))
-                                    .icon(Icon::empty().path("icons/square-pen.svg"))
-                                    .small()
-                                    .selected(!editor.preview)
-                                    .tooltip(Msg::IssueWrite.t())
-                                    .on_click(cx.listener(move |app, _, _, cx| {
-                                        if let Some(editor) = app.ui_mut().and_then(|ui| {
-                                            ui.issue_composer.editors.get_mut(&number)
-                                        }) {
-                                            editor.preview = false;
-                                        }
-                                        cx.notify();
-                                    })),
-                            ))
-                            .child(super::e2e::measure_control(
-                                if number.is_some() {
-                                    "issue-reply-preview"
-                                } else {
-                                    "issue-composer-preview"
-                                },
-                                Button::new(SharedString::from(format!("{id}-preview")))
-                                    .icon(Icon::empty().path("icons/eye.svg"))
-                                    .small()
-                                    .selected(editor.preview)
-                                    .tooltip(Msg::IssuePreview.t())
-                                    .on_click(cx.listener(move |app, _, _, cx| {
-                                        if let Some(editor) = app.ui_mut().and_then(|ui| {
-                                            ui.issue_composer.editors.get_mut(&number)
-                                        }) {
-                                            editor.preview = true;
-                                        }
-                                        cx.notify();
-                                    })),
-                            )),
-                    ),
-                )
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(
-                            Button::new(SharedString::from(format!("{id}-focus")))
-                                .icon(Icon::empty().path(if editor.focused {
-                                    "icons/window-restore.svg"
-                                } else {
-                                    "icons/window-maximize.svg"
-                                }))
-                                .small()
-                                .tooltip_with_action(
-                                    if editor.focused {
-                                        Msg::IssueExitFocus.t()
-                                    } else {
-                                        Msg::IssueFocusEditor.t()
-                                    },
-                                    &FocusIssueEditor,
-                                    Some("IssueComposer"),
-                                )
-                                .on_click(cx.listener(move |app, _, window, cx| {
-                                    app.toggle_issue_focus(number, window, cx)
-                                })),
-                        )
-                        .child(submit),
-                ),
-        );
+                                &FocusIssueEditor,
+                                Some("IssueComposer"),
+                            )
+                            .on_click(cx.listener(move |app, _, window, cx| {
+                                app.toggle_issue_focus(number, window, cx)
+                            })),
+                    )
+                    .child(submit),
+            ),
+    );
     if let Some(error) = editor.save_error.as_ref() {
         content = content.child(
             div()

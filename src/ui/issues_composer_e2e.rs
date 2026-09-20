@@ -164,6 +164,22 @@ impl KagiApp {
         (editor.body_revealed, body_focused, title_value, body_value)
     }
 
+    pub fn issue_inputs_focused_for_e2e(
+        &self,
+        number: Option<u64>,
+        window: &Window,
+        cx: &App,
+    ) -> bool {
+        let Some(editor) = self.ui().issue_composer.editors.get(&number) else {
+            return false;
+        };
+        editor
+            .body_input
+            .iter()
+            .chain(editor.title_input.iter())
+            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
     /// Settle the currently queued New Issue revision through the production
     /// completion path, without dispatching a GitHub write in this harness.
     pub fn settle_issue_write_for_e2e(&mut self, cx: &mut Context<Self>) {
@@ -184,6 +200,14 @@ impl KagiApp {
             .issue_composer
             .editors
             .get(&None)
+            .is_some_and(|editor| editor.preview)
+    }
+
+    pub fn issue_reply_preview_for_e2e(&self, number: u64) -> bool {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&Some(number))
             .is_some_and(|editor| editor.preview)
     }
 
@@ -257,7 +281,15 @@ impl KagiApp {
 
     /// Exercise the production selection transition without starting a real
     /// GitHub detail request in the GUI harness.
-    pub fn select_issue_for_e2e(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub fn select_issue_for_e2e(
+        &mut self,
+        number: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(focus) = self.root_focus.clone() {
+            window.focus(&focus, cx);
+        }
         self.select_github_issue(number);
         cx.notify();
     }

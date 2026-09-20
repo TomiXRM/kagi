@@ -63,7 +63,15 @@ impl KagiApp {
 
     /// Load the selected Issue's body and comments through the same
     /// session-owned background boundary as the list.
-    pub fn load_github_issue_detail(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub fn load_github_issue_detail(
+        &mut self,
+        number: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(focus) = self.root_focus.clone() {
+            window.focus(&focus, cx);
+        }
         self.select_github_issue(number);
         self.prepare_issue_composer(Some(number), cx);
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
@@ -92,7 +100,10 @@ impl KagiApp {
         cx.notify();
     }
 
-    pub(super) fn return_to_issues_home(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn return_to_issues_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(focus) = self.root_focus.clone() {
+            window.focus(&focus, cx);
+        }
         self.with_ui(TabUiState::clear_github_issue_selection);
         cx.notify();
     }

@@ -238,6 +238,17 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                 <= center.origin.y + center.size.height,
         "the newest main Issue row must be inside the clickable center viewport"
     );
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+    })
+    .unwrap();
+    assert!(
+        cx.update_window(win, |_, window, cx| {
+            app.read(cx).issue_inputs_focused_for_e2e(None, window, cx)
+        })
+        .unwrap(),
+        "the production New Issue input must own focus before row selection"
+    );
     cx.simulate_click(win, main_recent.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     assert_eq!(
@@ -249,10 +260,39 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(measure(cx, win, "issue-thread-back").is_some());
     assert!(measure(cx, win, "issue-main-list").is_none());
     assert!(
+        measure(cx, win, "issue-composer").is_none(),
+        "selecting an Issue must hide the New Issue Composer"
+    );
+    assert!(
+        measure(cx, win, "issue-reply-composer").is_some(),
+        "the selected Thread must keep its Reply Composer"
+    );
+    assert!(
+        !cx.update_window(win, |_, window, cx| {
+            app.read(cx).issue_inputs_focused_for_e2e(None, window, cx)
+        })
+        .unwrap(),
+        "the hidden New Issue inputs must release focus after row selection"
+    );
+    assert!(
         measure(cx, win, "issue-mode-card-2").is_some(),
         "the sidebar remains while the Thread is shown"
     );
 
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_issue_reply_input_for_e2e(4, window, cx)
+        });
+    })
+    .unwrap();
+    assert!(
+        cx.update_window(win, |_, window, cx| {
+            app.read(cx)
+                .issue_inputs_focused_for_e2e(Some(4), window, cx)
+        })
+        .unwrap(),
+        "the production Reply input must own focus before returning home"
+    );
     let back = measure(cx, win, "issue-thread-back").expect("Issues home control");
     cx.simulate_click(win, back.center(), gpui::Modifiers::none());
     cx.run_until_parked();
@@ -261,17 +301,25 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(measure(cx, win, "issue-main-row-1").is_some());
     assert!(measure(cx, win, "issue-main-row-4").is_some());
     assert!(measure(cx, win, "issue-composer").is_some());
+    assert!(
+        measure(cx, win, "issue-reply-composer").is_none(),
+        "returning home must hide the Reply Composer"
+    );
+    assert!(
+        !cx.update_window(win, |_, window, cx| {
+            app.read(cx)
+                .issue_inputs_focused_for_e2e(Some(4), window, cx)
+        })
+        .unwrap(),
+        "the hidden Reply input must release focus after returning home"
+    );
     assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), None);
 
-    // The compact Composer keeps its icon-only controls discoverable through
-    // the same E2E IDs, then plain Enter in the real title InputState reveals
-    // and focuses the existing body InputState without editing the title.
-    for control in ["issue-composer-write", "issue-composer-preview"] {
-        assert!(
-            measure(cx, win, control).is_some(),
-            "icon Composer control {control} must remain measurable"
-        );
-    }
+    // The compact Composer has one stable mode toggle: eye in edit mode and
+    // square-pen in preview mode. The old two-button controls must not coexist.
+    assert!(measure(cx, win, "issue-composer-mode-toggle").is_some());
+    assert!(measure(cx, win, "issue-composer-write").is_none());
+    assert!(measure(cx, win, "issue-composer-preview").is_none());
     cx.update_window(win, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.focus_issue_title_for_e2e(window, cx);
@@ -321,16 +369,22 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert_eq!(draft.effective_title(), "USB が復帰しない");
     assert!(!focused);
 
-    let preview = measure(cx, win, "issue-composer-preview").expect("Preview button");
-    cx.simulate_click(win, preview.center(), gpui::Modifiers::none());
+    let mode_toggle = measure(cx, win, "issue-composer-mode-toggle").expect("Composer mode toggle");
+    cx.simulate_click(win, mode_toggle.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).issue_preview_for_e2e()));
     assert_eq!(
         cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
         original
     );
-    let write = measure(cx, win, "issue-composer-write").expect("Write button");
-    cx.simulate_click(win, write.center(), gpui::Modifiers::none());
+    assert!(
+        measure(cx, win, "issue-composer-mode-toggle").is_some(),
+        "preview mode must keep the same single toggle control"
+    );
+    assert!(measure(cx, win, "issue-composer-write").is_none());
+    assert!(measure(cx, win, "issue-composer-preview").is_none());
+    let mode_toggle = measure(cx, win, "issue-composer-mode-toggle").expect("Composer mode toggle");
+    cx.simulate_click(win, mode_toggle.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     assert!(!cx.read(|cx| app.read(cx).issue_preview_for_e2e()));
     // Focus the existing source input again without changing its text/history.
@@ -396,6 +450,17 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     // Reply must hide the New Issue Composer and thread just as New Issue does.
     app.update(cx, |app, cx| app.seed_issue_reply_for_e2e(7, cx));
     measure(cx, win, "issue-reply-composer").expect("Reply Composer is visible");
+    let reply_mode_toggle = measure(cx, win, "issue-reply-mode-toggle").expect("Reply mode toggle");
+    assert!(measure(cx, win, "issue-reply-write").is_none());
+    assert!(measure(cx, win, "issue-reply-preview").is_none());
+    cx.simulate_click(win, reply_mode_toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).issue_reply_preview_for_e2e(7)));
+    let reply_mode_toggle = measure(cx, win, "issue-reply-mode-toggle")
+        .expect("Reply mode toggle stays stable in Preview");
+    cx.simulate_click(win, reply_mode_toggle.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(!cx.read(|cx| app.read(cx).issue_reply_preview_for_e2e(7)));
     assert!(
         !cx.read(|cx| app.read(cx).issue_reply_has_title_input_for_e2e(7)),
         "Reply must not allocate the New Issue-only title InputState"
@@ -429,10 +494,13 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     );
     // Selecting another row must exit #7's focus before metadata and the
     // eventual Reply destination move to #8.
-    app.update(cx, |app, cx| app.select_issue_for_e2e(8, cx));
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.select_issue_for_e2e(8, window, cx));
+    })
+    .unwrap();
     assert!(!cx.read(|cx| app.read(cx).issue_reply_focused_for_e2e(7)));
     assert_eq!(cx.read(|cx| app.read(cx).selected_issue_for_e2e()), Some(8));
-    assert!(measure(cx, win, "issue-composer").is_some());
+    assert!(measure(cx, win, "issue-composer").is_none());
     assert!(measure(cx, win, "issue-reply-composer").is_none());
 
     // A write completion still consumes the exact sent draft after the user

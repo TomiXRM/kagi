@@ -29,8 +29,8 @@ fn status(id: &'static str, text: impl Into<SharedString>, color: u32) -> AnyEle
 }
 
 fn back_to_issues(cx: &mut Context<KagiApp>) -> AnyElement {
-    let click = cx.listener(|app: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-        app.return_to_issues_home(cx);
+    let click = cx.listener(|app: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+        app.return_to_issues_home(window, cx);
     });
     super::e2e::measure_control(
         "issue-thread-back",

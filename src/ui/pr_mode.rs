@@ -41,6 +41,10 @@ use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, Main
 /// One open PR tab.
 pub struct PrTab {
     pub pr: PullRequest,
+    /// Local refs are loading while GitHub-owned detail loads in parallel.
+    pub local_refs_loading: bool,
+    /// Rejects an older ref fetch after a retry for the same PR tab.
+    pub local_refs_generation: u64,
     /// merge-base(base, head) — the diff base for the whole-PR view.
     pub base: CommitId,
     /// The base **branch's** current tip, which is what a merge would actually
@@ -208,11 +212,15 @@ impl KagiApp {
         if self.pr_mode().is_none() {
             self.toggle_pr_mode(cx);
         }
-        if let Some(ix) = self
-            .pr_mode()
-            .and_then(|m| m.tabs.iter().position(|t| t.pr.number == pr.number))
-        {
-            self.reload_pr_tab_head(pr, cx);
+        if let Some(ix) = self.pr_mode().and_then(|m| {
+            m.tabs
+                .iter()
+                .position(|t| t.pr.number == pr.number && t.pr.base_repo == pr.base_repo)
+        }) {
+            let local_ready = self
+                .pr_mode()
+                .and_then(|mode| mode.tabs.get(ix))
+                .is_some_and(|tab| !tab.head.0.is_empty() && tab.head.0 == pr.head_sha);
             if let Some(m) = self.pr_mode_mut() {
                 m.active = Some(ix);
                 // Another PR, another lane: the rail goes back to following it
@@ -222,52 +230,36 @@ impl KagiApp {
             }
             cx.notify();
             self.prioritize_pr_details(pr.number, cx);
+            if !local_ready {
+                self.fetch_pr_for_open(pr.clone(), cx);
+            } else if let Some((true, conflicts_missing, preview_missing)) =
+                self.pr_mode().and_then(|mode| {
+                    mode.tabs.get(ix).map(|tab| {
+                        (
+                            mode.view == PrView::Conflicts,
+                            tab.conflicts.is_none(),
+                            tab.conflict_preview.is_none(),
+                        )
+                    })
+                })
+            {
+                if conflicts_missing {
+                    self.pr_mode_load_conflicts(cx);
+                } else if preview_missing {
+                    self.pr_mode_load_conflict_text(cx);
+                }
+            }
             return;
         }
-        let tip = |name: &str| {
-            self.view()
-                .remote_branches
-                .iter()
-                .find(|rb| rb.name == name)
-                .map(|rb| rb.target.clone())
-        };
-        let (Some(base_tip), Some(head)) = (tip(&pr.base), tip(&pr.head)) else {
-            self.push_toast(
-                ToastKind::Info,
-                SharedString::from(format!(
-                    "{}: {} / {}",
-                    Msg::PrBranchNotFetched.t(),
-                    pr.base,
-                    pr.head
-                )),
-                cx,
-            );
-            return;
-        };
-        let Some(session) = self.ui().repo_session.as_ref() else {
-            return;
-        };
-        let repo = session.backend();
-        let base = repo
-            .merge_base(&base_tip, &head)
-            .unwrap_or_else(|_| base_tip.clone());
-        let commits = repo
-            .commits_between(&base, &head, COMMIT_LIMIT)
-            .unwrap_or_default();
-        let files = repo.compare_commits(&base, &head).unwrap_or_default();
-        klog!(
-            "pr-mode: open #{} commits={} files={}",
-            pr.number,
-            commits.len(),
-            files.len()
-        );
-        let mut tab = PrTab {
+        let tab = PrTab {
             pr: pr.clone(),
-            base,
-            base_tip,
-            head,
-            commits,
-            files,
+            local_refs_loading: false,
+            local_refs_generation: 0,
+            base: CommitId(String::new()),
+            base_tip: CommitId(String::new()),
+            head: CommitId(String::new()),
+            commits: Vec::new(),
+            files: Vec::new(),
             selected_commit: None,
             selected_file: None,
             diff: None,
@@ -289,10 +281,6 @@ impl KagiApp {
             merge_status: None,
             merge_status_loaded: false,
         };
-        if !tab.files.is_empty() {
-            tab.selected_file = Some(0);
-        }
-        self.pr_tab_reload_diff(&mut tab);
         let Some(m) = self.pr_mode_mut() else { return };
         m.tabs.push(tab);
         m.active = Some(m.tabs.len() - 1);
@@ -300,6 +288,7 @@ impl KagiApp {
         cx.notify();
         self.prioritize_pr_details(pr.number, cx);
         self.pr_mode_load_conversation(pr.number, cx);
+        self.fetch_pr_for_open(pr.clone(), cx);
     }
 
     /// Fetch reviews + comments, and separately the merge status, for `number`
@@ -422,6 +411,10 @@ impl KagiApp {
     /// Switch the body between Overview (description), Review, Diff and
     /// Conflicts.
     pub fn pr_mode_show(&mut self, view: PrView, cx: &mut Context<Self>) {
+        let local_refs_loading = self
+            .pr_mode()
+            .and_then(|mode| mode.active.and_then(|ix| mode.tabs.get(ix)))
+            .is_some_and(|tab| tab.local_refs_loading);
         if let Some(m) = self.pr_mode_mut() {
             m.view = view;
             // 概要 and レビュー are one page: the tab scrolls the feed to its
@@ -432,7 +425,7 @@ impl KagiApp {
                 _ => None,
             };
         }
-        if view == PrView::Conflicts {
+        if view == PrView::Conflicts && !local_refs_loading {
             self.pr_mode_load_conflicts(cx);
         }
         cx.notify();
@@ -497,119 +490,6 @@ impl KagiApp {
             }
         }
         cx.notify();
-    }
-
-    /// Fetch the marker text for the selected conflicted file, if it is not
-    /// already the one held. One file at a time: see `PrTab::conflict_preview`.
-    fn pr_mode_load_conflict_text(&mut self, cx: &mut Context<Self>) {
-        let Some(m) = self.pr_mode() else {
-            return;
-        };
-        let Some(tab) = m.active.and_then(|a| m.tabs.get(a)) else {
-            return;
-        };
-        let Some(Ok(files)) = tab.conflicts.as_ref() else {
-            return;
-        };
-        if files.is_empty() {
-            return;
-        }
-        let ix = tab.conflict_selected.unwrap_or(0).min(files.len() - 1);
-        let path = files[ix].path.clone();
-        if tab.conflict_preview.as_ref().map(|preview| preview.path()) == Some(path.as_path()) {
-            return;
-        }
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
-        let bg_path = path.clone();
-        let owner = self.active_session();
-        let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&repo_path).ok()?;
-            repo.pr_conflict_text(&base, &head, &bg_path).ok().flatten()
-        });
-        cx.spawn(async move |this, acx| {
-            let text = task.await;
-            let _ = this.update(acx, |app, cx| {
-                let Some(m) = app.pr_mode_of(owner) else {
-                    return;
-                };
-                let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
-                    return;
-                };
-                // Land on the first conflict rather than the top of the
-                // file: in a 2000-line file the interesting part is nowhere
-                // near where the scroll starts, and hunting for it is the work
-                // this tab exists to remove.
-                let first = t.apply_conflict_text(&path, text.as_deref());
-                cx.notify();
-                if let Some((row, rows)) = first.filter(|_| app.active_session() == owner) {
-                    app.pr_mode_jump_conflict(0, Some(row), Some(rows), cx);
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// Compute the active tab's conflict preview, once (ADR-0145).
-    ///
-    /// Off the UI thread: it is a full three-way merge of two trees, the same
-    /// work `plan_merge_branch` does, and on a large repo that is long enough
-    /// to drop frames. Cached on the tab because the answer only changes when
-    /// the PR or the base does, and re-running it on every render of a tab the
-    /// user is *looking at* would be the worst possible cadence.
-    fn pr_mode_load_conflicts(&mut self, cx: &mut Context<Self>) {
-        let Some(m) = self.pr_mode() else {
-            return;
-        };
-        let Some(ix) = m.active else { return };
-        let Some(tab) = m.tabs.get(ix) else { return };
-        if tab.conflicts.is_some() {
-            return;
-        }
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        // The base **tip**, not `tab.base`: that is merge-base(base, head), and
-        // merging head into its own ancestor is a fast-forward, so the preview
-        // would report "no conflicts" for every PR ever opened.
-        let (base, head, number) = (tab.base_tip.clone(), tab.head.clone(), tab.pr.number);
-        let task = cx.background_spawn(async move {
-            let repo = kagi_git::Backend::open(&repo_path).map_err(|e| format!("{e}"))?;
-            repo.pr_conflict_files(&base, &head)
-                .map_err(|e| format!("{e}"))
-        });
-        let owner = self.active_session();
-        cx.spawn(async move |this, acx| {
-            let result = task.await;
-            let _ = this.update(acx, |app, cx| {
-                // The user may have closed or switched tabs while this ran;
-                // find the tab by PR number rather than by the index we had.
-                let Some(m) = app.pr_mode_of(owner) else {
-                    return;
-                };
-                let Some(t) = m.tabs.iter_mut().find(|t| t.pr.number == number) else {
-                    return;
-                };
-                klog!(
-                    "pr-conflicts: #{} {}",
-                    number,
-                    match &result {
-                        Ok(v) => format!("{} file(s)", v.len()),
-                        Err(e) => format!("error: {e}"),
-                    }
-                );
-                t.conflicts = Some(result);
-                cx.notify();
-                // The list has just arrived; pull the first file's text so the
-                // tab is not left showing an empty pane beside a full list.
-                if app.active_session() == owner {
-                    app.pr_mode_load_conflict_text(cx);
-                }
-            });
-        })
-        .detach();
     }
 
     /// Back to the dashboard. Deactivates the tab without closing it, so its
@@ -1282,6 +1162,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         conflict_at,
         conversation_loaded,
         merge_status_loaded,
+        local_refs_loading,
     ) = {
         let m = app.pr_mode().unwrap();
         let t = &m.tabs[ix];
@@ -1296,6 +1177,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             t.conflict_at,
             t.conversation_loaded,
             t.merge_status_loaded,
+            t.local_refs_loading,
         )
     };
     // 概要 and レビュー are two sections of one page, so both tabs draw it;
@@ -1697,6 +1579,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
 
     // The body below the tabs is the view's own content, full width.
     let mut content = div().flex_1().min_w(px(0.)).min_h(px(0.)).flex().flex_col();
+    if local_refs_loading {
+        content = content.child(super::pr_conversation::render_loading());
+    }
     // The commits are their own tab now, at full height, instead of a strip
     // pinned above every other view (ADR-0200).
     if view == PrView::Commits {
@@ -1706,7 +1591,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         // `mergeStateStatus` actions, queue position, and what is still
         // missing. The animated loading rows stay above the scroll pane:
         // `with_animation` does not tick inside one.
-        if !merge_status_loaded || !conversation_loaded {
+        if !local_refs_loading && (!merge_status_loaded || !conversation_loaded) {
             content = content.child(super::pr_conversation::render_loading());
         }
         content = content.child(super::pr_conversation::render_feed(app, ix, cx));

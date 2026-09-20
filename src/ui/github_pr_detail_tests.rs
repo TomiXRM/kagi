@@ -18,6 +18,8 @@ fn path() -> PathBuf {
 fn tab(head: &str) -> PrTab {
     PrTab {
         pr: pr(1, head),
+        local_refs_loading: false,
+        local_refs_generation: 0,
         base: CommitId("base".into()),
         base_tip: CommitId("base-tip".into()),
         head: CommitId(head.into()),

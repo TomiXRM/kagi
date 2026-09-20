@@ -319,6 +319,31 @@ Every `gh` mutation now takes that frozen `<host>/<owner>/<repo>` from its
 caller; `repo_owner_name` is a fallback for an empty one only. A test keeps it
 so: the fake `gh` exits loudly if it is ever asked for `repo view`.
 
+### 12. Opening a PR fetches missing local refs
+
+A PR row always opens its page on the first click. GitHub-owned body, checks
+and conversation start loading immediately; missing local refs no longer stop
+the transition with “Branch not fetched”. Kagi fetches the base branch and
+`refs/pull/<number>/head` in the background, then fills commits and files into
+that same owner-scoped tab. The synthetic PR ref is addressed through the one
+configured remote whose raw URL matches the PR's frozen `base_repo`, so fork
+PRs work without guessing a head repository or overwriting a same-named
+remote-tracking branch. Its destination is Kagi's private
+`refs/kagi/pr/<remote>/<number>/head` namespace, so it never appears as a
+sidebar or Branch Cleanup branch. Zero or multiple matching remotes fail
+explicitly.
+
+The request freezes session, repository identity, PR number and head SHA.
+Completion updates only that tab incarnation and rejects a fetched head whose
+OID differs from the L1 `headRefOid`. Git I/O stays in `kagi-git` and runs off
+the UI thread under the existing fetch lease. A second PR click waits with its
+owner, visit and generation frozen while that lease is held, then starts
+without requiring another click. File diff and conflict state are derived only
+after those local refs land. Snapshot graph input pins fetched
+`refs/kagi/pr/**` tips as required roots, while branch collection continues to
+exclude that namespace; the swimlane therefore sees an unfetched PR's commits
+after reload without exposing a synthetic branch in the sidebar.
+
 ## Consequences
 
 - Three files passed the 800-LOC ceiling and were split on feature boundaries

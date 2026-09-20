@@ -133,6 +133,26 @@ impl RemoteExpect {
 }
 
 impl Backend {
+    /// Fetch the immutable local inputs used to open a GitHub PR. The
+    /// synthetic PR ref works for both same-repository and fork PRs.
+    pub fn fetch_pr_refs(
+        &self,
+        base_repo: &str,
+        number: u64,
+        base: &str,
+        expected_head: &str,
+    ) -> Result<(FetchOutcome, CommitId, CommitId), GitError> {
+        self.require_trust()?;
+        ops::fetch_pr_refs(
+            &self.repo,
+            &self.path,
+            base_repo,
+            number,
+            base,
+            expected_head,
+        )
+    }
+
     /// What this operation is about to make true on a remote, read **before**
     /// it runs.
     ///

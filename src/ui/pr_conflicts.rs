@@ -18,13 +18,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::SharedString;
+use gpui::{AppContext, Context, SharedString};
 use kagi_domain::resolution::{HunkModel, Region};
 use kagi_git::{PrConflictFile, PrConflictKind};
 
 use super::diff_view::{DiffRow, MainDiffSource, MainDiffView};
 use super::i18n::{self, Lang, Msg};
 use super::theme::theme;
+use super::KagiApp;
 use kagi_domain::diff::DiffLineKind;
 
 /// One loaded conflict file per PR tab. The backend caps marker input at
@@ -97,6 +98,144 @@ impl super::pr_mode::PrTab {
         self.conflict_preview = Some(preview);
         self.conflict_at = 0;
         first
+    }
+}
+
+impl KagiApp {
+    /// Compute the active tab's conflict preview once, off the UI thread.
+    pub(super) fn pr_mode_load_conflicts(&mut self, cx: &mut Context<Self>) {
+        let Some(mode) = self.pr_mode() else { return };
+        let Some(tab) = mode.active.and_then(|ix| mode.tabs.get(ix)) else {
+            return;
+        };
+        if tab.local_refs_loading
+            || tab.base_tip.0.is_empty()
+            || tab.head.0.is_empty()
+            || tab.conflicts.is_some()
+        {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        // Merge against the base branch tip, not merge-base(base, head).
+        let base = tab.base_tip.clone();
+        let head = tab.head.clone();
+        let number = tab.pr.number;
+        let base_repo = tab.pr.base_repo.clone();
+        let generation = tab.local_refs_generation;
+        let request_base = base.clone();
+        let request_head = head.clone();
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).map_err(|e| format!("{e}"))?;
+            repo.pr_conflict_files(&request_base, &request_head)
+                .map_err(|e| format!("{e}"))
+        });
+        let owner = self.active_session();
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                let Some(mode) = app.pr_mode_of(owner) else {
+                    return;
+                };
+                let Some(tab) = mode.tabs.iter_mut().find(|tab| {
+                    tab.pr.number == number
+                        && tab.pr.base_repo == base_repo
+                        && tab.base_tip == base
+                        && tab.head == head
+                        && tab.local_refs_generation == generation
+                }) else {
+                    return;
+                };
+                klog!(
+                    "pr-conflicts: #{} {}",
+                    number,
+                    match &result {
+                        Ok(files) => format!("{} file(s)", files.len()),
+                        Err(error) => format!("error: {error}"),
+                    }
+                );
+                tab.conflicts = Some(result);
+                cx.notify();
+                if app.active_session() == owner {
+                    app.pr_mode_load_conflict_text(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Fetch marker text for the selected conflict under the same frozen ref
+    /// identity as the list that selected it.
+    pub(super) fn pr_mode_load_conflict_text(&mut self, cx: &mut Context<Self>) {
+        let Some(mode) = self.pr_mode() else { return };
+        let Some(tab) = mode.active.and_then(|ix| mode.tabs.get(ix)) else {
+            return;
+        };
+        let Some(Ok(files)) = tab.conflicts.as_ref() else {
+            return;
+        };
+        if files.is_empty() {
+            return;
+        }
+        let ix = tab.conflict_selected.unwrap_or(0).min(files.len() - 1);
+        let path = files[ix].path.clone();
+        if tab.conflict_preview.as_ref().map(|preview| preview.path()) == Some(path.as_path()) {
+            return;
+        }
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let base = tab.base_tip.clone();
+        let head = tab.head.clone();
+        let number = tab.pr.number;
+        let base_repo = tab.pr.base_repo.clone();
+        let generation = tab.local_refs_generation;
+        let request_base = base.clone();
+        let request_head = head.clone();
+        let bg_path = path.clone();
+        let owner = self.active_session();
+        let task = cx.background_spawn(async move {
+            let repo = kagi_git::Backend::open(&repo_path).ok()?;
+            repo.pr_conflict_text(&request_base, &request_head, &bg_path)
+                .ok()
+                .flatten()
+        });
+        cx.spawn(async move |this, acx| {
+            let text = task.await;
+            let _ = this.update(acx, |app, cx| {
+                let Some(mode) = app.pr_mode_of(owner) else {
+                    return;
+                };
+                let target_is_active =
+                    mode.active
+                        .and_then(|ix| mode.tabs.get(ix))
+                        .is_some_and(|tab| {
+                            tab.pr.number == number
+                                && tab.pr.base_repo == base_repo
+                                && tab.base_tip == base
+                                && tab.head == head
+                                && tab.local_refs_generation == generation
+                        });
+                let Some(tab) = mode.tabs.iter_mut().find(|tab| {
+                    tab.pr.number == number
+                        && tab.pr.base_repo == base_repo
+                        && tab.base_tip == base
+                        && tab.head == head
+                        && tab.local_refs_generation == generation
+                }) else {
+                    return;
+                };
+                let first = tab.apply_conflict_text(&path, text.as_deref());
+                cx.notify();
+                if let Some((row, rows)) =
+                    first.filter(|_| app.active_session() == owner && target_is_active)
+                {
+                    app.pr_mode_jump_conflict(0, Some(row), Some(rows), cx);
+                }
+            });
+        })
+        .detach();
     }
 }
 

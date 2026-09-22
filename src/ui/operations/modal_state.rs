@@ -14,17 +14,17 @@ mod conflict;
 mod editor;
 mod smart;
 mod window;
+mod worktree;
 
+use super::super::modals::worktree::CreateWorktreeModal;
 use super::super::modals::ActiveModal;
 use super::super::modals::{
     AmendPlanModal, BranchCleanupModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal,
-    CreateBranchModal, CreateTagModal, CreateWorktreeModal, DeleteBranchModal,
-    DeleteRemoteBranchModal, DiscardModal, ForceLeasePushModal, HistoryPlanModal,
-    LockWorktreeModal, MergePlanModal, PopPlanModal, PrMergeModal, PruneWorktreesModal,
-    PullPlanModal, PushPlanModal, PushTagModal, RebaseCurrentOntoModal, RemoveWorktreeModal,
-    RenameBranchModal, RepairWorktreesModal, ResetCurrentModal, RevertModal, SetUpstreamModal,
-    StashApplyModal, StashDropModal, StashPushModal, SwitchToLatestPlanModal,
-    TrackingCheckoutPlanModal, TrustRepoModal, UnlockWorktreeModal,
+    CreateBranchModal, CreateTagModal, DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal,
+    ForceLeasePushModal, HistoryPlanModal, MergePlanModal, PopPlanModal, PrMergeModal,
+    PullPlanModal, PushPlanModal, PushTagModal, RebaseCurrentOntoModal, RenameBranchModal,
+    ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
+    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, TrustRepoModal,
 };
 use super::super::KagiApp;
 pub(crate) use arbitration::{AsyncPlanOffer, AsyncPlanToken, PlanningPresentation};
@@ -255,127 +255,6 @@ impl KagiApp {
     pub fn clear_stash_drop_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::StashDrop(_))) {
             self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn unlock_worktree_modal(&self) -> Option<&UnlockWorktreeModal> {
-        match &self.active_modal {
-            Some(ActiveModal::UnlockWorktree(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_unlock_worktree_modal(&mut self, m: UnlockWorktreeModal) {
-        self.replace_modal_from_user(ActiveModal::UnlockWorktree(m));
-    }
-    #[inline]
-    pub fn clear_unlock_worktree_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::UnlockWorktree(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn unlock_worktree_modal_mut(&mut self) -> Option<&mut UnlockWorktreeModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::UnlockWorktree(m)) => Some(m),
-            _ => None,
-        }
-    }
-    // ── issue #340: remove / lock / prune / repair worktree modals ──
-    #[inline]
-    pub fn remove_worktree_modal(&self) -> Option<&RemoveWorktreeModal> {
-        match &self.active_modal {
-            Some(ActiveModal::RemoveWorktree(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_remove_worktree_modal(&mut self, m: RemoveWorktreeModal) {
-        self.replace_modal_from_user(ActiveModal::RemoveWorktree(m));
-    }
-    #[inline]
-    pub fn clear_remove_worktree_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::RemoveWorktree(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn remove_worktree_modal_mut(&mut self) -> Option<&mut RemoveWorktreeModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::RemoveWorktree(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn lock_worktree_modal(&self) -> Option<&LockWorktreeModal> {
-        match &self.active_modal {
-            Some(ActiveModal::LockWorktree(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_lock_worktree_modal(&mut self, m: LockWorktreeModal) {
-        self.replace_modal_from_user(ActiveModal::LockWorktree(m));
-    }
-    #[inline]
-    pub fn clear_lock_worktree_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::LockWorktree(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn lock_worktree_modal_mut(&mut self) -> Option<&mut LockWorktreeModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::LockWorktree(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn prune_worktrees_modal(&self) -> Option<&PruneWorktreesModal> {
-        match &self.active_modal {
-            Some(ActiveModal::PruneWorktrees(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_prune_worktrees_modal(&mut self, m: PruneWorktreesModal) {
-        self.replace_modal_from_user(ActiveModal::PruneWorktrees(m));
-    }
-    #[inline]
-    pub fn clear_prune_worktrees_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::PruneWorktrees(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn prune_worktrees_modal_mut(&mut self) -> Option<&mut PruneWorktreesModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::PruneWorktrees(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn repair_worktrees_modal(&self) -> Option<&RepairWorktreesModal> {
-        match &self.active_modal {
-            Some(ActiveModal::RepairWorktrees(m)) => Some(m),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn set_repair_worktrees_modal(&mut self, m: RepairWorktreesModal) {
-        self.replace_modal_from_user(ActiveModal::RepairWorktrees(m));
-    }
-    #[inline]
-    pub fn clear_repair_worktrees_modal(&mut self) {
-        if matches!(self.active_modal, Some(ActiveModal::RepairWorktrees(_))) {
-            self.active_modal = None;
-        }
-    }
-    #[inline]
-    pub fn repair_worktrees_modal_mut(&mut self) -> Option<&mut RepairWorktreesModal> {
-        match &mut self.active_modal {
-            Some(ActiveModal::RepairWorktrees(m)) => Some(m),
-            _ => None,
         }
     }
     #[inline]
@@ -816,6 +695,7 @@ impl KagiApp {
     /// first render after the modal opens, and the modal's plain-`String`
     /// field is kept in sync for the plan/confirm/headless paths.
     pub(crate) fn sync_modal_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_worktree_lock_reason_input(window, cx);
         // ── Create-branch ───────────────────────────────────
         if let Some(m) = self.create_branch_modal_mut() {
             if m.input_state.is_none() {

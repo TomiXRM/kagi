@@ -32,6 +32,7 @@ pub mod stash;
 pub mod tag;
 pub(crate) mod transport_hold;
 pub mod worktree;
+mod worktree_lock;
 
 use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;

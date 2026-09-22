@@ -192,6 +192,16 @@ The current suite covers:
   A blocked plan has no confirm button, and the fixture's HEAD + porcelain
   status remains unchanged. Git operations use only a local bare repo.
   `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
+- worktree lock reason (`KAGI_GUI_E2E_ONLY=worktree_lock_reason`,
+  `tests/recovery/worktree_lock_reason.rs`): #372 item2. EN/JA use the real
+  InputState, clipboard paste and focused Enter to review, then a second Enter
+  to lock without test-forced refocusing. Input/plan cancellation makes no lock;
+  Unicode/quotes and blank reasons round-trip through Git's NUL-delimited
+  porcelain, with a durable Success and unchanged HEAD/working tree. The existing
+  explicit unlock is exercised between acquisitions. For Tier B, right-click a
+  linked worktree → Lock, edit the reason → Review → inspect the plan, then
+  Cancel or confirm. No tab-strip click or foreground activation is required.
+  Automatic terminal locking is not part of this change; it is tracked in #772.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): Push failures and delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

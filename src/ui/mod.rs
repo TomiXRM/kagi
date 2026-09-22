@@ -136,6 +136,7 @@ pub use compare_pane::ComparePane;
 pub use diff_view::*;
 use i18n::Msg;
 pub use main_diff_pane::MainDiffPane;
+pub use modals::worktree::*;
 pub use modals::*;
 pub use remote_browse::*;
 pub(crate) use render_helpers::with_vertical_scrollbar;
@@ -2970,6 +2971,7 @@ impl KagiApp {
             M::CreateWorktree(_) => self.start_create_worktree(cx),
             M::UnlockWorktree(_) => self.confirm_unlock_worktree(cx),
             M::RemoveWorktree(_) => self.confirm_remove_worktree(cx),
+            M::WorktreeLockReason(_) => self.confirm_worktree_lock_reason(cx),
             M::LockWorktree(_) => self.confirm_lock_worktree(cx),
             M::PruneWorktrees(_) => self.confirm_prune_worktrees(cx),
             M::RepairWorktrees(_) => self.confirm_repair_worktrees(cx),
@@ -3051,6 +3053,7 @@ impl KagiApp {
             M::CreateWorktree(_) => self.cancel_create_worktree_modal(),
             M::UnlockWorktree(_) => self.cancel_unlock_worktree_modal(),
             M::RemoveWorktree(_) => self.cancel_remove_worktree_modal(),
+            M::WorktreeLockReason(_) => self.clear_worktree_lock_reason_modal(),
             M::LockWorktree(_) => self.cancel_lock_worktree_modal(),
             M::PruneWorktrees(_) => self.cancel_prune_worktrees_modal(),
             M::RepairWorktrees(_) => self.cancel_repair_worktrees_modal(),

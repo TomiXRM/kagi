@@ -7,11 +7,17 @@
 
 use kagi_domain::plan_note::{PushNote, PushRecovery, PushTitle};
 
+use crate::i18n::Msg;
+
+/// JA text for `Msg::AdviceNoForceUsed` — shared by both `PushPunct` keys.
+pub(crate) const ADVICE_NO_FORCE_USED: &str =
+    "fast-forward できない push は失敗します。force は使いません。";
+
 /// Japanese rendering of one push note.
 pub fn note_ja(note: &PushNote) -> String {
     match note {
-        PushNote::NoForceUsed { .. } => {
-            "fast-forward できない push は失敗します。force は使いません。".to_string()
+        PushNote::NoForceUsed { punct } => {
+            super::advice_text(Msg::AdviceNoForceUsed(*punct), &[])
         }
         PushNote::NoUpstreamNoRemotes { branch } => format!(
             "upstream が未設定で、remote もありません。remote を追加してください。\nbranch `{}`\n  git remote add origin <url>",

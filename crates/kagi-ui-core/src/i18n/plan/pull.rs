@@ -4,6 +4,13 @@ use kagi_domain::plan_note::{
     restore_conflict_paths, DirtyParts, PullNote, PullRecovery, PullTitle,
 };
 
+use crate::i18n::Msg;
+
+/// JA template for `Msg::AdvicePullAutoStash`. The single `{}` takes the
+/// assembled changes fragment (`stage 済み 2 件、未追跡 1 件` …).
+pub(crate) const ADVICE_AUTO_STASH: &str =
+    "作業ツリーに{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
+
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; pull has its own module so it stays
 /// local rather than reaching into a sibling category file).
@@ -49,10 +56,7 @@ pub fn note_ja(note: &PullNote) -> String {
             if *untracked > 0 {
                 changes.push(format!("未追跡 {} 件", untracked));
             }
-            format!(
-                "作業ツリーに{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。",
-                changes.join("、")
-            )
+            super::advice_text(Msg::AdvicePullAutoStash, &[&changes.join("、")])
         }
         PullNote::NoUpstreamWithHint { branch, err } => format!(
             "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>",

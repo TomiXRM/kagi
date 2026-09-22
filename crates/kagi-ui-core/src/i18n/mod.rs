@@ -805,6 +805,17 @@ pub enum Msg {
     /// (#353). Deliberately "equivalent to", never "runs" — kagi executes in-process via
     /// the git library, not the CLI.
     PlanEquivalentTo,
+    // Advice catalog (#353): contextual variants retain their original wording.
+    AdviceUntrackedRemain(kagi_domain::plan_note::UntrackedCtx),
+    AdviceSuggestStashPush,
+    AdviceNoForceUsed(kagi_domain::plan_note::push::PushPunct),
+    AdviceWillDetachHead,
+    AdviceRecommendCreateBranchHereFirst,
+    AdviceDirtyStashFirst,
+    AdvicePullAutoStash,
+    AdviceDivergedSwitchOnly,
+    AdviceDeleteUnmerged,
+    AdviceUntrackedExcluded,
     /// #454: header of the always-visible list of files an amend folds into the
     /// commit. `{}` is appended by the caller as `" (N)"`.
     AmendFoldedFiles,
@@ -1097,9 +1108,44 @@ impl Msg {
     /// checkout / cherry-pick / revert / discard / worktree / HEAD / branch /
     /// upstream / stash …) appear verbatim in both arms per ADR-0048.
     pub fn t(self) -> &'static str {
+        self.t_for(lang())
+    }
+
+    pub(crate) fn t_for(self, language: Lang) -> &'static str {
+        use kagi_domain::advice_template_en as advice_en;
+        use kagi_domain::plan_note::{push::PushPunct, UntrackedCtx};
         use Lang::{En, Ja};
         use Msg::*;
-        match (lang(), self) {
+        match (language, self) {
+            (En, AdviceUntrackedRemain(ctx)) => match ctx {
+                UntrackedCtx::AfterCheckout => advice_en!(UntrackedAfterCheckout),
+                UntrackedCtx::AfterSwitching => advice_en!(UntrackedAfterSwitching),
+                UntrackedCtx::AfterSwitchingBranches => advice_en!(UntrackedAfterSwitchingBranches),
+                UntrackedCtx::AfterCherryPick => advice_en!(UntrackedAfterCherryPick),
+                UntrackedCtx::AfterRevert => advice_en!(UntrackedAfterRevert),
+                UntrackedCtx::PullFetchMayTouch => advice_en!(UntrackedPullFetchMayTouch),
+                UntrackedCtx::Untouched => advice_en!(UntrackedUntouched),
+            },
+            (Ja, AdviceUntrackedRemain(ctx)) => plan::common::untracked_advice_ja(ctx),
+            (En, AdviceSuggestStashPush) => advice_en!(SuggestStashPush),
+            (Ja, AdviceSuggestStashPush) => plan::common::ADVICE_SUGGEST_STASH_PUSH,
+            (En, AdviceNoForceUsed(PushPunct::EmDash)) => advice_en!(NoForceUsedEmDash),
+            (En, AdviceNoForceUsed(PushPunct::Semicolon)) => advice_en!(NoForceUsedSemicolon),
+            (Ja, AdviceNoForceUsed(_)) => plan::push::ADVICE_NO_FORCE_USED,
+            (En, AdviceWillDetachHead) => advice_en!(WillDetachHead),
+            (Ja, AdviceWillDetachHead) => plan::checkout::ADVICE_WILL_DETACH_HEAD,
+            (En, AdviceRecommendCreateBranchHereFirst) => advice_en!(RecommendCreateBranchHereFirst),
+            (Ja, AdviceRecommendCreateBranchHereFirst) => plan::checkout::ADVICE_RECOMMEND_CREATE_BRANCH_HERE_FIRST,
+            (En, AdviceDirtyStashFirst) => advice_en!(DirtyStashFirst),
+            (Ja, AdviceDirtyStashFirst) => plan::common::ADVICE_DIRTY_STASH_FIRST,
+            (En, AdvicePullAutoStash) => advice_en!(PullAutoStash),
+            (Ja, AdvicePullAutoStash) => plan::pull::ADVICE_AUTO_STASH,
+            (En, AdviceDivergedSwitchOnly) => advice_en!(DivergedSwitchOnly),
+            (Ja, AdviceDivergedSwitchOnly) => plan::switch::ADVICE_DIVERGED_SWITCH_ONLY,
+            (En, AdviceDeleteUnmerged) => advice_en!(DeleteUnmerged),
+            (Ja, AdviceDeleteUnmerged) => plan::branch::ADVICE_DELETE_UNMERGED,
+            (En, AdviceUntrackedExcluded) => advice_en!(UntrackedExcluded),
+            (Ja, AdviceUntrackedExcluded) => plan::stash::ADVICE_UNTRACKED_EXCLUDED,
             // ── issue #346: ruleset badge ───────────────────────────
             (En, RulesetBadge) => "Ruleset",
             (Ja, RulesetBadge) => "Ruleset",

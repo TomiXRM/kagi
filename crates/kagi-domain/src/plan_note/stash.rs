@@ -89,11 +89,9 @@ impl StashNote {
                  (equivalent to `git stash push -u`).",
                 count
             ),
-            StashNote::UntrackedExcluded { count } => format!(
-                "{} untracked file(s) will NOT be included in the stash \
-                 (include_untracked=false). They will remain in the working tree.",
-                count
-            ),
+            StashNote::UntrackedExcluded { count } => {
+                format!(crate::advice_template_en!(UntrackedExcluded), count)
+            }
             StashNote::IndexOutOfRange { index, count } => format!(
                 "Stash index {} is out of range (only {} stash entr{} exist).",
                 index,

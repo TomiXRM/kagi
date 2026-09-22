@@ -2,7 +2,34 @@
 
 use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 
-use crate::i18n::{branch_name_error, worktree_path_error};
+use crate::i18n::{branch_name_error, worktree_path_error, Msg};
+
+/// JA text for `Msg::AdviceSuggestStashPush`.
+pub(crate) const ADVICE_SUGGEST_STASH_PUSH: &str = "推奨コマンド: git stash push -u";
+
+/// JA text for `Msg::AdviceDirtyStashFirst` — copied verbatim from the former
+/// `Msg::DirtyStashFirst` JA arm. `stash@{0}` is literal git syntax, not a
+/// positional placeholder (the note takes no arguments).
+pub(crate) const ADVICE_DIRTY_STASH_FIRST: &str =
+    "Working tree が dirty です: 確定すると先に変更を stash します(stash@{0} に保存、`git stash pop` で復元)";
+
+/// JA template for `Msg::AdviceUntrackedRemain` — one per sentence tail.
+/// The single `{}` takes the untracked file count.
+pub(crate) fn untracked_advice_ja(ctx: UntrackedCtx) -> &'static str {
+    match ctx {
+        UntrackedCtx::AfterCheckout => "未追跡ファイル {} 件は checkout 後もそのまま残ります。",
+        UntrackedCtx::AfterSwitching => "未追跡ファイル {} 件は切り替え後もそのまま残ります。",
+        UntrackedCtx::AfterSwitchingBranches => {
+            "未追跡ファイル {} 件は branch 切り替え後もそのまま残ります。"
+        }
+        UntrackedCtx::AfterCherryPick => "未追跡ファイル {} 件は cherry-pick の影響を受けません。",
+        UntrackedCtx::AfterRevert => "未追跡ファイル {} 件は revert の影響を受けません。",
+        UntrackedCtx::PullFetchMayTouch => {
+            "未追跡ファイル {} 件は、取得した変更が同じパスに触れない限りそのまま残ります。"
+        }
+        UntrackedCtx::Untouched => "未追跡ファイル {} 件はそのまま残ります。",
+    }
+}
 
 /// JA rendering of the op phrase embedded in the common sentences.
 fn phrase_ja(p: OpPhrase) -> &'static str {
@@ -62,36 +89,10 @@ pub fn note_ja(note: &CommonNote) -> String {
             parts_ja(parts),
             phrase_ja(*before)
         ),
-        CommonNote::SuggestStashPush => "推奨コマンド: git stash push -u".to_string(),
-        CommonNote::UntrackedRemain { count, ctx } => match ctx {
-            UntrackedCtx::AfterCheckout => format!(
-                "未追跡ファイル {} 件は checkout 後もそのまま残ります。",
-                count
-            ),
-            UntrackedCtx::AfterSwitching => format!(
-                "未追跡ファイル {} 件は切り替え後もそのまま残ります。",
-                count
-            ),
-            UntrackedCtx::AfterSwitchingBranches => format!(
-                "未追跡ファイル {} 件は branch 切り替え後もそのまま残ります。",
-                count
-            ),
-            UntrackedCtx::AfterCherryPick => format!(
-                "未追跡ファイル {} 件は cherry-pick の影響を受けません。",
-                count
-            ),
-            UntrackedCtx::AfterRevert => format!(
-                "未追跡ファイル {} 件は revert の影響を受けません。",
-                count
-            ),
-            UntrackedCtx::PullFetchMayTouch => format!(
-                "未追跡ファイル {} 件は、取得した変更が同じパスに触れない限りそのまま残ります。",
-                count
-            ),
-            UntrackedCtx::Untouched => {
-                format!("未追跡ファイル {} 件はそのまま残ります。", count)
-            }
-        },
+        CommonNote::SuggestStashPush => super::advice_text(Msg::AdviceSuggestStashPush, &[]),
+        CommonNote::UntrackedRemain { count, ctx } => {
+            super::advice_text(Msg::AdviceUntrackedRemain(*ctx), &[count])
+        }
         CommonNote::DirtyRollbackHint { parts, op } => format!(
             "作業ツリーに{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。",
             parts_ja(parts),
@@ -130,14 +131,9 @@ pub fn note_ja(note: &CommonNote) -> String {
         // exactly one source of truth for their JA text.
         CommonNote::BranchNameErrorKeyed(e) => branch_name_error(e),
         CommonNote::WorktreePathErrorKeyed(e) => worktree_path_error(e),
-        // §F-6 — copied verbatim from the former `Msg::DirtyStashFirst` /
-        // `Msg::MergeConflictWarning` JA arms (ADR-0129 Phase 3: same text,
-        // now typed).
-        CommonNote::DirtyStashFirst => {
-            "Working tree が dirty です: 確定すると先に変更を stash します\
-             (stash@{0} に保存、`git stash pop` で復元)"
-                .to_string()
-        }
+        CommonNote::DirtyStashFirst => super::advice_text(Msg::AdviceDirtyStashFirst, &[]),
+        // §F-6 — copied verbatim from the former `Msg::MergeConflictWarning`
+        // JA arm (ADR-0129 Phase 3: same text, now typed).
         CommonNote::MergeConflictWarning => {
             "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。"
                 .to_string()

@@ -181,32 +181,33 @@ impl CommonNote {
                 parts.parts_en(),
                 before.phrase_en()
             ),
-            CommonNote::SuggestStashPush => "Suggested command: git stash push -u".to_string(),
+            CommonNote::SuggestStashPush => {
+                crate::advice_template_en!(SuggestStashPush).to_string()
+            }
             CommonNote::UntrackedRemain { count, ctx } => match ctx {
                 UntrackedCtx::AfterCheckout => {
-                    format!("{} untracked file(s) will remain after checkout.", count)
+                    format!(crate::advice_template_en!(UntrackedAfterCheckout), count)
                 }
                 UntrackedCtx::AfterSwitching => {
-                    format!("{} untracked file(s) will remain after switching.", count)
+                    format!(crate::advice_template_en!(UntrackedAfterSwitching), count)
                 }
                 UntrackedCtx::AfterSwitchingBranches => format!(
-                    "{} untracked file(s) will remain after switching branches.",
+                    crate::advice_template_en!(UntrackedAfterSwitchingBranches),
                     count
                 ),
                 UntrackedCtx::AfterCherryPick => format!(
-                    "{} untracked file(s) will remain untouched after cherry-pick.",
+                    crate::advice_template_en!(UntrackedAfterCherryPick),
                     count
                 ),
-                UntrackedCtx::AfterRevert => format!(
-                    "{} untracked file(s) will remain untouched after revert.",
-                    count
-                ),
+                UntrackedCtx::AfterRevert => {
+                    format!(crate::advice_template_en!(UntrackedAfterRevert), count)
+                }
                 UntrackedCtx::PullFetchMayTouch => format!(
-                    "{} untracked file(s) will remain untouched unless fetched changes need the same path.",
+                    crate::advice_template_en!(UntrackedPullFetchMayTouch),
                     count
                 ),
                 UntrackedCtx::Untouched => {
-                    format!("{} untracked file(s) will remain untouched.", count)
+                    format!(crate::advice_template_en!(UntrackedUntouched), count)
                 }
             },
             CommonNote::DirtyRollbackHint { parts, op } => format!(
@@ -285,9 +286,9 @@ impl CommonNote {
             CommonNote::GitErrorPassthrough { message } => message.clone(),
             CommonNote::BranchNameErrorKeyed(e) => e.to_string(),
             CommonNote::WorktreePathErrorKeyed(e) => e.to_string(),
-            CommonNote::DirtyStashFirst => "Working tree is dirty: confirming will stash your \
-                 changes first (saved to stash@{0}, restore with `git stash pop`)"
-                .to_string(),
+            CommonNote::DirtyStashFirst => {
+                crate::advice_template_en!(DirtyStashFirst).to_string()
+            }
             CommonNote::MergeConflictWarning => "This merge will produce conflicts. It will \
                  leave conflict markers and enter Conflict Mode, where you resolve each file (or \
                  abort to restore the pre-merge state)."

@@ -27,6 +27,22 @@ type WipRowParams = (
 );
 
 impl KagiApp {
+    /// Commit selection stays in commit coordinates; only scrolling includes
+    /// the WIP/stash prefix in the shared virtual list.
+    pub(super) fn commit_list_index(&self, commit_index: usize) -> usize {
+        let view = self.view();
+        usize::from(view.is_dirty)
+            + view
+                .worktrees
+                .iter()
+                .filter(|worktree| {
+                    !worktree.is_current && worktree.wip.is_some_and(|wip| wip.is_dirty())
+                })
+                .count()
+            + view.stash_graph_rows.len()
+            + commit_index
+    }
+
     /// Body slot — the main content area: sidebar | divider | commit list | optional panel.
     ///
     /// All parameters are pre-cloned values from `render`; no additional
@@ -70,10 +86,9 @@ impl KagiApp {
             );
 
         // ── WIP rows (Model A+: one per dirty worktree, each in its own colour) ──
-        // Built before the column so the closures don't conflict-borrow `self`:
-        // gather plain params first (cloning out of `self.view()`), then map
-        // to elements via `render_wip_row`.
-        let (wip_rows, wip_passing_lanes) = {
+        // Capture plain data; the virtual list may render or measure a row more
+        // than once, so elements are built inside its processor.
+        let (wip_params, wip_anchors) = {
             // Count every dirty kind so the row's "N changes" matches the
             // `is_dirty` gate above — otherwise an untracked-only (or
             // conflict-only) tree renders the row with a misleading "0 changes".
@@ -152,51 +167,20 @@ impl KagiApp {
                 ));
             }
 
-            // #472: each row gets its connector's column plus the columns of
-            // the rows above it, whose connectors pass straight through — the
-            // same accumulation the stash rows do with `passing_lanes`.
-            //
-            // #767: worktrees sharing a HEAD share one anchor, so the same
-            // column would otherwise be pushed once per row and the trace
-            // painted on top of itself. One entry per column is what "one
-            // shared trace, beginning at the topmost WIP row" means.
+            // Target-keyed anchors survive a worktree becoming clean.
             let row_targets: Vec<graph_wip::WipTarget> = params.iter().map(|p| p.0).collect();
             let wip_anchors = graph_wip::lanes_for_rows(&self.view().wip_lanes, &row_targets);
-            let graph_scroll_x = self.ui().graph_scroll_x;
-            let mut passing: Vec<(usize, usize)> = Vec::new();
-            let mut rows: Vec<gpui::AnyElement> = Vec::with_capacity(params.len());
-            for (i, (_, ordinal_color, label, count, ds, click, is_worktree)) in
-                params.into_iter().enumerate()
-            {
-                let anchor = wip_anchors[i];
-                // The connector's colour is HEAD's lane colour. A row with no
-                // connector (unborn HEAD, HEAD out of the loaded window) has no
-                // such colour, so it falls back to its own worktree ordinal.
-                let color_idx = anchor.map_or(ordinal_color, |a| a.color);
-                let lane = anchor.map(|a| a.lane);
-                rows.push(self.render_wip_row(
-                    color_idx,
-                    label,
-                    count,
-                    ds,
-                    click,
-                    is_worktree,
-                    commit_panel_open,
-                    lane,
-                    &passing,
-                    badge_col_w,
-                    graph_col_w,
-                    graph_scroll_x,
-                    cx,
-                ));
-                if let Some(l) = lane {
-                    if !passing.iter().any(|(pl, _)| *pl == l) {
-                        passing.push((l, color_idx));
-                    }
-                }
-            }
-            (rows, passing)
+            (params, wip_anchors)
         };
+        let mut wip_passing_lanes = Vec::new();
+        for anchor in wip_anchors.iter().flatten() {
+            let trace = (anchor.lane, anchor.color);
+            if !wip_passing_lanes.contains(&trace) {
+                wip_passing_lanes.push(trace);
+            }
+        }
+        let wip_count = wip_params.len();
+        let prefix_count = wip_count + self.view().stash_graph_rows.len();
 
         // T030: column header row (fixed, above WIP and commit list).
         let col_header = div()
@@ -360,15 +344,6 @@ impl KagiApp {
                     .child(SharedString::from("MESSAGE")),
             );
 
-        // ADR-0088: stash graph rows, shown below the WIP row.
-        let stash_graph_row_els = self.render_stash_graph_rows(
-            badge_col_w,
-            graph_col_w,
-            self.ui().graph_scroll_x,
-            &wip_passing_lanes,
-            cx,
-        );
-
         let commit_list_col = div()
             .flex_1()
             // Allow the center column to shrink below its longest commit
@@ -383,11 +358,7 @@ impl KagiApp {
             .flex_col()
             // ── Column header row (T030) ──────────────
             .child(col_header)
-            // ── WIP rows (one per dirty worktree, each colour-coded) ──
-            .children(wip_rows)
-            // ── Stash graph rows (ADR-0088), below WIP ───────
-            .children(stash_graph_row_els)
-            // ── Virtualized commit list ──────────────
+            // WIP, stash and commit rows share one scroll origin.
             .child({
                 // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
                 // overlay; the other is moved into `track_scroll`.
@@ -397,34 +368,78 @@ impl KagiApp {
                     &scrollbar_handle,
                     uniform_list(
                         "commit-list",
-                        row_count,
+                        prefix_count + row_count,
                         cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                             let rows_len = this.view().rows.len();
                             let compact = this.graph_compact;
-                            // Real commit rows for the part of the range that
-                            // maps to commits; the trailing synthetic index
-                            // (== rows_len) is the "load more" row.
-                            let commit_range = range.start..range.end.min(rows_len);
-                            let mut els: Vec<gpui::AnyElement> = render_rows(
-                                &this.view().rows,
-                                &this.avatars.images,
-                                commit_range,
-                                selected,
-                                this.badge_col_w,
-                                this.graph_col_w,
-                                compact,
-                                this.ui().graph_scroll_x,
-                                &this.view().stash_graph_lanes,
-                                this.view()
-                                    .branch_solo
-                                    .as_ref()
-                                    .map(|solo| &solo.visible_commits),
-                                cx,
-                            )
-                            .into_iter()
-                            .map(gpui::IntoElement::into_any_element)
-                            .collect();
-                            if range.end > rows_len {
+                            let mut els = Vec::with_capacity(range.len());
+                            if range.start < wip_count {
+                                let mut passing = Vec::new();
+                                for (i, (_, ordinal, label, count, diffstat, click, is_worktree)) in
+                                    wip_params.iter().take(range.end.min(wip_count)).enumerate()
+                                {
+                                    let anchor = wip_anchors[i];
+                                    let color = anchor.map_or(*ordinal, |anchor| anchor.color);
+                                    if range.contains(&i) {
+                                        els.push(this.render_wip_row(
+                                            color,
+                                            label.clone(),
+                                            *count,
+                                            *diffstat,
+                                            click.clone(),
+                                            *is_worktree,
+                                            commit_panel_open,
+                                            anchor.map(|anchor| anchor.lane),
+                                            &passing,
+                                            this.badge_col_w,
+                                            this.graph_col_w,
+                                            this.ui().graph_scroll_x,
+                                            cx,
+                                        ));
+                                    }
+                                    if let Some(anchor) = anchor {
+                                        let trace = (anchor.lane, anchor.color);
+                                        if !passing.contains(&trace) {
+                                            passing.push(trace);
+                                        }
+                                    }
+                                }
+                            }
+                            if range.start < prefix_count && range.end > wip_count {
+                                els.extend(this.render_stash_graph_rows(
+                                    this.badge_col_w,
+                                    this.graph_col_w,
+                                    this.ui().graph_scroll_x,
+                                    &wip_passing_lanes,
+                                    range.start.saturating_sub(wip_count)
+                                        ..range.end.min(prefix_count) - wip_count,
+                                    cx,
+                                ));
+                            }
+                            let commit_range =
+                                range.start.saturating_sub(prefix_count).min(rows_len)
+                                    ..range.end.saturating_sub(prefix_count).min(rows_len);
+                            els.extend(
+                                render_rows(
+                                    &this.view().rows,
+                                    &this.avatars.images,
+                                    commit_range,
+                                    selected,
+                                    this.badge_col_w,
+                                    this.graph_col_w,
+                                    compact,
+                                    this.ui().graph_scroll_x,
+                                    &this.view().stash_graph_lanes,
+                                    this.view()
+                                        .branch_solo
+                                        .as_ref()
+                                        .map(|solo| &solo.visible_commits),
+                                    cx,
+                                )
+                                .into_iter()
+                                .map(gpui::IntoElement::into_any_element),
+                            );
+                            if range.contains(&(prefix_count + rows_len)) {
                                 els.push(render_load_more_row(compact, cx));
                             }
                             els
@@ -436,6 +451,7 @@ impl KagiApp {
                     .min_h(px(0.)),
                     true,
                 )
+                .child(e2e::measure_inside("commit-list-viewport"))
             });
 
         // ADR-0120: resolve what each slot shows. The precedence lives in

@@ -4,7 +4,7 @@
 - Date: 2026-09-06
 - Touches: `crates/kagi-domain/src/{refs,graph}.rs`, `crates/kagi-git/src/snapshot.rs`,
   `src/ui/{graph_wip,graph_squash,graph_view,tab_view,render_body,render_wip}.rs`
-- Issue: #472; amended by #476 (target identity) and #767 (hollow anchors)
+- Issue: #472; amended by #476 (target identity), #767 (hollow anchors), and #773 (bounded routing and scrolling)
 - Builds on: ADR-0139 (squash ghost connectors), ADR-0088 (stash lanes),
   Model A+ (one WIP row per dirty worktree)
 
@@ -18,8 +18,8 @@ HEADs, and no way to pair them up.
 ## Decision
 
 Draw a hollow virtual commit point for each resolved WIP row, joined to its
-badge and HEAD by dashed connectors in HEAD's stable lane colour. A dedicated
-connector column retains the existing solid landing curve into HEAD.
+badge and HEAD by dashed connectors in HEAD's stable lane colour. WIP uses
+HEAD's own column, painted behind real history rather than taking a distant lane.
 
 1. **Data.** `kagi_domain::refs::Worktree` gains `head: Option<CommitId>`, read
    straight off that worktree's `HEAD` in `collect_worktrees` — never resolved
@@ -29,15 +29,16 @@ connector column retains the existing solid landing curve into HEAD.
 2. **Injection and pure anchoring.** `graph_wip::inject_wip_edges` is a
    synchronous post-pass over the built `CommitRow`s: `Pass` through every row
    above HEAD, then `IntoNode` at HEAD. `kagi_domain::graph::wip_anchor` selects
-   the lane and colour from borrowed `RowOccupancy` projections, without an
-   intermediate row allocation or any I/O. It shares `lane_top_busy` /
-   `lane_bottom_busy` with squash routing.
+   the lane and colour from lightweight `RowOccupancy` projections, without an
+   intermediate row allocation or any I/O. Edge occupancy does not displace WIP;
+   squash retains its independent collision rules.
 
-   Prefer HEAD's column when it is free all the way up; otherwise use an unused
-   dedicated column so a WIP connector cannot overdraw HEAD's descendants.
-   Distinct HEADs reserve distinct paths. Multiple WIPs on the **same HEAD**
-   share one `WipAnchor { lane, color }` and one injected trace; their hollow
-   nodes remain separate rows, aligned vertically.
+   #773 permits at most one neighbouring lane, preferring directly above HEAD.
+   We always take that first choice: no fresh-column allocation or WIP landing
+   curve remains. The painter emits WIP paths before real edges and nodes.
+   Multiple WIPs on the same HEAD share one anchor and trace; their hollow
+   nodes remain separate rows. Distinct HEADs may reuse a column. When their
+   lane and colour are identical, one trace continues to the deepest HEAD.
 
    `TabViewState::wip_lanes` maps each `WipTarget` to an optional anchor. The
    target-keyed join survives a clean worktree's row disappearing before a
@@ -68,16 +69,27 @@ connector column retains the existing solid landing curve into HEAD.
    WIP and commit rows share the left inset, lane geometry, zoom and horizontal
    scrolling. Their columns stay aligned when the row is selected or zoomed.
 
+5. **One scrolling graph.** WIP, stash, commit and load-more rows share the
+   existing `uniform_list`; only the column header stays fixed. Prefix elements
+   are built for visible ranges, retaining passing connectors from offscreen
+   rows. Once WIP leaves the viewport, each visible commit row still paints its
+   injected pass/landing, so the trace starts at the viewport's upper edge.
+   Commit selection remains in commit coordinates. Branch jumps and keyboard
+   navigation add the live WIP/stash prefix only when addressing the scroll
+   handle; per-session scroll ownership and PR swimlane filtering are unchanged.
+
 ## Consequences
 
 - Detached HEAD uses its actual OID, never an inferred branch name.
 - A loaded HEAD outside the viewport retains its anchor and clipped connector.
   An unloaded or unborn HEAD has no anchor: no invented lane-0 node or stub.
 - WIP badge/ring/connector colour follows HEAD, not worktree enumeration.
-- Pure domain tests cover occupancy at both row halves and unresolved endpoints.
-  Tier A `commit_row_layout_wip` measures actual node/dash paints for three
-  distinct HEADs, shared HEAD, detached/unborn state, zoom, hover and selection.
-  Existing connector and linked-worktree interaction scenarios remain in force.
+- Pure domain tests cover HEAD-aligned placement and unresolved endpoints.
+  Tier A `commit_row_layout_wip` measures node/dash paint order and alignment
+  for three HEADs with intervening history, shared HEAD, detached/unborn state,
+  zoom, hover and selection. A real wheel event hides WIP and checks that the
+  visible HEAD keeps its viewport-to-node connector. Existing connector and
+  linked-worktree interaction scenarios remain in force.
 
 ## Out of scope
 

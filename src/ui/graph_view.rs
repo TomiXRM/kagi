@@ -51,6 +51,7 @@ pub struct PaintedGraphNode {
     pub radius: f32,
     pub hollow: bool,
     pub color: gpui::Hsla,
+    pub paint_order: usize,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -59,6 +60,7 @@ pub struct PaintedGraphDash {
     pub from: gpui::Point<Pixels>,
     pub to: gpui::Point<Pixels>,
     pub color: gpui::Hsla,
+    pub paint_order: usize,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -282,6 +284,7 @@ fn paint_dashed_line(
                         from: p(offset),
                         to: p(end),
                         color,
+                        paint_order: trace.0.len() + trace.1.len(),
                     });
                 }
             });
@@ -403,7 +406,17 @@ pub fn graph_canvas(
                 let lane_x = |lane: usize| -> f32 { lane_center_x(ox + pad_l, lane, scroll_x) };
 
                 // ── Draw edges (mask does the clipping) ─────────
-                for edge in &edges {
+                // WIP is an annotation behind history, including occupied lanes.
+                // Stable filtered passes avoid sorting or allocating per paint.
+                for edge in edges
+                    .iter()
+                    .filter(|edge| graph_wip::wip_color_index(edge.color).is_some())
+                    .chain(
+                        edges
+                            .iter()
+                            .filter(|edge| graph_wip::wip_color_index(edge.color).is_none()),
+                    )
+                {
                     // A ghost connector is marked on the edge, not the lane: it
                     // deliberately reuses a real column (the tip's dead one), so
                     // the stash-style per-lane test cannot express it.
@@ -601,6 +614,7 @@ pub fn graph_canvas(
                                     radius: ring.unwrap_or(radius),
                                     hollow: stroke.is_some(),
                                     color,
+                                    paint_order: trace.0.len() + trace.1.len(),
                                 });
                             }
                         });

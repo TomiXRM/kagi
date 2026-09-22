@@ -25,6 +25,7 @@ pub(crate) fn badge_priority(kind: &BadgeKind) -> u8 {
 }
 
 /// What clicking a WIP row does.
+#[derive(Clone)]
 pub(crate) enum WipRowClick {
     /// Open the commit panel for the currently-open repo (stage/unstage).
     CommitPanel,

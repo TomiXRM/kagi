@@ -264,26 +264,36 @@ impl KagiApp {
             .as_ref()
             .and_then(|e| e.read(cx).state.plan_modal.clone());
         el.when_some(plan_modal, |el, modal| {
-            el.child(render_plan_modal(modal, cx))
+            el.child(render_plan_modal(modal, &self.modal_section_overrides, cx))
         })
         // ── Pull plan modal overlay (T-HT-003) ──────────
         .when_some(pull_modal, |el, modal| {
-            el.child(render_pull_modal(modal, cx))
+            el.child(render_pull_modal(modal, &self.modal_section_overrides, cx))
         })
         // ── Undo / Pop plan modal overlays ───────────────
         // ── Operation Undo / Redo modal (T-UNDOREDO-001) ──
         .when_some(history_modal, |el, modal| {
-            el.child(render_history_modal(modal, cx))
+            el.child(render_history_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Sequencer conflict-continue confirmation (ADR-0068) ──
         .when_some(conflict_continue_modal, |el, modal| {
-            el.child(render_conflict_continue_modal(modal, cx))
+            el.child(render_conflict_continue_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Abort confirmation (#704) — read from `self`, not passed in: the
         //    operation strip can open it with no conflict view in existence. ──
         .when_some(self.conflict_abort_modal().cloned(), |el, modal| {
             el.child(super::conflict_abort::render_conflict_abort_modal(
-                modal, cx,
+                modal,
+                &self.modal_section_overrides,
+                cx,
             ))
         })
         .when_some(amend_modal, |el, modal| {
@@ -296,16 +306,26 @@ impl KagiApp {
                 cx,
             ))
         })
-        .when_some(pop_modal, |el, modal| el.child(render_pop_modal(modal, cx)))
+        .when_some(pop_modal, |el, modal| {
+            el.child(render_pop_modal(modal, &self.modal_section_overrides, cx))
+        })
         // ── Stash drop modal overlay (ADR-0087) ─────────
         .when_some(self.pr_merge_modal().cloned(), |el, modal| {
-            el.child(render_pr_merge_modal(modal, cx))
+            el.child(render_pr_merge_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(self.pr_fields_modal().cloned(), |el, modal| {
             el.child(super::pr_fields::render_pr_fields_modal(self, modal, cx))
         })
         .when_some(stash_drop_modal, |el, modal| {
-            el.child(render_stash_drop_modal(modal, cx))
+            el.child(render_stash_drop_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Repository owner-trust prompt (ADR-0160 / #310) ──
         .when_some(self.trust_repo_modal().cloned(), |el, modal| {
@@ -313,7 +333,11 @@ impl KagiApp {
         })
         // ── Unlock-worktree confirmation ─────────────────
         .when_some(unlock_worktree_modal, |el, modal| {
-            el.child(render_unlock_worktree_modal(modal, cx))
+            el.child(render_unlock_worktree_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Worktree lifecycle confirmations (issue #340) ──
         .when_some(self.app_notice().cloned(), |el, notice| {
@@ -357,23 +381,43 @@ impl KagiApp {
             )
         })
         .when_some(self.remove_worktree_modal().cloned(), |el, modal| {
-            el.child(render_remove_worktree_modal(modal, cx))
+            el.child(render_remove_worktree_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(self.lock_worktree_modal().cloned(), |el, modal| {
-            el.child(render_lock_worktree_modal(modal, cx))
+            el.child(render_lock_worktree_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(self.prune_worktrees_modal().cloned(), |el, modal| {
-            el.child(render_prune_worktrees_modal(modal, cx))
+            el.child(render_prune_worktrees_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(self.repair_worktrees_modal().cloned(), |el, modal| {
-            el.child(render_repair_worktrees_modal(modal, cx))
+            el.child(render_repair_worktrees_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Push plan modal overlay (T-HT-004) ──────────
         .when_some(push_modal, |el, modal| {
-            el.child(render_push_modal(modal, cx))
+            el.child(render_push_modal(modal, &self.modal_section_overrides, cx))
         })
         .when_some(branch_plan_modal, |el, modal| {
-            el.child(render_branch_plan_modal(modal, cx))
+            el.child(render_branch_plan_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(set_upstream_modal, |el, modal| {
             el.child(render_set_upstream_modal(modal, cx))
@@ -382,13 +426,21 @@ impl KagiApp {
             el.child(render_rename_branch_modal(modal, cx))
         })
         .when_some(merge_modal, |el, modal| {
-            el.child(render_merge_modal(modal, cx))
+            el.child(render_merge_modal(modal, &self.modal_section_overrides, cx))
         })
         .when_some(tracking_checkout_modal, |el, modal| {
-            el.child(render_tracking_checkout_modal(modal, cx))
+            el.child(render_tracking_checkout_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(switch_to_latest_modal, |el, modal| {
-            el.child(render_switch_to_latest_modal(modal, cx))
+            el.child(render_switch_to_latest_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Create-branch modal overlay (above everything) ──
         .when_some(create_branch_modal, |el, modal| {
@@ -423,30 +475,62 @@ impl KagiApp {
         })
         // ── Revert modal overlay (T-CM-034) ──────────────
         .when_some(revert_modal, |el, modal| {
-            el.child(render_revert_modal(modal, cx))
+            el.child(render_revert_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Delete-branch modal overlay (W2-DELETE) ──────
         .when_some(delete_branch_modal, |el, modal| {
-            el.child(render_delete_branch_modal(modal, cx))
+            el.child(render_delete_branch_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(delete_remote_branch_modal, |el, modal| {
-            el.child(render_delete_remote_branch_modal(modal, cx))
+            el.child(render_delete_remote_branch_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(reset_current_modal, |el, modal| {
-            el.child(render_reset_current_modal(modal, cx))
+            el.child(render_reset_current_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(force_lease_push_modal, |el, modal| {
-            el.child(render_force_lease_push_modal(modal, cx))
+            el.child(render_force_lease_push_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(push_tag_modal, |el, modal| {
-            el.child(render_push_tag_modal(modal, cx))
+            el.child(render_push_tag_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         .when_some(rebase_current_onto_modal, |el, modal| {
-            el.child(render_rebase_modal(modal, cx))
+            el.child(render_rebase_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Branch-cleanup modal overlay (ADR-0128) ──────
         .when_some(branch_cleanup_modal, |el, modal| {
-            el.child(render_branch_cleanup_modal(modal, cx))
+            el.child(render_branch_cleanup_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
         })
         // ── Discard danger modal overlay (W17-DISCARD) ───
         .when_some(discard_modal, |el, modal| {

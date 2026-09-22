@@ -88,6 +88,10 @@ mod app_conflict;
 mod recovery_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/modal_compact.rs"]
+mod recovery_modal_compact;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/read_owner.rs"]
 mod read_owner;
 
@@ -671,6 +675,14 @@ mod macos {
             (
                 "cleanup_stale_tab",
                 Box::new(crate::recovery_operations::scenario_cleanup_stale_tab),
+            ),
+            (
+                "modal_sections",
+                Box::new(crate::recovery_layout::scenario_modal_sections),
+            ),
+            (
+                "modal_compact",
+                Box::new(crate::recovery_modal_compact::scenario_modal_compact),
             ),
             (
                 "preflight_presentation",

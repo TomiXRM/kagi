@@ -148,6 +148,9 @@ impl KagiApp {
 /// notes come from `plan_conflict_abort` rather than being re-worded here.
 pub(crate) fn render_conflict_abort_modal(
     modal: ConflictAbortModal,
+    // #462: the user's modal-section disclosure choices, borrowed for this
+    // frame (see `modal_renderers_plan`'s module doc).
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -158,6 +161,7 @@ pub(crate) fn render_conflict_abort_modal(
         Some((IconName::Undo2.into(), theme().color_blocker)),
         |this, _cx| this.cancel_conflict_abort(),
         |this, cx| this.confirm_conflict_abort(cx),
+        overrides,
         cx,
     )
 }

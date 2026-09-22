@@ -136,7 +136,6 @@ impl KagiApp {
         match planned {
             Ok(plan) => {
                 klog!("plan: discard 1 target blockers={}", plan.blockers.len());
-                self.reset_modal_sections();
                 let kinds = self.discard_kinds(cx);
                 self.set_discard_modal(DiscardModal {
                     kinds: kinds.clone(),
@@ -185,7 +184,6 @@ impl KagiApp {
                     plan.blockers.len(),
                     skipped.len()
                 );
-                self.reset_modal_sections();
                 let kinds = self.discard_kinds(cx);
                 self.set_discard_modal(DiscardModal {
                     kinds: kinds.clone(),
@@ -231,7 +229,6 @@ impl KagiApp {
 
         // ── Two-stage confirm: first click only arms ──────────────────
         if !modal.confirm_armed {
-            self.reset_modal_sections();
             let kinds = self.discard_kinds(cx);
             self.set_discard_modal(DiscardModal {
                 kinds: kinds.clone(),
@@ -293,7 +290,6 @@ impl KagiApp {
                         &repo_path,
                         cx,
                     );
-                    self.reset_modal_sections();
                     let kinds = self.discard_kinds(cx);
                     self.set_discard_modal(DiscardModal {
                         kinds: kinds.clone(),

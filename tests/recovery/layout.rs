@@ -585,3 +585,52 @@ pub fn scenario_footer_status_line(cx: &mut VisualTestAppContext, repo_path: &Pa
 
 #[path = "wip_layout.rs"]
 pub(crate) mod wip;
+
+/// Pin the existing disclosure interaction before changing override storage.
+pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
+    use kagi::ui::modals::AmendPlanModal;
+    let fixture = crate::macos::build_fixture();
+    let plan = kagi_git::Backend::open(fixture.path())
+        .unwrap()
+        .plan_amend(kagi_git::AmendMode::Both, Some("disclosure baseline"))
+        .unwrap();
+    assert!(plan.recovery.is_some());
+    let modal = AmendPlanModal {
+        plan: std::sync::Arc::new(plan),
+        error: None,
+        mode: kagi_git::AmendMode::Both,
+        message: "disclosure baseline".into(),
+        confirm_armed: false,
+    };
+    let (app, win) = crate::macos::mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        app.reset_modal_sections();
+        app.set_amend_modal(modal.clone());
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let measure = |cx: &mut VisualTestAppContext, name: &str| {
+        e2e::clear_control_bounds(win.window_id(), name);
+        cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        e2e::control_bounds(win.window_id(), name)
+    };
+    assert!(measure(cx, "amend-recovery-body").is_some());
+    for expanded in [false, true, false] {
+        let header = measure(cx, "amend-recovery").unwrap();
+        cx.simulate_click(win, header.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(measure(cx, "amend-recovery-body").is_some(), expanded);
+        assert!(measure(cx, "amend-recovery").is_some());
+    }
+    app.update(cx, |app, cx| {
+        app.clear_amend_modal();
+        app.reset_modal_sections();
+        app.set_amend_modal(modal);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(measure(cx, "amend-recovery-body").is_some());
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS modal_sections");
+}

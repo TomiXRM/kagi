@@ -16,8 +16,9 @@
 use super::i18n::Msg;
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_shell::{
-    modal_body, modal_card, modal_list_max_h, modal_list_panel, modal_prose_box, note_path_list,
-    note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
+    modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, modal_prose_box,
+    modal_recovery_section, note_path_list, note_path_list_element, section_open, MODAL_LIST_ROW_H,
+    MODAL_W_MD,
 };
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
@@ -26,6 +27,13 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+
+/// #462 section id for the shared plan card's recovery prose — the one block
+/// on this card that is *supporting* detail. Warnings, blockers, the commit
+/// preview and the error line are not collapsible: a confirmation may never
+/// hide what it acts on or why it is refused. `KagiApp` owns the user's flip
+/// (`modal_section_overrides`); this renderer owns the default.
+const SECTION_PLAN_RECOVERY: &str = "plan-recovery";
 
 /// Richer plan-card header (ADR pending: "richer popup cards", started with
 /// Pull/Push per user request 2026-07-22, extended to every plan-confirmation
@@ -146,6 +154,7 @@ pub(crate) fn render_current_predicted(
             .flex_wrap()
             .gap_2()
             .text_sm()
+            .when(modal_compact(), |row| row.text_xs().gap_1())
             .child(
                 // #454: the row wraps (`flex_wrap`) and the head may shrink to
                 // the line width (`flex_shrink` + `min_w(0)`), so a long head
@@ -200,6 +209,7 @@ pub(crate) fn render_current_predicted(
             .flex()
             .flex_col()
             .gap_1()
+            .when(modal_compact(), |column| column.px_2().py_1().gap_0p5())
             .child(
                 div()
                     .text_xs()
@@ -207,15 +217,17 @@ pub(crate) fn render_current_predicted(
                     .child(SharedString::from("CURRENT")),
             )
             .child(state_line(&plan.current.head, &plan.current.dirty))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .py(theme::scaled_px(1.))
-                    .text_color(rgb(color))
-                    .child(SharedString::from("\u{2193}")),
-            )
+            .when(!modal_compact(), |column| {
+                column.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .py(theme::scaled_px(1.))
+                        .text_color(rgb(color))
+                        .child(SharedString::from("\u{2193}")),
+                )
+            })
             .child(
                 div()
                     .text_xs()
@@ -343,6 +355,10 @@ pub(crate) fn render_plan_modal_wrapper_styled(
     accent: Option<PlanCardAccent>,
     cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
     confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    // #462: the user's section open/closed choices, borrowed from `KagiApp`
+    // for this frame. Borrowed rather than read back through `cx`: the app is
+    // already mutably borrowed while it renders.
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel_handler = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
@@ -367,6 +383,7 @@ pub(crate) fn render_plan_modal_wrapper_styled(
         confirm_handler,
         create_branch_target,
         accent,
+        overrides,
         cx,
     )
     .into_any_element()
@@ -392,11 +409,13 @@ pub(crate) fn render_modal_title_row(
                 .flex_row()
                 .items_center()
                 .gap_3()
+                .when(modal_compact(), |row| row.gap_2())
                 .child(
                     div()
                         .flex_shrink_0()
                         .w(theme::scaled_px(40.))
                         .h(theme::scaled_px(40.))
+                        .when(modal_compact(), |badge| badge.size(theme::scaled_px(32.)))
                         .rounded_full()
                         .bg(gpui::rgba(badge_bg))
                         .border_1()
@@ -416,6 +435,7 @@ pub(crate) fn render_modal_title_row(
                         .min_w(gpui::px(0.))
                         .text_color(rgb(current_theme().text_main))
                         .text_lg()
+                        .when(modal_compact(), |title| title.text_base())
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .overflow_hidden()
                         .child(title),
@@ -425,6 +445,7 @@ pub(crate) fn render_modal_title_row(
         None => div()
             .text_color(rgb(current_theme().text_main))
             .text_xl()
+            .when(modal_compact(), |title| title.text_base())
             .child(title)
             .into_any_element(),
     }
@@ -441,6 +462,8 @@ fn render_plan_modal_card_styled(
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     create_branch_target: Option<CommitId>,
     accent: Option<PlanCardAccent>,
+    // #462: see [`render_plan_modal_wrapper_styled`].
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Accept either a `&'static str` (most modals) or a dynamic `String`/
@@ -548,28 +571,38 @@ fn render_plan_modal_card_styled(
             .min_h(gpui::px(0.))
             .max_h(modal_list_max_h(total))
             .overflow_y_scroll();
+        #[cfg(feature = "gui-e2e")]
+        {
+            list = list
+                .relative()
+                .child(super::modal_shell::modal_probe("modal-target-list"));
+        }
         for entry in &plan.preview_commits {
             let line: String = entry.chars().take(72).collect();
-            list = list.child(
-                // flex_shrink_0: a capped flex_col compresses its rows instead
-                // of scrolling them without it (T027 bug class).
-                div()
-                    .flex_shrink_0()
-                    .h(theme::scaled_px(MODAL_LIST_ROW_H))
-                    .flex()
-                    .items_center()
-                    .overflow_hidden()
-                    // One line per commit: a long summary used to wrap and
-                    // overrun this fixed-height row into the next one.
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(render_commit_row(&line, accent.clone())),
-            );
+            let row = div()
+                .flex_shrink_0()
+                .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                .flex()
+                .items_center()
+                .overflow_hidden()
+                // One line per commit: a long summary used to wrap and
+                // overrun this fixed-height row into the next one.
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(render_commit_row(&line, accent.clone()));
+            #[cfg(feature = "gui-e2e")]
+            let row = row
+                .relative()
+                .child(super::modal_shell::modal_probe(format!(
+                    "modal-commit-{entry}"
+                )));
+            list = list.child(row);
         }
         body = body.child(modal_list_panel(
             SharedString::from("Commits to push"),
             total,
             Some(("plan-commits-copy", plan.preview_commits.join("\n"))),
+            None,
             list.into_any_element(),
             cx,
         ));
@@ -606,28 +639,51 @@ fn render_plan_modal_card_styled(
         body = body.child(block_col.flex_shrink_0());
     }
 
-    // ── Recovery ──────────────────────────────────────────
+    // ── Recovery (supporting detail) ──────────────────────
     // Capped and scrollable in place: the body no longer scrolls, so a long
     // recovery text would otherwise be clipped by the card (the recovery
     // instructions are the reason a destructive operation is allowed at all).
+    //
+    // Fold only supporting recovery. Preserve explicit choices across resizes;
+    // untouched normal-height cards keep their existing plain prose.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        body = body.child(modal_prose_box(
-            "plan-recovery-scroll",
-            match accent {
-                Some((_, color)) => render_recovery_box(&recovery_text, color),
-                None => div()
-                    .text_xs()
-                    .text_color(rgb(current_theme().text_muted))
-                    .child(SharedString::from(recovery_text))
-                    .into_any_element(),
-            },
-        ));
+        let prose = move || {
+            modal_prose_box(
+                "plan-recovery-scroll",
+                match accent {
+                    Some((_, color)) => render_recovery_box(&recovery_text, color),
+                    None => div()
+                        .text_xs()
+                        .text_color(rgb(current_theme().text_muted))
+                        .child(SharedString::from(recovery_text))
+                        .into_any_element(),
+                },
+            )
+            .into_any_element()
+        };
+        let compact = modal_compact();
+        if compact || overrides.contains_key(SECTION_PLAN_RECOVERY) {
+            let open = section_open(overrides, SECTION_PLAN_RECOVERY, !compact);
+            body = body.child(modal_recovery_section(
+                SECTION_PLAN_RECOVERY,
+                open,
+                // Built only while open, so a folded section costs nothing.
+                open.is_open().then(prose),
+                cx,
+            ));
+        } else {
+            body = body.child(prose());
+        }
     }
 
     // ── Equivalent git command (#353) ─────────────────────
     // "This is *equivalent to* `<cmd>`" — never "runs": kagi executes via
     // libgit2, so the CLI command is shown only as the faithful equivalent.
+    //
+    // #462: supporting description too, but it stays visible on a compact card
+    // — one `text_xs` line behind a header row plus panel padding and border
+    // *costs* height rather than buying it back.
     if let Some(cmd) = plan.equivalent_command.as_deref() {
         let line = Msg::PlanEquivalentTo.t().replace("{}", cmd);
         body = body.child(
@@ -658,14 +714,17 @@ fn render_plan_modal_card_styled(
         .flex_row()
         .gap_2()
         .justify_end()
-        // Cancel button (always present — safe default)
-        .child(
+        // Cancel button (always present — safe default). #462: measured, so a
+        // scenario can assert the footer's own controls are on screen rather
+        // than inferring it from the card.
+        .child(super::e2e::measure_control(
+            "plan-cancel",
             Button::new("plan-cancel")
                 .label(Msg::PlanCancel.t())
                 .ghost()
                 .small()
                 .on_click(cancel_handler),
-        );
+        ));
 
     if let Some(commit_id) = create_branch_target {
         let create_handler = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
@@ -712,19 +771,25 @@ fn render_plan_modal_card_styled(
                     .left_0()
                     .size_full(),
                 )
+                // #462: the same wrapper carries the named probe, so a
+                // scenario reads this button's real bounds instead of the
+                // window-wide "last confirm drawn" slot above.
+                .child(super::modal_shell::modal_probe("plan-confirm"))
                 .child(button)
         };
         button_row = button_row.child(button);
     }
+
+    // #462: the footer is the block a compact card must never push off the
+    // bottom, so it is measured as a whole. `relative` + an absolute,
+    // zero-layout probe: the row keeps its own flex sizing.
+    #[cfg(feature = "gui-e2e")]
+    let button_row = button_row
+        .relative()
+        .child(super::modal_shell::modal_probe("modal-footer"));
 
     let card = card.child(body).child(button_row.flex_shrink_0());
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(card)
 }
-
-// ──────────────────────────────────────────────────────────────
-// ActiveModal — single active-modal enum (ADR-0076 / issue #13 P7)
-// ──────────────────────────────────────────────────────────────
-
-// ActiveModal moved back to modals.rs (state, not rendering).

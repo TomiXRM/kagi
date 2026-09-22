@@ -752,7 +752,7 @@ pub(crate) fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle
     handle: &H,
     list: impl IntoElement,
     show_bar: bool,
-) -> impl IntoElement {
+) -> gpui::Stateful<gpui::Div> {
     let mut container = div()
         .id(id)
         .relative()

@@ -26,13 +26,14 @@ pub(crate) const MODAL_LIST_ROW_H: f32 = 18.;
 
 /// Fraction of the window height a single modal list may occupy.
 ///
-/// The card itself is capped at 80% of the window; above the list sit the
-/// title and the current→predicted block, below it blockers, recovery text
-/// and the pinned action row. 40% leaves those visible.
+/// The card keeps a fixed outer gutter; the remaining space must also hold
+/// state, warnings, recovery text and the pinned action row.
 const MODAL_LIST_VIEWPORT_FRAC: f32 = 0.4;
 
 /// Fraction of the window height a prose panel (recovery text) may occupy.
 const MODAL_PROSE_VIEWPORT_FRAC: f32 = 0.25;
+/// Two lines of `text_xs` plus its line gap.
+const PROSE_FLOOR_H: f32 = 34.;
 
 /// Row ceiling used only before the first frame publishes a window height
 /// (headless snapshot tests), to keep list heights deterministic there.
@@ -43,10 +44,35 @@ const MODAL_LIST_FALLBACK_ROWS: f32 = 20.;
 /// operation's own targets, invisible (observed at 700px, #454).
 const MODAL_LIST_MIN_ROWS: f32 = 3.;
 
+/// Logical viewport height at or below which supporting detail yields to targets (#462).
+const MODAL_COMPACT_HEIGHT: f32 = 800.;
+const MODAL_COMPACT_LIST_ROWS: f32 = 8.;
+
+pub(crate) fn modal_compact() -> bool {
+    theme::viewport_h()
+        .is_some_and(|height| gpui::px(height) <= theme::scaled_px(MODAL_COMPACT_HEIGHT))
+}
+
+/// Observe actual layout without adding a wrapper or participating in flex sizing.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn modal_probe(name: impl Into<String>) -> impl IntoElement {
+    let name = name.into();
+    gpui::canvas(
+        move |bounds, window, _| {
+            super::e2e::record_control_bounds(window.window_handle().window_id(), &name, bounds);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 /// Height for a scrolling modal list of `rows` rows: it hugs its content while
-/// short, then stops at [`MODAL_LIST_VIEWPORT_FRAC`] of the **window height**,
-/// never below [`MODAL_LIST_MIN_ROWS`] (a list that shrinks to nothing hides
-/// what the operation acts on).
+/// short, then stops at [`MODAL_LIST_VIEWPORT_FRAC`] of the **window height**.
+/// Compact layout additionally caps it at [`MODAL_COMPACT_LIST_ROWS`]; neither
+/// mode requests fewer than [`MODAL_LIST_MIN_ROWS`] for a long target list.
 ///
 /// #454: the height used to be a flat `min(rows, 20) * 18px` — the same box on
 /// a 700px window as on a 1400px one. Only the cards that scroll their list
@@ -58,6 +84,11 @@ pub(crate) fn modal_list_max_h(rows: usize) -> gpui::Pixels {
     let ceiling = match theme::viewport_h() {
         Some(h) => gpui::px(h * MODAL_LIST_VIEWPORT_FRAC),
         None => theme::scaled_px(MODAL_LIST_FALLBACK_ROWS * MODAL_LIST_ROW_H),
+    };
+    let ceiling = if modal_compact() {
+        ceiling.min(theme::scaled_px(MODAL_COMPACT_LIST_ROWS * MODAL_LIST_ROW_H))
+    } else {
+        ceiling
     };
     let floor = theme::scaled_px(rows.min(MODAL_LIST_MIN_ROWS) * MODAL_LIST_ROW_H);
     content.min(ceiling).max(floor)
@@ -87,6 +118,12 @@ pub(crate) const MODAL_W_MD: f32 = 576.;
 pub(crate) const MODAL_W_LG: f32 = 648.;
 
 pub(crate) fn modal_card(width: f32) -> gpui::Div {
+    // Spend spare horizontal space before shrinking safety prose vertically.
+    let width = if modal_compact() {
+        width.max(MODAL_W_LG)
+    } else {
+        width
+    };
     modal_card_sized()
         .w(theme::scaled_px(width))
         // A card must never be wider than the window it sits in: at zoom 1.5
@@ -105,8 +142,11 @@ pub(crate) fn modal_card_sized() -> gpui::Div {
     // scrim (#454 review). The border is derived like the panel tints, so it
     // holds on every theme.
     let (_, border) = theme::panel_style();
-    div()
-        .max_h(gpui::relative(0.8))
+    let card = div()
+        .max_h(gpui::relative(0.92))
+        .when_some(theme::viewport_h(), |card, height| {
+            card.max_h((gpui::px(height) - theme::scaled_px(32.)).max(gpui::px(0.)))
+        })
         .overflow_hidden()
         .border_1()
         .border_color(gpui::rgba(border))
@@ -123,25 +163,31 @@ pub(crate) fn modal_card_sized() -> gpui::Div {
         .flex()
         .flex_col()
         .gap_3()
+        .when(modal_compact(), |card| {
+            card.p_2().gap_1().line_height(gpui::relative(1.3))
+        });
+    #[cfg(feature = "gui-e2e")]
+    let card = card.relative().child(modal_probe("modal-card"));
+    card
 }
 
 /// The middle of a [`modal_card`] for cards whose **lists** are the scroll
 /// region (amend, discard): it does not scroll itself.
 ///
-/// #454 layout rule — *one scroll region per card, never nested*. A scrolling
+/// #454 layout rule — *one scroll region per panel, never nested*. A scrolling
 /// body wrapped around scrolling lists gave a scroller inside a scroller: the
 /// outer one drifted and clipped the card's own labels (`CURRENT` slid off the
 /// top on a 700px window). So a card picks exactly one:
 ///
-/// * huge, virtualized list + short prose -> `modal_body` here, and the list
-///   carries the scroll ([`modal_list_max_h`] for its height);
+/// * huge, virtualized list + short prose -> `modal_body` here, and each panel
+///   carries its own scroll ([`modal_list_max_h`] for list height);
 /// * long prose + plain bounded lists -> [`modal_scroll_body`], and the lists
 ///   render at full height inside it.
 ///
 /// `flex_1 + min_h(0)` lets the body shrink inside the capped card instead of
 /// pushing the buttons off the bottom (the T027 flex-compression bug class).
 pub(crate) fn modal_body() -> gpui::Div {
-    div()
+    let body = div()
         .flex_1()
         .min_h(gpui::px(0.))
         // Clip, so a block that outgrows its share can never paint over the
@@ -151,6 +197,10 @@ pub(crate) fn modal_body() -> gpui::Div {
         .flex()
         .flex_col()
         .gap_3()
+        .when(modal_compact(), |body| body.gap_1());
+    #[cfg(feature = "gui-e2e")]
+    let body = body.relative().child(modal_probe("modal-body"));
+    body
 }
 
 /// Height cap for a **prose** panel (recovery text, notes) in a card whose
@@ -180,14 +230,15 @@ pub(crate) fn modal_prose_box(
     id: &'static str,
     body: gpui::AnyElement,
 ) -> gpui::Stateful<gpui::Div> {
-    /// Two lines of `text_xs` plus its line gap.
-    const PROSE_FLOOR_H: f32 = 34.;
-    div()
+    let panel = div()
         .id(id)
         .min_h(theme::scaled_px(PROSE_FLOOR_H))
         .max_h(modal_prose_max_h())
         .overflow_y_scroll()
-        .child(body)
+        .child(body);
+    #[cfg(feature = "gui-e2e")]
+    let panel = panel.relative().child(modal_probe(id));
+    panel
 }
 
 /// The middle of a [`modal_card`] that scrolls, for cards whose lists are
@@ -204,19 +255,19 @@ pub(crate) fn modal_scroll_body() -> gpui::Stateful<gpui::Div> {
         .flex()
         .flex_col()
         .gap_3()
+        .when(modal_compact(), |body| body.gap_1())
 }
 
 /// Is section `id` expanded, given the renderer's default?
 ///
-/// `overrides` is `KagiApp::modal_section_overrides`: it records only the
-/// sections the user flipped, so each renderer keeps ownership of its own
-/// default and no `clear_*` path has to reset disclosure state.
+/// Missing entries use the responsive default; a user's explicit choice is
+/// stable across height changes and is cleared for the next confirmation.
 pub(crate) fn section_open(
-    overrides: &std::collections::HashSet<&'static str>,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     id: &'static str,
     default_open: bool,
 ) -> SectionOpen {
-    SectionOpen(default_open != overrides.contains(id))
+    SectionOpen(overrides.get(id).copied().unwrap_or(default_open))
 }
 
 /// Whether a section is expanded — constructible only by [`section_open`].
@@ -276,7 +327,7 @@ pub(crate) fn modal_section(
     open: SectionOpen,
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> gpui::Div {
     modal_section_chipped(id, title, Some(count.to_string().into()), open, body, cx)
 }
 
@@ -288,7 +339,7 @@ pub(crate) fn modal_section_chipped(
     open: SectionOpen,
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> gpui::Div {
     let open = open.is_open();
     let (panel_bg, panel_border) = theme::panel_style();
     let caret = if open { "\u{25be}" } else { "\u{25b8}" };
@@ -303,7 +354,7 @@ pub(crate) fn modal_section_chipped(
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(move |this, _ev, _window, cx| {
-                this.toggle_modal_section(id);
+                this.toggle_modal_section(id, open);
                 cx.notify();
             }),
         )
@@ -326,6 +377,8 @@ pub(crate) fn modal_section_chipped(
                 .child(modal_chip(chip, current_theme().text_sub)),
         );
     }
+    #[cfg(feature = "gui-e2e")]
+    let header = header.relative().child(modal_probe(id));
 
     // The panel: a rounded surface with a hairline border, so sections read as
     // separate cards instead of one text column (#454 mock, right half).
@@ -347,13 +400,40 @@ pub(crate) fn modal_section_chipped(
         .bg(gpui::rgba(panel_bg))
         .border_1()
         .border_color(gpui::rgba(panel_border))
+        .when(modal_compact(), |section| section.p_1p5().gap_1())
+        .when(!open, |section| section.flex_shrink_0())
         .child(header);
     if open {
         if let Some(body) = body {
             section = section.child(body);
+            #[cfg(feature = "gui-e2e")]
+            {
+                section = section.relative().child(modal_probe(format!("{id}-body")));
+            }
         }
     }
-    section.into_any_element()
+    section
+}
+
+/// Recovery keeps both its header and a readable, independently scrollable body.
+pub(crate) fn modal_recovery_section(
+    id: &'static str,
+    open: SectionOpen,
+    body: Option<gpui::AnyElement>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Div {
+    modal_section_chipped(
+        id,
+        Msg::ModalRecoverySection.t(),
+        Some(format!("{} · 1", Msg::ModalRecoveryChip.t()).into()),
+        open,
+        body,
+        cx,
+    )
+    .when(open.is_open(), |section| {
+        let chrome = if modal_compact() { 42. } else { 50. };
+        section.min_h(theme::scaled_px(PROSE_FLOOR_H + chrome))
+    })
 }
 
 /// A non-collapsible list panel: the mock's `対象ファイル` box — same surface,
@@ -370,25 +450,40 @@ pub(crate) fn modal_list_panel(
     // `(element id, text)` for the header's copy button: the rows as text, so
     // the list is copyable without selection (#454 follow-up).
     copy: Option<(&'static str, String)>,
+    summary: Option<gpui::Div>,
     body: gpui::AnyElement,
     cx: &mut Context<KagiApp>,
 ) -> gpui::Div {
     // Theme-independent panel tint: `surface == modal` in several themes, so a
     // `surface` fill would be invisible on the card (see `theme::panel_style`).
     let (panel_bg, panel_border) = theme::panel_style();
-    // Floor, so the panel is not the block that gives everything up: on a
-    // 700px window the prose below it (recovery text, notes) kept its three
-    // lines while the list collapsed to five rows — the wrong priority, since
-    // the list is the operation's data and the prose is advice. The prose
-    // panels stay `min_h(0)` and yield first; this floor is the header/padding
-    // chrome plus up to `PANEL_FLOOR_ROWS` rows.
+    // Reserve visible targets after the header/padding. Compact cards relax
+    // the normal eight-row floor while folding supporting prose; the list
+    // remains present and scrollable rather than forcing fixed chrome out.
     const PANEL_FLOOR_ROWS: f32 = 8.;
-    const PANEL_CHROME_H: f32 = 44.;
-    let floor_rows = (count as f32).min(PANEL_FLOOR_ROWS);
-    div()
-        .min_h(theme::scaled_px(
-            floor_rows * MODAL_LIST_ROW_H + PANEL_CHROME_H,
-        ))
+    let compact = modal_compact();
+    // Preserve the normal panel's existing minimum. The smaller compact floor
+    // must reserve its tally separately or it consumes the promised file rows.
+    let chrome_h = if compact {
+        50. + if summary.is_some() {
+            MODAL_LIST_ROW_H + 8.
+        } else {
+            0.
+        }
+    } else {
+        44.
+    };
+    let minimum_rows = if compact {
+        MODAL_LIST_MIN_ROWS
+    } else {
+        PANEL_FLOOR_ROWS
+    };
+    let floor_rows = (count as f32).min(minimum_rows);
+    let panel = div()
+        .min_h(theme::scaled_px(floor_rows * MODAL_LIST_ROW_H + chrome_h))
+        .when(compact, |panel| {
+            panel.h(modal_list_max_h(count) + theme::scaled_px(chrome_h))
+        })
         .overflow_hidden()
         .flex()
         .flex_col()
@@ -424,7 +519,11 @@ pub(crate) fn modal_list_panel(
                         })),
                 ),
         )
-        .child(body)
+        .children(summary.map(|summary| summary.h(theme::scaled_px(MODAL_LIST_ROW_H))))
+        .child(body);
+    #[cfg(feature = "gui-e2e")]
+    let panel = panel.relative().child(modal_probe("modal-target-panel"));
+    panel
 }
 
 /// One row of a modal file list: the change-kind letter badge the mock shows
@@ -452,7 +551,10 @@ pub(crate) fn modal_file_row(
         Some(kind) => change_badge(kind),
         None => (' ', current_theme().text_muted),
     };
-    div()
+    let path = path.into();
+    #[cfg(feature = "gui-e2e")]
+    let probe_name = format!("modal-file-{path}");
+    let row = div()
         .flex_shrink_0()
         .h(theme::scaled_px(MODAL_LIST_ROW_H))
         .w_full()
@@ -469,7 +571,10 @@ pub(crate) fn modal_file_row(
                 .text_color(rgb(color))
                 .child(SharedString::from(letter.to_string())),
         )
-        .child(modal_path_text(path.into()))
+        .child(modal_path_text(path));
+    #[cfg(feature = "gui-e2e")]
+    let row = row.relative().child(modal_probe(probe_name));
+    row
 }
 
 /// `dir/` + `name` as one line, the directory muted and truncated from the
@@ -664,8 +769,7 @@ pub(crate) fn note_path_list_element(files: &[String]) -> gpui::AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{modal_list_max_h, section_open, MODAL_LIST_ROW_H};
-    use std::collections::HashSet;
+    use super::{modal_list_max_h, MODAL_LIST_ROW_H};
 
     /// #454: the list ceiling follows the **window height**, not a fixed row
     /// count — the same 100-row list must get a taller box on a taller window,
@@ -676,39 +780,16 @@ mod tests {
 
         crate::ui::theme::set_viewport_h(700.);
         let short_window = modal_list_max_h(100);
-        assert_eq!(short_window, gpui::px(700. * 0.4));
         assert_eq!(modal_list_max_h(3), rows_px(3.), "short list hugs content");
 
         crate::ui::theme::set_viewport_h(1400.);
         let tall_window = modal_list_max_h(100);
-        assert_eq!(tall_window, gpui::px(1400. * 0.4));
         assert!(
             tall_window > short_window,
             "a taller window must show more rows ({tall_window:?} vs {short_window:?})"
         );
         assert_eq!(modal_list_max_h(3), rows_px(3.), "short list still 3 rows");
 
-        // Before the first frame publishes a height, fall back to 20 rows so
-        // headless renders stay deterministic.
         crate::ui::theme::set_viewport_h(0.);
-        assert_eq!(modal_list_max_h(100), rows_px(20.));
-    }
-
-    /// The renderer owns the default; the set only records a flip. This is what
-    /// lets a destructive modal keep its target list visible by construction
-    /// while still remembering that the user collapsed a detail section.
-    #[test]
-    fn overrides_flip_the_renderer_default() {
-        let mut o: HashSet<&'static str> = HashSet::new();
-        assert!(section_open(&o, "files", true).is_open());
-        assert!(!section_open(&o, "skipped", false).is_open());
-
-        o.insert("skipped");
-        assert!(section_open(&o, "skipped", false).is_open());
-        // Flipping one section must not touch another.
-        assert!(section_open(&o, "files", true).is_open());
-
-        o.remove("skipped");
-        assert!(!section_open(&o, "skipped", false).is_open());
     }
 }

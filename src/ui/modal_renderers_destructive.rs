@@ -312,6 +312,7 @@ pub(crate) fn render_amend_modal(
     if let Some(err) = &error {
         body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -676,6 +677,7 @@ pub(crate) fn render_discard_modal(
     if let Some(err) = &modal.error {
         body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()

@@ -143,7 +143,6 @@ pub(crate) fn modal_card_sized() -> gpui::Div {
     // holds on every theme.
     let (_, border) = theme::panel_style();
     let card = div()
-        .max_h(gpui::relative(0.92))
         .when_some(theme::viewport_h(), |card, height| {
             card.max_h((gpui::px(height) - theme::scaled_px(32.)).max(gpui::px(0.)))
         })

@@ -503,6 +503,13 @@ fn amend_case(
     assert_section(cx, case, "amend-warnings", true);
     assert_section(cx, case, "amend-recovery", !case.compact);
 
+    if case.viewport.size.height == px(600.) {
+        theme::set_zoom(0.8);
+        assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
+        assert_section(cx, case, "amend-recovery", false);
+        assert_section(cx, case, "amend-warnings", true);
+        theme::set_zoom(1.);
+    }
     // The user outranks the default: clicking the real header flips the
     // section, and the card still fits with it flipped.
     toggle_section(cx, case, "amend-recovery");
@@ -530,13 +537,6 @@ fn amend_case(
     assert_section(cx, case, "amend-recovery", case.compact);
     toggle_section(cx, case, "amend-recovery");
     assert_section(cx, case, "amend-recovery", !case.compact);
-    if case.viewport.size.height == px(600.) {
-        theme::set_zoom(0.8);
-        assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
-        assert_section(cx, case, "amend-recovery", false);
-        assert_section(cx, case, "amend-warnings", true);
-        theme::set_zoom(1.);
-    }
     theme::set_zoom(case.flip_zoom());
     assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
     assert_section(cx, case, "amend-recovery", !case.compact);

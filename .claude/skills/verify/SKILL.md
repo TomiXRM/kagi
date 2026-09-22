@@ -723,6 +723,11 @@ G: `transport_recording_test` validates the actual `mergedAt` query with fake gh
 real script under a simulated translated Git; `conflicts_test::skip_advancing_to_the_next_conflict_is_not_a_failure`
 checks that the next same-path conflict has no skipped draft. UI `transport_hold`
 unit coverage verifies owner/operation isolation and Partial/Unknown admission.
+Skip の分類順 (#569 (1)) は `cargo test -p kagi --lib conflict_skip::tests`
+で確認する。`tests/recovery/conflict_skip_g.rs` は GUI を起動せず、実 repository と
+`Sessions` で Unclear の lease 保持・writer 拒否・reconcile 登録、typed
+TerminationUnknown の Unknown 維持、既知結果の通常解放を検証する。
+既存 `app_writer_admission_test` と `conflicts_test` の `skip_` も併用する。
 For M, check that notice dismissal/tab switching does not re-enable PR merge or
 remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
 the app lifetime; inspect remote state before restarting. GUI runner build only

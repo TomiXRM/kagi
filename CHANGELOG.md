@@ -17,6 +17,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- conflict Skip の結果が `Unclear` のとき、結果分類より先に writer lease を解放していた問題を修正しました。停止済みでも sequencer の結果が不明な場合は lease を保持して既存の reconcile 経路へ渡し、停止未確認の `TerminationUnknown` も `Unknown` のまま扱います。Continue / Abort や read/ack の改修は含みません。（#569 (1)）
 - Worktree inspection の review 指摘を修正しました。local ref に解決される upstream を push 済みの根拠にせず、Windows の圧縮ファイルは物理使用量を取得できない場合に不明とします。初回計測が途中で中断されても、tab 復帰時に cache を保持して未計測 worktree の走査を再開します。（#633 / #779）
 - conflict の Abort 確認が、reload で前提が変わったあとも古い内容のまま残っていたのを直しました。取り込んだ reload で確認を閉じ、内容の差し替えはしません（閉じるだけで、中止は実行しません）。開き直すと現在の状態で計画し直します。合わせて Abort 確認を開くときに window の focus を root へ戻すので、Result pane を編集して Preview に戻したあとのように focus が描画されていない要素に残っている状態でも Esc で閉じられます。（#755）
 - WIP の点を HEAD と同じ lane の真上に置き、履歴との衝突で遠い専用列へ迂回しないようにしました。点線は実 commit・edge の背後を通ります。WIP / stash 行も commit 一覧と一緒にスクロールし、WIP が画面外でも可視の HEAD までは viewport 上端から点線が続きます。（#773、ADR-0174）

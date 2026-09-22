@@ -211,9 +211,9 @@ fn reference_commit(repo: &Repository, name: &str) -> Result<CommitId, GitError>
 /// Which local remote **is** `base_repo` (`<host>/<owner>/<repo>`) — by
 /// identity, never by name (#701 final review 4).
 ///
-/// Resolve SSH configuration for every candidate before deciding uniqueness:
-/// a literal URL and an alias may name the same repository, and a literal SSH
-/// hostname can itself be remapped by `HostName`. Non-SSH URLs stay pure reads.
+/// Exclude candidates with a different owner/repo before resolving SSH hosts.
+/// Among the remaining candidates, a literal URL and an alias may name the same
+/// repository, and a literal hostname can itself be remapped by `HostName`.
 ///
 /// An alias that could not be resolved is a **refusal**, not a miss. An
 /// unexamined candidate excludes nothing, so over it neither "no remote
@@ -238,7 +238,13 @@ fn remote_for_repo(repo: &Repository, base_repo: &str) -> Result<String, GitErro
         }
     }
     let (mut matched, mut unidentified) = (Vec::new(), Vec::new());
+    let base_path = base_repo.split_once('/').map(|(_, path)| path);
     for (name, url) in &remotes {
+        if crate::backend::remote_ref::repo_identity(url)
+            .is_some_and(|identity| identity.split_once('/').map(|(_, path)| path) != base_path)
+        {
+            continue;
+        }
         match crate::backend::remote_identity::resolve_repo_identity(url, &config) {
             Ok(identity) if identity.as_deref() == Some(base_repo) => matched.push(name.clone()),
             Ok(_) => {}
@@ -439,6 +445,46 @@ mod tests {
         assert!(
             remote_for_repo(&repo, "github.com/acme/widgets").is_err(),
             "an unidentified alias prevents proving the literal match is unique"
+        );
+    }
+
+    #[test]
+    fn unrelated_alias_paths_do_not_block_selection_with_an_ssh_override() {
+        let root = tempfile::tempdir().unwrap();
+        let mut repo = Repository::init(root.path().join("local")).unwrap();
+        let global = root.path().join("global-config");
+        std::fs::write(&global, "[core]\nsshCommand = kagi-unused-ssh\n").unwrap();
+        let mut config = repo.config().unwrap();
+        config
+            .add_file(&global, git2::ConfigLevel::Global, true)
+            .unwrap();
+        config
+            .set_str("remote.origin.url", "git@github.com:acme/widgets.git")
+            .unwrap();
+        repo.set_config(&config).unwrap();
+        crate::backend::remote_identity::set_ssh_program_for_test(Path::new(
+            "/nonexistent/kagi-must-not-run-ssh",
+        ));
+        config
+            .set_str("remote.fork.url", "git@gh-personal:me/widgets.git")
+            .unwrap();
+        assert_eq!(
+            remote_for_repo(&repo, "github.com/acme/widgets").unwrap(),
+            "origin"
+        );
+        config
+            .set_str("remote.fork.url", "git@gh-personal:acme/other.git")
+            .unwrap();
+        assert_eq!(
+            remote_for_repo(&repo, "github.com/acme/widgets").unwrap(),
+            "origin"
+        );
+        config
+            .set_str("remote.fork.url", "git@gh-personal:acme/widgets.git")
+            .unwrap();
+        assert!(
+            remote_for_repo(&repo, "github.com/acme/widgets").is_err(),
+            "a same-path alias must still prevent claiming a unique match"
         );
     }
 

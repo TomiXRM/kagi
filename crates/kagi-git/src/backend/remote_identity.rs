@@ -333,7 +333,7 @@ impl<'a> Redacted<'a> {
         let Some(userinfo) = self.userinfo.filter(|value| !value.is_empty()) else {
             return text.to_string();
         };
-        let scrubbed = text.replace(userinfo, "***");
+        let scrubbed = text.replace(&format!("{userinfo}@"), "***@");
         match userinfo.split_once(':') {
             Some((_, password)) if !password.is_empty() => scrubbed.replace(password, "***"),
             _ => scrubbed,
@@ -370,6 +370,19 @@ pub(crate) fn set_ssh_program_for_test(path: &std::path::Path) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn credential_scrubbing_preserves_unrelated_words() {
+        let message = "git uses gitproxy to reach git@gh";
+        assert_eq!(
+            Redacted::new("git@gh").scrub(message),
+            "git uses gitproxy to reach ***@gh"
+        );
+        assert_eq!(
+            Redacted::new("git:sentinel-token@gh")
+                .scrub("git uses gitproxy for git:sentinel-token@gh; password sentinel-token"),
+            "git uses gitproxy for ***@gh; password ***"
+        );
+    }
     /// A real, writable configuration. `core.sshCommand` is pinned empty at
     /// repository level, so the developer's own global setting cannot decide
     /// what these tests are about.

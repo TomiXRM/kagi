@@ -138,6 +138,8 @@ SSH identity は既存の pure `repo_identity` と分離した I/O-aware resolve
 PR fetch の remote 選択で使う。`ssh -G` は既存 runner の 60 秒 deadline で実行し、
 出力の `hostname` だけを読む。remote-stash の write-profile parser は使わず、
 ControlMaster・ProxyJump・agent-only 認証を理由に host 識別を拒否しない。
+host 解決の前に既存の pure identity parser で owner/repo を比較し、
+異なる path の候補は除外する。同じ path の未識別 alias は一意性を証明できないため拒否する。
 SSH command override 下の remote-ref は Git 自身の `ls-remote` を試み、
 その失敗は `Err`（通信失敗 tier）のまま保持する。PR fetch の非 alias 候補は
 literal host の読みを維持する。override 自体を観測不能の根拠にしない。

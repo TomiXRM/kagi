@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 
+#[path = "support/conflict_refusal.rs"]
+mod refusal;
+
 static ENV: Mutex<()> = Mutex::new(());
 
 struct Fixture {
@@ -287,51 +290,6 @@ fn changed_conflict_and_changed_buffer_are_refused_without_mutation() {
 
     assert!(git(&fixture.repo, &["add", "file.txt"]));
     assert!(Backend::plan_recorded_conflict(&fixture.repo, request).is_err());
-}
-
-#[test]
-fn marker_draft_refusal_preserves_the_session_suffix_in_the_recording() {
-    let fixture = Fixture::content();
-    let mut sessions = Sessions::new();
-    let (owner, snapshot) = fixture.owner_and_snapshot(&mut sessions);
-    let backend = Backend::open(&fixture.repo).unwrap();
-    let mut buffer = backend.resolution_buffer_from_repo().unwrap();
-    let markers = backend
-        .materialized_markers(&buffer, Path::new("file.txt"))
-        .expect("text conflict markers");
-    assert!(buffer.ensure_hunks(Path::new("file.txt"), &markers));
-    assert!(buffer.reset_hunk(Path::new("file.txt"), 0));
-    let request = Backend::conflict_save_request(
-        snapshot.observation.revision,
-        &buffer,
-        Path::new("file.txt"),
-        snapshot.observation.kind,
-        "",
-    )
-    .unwrap();
-    assert!(matches!(
-        &request,
-        ConflictRequest::Save {
-            draft: ConflictDraft::Text(bytes),
-            ..
-        } if bytes.windows(b"<<<<<<<".len()).any(|window| window == b"<<<<<<<")
-    ));
-    let owner = sessions.attachment(owner).unwrap();
-    let completion = plan_conflict(
-        &mut sessions,
-        ConflictAppRequest { owner, request },
-        ExecutionPolicy::human(false),
-    )
-    .run();
-    assert!(apply_plan(&mut sessions, completion));
-    let PlanState::Error {
-        recording: Some(recording),
-        ..
-    } = sessions.plan_state()
-    else {
-        panic!("marker draft must be refused during planning")
-    };
-    assert_eq!(recording.entry().op, "conflict-save:merge");
 }
 
 #[test]
@@ -719,57 +677,6 @@ fn abort_is_admissible_with_no_conflict_view_and_settles_once() {
         "main\n",
         "the pre-merge content is restored"
     );
-}
-
-#[test]
-fn an_abort_planned_against_a_stale_revision_is_refused_without_mutation() {
-    let fixture = Fixture::content();
-    fixture.resolve_and_stage();
-    let mut sessions = Sessions::new();
-    let (owner, _snapshot) = fixture.owner_and_snapshot(&mut sessions);
-    // The user opens the confirmation…
-    let frozen = Backend::conflict_abort_request(&fixture.in_progress());
-    let frozen_for_backend = frozen.clone();
-    // …and the repository moves under it before they confirm.
-    std::fs::write(fixture.repo.join("other.txt"), "typed meanwhile\n").unwrap();
-    assert!(git(&fixture.repo, &["add", "other.txt"]));
-
-    let fresh = Backend::open(&fixture.repo)
-        .unwrap()
-        .conflict_snapshot()
-        .unwrap()
-        .expect("still merging");
-    sessions.observe_conflict(owner, Some(fresh.observation));
-    let owner = sessions.attachment(owner).unwrap();
-    let plan = plan_conflict(
-        &mut sessions,
-        ConflictAppRequest {
-            owner,
-            request: frozen,
-        },
-        ExecutionPolicy::human(false),
-    );
-    assert!(apply_plan(&mut sessions, plan.run()));
-    assert!(
-        matches!(sessions.plan_state(), PlanState::Error { .. }),
-        "a frozen revision that no longer describes the repository is refused"
-    );
-    assert!(!sessions.has_leases(), "a refused plan admits no write");
-    assert!(
-        fixture.repo.join(".git/MERGE_HEAD").exists(),
-        "the refusal mutated nothing"
-    );
-    assert_eq!(
-        std::fs::read_to_string(fixture.repo.join("other.txt")).unwrap(),
-        "typed meanwhile\n"
-    );
-    // Belt to that brace: the Backend refuses the frozen request on its own,
-    // so a caller that skipped the application boundary is refused too.
-    assert!(
-        Backend::plan_recorded_conflict(&fixture.repo, frozen_for_backend).is_err(),
-        "the Backend re-reads the live revision and refuses a stale abort"
-    );
-    assert!(fixture.repo.join(".git/MERGE_HEAD").exists());
 }
 
 /// #704 review: a receipt reports the observation the plan froze, even when

@@ -119,6 +119,7 @@ impl KagiApp {
                     owner.session,
                     kagi_domain::conflict_family::ConflictAction::Save,
                     recording,
+                    None,
                     cx,
                 );
                 self.present_app_notice();
@@ -144,12 +145,16 @@ impl KagiApp {
         let token = match self.app_sessions.plan_state() {
             app::PlanState::Ready { token, .. } => token.clone(),
             app::PlanState::Error {
-                error, recording, ..
+                error,
+                recording,
+                blocker,
+                ..
             } => {
                 let error = error.clone();
                 let recording = recording.clone();
+                let blocker = blocker.clone();
                 if let Some(recording) = recording {
-                    self.present_conflict_action(owner, action, recording, cx);
+                    self.present_conflict_action(owner, action, recording, blocker.as_ref(), cx);
                 } else {
                     self.push_toast(ToastKind::Error, error.clone(), cx);
                     self.app_notices.push_back(error.clone().into());

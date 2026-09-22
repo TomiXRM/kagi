@@ -83,6 +83,13 @@ The current suite covers:
 - durable stash-drop recovery; history persistence; cleanup stale-tab,
   preflight, open-failure, and partial presentation; remove's public boundary;
   editor writer admission; commit-row and editor-history layout;
+- conflict refusal reasons (`KAGI_GUI_E2E_ONLY=conflict_save_boundary`,
+  `tests/recovery/conflict_refusal.rs`): Save with remaining markers and Abort
+  after an external staged resolution show the specific EN/JA reason in the
+  AppNotice and bounded toast, retain the English footer contract and oplog
+  detail, and leave the index, working file and merge state unchanged.
+  Abort covers both the dashboard and the operation strip; the strip case
+  completes a reload after staging a different blob and before confirming.
 - bottom-panel toggle, graph copy, oplog expand/copy, snapshot creation, theme
   switching, agent provenance, and WIP-to-HEAD connectors;
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;

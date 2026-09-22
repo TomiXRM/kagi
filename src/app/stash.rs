@@ -55,6 +55,7 @@ impl StashPlanJob {
                             | kagi_git::GitError::BareRepository(_)
                     ),
                     error: e.to_string(),
+                    blocker: None,
                     recording: None,
                 },
                 Some(PlanErrorEvidence {
@@ -135,6 +136,7 @@ impl RemoteStashPlanJob {
             },
             Err(error) => PlanState::Error {
                 error: error.to_string(),
+                blocker: None,
                 open_failed: false,
                 recording: None,
             },

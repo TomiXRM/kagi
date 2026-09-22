@@ -50,7 +50,7 @@ const FIRST_PARENT_WALK_CAP: usize = 4000;
 
 /// Resolve the default branch name: `origin/HEAD` symref if present, else the
 /// first of `main` / `master` that exists locally or on origin.
-fn default_branch_name(repo: &Repository) -> String {
+pub(crate) fn default_branch_name(repo: &Repository) -> String {
     if let Ok(head_ref) = repo.find_reference("refs/remotes/origin/HEAD") {
         if let Ok(Some(sym)) = head_ref.symbolic_target() {
             if let Some(name) = sym.strip_prefix("refs/remotes/origin/") {

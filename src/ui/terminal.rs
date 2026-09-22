@@ -209,6 +209,15 @@ pub fn build_terminal_view(
     owner: crate::app::SessionId,
     cx: &mut Context<crate::ui::KagiApp>,
 ) -> Result<TerminalBuild, String> {
+    let settings = crate::ui::settings::Settings::load();
+    let (start, end) = settings.worktree_port_range();
+    let environment = kagi_git::worktree_ports::terminal_env(
+        repo_path,
+        kagi_domain::worktree_ports::PortRange { start, end },
+        settings.worktree_ports_per_worktree(),
+    )
+    .map_err(|error| format!("terminal environment: {error}"))?;
+
     // Open the PTY pair.
     let pty_system = NativePtySystem::default();
     let pair = pty_system
@@ -235,6 +244,9 @@ pub fn build_terminal_view(
     cmd.cwd(repo_path);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    for (key, value) in environment.vars {
+        cmd.env(key, value);
+    }
 
     // Spawn the shell process before consuming the master (slave must still
     // be open for the child to inherit its fd).

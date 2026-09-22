@@ -133,8 +133,8 @@ pub struct WorktreePortEnv {
 }
 
 /// Assign this worktree's block (persisting it) and build its full `KAGI_*`
-/// environment. This is the single entry point a later terminal-wiring PR calls
-/// when spawning the embedded shell for a worktree tab. `None` on exhaustion.
+/// environment. [`terminal_env`] resolves repository metadata before calling
+/// this shared payload builder. `None` on exhaustion.
 pub fn worktree_env(
     worktree_path: &Path,
     worktree_name: &str,
@@ -152,4 +152,42 @@ pub fn worktree_env(
         port,
     );
     Some(WorktreePortEnv { port, vars })
+}
+
+/// Resolve the owning repository's identity and prepare its terminal environment.
+/// Git metadata stays in the backend; allocation and persistence remain owned
+/// by the existing [`worktree_env`] payload builder.
+pub fn terminal_env(
+    repo_path: &Path,
+    range: PortRange,
+    per: u16,
+) -> Result<WorktreePortEnv, crate::GitError> {
+    let metadata_error = |error: git2::Error| crate::GitError::Other(error.to_string());
+    let repo = git2::Repository::open(repo_path).map_err(metadata_error)?;
+    let worktree_path = repo
+        .workdir()
+        .ok_or_else(|| crate::GitError::Other("terminal requires a working tree".into()))?;
+    let main = git2::Repository::open(repo.commondir()).map_err(metadata_error)?;
+    let main_path = main
+        .workdir()
+        .ok_or_else(|| crate::GitError::Other("main worktree is unavailable".into()))?;
+    let name = if repo.is_worktree() {
+        let worktree = git2::Worktree::open_from_repository(&repo).map_err(metadata_error)?;
+        worktree
+            .name()
+            .map_err(metadata_error)?
+            .ok_or_else(|| crate::GitError::Other("worktree name is unavailable".into()))?
+            .to_owned()
+    } else {
+        "main".to_owned()
+    };
+    worktree_env(
+        worktree_path,
+        &name,
+        main_path,
+        &crate::ops::default_branch_name(&repo),
+        range,
+        per,
+    )
+    .ok_or_else(|| crate::GitError::Other("worktree port range is exhausted".into()))
 }

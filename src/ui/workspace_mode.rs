@@ -39,6 +39,9 @@ fn sidebar_mode_nav_cell(
 ) -> gpui::AnyElement {
     div()
         .id(id)
+        .role(gpui::Role::Tab)
+        .aria_label(label)
+        .aria_selected(active)
         .flex_1()
         .py_1()
         .flex()
@@ -144,6 +147,7 @@ pub(super) fn render_sidebar_mode_nav(
         "sidebar-mode-nav",
         div()
             .id("sidebar-mode-nav")
+            .role(gpui::Role::TabList)
             .flex_shrink_0()
             .mx_2()
             .mt_1()

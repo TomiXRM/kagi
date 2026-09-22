@@ -380,6 +380,10 @@ impl KagiApp {
 
             div()
                 .id(id)
+                // Bare string captions have no AX node;
+                // share the visible label explicitly.
+                .role(gpui::Role::Button)
+                .aria_label(label)
                 .flex()
                 .flex_col()
                 .items_center()
@@ -512,6 +516,10 @@ impl KagiApp {
                         };
                         div()
                             .id("tb-refresh")
+                            .role(gpui::Role::Button)
+                            .when_some(commands::command("file.refresh"), |el, command| {
+                                el.aria_label(command.label)
+                            })
                             .flex_shrink_0()
                             .mr_2()
                             .p_1()
@@ -709,9 +717,12 @@ impl KagiApp {
                                 this.open_update_modal();
                                 cx.notify();
                             });
+                            let chip_text = SharedString::from(format!("\u{2191} Update {}", tag));
                             el.child(
                                 div()
                                     .id("tb-update")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(chip_text.clone())
                                     .flex()
                                     .items_center()
                                     .px(theme::scaled_px(8.0))
@@ -726,10 +737,7 @@ impl KagiApp {
                                             .text_color(rgb(theme().bg_base))
                                             .text_xs()
                                             .font_weight(gpui::FontWeight::BOLD)
-                                            .child(SharedString::from(format!(
-                                                "\u{2191} Update {}",
-                                                tag
-                                            ))),
+                                            .child(chip_text),
                                     )
                                     .on_click(open),
                             )

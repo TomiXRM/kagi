@@ -31,7 +31,7 @@ src/ui/operations/commit.rs 1233
 src/ui/operations/modal_state.rs 952
 src/ui/pr_mode.rs 1878
 src/ui/render.rs 827
-src/ui/render_header.rs 814
+src/ui/render_header.rs 822
 src/ui/settings_view.rs 823
 src/ui/sidebar.rs 1931
 src/ui/tabs.rs 1163

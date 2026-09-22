@@ -416,15 +416,9 @@ pub fn merge_pr(
         return refused_report(workdir, plan);
     }
     let result = merge_pr_transport(workdir, &base_repo, number, method, delete_branch, head_sha);
-    // gh exit zero can also mean *queued*, and a non-zero exit does not mean
-    // "not merged" — so the server is asked whenever its answer decides
-    // anything. It decides nothing only when gh succeeded and no local
-    // cleanup was promised.
-    let merged = if result.is_ok() && !delete_branch {
-        Some(true)
-    } else {
-        pr_merged_on_server(workdir, &base_repo, number)
-    };
+    // Exit zero can mean queued even when no branch deletion was requested.
+    // The receipt must distinguish a known submission from a completed merge.
+    let merged = pr_merged_on_server(workdir, &base_repo, number);
     let mut outcome = merge_outcome(plan, number, head_sha, merged, &result);
     let local = local_half(workdir, plan, head_sha, delete_branch, merged, &result);
     compose_local_half(&mut outcome, &local);

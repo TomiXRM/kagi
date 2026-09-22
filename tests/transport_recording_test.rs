@@ -180,6 +180,10 @@ fn pr_merge_records_before_returning_when_the_ui_completion_is_dropped() {
         panic!("expected a recorded success, got {:?}", entry.outcome);
     };
     assert!(
+        after.dirty.contains("queued"),
+        "a submission is not a merged PR"
+    );
+    assert!(
         after.dirty.contains(HEAD_SHA),
         "the head the merge was bound to is the recovery handle: {}",
         after.dirty

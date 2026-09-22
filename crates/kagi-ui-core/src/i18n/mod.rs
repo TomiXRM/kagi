@@ -162,6 +162,14 @@ pub fn init_lang() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
     AppNoticeDismiss,
+    /// Title row of the shared app-notice card (#792). One neutral title for
+    /// every notice: `AppNotice` carries no outcome kind, so a card that named
+    /// one ("refused", "aborted") would be guessing.
+    AppNoticeTitle,
+    /// The card's closing line: where the operation's detail can be read and
+    /// copied. Says where to look, never that the entry was durably saved —
+    /// an append failure is one of the notices this card carries.
+    AppNoticeDetailsInOpLog,
     AppReconcileAcknowledge,
     AppReconcileInspect,
     AppReconcileConfirm,
@@ -1196,6 +1204,10 @@ impl Msg {
 
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
+            (En, AppNoticeTitle) => "Operation notice",
+            (Ja, AppNoticeTitle) => "操作に関する通知",
+            (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
+            (Ja, AppNoticeDetailsInOpLog) => "Operation Log で操作の詳細を確認・コピーできます。",
             (En, AppReconcileInspect) => "Inspect current state",
             (Ja, AppReconcileInspect) => "現在の状態を照会",
             (En, AppReconcileConfirm) => "Acknowledge observation",

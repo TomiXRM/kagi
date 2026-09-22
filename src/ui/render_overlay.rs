@@ -339,47 +339,11 @@ impl KagiApp {
                 cx,
             ))
         })
-        // ── Worktree lifecycle confirmations (issue #340) ──
+        // ── App notice (#792: the shared card, not a bespoke rectangle) ──
         .when_some(self.app_notice().cloned(), |el, notice| {
-            el.child(
-                modal_renderers::modal_overlay(
-                    div()
-                        .p_4()
-                        .bg(rgb(theme().bg_base))
-                        .child(notice.message)
-                        .when(notice.release_armed, |el| {
-                            el.child(super::e2e::measure_control(
-                                "app-notice-release-warning",
-                                div().child(Msg::AppReconcileReleaseArmed.t()),
-                            ))
-                        })
-                        .child(super::e2e::measure_control(
-                            "app-notice-confirm",
-                            div()
-                                .id("app-notice-dismiss")
-                                .child(if notice.inspect.is_some() {
-                                    Msg::AppReconcileInspect.t()
-                                } else if let Some(read) = &notice.acknowledge {
-                                    if read.can_acknowledge_unobserved() {
-                                        if notice.release_armed {
-                                            Msg::AppReconcileReleaseUnobservable.t()
-                                        } else {
-                                            Msg::AppReconcileArmRelease.t()
-                                        }
-                                    } else {
-                                        Msg::AppReconcileConfirm.t()
-                                    }
-                                } else {
-                                    Msg::AppNoticeDismiss.t()
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.confirm_app_notice(cx);
-                                })),
-                        )),
-                )
-                .child(super::e2e::measure_inside("active-modal/app-notice")),
-            )
+            el.child(render_app_notice_modal(notice, cx))
         })
+        // ── Worktree lifecycle confirmations (issue #340) ──
         .when_some(self.remove_worktree_modal().cloned(), |el, modal| {
             el.child(render_remove_worktree_modal(
                 modal,

@@ -10,7 +10,7 @@ use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modal_shell::{
     modal_body, modal_card, modal_card_sized, modal_scroll_body, MODAL_W_MD, MODAL_W_SM,
 };
-use super::modals::EditorDirtyGuardModal;
+use super::modals::{AppNotice, EditorDirtyGuardModal};
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
@@ -430,4 +430,86 @@ pub(crate) fn render_editor_dirty_guard_modal(
         );
 
     modal_overlay(card).into_any_element()
+}
+
+/// AppNotice uses the shared card; its untyped message gets a neutral title.
+/// Operation Log owns copying; the notice retains its existing action.
+pub(crate) fn render_app_notice_modal(
+    notice: AppNotice,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let action_label = if notice.inspect.is_some() {
+        Msg::AppReconcileInspect.t()
+    } else if let Some(read) = &notice.acknowledge {
+        if read.can_acknowledge_unobserved() {
+            if notice.release_armed {
+                Msg::AppReconcileReleaseUnobservable.t()
+            } else {
+                Msg::AppReconcileArmRelease.t()
+            }
+        } else {
+            Msg::AppReconcileConfirm.t()
+        }
+    } else {
+        Msg::AppNoticeDismiss.t()
+    };
+
+    let card = modal_card(MODAL_W_SM)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            SharedString::from(Msg::AppNoticeTitle.t()),
+            Some((IconName::Inbox.into(), current_theme().color_warning)),
+        )))
+        .child(
+            // One scroll region for the whole card: the message is producer
+            // text of unbounded length (a multi-line evidence string among
+            // them), and the header and the action row stay pinned.
+            modal_scroll_body()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_main))
+                        .child(SharedString::from(notice.message)),
+                )
+                // #706 stage two. Never behind disclosure: this is the
+                // sentence the second confirm acts on.
+                .when(notice.release_armed, |body| {
+                    body.child(super::e2e::measure_control(
+                        "app-notice-release-warning",
+                        div()
+                            .text_sm()
+                            .text_color(rgb(current_theme().color_warning))
+                            .child(Msg::AppReconcileReleaseArmed.t()),
+                    ))
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(current_theme().text_muted))
+                        .child(Msg::AppNoticeDetailsInOpLog.t()),
+                ),
+        )
+        .child(
+            div().flex_shrink_0().child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .child(super::e2e::measure_control(
+                        "app-notice-confirm",
+                        Button::new("app-notice-dismiss")
+                            .label(action_label)
+                            .primary()
+                            .small()
+                            // Preserve the old non-focusable action's root-focus behavior.
+                            .tab_stop(false)
+                            .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
+                                this.confirm_app_notice(cx);
+                            })),
+                    )),
+            ),
+        );
+
+    modal_overlay(card)
+        .child(super::e2e::measure_inside("active-modal/app-notice"))
+        .into_any_element()
 }

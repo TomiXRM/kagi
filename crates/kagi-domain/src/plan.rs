@@ -54,12 +54,9 @@ impl std::fmt::Display for BranchNameError {
             BranchNameError::RenameInvalid(name) => {
                 write!(f, "'{}' is not a valid branch name.", name)
             }
-            BranchNameError::CreateInvalidRef(name) => write!(
-                f,
-                "Branch name '{}' is not a valid git ref name \
-                 (no spaces, '..', or other invalid characters).",
-                name
-            ),
+            BranchNameError::CreateInvalidRef(name) => {
+                write!(f, crate::advice_template_en!(CommonBranchInvalidRef), name)
+            }
             BranchNameError::CreateLeadingDash(name) => {
                 write!(f, "Branch name '{}' must not start with '-'.", name)
             }

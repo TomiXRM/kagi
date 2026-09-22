@@ -100,49 +100,46 @@ impl GithubNote {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
-            GithubNote::HeadUnavailable { number } => format!(
-                "The head commit for #{} is unavailable. Refresh the pull-request list before merging.",
-                number
-            ),
-            GithubNote::NotMergeable { number } => format!(
-                "GitHub reports #{} as not mergeable. Resolve conflicts (or satisfy branch protection) first.",
-                number
-            ),
+            GithubNote::HeadUnavailable { number } => {
+                format!(crate::advice_template_en!(GithubHeadUnavailable), number)
+            }
+            GithubNote::NotMergeable { number } => {
+                format!(crate::advice_template_en!(GithubNotMergeable), number)
+            }
             GithubNote::IsDraft { number } => {
-                format!("#{} is a draft. Mark it ready for review before merging.", number)
+                format!(crate::advice_template_en!(GithubIsDraft), number)
             }
             GithubNote::ChecksFailing { number, failed } => format!(
-                "#{} has {} failing check(s). Merging now lands code its CI rejected.",
+                crate::advice_template_en!(GithubChecksFailing),
                 number, failed
             ),
             GithubNote::ChecksPending { number } => {
-                format!("#{}'s checks have not finished yet.", number)
+                format!(crate::advice_template_en!(GithubChecksPending), number)
             }
             GithubNote::ChangesRequested { number } => {
-                format!("A reviewer requested changes on #{}.", number)
+                format!(crate::advice_template_en!(GithubChangesRequested), number)
             }
             GithubNote::RemoteSideEffect => {
-                "This merges on GitHub. Your local clone is unchanged until the next fetch.".to_string()
+                crate::advice_template_en!(GithubRemoteSideEffect).to_string()
             }
-            GithubNote::DeletesBranch { branch } => format!(
-                "The head branch '{}' will be deleted on the remote.",
-                branch
-            ),
+            GithubNote::DeletesBranch { branch } => {
+                format!(crate::advice_template_en!(GithubDeletesBranch), branch)
+            }
             GithubNote::ForkKeepsRemoteBranch => {
-                "The remote branch in the fork is not deleted by gh.".to_string()
+                crate::advice_template_en!(GithubForkKeepsRemoteBranch).to_string()
             }
             GithubNote::DeletesLocalBranch { branch, tip } => match tip {
                 Some(tip) => format!(
-                    "Once GitHub confirms the merge, the local branch '{}' at {} is deleted here — only if it still points there and is checked out nowhere.",
+                    crate::advice_template_en!(GithubDeletesLocalBranchPresent),
                     branch, tip
                 ),
                 None => format!(
-                    "The local branch '{}' does not exist here, so nothing local is deleted after the merge.",
+                    crate::advice_template_en!(GithubDeletesLocalBranchAbsent),
                     branch
                 ),
             },
             GithubNote::KeepsLocalBranch { branch, reason } => format!(
-                "The local branch '{}' is kept, not deleted: {}",
+                crate::advice_template_en!(GithubKeepsLocalBranch),
                 branch,
                 reason.message_en()
             ),
@@ -152,38 +149,36 @@ impl GithubNote {
             GithubNote::LocalBranchAbsent { name } => {
                 format!("local branch already absent: {}", name)
             }
-            GithubNote::LocalBranchKept { name, reason } => {
-                format!("local branch kept: {} ({})", name, reason.message_en())
-            }
-            GithubNote::LocalBranchNotDeleted { reason } => {
-                format!("local branch not deleted: {}", reason.message_en())
-            }
-            GithubNote::SuggestionRangeGone { path } => format!(
-                "The lines '{}' was reviewed at no longer exist. Re-open the review against the current file.",
-                path
+            GithubNote::LocalBranchKept { name, reason } => format!(
+                crate::advice_template_en!(GithubLocalBranchKept),
+                name,
+                reason.message_en()
             ),
-            GithubNote::SuggestionStale { path } => format!(
-                "'{}' has changed since this suggestion was reviewed. Applying it now could edit the wrong lines, so it is refused. Re-open the review against the current file.",
-                path
+            GithubNote::LocalBranchNotDeleted { reason } => format!(
+                crate::advice_template_en!(GithubLocalBranchNotDeleted),
+                reason.message_en()
             ),
+            GithubNote::SuggestionRangeGone { path } => {
+                format!(crate::advice_template_en!(GithubSuggestionRangeGone), path)
+            }
+            GithubNote::SuggestionStale { path } => {
+                format!(crate::advice_template_en!(GithubSuggestionStale), path)
+            }
             GithubNote::SuggestionWorkingTreeOnly => {
-                "This edits the working tree only — nothing is committed. Review it with hunk staging before you commit.".to_string()
+                crate::advice_template_en!(GithubSuggestionWorkingTreeOnly).to_string()
             }
             GithubNote::CommentBodyEmpty => {
-                "The comment is empty. Write something before posting it.".to_string()
+                crate::advice_template_en!(GithubCommentBodyEmpty).to_string()
             }
             GithubNote::IssueTitleEmpty => {
-                "The issue title is empty. Write a title or add meaningful text to the body."
-                    .to_string()
+                crate::advice_template_en!(GithubIssueTitleEmpty).to_string()
             }
-            GithubNote::ReviewBodyEmpty { verdict } => format!(
-                "GitHub requires a comment on a '{}' review. Write what you want changed before submitting it.",
-                verdict
-            ),
-            GithubNote::FieldEditEmpty { number } => format!(
-                "Nothing on #{} would change. Pick a reviewer, assignee or label to add or remove first.",
-                number
-            ),
+            GithubNote::ReviewBodyEmpty { verdict } => {
+                format!(crate::advice_template_en!(GithubReviewBodyEmpty), verdict)
+            }
+            GithubNote::FieldEditEmpty { number } => {
+                format!(crate::advice_template_en!(GithubFieldEditEmpty), number)
+            }
         }
     }
 }
@@ -232,16 +227,12 @@ impl PrMergeLocalReason {
                 "the local branch is at {}, not the merged PR head {}",
                 tip, head
             ),
-            Self::Queued => {
-                "GitHub queued the merge, so nothing has been merged yet".to_string()
-            }
+            Self::Queued => "GitHub queued the merge, so nothing has been merged yet".to_string(),
             Self::Changed => "the branch moved after approval".to_string(),
             Self::HeadChanged => "HEAD moved after approval".to_string(),
-            Self::IdentityChanged => {
-                "this is not the repository the approval named".to_string()
-            }
+            Self::IdentityChanged => "this is not the repository the approval named".to_string(),
             Self::DeletionUnauthorized { detail } => format!(
-                "gh reported an error, so the transport did not authorize deleting the local branch: {}",
+                crate::advice_template_en!(GithubLocalBranchNotDeletedDeletionUnauthorized),
                 detail
             ),
             Self::Detail(detail) => detail.clone(),

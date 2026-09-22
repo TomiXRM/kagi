@@ -32,24 +32,20 @@ impl CleanupNote {
     pub fn message_en(&self) -> String {
         match self {
             CleanupNote::NoSelection => "No branches selected for deletion.".to_string(),
-            CleanupNote::NoLongerCandidate { name } => format!(
-                "Branch '{}' is no longer a cleanup candidate. Refresh the list.",
-                name
-            ),
-            CleanupNote::NotSafelyDeletable { name } => format!(
-                "Branch '{}' is not safely deletable (it may have grown new commits since merge). Refresh the list.",
-                name
-            ),
-            CleanupNote::TipMoved { name } => format!(
-                "Branch '{}' moved since the list was built. Refresh the list.",
-                name
-            ),
+            CleanupNote::NoLongerCandidate { name } => {
+                format!(crate::advice_template_en!(CleanupNoLongerCandidate), name)
+            }
+            CleanupNote::NotSafelyDeletable { name } => {
+                format!(crate::advice_template_en!(CleanupNotSafelyDeletable), name)
+            }
+            CleanupNote::TipMoved { name } => {
+                format!(crate::advice_template_en!(CleanupTipMoved), name)
+            }
             CleanupNote::SquashHeuristicOnly => {
-                "Some branches are only *likely* squash-merged (upstream gone); there is no local proof of the merge."
-                    .to_string()
+                crate::advice_template_en!(CleanupSquashHeuristicOnly).to_string()
             }
             CleanupNote::RemoteDeleteNetwork => {
-                "Remote branches on 'origin' will be deleted (network write).".to_string()
+                crate::advice_template_en!(CleanupRemoteDeleteNetwork).to_string()
             }
         }
     }

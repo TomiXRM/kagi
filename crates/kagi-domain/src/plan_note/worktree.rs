@@ -160,7 +160,7 @@ impl WorktreeNote {
     pub fn message_en(&self) -> String {
         match self {
             WorktreeNote::DirtyBlocksCheckoutAfterCreate { parts } => format!(
-                "Working tree has {} — checkout after branch creation could lose work. Stash changes before continuing.",
+                crate::advice_template_en!(WorktreeDirtyBlocksCheckoutAfterCreate),
                 parts.parts_en()
             ),
             WorktreeNote::BranchInOtherWorktree { branch, path } => format!(
@@ -172,7 +172,7 @@ impl WorktreeNote {
                 branch,
                 start,
             } => format!(
-                "Creates a linked worktree at '{}' with branch '{}' (start point {}).",
+                crate::advice_template_en!(WorktreeCreatesLinkedWorktree),
                 path, branch, start
             ),
             WorktreeNote::LockedWithReason { reason } => {
@@ -181,8 +181,7 @@ impl WorktreeNote {
                     None => "(no reason recorded)".to_string(),
                 };
                 format!(
-                    "Locked with reason: {} — a lock is deliberate protection someone \
-                     placed on this worktree. Make sure it is no longer needed.",
+                    crate::advice_template_en!(WorktreeLockedWithReason),
                     reason_display
                 )
             }
@@ -207,21 +206,21 @@ impl WorktreeNote {
                     names = format!("{} (+{} more)", names, more);
                 }
                 format!(
-                    "Copies {} .worktreeinclude file(s) ({}) into the new worktree: {}.",
+                    crate::advice_template_en!(WorktreeIncludeCopy),
                     count,
                     crate::worktree_include::human_bytes(*total_bytes),
                     names
                 )
             }
             WorktreeNote::IncludeSkippedSymlinks { count } => format!(
-                "Skips {} matched symlink(s) — symlinks are not copied.",
+                crate::advice_template_en!(WorktreeIncludeSkippedSymlinks),
                 count
             ),
             WorktreeNote::IncludeOverCap {
                 total_bytes,
                 cap_bytes,
             } => format!(
-                ".worktreeinclude matches {}, over the {} copy cap — copy still proceeds but may be large (e.g. a node_modules match).",
+                crate::advice_template_en!(WorktreeIncludeOverCap),
                 crate::worktree_include::human_bytes(*total_bytes),
                 crate::worktree_include::human_bytes(*cap_bytes)
             ),
@@ -229,7 +228,7 @@ impl WorktreeNote {
                 "This is the main worktree — it cannot be removed.".to_string()
             }
             WorktreeNote::RemoveDirty { path, summary } => format!(
-                "Worktree '{}' has uncommitted changes ({}) — commit or stash them first (removal never forces).",
+                crate::advice_template_en!(WorktreeRemoveDirty),
                 path, summary
             ),
             WorktreeNote::RemoveLocked { path, reason } => {
@@ -238,7 +237,7 @@ impl WorktreeNote {
                     None => "(no reason recorded)".to_string(),
                 };
                 format!(
-                    "Worktree '{}' is locked ({}) — unlock it before removing (kagi never forces).",
+                    crate::advice_template_en!(WorktreeRemoveLocked),
                     path, reason_display
                 )
             }
@@ -250,12 +249,12 @@ impl WorktreeNote {
                 let branch_display = branch.as_deref().unwrap_or("(detached HEAD)");
                 if *delete_branch {
                     format!(
-                        "Removes the linked worktree at '{}' and also deletes its branch '{}'.",
+                        crate::advice_template_en!(WorktreeRemovesWorktreeDeleteBranch),
                         path, branch_display
                     )
                 } else {
                     format!(
-                        "Removes the linked worktree at '{}' — branch '{}' is kept.",
+                        crate::advice_template_en!(WorktreeRemovesWorktreeKeepBranch),
                         path, branch_display
                     )
                 }
@@ -266,7 +265,7 @@ impl WorktreeNote {
                     None => "(no reason)".to_string(),
                 };
                 format!(
-                    "Locks the worktree at '{}' with reason: {}.",
+                    crate::advice_template_en!(WorktreeLocksWorktree),
                     path, reason_display
                 )
             }
@@ -290,47 +289,54 @@ impl WorktreeNote {
                     names = format!("{} (+{} more)", names, more);
                 }
                 format!(
-                    "Prunes {} stale worktree admin entry(ies) whose working directory is gone: {}.",
+                    crate::advice_template_en!(WorktreePrunePreview),
                     count, names
                 )
             }
-            WorktreeNote::PruneNothing => {
-                "No prunable worktrees — nothing to prune.".to_string()
-            }
+            WorktreeNote::PruneNothing => "No prunable worktrees — nothing to prune.".to_string(),
             WorktreeNote::RepairsWorktrees => {
-                "Repairs worktree administrative links: fixes a moved main worktree, a moved \
-                 linked worktree, or both. This never touches your files — only the .git links."
-                    .to_string()
+                crate::advice_template_en!(WorktreeRepairsWorktrees).to_string()
             }
             WorktreeNote::PostCreateSteps {
                 steps,
                 trust_required,
                 ..
-            } => format!(
-                "Runs {} post-create step(s) from .kagi/worktree.toml:{}",
-                steps.len(),
-                worktree_steps_lines(
-                    steps,
-                    *trust_required,
-                    "  ⚠ Confirming TRUSTS this config to run the command step(s) above \
-                     (committed config is untrusted by default)."
-                )
-            ),
+            } => {
+                let step_lines = worktree_steps_lines(steps, false, "");
+                if *trust_required {
+                    format!(
+                        crate::advice_template_en!(WorktreePostCreateStepsTrustRequired),
+                        steps.len(),
+                        step_lines
+                    )
+                } else {
+                    format!(
+                        crate::advice_template_en!(WorktreePostCreateSteps),
+                        steps.len(),
+                        step_lines
+                    )
+                }
+            }
             WorktreeNote::PreRemoveSteps {
                 steps,
                 trust_required,
                 ..
-            } => format!(
-                "Runs {} pre-remove step(s) from .kagi/worktree.toml (a failed or untrusted \
-                 command aborts the removal):{}",
-                steps.len(),
-                worktree_steps_lines(
-                    steps,
-                    *trust_required,
-                    "  ⚠ Confirming TRUSTS this config to run the command step(s) above \
-                     (committed config is untrusted by default)."
-                )
-            ),
+            } => {
+                let step_lines = worktree_steps_lines(steps, false, "");
+                if *trust_required {
+                    format!(
+                        crate::advice_template_en!(WorktreePreRemoveStepsTrustRequired),
+                        steps.len(),
+                        step_lines
+                    )
+                } else {
+                    format!(
+                        crate::advice_template_en!(WorktreePreRemoveSteps),
+                        steps.len(),
+                        step_lines
+                    )
+                }
+            }
         }
     }
 }

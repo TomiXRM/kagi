@@ -23,22 +23,17 @@ impl DiscardNote {
     pub fn message_en(&self) -> String {
         match self {
             DiscardNote::NothingSelected => "Nothing to discard: no files selected.".to_string(),
-            DiscardNote::TargetConflicted { path } => format!(
-                "'{}' is conflicted. Resolve the conflict instead of discarding it.",
-                path
-            ),
+            DiscardNote::TargetConflicted { path } => {
+                format!(crate::advice_template_en!(DiscardTargetConflicted), path)
+            }
             DiscardNote::NoUnstagedChanges { path } => {
                 format!("'{}' has no unstaged changes to discard.", path)
             }
-            DiscardNote::TargetSubmodule { path } => format!(
-                "'{}' is a submodule. Discard cannot operate on submodules; \
-                 manage the change from inside the submodule instead.",
-                path
-            ),
+            DiscardNote::TargetSubmodule { path } => {
+                format!(crate::advice_template_en!(DiscardTargetSubmodule), path)
+            }
             DiscardNote::UntrackedWillBeDeleted { count } => format!(
-                "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any \
-                 now-empty folders removed). A backup blob is saved to the oplog first — \
-                 recover with `git cat-file -p <blob-sha>`.",
+                crate::advice_template_en!(DiscardUntrackedWillBeDeleted),
                 count
             ),
         }

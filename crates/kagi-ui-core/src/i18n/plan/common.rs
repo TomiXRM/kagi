@@ -13,6 +13,33 @@ pub(crate) const ADVICE_SUGGEST_STASH_PUSH: &str = "推奨コマンド: git stas
 pub(crate) const ADVICE_DIRTY_STASH_FIRST: &str =
     "Working tree が dirty です: 確定すると先に変更を stash します(stash@{0} に保存、`git stash pop` で復元)";
 
+pub(crate) const ADVICE_COMMON_BRANCH_INVALID_REF: &str =
+    "branch 名 '{}' は有効な git ref 名ではありません(空白・'..' などは使えません)。";
+
+/// JA template for `Msg::AdviceCommonConflictedFiles`.
+pub(crate) const ADVICE_COMMON_CONFLICTED_FILES: &str =
+    "conflict が {} 件あります。{}の前に解決してください。";
+
+/// JA template for `Msg::AdviceCommonDirtyBlocksOp`.
+pub(crate) const ADVICE_COMMON_DIRTY_BLOCKS_OP: &str =
+    "作業ツリーに{}があります。{}の前に stash か commit してください。";
+
+/// JA template for `Msg::AdviceCommonDirtyRollbackHint`.
+pub(crate) const ADVICE_COMMON_DIRTY_ROLLBACK_HINT: &str =
+    "作業ツリーに{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。";
+
+/// JA template for `Msg::AdviceCommonPartialCloneObjectMissing`.
+pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
+    "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。`git` は不足 object を必要に応じて取得しますが、Kagi は取得しません。";
+
+/// JA template for `Msg::AdviceCommonSparseExcludedPath`.
+pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
+    "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
+
+/// JA text for `Msg::AdviceCommonMergeConflictWarning`.
+pub(crate) const ADVICE_COMMON_MERGE_CONFLICT_WARNING: &str =
+    "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。";
+
 /// JA template for `Msg::AdviceUntrackedRemain` — one per sentence tail.
 /// The single `{}` takes the untracked file count.
 pub(crate) fn untracked_advice_ja(ctx: UntrackedCtx) -> &'static str {
@@ -79,33 +106,28 @@ fn parts_ja(parts: &DirtyParts) -> String {
 /// Japanese rendering of one cross-op note.
 pub fn note_ja(note: &CommonNote) -> String {
     match note {
-        CommonNote::ConflictedFiles { count, before } => format!(
-            "conflict が {} 件あります。{}の前に解決してください。",
-            count,
-            phrase_ja(*before)
+        CommonNote::ConflictedFiles { count, before } => super::advice_text(
+            Msg::AdviceCommonConflictedFiles,
+            &[count, &phrase_ja(*before)],
         ),
-        CommonNote::DirtyBlocksOp { parts, before } => format!(
-            "作業ツリーに{}があります。{}の前に stash か commit してください。",
-            parts_ja(parts),
-            phrase_ja(*before)
+        CommonNote::DirtyBlocksOp { parts, before } => super::advice_text(
+            Msg::AdviceCommonDirtyBlocksOp,
+            &[&parts_ja(parts), &phrase_ja(*before)],
         ),
         CommonNote::SuggestStashPush => super::advice_text(Msg::AdviceSuggestStashPush, &[]),
         CommonNote::UntrackedRemain { count, ctx } => {
             super::advice_text(Msg::AdviceUntrackedRemain(*ctx), &[count])
         }
-        CommonNote::DirtyRollbackHint { parts, op } => format!(
-            "作業ツリーに{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。",
-            parts_ja(parts),
-            phrase_ja(*op)
+        CommonNote::DirtyRollbackHint { parts, op } => super::advice_text(
+            Msg::AdviceCommonDirtyRollbackHint,
+            &[&parts_ja(parts), &phrase_ja(*op)],
         ),
-        CommonNote::PartialCloneObjectMissing { detail } => format!(
-            "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。`git` は不足 object を必要に応じて取得しますが、Kagi は取得しません。",
-            detail
-        ),
-        CommonNote::SparseExcludedPath { path } => format!(
-            "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。",
-            path
-        ),
+        CommonNote::PartialCloneObjectMissing { detail } => {
+            super::advice_text(Msg::AdviceCommonPartialCloneObjectMissing, &[detail])
+        }
+        CommonNote::SparseExcludedPath { path } => {
+            super::advice_text(Msg::AdviceCommonSparseExcludedPath, &[path])
+        }
         CommonNote::HeadDetached { op } => format!(
             "HEAD が detached 状態です。{} は branch 上でのみ実行できます。",
             op_ja(*op)
@@ -132,11 +154,8 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::BranchNameErrorKeyed(e) => branch_name_error(e),
         CommonNote::WorktreePathErrorKeyed(e) => worktree_path_error(e),
         CommonNote::DirtyStashFirst => super::advice_text(Msg::AdviceDirtyStashFirst, &[]),
-        // §F-6 — copied verbatim from the former `Msg::MergeConflictWarning`
-        // JA arm (ADR-0129 Phase 3: same text, now typed).
         CommonNote::MergeConflictWarning => {
-            "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。"
-                .to_string()
+            super::advice_text(Msg::AdviceCommonMergeConflictWarning, &[])
         }
     }
 }

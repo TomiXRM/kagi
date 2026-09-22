@@ -86,43 +86,42 @@ impl RulesetNote {
     pub fn message_en(&self) -> String {
         match self {
             RulesetNote::PatternViolation { field, requirement } => format!(
-                "{} does not satisfy the branch ruleset: {}.",
+                crate::advice_template_en!(RulesetPatternViolation),
                 field.subject_en(),
                 requirement
             ),
             RulesetNote::PatternUncheckable { field, pattern } => format!(
-                "{} is constrained by a regex ruleset (/{}/ ) that Kagi cannot verify locally — \
-                 GitHub will check it on push.",
+                crate::advice_template_en!(RulesetPatternUncheckable),
                 field.subject_en(),
                 pattern
             ),
             RulesetNote::FileTooLarge { path, size, limit } => format!(
-                "{} ({}) exceeds the ruleset's max file size ({}); GitHub will reject the push.",
+                crate::advice_template_en!(RulesetFileTooLarge),
                 path, size, limit
             ),
             RulesetNote::RestrictedExtension { path, ext } => format!(
-                "{} has a restricted extension (.{}); the ruleset forbids it.",
+                crate::advice_template_en!(RulesetRestrictedExtension),
                 path, ext
             ),
             RulesetNote::RestrictedPath { path, pattern } => format!(
-                "{} matches a restricted path pattern ({}); the ruleset forbids it.",
+                crate::advice_template_en!(RulesetRestrictedPath),
                 path, pattern
             ),
             RulesetNote::PathTooLong { path, len, limit } => format!(
-                "{} has a {}-character path, over the ruleset's limit of {}.",
+                crate::advice_template_en!(RulesetPathTooLong),
                 path, len, limit
             ),
-            RulesetNote::SignatureRequired => "The branch ruleset requires signed commits, but \
-                 commit signing is not configured (commit.gpgsign / user.signingkey)."
-                .to_string(),
-            RulesetNote::LinearHistoryRequired => "The branch ruleset requires linear history; a \
-                 merge commit would be rejected on push."
-                .to_string(),
-            RulesetNote::NonFastForward => "The branch ruleset forbids non-fast-forward updates \
-                 to this branch."
-                .to_string(),
+            RulesetNote::SignatureRequired => {
+                crate::advice_template_en!(RulesetSignatureRequired).to_string()
+            }
+            RulesetNote::LinearHistoryRequired => {
+                crate::advice_template_en!(RulesetLinearHistoryRequired).to_string()
+            }
+            RulesetNote::NonFastForward => {
+                crate::advice_template_en!(RulesetNonFastForward).to_string()
+            }
             RulesetNote::CreationBlocked => {
-                "The branch ruleset forbids creating this branch.".to_string()
+                crate::advice_template_en!(RulesetCreationBlocked).to_string()
             }
             RulesetNote::UpdateBlocked => {
                 "The branch ruleset forbids updating this branch.".to_string()
@@ -130,9 +129,9 @@ impl RulesetNote {
             RulesetNote::DeletionBlocked => {
                 "The branch ruleset forbids deleting this branch.".to_string()
             }
-            RulesetNote::ConstraintsUnknown => "The branch ruleset could not be determined; \
-                 Kagi is keeping the conservative flow rather than assuming there are no rules."
-                .to_string(),
+            RulesetNote::ConstraintsUnknown => {
+                crate::advice_template_en!(RulesetConstraintsUnknown).to_string()
+            }
         }
     }
 }

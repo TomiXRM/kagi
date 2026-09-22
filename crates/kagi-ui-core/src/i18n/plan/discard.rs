@@ -2,27 +2,36 @@
 
 use kagi_domain::plan_note::{DiscardNote, PlanTitle};
 
+use crate::i18n::Msg;
+
+/// JA template for `Msg::AdviceDiscardTargetConflicted`.
+pub(crate) const ADVICE_DISCARD_TARGET_CONFLICTED: &str =
+    "conflict 中です。破棄せず conflict 解決フローで処理してください。\nfile `{}`";
+
+/// JA template for `Msg::AdviceDiscardTargetSubmodule`.
+pub(crate) const ADVICE_DISCARD_TARGET_SUBMODULE: &str =
+    "submodule は破棄できません。submodule 内で変更を管理してください。\nfile `{}`";
+
+/// JA template for `Msg::AdviceDiscardUntrackedWillBeDeleted`.
+pub(crate) const ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED: &str =
+    "⚠️ 未追跡ファイル {} 件をディスクから削除します(空フォルダも削除)。削除前に blob を oplog に保存します:\n  git cat-file -p <blob-sha>";
+
 /// Japanese rendering of one discard note.
 pub fn note_ja(note: &DiscardNote) -> String {
     match note {
-        DiscardNote::NothingSelected => {
-            "破棄する対象が選択されていません。".to_string()
+        DiscardNote::NothingSelected => "破棄する対象が選択されていません。".to_string(),
+        DiscardNote::TargetConflicted { path } => {
+            super::advice_text(Msg::AdviceDiscardTargetConflicted, &[path])
         }
-        DiscardNote::TargetConflicted { path } => format!(
-            "conflict 中です。破棄せず conflict 解決フローで処理してください。\nfile `{}`",
-            path
-        ),
         DiscardNote::NoUnstagedChanges { path } => {
             format!("破棄できる未 stage の変更がありません。\nfile `{}`", path)
         }
-        DiscardNote::TargetSubmodule { path } => format!(
-            "submodule は破棄できません。submodule 内で変更を管理してください。\nfile `{}`",
-            path
-        ),
-        DiscardNote::UntrackedWillBeDeleted { count } => format!(
-            "⚠️ 未追跡ファイル {} 件をディスクから削除します(空フォルダも削除)。削除前に blob を oplog に保存します:\n  git cat-file -p <blob-sha>",
-            count
-        ),
+        DiscardNote::TargetSubmodule { path } => {
+            super::advice_text(Msg::AdviceDiscardTargetSubmodule, &[path])
+        }
+        DiscardNote::UntrackedWillBeDeleted { count } => {
+            super::advice_text(Msg::AdviceDiscardUntrackedWillBeDeleted, &[count])
+        }
     }
 }
 

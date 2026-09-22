@@ -146,34 +146,35 @@ impl HistoryNote {
             },
             HistoryNote::PushedHistoryRewrite { sha, op } => match op {
                 HistoryOp::Undo => format!(
-                    "Commit {} has been pushed to the upstream tracking branch. Undoing a pushed commit would rewrite published history, which is not allowed. Use `git revert` to create an inverse commit instead.",
+                    crate::advice_template_en!(HistoryPushedHistoryRewriteUndo),
                     sha
                 ),
                 HistoryOp::Amend => format!(
-                    "Commit {} has been pushed, and this branch is one other people build on. Rewriting its history would strand every clone that has already fetched it, so amend is refused here regardless of confirmation. Create a new commit to make the correction instead.",
+                    crate::advice_template_en!(HistoryPushedHistoryRewriteAmend),
                     sha
                 ),
             },
             HistoryNote::AmendDivergesFromRemote { sha, branch } => format!(
-                "Commit {} is already on the remote. Amending replaces it with a new commit, so '{}' will diverge from its upstream and a plain push will be refused. Publish the result with 'Force-with-lease push...' from the branch menu, which fails if anyone else has pushed since your last fetch.",
+                crate::advice_template_en!(HistoryAmendDivergesFromRemote),
                 sha, branch
             ),
             HistoryNote::EmptyMessage => "Commit message must not be empty.".to_string(),
             HistoryNote::NothingStagedForAmend => {
-                "Nothing staged to fold into the commit. Stage changes first, or use \
-                 message-only amend."
-                    .to_string()
+                crate::advice_template_en!(HistoryNothingStagedForAmend).to_string()
             }
             HistoryNote::WrongBranch {
                 branch,
                 current,
                 label,
             } => format!(
-                "Operation was on branch '{}', but the current branch is '{}'. Switch back to '{}' to {} it.",
-                branch, current, branch, label.label_en_lower()
+                crate::advice_template_en!(HistoryWrongBranch),
+                branch,
+                current,
+                branch,
+                label.label_en_lower()
             ),
             HistoryNote::HeadNotOnBranch { label } => format!(
-                "HEAD is not on a branch. {} requires the operation's branch to be checked out.",
+                crate::advice_template_en!(HistoryHeadNotOnBranch),
                 label.label_en()
             ),
             HistoryNote::EntryStaleBranchMoved {
@@ -181,8 +182,7 @@ impl HistoryNote {
                 now,
                 expected,
             } => format!(
-                "Branch '{}' has moved since this operation (now at {}, expected {}). \
-                 This history entry is stale and will be skipped.",
+                crate::advice_template_en!(HistoryEntryStaleBranchMoved),
                 branch, now, expected
             ),
             HistoryNote::BranchNoTarget { branch } => {
@@ -190,14 +190,11 @@ impl HistoryNote {
             }
             HistoryNote::BranchGone { branch } => format!("Branch '{}' no longer exists.", branch),
             HistoryNote::EntryStaleUnreachable { sha } => format!(
-                "Target commit {} is no longer reachable in the object store. \
-                 This history entry is stale and will be skipped.",
+                crate::advice_template_en!(HistoryEntryStaleUnreachable),
                 sha
             ),
             HistoryNote::SoftMovePreservesChanges => {
-                "You have uncommitted changes. They will be preserved verbatim; \
-                 only the branch ref moves (soft reset — index and working tree untouched)."
-                    .to_string()
+                crate::advice_template_en!(HistorySoftMovePreservesChanges).to_string()
             }
         }
     }

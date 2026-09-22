@@ -42,7 +42,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Changed
 
 - Operation Log の手書き JSON codec を private serde DTO に置き換えました。既存 receipt の field・旧形式の id/parent 再構築・optional field の互換性を維持し、Unicode escape を正しく復元します。追記・lock・retention の保存方式は変更しません。（#513 oplog slice）
-- よく使う操作案内10種（untracked の保持、stash 推奨、detached HEAD、通常 push、分岐時の switch、未 merge branch の削除など）を EN/JA の `Advice` メッセージキーに整理しました。既存の表示文言・引数・英語の操作ログは維持し、blocker の書き換えや等価コマンドの追加は行っていません。（#353、ADR-0169）
+- 操作案内の EN/JA `Advice` カタログを全24 family に拡張しました。既存10キーに残り164キーを追加し、全224 Note variant と Git advice 43項目の対応・対象外を棚卸ししています。既存の表示文言・引数・警告／blocker の分類・英語の操作ログは維持し、blocker の書き換えや等価コマンドの追加は行っていません。（#353、ADR-0169）
 - **PR ページを Issues と同じタイムライン chrome に揃えました。** description / review / comment は Issues Thread と同じ borderless な行（40px avatar、`@login · 経過時間`、1px の区切り線）になり、line comment の diff hunk・suggestion・severity tag・`path:line` はその行に残ります。pinned composer は avatar・単一の eye ↔ square-pen トグル・有効なときだけ amber になる送信ボタンを Issues と共有し、PR home は triage 用の表のまま行の avatar・余白・hover を共通部品に合わせました。行と composer の chrome は `src/ui/timeline_row.rs` の 1 実装で Issues と PR の両方が使います。PR の下書きは従来どおりタブのメモリ上にあり（永続化なし）、「下書き保存済み」はその保持を指します。既存の投稿・review 経路、owner 固定、transport 記録は変更ありません。（ADR-0200 追記 / ADR-0201）
 
 ## [0.39.0] - 2026-09-20

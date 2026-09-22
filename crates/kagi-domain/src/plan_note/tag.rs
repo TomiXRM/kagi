@@ -24,14 +24,13 @@ impl TagNameError {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
-            TagNameError::Empty => "Tag name cannot be empty.".to_string(),
+            TagNameError::Empty => crate::advice_template_en!(TagNameErrorEmpty).to_string(),
             TagNameError::InvalidRef(name) => {
                 format!("'{}' is not a valid tag name.", name)
             }
-            TagNameError::LeadingDash(name) => format!(
-                "Tag name '{}' starts with '-', which is ambiguous on the command line.",
-                name
-            ),
+            TagNameError::LeadingDash(name) => {
+                format!(crate::advice_template_en!(TagNameErrorLeadingDash), name)
+            }
             TagNameError::Exists(name) => format!("A tag named '{}' already exists.", name),
         }
     }
@@ -72,13 +71,12 @@ impl TagNote {
                     .to_string()
             }
             TagNote::PushRemoteSideEffect { remote, name } => format!(
-                "This publishes tag '{}' to '{}'. Unlike every other tag action in kagi, it leaves this machine and others will see it.",
+                crate::advice_template_en!(TagPushRemoteSideEffect),
                 name, remote
             ),
-            TagNote::PushRejectedIfMoved { name } => format!(
-                "If '{}' already exists on the remote pointing at a different commit, the remote rejects the push rather than moving it. kagi never force-pushes a tag.",
-                name
-            ),
+            TagNote::PushRejectedIfMoved { name } => {
+                format!(crate::advice_template_en!(TagPushRejectedIfMoved), name)
+            }
         }
     }
 }

@@ -28,20 +28,19 @@ impl ForceLeaseNote {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
-            ForceLeaseNote::NoUpstream { branch } => format!(
-                "Branch '{}' has no upstream configured. Force-with-lease needs a known remote tip to lease-check against.",
-                branch
-            ),
+            ForceLeaseNote::NoUpstream { branch } => {
+                format!(crate::advice_template_en!(ForceLeaseNoUpstream), branch)
+            }
             ForceLeaseNote::NothingToPush { branch } => format!(
                 "Branch '{}' already matches its remote-tracking ref. Nothing to force-push.",
                 branch
             ),
             ForceLeaseNote::RewritesRemoteHistory { branch } => format!(
-                "This overwrites the remote branch '{}''s history. Anyone who already pulled the old history will need to reconcile (e.g. rebase onto the new tip).",
+                crate::advice_template_en!(ForceLeaseRewritesRemoteHistory),
                 branch
             ),
             ForceLeaseNote::LeaseValue { remote, sha } => format!(
-                "Protected by lease: the push is rejected if '{}' has moved past {} since your last fetch (i.e. if someone else pushed in the meantime).",
+                crate::advice_template_en!(ForceLeaseLeaseValue),
                 remote, sha
             ),
         }

@@ -3,12 +3,49 @@
 
 use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_WORKTREE_DIRTY_BLOCKS_CHECKOUT_AFTER_CREATE: &str =
+    "作業ツリーに {} があります。branch 作成後の checkout で変更が失われる可能性があります。先に stash してください。";
+pub(crate) const ADVICE_WORKTREE_CREATES_LINKED_WORKTREE: &str =
+    "リンク worktree を作成します(起点 {})。\nworktree `{}` / branch `{}`";
+pub(crate) const ADVICE_WORKTREE_LOCKED_WITH_REASON: &str =
+    "ロック理由: {}。ロックは誰かが意図的に設定した保護です。不要か確認してください。";
+pub(crate) const ADVICE_WORKTREE_INCLUDE_COPY: &str =
+    ".worktreeinclude に一致する {} 件({})を新しい worktree にコピーします: {}。";
+pub(crate) const ADVICE_WORKTREE_INCLUDE_SKIPPED_SYMLINKS: &str =
+    "一致した symlink {} 件はスキップします(symlink はコピーしません)。";
+pub(crate) const ADVICE_WORKTREE_INCLUDE_OVER_CAP: &str =
+    ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります(例: node_modules)。";
+pub(crate) const ADVICE_WORKTREE_REMOVE_DIRTY: &str =
+    "worktree に未 commit の変更があります({})。先に commit か stash してください(削除は force しません)。\nworktree `{}`";
+pub(crate) const ADVICE_WORKTREE_REMOVE_LOCKED: &str =
+    "worktree はロックされています({})。削除前にロックを解除してください(kagi は force しません)。\nworktree `{}`";
+pub(crate) const ADVICE_WORKTREE_REMOVES_WORKTREE_DELETE_BRANCH: &str =
+    "リンク worktree を削除し、branch も削除します。\nworktree `{}` / branch `{}`";
+pub(crate) const ADVICE_WORKTREE_REMOVES_WORKTREE_KEEP_BRANCH: &str =
+    "リンク worktree を削除します。branch は残します。\nworktree `{}` / branch `{}`";
+pub(crate) const ADVICE_WORKTREE_LOCKS_WORKTREE: &str =
+    "worktree をロックします。理由: {}。\nworktree `{}`";
+pub(crate) const ADVICE_WORKTREE_PRUNE_PREVIEW: &str =
+    "作業ディレクトリが消えた古い worktree 管理エントリ {} 件を prune します: {}。";
+pub(crate) const ADVICE_WORKTREE_REPAIRS_WORKTREES: &str =
+    "worktree の管理リンクを修復します(main / linked の移動に対応)。ファイルには触れず、.git のリンクのみを修復します。";
+pub(crate) const ADVICE_WORKTREE_POST_CREATE_STEPS: &str =
+    ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}";
+pub(crate) const ADVICE_WORKTREE_POST_CREATE_STEPS_TRUST_REQUIRED: &str =
+    ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}\n  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。";
+pub(crate) const ADVICE_WORKTREE_PRE_REMOVE_STEPS: &str =
+    ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}";
+pub(crate) const ADVICE_WORKTREE_PRE_REMOVE_STEPS_TRUST_REQUIRED: &str =
+    ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}\n  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。";
+
 /// Japanese rendering of one worktree note.
 pub fn note_ja(note: &WorktreeNote) -> String {
     match note {
-        WorktreeNote::DirtyBlocksCheckoutAfterCreate { parts } => format!(
-            "作業ツリーに {} があります。branch 作成後の checkout で変更が失われる可能性があります。先に stash してください。",
-            parts.parts_en()
+        WorktreeNote::DirtyBlocksCheckoutAfterCreate { parts } => super::advice_text(
+            Msg::AdviceWorktreeDirtyBlocksCheckoutAfterCreate,
+            &[&parts.parts_en()],
         ),
         WorktreeNote::BranchInOtherWorktree { branch, path } => format!(
             "この branch は別の worktree で既に checkout 済みです。\nbranch `{}` / worktree `{}`",
@@ -18,22 +55,22 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             path,
             branch,
             start,
-        } => format!(
-            "リンク worktree を作成します(起点 {})。\nworktree `{}` / branch `{}`",
-            start, path, branch
+        } => super::advice_text(
+            Msg::AdviceWorktreeCreatesLinkedWorktree,
+            &[start, path, branch],
         ),
         WorktreeNote::LockedWithReason { reason } => {
             let reason_display = match reason {
                 Some(r) => format!("「{}」", r),
                 None => "(理由の記録なし)".to_string(),
             };
-            format!(
-                "ロック理由: {}。ロックは誰かが意図的に設定した保護です。不要か確認してください。",
-                reason_display
-            )
+            super::advice_text(Msg::AdviceWorktreeLockedWithReason, &[&reason_display])
         }
         WorktreeNote::AlreadyUnlocked { name } => {
-            format!("worktree は既にロック解除されています。\nworktree `{}`", name)
+            format!(
+                "worktree は既にロック解除されています。\nworktree `{}`",
+                name
+            )
         }
         WorktreeNote::LockStateUnreadable { name, err } => format!(
             "ロック状態を読み取れませんでした: {}\nworktree `{}`",
@@ -52,38 +89,38 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             if *more > 0 {
                 names = format!("{} (他 {} 件)", names, more);
             }
-            format!(
-                ".worktreeinclude に一致する {} 件({})を新しい worktree にコピーします: {}。",
-                count,
-                kagi_domain::worktree_include::human_bytes(*total_bytes),
-                names
+            super::advice_text(
+                Msg::AdviceWorktreeIncludeCopy,
+                &[
+                    count,
+                    &kagi_domain::worktree_include::human_bytes(*total_bytes),
+                    &names,
+                ],
             )
         }
         WorktreeNote::IncludeSkippedSymlinks { count } => {
-            format!("一致した symlink {} 件はスキップします(symlink はコピーしません)。", count)
+            super::advice_text(Msg::AdviceWorktreeIncludeSkippedSymlinks, &[count])
         }
         WorktreeNote::IncludeOverCap {
             total_bytes,
             cap_bytes,
-        } => format!(
-            ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります(例: node_modules)。",
-            kagi_domain::worktree_include::human_bytes(*total_bytes),
-            kagi_domain::worktree_include::human_bytes(*cap_bytes)
+        } => super::advice_text(
+            Msg::AdviceWorktreeIncludeOverCap,
+            &[
+                &kagi_domain::worktree_include::human_bytes(*total_bytes),
+                &kagi_domain::worktree_include::human_bytes(*cap_bytes),
+            ],
         ),
         WorktreeNote::RemoveMainRefused => "main worktree は削除できません。".to_string(),
-        WorktreeNote::RemoveDirty { path, summary } => format!(
-            "worktree に未 commit の変更があります({})。先に commit か stash してください(削除は force しません)。\nworktree `{}`",
-            summary, path
-        ),
+        WorktreeNote::RemoveDirty { path, summary } => {
+            super::advice_text(Msg::AdviceWorktreeRemoveDirty, &[summary, path])
+        }
         WorktreeNote::RemoveLocked { path, reason } => {
             let reason_display = match reason {
                 Some(r) => format!("「{}」", r),
                 None => "(理由の記録なし)".to_string(),
             };
-            format!(
-                "worktree はロックされています({})。削除前にロックを解除してください(kagi は force しません)。\nworktree `{}`",
-                reason_display, path
-            )
+            super::advice_text(Msg::AdviceWorktreeRemoveLocked, &[&reason_display, path])
         }
         WorktreeNote::RemovesWorktree {
             path,
@@ -92,14 +129,14 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         } => {
             let branch_display = branch.as_deref().unwrap_or("(detached HEAD)");
             if *delete_branch {
-                format!(
-                    "リンク worktree を削除し、branch も削除します。\nworktree `{}` / branch `{}`",
-                    path, branch_display
+                super::advice_text(
+                    Msg::AdviceWorktreeRemovesWorktreeDeleteBranch,
+                    &[path, &branch_display],
                 )
             } else {
-                format!(
-                    "リンク worktree を削除します。branch は残します。\nworktree `{}` / branch `{}`",
-                    path, branch_display
+                super::advice_text(
+                    Msg::AdviceWorktreeRemovesWorktreeKeepBranch,
+                    &[path, &branch_display],
                 )
             }
         }
@@ -108,14 +145,17 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 Some(r) => format!("「{}」", r),
                 None => "(理由なし)".to_string(),
             };
-            format!("worktree をロックします。理由: {}。\nworktree `{}`", reason_display, path)
+            super::advice_text(Msg::AdviceWorktreeLocksWorktree, &[&reason_display, path])
         }
         WorktreeNote::AlreadyLocked { name, reason } => {
             let reason_display = match reason {
                 Some(r) => format!("「{}」", r),
                 None => "(理由の記録なし)".to_string(),
             };
-            format!("worktree は既にロックされています({})。\nworktree `{}`", reason_display, name)
+            format!(
+                "worktree は既にロックされています({})。\nworktree `{}`",
+                reason_display, name
+            )
         }
         WorktreeNote::PrunePreview {
             count,
@@ -126,43 +166,40 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             if *more > 0 {
                 names = format!("{} (他 {} 件)", names, more);
             }
-            format!(
-                "作業ディレクトリが消えた古い worktree 管理エントリ {} 件を prune します: {}。",
-                count, names
-            )
+            super::advice_text(Msg::AdviceWorktreePrunePreview, &[count, &names])
         }
         WorktreeNote::PruneNothing => "prune 対象の worktree はありません。".to_string(),
         WorktreeNote::RepairsWorktrees => {
-            "worktree の管理リンクを修復します(main / linked の移動に対応)。\
-             ファイルには触れず、.git のリンクのみを修復します。"
-                .to_string()
+            super::advice_text(Msg::AdviceWorktreeRepairsWorktrees, &[])
         }
         WorktreeNote::PostCreateSteps {
             steps,
             trust_required,
             ..
-        } => format!(
-            ".kagi/worktree.toml の作成後ステップ {} 件を実行します:{}",
-            steps.len(),
-            kagi_domain::plan_note::worktree::worktree_steps_lines(
-                steps,
-                *trust_required,
-                "  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。"
-            )
-        ),
+        } => {
+            let step_lines =
+                kagi_domain::plan_note::worktree::worktree_steps_lines(steps, false, "");
+            let msg = if *trust_required {
+                Msg::AdviceWorktreePostCreateStepsTrustRequired
+            } else {
+                Msg::AdviceWorktreePostCreateSteps
+            };
+            super::advice_text(msg, &[&steps.len(), &step_lines])
+        }
         WorktreeNote::PreRemoveSteps {
             steps,
             trust_required,
             ..
-        } => format!(
-            ".kagi/worktree.toml の削除前ステップ {} 件を実行します(command が失敗または未信頼なら削除を中止):{}",
-            steps.len(),
-            kagi_domain::plan_note::worktree::worktree_steps_lines(
-                steps,
-                *trust_required,
-                "  ⚠ 確認すると設定を信頼し、上記 command を実行します(commit 済み設定は既定で未信頼)。"
-            )
-        ),
+        } => {
+            let step_lines =
+                kagi_domain::plan_note::worktree::worktree_steps_lines(steps, false, "");
+            let msg = if *trust_required {
+                Msg::AdviceWorktreePreRemoveStepsTrustRequired
+            } else {
+                Msg::AdviceWorktreePreRemoveSteps
+            };
+            super::advice_text(msg, &[&steps.len(), &step_lines])
+        }
     }
 }
 

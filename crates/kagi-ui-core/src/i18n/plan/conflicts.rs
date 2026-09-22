@@ -3,61 +3,80 @@
 
 use kagi_domain::plan_note::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_CONFLICTS_OBSERVATION_CHANGED: &str =
+    "表示後に conflict の状態が変わりました。conflict を開き直して、操作をやり直してください。";
+pub(crate) const ADVICE_CONFLICTS_PLAN_CHANGED: &str =
+    "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。";
+pub(crate) const ADVICE_CONFLICTS_REPOSITORY_IDENTITY_CHANGED: &str =
+    "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。";
+pub(crate) const ADVICE_CONFLICTS_CONFLICT_GONE: &str =
+    "conflict は既に終了しています。リポジトリを再読み込みしてください。";
+pub(crate) const ADVICE_CONFLICTS_RESOLUTION_MARKERS: &str =
+    "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。";
+pub(crate) const ADVICE_CONFLICTS_UNRESOLVED_FILES: &str =
+    "{} 件が未解決です。続行前にすべて解決してください。\nfiles {}";
+pub(crate) const ADVICE_CONFLICTS_MARKER_RESIDUE: &str =
+    "conflict marker が残っています。続行前にすべて削除してください。\nfiles {}";
+pub(crate) const ADVICE_CONFLICTS_INDEX_UNMERGED: &str =
+    "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles {}";
+pub(crate) const ADVICE_CONFLICTS_BINARY_UNRESOLVED: &str =
+    "バイナリ conflict の採用側が未選択です。\nfiles {}";
+pub(crate) const ADVICE_CONFLICTS_DELETION_UNDECIDED: &str = "保持か削除かが未決定です。\nfiles {}";
+pub(crate) const ADVICE_CONFLICTS_EMPTY_MERGE_MESSAGE: &str =
+    "merge commit のメッセージが空です。入力してから続行してください。";
+pub(crate) const ADVICE_CONFLICTS_NO_CONFLICTING_FILES_DETECTED: &str =
+    "conflict ファイルはありません。続行すると操作はそのまま完了します。";
+pub(crate) const ADVICE_CONFLICTS_PARTIAL_RESOLUTIONS_PRESERVED: &str =
+    "部分的な解決内容は autosave と oplog に保存されます。破棄されません。";
+pub(crate) const ADVICE_CONFLICTS_SKIP_DISCARDS_STEP: &str =
+    "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。部分的な解決内容は autosave に保存されます。";
+
 /// Japanese rendering of one conflicts note.
 pub fn note_ja(note: &ConflictsNote) -> String {
     match note {
         ConflictsNote::ObservationChanged => {
-            "表示後に conflict の状態が変わりました。conflict を開き直して、操作をやり直してください。".into()
+            super::advice_text(Msg::AdviceConflictsObservationChanged, &[])
         }
-        ConflictsNote::PlanChanged => {
-            "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。".into()
-        }
+        ConflictsNote::PlanChanged => super::advice_text(Msg::AdviceConflictsPlanChanged, &[]),
         ConflictsNote::RepositoryIdentityChanged => {
-            "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。".into()
+            super::advice_text(Msg::AdviceConflictsRepositoryIdentityChanged, &[])
         }
-        ConflictsNote::ConflictGone => {
-            "conflict は既に終了しています。リポジトリを再読み込みしてください。".into()
-        }
+        ConflictsNote::ConflictGone => super::advice_text(Msg::AdviceConflictsConflictGone, &[]),
         ConflictsNote::ResolutionMarkers => {
-            "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。".into()
+            super::advice_text(Msg::AdviceConflictsResolutionMarkers, &[])
         }
-        ConflictsNote::UnresolvedFiles { files } => format!(
-            "{} 件が未解決です。続行前にすべて解決してください。\nfiles {}",
-            files.len(),
-            files.join(", ")
+        ConflictsNote::UnresolvedFiles { files } => super::advice_text(
+            Msg::AdviceConflictsUnresolvedFiles,
+            &[&files.len(), &files.join(", ")],
         ),
-        ConflictsNote::MarkerResidue { files } => format!(
-            "conflict marker が残っています。続行前にすべて削除してください。\nfiles {}",
-            files.join(", ")
-        ),
-        ConflictsNote::IndexUnmerged { files } => format!(
-            "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles {}",
-            files.join(", ")
-        ),
-        ConflictsNote::BinaryUnresolved { files } => format!(
-            "バイナリ conflict の採用側が未選択です。\nfiles {}",
-            files.join(", ")
-        ),
-        ConflictsNote::DeletionUndecided { files } => format!(
-            "保持か削除かが未決定です。\nfiles {}",
-            files.join(", ")
-        ),
+        ConflictsNote::MarkerResidue { files } => {
+            super::advice_text(Msg::AdviceConflictsMarkerResidue, &[&files.join(", ")])
+        }
+        ConflictsNote::IndexUnmerged { files } => {
+            super::advice_text(Msg::AdviceConflictsIndexUnmerged, &[&files.join(", ")])
+        }
+        ConflictsNote::BinaryUnresolved { files } => {
+            super::advice_text(Msg::AdviceConflictsBinaryUnresolved, &[&files.join(", ")])
+        }
+        ConflictsNote::DeletionUndecided { files } => {
+            super::advice_text(Msg::AdviceConflictsDeletionUndecided, &[&files.join(", ")])
+        }
         ConflictsNote::EmptyMergeMessage => {
-            "merge commit のメッセージが空です。入力してから続行してください。".to_string()
+            super::advice_text(Msg::AdviceConflictsEmptyMergeMessage, &[])
         }
         // Checklist prose stays untranslated (error/checklist keying is out of
         // scope for this migration — mirrors CommonNote::GitErrorPassthrough).
         ConflictsNote::ChecklistBlocker { message } => message.clone(),
         ConflictsNote::NoConflictingFilesDetected => {
-            "conflict ファイルはありません。続行すると操作はそのまま完了します。".to_string()
+            super::advice_text(Msg::AdviceConflictsNoConflictingFilesDetected, &[])
         }
         ConflictsNote::PartialResolutionsPreserved => {
-            "部分的な解決内容は autosave と oplog に保存されます。破棄されません。".to_string()
+            super::advice_text(Msg::AdviceConflictsPartialResolutionsPreserved, &[])
         }
         ConflictsNote::SkipDiscardsStep => {
-            "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。\
-             部分的な解決内容は autosave に保存されます。"
-                .to_string()
+            super::advice_text(Msg::AdviceConflictsSkipDiscardsStep, &[])
         }
     }
 }

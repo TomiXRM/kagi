@@ -59,57 +59,49 @@ impl ConflictsNote {
     pub fn message_en(&self) -> String {
         match self {
             ConflictsNote::ObservationChanged => {
-                "conflict changed since it was observed — re-open the conflict".into()
+                crate::advice_template_en!(ConflictsObservationChanged).into()
             }
-            ConflictsNote::PlanChanged => {
-                "conflict changed since planning; no files were modified".into()
-            }
+            ConflictsNote::PlanChanged => crate::advice_template_en!(ConflictsPlanChanged).into(),
             ConflictsNote::RepositoryIdentityChanged => {
-                "repository identity changed after planning".into()
+                crate::advice_template_en!(ConflictsRepositoryIdentityChanged).into()
             }
-            ConflictsNote::ConflictGone => "the conflict is no longer present".into(),
+            ConflictsNote::ConflictGone => crate::advice_template_en!(ConflictsConflictGone).into(),
             ConflictsNote::ResolutionMarkers => {
-                "conflict markers remain in the resolution buffer".into()
+                crate::advice_template_en!(ConflictsResolutionMarkers).into()
             }
             ConflictsNote::UnresolvedFiles { files } => format!(
-                "{} file(s) still unresolved: {}. Resolve every file before continuing.",
+                crate::advice_template_en!(ConflictsUnresolvedFiles),
                 files.len(),
                 files.join(", ")
             ),
             ConflictsNote::MarkerResidue { files } => format!(
-                "Conflict marker(s) remain in: {}. Remove all <<<<<<< ======= >>>>>>> markers before continuing.",
+                crate::advice_template_en!(ConflictsMarkerResidue),
                 files.join(", ")
             ),
             ConflictsNote::IndexUnmerged { files } => format!(
-                "The index still has unmerged entries not tracked by this session: {}. Re-scan the repository.",
+                crate::advice_template_en!(ConflictsIndexUnmerged),
                 files.join(", ")
             ),
             ConflictsNote::BinaryUnresolved { files } => format!(
-                "Binary conflict(s) still need a side chosen: {}.",
+                crate::advice_template_en!(ConflictsBinaryUnresolved),
                 files.join(", ")
             ),
             ConflictsNote::DeletionUndecided { files } => format!(
-                "Keep-or-delete decision still pending for: {}.",
+                crate::advice_template_en!(ConflictsDeletionUndecided),
                 files.join(", ")
             ),
             ConflictsNote::EmptyMergeMessage => {
-                "The merge commit message is empty. Provide a commit message before continuing."
-                    .to_string()
+                crate::advice_template_en!(ConflictsEmptyMergeMessage).to_string()
             }
             ConflictsNote::ChecklistBlocker { message } => message.clone(),
             ConflictsNote::NoConflictingFilesDetected => {
-                "No conflicting files detected; continue will finish the operation as-is."
-                    .to_string()
+                crate::advice_template_en!(ConflictsNoConflictingFilesDetected).to_string()
             }
             ConflictsNote::PartialResolutionsPreserved => {
-                "Your partial resolutions are preserved in the autosave directory and \
-                 referenced in the operation log; they are not discarded."
-                    .to_string()
+                crate::advice_template_en!(ConflictsPartialResolutionsPreserved).to_string()
             }
             ConflictsNote::SkipDiscardsStep => {
-                "Skip discards the current step's changes (the conflicting pick is dropped, \
-                 not committed). Your partial resolution is preserved in the autosave directory."
-                    .to_string()
+                crate::advice_template_en!(ConflictsSkipDiscardsStep).to_string()
             }
         }
     }

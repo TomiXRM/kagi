@@ -3,17 +3,26 @@
 use kagi_domain::plan_note::tag::TagNameError;
 use kagi_domain::plan_note::{TagNote, TagRecovery, TagTitle};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_TAG_NAME_ERROR_EMPTY: &str = "tag 名を入力してください。";
+pub(crate) const ADVICE_TAG_NAME_ERROR_LEADING_DASH: &str =
+    "tag 名が '-' で始まっており、フラグと誤認される可能性があります。\ntag `{}`";
+pub(crate) const ADVICE_TAG_PUSH_REMOTE_SIDE_EFFECT: &str =
+    "tag を {} に公開します。他の tag 操作と違い、このマシンの外に出て他の人から見えます。\ntag `{}`";
+pub(crate) const ADVICE_TAG_PUSH_REJECTED_IF_MOVED: &str =
+    "remote 側で別の commit を指して既に存在する場合、push は拒否されます(移動しません)。kagi は tag を force push しません。\ntag `{}`";
+
 /// Japanese rendering of one tag-name validation error.
 fn name_error_ja(err: &TagNameError) -> String {
     match err {
-        TagNameError::Empty => "tag 名を入力してください。".to_string(),
+        TagNameError::Empty => super::advice_text(Msg::AdviceTagNameErrorEmpty, &[]),
         TagNameError::InvalidRef(name) => {
             format!("有効な tag 名ではありません。\ntag `{}`", name)
         }
-        TagNameError::LeadingDash(name) => format!(
-            "tag 名が '-' で始まっており、フラグと誤認される可能性があります。\ntag `{}`",
-            name
-        ),
+        TagNameError::LeadingDash(name) => {
+            super::advice_text(Msg::AdviceTagNameErrorLeadingDash, &[name])
+        }
         TagNameError::Exists(name) => format!("tag はすでに存在します。\ntag `{}`", name),
     }
 }
@@ -27,14 +36,12 @@ pub fn note_ja(note: &TagNote) -> String {
         }
         TagNote::NotFound { name } => format!("ローカルに tag がありません。\ntag `{}`", name),
         TagNote::NoRemote => "remote が未設定で、tag の push 先がありません。".to_string(),
-        TagNote::PushRemoteSideEffect { remote, name } => format!(
-            "tag を {} に公開します。他の tag 操作と違い、このマシンの外に出て他の人から見えます。\ntag `{}`",
-            remote, name
-        ),
-        TagNote::PushRejectedIfMoved { name } => format!(
-            "remote 側で別の commit を指して既に存在する場合、push は拒否されます(移動しません)。kagi は tag を force push しません。\ntag `{}`",
-            name
-        ),
+        TagNote::PushRemoteSideEffect { remote, name } => {
+            super::advice_text(Msg::AdviceTagPushRemoteSideEffect, &[remote, name])
+        }
+        TagNote::PushRejectedIfMoved { name } => {
+            super::advice_text(Msg::AdviceTagPushRejectedIfMoved, &[name])
+        }
     }
 }
 

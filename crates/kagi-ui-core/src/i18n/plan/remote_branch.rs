@@ -3,6 +3,11 @@
 
 use kagi_domain::plan_note::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_REMOTE_BRANCH_LOCAL_BRANCH_UNTOUCHED: &str =
+    "削除するのは remote 上の branch だけです。local branch は残り、upstream 未設定になります。\nbranch `{}`";
+
 /// Japanese rendering of one remote-branch note.
 pub fn note_ja(note: &RemoteBranchNote) -> String {
     match note {
@@ -10,9 +15,9 @@ pub fn note_ja(note: &RemoteBranchNote) -> String {
             "remote-tracking branch がローカルに見つかりません。削除済みか未 fetch の可能性があります。\nbranch `{}/{}`",
             remote, branch
         ),
-        RemoteBranchNote::LocalBranchUntouched { local_name } => format!(
-            "削除するのは remote 上の branch だけです。local branch は残り、upstream 未設定になります。\nbranch `{}`",
-            local_name
+        RemoteBranchNote::LocalBranchUntouched { local_name } => super::advice_text(
+            Msg::AdviceRemoteBranchLocalBranchUntouched,
+            &[local_name],
         ),
     }
 }

@@ -72,13 +72,11 @@ impl CherryRevertNote {
                 let joined = files.join(", ");
                 match op {
                     PlanOp::CherryPick => format!(
-                        "Cherry-pick would produce {} conflict(s): {}. Resolve divergence before \
-                         cherry-picking.",
+                        crate::advice_template_en!(CherryRevertWouldConflictCherryPick),
                         count, joined
                     ),
                     PlanOp::Revert => format!(
-                        "Revert would produce {} conflict(s): {}. Resolve divergence before \
-                         reverting.",
+                        crate::advice_template_en!(CherryRevertWouldConflictRevert),
                         count, joined
                     ),
                     _ => {
@@ -101,7 +99,7 @@ impl CherryRevertNote {
                 sha
             ),
             CherryRevertNote::DirtyMayRefuse { parts } => format!(
-                "Working tree has {}. Safe checkout may refuse if those files overlap the revert.",
+                crate::advice_template_en!(CherryRevertDirtyMayRefuse),
                 parts.parts_en()
             ),
         }

@@ -223,3 +223,21 @@ fn explicit_japanese_advice_preserves_stash_syntax_under_english_locale() {
     assert!(advice.contains("stash@{0}"));
     assert!(advice.contains("`git stash pop`"));
 }
+
+#[test]
+fn stash_identity_advice_preserves_git_braces_and_identifier_data() {
+    use kagi_domain::plan_note::{PlanNote, StashNote};
+
+    let _guard = LOCK.lock();
+    let expected = "approved-{}-先端";
+    let note = PlanNote::Stash(StashNote::TargetChanged {
+        index: 3,
+        expected: expected.into(),
+    });
+    for language in [Lang::En, Lang::Ja] {
+        set_lang_no_persist(language);
+        let text = plan_note_text(&note);
+        assert!(text.contains("stash@{3}"), "{language:?}: {text}");
+        assert!(text.contains(expected), "{language:?}: {text}");
+    }
+}

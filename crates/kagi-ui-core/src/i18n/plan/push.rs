@@ -13,16 +13,20 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_NO_FORCE_USED: &str =
     "fast-forward できない push は失敗します。force は使いません。";
 
+pub(crate) const ADVICE_PUSH_NO_UPSTREAM_NO_REMOTES: &str =
+    "upstream が未設定で、remote もありません。remote を追加してください。\nbranch `{}`\n  git remote add origin <url>";
+pub(crate) const ADVICE_PUSH_UPSTREAM_FORMAT_INVALID: &str =
+    "upstream は origin/main のような remote branch 名で指定してください。";
+pub(crate) const ADVICE_PUSH_UPSTREAM_NOT_PRESENT_LOCALLY: &str =
+    "この remote-tracking branch はローカルにありませんが、設定はできます。\nbranch `{}`";
+
 /// Japanese rendering of one push note.
 pub fn note_ja(note: &PushNote) -> String {
     match note {
-        PushNote::NoForceUsed { punct } => {
-            super::advice_text(Msg::AdviceNoForceUsed(*punct), &[])
+        PushNote::NoForceUsed { punct } => super::advice_text(Msg::AdviceNoForceUsed(*punct), &[]),
+        PushNote::NoUpstreamNoRemotes { branch } => {
+            super::advice_text(Msg::AdvicePushNoUpstreamNoRemotes, &[branch])
         }
-        PushNote::NoUpstreamNoRemotes { branch } => format!(
-            "upstream が未設定で、remote もありません。remote を追加してください。\nbranch `{}`\n  git remote add origin <url>",
-            branch
-        ),
         PushNote::NoUpstreamWithErr { branch, err } => {
             format!("upstream が未設定です: {}\nbranch `{}`", err, branch)
         }
@@ -31,12 +35,11 @@ pub fn note_ja(note: &PushNote) -> String {
             branch
         ),
         PushNote::UpstreamFormatInvalid => {
-            "upstream は origin/main のような remote branch 名で指定してください。".to_string()
+            super::advice_text(Msg::AdvicePushUpstreamFormatInvalid, &[])
         }
-        PushNote::UpstreamNotPresentLocally { upstream } => format!(
-            "この remote-tracking branch はローカルにありませんが、設定はできます。\nbranch `{}`",
-            upstream
-        ),
+        PushNote::UpstreamNotPresentLocally { upstream } => {
+            super::advice_text(Msg::AdvicePushUpstreamNotPresentLocally, &[upstream])
+        }
     }
 }
 

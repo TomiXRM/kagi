@@ -52,19 +52,18 @@ impl SwitchNote {
             SwitchNote::NameEmpty => "Branch name is empty.".to_string(),
             SwitchNote::NoUpstreamToSwitch => "No upstream/remote branch to switch to.".to_string(),
             SwitchNote::WillCreateTracking { name, remote } => format!(
-                "Local branch '{}' does not exist; it will be created tracking {}.",
+                crate::advice_template_en!(SwitchWillCreateTracking),
                 name, remote
             ),
-            SwitchNote::FfLocalKnowledge { behind } => format!(
-                "Fast-forward {} commit(s) (local knowledge; re-checked after fetch).",
-                behind
-            ),
+            SwitchNote::FfLocalKnowledge { behind } => {
+                format!(crate::advice_template_en!(SwitchFfLocalKnowledge), behind)
+            }
             SwitchNote::AheadSwitchOnly {
                 name,
                 ahead,
                 remote,
             } => format!(
-                "'{}' is {} commit(s) ahead of {}; switching only, not updated.",
+                crate::advice_template_en!(SwitchAheadSwitchOnly),
                 name, ahead, remote
             ),
             SwitchNote::DivergedSwitchOnly {

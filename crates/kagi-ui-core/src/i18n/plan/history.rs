@@ -6,6 +6,27 @@ use kagi_domain::plan_note::{
     HistoryMoveDir, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle,
 };
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_HISTORY_PUSHED_HISTORY_REWRITE_UNDO: &str =
+    "push 済みの commit です。公開履歴を書き換えるため undo はできません。`git revert` で打ち消し commit を作成してください。\ncommit `{}`";
+pub(crate) const ADVICE_HISTORY_PUSHED_HISTORY_REWRITE_AMEND: &str =
+    "push 済みで、他の人が土台にしている branch です。履歴を書き換えると fetch 済みの clone が取り残されます。amend は拒否されます。修正は新しい commit で行ってください。\ncommit `{}`";
+pub(crate) const ADVICE_HISTORY_AMEND_DIVERGES_FROM_REMOTE: &str =
+    "remote にある commit です。amend は新しい commit で置き換えるため `{}` は upstream から分岐し、通常の push は拒否されます。branch メニューの Force-with-lease push を使ってください。\ncommit `{}`";
+pub(crate) const ADVICE_HISTORY_NOTHING_STAGED_FOR_AMEND: &str =
+    "stage 済みの変更がありません。先に stage するか、メッセージのみの amend を使ってください。";
+pub(crate) const ADVICE_HISTORY_WRONG_BRANCH: &str =
+    "この操作は branch `{}` 上のものです。現在の branch は `{}`。{} するには `{}` に切り替えてください。";
+pub(crate) const ADVICE_HISTORY_HEAD_NOT_ON_BRANCH: &str =
+    "HEAD が branch を指していません。{} には対象 branch を checkout している必要があります。";
+pub(crate) const ADVICE_HISTORY_ENTRY_STALE_BRANCH_MOVED: &str =
+    "branch `{}` は操作後に移動しています(現在 {}、想定 {})。古い履歴エントリのためスキップします。";
+pub(crate) const ADVICE_HISTORY_ENTRY_STALE_UNREACHABLE: &str =
+    "対象 commit に到達できません。古い履歴エントリのためスキップします。\ncommit `{}`";
+pub(crate) const ADVICE_HISTORY_SOFT_MOVE_PRESERVES_CHANGES: &str =
+    "未 commit の変更はそのまま保持されます。動かすのは branch の参照のみです(soft reset、index と作業ツリーは変更なし)。";
+
 /// JA rendering of the undo/redo verb used by the ref-move title and recovery
 /// text. Exhaustive on [`HistoryMoveDir`] — no `_` fallback to drop meaning.
 fn label_ja(dir: HistoryMoveDir) -> &'static str {
@@ -39,53 +60,48 @@ pub fn note_ja(note: &HistoryNote) -> String {
             ),
         },
         HistoryNote::PushedHistoryRewrite { sha, op } => match op {
-            HistoryOp::Undo => format!(
-                "push 済みの commit です。公開履歴を書き換えるため undo はできません。`git revert` で打ち消し commit を作成してください。\ncommit `{}`",
-                sha
-            ),
-            HistoryOp::Amend => format!(
-                "push 済みで、他の人が土台にしている branch です。履歴を書き換えると fetch 済みの clone が取り残されます。amend は拒否されます。修正は新しい commit で行ってください。\ncommit `{}`",
-                sha
-            ),
+            HistoryOp::Undo => {
+                super::advice_text(Msg::AdviceHistoryPushedHistoryRewriteUndo, &[sha])
+            }
+            HistoryOp::Amend => {
+                super::advice_text(Msg::AdviceHistoryPushedHistoryRewriteAmend, &[sha])
+            }
         },
-        HistoryNote::AmendDivergesFromRemote { sha, branch } => format!(
-            "remote にある commit です。amend は新しい commit で置き換えるため `{}` は upstream から分岐し、通常の push は拒否されます。branch メニューの Force-with-lease push を使ってください。\ncommit `{}`",
-            branch, sha
-        ),
+        HistoryNote::AmendDivergesFromRemote { sha, branch } => {
+            super::advice_text(Msg::AdviceHistoryAmendDivergesFromRemote, &[branch, sha])
+        }
         HistoryNote::EmptyMessage => "commit メッセージを空にはできません。".to_string(),
         HistoryNote::NothingStagedForAmend => {
-            "stage 済みの変更がありません。先に stage するか、メッセージのみの amend を使ってください。".to_string()
+            super::advice_text(Msg::AdviceHistoryNothingStagedForAmend, &[])
         }
         HistoryNote::WrongBranch {
             branch,
             current,
             label,
-        } => format!(
-            "この操作は branch `{}` 上のものです。現在の branch は `{}`。{} するには `{}` に切り替えてください。",
-            branch, current, label.label_en_lower(), branch
+        } => super::advice_text(
+            Msg::AdviceHistoryWrongBranch,
+            &[branch, current, &label.label_en_lower(), branch],
         ),
-        HistoryNote::HeadNotOnBranch { label } => format!(
-            "HEAD が branch を指していません。{} には対象 branch を checkout している必要があります。",
-            label.label_en()
-        ),
+        HistoryNote::HeadNotOnBranch { label } => {
+            super::advice_text(Msg::AdviceHistoryHeadNotOnBranch, &[&label.label_en()])
+        }
         HistoryNote::EntryStaleBranchMoved {
             branch,
             now,
             expected,
-        } => format!(
-            "branch `{}` は操作後に移動しています(現在 {}、想定 {})。古い履歴エントリのためスキップします。",
-            branch, now, expected
+        } => super::advice_text(
+            Msg::AdviceHistoryEntryStaleBranchMoved,
+            &[branch, now, expected],
         ),
         HistoryNote::BranchNoTarget { branch } => {
             format!("branch `{}` に対象 commit がありません。", branch)
         }
         HistoryNote::BranchGone { branch } => format!("branch `{}` はもう存在しません。", branch),
-        HistoryNote::EntryStaleUnreachable { sha } => format!(
-            "対象 commit に到達できません。古い履歴エントリのためスキップします。\ncommit `{}`",
-            sha
-        ),
+        HistoryNote::EntryStaleUnreachable { sha } => {
+            super::advice_text(Msg::AdviceHistoryEntryStaleUnreachable, &[sha])
+        }
         HistoryNote::SoftMovePreservesChanges => {
-            "未 commit の変更はそのまま保持されます。動かすのは branch の参照のみです(soft reset、index と作業ツリーは変更なし)。".to_string()
+            super::advice_text(Msg::AdviceHistorySoftMovePreservesChanges, &[])
         }
     }
 }

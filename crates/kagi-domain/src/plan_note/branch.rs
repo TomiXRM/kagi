@@ -62,29 +62,29 @@ impl BranchNote {
                 format!("Commit '{}' does not exist in this repository.", sha)
             }
             BranchNote::RenameRefOnlyDirty => {
-                "Working tree is dirty; branch rename is ref-only and will not touch files."
-                    .to_string()
+                crate::advice_template_en!(BranchRenameRefOnlyDirty).to_string()
             }
             BranchNote::RenameRemoteNotRenamed => {
-                "Remote branch names are not renamed automatically; only local branch config is carried over.".to_string()
+                crate::advice_template_en!(BranchRenameRemoteNotRenamed).to_string()
             }
             BranchNote::DeleteCurrentBranch { name } => format!(
-                "Branch '{}' is the currently checked-out branch. Checkout a different branch before deleting this one.",
+                crate::advice_template_en!(BranchDeleteCurrentBranch),
                 name
             ),
             BranchNote::DeleteBranchCheckedOut { name, path } => format!(
-                "Branch '{}' is checked out in worktree '{}'. Switch that worktree to another branch before deleting.", name, path
+                crate::advice_template_en!(BranchDeleteBranchCheckedOut),
+                name, path
             ),
             BranchNote::DeleteBranchInLockedWorktree { name, path } => format!(
-                "Branch '{}' is checked out in LOCKED worktree '{}'. Unlock it first (right-click the worktree in the sidebar \u{2192} Unlock worktree) before deleting the branch.",
+                crate::advice_template_en!(BranchDeleteBranchInLockedWorktree),
                 name, path
             ),
             BranchNote::DeleteBranchInDirtyWorktree { name, path } => format!(
-                "Branch '{}' is checked out in worktree '{}' which has uncommitted changes. Commit or discard them there first — the worktree is not removed while it holds work.",
+                crate::advice_template_en!(BranchDeleteBranchInDirtyWorktree),
                 name, path
             ),
             BranchNote::DeleteRemovesPinningWorktree { name, path } => format!(
-                "Branch '{}' is checked out in clean worktree '{}'. The worktree will be removed, then the branch deleted.",
+                crate::advice_template_en!(BranchDeleteRemovesPinningWorktree),
                 name, path
             ),
             BranchNote::DeleteDetachedAtTip { name } => format!(
@@ -96,11 +96,11 @@ impl BranchNote {
                 name, tip, commits
             ),
             BranchNote::DeleteSquashMerged { name, squash } => format!(
-                "Branch '{}' was squash-merged as {}: its commits are not ancestors of HEAD (the graph shows it as a dead end), but the identical change is already there. Nothing is lost by deleting it.",
+                crate::advice_template_en!(BranchDeleteSquashMerged),
                 name, squash
             ),
             BranchNote::DeleteKeepsRemote { name } => format!(
-                "Branch '{}' has an upstream tracking branch. Only the local branch will be deleted; the remote branch is NOT removed.",
+                crate::advice_template_en!(BranchDeleteKeepsRemote),
                 name
             ),
         }

@@ -65,19 +65,18 @@ impl CheckoutNote {
             }
             CheckoutNote::CommitAlreadyHead => "Commit is already HEAD.".to_string(),
             CheckoutNote::CheckoutOverlap { count, files } => format!(
-                "Working tree has local changes to {} file(s) that the target also \
-                 modifies: {}. Safe checkout would be refused (the conflict prevents checkout). \
-                 Stash or commit these changes first.",
+                crate::advice_template_en!(CheckoutCheckoutOverlap),
                 count,
                 files.join(", ")
             ),
-            CheckoutNote::DirtyCarriedOver { parts, branch } => {
-                format!("{} will be carried over to '{}'.", parts.parts_en(), branch)
-            }
-            CheckoutNote::DirtyMayFail { display } => format!(
-                "Working tree is dirty ({}). Safe checkout may fail; stash or commit first.",
-                display
+            CheckoutNote::DirtyCarriedOver { parts, branch } => format!(
+                crate::advice_template_en!(CheckoutDirtyCarriedOver),
+                parts.parts_en(),
+                branch
             ),
+            CheckoutNote::DirtyMayFail { display } => {
+                format!(crate::advice_template_en!(CheckoutDirtyMayFail), display)
+            }
             CheckoutNote::WillDetachHead => crate::advice_template_en!(WillDetachHead).to_string(),
             CheckoutNote::RecommendCreateBranchHereFirst => {
                 crate::advice_template_en!(RecommendCreateBranchHereFirst).to_string()

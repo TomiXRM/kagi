@@ -39,19 +39,15 @@ impl ResetNote {
                 format!("Commit '{}' does not exist in this repository.", sha)
             }
             ResetNote::RefOnlySoftReset => {
-                "This only moves the branch pointer (like `git reset --soft`): the working tree \
-                 and staged changes are left exactly as they are, so this will show up as a \
-                 large diff against the new HEAD, not lost files."
-                    .to_string()
+                crate::advice_template_en!(ResetRefOnlySoftReset).to_string()
             }
             ResetNote::AbandonsCommits { branch, count } => format!(
-                "{} commit(s) will no longer be reachable from '{}' (still recoverable via reflog until GC).",
+                crate::advice_template_en!(ResetAbandonsCommits),
                 count, branch
             ),
-            ResetNote::TargetNotAncestor { branch } => format!(
-                "The target commit is not an ancestor of '{}'. This reassigns the branch to unrelated history rather than moving it back along its own line.",
-                branch
-            ),
+            ResetNote::TargetNotAncestor { branch } => {
+                format!(crate::advice_template_en!(ResetTargetNotAncestor), branch)
+            }
         }
     }
 }

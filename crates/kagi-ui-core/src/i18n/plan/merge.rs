@@ -3,6 +3,33 @@
 
 use kagi_domain::plan_note::{MergeNote, MergeRecovery, MergeTitle};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_MERGE_WILL_CONFLICT: &str =
+    "merge すると {} 件 conflict します。Conflict Mode で解決してください。\nfiles {}";
+pub(crate) const ADVICE_MERGE_UNRELATED_HISTORIES: &str =
+    "`{}` と現在の branch に共通の履歴がありません。--allow-unrelated-histories なしでは拒否されます。";
+pub(crate) const ADVICE_MERGE_OPERATION_IN_PROGRESS: &str =
+    "{} が進行中です。merge の前に完了か中止してください。";
+pub(crate) const ADVICE_MERGE_UNTRACKED_WOULD_BE_OVERWRITTEN: &str =
+    "untracked ファイル {} 件が merge で上書きされます。先に移動か削除してください。\nfiles {}";
+pub(crate) const ADVICE_MERGE_INTO_UNRELATED_HISTORIES: &str =
+    "`{}` と `{}` に共通の履歴がありません。--allow-unrelated-histories なしでは拒否されます。";
+pub(crate) const ADVICE_MERGE_INTO_CHECKED_OUT_ELSEWHERE: &str =
+    "branch は別の worktree で checkout 中です。その worktree 側で merge してください。\nbranch `{}` / worktree `{}`";
+pub(crate) const ADVICE_MERGE_INTO_WOULD_CONFLICT: &str =
+    "`{}` を `{}` に merge すると {} 件 conflict します。解決は作業ツリー上で行うため、`{}` を checkout してから実行してください。";
+pub(crate) const ADVICE_MERGE_INTO_FAST_FORWARD: &str =
+    "`{}` に固有の commit が無いため `{}` へ fast-forward します。ref が動くだけで merge commit は作られません。";
+pub(crate) const ADVICE_MERGE_INTO_WORKING_TREE_UNTOUCHED: &str =
+    "作業ツリーには触れません。`{}` は checkout されたまま、ディスク上のファイルは変わりません。";
+pub(crate) const ADVICE_MERGE_INTO_CREATES_LOCAL_BRANCH: &str =
+    "ローカルに `{}` が無いため `{}` の先頭に作成して merge します。push はしません。remote 側の `{}` は変わりません。";
+pub(crate) const ADVICE_MERGE_INTO_REMOTE_SOURCE: &str =
+    "remote-tracking ref `{}` (tip: {}) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。";
+pub(crate) const ADVICE_MERGE_INTO_LOCAL_DIFFERS_FROM_REMOTE: &str =
+    "ローカルの `{}` は `{}` と位置が異なります。merge はローカル branch に対して行われ、remote の ref は触れません。";
+
 /// Capped file list (issue #301): shown names joined by `", "`, with
 /// "他 N 件" appended when the true `count` exceeds what is shown. Empty list
 /// renders "(不明なファイル)".
@@ -32,32 +59,29 @@ pub fn note_ja(note: &MergeNote) -> String {
             "現在の branch `{}` はすでに `{}` を含んでいます。merge 対象がありません。",
             current, target
         ),
-        MergeNote::WillConflict { count, files } => format!(
-            "merge すると {} 件 conflict します。Conflict Mode で解決してください。\nfiles {}",
-            count,
-            capped_files_ja(*count, files)
-        ),
-        MergeNote::UnrelatedHistories { target } => format!(
-            "`{}` と現在の branch に共通の履歴がありません。--allow-unrelated-histories なしでは拒否されます。",
-            target
-        ),
-        MergeNote::OperationInProgress { op } => format!(
-            "{} が進行中です。merge の前に完了か中止してください。",
-            op.label_ja()
-        ),
-        MergeNote::UntrackedWouldBeOverwritten { count, files } => format!(
-            "untracked ファイル {} 件が merge で上書きされます。先に移動か削除してください。\nfiles {}",
-            count,
-            capped_files_ja(*count, files)
-        ),
-        MergeNote::IntoUnrelatedHistories { target, source } => format!(
-            "`{}` と `{}` に共通の履歴がありません。--allow-unrelated-histories なしでは拒否されます。",
-            source, target
-        ),
-        MergeNote::IntoCheckedOutElsewhere { target, worktree } => format!(
-            "branch は別の worktree で checkout 中です。その worktree 側で merge してください。\nbranch `{}` / worktree `{}`",
-            target, worktree
-        ),
+        MergeNote::WillConflict { count, files } => {
+            let files_label = capped_files_ja(*count, files);
+            super::advice_text(Msg::AdviceMergeWillConflict, &[count, &files_label])
+        }
+        MergeNote::UnrelatedHistories { target } => {
+            super::advice_text(Msg::AdviceMergeUnrelatedHistories, &[target])
+        }
+        MergeNote::OperationInProgress { op } => {
+            super::advice_text(Msg::AdviceMergeOperationInProgress, &[&op.label_ja()])
+        }
+        MergeNote::UntrackedWouldBeOverwritten { count, files } => {
+            let files_label = capped_files_ja(*count, files);
+            super::advice_text(
+                Msg::AdviceMergeUntrackedWouldBeOverwritten,
+                &[count, &files_label],
+            )
+        }
+        MergeNote::IntoUnrelatedHistories { target, source } => {
+            super::advice_text(Msg::AdviceMergeIntoUnrelatedHistories, &[source, target])
+        }
+        MergeNote::IntoCheckedOutElsewhere { target, worktree } => {
+            super::advice_text(Msg::AdviceMergeIntoCheckedOutElsewhere, &[target, worktree])
+        }
         MergeNote::IntoAlreadyContains { target, source } => format!(
             "branch `{}` はすでに `{}` を含んでいます。merge 対象がありません。",
             target, source
@@ -66,27 +90,27 @@ pub fn note_ja(note: &MergeNote) -> String {
             target,
             source,
             count,
-        } => format!(
-            "`{}` を `{}` に merge すると {} 件 conflict します。解決は作業ツリー上で行うため、`{}` を checkout してから実行してください。",
-            source, target, count, target
+        } => super::advice_text(
+            Msg::AdviceMergeIntoWouldConflict,
+            &[source, target, count, target],
         ),
-        MergeNote::IntoFastForward { target, source } => format!(
-            "`{}` に固有の commit が無いため `{}` へ fast-forward します。ref が動くだけで merge commit は作られません。",
-            target, source
+        MergeNote::IntoFastForward { target, source } => {
+            super::advice_text(Msg::AdviceMergeIntoFastForward, &[target, source])
+        }
+        MergeNote::IntoRemoteSource { reference, tip } => {
+            super::advice_text(Msg::AdviceMergeIntoRemoteSource, &[reference, tip])
+        }
+        MergeNote::IntoCreatesLocalBranch { local, remote_ref } => super::advice_text(
+            Msg::AdviceMergeIntoCreatesLocalBranch,
+            &[local, remote_ref, remote_ref],
         ),
-        MergeNote::IntoRemoteSource { reference, tip } => format!("remote-tracking ref `{reference}` (tip: {tip}) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。"),
-        MergeNote::IntoCreatesLocalBranch { local, remote_ref } => format!(
-            "ローカルに `{}` が無いため `{}` の先頭に作成して merge します。push はしません。remote 側の `{}` は変わりません。",
-            local, remote_ref, remote_ref
+        MergeNote::IntoLocalDiffersFromRemote { local, remote_ref } => super::advice_text(
+            Msg::AdviceMergeIntoLocalDiffersFromRemote,
+            &[local, remote_ref],
         ),
-        MergeNote::IntoLocalDiffersFromRemote { local, remote_ref } => format!(
-            "ローカルの `{}` は `{}` と位置が異なります。merge はローカル branch に対して行われ、remote の ref は触れません。",
-            local, remote_ref
-        ),
-        MergeNote::IntoWorkingTreeUntouched { current } => format!(
-            "作業ツリーには触れません。`{}` は checkout されたまま、ディスク上のファイルは変わりません。",
-            current
-        ),
+        MergeNote::IntoWorkingTreeUntouched { current } => {
+            super::advice_text(Msg::AdviceMergeIntoWorkingTreeUntouched, &[current])
+        }
         MergeNote::NoChanges { target } => {
             format!("`{}` を merge しても変更はありません。", target)
         }

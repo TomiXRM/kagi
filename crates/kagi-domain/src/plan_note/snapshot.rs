@@ -27,15 +27,10 @@ impl SnapshotNote {
                 format!("Snapshot '{}' does not exist in this repository.", id)
             }
             SnapshotNote::SavepointFirst => {
-                "A snapshot of your current working tree is taken first, so this restore can \
-                 itself be undone by restoring that savepoint."
-                    .to_string()
+                crate::advice_template_en!(SnapshotSavepointFirst).to_string()
             }
             SnapshotNote::RewritesWorkingTree => {
-                "This makes your working tree match the snapshot: tracked files are overwritten \
-                 and the files it recorded are re-created. Your current state is saved as a \
-                 savepoint first, so this is recoverable."
-                    .to_string()
+                crate::advice_template_en!(SnapshotRewritesWorkingTree).to_string()
             }
         }
     }

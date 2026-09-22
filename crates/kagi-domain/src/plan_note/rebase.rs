@@ -33,7 +33,7 @@ impl RebaseNote {
                 "HEAD is detached. Rebase requires an attached branch.".to_string()
             }
             RebaseNote::DirtyWorkingTree => {
-                "Working tree has uncommitted changes. Commit, stash, or discard them before rebasing.".to_string()
+                crate::advice_template_en!(RebaseDirtyWorkingTree).to_string()
             }
             RebaseNote::InvalidOnto { onto } => {
                 format!("'{}' does not resolve to a branch or commit.", onto)
@@ -42,10 +42,7 @@ impl RebaseNote {
                 "'{}' is already up to date with '{}'. Nothing to rebase.",
                 branch, onto
             ),
-            RebaseNote::MayConflict => {
-                "Rebase may stop partway through with a conflict. Resolve each conflicted commit in the conflict editor, then Continue; the sequence keeps replaying until it finishes."
-                    .to_string()
-            }
+            RebaseNote::MayConflict => crate::advice_template_en!(RebaseMayConflict).to_string(),
         }
     }
 }

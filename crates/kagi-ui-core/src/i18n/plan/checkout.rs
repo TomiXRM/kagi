@@ -21,6 +21,13 @@ pub(crate) const ADVICE_WILL_DETACH_HEAD: &str =
 pub(crate) const ADVICE_RECOMMEND_CREATE_BRANCH_HERE_FIRST: &str =
     "Create branch here を先に使うことを推奨します。";
 
+pub(crate) const ADVICE_CHECKOUT_CHECKOUT_OVERLAP: &str =
+    "ローカルに、切り替え先も変更する {} 件のファイルの変更があります。先に stash か commit してください。\nfiles {}";
+pub(crate) const ADVICE_CHECKOUT_DIRTY_CARRIED_OVER: &str =
+    "{}は切り替え先に引き継がれます。\nbranch `{}`";
+pub(crate) const ADVICE_CHECKOUT_DIRTY_MAY_FAIL: &str =
+    "作業ツリーが dirty です({})。checkout に失敗する場合があります。先に stash か commit してください。";
+
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; kept local since `CheckoutNote` is
 /// the only checkout-category note that needs it).
@@ -42,18 +49,17 @@ pub fn note_ja(note: &CheckoutNote) -> String {
             format!("すでに現在の branch です。\nbranch `{}`", branch)
         }
         CheckoutNote::CommitAlreadyHead => "この commit はすでに HEAD です。".to_string(),
-        CheckoutNote::CheckoutOverlap { count, files } => format!(
-            "ローカルに、切り替え先も変更する {} 件のファイルの変更があります。先に stash か commit してください。\nfiles {}",
-            count,
-            files.join(", ")
+        CheckoutNote::CheckoutOverlap { count, files } => super::advice_text(
+            Msg::AdviceCheckoutCheckoutOverlap,
+            &[count, &files.join(", ")],
         ),
-        CheckoutNote::DirtyCarriedOver { parts, branch } => {
-            format!("{}は切り替え先に引き継がれます。\nbranch `{}`", parts_ja(parts), branch)
+        CheckoutNote::DirtyCarriedOver { parts, branch } => super::advice_text(
+            Msg::AdviceCheckoutDirtyCarriedOver,
+            &[&parts_ja(parts), branch],
+        ),
+        CheckoutNote::DirtyMayFail { display } => {
+            super::advice_text(Msg::AdviceCheckoutDirtyMayFail, &[display])
         }
-        CheckoutNote::DirtyMayFail { display } => format!(
-            "作業ツリーが dirty です({})。checkout に失敗する場合があります。先に stash か commit してください。",
-            display
-        ),
         CheckoutNote::WillDetachHead => super::advice_text(Msg::AdviceWillDetachHead, &[]),
         CheckoutNote::RecommendCreateBranchHereFirst => {
             super::advice_text(Msg::AdviceRecommendCreateBranchHereFirst, &[])

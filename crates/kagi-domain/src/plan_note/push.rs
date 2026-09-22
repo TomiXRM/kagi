@@ -57,11 +57,9 @@ impl PushNote {
                     crate::advice_template_en!(NoForceUsedSemicolon).to_string()
                 }
             },
-            PushNote::NoUpstreamNoRemotes { branch } => format!(
-                "No upstream configured for branch '{}' and no remotes exist. \
-                 Add a remote with `git remote add origin <url>`.",
-                branch
-            ),
+            PushNote::NoUpstreamNoRemotes { branch } => {
+                format!(crate::advice_template_en!(PushNoUpstreamNoRemotes), branch)
+            }
             PushNote::NoUpstreamWithErr { branch, err } => {
                 format!("No upstream configured for branch '{}': {}.", branch, err)
             }
@@ -76,10 +74,10 @@ impl PushNote {
                 ),
             },
             PushNote::UpstreamFormatInvalid => {
-                "Upstream must be a remote branch name like origin/main.".to_string()
+                crate::advice_template_en!(PushUpstreamFormatInvalid).to_string()
             }
             PushNote::UpstreamNotPresentLocally { upstream } => format!(
-                "Remote-tracking branch '{}' is not present locally; config can still be set.",
+                crate::advice_template_en!(PushUpstreamNotPresentLocally),
                 upstream
             ),
         }

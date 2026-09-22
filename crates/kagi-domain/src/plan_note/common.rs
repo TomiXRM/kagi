@@ -172,12 +172,12 @@ impl CommonNote {
     pub fn message_en(&self) -> String {
         match self {
             CommonNote::ConflictedFiles { count, before } => format!(
-                "Repository has {} conflicted file(s). Resolve conflicts before {}.",
+                crate::advice_template_en!(CommonConflictedFiles),
                 count,
                 before.phrase_en()
             ),
             CommonNote::DirtyBlocksOp { parts, before } => format!(
-                "Working tree has {} — stash or commit changes before {}.",
+                crate::advice_template_en!(CommonDirtyBlocksOp),
                 parts.parts_en(),
                 before.phrase_en()
             ),
@@ -195,10 +195,9 @@ impl CommonNote {
                     crate::advice_template_en!(UntrackedAfterSwitchingBranches),
                     count
                 ),
-                UntrackedCtx::AfterCherryPick => format!(
-                    crate::advice_template_en!(UntrackedAfterCherryPick),
-                    count
-                ),
+                UntrackedCtx::AfterCherryPick => {
+                    format!(crate::advice_template_en!(UntrackedAfterCherryPick), count)
+                }
                 UntrackedCtx::AfterRevert => {
                     format!(crate::advice_template_en!(UntrackedAfterRevert), count)
                 }
@@ -211,24 +210,17 @@ impl CommonNote {
                 }
             },
             CommonNote::DirtyRollbackHint { parts, op } => format!(
-                "Working tree has {}. Stash or commit before {} if you want a clean rollback point.",
+                crate::advice_template_en!(CommonDirtyRollbackHint),
                 parts.parts_en(),
                 op.phrase_en()
             ),
             CommonNote::PartialCloneObjectMissing { detail } => format!(
-                "This repository is a partial clone and the object this needs \
-                 has not been fetched yet, so Kagi cannot read it ({}). Run \
-                 `git fetch` in the repository to download it; `git` fetches \
-                 missing objects on demand, and Kagi does not.",
+                crate::advice_template_en!(CommonPartialCloneObjectMissing),
                 detail
             ),
-            CommonNote::SparseExcludedPath { path } => format!(
-                "'{}' is excluded by sparse-checkout, so it is absent from the \
-                 working tree on purpose — not deleted. Staging it would record \
-                 a deletion you did not make. Git refuses this too; widen the \
-                 sparse-checkout definition first if you meant to change it.",
-                path
-            ),
+            CommonNote::SparseExcludedPath { path } => {
+                format!(crate::advice_template_en!(CommonSparseExcludedPath), path)
+            }
             CommonNote::HeadDetached { op } => match op {
                 PlanOp::Undo => {
                     "HEAD is detached. Undo commit requires HEAD to be on a branch.".to_string()
@@ -250,7 +242,9 @@ impl CommonNote {
                 PlanOp::Push => {
                     "HEAD is detached. Push is only supported when HEAD is on a branch.".to_string()
                 }
-                PlanOp::Merge => "HEAD is detached. Merge is only supported on a branch.".to_string(),
+                PlanOp::Merge => {
+                    "HEAD is detached. Merge is only supported on a branch.".to_string()
+                }
             },
             CommonNote::HeadUnborn { op } => match op {
                 PlanOp::Undo => {
@@ -286,13 +280,10 @@ impl CommonNote {
             CommonNote::GitErrorPassthrough { message } => message.clone(),
             CommonNote::BranchNameErrorKeyed(e) => e.to_string(),
             CommonNote::WorktreePathErrorKeyed(e) => e.to_string(),
-            CommonNote::DirtyStashFirst => {
-                crate::advice_template_en!(DirtyStashFirst).to_string()
+            CommonNote::DirtyStashFirst => crate::advice_template_en!(DirtyStashFirst).to_string(),
+            CommonNote::MergeConflictWarning => {
+                crate::advice_template_en!(CommonMergeConflictWarning).to_string()
             }
-            CommonNote::MergeConflictWarning => "This merge will produce conflicts. It will \
-                 leave conflict markers and enter Conflict Mode, where you resolve each file (or \
-                 abort to restore the pre-merge state)."
-                .to_string(),
         }
     }
 }

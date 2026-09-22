@@ -5,6 +5,15 @@ use kagi_domain::plan_note::{
     CherryRevertNote, CherryRevertRecovery, CherryRevertTitle, DirtyParts, PlanOp,
 };
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_CHERRY_REVERT_WOULD_CONFLICT_CHERRY_PICK: &str =
+    "cherry-pick すると {} 件 conflict します。先に解決してください。\nfiles {}";
+pub(crate) const ADVICE_CHERRY_REVERT_WOULD_CONFLICT_REVERT: &str =
+    "revert すると {} 件 conflict します。先に解決してください。\nfiles {}";
+pub(crate) const ADVICE_CHERRY_REVERT_DIRTY_MAY_REFUSE: &str =
+    "作業ツリーに{}があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。";
+
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA (mirrors
 /// `i18n::plan::common::parts_ja`; kept local since that helper is private to
 /// its own module).
@@ -42,13 +51,13 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
         CherryRevertNote::WouldConflict { count, files, op } => {
             let joined = files.join(", ");
             match op {
-                PlanOp::CherryPick => format!(
-                    "cherry-pick すると {} 件 conflict します。先に解決してください。\nfiles {}",
-                    count, joined
+                PlanOp::CherryPick => super::advice_text(
+                    Msg::AdviceCherryRevertWouldConflictCherryPick,
+                    &[count, &joined],
                 ),
-                PlanOp::Revert => format!(
-                    "revert すると {} 件 conflict します。先に解決してください。\nfiles {}",
-                    count, joined
+                PlanOp::Revert => super::advice_text(
+                    Msg::AdviceCherryRevertWouldConflictRevert,
+                    &[count, &joined],
                 ),
                 _ => unreachable!("CherryRevertNote::WouldConflict only uses CherryPick/Revert"),
             }
@@ -65,10 +74,13 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
             "現在の branch に含まれていません。revert は現在の branch 上の commit のみが対象です。\ncommit `{}`",
             sha
         ),
-        CherryRevertNote::DirtyMayRefuse { parts } => format!(
-            "作業ツリーに{}があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。",
-            parts_ja(parts)
-        ),
+        CherryRevertNote::DirtyMayRefuse { parts } => {
+            let parts_label = parts_ja(parts);
+            super::advice_text(
+                Msg::AdviceCherryRevertDirtyMayRefuse,
+                &[&parts_label],
+            )
+        }
     }
 }
 

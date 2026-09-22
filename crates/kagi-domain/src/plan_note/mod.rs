@@ -16,6 +16,7 @@
 //! fills its own `plan_note/<category>.rs` enum and never touches this
 //! dispatch file.
 
+mod advice;
 pub mod branch;
 pub mod checklist;
 pub mod checkout;
@@ -67,80 +68,6 @@ pub use stash::{StashNote, StashRecovery, StashTitle};
 pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
 pub use tag::{TagNote, TagRecovery, TagTitle};
 pub use worktree::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
-
-/// English advice templates shared by domain renderers and `Msg` (#353).
-///
-/// Literal expansion preserves `format!`'s compile-time argument checks and
-/// keeps the English wording in one place, without runtime parsing.
-/// Positional holes use the domain renderer's argument order. Zero-argument
-/// tags are plain text: `DirtyStashFirst` contains literal `stash@{0}`.
-#[macro_export]
-macro_rules! advice_template_en {
-    // §A4–A10 — `CommonNote::UntrackedRemain` (one tag per `UntrackedCtx`).
-    (UntrackedAfterCheckout) => {
-        "{} untracked file(s) will remain after checkout."
-    };
-    (UntrackedAfterSwitching) => {
-        "{} untracked file(s) will remain after switching."
-    };
-    (UntrackedAfterSwitchingBranches) => {
-        "{} untracked file(s) will remain after switching branches."
-    };
-    (UntrackedAfterCherryPick) => {
-        "{} untracked file(s) will remain untouched after cherry-pick."
-    };
-    (UntrackedAfterRevert) => {
-        "{} untracked file(s) will remain untouched after revert."
-    };
-    (UntrackedPullFetchMayTouch) => {
-        "{} untracked file(s) will remain untouched unless fetched changes need the same path."
-    };
-    (UntrackedUntouched) => {
-        "{} untracked file(s) will remain untouched."
-    };
-    // §A3 — `CommonNote::SuggestStashPush`.
-    (SuggestStashPush) => {
-        "Suggested command: git stash push -u"
-    };
-    // `PushNote::NoForceUsed` — one tag per `PushPunct`.
-    (NoForceUsedEmDash) => {
-        "Non-fast-forward pushes will fail — force is not used."
-    };
-    (NoForceUsedSemicolon) => {
-        "Non-fast-forward pushes will fail; force is not used."
-    };
-    // `CheckoutNote` §G-1 pair.
-    (WillDetachHead) => {
-        "This will leave you in a detached HEAD state. \
-         Create a branch first if you want to keep new work."
-    };
-    (RecommendCreateBranchHereFirst) => {
-        "Using 'Create branch here' first is recommended."
-    };
-    // §F-6 — `CommonNote::DirtyStashFirst` (contains a literal `{0}`).
-    (DirtyStashFirst) => {
-        "Working tree is dirty: confirming will stash your \
-         changes first (saved to stash@{0}, restore with `git stash pop`)"
-    };
-    // `PullNote::AutoStash` — the hole is the joined change summary.
-    (PullAutoStash) => {
-        "Working tree has {}. Kagi will stash these changes, pull, then restore them. If restoration conflicts, the stash is kept."
-    };
-    // `SwitchNote::DivergedSwitchOnly` — name, remote, ahead, behind.
-    (DivergedSwitchOnly) => {
-        "'{}' has diverged from {} ({} ahead, {} behind); switching only — \
-         merge or rebase to integrate."
-    };
-    // `BranchNote::DeleteUnmerged` — name, tip, commits.
-    (DeleteUnmerged) => {
-        "Branch '{}' is unmerged (tip {}). Deleting it makes {} commits unreachable from other refs; a recovery ref will retain them. Confirm twice to delete."
-    };
-    // `StashNote::UntrackedExcluded` — count.
-    (UntrackedExcluded) => {
-        "{} untracked file(s) will NOT be included in the stash \
-         (include_untracked=false). They will remain in the working tree."
-    };
-}
 
 /// Category-nested note shown in the plan modal's blockers/warnings lists
 /// (ADR-0129 §1). Flat 100+-variant enums are forbidden — one variant space

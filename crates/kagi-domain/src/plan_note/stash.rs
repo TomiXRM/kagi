@@ -84,11 +84,9 @@ impl StashNote {
             StashNote::NothingToStash => "Nothing to stash: working tree is already clean \
                  (no staged, modified, or untracked files)."
                 .to_string(),
-            StashNote::UntrackedIncluded { count } => format!(
-                "{} untracked file(s) will be included in the stash \
-                 (equivalent to `git stash push -u`).",
-                count
-            ),
+            StashNote::UntrackedIncluded { count } => {
+                format!(crate::advice_template_en!(StashUntrackedIncluded), count)
+            }
             StashNote::UntrackedExcluded { count } => {
                 format!(crate::advice_template_en!(UntrackedExcluded), count)
             }
@@ -104,64 +102,49 @@ impl StashNote {
                     StashDirtyOp::Pop => "pop",
                 };
                 format!(
-                    "Working tree is dirty ({}) — stash {} is only allowed on a clean \
-                     working tree to prevent accidental merge conflicts.",
+                    crate::advice_template_en!(StashDirtyBlocksApply),
                     parts.parts_en(),
                     op_word
                 )
             }
             StashNote::PopWouldConflict { count, files } => {
                 let files_label = if files.is_empty() {
-                    "(unknown files)".to_string()
+                    crate::advice_template_en!(StashConflictUnknownFiles).to_string()
                 } else {
                     files.join(", ")
                 };
                 format!(
-                    "Stash pop will conflict in {} file(s): {}. \
-                     The stash entry will be KEPT — resolve the conflicts, \
-                     then drop the stash manually.",
+                    crate::advice_template_en!(StashPopWouldConflict),
                     count, files_label
                 )
             }
             StashNote::ApplyWouldConflict { count, files } => {
                 let files_label = if files.is_empty() {
-                    "(unknown files)".to_string()
+                    crate::advice_template_en!(StashConflictUnknownFiles).to_string()
                 } else {
                     files.join(", ")
                 };
                 format!(
-                    "Stash apply will conflict in {} file(s): {}. \
-                     The stash entry stays in the list — resolve the conflicts \
-                     in the working tree.",
+                    crate::advice_template_en!(StashApplyWouldConflict),
                     count, files_label
                 )
             }
             StashNote::ApplyPredictionUnavailable { reason } => format!(
-                "Could not verify whether the stash applies cleanly ({}). \
-                 Apply keeps the stash entry, so it is safe to try — \
-                 if it conflicts, resolve the conflicts and the stash remains.",
+                crate::advice_template_en!(StashApplyPredictionUnavailable),
                 reason
             ),
             StashNote::PopPredictionUnavailable { reason } => format!(
-                "Could not verify whether the stash applies cleanly ({}). \
-                 Pop is blocked because it deletes the stash entry. \
-                 Use 'Stash Apply' instead: it applies the stash without removing it.",
+                crate::advice_template_en!(StashPopPredictionUnavailable),
                 reason
             ),
             StashNote::RemoteDropIrreversible => {
-                "This permanently removes the stash entry on the remote host. \
-                 It cannot be undone from Kagi."
-                    .to_string()
+                crate::advice_template_en!(StashRemoteDropIrreversible).to_string()
             }
             StashNote::TargetChanged { index, expected } => format!(
-                "stash@{{{}}} is no longer the approved entry {}: another stash \
-                 now occupies that position. Nothing was changed — re-plan \
-                 before proceeding.",
+                crate::advice_template_en!(StashTargetChanged),
                 index, expected
             ),
-            StashNote::ListChanged => "The stash list changed since planning \
-                 (order or entries differ). Nothing was changed — re-plan before proceeding."
-                .to_string(),
+            StashNote::ListChanged => crate::advice_template_en!(StashListChanged).to_string(),
         }
     }
 }

@@ -18,6 +18,25 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_DELETE_UNMERGED: &str =
     "未 merge の branch です。削除すると {} commit が他の ref から到達不能になりますが、復元用 ref で保持します。2 回確認すると削除します。\nbranch `{}` / 先端 `{}`";
 
+pub(crate) const ADVICE_BRANCH_RENAME_REF_ONLY_DIRTY: &str =
+    "リネームは ref だけを変更します。作業ツリーは変わりません。";
+pub(crate) const ADVICE_BRANCH_RENAME_REMOTE_NOT_RENAMED: &str =
+    "remote branch はリネームされません。local の設定だけ引き継ぎます。";
+pub(crate) const ADVICE_BRANCH_DELETE_CURRENT_BRANCH: &str =
+    "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`";
+pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_CHECKED_OUT: &str =
+    "ブランチ '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別のブランチへ切り替えてください。";
+pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_LOCKED_WORKTREE: &str =
+    "ロックされた worktree で checkout 中です。先にロックを解除してください。\nbranch `{}` / worktree `{}`";
+pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_DIRTY_WORKTREE: &str =
+    "worktree に未 commit の変更があります。先に commit か破棄してください。\nbranch `{}` / worktree `{}`";
+pub(crate) const ADVICE_BRANCH_DELETE_REMOVES_PINNING_WORKTREE: &str =
+    "clean な worktree で checkout 中です。worktree を削除してから branch を削除します。\nbranch `{}` / worktree `{}`";
+pub(crate) const ADVICE_BRANCH_DELETE_SQUASH_MERGED: &str =
+    "squash merge 済みです。変更は取り込み済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`";
+pub(crate) const ADVICE_BRANCH_DELETE_KEEPS_REMOTE: &str =
+    "削除するのは local branch だけです。remote は残ります。\nbranch `{}`";
+
 /// Japanese rendering of one branch note.
 pub fn note_ja(note: &BranchNote) -> String {
     match note {
@@ -25,30 +44,26 @@ pub fn note_ja(note: &BranchNote) -> String {
             format!("commit がありません。\ncommit `{}`", sha)
         }
         BranchNote::RenameRefOnlyDirty => {
-            "リネームは ref だけを変更します。作業ツリーは変わりません。".to_string()
+            super::advice_text(Msg::AdviceBranchRenameRefOnlyDirty, &[])
         }
         BranchNote::RenameRemoteNotRenamed => {
-            "remote branch はリネームされません。local の設定だけ引き継ぎます。".to_string()
+            super::advice_text(Msg::AdviceBranchRenameRemoteNotRenamed, &[])
         }
-        BranchNote::DeleteCurrentBranch { name } => format!(
-            "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`",
-            name
-        ),
-        BranchNote::DeleteBranchCheckedOut { name, path } => format!(
-            "ブランチ '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別のブランチへ切り替えてください。", name, path
-        ),
-        BranchNote::DeleteBranchInLockedWorktree { name, path } => format!(
-            "ロックされた worktree で checkout 中です。先にロックを解除してください。\nbranch `{}` / worktree `{}`",
-            name, path
-        ),
-        BranchNote::DeleteBranchInDirtyWorktree { name, path } => format!(
-            "worktree に未 commit の変更があります。先に commit か破棄してください。\nbranch `{}` / worktree `{}`",
-            name, path
-        ),
-        BranchNote::DeleteRemovesPinningWorktree { name, path } => format!(
-            "clean な worktree で checkout 中です。worktree を削除してから branch を削除します。\nbranch `{}` / worktree `{}`",
-            name, path
-        ),
+        BranchNote::DeleteCurrentBranch { name } => {
+            super::advice_text(Msg::AdviceBranchDeleteCurrentBranch, &[name])
+        }
+        BranchNote::DeleteBranchCheckedOut { name, path } => {
+            super::advice_text(Msg::AdviceBranchDeleteBranchCheckedOut, &[name, path])
+        }
+        BranchNote::DeleteBranchInLockedWorktree { name, path } => {
+            super::advice_text(Msg::AdviceBranchDeleteBranchInLockedWorktree, &[name, path])
+        }
+        BranchNote::DeleteBranchInDirtyWorktree { name, path } => {
+            super::advice_text(Msg::AdviceBranchDeleteBranchInDirtyWorktree, &[name, path])
+        }
+        BranchNote::DeleteRemovesPinningWorktree { name, path } => {
+            super::advice_text(Msg::AdviceBranchDeleteRemovesPinningWorktree, &[name, path])
+        }
         BranchNote::DeleteDetachedAtTip { name } => format!(
             "HEAD がこの branch の先端を指しています(detached)。削除できません。\nbranch `{}`",
             name
@@ -56,14 +71,12 @@ pub fn note_ja(note: &BranchNote) -> String {
         BranchNote::DeleteUnmerged { name, tip, commits } => {
             super::advice_text(Msg::AdviceDeleteUnmerged, &[commits, name, tip])
         }
-        BranchNote::DeleteSquashMerged { name, squash } => format!(
-            "squash merge 済みです。変更は取り込み済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`",
-            name, squash
-        ),
-        BranchNote::DeleteKeepsRemote { name } => format!(
-            "削除するのは local branch だけです。remote は残ります。\nbranch `{}`",
-            name
-        ),
+        BranchNote::DeleteSquashMerged { name, squash } => {
+            super::advice_text(Msg::AdviceBranchDeleteSquashMerged, &[name, squash])
+        }
+        BranchNote::DeleteKeepsRemote { name } => {
+            super::advice_text(Msg::AdviceBranchDeleteKeepsRemote, &[name])
+        }
     }
 }
 

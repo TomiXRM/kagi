@@ -29,20 +29,19 @@ impl ChecklistNote {
     pub fn message_en(&self) -> String {
         match self {
             ChecklistNote::PossibleSecretFileStaged { path } => format!(
-                "Possible secret file staged: {} — confirm before committing.",
+                crate::advice_template_en!(ChecklistPossibleSecretFileStaged),
                 path
             ),
             ChecklistNote::LargeBinaryStaged { path, size } => format!(
-                "Large binary file staged: {} ({}). Confirm before committing.",
+                crate::advice_template_en!(ChecklistLargeBinaryStaged),
                 path, size
             ),
             ChecklistNote::ConflictMarkerFound { path } => format!(
-                "Conflict marker found in staged file: {}. \
-                 Resolve the merge conflict before committing.",
+                crate::advice_template_en!(ChecklistConflictMarkerFound),
                 path
             ),
             ChecklistNote::PossibleSecretContentStaged { path } => format!(
-                "Possible secret content in staged file: {} — confirm before committing.",
+                crate::advice_template_en!(ChecklistPossibleSecretContentStaged),
                 path
             ),
         }

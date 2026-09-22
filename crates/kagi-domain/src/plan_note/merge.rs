@@ -118,7 +118,7 @@ impl MergeNote {
                 current, target
             ),
             MergeNote::IntoCheckedOutElsewhere { target, worktree } => format!(
-                "Branch '{}' is checked out in the worktree '{}'. Merging into it from here would move its ref out from under that worktree, leaving its files and index describing a different commit. Merge from that worktree instead.",
+                crate::advice_template_en!(MergeIntoCheckedOutElsewhere),
                 target, worktree
             ),
             MergeNote::IntoAlreadyContains { target, source } => format!(
@@ -130,51 +130,53 @@ impl MergeNote {
                 source,
                 count,
             } => format!(
-                "Merging '{}' into '{}' conflicts in {} file(s). Conflicts are resolved in the working tree, so this one needs '{}' checked out first.",
+                crate::advice_template_en!(MergeIntoWouldConflict),
                 source, target, count, target
             ),
             MergeNote::IntoFastForward { target, source } => format!(
-                "'{}' has no commits of its own, so it fast-forwards to '{}'. Its ref moves; no merge commit is written.",
+                crate::advice_template_en!(MergeIntoFastForward),
                 target, source
             ),
-            MergeNote::IntoRemoteSource { reference, tip } => format!("Remote-tracking ref '{reference}' at {tip} reflects the last fetch and may be stale. No fetch is performed; no local source branch is created."),
+            MergeNote::IntoRemoteSource { reference, tip } => format!(
+                crate::advice_template_en!(MergeIntoRemoteSource),
+                reference, tip
+            ),
             MergeNote::IntoCreatesLocalBranch { local, remote_ref } => format!(
-                "There is no local '{}' yet, so one is created at '{}' and the merge lands on it. Nothing is pushed; '{}' on the remote is unchanged.",
+                crate::advice_template_en!(MergeIntoCreatesLocalBranch),
                 local, remote_ref, remote_ref
             ),
             MergeNote::IntoLocalDiffersFromRemote { local, remote_ref } => format!(
-                "Local '{}' is not at '{}'. The merge lands on your local branch; the remote ref is not read or written.",
+                crate::advice_template_en!(MergeIntoLocalDiffersFromRemote),
                 local, remote_ref
             ),
             MergeNote::IntoWorkingTreeUntouched { current } => format!(
-                "Your working tree is not touched: '{}' stays checked out, and no file on disk changes.",
+                crate::advice_template_en!(MergeIntoWorkingTreeUntouched),
                 current
             ),
             MergeNote::WillConflict { count, files } => {
                 let files_label = capped_files_en(*count, files);
                 format!(
-                    "Merge will produce {} conflict(s): {}. You will resolve them in Conflict Mode.",
+                    crate::advice_template_en!(MergeWillConflict),
                     count, files_label
                 )
             }
             MergeNote::NoChanges { target } => {
                 format!("Merging '{}' would produce no changes.", target)
             }
-            MergeNote::UnrelatedHistories { target } => format!(
-                "'{}' and the current branch have no common history. git refuses this without --allow-unrelated-histories; merging unrelated trees is almost always a mistake.",
-                target
-            ),
+            MergeNote::UnrelatedHistories { target } => {
+                format!(crate::advice_template_en!(MergeUnrelatedHistories), target)
+            }
             MergeNote::OperationInProgress { op } => format!(
-                "{} is already in progress. Finish or abort it before merging.",
+                crate::advice_template_en!(MergeOperationInProgress),
                 op.label_en()
             ),
             MergeNote::UntrackedWouldBeOverwritten { count, files } => format!(
-                "{} untracked file(s) would be overwritten by merge: {}. Move or remove them first.",
+                crate::advice_template_en!(MergeUntrackedWouldBeOverwritten),
                 count,
                 capped_files_en(*count, files)
             ),
             MergeNote::IntoUnrelatedHistories { target, source } => format!(
-                "'{}' and '{}' have no common history. git refuses this without --allow-unrelated-histories; merging unrelated trees is almost always a mistake.",
+                crate::advice_template_en!(MergeIntoUnrelatedHistories),
                 source, target
             ),
         }

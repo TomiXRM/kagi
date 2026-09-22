@@ -11,6 +11,26 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_UNTRACKED_EXCLUDED: &str =
     "未追跡ファイル {} 件は stash に含めません。作業ツリーに残ります。";
 
+pub(crate) const ADVICE_STASH_UNTRACKED_INCLUDED: &str =
+    "未追跡ファイル {} 件も stash に含めます(git stash push -u 相当)。";
+pub(crate) const ADVICE_STASH_DIRTY_BLOCKS_APPLY: &str =
+    "作業ツリーに{}があります。意図しない conflict を防ぐため、stash {} はクリーンな作業ツリーでのみ実行できます。";
+pub(crate) const ADVICE_STASH_CONFLICT_UNKNOWN_FILES: &str = "(不明なファイル)";
+pub(crate) const ADVICE_STASH_POP_WOULD_CONFLICT: &str =
+    "stash pop すると {} 件が conflict します。stash entry は保持されるので、解決後に手動で drop してください。\nfiles {}";
+pub(crate) const ADVICE_STASH_APPLY_WOULD_CONFLICT: &str =
+    "stash apply すると {} 件が conflict します。stash entry は残るので、作業ツリーで解決してください。\nfiles {}";
+pub(crate) const ADVICE_STASH_APPLY_PREDICTION_UNAVAILABLE: &str =
+    "クリーンに適用できるか検証できませんでした({})。apply は entry を削除しないので、そのまま試せます。conflict した場合は解決してください。stash は残ります。";
+pub(crate) const ADVICE_STASH_POP_PREDICTION_UNAVAILABLE: &str =
+    "クリーンに適用できるか検証できませんでした({})。pop は entry を削除するためブロックしました。削除せず適用する Stash Apply を使ってください。";
+pub(crate) const ADVICE_STASH_REMOTE_DROP_IRREVERSIBLE: &str =
+    "remote 上の stash entry を完全に削除します。kagi からは元に戻せません。";
+pub(crate) const ADVICE_STASH_TARGET_CHANGED: &str =
+    "stash@{{}} は承認した entry {} ではなくなりました。別の stash がその位置にあります。何も変更していません。再 plan してください。";
+pub(crate) const ADVICE_STASH_LIST_CHANGED: &str =
+    "plan 以降に stash 一覧が変化しました(順序または entry が異なります)。何も変更していません。再 plan してください。";
+
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; stash has its own module so it stays
 /// local rather than reaching into a sibling category file).
@@ -31,68 +51,58 @@ pub fn note_ja(note: &StashNote) -> String {
         StashNote::NothingToStash => {
             "作業ツリーはすでにクリーンです。stash する対象がありません。".to_string()
         }
-        StashNote::UntrackedIncluded { count } => format!(
-            "未追跡ファイル {} 件も stash に含めます(git stash push -u 相当)。",
-            count
-        ),
+        StashNote::UntrackedIncluded { count } => {
+            super::advice_text(Msg::AdviceStashUntrackedIncluded, &[count])
+        }
         StashNote::UntrackedExcluded { count } => {
             super::advice_text(Msg::AdviceUntrackedExcluded, &[count])
         }
         // JA には単複の別がないため、count は複数形サフィックスを持たず自然に読める。
         StashNote::IndexOutOfRange { index, count } => {
-            format!("stash index {} は範囲外です(entry は {} 件)。", index, count)
+            format!(
+                "stash index {} は範囲外です(entry は {} 件)。",
+                index, count
+            )
         }
         StashNote::DirtyBlocksApply { parts, op } => {
             let op_word = match op {
                 StashDirtyOp::Apply => "apply",
                 StashDirtyOp::Pop => "pop",
             };
-            format!(
-                "作業ツリーに{}があります。意図しない conflict を防ぐため、stash {} はクリーンな作業ツリーでのみ実行できます。",
-                parts_ja(parts),
-                op_word
+            super::advice_text(
+                Msg::AdviceStashDirtyBlocksApply,
+                &[&parts_ja(parts), &op_word],
             )
         }
         StashNote::PopWouldConflict { count, files } => {
             let files_label = if files.is_empty() {
-                "(不明なファイル)".to_string()
+                super::advice_text(Msg::AdviceStashConflictUnknownFiles, &[])
             } else {
                 files.join(", ")
             };
-            format!(
-                "stash pop すると {} 件が conflict します。stash entry は保持されるので、解決後に手動で drop してください。\nfiles {}",
-                count, files_label
-            )
+            super::advice_text(Msg::AdviceStashPopWouldConflict, &[count, &files_label])
         }
         StashNote::ApplyWouldConflict { count, files } => {
             let files_label = if files.is_empty() {
-                "(不明なファイル)".to_string()
+                super::advice_text(Msg::AdviceStashConflictUnknownFiles, &[])
             } else {
                 files.join(", ")
             };
-            format!(
-                "stash apply すると {} 件が conflict します。stash entry は残るので、作業ツリーで解決してください。\nfiles {}",
-                count, files_label
-            )
+            super::advice_text(Msg::AdviceStashApplyWouldConflict, &[count, &files_label])
         }
-        StashNote::ApplyPredictionUnavailable { reason } => format!(
-            "クリーンに適用できるか検証できませんでした({})。apply は entry を削除しないので、そのまま試せます。conflict した場合は解決してください。stash は残ります。"
-        , reason),
-        StashNote::PopPredictionUnavailable { reason } => format!(
-            "クリーンに適用できるか検証できませんでした({})。pop は entry を削除するためブロックしました。削除せず適用する Stash Apply を使ってください。",
-            reason
-        ),
+        StashNote::ApplyPredictionUnavailable { reason } => {
+            super::advice_text(Msg::AdviceStashApplyPredictionUnavailable, &[reason])
+        }
+        StashNote::PopPredictionUnavailable { reason } => {
+            super::advice_text(Msg::AdviceStashPopPredictionUnavailable, &[reason])
+        }
         StashNote::RemoteDropIrreversible => {
-            "remote 上の stash entry を完全に削除します。kagi からは元に戻せません。".to_string()
+            super::advice_text(Msg::AdviceStashRemoteDropIrreversible, &[])
         }
-        StashNote::TargetChanged { index, expected } => format!(
-            "stash@{{{}}} は承認した entry {} ではなくなりました。別の stash がその位置にあります。何も変更していません。再 plan してください。",
-            index, expected
-        ),
-        StashNote::ListChanged => {
-            "plan 以降に stash 一覧が変化しました(順序または entry が異なります)。何も変更していません。再 plan してください。"
-                .to_string()
+        StashNote::TargetChanged { index, expected } => {
+            super::advice_text(Msg::AdviceStashTargetChanged, &[index, expected])
         }
+        StashNote::ListChanged => super::advice_text(Msg::AdviceStashListChanged, &[]),
     }
 }
 

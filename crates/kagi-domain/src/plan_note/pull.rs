@@ -99,20 +99,21 @@ pub fn restore_conflict_paths(paths: &[String]) -> (&[String], usize) {
     }
 }
 
-/// `<summary>` + one path per line + `<advice>`, the shape both restore notes
-/// share. The modal renders the paths as rows from the note's own data; this is
-/// the plain-text form the CLI, the oplog and the tests read.
-fn path_note_en(summary: &str, advice: &str, paths: &[String]) -> String {
+/// One path per line, capped for use as the single dynamic argument in both
+/// restore-conflict advice templates.
+fn path_block_en(paths: &[String]) -> String {
     let (shown, extra) = restore_conflict_paths(paths);
-    let mut out = String::from(summary);
+    let mut out = String::new();
     for path in shown {
         out.push_str("\n  - ");
         out.push_str(path);
     }
     if extra > 0 {
-        out.push_str(&format!("\n  - … and {extra} more"));
+        out.push_str(&format!(
+            crate::advice_template_en!(PullRestoreConflictMore),
+            extra
+        ));
     }
-    out.push_str(advice);
     out
 }
 
@@ -121,7 +122,7 @@ impl PullNote {
     pub fn message_en(&self) -> String {
         match self {
             PullNote::DirtyPullGuard { parts } => format!(
-                "Working tree has {}. Pull will proceed only if fetched changes do not touch those paths.",
+                crate::advice_template_en!(PullDirtyPullGuard),
                 parts.parts_en()
             ),
             PullNote::AutoStash { parts, untracked } => {
@@ -139,36 +140,24 @@ impl PullNote {
                 )
             }
             PullNote::NoUpstreamWithHint { branch, err } => format!(
-                "No upstream configured for branch '{}': {}. Set one with `git branch --set-upstream-to=<remote>/<branch>`.",
+                crate::advice_template_en!(PullNoUpstreamWithHint),
                 branch, err
             ),
             PullNote::MergePrediction => {
-                "Plan-time merge prediction: the current upstream tip would conflict with HEAD. \
-                 Execute is NOT blocked (fetch may change things), but be aware that if the \
-                 upstream has not changed, execute will fail safely leaving the repo untouched."
-                    .to_string()
+                crate::advice_template_en!(PullMergePrediction).to_string()
             }
-            PullNote::RestoreConflict { paths } => path_note_en(
-                "Restoring the stash after this pull will conflict. Kagi merged your edit with \
-                 the incoming change and these paths do not merge:",
-                "\nCommit or stash those paths yourself first, or resolve the conflict after the \
-                 pull — the stash is kept either way.",
-                paths,
+            PullNote::RestoreConflict { paths } => format!(
+                crate::advice_template_en!(PullRestoreConflict),
+                path_block_en(paths)
             ),
-            PullNote::RestoreConflictPossible { paths } => path_note_en(
-                "Restoring the stash after this pull may conflict. Both sides changed these \
-                 paths and Kagi could not merge them in advance (binary content, a mode change, \
-                 or a file added or removed on one side):",
-                "\nThe restore is attempted anyway; if it conflicts, the stash is kept.",
-                paths,
+            PullNote::RestoreConflictPossible { paths } => format!(
+                crate::advice_template_en!(PullRestoreConflictPossible),
+                path_block_en(paths)
             ),
-            PullNote::ConflictedRefOnly { count } => format!(
-                "Repository has {} conflicted file(s); this ref-only pull will not touch the working tree.",
-                count
-            ),
-            PullNote::DirtyRefOnly => {
-                "Working tree is dirty; this ref-only pull will not touch the working tree.".to_string()
+            PullNote::ConflictedRefOnly { count } => {
+                format!(crate::advice_template_en!(PullConflictedRefOnly), count)
             }
+            PullNote::DirtyRefOnly => crate::advice_template_en!(PullDirtyRefOnly).to_string(),
             PullNote::NoUpstream { branch, err } => {
                 format!("No upstream configured for branch '{}': {}.", branch, err)
             }
@@ -176,23 +165,18 @@ impl PullNote {
                 "Branch '{}' is already up to date with its upstream.",
                 branch
             ),
-            PullNote::CannotFastForward { branch } => format!(
-                "Branch '{}' cannot be fast-forwarded to its upstream; pull it while checked out to merge.",
-                branch
-            ),
+            PullNote::CannotFastForward { branch } => {
+                format!(crate::advice_template_en!(PullCannotFastForward), branch)
+            }
             PullNote::RemoteDiverged {
                 branch,
                 ahead,
                 behind,
             } => format!(
-                "{branch} has diverged ({ahead} ahead, {behind} behind); \
-                 the pull will create a merge commit on the remote."
+                crate::advice_template_en!(PullRemoteDiverged),
+                branch, ahead, behind
             ),
-            PullNote::RemoteDirty => {
-                "The remote working tree has uncommitted changes; the pull may fail \
-                 or produce conflicts that must be resolved on the host."
-                    .to_string()
-            }
+            PullNote::RemoteDirty => crate::advice_template_en!(PullRemoteDirty).to_string(),
         }
     }
 }

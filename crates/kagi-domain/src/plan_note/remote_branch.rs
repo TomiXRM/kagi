@@ -24,7 +24,7 @@ impl RemoteBranchNote {
                 remote, branch
             ),
             RemoteBranchNote::LocalBranchUntouched { local_name } => format!(
-                "This only deletes the branch on the remote. Your local branch '{}' is untouched and will show as having no upstream.",
+                crate::advice_template_en!(RemoteBranchLocalBranchUntouched),
                 local_name
             ),
         }

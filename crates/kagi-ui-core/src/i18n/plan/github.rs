@@ -2,54 +2,85 @@
 
 use kagi_domain::plan_note::{GithubNote, GithubRecovery, GithubTitle, PrMergeLocalReason};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_GITHUB_HEAD_UNAVAILABLE: &str =
+    "#{} の head commit を取得できていません。pull request 一覧を更新してから merge してください。";
+pub(crate) const ADVICE_GITHUB_NOT_MERGEABLE: &str =
+    "#{} は merge できません。conflict 解消か branch 保護条件の充足が必要です。";
+pub(crate) const ADVICE_GITHUB_IS_DRAFT: &str =
+    "#{} は draft です。merge 前に Ready for review にしてください。";
+pub(crate) const ADVICE_GITHUB_CHECKS_FAILING: &str =
+    "#{} で {} 件のチェックが失敗しています。merge すると CI 不合格のコードが入ります。";
+pub(crate) const ADVICE_GITHUB_CHECKS_PENDING: &str = "#{} のチェックがまだ完了していません。";
+pub(crate) const ADVICE_GITHUB_CHANGES_REQUESTED: &str = "#{} にレビューの修正依頼があります。";
+pub(crate) const ADVICE_GITHUB_REMOTE_SIDE_EFFECT: &str =
+    "merge は GitHub 上で実行されます。次の fetch までローカルは変わりません。";
+pub(crate) const ADVICE_GITHUB_DELETES_BRANCH: &str =
+    "head branch を remote で削除します。\nbranch `{}`";
+pub(crate) const ADVICE_GITHUB_FORK_KEEPS_REMOTE_BRANCH: &str =
+    "fork 側の remote branch は gh では削除されません。";
+pub(crate) const ADVICE_GITHUB_DELETES_LOCAL_BRANCH_PRESENT: &str =
+    "GitHub 上で merge が確認できたあと、local branch を削除します。削除するのは、この commit を指したままで、どこにも checkout されていない場合だけです。\nbranch `{}`\ntip `{}`";
+pub(crate) const ADVICE_GITHUB_DELETES_LOCAL_BRANCH_ABSENT: &str =
+    "local branch はこのリポジトリに存在しません。merge 後も local では何も削除しません。\nbranch `{}`";
+pub(crate) const ADVICE_GITHUB_KEEPS_LOCAL_BRANCH: &str =
+    "local branch は削除しません: {}\nbranch `{}`";
+pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_KEPT: &str = "local branch を残しました: {} ({})";
+pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_NOT_DELETED: &str =
+    "merge は完了しました。local branch は削除していません: {}";
+pub(crate) const ADVICE_GITHUB_SUGGESTION_RANGE_GONE: &str =
+    "レビュー対象だった行が作業ツリーにありません。現在のファイルでレビューを開き直してください。\nfile `{}`";
+pub(crate) const ADVICE_GITHUB_SUGGESTION_STALE: &str =
+    "suggestion のレビュー後にファイルが変更されています。誤った行を書き換える恐れがあるため拒否します。現在のファイルでレビューを開き直してください。\nfile `{}`";
+pub(crate) const ADVICE_GITHUB_SUGGESTION_WORKING_TREE_ONLY: &str =
+    "作業ツリーだけを書き換えます(commit しません)。commit 前に hunk staging で確認してください。";
+pub(crate) const ADVICE_GITHUB_COMMENT_BODY_EMPTY: &str =
+    "コメント本文が空です。投稿する文章を入力してください。";
+pub(crate) const ADVICE_GITHUB_ISSUE_TITLE_EMPTY: &str =
+    "Issue のタイトルが空です。タイトルか、本文にタイトルとして使える内容を入力してください。";
+pub(crate) const ADVICE_GITHUB_REVIEW_BODY_EMPTY: &str =
+    "GitHub は「{}」のレビューにコメントを必須としています。何を変えてほしいかを書いてから提出してください。";
+pub(crate) const ADVICE_GITHUB_FIELD_EDIT_EMPTY: &str =
+    "#{} は何も変わりません。追加または削除する reviewer / 担当 / label を選んでください。";
+pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_NOT_DELETED_DELETION_UNAUTHORIZED: &str =
+    "gh がエラーを返したため、local branch の削除は transport に許可されていません: {}";
+
 /// Japanese rendering of one GitHub note.
 pub fn note_ja(note: &GithubNote) -> String {
     match note {
-        GithubNote::HeadUnavailable { number } => format!(
-            "#{} の head commit を取得できていません。pull request 一覧を更新してから merge してください。",
-            number
-        ),
-        GithubNote::NotMergeable { number } => format!(
-            "#{} は merge できません。conflict 解消か branch 保護条件の充足が必要です。",
-            number
-        ),
-        GithubNote::IsDraft { number } => {
-            format!("#{} は draft です。merge 前に Ready for review にしてください。", number)
+        GithubNote::HeadUnavailable { number } => {
+            super::advice_text(Msg::AdviceGithubHeadUnavailable, &[number])
         }
-        GithubNote::ChecksFailing { number, failed } => format!(
-            "#{} で {} 件のチェックが失敗しています。merge すると CI 不合格のコードが入ります。",
-            number, failed
-        ),
+        GithubNote::NotMergeable { number } => {
+            super::advice_text(Msg::AdviceGithubNotMergeable, &[number])
+        }
+        GithubNote::IsDraft { number } => super::advice_text(Msg::AdviceGithubIsDraft, &[number]),
+        GithubNote::ChecksFailing { number, failed } => {
+            super::advice_text(Msg::AdviceGithubChecksFailing, &[number, failed])
+        }
         GithubNote::ChecksPending { number } => {
-            format!("#{} のチェックがまだ完了していません。", number)
+            super::advice_text(Msg::AdviceGithubChecksPending, &[number])
         }
         GithubNote::ChangesRequested { number } => {
-            format!("#{} にレビューの修正依頼があります。", number)
+            super::advice_text(Msg::AdviceGithubChangesRequested, &[number])
         }
-        GithubNote::RemoteSideEffect => {
-            "merge は GitHub 上で実行されます。次の fetch までローカルは変わりません。".to_string()
+        GithubNote::RemoteSideEffect => super::advice_text(Msg::AdviceGithubRemoteSideEffect, &[]),
+        GithubNote::DeletesBranch { branch } => {
+            super::advice_text(Msg::AdviceGithubDeletesBranch, &[branch])
         }
-        GithubNote::DeletesBranch { branch } => format!(
-            "head branch を remote で削除します。\nbranch `{}`",
-            branch
-        ),
         GithubNote::ForkKeepsRemoteBranch => {
-            "fork 側の remote branch は gh では削除されません。".to_string()
+            super::advice_text(Msg::AdviceGithubForkKeepsRemoteBranch, &[])
         }
         GithubNote::DeletesLocalBranch { branch, tip } => match tip {
-            Some(tip) => format!(
-                "GitHub 上で merge が確認できたあと、local branch を削除します。削除するのは、この commit を指したままで、どこにも checkout されていない場合だけです。\nbranch `{}`\ntip `{}`",
-                branch, tip
-            ),
-            None => format!(
-                "local branch はこのリポジトリに存在しません。merge 後も local では何も削除しません。\nbranch `{}`",
-                branch
-            ),
+            Some(tip) => {
+                super::advice_text(Msg::AdviceGithubDeletesLocalBranchPresent, &[branch, tip])
+            }
+            None => super::advice_text(Msg::AdviceGithubDeletesLocalBranchAbsent, &[branch]),
         },
-        GithubNote::KeepsLocalBranch { branch, reason } => format!(
-            "local branch は削除しません: {}\nbranch `{}`",
-            reason_ja(reason),
-            branch
+        GithubNote::KeepsLocalBranch { branch, reason } => super::advice_text(
+            Msg::AdviceGithubKeepsLocalBranch,
+            &[&reason_ja(reason), branch],
         ),
         GithubNote::LocalBranchDeleted { name, tip } => {
             format!("local branch を削除しました: {}@{}", name, tip)
@@ -57,40 +88,30 @@ pub fn note_ja(note: &GithubNote) -> String {
         GithubNote::LocalBranchAbsent { name } => {
             format!("local branch は既に存在しません: {}", name)
         }
-        GithubNote::LocalBranchKept { name, reason } => {
-            format!("local branch を残しました: {} ({})", name, reason_ja(reason))
-        }
-        GithubNote::LocalBranchNotDeleted { reason } => {
-            format!(
-                "merge は完了しました。local branch は削除していません: {}",
-                reason_ja(reason)
-            )
-        }
-        GithubNote::SuggestionRangeGone { path } => format!(
-            "レビュー対象だった行が作業ツリーにありません。現在のファイルでレビューを開き直してください。\nfile `{}`",
-            path
+        GithubNote::LocalBranchKept { name, reason } => super::advice_text(
+            Msg::AdviceGithubLocalBranchKept,
+            &[name, &reason_ja(reason)],
         ),
-        GithubNote::SuggestionStale { path } => format!(
-            "suggestion のレビュー後にファイルが変更されています。誤った行を書き換える恐れがあるため拒否します。現在のファイルでレビューを開き直してください。\nfile `{}`",
-            path
+        GithubNote::LocalBranchNotDeleted { reason } => super::advice_text(
+            Msg::AdviceGithubLocalBranchNotDeleted,
+            &[&reason_ja(reason)],
         ),
-        GithubNote::CommentBodyEmpty => {
-            "コメント本文が空です。投稿する文章を入力してください。".to_string()
+        GithubNote::SuggestionRangeGone { path } => {
+            super::advice_text(Msg::AdviceGithubSuggestionRangeGone, &[path])
         }
-        GithubNote::IssueTitleEmpty => {
-            "Issue のタイトルが空です。タイトルか、本文にタイトルとして使える内容を入力してください。"
-                .to_string()
+        GithubNote::SuggestionStale { path } => {
+            super::advice_text(Msg::AdviceGithubSuggestionStale, &[path])
         }
-        GithubNote::ReviewBodyEmpty { verdict } => format!(
-            "GitHub は「{}」のレビューにコメントを必須としています。何を変えてほしいかを書いてから提出してください。",
-            verdict
-        ),
-        GithubNote::FieldEditEmpty { number } => format!(
-            "#{} は何も変わりません。追加または削除する reviewer / 担当 / label を選んでください。",
-            number
-        ),
+        GithubNote::CommentBodyEmpty => super::advice_text(Msg::AdviceGithubCommentBodyEmpty, &[]),
+        GithubNote::IssueTitleEmpty => super::advice_text(Msg::AdviceGithubIssueTitleEmpty, &[]),
+        GithubNote::ReviewBodyEmpty { verdict } => {
+            super::advice_text(Msg::AdviceGithubReviewBodyEmpty, &[verdict])
+        }
+        GithubNote::FieldEditEmpty { number } => {
+            super::advice_text(Msg::AdviceGithubFieldEditEmpty, &[number])
+        }
         GithubNote::SuggestionWorkingTreeOnly => {
-            "作業ツリーだけを書き換えます(commit しません)。commit 前に hunk staging で確認してください。".to_string()
+            super::advice_text(Msg::AdviceGithubSuggestionWorkingTreeOnly, &[])
         }
     }
 }
@@ -114,9 +135,9 @@ pub fn reason_ja(reason: &PrMergeLocalReason) -> String {
         PrMergeLocalReason::Changed => "承認後に branch が動きました".to_string(),
         PrMergeLocalReason::HeadChanged => "承認後に HEAD が変わりました".to_string(),
         PrMergeLocalReason::IdentityChanged => "承認時の repository ではありません".to_string(),
-        PrMergeLocalReason::DeletionUnauthorized { detail } => format!(
-            "gh がエラーを返したため、local branch の削除は transport に許可されていません: {}",
-            detail
+        PrMergeLocalReason::DeletionUnauthorized { detail } => super::advice_text(
+            Msg::AdviceGithubLocalBranchNotDeletedDeletionUnauthorized,
+            &[detail],
         ),
         PrMergeLocalReason::Detail(detail) => detail.clone(),
     }

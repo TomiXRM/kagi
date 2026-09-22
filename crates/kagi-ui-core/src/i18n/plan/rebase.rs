@@ -2,16 +2,20 @@
 
 use kagi_domain::plan_note::{RebaseNote, RebaseRecovery, RebaseTitle};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_REBASE_DIRTY_WORKING_TREE: &str =
+    "作業ツリーに未 commit の変更があります。先に commit か stash か破棄してください。";
+pub(crate) const ADVICE_REBASE_MAY_CONFLICT: &str =
+    "rebase は途中で conflict により停止することがあります。conflict エディタで commit ごとに解決してから Continue してください。";
+
 /// Japanese rendering of one rebase note.
 pub fn note_ja(note: &RebaseNote) -> String {
     match note {
         RebaseNote::DetachedHead => {
             "HEAD が detached です。rebase には branch が必要です。".to_string()
         }
-        RebaseNote::DirtyWorkingTree => {
-            "作業ツリーに未 commit の変更があります。先に commit か stash か破棄してください。"
-                .to_string()
-        }
+        RebaseNote::DirtyWorkingTree => super::advice_text(Msg::AdviceRebaseDirtyWorkingTree, &[]),
         RebaseNote::InvalidOnto { onto } => {
             format!("branch / commit として解決できません。\nonto `{}`", onto)
         }
@@ -19,9 +23,7 @@ pub fn note_ja(note: &RebaseNote) -> String {
             "すでに追従しています。rebase する内容はありません。\nbranch `{}` / onto `{}`",
             branch, onto
         ),
-        RebaseNote::MayConflict => {
-            "rebase は途中で conflict により停止することがあります。conflict エディタで commit ごとに解決してから Continue してください。".to_string()
-        }
+        RebaseNote::MayConflict => super::advice_text(Msg::AdviceRebaseMayConflict, &[]),
     }
 }
 

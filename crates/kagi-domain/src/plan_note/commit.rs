@@ -54,15 +54,14 @@ impl CommitNote {
     pub fn message_en(&self) -> String {
         match self {
             CommitNote::EmptyMessage => "Commit message must not be empty.".to_string(),
-            CommitNote::NothingStaged => "Nothing to commit: no files are staged. Use \
-                 stage_file() to stage changes before committing."
-                .to_string(),
-            CommitNote::ConflictedFiles { count } => format!(
-                "Repository has {} conflicted file(s). Resolve all conflicts before committing.",
-                count
-            ),
+            CommitNote::NothingStaged => {
+                crate::advice_template_en!(CommitNothingStaged).to_string()
+            }
+            CommitNote::ConflictedFiles { count } => {
+                format!(crate::advice_template_en!(CommitConflictedFiles), count)
+            }
             CommitNote::LeftoverNotIncluded { count, parts } => format!(
-                "{} file(s) ({}) will NOT be included in this commit.",
+                crate::advice_template_en!(CommitLeftoverNotIncluded),
                 count,
                 parts.parts_en()
             ),

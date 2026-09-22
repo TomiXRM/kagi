@@ -2,6 +2,15 @@
 
 use kagi_domain::plan_note::{ResetNote, ResetRecovery, ResetTitle};
 
+use crate::i18n::Msg;
+
+pub(crate) const ADVICE_RESET_REF_ONLY_SOFT_RESET: &str =
+    "branch ポインタだけを移動します(`git reset --soft` 相当)。作業ツリーと stage 済みの変更は残り、新しい HEAD への差分として表示されます。";
+pub(crate) const ADVICE_RESET_ABANDONS_COMMITS: &str =
+    "{} 件の commit が到達不能になります(GC まで reflog から復元可能)。\nbranch `{}`";
+pub(crate) const ADVICE_RESET_TARGET_NOT_ANCESTOR: &str =
+    "対象 commit は祖先ではありません。系譜の巻き戻しではなく、無関係な履歴への付け替えになります。\nbranch `{}`";
+
 /// Japanese rendering of one reset note.
 pub fn note_ja(note: &ResetNote) -> String {
     match note {
@@ -11,17 +20,13 @@ pub fn note_ja(note: &ResetNote) -> String {
         ResetNote::CommitMissing { sha } => {
             format!("commit がこのリポジトリにありません。\ncommit `{}`", sha)
         }
-        ResetNote::RefOnlySoftReset => {
-            "branch ポインタだけを移動します(`git reset --soft` 相当)。作業ツリーと stage 済みの変更は残り、新しい HEAD への差分として表示されます。".to_string()
+        ResetNote::RefOnlySoftReset => super::advice_text(Msg::AdviceResetRefOnlySoftReset, &[]),
+        ResetNote::AbandonsCommits { branch, count } => {
+            super::advice_text(Msg::AdviceResetAbandonsCommits, &[count, branch])
         }
-        ResetNote::AbandonsCommits { branch, count } => format!(
-            "{} 件の commit が到達不能になります(GC まで reflog から復元可能)。\nbranch `{}`",
-            count, branch
-        ),
-        ResetNote::TargetNotAncestor { branch } => format!(
-            "対象 commit は祖先ではありません。系譜の巻き戻しではなく、無関係な履歴への付け替えになります。\nbranch `{}`",
-            branch
-        ),
+        ResetNote::TargetNotAncestor { branch } => {
+            super::advice_text(Msg::AdviceResetTargetNotAncestor, &[branch])
+        }
     }
 }
 

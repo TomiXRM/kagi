@@ -11,6 +11,28 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_AUTO_STASH: &str =
     "作業ツリーに{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
 
+pub(crate) const ADVICE_PULL_DIRTY_PULL_GUARD: &str =
+    "作業ツリーに{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。";
+pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
+    "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
+pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
+    "merge 予測: 現在の upstream の先端は HEAD と conflict します。fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。";
+pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
+    "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:{}\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。";
+pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
+    "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):{}\n復元は試行されます。conflict した場合、stash は保持されます。";
+pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_MORE: &str = "\n  - 他 {} 件";
+pub(crate) const ADVICE_PULL_CONFLICTED_REF_ONLY: &str =
+    "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。";
+pub(crate) const ADVICE_PULL_DIRTY_REF_ONLY: &str =
+    "作業ツリーに変更があります。この ref-only pull は作業ツリーに影響しません。";
+pub(crate) const ADVICE_PULL_CANNOT_FAST_FORWARD: &str =
+    "branch `{}` は upstream に fast-forward できません。checkout 状態で pull すると merge されます。";
+pub(crate) const ADVICE_PULL_REMOTE_DIVERGED: &str =
+    "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はremote上で merge commit を作成します。";
+pub(crate) const ADVICE_PULL_REMOTE_DIRTY: &str =
+    "remoteの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。";
+
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; pull has its own module so it stays
 /// local rather than reaching into a sibling category file).
@@ -25,28 +47,30 @@ fn parts_ja(parts: &DirtyParts) -> String {
     out.join("、")
 }
 
-/// `<要約>` + 1 行 1 パス + `<助言>`。両方の restore note が共有する形。
-fn path_note_ja(summary: &str, advice: &str, paths: &[String]) -> String {
+/// One path per line, capped for use as the single dynamic argument in both
+/// restore-conflict advice templates.
+fn path_block_ja(paths: &[String]) -> String {
     let (shown, extra) = restore_conflict_paths(paths);
-    let mut out = String::from(summary);
+    let mut out = String::new();
     for path in shown {
         out.push_str("\n  - ");
         out.push_str(path);
     }
     if extra > 0 {
-        out.push_str(&format!("\n  - 他 {extra} 件"));
+        out.push_str(&super::advice_text(
+            Msg::AdvicePullRestoreConflictMore,
+            &[&extra],
+        ));
     }
-    out.push_str(advice);
     out
 }
 
 /// Japanese rendering of one pull note.
 pub fn note_ja(note: &PullNote) -> String {
     match note {
-        PullNote::DirtyPullGuard { parts } => format!(
-            "作業ツリーに{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。",
-            parts_ja(parts)
-        ),
+        PullNote::DirtyPullGuard { parts } => {
+            super::advice_text(Msg::AdvicePullDirtyPullGuard, &[&parts_ja(parts)])
+        }
         PullNote::AutoStash { parts, untracked } => {
             let mut changes = Vec::new();
             let tracked = parts_ja(parts);
@@ -58,54 +82,39 @@ pub fn note_ja(note: &PullNote) -> String {
             }
             super::advice_text(Msg::AdvicePullAutoStash, &[&changes.join("、")])
         }
-        PullNote::NoUpstreamWithHint { branch, err } => format!(
-            "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>",
-            branch, err
-        ),
-        PullNote::MergePrediction => {
-            "merge 予測: 現在の upstream の先端は HEAD と conflict します。\
-             fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。"
-                .to_string()
+        PullNote::NoUpstreamWithHint { branch, err } => {
+            super::advice_text(Msg::AdvicePullNoUpstreamWithHint, &[branch, err])
         }
-        PullNote::RestoreConflict { paths } => path_note_ja(
-            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:",
-            "\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。",
-            paths,
-        ),
-        PullNote::RestoreConflictPossible { paths } => path_note_ja(
-            "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):",
-            "\n復元は試行されます。conflict した場合、stash は保持されます。",
-            paths,
-        ),
-        PullNote::ConflictedRefOnly { count } => format!(
-            "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。",
-            count
-        ),
-        PullNote::DirtyRefOnly => {
-            "作業ツリーに変更があります。この ref-only pull は作業ツリーに影響しません。".to_string()
+        PullNote::MergePrediction => super::advice_text(Msg::AdvicePullMergePrediction, &[]),
+        PullNote::RestoreConflict { paths } => {
+            super::advice_text(Msg::AdvicePullRestoreConflict, &[&path_block_ja(paths)])
         }
+        PullNote::RestoreConflictPossible { paths } => super::advice_text(
+            Msg::AdvicePullRestoreConflictPossible,
+            &[&path_block_ja(paths)],
+        ),
+        PullNote::ConflictedRefOnly { count } => {
+            super::advice_text(Msg::AdvicePullConflictedRefOnly, &[count])
+        }
+        PullNote::DirtyRefOnly => super::advice_text(Msg::AdvicePullDirtyRefOnly, &[]),
         PullNote::NoUpstream { branch, err } => {
-            format!("branch `{}` に upstream が設定されていません: {}", branch, err)
+            format!(
+                "branch `{}` に upstream が設定されていません: {}",
+                branch, err
+            )
         }
         PullNote::AlreadyUpToDate { branch } => {
             format!("branch `{}` は upstream と同期済みです。", branch)
         }
-        PullNote::CannotFastForward { branch } => format!(
-            "branch `{}` は upstream に fast-forward できません。checkout 状態で pull すると merge されます。",
-            branch
-        ),
+        PullNote::CannotFastForward { branch } => {
+            super::advice_text(Msg::AdvicePullCannotFastForward, &[branch])
+        }
         PullNote::RemoteDiverged {
             branch,
             ahead,
             behind,
-        } => format!(
-            "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はremote上で merge commit を作成します。",
-            branch, ahead, behind
-        ),
-        PullNote::RemoteDirty => {
-            "remoteの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。"
-                .to_string()
-        }
+        } => super::advice_text(Msg::AdvicePullRemoteDiverged, &[branch, ahead, behind]),
+        PullNote::RemoteDirty => super::advice_text(Msg::AdvicePullRemoteDirty, &[]),
     }
 }
 
